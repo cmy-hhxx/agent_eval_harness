@@ -256,6 +256,40 @@ def test_version_names_replace_roles_without_changing_quotes_or_stock_terms(conf
     assert comparison_row(tmp_path, task, result)["verdict"]["winner_version"] is None
 
 
+@pytest.mark.parametrize("supplement", [[], ["A"], ["A", "B"]])
+def test_numeric_export_preserves_grounded_verdict(config, tmp_path, supplement):
+    records = {label: adapt(raw(reference=None, answer=answer), config.versions[index], "in.jsonl", 1, None)
+               for label, index, answer in (("A", 1, "2+2=4"), ("B", 0, "2+3=5"))}
+    task = {"id": "numeric", "stage": "pairwise",
+            "candidates": {key: {**record.identity(), "llm": None} for key, record in records.items()},
+            "dependencies": {"A": None, "B": None}, "reference": None,
+            "pair": ["a_fast", "a_expert"]}
+    save_presentation(tmp_path, config)
+    evaluation = fake_evaluation("pairwise", records)
+    evaluation["verdict"]["reason"] = (
+        "【候选A】更好。题目已给出2+2，候选A按2+2得到4；候选B擅自改成2+3得到5，核心结果错误。"
+        "候选A虽缺少展开说明，但不影响本题计算正确性，因此仍胜出。")
+    calculations = [
+        {"candidate": "A", "operation": "add", "operands": ["2", "2"], "result": "4"},
+        {"candidate": "B", "operation": "add", "operands": ["2", "3"], "result": "5"},
+        *[{"candidate": label, "operation": "multiply", "operands": ["4", "100"], "result": "400"}
+          for label in supplement],
+    ]
+    receipt = {"status": "succeeded", "evaluation": evaluation, "calculations": calculations}
+    write_json(tmp_path / "tasks" / task["id"] / "result.json", receipt)
+    write_json(tmp_path / "manifest.json", {"run_id": "numeric", "status": "finished", "tasks": [task],
+                                            "preflight": {}, "started_at": 0, "finished_at": 1})
+    export_results(tmp_path)
+    row = json.loads((tmp_path / "results" / "a_fast__vs__a_expert.jsonl").read_text())
+    expected = display_text(evaluation["verdict"]["reason"], {"A": "A组Expert", "B": "A组Fast"})
+    assert row["verdict"]["reason"] == expected
+    assert row["verdict"]["winner_version"] == "a_expert"
+    summary = json.loads((tmp_path / "task_summaries.jsonl").read_text())
+    assert summary["conclusion"]["reason"] == expected
+    assert expected.split("。", 1)[1] in render_summaries([summary])
+    assert read_json(tmp_path / "tasks" / task["id"] / "result.json") == receipt
+
+
 def test_verdict_opening_agrees_with_winner_and_ties_are_explicit(config, tmp_path):
     records = {label: adapt(raw(reference=None), config.versions[i], "in.jsonl", 1, None)
                for i, label in enumerate(("A", "B"))}

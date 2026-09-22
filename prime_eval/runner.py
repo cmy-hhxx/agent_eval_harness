@@ -39,6 +39,7 @@ def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str
             **display_text(evaluation["evaluations"][candidate], display)}
     verdict = evaluation["verdict"]
     winner = verdict["result"][0] if verdict["result"] in ("A_better", "B_better") else None
+    reason = display_text(verdict["reason"], display)
     return {
         "schema_version": "3.2", "evaluation_type": "pairwise_model_comparison",
         "comparison_id": "cmp_" + digest({"batch": a["batch_id"], "case": a["case_id"], "pair": task["pair"]})[:32],
@@ -48,7 +49,7 @@ def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str
         "verdict": {"result": "win" if winner else verdict["result"],
                     "winner_version": task["candidates"][winner]["version"] if winner else None,
                     "winner_name": display[winner] if winner else None,
-                    "reason": display_text(verdict["reason"], display)}, "evaluations": evaluations,
+                    "reason": reason}, "evaluations": evaluations,
     }
 
 
