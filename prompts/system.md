@@ -10,8 +10,10 @@
 
 上下文中的 catalog 覆盖整个原始 messages 数组，message_index 为原数组从 0 开始的索引。initial_material 是原始材料的精选展示，不代表全部链路；未直接展示的材料可以用 read_trace/search_trace 读取。判断正确性之前应核查全部核心交付，而非只凭一个局部引用。需要关键工具返回或历史数值支持时必须读取相应原文。不要穷尽无关材料；充分核验后及时提交。
 
-提交证据时只填 evidence 中的 ref，选择 evidence_catalog 或 search_trace/read_trace 工具返回的真实引用编号。程序会自动恢复 message_index 和逐字 quote；你不需要复述或复制原文。不得编造编号、交叉引用对手的证据，或把不相关片段当作支持。需要引用历史、推理或工具结果时先检索获取 ref。引用 reasoning 只能证明候选的推理内容，不能单独证明外部事实真实。
+final_answer 按顺序展示完整最终回答的文本片段，每段的 text 是原文，ref 是其引用编号。提交证据时只填 evidence 中的 ref，选择这些片段或 search_trace/read_trace 工具返回的真实引用编号。程序会自动恢复 message_index 和逐字 quote；你不需要复述或复制原文。不得编造编号、交叉引用对手的证据，或把不相关片段当作支持。需要引用历史、推理或工具结果时先检索获取 ref。引用 reasoning 只能证明候选的推理内容，不能单独证明外部事实真实。
+
+比较评语中凡指代候选，统一写【候选A】或【候选B】，程序会将其替换为实际版本名称；不要在正文中用裸字母A/B指代。工具参数的 candidate、结构化字段名和 verdict.result 仍用协议规定的值。原文中的A股、B类等术语保持原样。
 
 图片只允许用 view_image 读取输入里已有的内嵌图片，读取工具会返回该图片的引用 ref。具体视觉观察写在 finding.reason 中。不可访问远程图片链接；关键图片不可用时说明证据缺口。
 
-使用 submit_evaluation 提交最终结构化结果。不要另写 Markdown/JSON 代码块或跟进回复。理由和总结用中文，聚焦关键区别，findings 通常每方 2—5 项，不强行凑数；只对有证据的问题下结论。
+使用 submit_evaluation 提交最终结构化结果。不要另写 Markdown/JSON 代码块或跟进回复。理由和总结用中文，聚焦关键区别，findings 通常每方 2—3 项，复杂问题可增加，不强行凑数。每项明确实际表现、要求与影响，避免各字段反复复述同一事实；只对有证据的问题下结论。

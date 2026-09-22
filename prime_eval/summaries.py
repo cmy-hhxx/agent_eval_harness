@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .core import Json
+from .presentation import display_text
 
 
 def compare_timing(measurements: Json) -> Json:
@@ -12,9 +13,14 @@ def compare_timing(measurements: Json) -> Json:
 
 
 def task_summary(task: Json, row: Json, analysis: Json) -> Json:
-    timings = {label: identity["answer_timing"] for label, identity in task["candidates"].items()}
+    timings = {identity["version"]: identity["answer_timing"] for identity in task["candidates"].values()}
+    names = {label: row["models"][identity["version"]]["version"] for label, identity in task["candidates"].items()}
+    analysis = display_text(analysis, names)
+    comparison = compare_timing({label: identity["answer_timing"] for label, identity in task["candidates"].items()})
+    faster = comparison.pop("faster_candidate")
+    comparison["faster_version"] = task["candidates"][faster]["version"] if faster in ("A", "B") else None
     return {
-        "summary_version": "1.0", "comparison_id": row["comparison_id"], "case": row["case"],
+        "summary_version": "1.1", "comparison_id": row["comparison_id"], "case": row["case"],
         "question": task["candidates"]["A"]["question"],
         "task_type": analysis["task_type"], "goal": analysis["goal"], "requirements": analysis["requirements"],
         "conclusion": row["verdict"],
@@ -22,7 +28,7 @@ def task_summary(task: Json, row: Json, analysis: Json) -> Json:
                                "strengths": [f for f in review["findings"] if f["type"] == "strength"],
                                "weaknesses": [f for f in review["findings"] if f["type"] == "problem"]}
                        for label, review in row["evaluations"].items()},
-        "timing": {"measurements": timings, "comparison": compare_timing(timings),
+        "timing": {"measurements": timings, "comparison": comparison,
                    "analysis": analysis["timing_analysis"]},
         "scoring_points": analysis["scoring_points"], "red_flags": analysis["red_flags"],
     }
@@ -30,24 +36,26 @@ def task_summary(task: Json, row: Json, analysis: Json) -> Json:
 
 def render_summaries(summaries: list[Json]) -> str:
     lines: list[str] = []
-    verdicts = {"A_better": "候选 A 更好", "B_better": "候选 B 更好", "tie": "平局", "not_comparable": "材料不足以比较"}
+    verdicts = {"tie": "平局", "not_comparable": "材料不足以比较"}
     for item in summaries:
         lines += [f"# {item['case']['case_id']}", "", f"比较记录：`{item['comparison_id']}`", "",
                   "## 问题明细", "", "**原始问题**", ""]
         lines.extend("> " + line for line in item["question"].splitlines())
         lines += ["", f"**任务类型**：{item['task_type']}", "", f"**任务目标**：{item['goal']}", "", "**核心要求**", ""]
         lines.extend(f"- {text}" for text in item["requirements"])
-        lines += ["", "## 测评结论", "", f"**{verdicts[item['conclusion']['result']]}**。{item['conclusion']['reason']}", "",
-                  "## 原始回答耗时", "", "| 候选及实际版本 | 首 token（秒） | 首回答（秒） | 完成（秒） |",
+        conclusion = item["conclusion"]
+        title = f"{conclusion['winner_name']} 更好" if conclusion["result"] == "win" else verdicts[conclusion["result"]]
+        lines += ["", "## 测评结论", "", f"**{title}**。{conclusion['reason']}", "",
+                  "## 原始回答耗时", "", "| 版本 | 首 token（秒） | 首回答（秒） | 完成（秒） |",
                   "|---|---:|---:|---:|"]
         for label, timing in item["timing"]["measurements"].items():
             values = ["缺失" if timing[key] is None else f"{timing[key]:.3f}"
                       for key in ("first_token_seconds", "first_answer_seconds", "finish_seconds")]
             name = item["candidates"][label]["model"]["version"]
-            lines.append(f"| {label} · {name} | {' | '.join(values)} |")
+            lines.append(f"| {name} | {' | '.join(values)} |")
         lines += ["", item["timing"]["analysis"], ""]
         for label, review in item["candidates"].items():
-            lines += [f"## 候选 {label} · {review['model']['version']}：优劣势", "", review["summary"], ""]
+            lines += [f"## {review['model']['version']}：优劣势", "", review["summary"], ""]
             for title, key in (("优势", "strengths"), ("不足", "weaknesses")):
                 lines += [f"### {title}", ""]
                 if not review[key]:

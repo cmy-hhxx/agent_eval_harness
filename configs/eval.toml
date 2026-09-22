@@ -8,24 +8,28 @@ timing_unit = "ms"
 [[inputs.versions]]
 id = "a_fast"
 name = "A Fast"
+display_name = "A组Fast"
 path = "../eval_input/a_fast.jsonl"
 adapter = "a"
 
 [[inputs.versions]]
 id = "a_expert"
 name = "A Expert"
+display_name = "A组Expert"
 path = "../eval_input/a_expert.jsonl"
 adapter = "a"
 
 [[inputs.versions]]
 id = "aa_fast"
 name = "AA Fast"
+display_name = "AA组Fast"
 path = "../eval_input/aa_fast.jsonl"
 adapter = "aa"
 
 [[inputs.versions]]
 id = "aa_expert"
 name = "AA Expert"
+display_name = "AA组Expert"
 path = "../eval_input/aa_expert.jsonl"
 adapter = "aa"
 
@@ -56,7 +60,8 @@ retries = 2
 retry_delay_seconds = 5
 repair_attempts = 1
 max_tool_calls = 8
-initial_context_chars = 120000
+initial_context_chars = 16000
+report_interval_seconds = 30
 seed = "prime-eval-v1"
 
 [prompts]

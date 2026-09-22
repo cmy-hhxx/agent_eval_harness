@@ -57,6 +57,8 @@ for line in sys.stdin:
     assert '"catalog"' not in prompt
     assert '"final_answer"' in prompt
     assert '"original_answer_timing"' not in prompt
+    assert '"evidence_catalog"' not in prompt
+    assert prompt.count("答案是4。") == 1
 
 
 def test_shutdown_targets_only_the_owned_daemon(tmp_path, monkeypatch):

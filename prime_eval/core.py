@@ -127,7 +127,11 @@ def load_config(path: Path) -> Config:
     versions = data["inputs"]["versions"]
     if len(versions) < 2 or len({v["id"] for v in versions}) != len(versions) or len({v["name"] for v in versions}) != len(versions):
         raise ValueError("至少需要两个版本，id 和 name 均不得重复")
-    for key in ("concurrency", "timeout_seconds", "idle_timeout_seconds", "max_tool_calls", "initial_context_chars"):
+    display_names = [v.get("display_name", v["name"]) for v in versions]
+    if any(not isinstance(name, str) or not name.strip() for name in display_names) or len(set(display_names)) != len(versions):
+        raise ValueError("display_name 必须非空且不得重复")
+    data["execution"].setdefault("report_interval_seconds", 30)
+    for key in ("concurrency", "timeout_seconds", "idle_timeout_seconds", "max_tool_calls", "initial_context_chars", "report_interval_seconds"):
         if not isinstance(data["execution"][key], int) or data["execution"][key] <= 0:
             raise ValueError(f"execution.{key} 必须为正整数")
     for key in ("retries", "repair_attempts", "retry_delay_seconds"):
@@ -198,12 +202,10 @@ class Record:
     def material(self, budget: int) -> Json:
         messages = self.raw["messages"]
         final = content_text(messages[self.final_index].get("content"))
-        if len(final) + len(self.question) > budget:
-            raise ValueError("initial_context_chars 小于完整问题与最终回答长度，拒绝截断")
         displayed: list[Json] = []
         used = len(final) + len(self.question)
         # Current answer and history always take priority over system/tool bulk.
-        priorities = sorted(range(len(messages)), key=lambda i: (messages[i].get("role") not in ("user", "assistant"), i))
+        priorities = sorted(range(len(messages)), key=lambda i: (messages[i].get("role") not in ("user", "assistant"), -i))
         for i in priorities:
             if i == self.final_index:
                 continue
@@ -383,12 +385,11 @@ def submission_schema(schema: Json, stage: str) -> Json:
 def initial_evidence(record: Record, candidate: str) -> list[Json]:
     bank: list[Json] = []
     for path, text in strings(record.raw["messages"][record.final_index].get("content"), "/content"):
-        if path.endswith("/type") or text.startswith("data:image/") or not text.strip():
+        if path != "/content" and not path.endswith("/text"):
             continue
-        for line in text.split("\n"):
-            line = line.strip()
-            for offset in range(0, len(line), 280):
-                quote = line[offset:offset + 320]
+        for line in text.splitlines(keepends=True):
+            for offset in range(0, len(line), 640):
+                quote = line[offset:offset + 640]
                 if not quote:
                     continue
                 bank.append({"ref": f"{candidate}-{record.final_index}-{len(bank)}", "candidate": candidate,

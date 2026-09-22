@@ -7,10 +7,24 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
 
 from .core import build_plan, load_config
 from .prime import prepare
-from .runner import export_results, run_evaluation, validate_run
+from .presentation import save_presentation
+from .runner import export_results, read_progress, run_evaluation, validate_run
+
+
+@contextmanager
+def run_lock(run: Path):
+    import fcntl
+    run.mkdir(parents=True, exist_ok=True)
+    with (run / ".lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("该 run 正在运行，不能同时恢复或重新导出") from None
+        yield
 
 
 def main() -> int:
@@ -30,13 +44,24 @@ def main() -> int:
             sub.add_argument("--resume", action="store_true")
             sub.add_argument("--retry-failed", action="store_true")
             sub.add_argument("--stage", choices=["all", "correctness", "pairwise"], default="all")
-    for name in ("validate", "report"):
-        commands.add_parser(name).add_argument("--run", type=Path, required=True)
+    for name in ("validate", "report", "status"):
+        sub = commands.add_parser(name)
+        sub.add_argument("--run", type=Path, required=True)
+        if name == "report":
+            sub.add_argument("--config", type=Path, help="只更新输出 schema 和版本显示名称，不调用模型")
     args = parser.parse_args()
     try:
         code = 0
         if args.command == "report":
-            result = export_results(args.run.resolve())
+            run = args.run.resolve()
+            if not (run / "manifest.json").exists():
+                raise ValueError("运行目录不存在 manifest.json")
+            with run_lock(run):
+                if args.config:
+                    save_presentation(run, load_config(args.config))
+                result = export_results(run)
+        elif args.command == "status":
+            result = read_progress(args.run.resolve())
         elif args.command == "validate":
             result = validate_run(args.run.resolve())
             code = 0 if result["valid"] else 2
@@ -60,14 +85,7 @@ def main() -> int:
                     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_id):
                         raise ValueError("run-id 只能含字母、数字、下划线、点、短横线")
                     run = Path(config.data["artifacts"]["output_dir"]) / run_id
-                    # A lock protects atomic exports from another live runner, while resume survives crashes.
-                    import fcntl
-                    run.mkdir(parents=True, exist_ok=True)
-                    with (run / ".lock").open("w") as lock:
-                        try:
-                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        except BlockingIOError:
-                            raise ValueError("该 run 正在运行，不能同时恢复") from None
+                    with run_lock(run):
                         result = asyncio.run(run_evaluation(config, plan, run, args.resume, args.retry_failed, args.stage))
                     statuses = result["task_statuses"]
                     code = 2 if statuses.get("failed") or statuses.get("blocked") or (statuses.get("pending") and args.stage != "correctness") else 0

@@ -8,9 +8,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from jsonschema import ValidationError
+
 from .core import (Config, EvaluationPlan, Json, Record, atomic_text, digest, read_json,
                    validate_result, write_json, write_jsonl)
 from .prime import JudgeError, invoke, prepared_prime, probe_prime, redact, stop_owned_daemon
+from .presentation import display_text, role_names, save_presentation, version_names
 from .summaries import render_summaries, task_summary
 
 SUBJECTIVE_CORRECTNESS = {"is_correct": None, "correctness_reason": "", "evidence": []}
@@ -24,25 +27,34 @@ def task_descriptor(stage: str, candidates: dict[str, Record], reference: Any, f
     return {"id": task_id, "stage": stage, "candidates": identity, "reference": reference}
 
 
-def comparison_row(run: Path, task: Json, evaluation: Json) -> Json:
+def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str] | None = None) -> Json:
     a = task["candidates"]["A"]
+    names = names if names is not None else version_names(run)
+    display = role_names(task, names)
     evaluations = {}
     for candidate, dependency in task["dependencies"].items():
         check = read_json(run / "tasks" / dependency / "result.json")["evaluation"] if dependency else SUBJECTIVE_CORRECTNESS
-        evaluations[candidate] = {"is_correct": check["is_correct"], "correctness_reason": check["correctness_reason"],
-                                  **evaluation["evaluations"][candidate]}
+        evaluations[task["candidates"][candidate]["version"]] = {
+            "is_correct": check["is_correct"], "correctness_reason": check["correctness_reason"],
+            **display_text(evaluation["evaluations"][candidate], display)}
+    verdict = evaluation["verdict"]
+    winner = verdict["result"][0] if verdict["result"] in ("A_better", "B_better") else None
     return {
-        "schema_version": "3.1", "evaluation_type": "pairwise_model_comparison",
+        "schema_version": "3.2", "evaluation_type": "pairwise_model_comparison",
         "comparison_id": "cmp_" + digest({"batch": a["batch_id"], "case": a["case_id"], "pair": task["pair"]})[:32],
         "case": {"batch_id": a["batch_id"], "case_id": a["case_id"]},
         "ground_truth": {"available": task["reference"] is not None, "value": task["reference"]},
-        "models": {k: {"version": r["name"], "llm": r["llm"], "trace_id": r["trace_id"]} for k, r in task["candidates"].items()},
-        "verdict": evaluation["verdict"], "evaluations": evaluations,
+        "models": {r["version"]: {"version": names[r["version"]], "llm": r["llm"], "trace_id": r["trace_id"]} for r in task["candidates"].values()},
+        "verdict": {"result": "win" if winner else verdict["result"],
+                    "winner_version": task["candidates"][winner]["version"] if winner else None,
+                    "winner_name": display[winner] if winner else None,
+                    "reason": display_text(verdict["reason"], display)}, "evaluations": evaluations,
     }
 
 
 def export_results(run: Path) -> Json:
     manifest = read_json(run / "manifest.json")
+    names = version_names(run)
     groups: dict[str, list[Json]] = defaultdict(list)
     correctness: list[Json] = [{**identity, **SUBJECTIVE_CORRECTNESS, "assessment_status": "subjective_not_assessed"}
                                for identity in manifest.get("subjective_inputs", [])]
@@ -64,7 +76,8 @@ def export_results(run: Path) -> Json:
             status = "not_comparable"
         statuses[status] += 1
         outcomes.append({"task_id": task["id"], "stage": task["stage"], "status": status,
-                         "candidates": task["candidates"], "reason": result["evaluation"]["verdict"]["reason"] if not_comparable else result.get("reason"),
+                         "candidates": {r["version"]: {**r, "name": names[r["version"]]} for r in task["candidates"].values()},
+                         "reason": display_text(result["evaluation"]["verdict"]["reason"], role_names(task, names)) if not_comparable else result.get("reason"),
                          "cached": result.get("cached", False), "raw_artifact": result.get("raw_artifact"),
                          "duration_seconds": result.get("duration_seconds")})
         if status not in ("succeeded", "not_comparable"):
@@ -73,7 +86,7 @@ def export_results(run: Path) -> Json:
         if task["stage"] == "correctness":
             correctness.append({**task["candidates"]["A"], **evaluation, "task_id": task["id"], "assessment_status": "assessed"})
             continue
-        row = comparison_row(run, task, evaluation)
+        row = comparison_row(run, task, evaluation, names)
         summaries.append(task_summary(task, row, evaluation["task_analysis"]))
         if not_comparable:
             continue
@@ -88,6 +101,8 @@ def export_results(run: Path) -> Json:
     for old in output.glob("*__vs__*.jsonl"):
         if old.stem not in groups:
             old.unlink()
+    for record in correctness:
+        record["name"] = names[record["version"]]
     write_jsonl(run / "correctness.jsonl", correctness)
     write_jsonl(run / "task_outcomes.jsonl", outcomes)
     summaries.sort(key=lambda item: (item["case"]["batch_id"], item["case"]["case_id"], item["comparison_id"]))
@@ -111,17 +126,14 @@ def export_results(run: Path) -> Json:
                       "accuracy_among_decidable": stats["correct"] / decided if decided else None})
     pair_summary: Json = {}
     for pair, rows in groups.items():
-        names = pair.split("__vs__")
-        wins = Counter({name: 0 for name in names})
+        wins = Counter({name: 0 for name in pair.split("__vs__")})
         ties = 0
         for row in rows:
             verdict = row["verdict"]["result"]
             if verdict == "tie":
                 ties += 1
             else:
-                winner = row["models"]["A" if verdict == "A_better" else "B"]["version"]
-                version_id = next(v["id"] for v in manifest["config"]["inputs"]["versions"] if v["name"] == winner)
-                wins[version_id] += 1
+                wins[row["verdict"]["winner_version"]] += 1
         pair_summary[pair] = {"evaluated": len(rows), "wins": dict(wins), "ties": ties,
                               "case_ids": [row["case"] for row in rows]}
     summary = {"run_id": manifest["run_id"], "status": manifest["status"], "planned": manifest["preflight"],
@@ -135,16 +147,50 @@ def export_results(run: Path) -> Json:
              "各组合题集可能不同，不能直接将胜率当成同题集排名。", "",
              "| 配对 | 有效比较 | 胜出数量 | 平局 |", "|---|---:|---|---:|"]
     for pair, stats in pair_summary.items():
-        lines.append(f"| {pair} | {stats['evaluated']} | {stats['wins']} | {stats['ties']} |")
+        pair_title = " / ".join(names[key] for key in pair.split("__vs__"))
+        wins_text = "、".join(f"{names[key]}：{value}" for key, value in stats["wins"].items())
+        lines.append(f"| {pair_title} | {stats['evaluated']} | {wins_text} | {stats['ties']} |")
     lines += ["", "| 版本 | 正确 | 错误 | 客观题未判定 | 主观题跳过 | 可判定题正确率 |", "|---|---:|---:|---:|---:|---:|"]
     for name, stats in per_version.items():
         accuracy = f"{stats['accuracy_among_decidable']:.1%}" if stats["accuracy_among_decidable"] is not None else "—"
         lines.append(f"| {name} | {stats['correct']} | {stats['incorrect']} | {stats['undetermined']} | {stats['subjective_not_assessed']} | {accuracy} |")
     lines += ["", "缺失配对见 skipped.jsonl；输入异常见 preflight.json；任务失败见 failures.jsonl。",
-              "逐题的问题明细、结论、A/B优劣势、原始回答耗时、得分点与红线见 [逐题总结](task_summaries.md)。",
+              "逐题的问题明细、结论、各版本优劣势、原始回答耗时、得分点与红线见 [逐题总结](task_summaries.md)。",
               "每次调用的原始事件、提示词与耗时位于 tasks/；缓存命中记录保留原始调用目录链接。"]
     atomic_text(run / "report.md", "\n".join(lines) + "\n")
     return summary
+
+
+def read_progress(run: Path) -> Json:
+    path = run / "progress.json"
+    if not path.exists():
+        raise ValueError("该运行没有实时进度快照；旧批次请查看 summary.json")
+    progress = read_json(path)
+    try:
+        os.kill(progress["runner_pid"], 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    except PermissionError:
+        alive = True
+    progress["runner_alive"] = alive
+    if progress["status"] == "running" and not alive:
+        progress["status"] = "interrupted"
+        progress["note"] = "运行进程已退出，计数为最后持久化快照；使用 --resume 继续未完成任务。"
+    return progress
+
+
+def validated_previous(path: Path, schema: Json, stage: str, candidates: dict[str, Record]) -> Json | None:
+    if not path.exists():
+        return None
+    try:
+        result = read_json(path)
+        if result["status"] == "succeeded":
+            viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in result.get("viewed_images", [])}
+            validate_result(schema, stage, result["evaluation"], candidates, viewed)
+        return result
+    except (OSError, ValueError, KeyError, TypeError, ValidationError):
+        return None
 
 
 async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume: bool, retry_failed: bool = False, stage: str = "all") -> Json:
@@ -187,6 +233,7 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
                     "subjective_inputs": list(subjective.values()),
                     "preflight": plan.summary(), "started_at": time.time()}
         write_json(run / "schema.json", config.schema)
+        save_presentation(run, config)
         write_json(run / "preflight.json", plan.summary())
         write_jsonl(run / "skipped.jsonl", plan.skipped)
         for record in lookup.values():
@@ -197,38 +244,76 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
     cache_dir = Path(config.data["artifacts"]["cache_dir"]) / "results"
     secret = os.environ.get(config.data["judge"]["api_key_env"], "")
     completed = 0
+    reused = 0
+    states: dict[str, str] = {}
+    for task in tasks:
+        try:
+            states[task["id"]] = read_json(run / "tasks" / task["id"] / "result.json")["status"]
+        except (OSError, ValueError, KeyError, TypeError):
+            states[task["id"]] = "pending"
+    counts = Counter(states.values())
+    active: Json = {}
+    last_export = time.monotonic()
+
+    def progress(task: Json | None = None, status: str | None = None) -> None:
+        if task is not None and status is not None:
+            old = states[task["id"]]
+            counts[old] -= 1
+            counts[status] += 1
+            states[task["id"]] = status
+            if status == "running":
+                active[task["id"]] = {"stage": task["stage"], "case_id": next(iter(task["candidates"].values()))["case_id"],
+                                       "versions": [r["version"] for r in task["candidates"].values()]}
+            else:
+                active.pop(task["id"], None)
+        write_json(run / "progress.json", {"run_id": run.name, "status": manifest["status"], "runner_pid": os.getpid(),
+                                           "updated_at": time.time(), "total_tasks": len(tasks),
+                                           "task_statuses": dict(+counts), "reused_this_session": reused,
+                                           "processed_this_session": completed, "active_tasks": active})
+
+    def checkpoint(task: Json, result: Json) -> None:
+        nonlocal completed, last_export
+        # The durable task receipt is authoritative; aggregate reports can be rebuilt.
+        write_json(run / "tasks" / task["id"] / "result.json", result)
+        completed += 1
+        progress(task, result["status"])
+        print(f"[{completed}/{len(tasks)}] {task['stage']} {result['status']} {task['id']}" + (" (cache)" if result.get("cached") else ""), flush=True)
+        if time.monotonic() - last_export >= config.data["execution"]["report_interval_seconds"]:
+            export_results(run)
+            last_export = time.monotonic()
+
+    progress()
 
     async def execute(task: Json, correctness: Json) -> Json:
-        nonlocal completed
+        nonlocal reused
         task_dir = run / "tasks" / task["id"]
         result_file = task_dir / "result.json"
         candidates = {k: lookup[(r["batch_id"], r["case_id"], r["version"])] for k, r in task["candidates"].items()}
         cache_key = digest([task["id"], correctness])
         cache_file = cache_dir / f"{cache_key}.json"
         result = None
-        if result_file.exists():
-            previous = read_json(result_file)
-            if previous["status"] == "succeeded" or not retry_failed:
+        fresh_success = False
+        previous = validated_previous(result_file, config.schema, task["stage"], candidates)
+        if previous:
+            if previous["status"] == "succeeded" or (previous["status"] == "failed" and not retry_failed):
                 result = previous
+                reused += int(previous["status"] == "succeeded")
         if result is None and cache_file.exists():
-            cached = read_json(cache_file)
-            if Path(cached.get("raw_artifact", "missing")).is_dir():
-                try:
-                    viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in cached.get("viewed_images", [])}
-                    validate_result(config.schema, task["stage"], cached["evaluation"], candidates, viewed)
-                    result = {**cached, "cached": True}
-                except (ValueError, KeyError):
-                    pass
+            cached = validated_previous(cache_file, config.schema, task["stage"], candidates)
+            if cached and cached["status"] == "succeeded" and Path(cached.get("raw_artifact", "missing")).is_dir():
+                result = {**cached, "cached": True}
+                reused += 1
         if result is None:
             attempts = len(list(task_dir.glob("attempt-*"))) if task_dir.exists() else 0
             for attempt in range(config.data["execution"]["retries"] + 1):
                 attempt_dir = task_dir / f"attempt-{attempts + attempt + 1:03d}"
                 try:
                     async with semaphore:
+                        progress(task, "running")
                         value = await invoke(config, runtime_prime, task["stage"], candidates, task["reference"], correctness,
                                              attempt_dir, {k: run / "inputs" / f"{r.hash}.json" for k, r in candidates.items()})
                     result = {**value, "status": "succeeded", "cached": False, "raw_artifact": str(attempt_dir), "cache_key": cache_key}
-                    write_json(cache_file, result)
+                    fresh_success = True
                     break
                 except Exception as error:
                     reason = redact(str(error), secret)
@@ -236,33 +321,45 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
                     result = {"status": "failed", "reason": reason, "raw_artifact": str(attempt_dir), "cache_key": cache_key}
                     if not isinstance(error, JudgeError) or not error.retryable or attempt >= config.data["execution"]["retries"]:
                         break
+                    progress(task, "retrying")
                     await asyncio.sleep(config.data["execution"]["retry_delay_seconds"] * 2 ** attempt)
         assert result is not None
-        write_json(result_file, result)
-        completed += 1
-        print(f"[{completed}/{len(tasks)}] {task['stage']} {result['status']} {task['id']}" + (" (cache)" if result.get("cached") else ""), flush=True)
-        export_results(run)
+        checkpoint(task, result)
+        if fresh_success:
+            try:
+                write_json(cache_file, result)
+            except OSError as error:
+                print(f"缓存未写入，任务结果已保存：{redact(str(error), secret)}", flush=True)
         return result
+
+    check_futures: dict[str, asyncio.Task[Json]] = {}
+    check_tasks = {task["id"]: task for task in checks.values()}
 
     async def compare(task: Json) -> Json:
         values = {}
         for candidate, dependency in task["dependencies"].items():
-            path = run / "tasks" / str(dependency) / "result.json"
-            values[candidate] = (read_json(path) if path.exists() else {"status": "blocked"}) if dependency else {"status": "succeeded", "evaluation": SUBJECTIVE_CORRECTNESS}
+            if not dependency:
+                values[candidate] = {"status": "succeeded", "evaluation": SUBJECTIVE_CORRECTNESS}
+            elif dependency in check_futures:
+                values[candidate] = await check_futures[dependency]
+            else:
+                check = check_tasks[dependency]
+                records = {k: lookup[(r["batch_id"], r["case_id"], r["version"])] for k, r in check["candidates"].items()}
+                values[candidate] = validated_previous(run / "tasks" / dependency / "result.json", config.schema, "correctness", records) or {"status": "blocked"}
         if any(value["status"] != "succeeded" for value in values.values()):
             result = {"status": "blocked", "reason": "独立正确性核验失败，未生成配对结论"}
-            write_json(run / "tasks" / task["id"] / "result.json", result)
+            checkpoint(task, result)
             return result
         return await execute(task, {k: v["evaluation"] for k, v in values.items()})
 
     futures: list[asyncio.Task[Json]] = []
     try:
         if stage in ("all", "correctness"):
-            futures = [asyncio.create_task(execute(task, {})) for task in checks.values()]
-            await asyncio.gather(*futures)
+            check_futures = {task["id"]: asyncio.create_task(execute(task, {})) for task in checks.values()}
+            futures.extend(check_futures.values())
         if stage in ("all", "pairwise"):
-            futures = [asyncio.create_task(compare(task)) for task in pair_tasks]
-            await asyncio.gather(*futures)
+            futures.extend(asyncio.create_task(compare(task)) for task in pair_tasks)
+        await asyncio.gather(*futures)
         manifest["status"] = "correctness_complete" if stage == "correctness" else "finished"
     except BaseException:
         manifest["status"] = "interrupted"
@@ -274,13 +371,22 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
         await stop_owned_daemon(runtime_prime)
         manifest["finished_at"] = time.time()
         write_json(manifest_file, manifest)
-        export_results(run)
-    return export_results(run)
+        # In-flight requests have no receipt and resume from their task boundary.
+        for task in tasks:
+            if states[task["id"]] in ("running", "retrying"):
+                counts[states[task["id"]]] -= 1
+                counts["pending"] += 1
+                states[task["id"]] = "pending"
+        active.clear()
+        progress()
+        summary = export_results(run)
+    return summary
 
 
 def validate_run(run: Path) -> Json:
     from jsonschema import Draft202012Validator
     manifest, schema = read_json(run / "manifest.json"), read_json(run / "schema.json")
+    output_schema, names = read_json(run / "output_schema.json"), version_names(run)
     errors = []
     count = 0
     seen: set[tuple[str, str, tuple[str, ...]]] = set()
@@ -307,7 +413,7 @@ def validate_run(run: Path) -> Json:
             viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in result.get("viewed_images", [])}
             validate_result(schema, task["stage"], result["evaluation"], candidates, viewed)
             if task["stage"] == "pairwise":
-                expected = comparison_row(run, task, result["evaluation"])
+                expected = comparison_row(run, task, result["evaluation"], names)
                 for label, record in candidates.items():
                     if task["candidates"][label]["answer_timing"] != record.answer_timing:
                         raise ValueError("原始回答耗时与输入快照不一致")
@@ -322,7 +428,7 @@ def validate_run(run: Path) -> Json:
                 try:
                     import json
                     row = json.loads(text)
-                    Draft202012Validator(schema).validate(row)
+                    Draft202012Validator(output_schema).validate(row)
                     expected = expected_rows.get(row["comparison_id"])
                     if not expected or row != expected["row"] or path.name != expected["file"]:
                         raise ValueError("结果与原始任务、正确性记录或候选映射不一致")
@@ -332,7 +438,7 @@ def validate_run(run: Path) -> Json:
                     if key in seen or len(set(pair)) != 2:
                         raise ValueError("重复配对或自身比较")
                     seen.add(key)
-                    for label in ("A", "B"):
+                    for label in row["models"]:
                         identity = (batch, case, row["models"][label]["version"])
                         check = row["evaluations"][label]
                         value = (check["is_correct"], check["correctness_reason"])

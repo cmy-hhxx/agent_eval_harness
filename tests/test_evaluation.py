@@ -8,8 +8,9 @@ from typing import Any
 
 import pytest
 
-from prime_eval.core import adapt, build_plan, load_config, validate_result, write_json, write_jsonl
-from prime_eval.runner import run_evaluation, validate_run
+from prime_eval.core import adapt, build_plan, initial_evidence, load_config, read_json, validate_result, write_json, write_jsonl
+from prime_eval.presentation import display_text, save_presentation
+from prime_eval.runner import comparison_row, export_results, read_progress, run_evaluation, validate_run
 from prime_eval.summaries import compare_timing
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,17 +147,17 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
     assert summaries[0]["scoring_points"] == ["算式与结果一致"]
     assert summaries[0]["red_flags"] == ["将2+2算成5"]
     assert summaries[0]["timing"]["comparison"]["finish_comparable"] is False
-    assert summaries[0]["candidates"]["A"]["strengths"][0]["evidence"][0]["quote"] == "答案是 4"
+    assert next(iter(summaries[0]["candidates"].values()))["strengths"][0]["evidence"][0]["quote"] == "答案是 4"
     assert "原始回答耗时" in (run / "task_summaries.md").read_text()
-    assert second["correctness"]["A Fast"]["subjective_not_assessed"] == 1
-    assert second["correctness"]["A Fast"]["correct"] == 1
+    assert second["correctness"]["A组Fast"]["subjective_not_assessed"] == 1
+    assert second["correctness"]["A组Fast"]["correct"] == 1
     asyncio.run(run_evaluation(config, plan, run, True))
     assert len(calls) == 16
     asyncio.run(run_evaluation(config, plan, tmp_path / "new-run", False))
     assert len(calls) == 16
     result_file = next((run / "results").glob("*.jsonl"))
     rows = [json.loads(line) for line in result_file.read_text().split("\n") if line]
-    rows[0]["models"]["A"]["trace_id"] = "wrong-trace"
+    next(iter(rows[0]["models"].values()))["trace_id"] = "wrong-trace"
     write_jsonl(result_file, rows)
     assert not validate_run(run)["valid"]
 
@@ -209,7 +210,7 @@ def test_summary_tampering_is_detected(config, tmp_path, monkeypatch):
     asyncio.run(run_evaluation(config, build_plan(config), run, False))
     assert validate_run(run)["valid"]
     row = json.loads((run / "task_summaries.jsonl").read_text())
-    assert row["timing"]["measurements"]["A"]["finish_seconds"] is None  # Never use the judge's 99 seconds.
+    assert row["timing"]["measurements"]["a_fast"]["finish_seconds"] is None  # Never use the judge's 99 seconds.
     row["conclusion"]["reason"] = "tampered"
     write_jsonl(run / "task_summaries.jsonl", [row])
     result = validate_run(run)
@@ -231,3 +232,157 @@ def test_comparison_does_not_explain_subjective_evaluation_process(config):
     result["verdict"]["reason"] = "A更直接，且本题无标准答案、未进行独立正确性判定。"
     with pytest.raises(ValueError, match="流程说明"):
         validate_result(config.schema, "pairwise", result, candidates)
+
+
+def test_version_names_replace_roles_without_changing_quotes_or_stock_terms(config, tmp_path):
+    names = {"A": "AA组Expert", "B": "A组Fast"}
+    value = {"summary": "【候选A】更慢；候选 B更快。A使用原始数据，A/B都提及A股、B类及ETF、GDP、ABC。",
+             "evidence": [{"quote": "A/B都提及A股"}]}
+    mapped = display_text(value, names)
+    assert mapped["summary"] == "AA组Expert更慢；A组Fast更快。AA组Expert使用原始数据，AA组Expert/A组Fast都提及A股、B类及ETF、GDP、ABC。"
+    assert mapped["evidence"] == value["evidence"]
+    assert value["summary"].startswith("【候选A】")
+    records = {label: adapt(raw(reference=None), config.versions[index], "in.jsonl", 1, None)
+               for label, index in (("A", 1), ("B", 0))}
+    task = {"candidates": {key: {**r.identity(), "llm": None} for key, r in records.items()},
+            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+    save_presentation(tmp_path, config)
+    result = fake_evaluation("pairwise", records)
+    row = comparison_row(tmp_path, task, result)
+    assert set(row["models"]) == {"a_fast", "a_expert"}
+    assert row["verdict"] == {"result": "win", "winner_version": "a_expert", "winner_name": "A组Expert", "reason": "A组Expert 的表达更直接。"}
+    result["verdict"]["result"] = "tie"
+    assert comparison_row(tmp_path, task, result)["verdict"]["winner_version"] is None
+
+
+def test_full_answer_survives_soft_budget_and_history_prefers_recent(config):
+    answer = "  第一行保持缩进\n\n" + "数据" * 800 + "\n末尾\n"
+    record = adapt(raw(answer=answer), config.versions[0], "in.jsonl", 1, None)
+    assert record.material(10)["final_answer"] == answer
+    bank = initial_evidence(record, "A")
+    assert "".join(entry["quote"] for entry in bank) == answer
+    assert all(entry["quote"] in answer for entry in bank)
+    data = raw()
+    data["messages"] = [
+        {"type": "message", "role": "user", "content": "旧" * 200},
+        {"type": "message", "role": "assistant", "content": "新" * 200},
+        *data["messages"],
+    ]
+    record = adapt(data, config.versions[0], "in.jsonl", 1, None)
+    selected = record.material(450)["initial_material"]
+    assert {item["message_index"] for item in selected} == {1, 2}
+
+
+def test_subjective_comparison_runs_while_correctness_is_pending(config, tmp_path, monkeypatch):
+    import prime_eval.runner as runner
+    fill(config, [[raw(), raw("subjective", reference=None)] for _ in range(2)])
+    monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
+    calls = []
+
+    async def scenario():
+        subjective_finished = asyncio.Event()
+
+        async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
+            directory.mkdir(parents=True)
+            if stage == "correctness":
+                await asyncio.wait_for(subjective_finished.wait(), 1)
+            elif reference is None:
+                subjective_finished.set()
+            calls.append((stage, reference))
+            return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+
+        monkeypatch.setattr(runner, "invoke", invoke)
+        return await run_evaluation(config, build_plan(config), tmp_path / "pipeline", False)
+
+    result = asyncio.run(scenario())
+    assert calls[0] == ("pairwise", None)
+    assert result["task_statuses"] == {"succeeded": 4}
+
+
+def test_interruption_resume_and_corrupt_receipt_recovery(config, tmp_path, monkeypatch):
+    import prime_eval.runner as runner
+    fill(config, [[raw("q1", reference=None), raw("q2", reference=None)] for _ in range(2)])
+    monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
+    monkeypatch.setattr(runner, "probe_prime", lambda _: {"binary": "fake"})
+    calls = []
+    interrupted = False
+    exports = []
+
+    def export(run):
+        exports.append(run)
+        return export_results(run)
+
+    async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
+        nonlocal interrupted
+        case = candidates["A"].case
+        calls.append(case)
+        directory.mkdir(parents=True)
+        if case == "q2" and not interrupted:
+            interrupted = True
+            raise asyncio.CancelledError()
+        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+
+    monkeypatch.setattr(runner, "invoke", invoke)
+    monkeypatch.setattr(runner, "export_results", export)
+    plan, run = build_plan(config), tmp_path / "resume"
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run_evaluation(config, plan, run, False))
+    assert len(exports) == 1  # No full report rewrite per task.
+    assert read_progress(run)["status"] == "interrupted"
+    assert read_progress(run)["task_statuses"] == {"succeeded": 1, "pending": 1}
+    result = asyncio.run(run_evaluation(config, plan, run, True))
+    assert calls == ["q1", "q2", "q2"]
+    assert result["completed_comparisons"] == 2
+    assert read_progress(run)["reused_this_session"] == 1
+    assert validate_run(run)["valid"]
+    task = read_json(run / "manifest.json")["tasks"][0]
+    receipt = run / "tasks" / task["id"] / "result.json"
+    cached = read_json(receipt)
+    (Path(config.data["artifacts"]["cache_dir"]) / "results" / f"{cached['cache_key']}.json").unlink()
+    receipt.write_text('{"status":"succeeded","evaluation":{}}')
+    asyncio.run(run_evaluation(config, plan, run, True))
+    assert calls == ["q1", "q2", "q2", "q1"]
+    assert validate_run(run)["valid"]
+    config.prompts["pairwise"] += "\nchanged"
+    with pytest.raises(ValueError, match="已变化"):
+        asyncio.run(run_evaluation(config, plan, run, True))
+
+
+def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, tmp_path, monkeypatch):
+    import prime_eval.runner as runner
+    from prime_eval.prime import JudgeError
+    fill(config, [[raw(reference=None)] for _ in range(2)])
+    monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
+    monkeypatch.setattr(runner, "probe_prime", lambda _: {"binary": "fake"})
+    calls = []
+
+    async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
+        calls.append(candidates["A"].case)
+        directory.mkdir(parents=True)
+        if len(calls) == 1:
+            raise JudgeError("synthetic failure")
+        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+
+    monkeypatch.setattr(runner, "invoke", invoke)
+    run, plan = tmp_path / "run", build_plan(config)
+    asyncio.run(run_evaluation(config, plan, run, False))
+    asyncio.run(run_evaluation(config, plan, run, True))
+    assert len(calls) == 1
+    asyncio.run(run_evaluation(config, plan, run, True, retry_failed=True))
+    assert len(calls) == 2
+    fill(config, [[raw(reference=None), raw("q2", reference=None)] for _ in range(2)])
+    new_run = tmp_path / "incremental"
+    result = asyncio.run(run_evaluation(config, build_plan(config), new_run, False))
+    assert calls == ["q1", "q1", "q2"]
+    assert result["completed_comparisons"] == 2
+    assert read_progress(new_run)["reused_this_session"] == 1
+    # Updating presentation regenerates output without touching original judgments.
+    task = read_json(new_run / "manifest.json")["tasks"][0]
+    receipt = new_run / "tasks" / task["id"] / "result.json"
+    before = receipt.read_bytes()
+    config.versions[0]["display_name"] = "实验组Fast"
+    save_presentation(new_run, config)
+    export_results(new_run)
+    assert receipt.read_bytes() == before and len(calls) == 3
+    assert "实验组Fast" in (new_run / "task_summaries.md").read_text()
+    assert validate_run(new_run)["valid"]

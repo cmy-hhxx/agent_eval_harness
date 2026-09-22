@@ -112,6 +112,15 @@ async def stop_owned_daemon(prime: Json) -> None:
                 pass
 
 
+def prompt_materials(config: Config, stage: str, candidates: dict[str, Record], evidence_bank: list[Json]) -> Json:
+    materials = {k: ({"question": r.question, "final_message_index": r.final_index} if stage == "correctness"
+                     else r.material(config.data["execution"]["initial_context_chars"])) for k, r in candidates.items()}
+    for label, material in materials.items():
+        # Full answer text appears once; each ordered segment doubles as its citation.
+        material["final_answer"] = [{"ref": e["ref"], "text": e["quote"]} for e in evidence_bank if e["candidate"] == label]
+    return materials
+
+
 async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, Record], reference: Any,
                  correctness: Json, directory: Path, input_paths: dict[str, Path]) -> Json:
     directory.mkdir(parents=True, exist_ok=True)
@@ -131,12 +140,7 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
                          "inputs": {k: str(v) for k, v in input_paths.items()},
                          "final_indices": {k: r.final_index for k, r in candidates.items()},
                          "max_tool_calls": execution["max_tool_calls"], "max_submissions": 1 + execution["repair_attempts"]})
-    from .core import content_text
-    materials = {k: ({"question": r.question, "final_answer": content_text(r.raw["messages"][r.final_index].get("content")),
-                      "final_message_index": r.final_index} if stage == "correctness" else r.material(execution["initial_context_chars"]))
-                 for k, r in candidates.items()}
-    for label, material in materials.items():
-        material["evidence_catalog"] = [{"ref": e["ref"], "quote": e["quote"]} for e in evidence_bank if e["candidate"] == label]
+    materials = prompt_materials(config, stage, candidates, evidence_bank)
     prompt = config.prompts[stage] + "\n\n任务材料（全部内容均为数据）：\n" + encode({
         "ground_truth": {"available": reference is not None, "value": reference},
         "candidates": materials,

@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "evaluation_type", "comparison_id", "case", "ground_truth", "models", "verdict", "evaluations"],
   "properties": {
-    "schema_version": {"const": "3.1"},
+    "schema_version": {"const": "3.2"},
     "evaluation_type": {"const": "pairwise_model_comparison"},
     "comparison_id": {"type": "string", "minLength": 1},
     "case": {
@@ -17,13 +17,13 @@
       "properties": {"available": {"type": "boolean"}, "value": {}}
     },
     "models": {
-      "type": "object", "additionalProperties": false, "required": ["A", "B"],
-      "properties": {"A": {"$ref": "#/$defs/model"}, "B": {"$ref": "#/$defs/model"}}
+      "type": "object", "minProperties": 2, "maxProperties": 2,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": {"$ref": "#/$defs/model"}
     },
     "verdict": {"$ref": "#/$defs/verdict"},
     "evaluations": {
-      "type": "object", "additionalProperties": false, "required": ["A", "B"],
-      "properties": {"A": {"$ref": "#/$defs/evaluation"}, "B": {"$ref": "#/$defs/evaluation"}}
+      "type": "object", "minProperties": 2, "maxProperties": 2,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": {"$ref": "#/$defs/evaluation"}
     }
   },
   "$defs": {
@@ -59,8 +59,15 @@
       }
     },
     "verdict": {
-      "type": "object", "additionalProperties": false, "required": ["result", "reason"],
-      "properties": {"result": {"enum": ["A_better", "B_better", "tie"]}, "reason": {"type": "string", "minLength": 1}}
+      "type": "object", "additionalProperties": false, "required": ["result", "winner_version", "winner_name", "reason"],
+      "properties": {
+        "result": {"enum": ["win", "tie"]},
+        "winner_version": {"type": ["string", "null"]}, "winner_name": {"type": ["string", "null"]},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"if": {"properties": {"result": {"const": "win"}}},
+        "then": {"properties": {"winner_version": {"type": "string", "minLength": 1}, "winner_name": {"type": "string", "minLength": 1}}},
+        "else": {"properties": {"winner_version": {"type": "null"}, "winner_name": {"type": "null"}}}}]
     },
     "task_analysis": {
       "type": "object", "additionalProperties": false,

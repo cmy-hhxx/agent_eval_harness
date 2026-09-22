@@ -1,12 +1,14 @@
-# 第二版阶段性交付（2026-09-22）
+# 真实评测阶段性交付（2026-09-22）
 
 **已交付4条比较和对应逐题总结。计划中的第5条流式超时，按用户要求停止继续重试。**
+
+第三轮迭代将这4条既有结果重新导出为实际版本名称，结论和证据未重新评判，没有新增模型调用。[速度与续跑验收](iteration-3.md)另列本轮验证结果。
 
 ## 交付
 
 - [逐题总结（可读）](../eval_output/smoke-5-v2/task_summaries.md)
 - [逐题总结JSONL](../eval_output/smoke-5-v2/task_summaries.jsonl)
-- [demo格式比较记录](../eval_output/smoke-5-v2/results/)
+- [按版本标识的比较记录（schema 3.2）](../eval_output/smoke-5-v2/results/)
 - [未完成任务](../eval_output/smoke-5-v2/failures.jsonl)
 - [校验结果](../eval_output/smoke-5-v2/validation.json)
 
@@ -16,20 +18,20 @@
 
 ## 校验与范围
 
-- 16项Python测试、4项Node扩展测试通过；pyright无错误。
+- 第二版交付时16项Python测试、4项Node扩展测试通过；pyright无错误。本轮新增验证见上方链接。
 - 已完成4条的schema、原文引用、版本映射、耗时来源和逐题总结一致性校验通过。
-- 2次Mini正确性判定成功；4条比较由Luna完成，均为本版真实调用。
+- 2次Mini正确性判定成功；4条比较由Luna完成，均来自第二版真实调用。
 - 第5条因流式超时未完成，已经停止，不纳入胜负统计。validation通过只表示已交付记录有效，不表示计划全部完成。
 - 为评测分配独立daemon socket；结束时只终止持有该socket的进程，避免使用会停止全部Prime服务的全局shutdown命令。本机使用系统lsof定位该进程。
 
 ## 已完成样本
 
-| case | 候选A | 候选B | 结论 |
+| case | 版本一 | 版本二 | 胜出版本 |
 |---|---|---|---|
-| 14_多轮选股_258题_20260911_Q023_2_T08_multi | A Expert | A Fast | B_better |
-| 1_数据查询_6292句_20260911_1955 | A Expert | A Fast | B_better |
-| 市场热点与异动归因_20题_20260921_Q003 | AA Expert | AA Fast | A_better |
-| 市场热点与异动归因_20题_20260921_Q007 | AA Fast | AA Expert | A_better |
+| 14_多轮选股_258题_20260911_Q023_2_T08_multi | A组Expert | A组Fast | A组Fast |
+| 1_数据查询_6292句_20260911_1955 | A组Expert | A组Fast | A组Fast |
+| 市场热点与异动归因_20题_20260921_Q003 | AA组Expert | AA组Fast | AA组Expert |
+| 市场热点与异动归因_20题_20260921_Q007 | AA组Fast | AA组Expert | AA组Fast |
 
 未完成：`市场热点与异动归因_20题_20260921_Q004`；原因：流式输出静默超过 45 秒。
 
