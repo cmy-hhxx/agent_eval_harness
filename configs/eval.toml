@@ -1,0 +1,70 @@
+# Paths are relative to this file. A run can contain several batches.
+[inputs]
+batches = []
+case_ids = []
+
+[[inputs.versions]]
+id = "a_fast"
+name = "A Fast"
+path = "../eval_input/a_fast.jsonl"
+adapter = "a"
+
+[[inputs.versions]]
+id = "a_expert"
+name = "A Expert"
+path = "../eval_input/a_expert.jsonl"
+adapter = "a"
+
+[[inputs.versions]]
+id = "aa_fast"
+name = "AA Fast"
+path = "../eval_input/aa_fast.jsonl"
+adapter = "aa"
+
+[[inputs.versions]]
+id = "aa_expert"
+name = "AA Expert"
+path = "../eval_input/aa_expert.jsonl"
+adapter = "aa"
+
+[judge]
+prime_binary = "prime-agent"
+provider = "evaluation-gateway"
+base_url = "https://internal-idc-equ.ainvest.com/ind/iwc-aime-model/litellm/v1"
+api = "openai-completions"
+api_key_env = "PRIME_EVAL_API_KEY"
+
+[judge.correctness]
+model = "gpt-5.4-mini"
+thinking = "low"
+context_window = 400000
+max_output_tokens = 4096
+
+[judge.pairwise]
+model = "gpt-5.6-luna"
+thinking = "low"
+context_window = 1050000
+max_output_tokens = 8192
+
+[execution]
+concurrency = 8
+timeout_seconds = 300
+idle_timeout_seconds = 45
+retries = 2
+retry_delay_seconds = 5
+repair_attempts = 1
+max_tool_calls = 8
+initial_context_chars = 120000
+seed = "prime-eval-v1"
+
+[prompts]
+system = "../prompts/system.md"
+correctness = "../prompts/correctness.md"
+pairwise = "../prompts/pairwise.md"
+repair = "../prompts/repair.md"
+
+[artifacts]
+output_dir = "../eval_output"
+cache_dir = "../.eval-cache"
+schema = "../schemas/evaluation.json"
+extension = "../extensions/evaluation-tools.js"

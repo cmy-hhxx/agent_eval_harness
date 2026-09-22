@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+eval_input/
+eval_output/
+.eval-cache/
