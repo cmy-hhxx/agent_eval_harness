@@ -204,8 +204,15 @@ export default function (pi) {
           const editorial = [evaluation.verdict.reason, ...Object.values(evaluation.evaluations).flatMap(review =>
             [review.summary, ...review.findings.flatMap(finding => [finding.text, finding.reason])]),
             ...textLeaves(evaluation.task_analysis).map(leaf => leaf.text)];
-          if (editorial.some(text => /无标准答案|没有标准答案|未进行独立正确性|未进行正确性判定|未做独立正确性/.test(text))) {
+          if (editorial.some(text => /无标准答案|没有标准答案|未进行独立正确性|未进行正确性判定|未做独立正确性|通过核验|通过校验|已被核验|独立判定/.test(text))) {
             throw new Error("请删除评测流程说明，只描述回答本身的具体优劣和差异，再次提交。");
+          }
+          const emptyComment = /(?:耗时|用时|时延|首\s*token|首回答|完成时间|时间数据)(?:数据|记录|信息|数值|字段|的|均|都|仍|也|完全|未|没有|被|\s){0,6}(?:缺失|缺少|未提供|不可用|未记录|不完整)|(?:缺失|缺少|未提供|没有|未记录)(?:双方|两方|一方|另一方|原始|回答|的|对应|具体|可用|任何|有效|完整|相关|\s){0,8}(?:耗时|用时|时延|首\s*token|首回答|完成时间)|(?:无法|不能|不宜|不应|不做|不作|不)(?:[^。！？\n]{0,12})(?:比较快慢|奖励速度)|未发现(?:有证据支持的)?(?:明显|实质)(?:优势|不足|问题)|暂无(?:明显)?(?:优势|不足|问题)/i;
+          if (editorial.some(text => emptyComment.test(text))) {
+            throw new Error("删除耗时缺失说明或空项占位话；只写实际发现，再次提交。");
+          }
+          if (task.timing_comparable === false && evaluation.task_analysis.timing_analysis !== "") {
+            throw new Error("timing_analysis 必须为空字符串，不解释原因。");
           }
         }
         if (task.stage === "correctness" && evaluation.evidence.some(e => e.message_index !== task.final_indices.A)) {

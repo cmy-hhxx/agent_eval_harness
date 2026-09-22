@@ -38,36 +38,36 @@ def render_summaries(summaries: list[Json]) -> str:
     lines: list[str] = []
     verdicts = {"tie": "平局", "not_comparable": "材料不足以比较"}
     for item in summaries:
-        lines += [f"# {item['case']['case_id']}", "", f"比较记录：`{item['comparison_id']}`", "",
-                  "## 问题明细", "", "**原始问题**", ""]
+        lines += [f"# {item['case']['case_id']}", "", "## 问题", ""]
         lines.extend("> " + line for line in item["question"].splitlines())
-        lines += ["", f"**任务类型**：{item['task_type']}", "", f"**任务目标**：{item['goal']}", "", "**核心要求**", ""]
+        lines += ["", item["goal"], "", "**要点**", ""]
         lines.extend(f"- {text}" for text in item["requirements"])
         conclusion = item["conclusion"]
         title = f"{conclusion['winner_name']} 更好" if conclusion["result"] == "win" else verdicts[conclusion["result"]]
-        lines += ["", "## 测评结论", "", f"**{title}**。{conclusion['reason']}", "",
-                  "## 原始回答耗时", "", "| 版本 | 首 token（秒） | 首回答（秒） | 完成（秒） |",
-                  "|---|---:|---:|---:|"]
+        lines += ["", "## 结论", "", f"**{title}**。{conclusion['reason']}", ""]
+        timing_lines = []
         for label, timing in item["timing"]["measurements"].items():
-            values = ["缺失" if timing[key] is None else f"{timing[key]:.3f}"
-                      for key in ("first_token_seconds", "first_answer_seconds", "finish_seconds")]
-            name = item["candidates"][label]["model"]["version"]
-            lines.append(f"| {name} | {' | '.join(values)} |")
-        lines += ["", item["timing"]["analysis"], ""]
+            if timing["finish_seconds"] is not None:
+                name = item["candidates"][label]["model"]["version"]
+                timing_lines.append(f"{name} {timing['finish_seconds']:.3f}秒")
+        if timing_lines:
+            lines += ["**回答耗时**：" + "；".join(timing_lines) + "。", ""]
+        if item["timing"]["analysis"]:
+            lines += [item["timing"]["analysis"], ""]
         for label, review in item["candidates"].items():
-            lines += [f"## {review['model']['version']}：优劣势", "", review["summary"], ""]
+            lines += [f"## {review['model']['version']}", "", review["summary"], ""]
             for title, key in (("优势", "strengths"), ("不足", "weaknesses")):
-                lines += [f"### {title}", ""]
                 if not review[key]:
-                    lines += ["未发现有证据支持的明显" + ("优势。" if key == "strengths" else "问题。"), ""]
+                    continue
+                lines += [f"### {title}", ""]
                 for finding in review[key]:
                     lines += [f"- **{finding['text']}**：{finding['reason']}", ""]
                     for evidence in finding["evidence"]:
                         quote = evidence["quote"].replace("\n", " ")
                         lines += [f"> 原始消息 #{evidence['message_index']}：{quote}", ""]
-        lines += ["## 此类任务的得分点", ""]
+        lines += ["## 得分点", ""]
         lines.extend(f"- {text}" for text in item["scoring_points"])
         lines += ["", "## Red flags：不能犯的错误", ""]
         lines.extend(f"- {text}" for text in item["red_flags"])
-        lines += ["", "红线列出此类题的判分标准；是否触犯，以以上有证据的具体发现为准。", "", "---", ""]
+        lines += ["", "---", ""]
     return "\n".join(lines)

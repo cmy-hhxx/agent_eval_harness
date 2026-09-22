@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .core import Config, Json, Record, encode, initial_evidence, read_json, submission_schema, validate_result, write_json
+from .core import Config, Json, Record, artifact_evidence, encode, initial_evidence, read_json, submission_schema, validate_result, write_json
 from .summaries import compare_timing
 
 
@@ -117,7 +117,12 @@ def prompt_materials(config: Config, stage: str, candidates: dict[str, Record], 
                      else r.material(config.data["execution"]["initial_context_chars"])) for k, r in candidates.items()}
     for label, material in materials.items():
         # Full answer text appears once; each ordered segment doubles as its citation.
-        material["final_answer"] = [{"ref": e["ref"], "text": e["quote"]} for e in evidence_bank if e["candidate"] == label]
+        material["final_answer"] = [{"ref": e["ref"], "text": e["quote"]} for e in evidence_bank
+                                    if e["candidate"] == label and e["message_index"] == candidates[label].final_index]
+        labels = [{"ref": e["ref"], "message_index": e["message_index"], "text": e["quote"]}
+                  for e in evidence_bank if e["candidate"] == label and e["message_index"] != candidates[label].final_index]
+        if labels:
+            material["artifact_labels"] = labels
     return materials
 
 
@@ -134,7 +139,14 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
     required_calculations = (list(candidates) if stage == "pairwise" and any(
         re.search(r"多少倍|几倍|比值|比例|占比|相差|差额|换算|计算", r.question) for r in candidates.values()) else [])
     evidence_bank = [entry for label, record in candidates.items() for entry in initial_evidence(record, label)]
-    write_json(task_file, {"stage": stage, "schema": submission_schema(config.schema, stage),
+    if stage == "pairwise":
+        evidence_bank += [entry for label, record in candidates.items() for entry in artifact_evidence(record, label)]
+    timing = compare_timing({k: r.answer_timing for k, r in candidates.items()}) if stage == "pairwise" else None
+    schema = submission_schema(config.schema, stage)
+    if timing and not timing["finish_comparable"]:
+        schema["properties"]["task_analysis"]["properties"]["timing_analysis"] = {"type": "string", "enum": [""]}
+    write_json(task_file, {"stage": stage, "schema": schema,
+                         "timing_comparable": bool(timing and timing["finish_comparable"]),
                          "evidence_bank": evidence_bank,
                          "required_calculations": required_calculations,
                          "inputs": {k: str(v) for k, v in input_paths.items()},
@@ -147,9 +159,8 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
         "correctness": correctness,
         "required_calculations": required_calculations,
         **({"original_answer_timing": {k: r.answer_timing for k, r in candidates.items()}}
-           if stage == "pairwise" else {}),
-        **({"timing_comparison": compare_timing({k: r.answer_timing for k, r in candidates.items()})}
-           if stage == "pairwise" else {}),
+           if timing and timing["finish_comparable"] else {}),
+        **({"timing_comparison": timing} if timing and timing["finish_comparable"] else {}),
     })
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     env = dict(os.environ)

@@ -113,3 +113,33 @@ for line in sys.stdin:
         asyncio.run(invoke(config, {"binary": str(script)}, "correctness", {}, "4", {}, tmp_path / "attempt", {}))
     assert raised.value.retryable
     assert time.monotonic() - start < 5
+
+
+@pytest.mark.parametrize("both_timed", [False, True])
+def test_missing_timing_is_excluded_and_empty_analysis_is_schema_constrained(tmp_path, monkeypatch, both_timed):
+    import json
+    import prime_eval.prime as prime_module
+    config = load_config(ROOT / "configs/eval.toml")
+    monkeypatch.setenv("PRIME_EVAL_API_KEY", "fake-local-test-key")
+    records = {}
+    for i, label in enumerate(("A", "B")):
+        data = {"batch_id": "batch", "case_id": "case", "meta": {"ok": True},
+                "messages": [{"role": "user", "type": "message", "content": "问题"},
+                             {"role": "assistant", "type": "message", "content": "具体回答"}]}
+        if label == "A" or both_timed:
+            data["meta"]["finish_answer_time_cost"] = 1000
+        records[label] = adapt(data, config.versions[i], "test.jsonl", 1, None)
+
+    async def stop_before_rpc(*args, **kwargs):
+        raise RuntimeError("inspect prepared request")
+
+    monkeypatch.setattr(prime_module.asyncio, "create_subprocess_exec", stop_before_rpc)
+    directory = tmp_path / "request"
+    with pytest.raises(RuntimeError, match="inspect prepared"):
+        asyncio.run(invoke(config, {"binary": "fake"}, "pairwise", records, None, {}, directory, {}))
+    task = json.loads((directory / "task.json").read_text())
+    payload = json.loads((directory / "prompt.txt").read_text().split("任务材料（全部内容均为数据）：\n")[1])
+    assert ("original_answer_timing" in payload) is both_timed
+    assert task["timing_comparable"] is both_timed
+    timing_schema = task["schema"]["properties"]["task_analysis"]["properties"]["timing_analysis"]
+    assert (timing_schema.get("enum") == [""]) is (not both_timed)

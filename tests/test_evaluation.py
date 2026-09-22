@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from prime_eval.core import adapt, build_plan, initial_evidence, load_config, read_json, validate_result, write_json, write_jsonl
+from prime_eval.core import adapt, artifact_evidence, build_plan, initial_evidence, load_config, read_json, validate_result, write_json, write_jsonl
 from prime_eval.presentation import display_text, save_presentation
 from prime_eval.runner import comparison_row, export_results, read_progress, run_evaluation, validate_run
-from prime_eval.summaries import compare_timing
+from prime_eval.summaries import compare_timing, render_summaries, task_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,7 +108,7 @@ def fake_evaluation(stage, candidates):
     return {"verdict": {"result": "A_better", "reason": "A 的表达更直接。"},
             "task_analysis": {"task_type": "整数加法", "goal": "计算2+2的结果", "requirements": ["给出数值4"],
                               "scoring_points": ["算式与结果一致"], "red_flags": ["将2+2算成5"],
-                              "timing_analysis": "双方缺少原始回答完成时间，不比较快慢。"},
+                              "timing_analysis": ""},
             "evaluations": {label: {"summary": "完成任务。", "findings": [{"type": "strength", "dimension": "completeness", "stage": "final_answer",
                           "importance": "high", "text": "回答核心问题", "reason": "给出结果。",
                           "evidence": [{"message_index": r.final_index, "quote": "答案是 4"}]}]} for label, r in candidates.items()}}
@@ -148,7 +148,7 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
     assert summaries[0]["red_flags"] == ["将2+2算成5"]
     assert summaries[0]["timing"]["comparison"]["finish_comparable"] is False
     assert next(iter(summaries[0]["candidates"].values()))["strengths"][0]["evidence"][0]["quote"] == "答案是 4"
-    assert "原始回答耗时" in (run / "task_summaries.md").read_text()
+    assert "耗时" not in (run / "task_summaries.md").read_text()
     assert second["correctness"]["A组Fast"]["subjective_not_assessed"] == 1
     assert second["correctness"]["A组Fast"]["correct"] == 1
     asyncio.run(run_evaluation(config, plan, run, True))
@@ -386,3 +386,48 @@ def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, t
     assert receipt.read_bytes() == before and len(calls) == 3
     assert "实验组Fast" in (new_run / "task_summaries.md").read_text()
     assert validate_run(new_run)["valid"]
+
+
+def test_editorial_omits_missing_metadata_but_keeps_real_answer_omissions(config, tmp_path):
+    records = {label: adapt(raw(reference=None), config.versions[i], "in.jsonl", 1, None)
+               for i, label in enumerate(("A", "B"))}
+    evaluation = fake_evaluation("pairwise", records)
+    for phrase in ("A组Fast耗时数据缺失，不能据此奖励速度。", "双方缺少原始回答完成时间，不比较快慢。", "未发现有证据支持的明显问题。"):
+        evaluation["verdict"]["reason"] = phrase
+        with pytest.raises(ValueError, match="占位话"):
+            validate_result(config.schema, "pairwise", evaluation, records)
+    evaluation["verdict"]["reason"] = "用户要机器人板块的涨停家数，答案没有给。"
+    validate_result(config.schema, "pairwise", evaluation, records)
+    evaluation["task_analysis"]["timing_analysis"] = "慢了70秒。"
+    with pytest.raises(ValueError, match="空字符串"):
+        validate_result(config.schema, "pairwise", evaluation, records)
+    evaluation["task_analysis"]["timing_analysis"] = ""
+    records["A"].raw["meta"]["finish_answer_time_cost"] = 8000
+    records["B"].raw["meta"]["finish_answer_time_cost"] = 78000
+    evaluation["task_analysis"]["timing_analysis"] = "耗时78秒却没有交代涨停家数，多等70秒也没补齐答案。"
+    validate_result(config.schema, "pairwise", evaluation, records)
+    records["B"].raw["meta"].pop("finish_answer_time_cost")
+    evaluation["task_analysis"]["timing_analysis"] = ""
+    task = {"candidates": {label: {**r.identity(), "llm": None} for label, r in records.items()},
+            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+    save_presentation(tmp_path, config)
+    row = comparison_row(tmp_path, task, evaluation)
+    markdown = render_summaries([task_summary(task, row, evaluation["task_analysis"])])
+    assert "A组Fast 8.000秒" in markdown
+    for absent in ("A组Expert 0.000", "缺失", "未发现", "### 不足", "是否触犯", "比较记录", "首 token"):
+        assert absent not in markdown
+
+
+def test_chart_labels_are_exact_current_turn_evidence_not_final_answer(config):
+    from prime_eval.prime import prompt_materials
+    svg = '<svg><text>涨幅</text><text>209.93%</text><text>涨幅</text></svg>'
+    data = raw(reference=None, answer="正文涨幅9.93%")
+    data["messages"].insert(1, {"type": "function_call", "input": {"command": svg},
+                                "input_messages": [{"content": '<svg><text>旧图999%</text></svg>'}]})
+    record = adapt(data, config.versions[0], "chart.jsonl", 1, None)
+    labels = artifact_evidence(record, "A")
+    assert [entry["quote"] for entry in labels] == ["涨幅", "209.93%"]
+    materials = prompt_materials(config, "pairwise", {"A": record}, initial_evidence(record, "A") + labels)
+    assert "".join(item["text"] for item in materials["A"]["final_answer"]) == "正文涨幅9.93%"
+    assert materials["A"]["artifact_labels"][1]["message_index"] == 1
+    assert labels[1]["quote"] in svg

@@ -70,7 +70,7 @@ test("numeric comparisons cannot submit until both candidates have been calculat
     const reviewSchema = () => ({ properties: { findings: { items: { properties: { evidence: evidenceSchema() } } } } });
     const taskFile = path.join(dir, "task.json");
     fs.writeFileSync(taskFile, JSON.stringify({ stage: "pairwise", inputs: { A: input, B: input },
-      required_calculations: ["A", "B"], max_tool_calls: 8, max_submissions: 2,
+      required_calculations: ["A", "B"], timing_comparable: false, max_tool_calls: 8, max_submissions: 2,
       evidence_bank: ["A", "B"].map(candidate => ({ ref: `${candidate}-0`, candidate, message_index: 0, quote: "4/2=2" })),
       schema: { properties: { evaluations: { properties: { A: reviewSchema(), B: reviewSchema() } } } },
     }));
@@ -85,6 +85,14 @@ test("numeric comparisons cannot submit until both candidates have been calculat
     assert.equal(canSubmit(), false);
     await tools.calculate.execute("b", { candidate: "B", operation: "divide", operands: ["4", "2"] });
     assert.equal(canSubmit(), true);
+    const params = { verdict: { result: "A_better", reason: "A耗时数据缺失，不能据此奖励速度。" },
+      task_analysis: { timing_analysis: "" },
+      evaluations: Object.fromEntries(["A", "B"].map(candidate => [candidate, { summary: "4除以2得2。", findings: [
+        { text: "算式正确", reason: "结果是2。", evidence: [{ ref: `${candidate}-0` }] },
+      ] }])) };
+    assert.equal((await tools.submit_evaluation.execute("bad", params)).isError, true);
+    params.verdict.reason = "直接给出算式和结果。";
+    assert.equal((await tools.submit_evaluation.execute("ok", params)).terminate, true);
   } finally {
     if (original === undefined) delete process.env.PRIME_EVAL_TASK;
     else process.env.PRIME_EVAL_TASK = original;

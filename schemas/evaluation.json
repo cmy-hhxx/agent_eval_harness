@@ -78,7 +78,7 @@
         "requirements": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
         "scoring_points": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
         "red_flags": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
-        "timing_analysis": {"type": "string", "minLength": 1}
+        "timing_analysis": {"type": "string"}
       }
     },
     "pairwise": {

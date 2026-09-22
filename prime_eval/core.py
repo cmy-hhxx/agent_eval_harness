@@ -397,6 +397,28 @@ def initial_evidence(record: Record, candidate: str) -> list[Json]:
     return bank
 
 
+def artifact_evidence(record: Record, candidate: str) -> list[Json]:
+    """Expose compact SVG labels from this turn without sending large source files."""
+    bank: list[Json] = []
+    seen: set[str] = set()
+    messages = record.raw["messages"]
+    last_user = max(i for i, message in enumerate(messages[:record.final_index]) if message.get("role") == "user")
+    for index in range(last_user + 1, record.final_index):
+        for path, text in strings(messages[index]):
+            if path.startswith("/input_messages") or "<svg" not in text:
+                continue
+            for match in re.finditer(r">([^<>\r\n]{1,240})</text>", text):
+                quote = match.group(1)
+                if quote in seen or not quote.strip():
+                    continue
+                seen.add(quote)
+                bank.append({"ref": f"{candidate}-artifact-{index}-{len(bank)}", "candidate": candidate,
+                             "message_index": index, "quote": quote, "path": path})
+                if len(bank) >= 80:
+                    return bank
+    return bank
+
+
 def validate_result(schema: Json, stage: str, result: Json, candidates: dict[str, Record], viewed: set[tuple[str, int]] | None = None) -> list[Json]:
     Draft202012Validator(stage_schema(schema, stage) if stage != "output" else schema).validate(result)
     if stage == "correctness" and re.search(r"候选\s*[AB]", result["correctness_reason"]):
@@ -408,8 +430,13 @@ def validate_result(schema: Json, stage: str, result: Json, candidates: dict[str
         for review in result["evaluations"].values():
             editorial.append(review["summary"])
             editorial.extend(text for finding in review["findings"] for text in (finding["text"], finding["reason"]))
-        if any(re.search(r"无标准答案|没有标准答案|未进行独立正确性|未进行正确性判定|未做独立正确性", text) for text in editorial):
+        if any(re.search(r"无标准答案|没有标准答案|未进行独立正确性|未进行正确性判定|未做独立正确性|通过核验|通过校验|已被核验|独立判定", text) for text in editorial):
             raise ValueError("评语只能描述答案内容，不得加入标准答案缺失或独立评测流程说明")
+        missing_timing = r"(?:耗时|用时|时延|首\s*token|首回答|完成时间|时间数据)(?:数据|记录|信息|数值|字段|的|均|都|仍|也|完全|未|没有|被|\s){0,6}(?:缺失|缺少|未提供|不可用|未记录|不完整)|(?:缺失|缺少|未提供|没有|未记录)(?:双方|两方|一方|另一方|原始|回答|的|对应|具体|可用|任何|有效|完整|相关|\s){0,8}(?:耗时|用时|时延|首\s*token|首回答|完成时间)|(?:无法|不能|不宜|不应|不做|不作|不)(?:[^。！？\n]{0,12})(?:比较快慢|奖励速度)|未发现(?:有证据支持的)?(?:明显|实质)(?:优势|不足|问题)|暂无(?:明显)?(?:优势|不足|问题)"
+        if any(re.search(missing_timing, text, re.IGNORECASE) for text in editorial):
+            raise ValueError("删除耗时缺失说明或空项占位话；只写实际发现")
+        if stage == "pairwise" and any(r.answer_timing["finish_seconds"] is None for r in candidates.values()) and result["task_analysis"]["timing_analysis"]:
+            raise ValueError("无完整双方耗时时 timing_analysis 必须为空字符串")
     located: list[Json] = []
     for candidate, record in candidates.items():
         groups = ([result["evidence"]] if stage == "correctness"
