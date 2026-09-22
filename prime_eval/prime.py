@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import Config, Json, Record, encode, initial_evidence, read_json, submission_schema, validate_result, write_json
+from .summaries import compare_timing
 
 
 class JudgeError(RuntimeError):
@@ -94,6 +95,19 @@ def initialize_agent(config: Config, directory: Path, stage: str) -> None:
                "telemetry": {"enabled": False}, "quietStartup": True, "packages": []})
 
 
+async def stop_owned_daemon(prime: Json) -> None:
+    socket = prime.get("daemon_socket")
+    if not socket or not Path(socket).exists():
+        return
+    proc = await asyncio.create_subprocess_exec(prime["binary"], "shutdown", "--daemon-socket", socket, "--force",
+                                                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        await asyncio.wait_for(proc.wait(), 15)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+
+
 async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, Record], reference: Any,
                  correctness: Json, directory: Path, input_paths: dict[str, Path]) -> Json:
     directory.mkdir(parents=True, exist_ok=True)
@@ -124,6 +138,10 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
         "candidates": materials,
         "correctness": correctness,
         "required_calculations": required_calculations,
+        **({"original_answer_timing": {k: r.answer_timing for k, r in candidates.items()}}
+           if stage == "pairwise" else {}),
+        **({"timing_comparison": compare_timing({k: r.answer_timing for k, r in candidates.items()})}
+           if stage == "pairwise" else {}),
     })
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     env = dict(os.environ)
@@ -133,6 +151,8 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
             "--no-builtin-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
             "--extension", config.data["artifacts"]["extension"], "--provider", judge["provider"], "--model", judge["model"],
             "--thinking", judge["thinking"], "--system-prompt", config.prompts["system"]]
+    if prime.get("daemon_socket"):
+        args.extend(["--daemon-socket", prime["daemon_socket"]])
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE, env=env, cwd=directory,
@@ -152,7 +172,6 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
         proc.stdin.write((encode(value) + "\n").encode())
         await proc.stdin.drain()
 
-    result = None
     usage: Json = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}
     pending = {"get_state", "set_auto_compaction", "set_auto_retry"}
     errors: list[str] = []
@@ -234,10 +253,6 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
                         elif details.get("submission_exhausted"):
                             raise JudgeError("结构化提交次数耗尽")
                     elif kind == "agent_end":
-                        if result is not None:
-                            result.update({"usage": usage, "duration_seconds": round(time.monotonic() - started, 3),
-                                           "first_token_seconds": first_token_seconds, "tool_calls": tool_calls})
-                            return result
                         if errors:
                             reason = "\n".join(errors)
                             retryable = any(term in reason.lower() for term in ("429", "rate limit", "timeout", "timed out", "502", "503", "504", "500", "overloaded", "connection", "fetch failed"))
@@ -246,7 +261,11 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
                             raise JudgeError("任务结束但没有有效的 submit_evaluation")
                         repairs += 1
                         await send({"type": "prompt", "message": config.prompts["repair"] + "\n错误：缺少有效的结构化提交。"})
-                raise JudgeError("prime-agent 提前退出: " + "\n".join(errors))
+                await asyncio.wait_for(asyncio.shield(stderr_task), 1)
+                stderr = (directory / "stderr.log").read_text(encoding="utf-8")
+                reason = "\n".join(errors) or stderr[-1800:]
+                raise JudgeError("prime-agent 提前退出: " + reason,
+                                 retryable=any(term in reason.lower() for term in ("timed out", "timeout", "connection")))
     except TimeoutError as error:
         raise JudgeError(f"任务超过 {execution['timeout_seconds']} 秒", retryable=True) from error
     finally:

@@ -2,6 +2,8 @@
 [inputs]
 batches = []
 case_ids = []
+# Unit of meta.*_time_cost from the input collector; a version may override it.
+timing_unit = "ms"
 
 [[inputs.versions]]
 id = "a_fast"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import math
 import os
 import re
 import tempfile
@@ -102,6 +103,7 @@ class Config:
             "prompts": {k: v for k, v in self.prompts.items() if not stage or k in ("system", stage, "repair")},
             "extension": Path(self.data["artifacts"]["extension"]).read_text(),
             "adapter": ADAPTER_VERSION, "engine": engine,
+            "timing_units": {v["id"]: v["timing_unit"] for v in self.versions},
             "settings": {k: execution[k] for k in ("initial_context_chars", "max_tool_calls", "seed", "repair_attempts")},
         })
 
@@ -114,6 +116,9 @@ def load_config(path: Path) -> Config:
         if section not in data:
             raise ValueError(f"配置缺少 {section}")
     for item in data["inputs"]["versions"]:
+        item.setdefault("timing_unit", data["inputs"].get("timing_unit", "ms"))
+        if item["timing_unit"] not in ("ms", "s"):
+            raise ValueError("inputs.timing_unit 必须为 ms 或 s")
         if not re.fullmatch(r"[a-z][a-z0-9_]*", item["id"]):
             raise ValueError(f"非法版本 id: {item['id']}")
         if item["adapter"] not in ("a", "aa"):
@@ -158,6 +163,7 @@ class Record:
     final_index: int
     reference: Any
     llm: str | None
+    timing_unit: str = "ms"
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -174,7 +180,20 @@ class Record:
 
     def identity(self) -> Json:
         return {"batch_id": self.batch, "case_id": self.case, "version": self.version, "name": self.name,
-                "input_hash": self.hash, "trace_id": self.trace_id, "source": self.source, "line": self.line}
+                "input_hash": self.hash, "trace_id": self.trace_id, "source": self.source, "line": self.line,
+                "question": self.question, "answer_timing": self.answer_timing}
+
+    @property
+    def answer_timing(self) -> Json:
+        fields = {"first_token_seconds": "first_token_time_cost", "first_answer_seconds": "first_answer_time_cost",
+                  "finish_seconds": "finish_answer_time_cost"}
+        meta = self.raw.get("meta") or {}
+        values = {key: meta.get(field) for key, field in fields.items()}
+        seconds = {key: (value / (1000 if self.timing_unit == "ms" else 1)
+                        if isinstance(value, (int, float)) and not isinstance(value, bool)
+                        and math.isfinite(value) and value >= 0 else None) for key, value in values.items()}
+        return {**seconds, "source_unit": self.timing_unit, "source_values": values,
+                "source_fields": {key: f"meta.{field}" for key, field in fields.items()}}
 
     def material(self, budget: int) -> Json:
         messages = self.raw["messages"]
@@ -247,7 +266,7 @@ def adapt(raw: Json, item: Json, source: str, line: int, default_batch: str | No
     if item["adapter"] == "aa":
         llm = next((m.get("model") for m in reversed(messages[:finals[-1]]) if m.get("type") == "llm_turn" and m.get("model")), llm)
     return Record(str(batch), str(case), item["id"], item["name"], raw, source, line, question, finals[-1],
-                  references[0] if references else None, str(llm) if llm else None)
+                  references[0] if references else None, str(llm) if llm else None, item.get("timing_unit", "ms"))
 
 
 @dataclass
@@ -383,6 +402,8 @@ def validate_result(schema: Json, stage: str, result: Json, candidates: dict[str
         raise ValueError("独立正确性理由请使用‘该回答’，避免配对位置变化后称谓错误")
     if stage in ("pairwise", "output"):
         editorial = [result["verdict"]["reason"]]
+        if stage == "pairwise":
+            editorial.extend(text for _, text in strings(result["task_analysis"]))
         for review in result["evaluations"].values():
             editorial.append(review["summary"])
             editorial.extend(text for finding in review["findings"] for text in (finding["text"], finding["reason"]))

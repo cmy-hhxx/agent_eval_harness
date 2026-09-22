@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from prime_eval.core import adapt, load_config, write_json
-from prime_eval.prime import JudgeError, invoke
+from prime_eval.prime import JudgeError, invoke, stop_owned_daemon
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,6 +26,7 @@ def test_validated_terminating_tool_does_not_wait_for_agent_end(tmp_path, monkey
     script = tmp_path / "fake-prime"
     script.write_text(f"#!{sys.executable}\n" + '''
 import json,os,sys
+assert sys.argv[sys.argv.index('--daemon-socket')+1].endswith('owned.sock')
 def emit(value):
     print(json.dumps(value,ensure_ascii=False),flush=True)
 for line in sys.stdin:
@@ -46,7 +47,8 @@ for line in sys.stdin:
 ''', encoding="utf-8")
     script.chmod(0o755)
     start = time.monotonic()
-    result = asyncio.run(invoke(config, {"binary": str(script)}, "correctness", {"A": record}, "4", {}, tmp_path / "attempt", {"A": source}))
+    result = asyncio.run(invoke(config, {"binary": str(script), "daemon_socket": str(tmp_path / "owned.sock")},
+                               "correctness", {"A": record}, "4", {}, tmp_path / "attempt", {"A": source}))
     assert time.monotonic() - start < 5
     assert result["completion"] == "validated_terminating_tool"
     assert result["usage"]["totalTokens"] == 15
@@ -54,6 +56,23 @@ for line in sys.stdin:
     prompt = (tmp_path / "attempt" / "prompt.txt").read_text()
     assert '"catalog"' not in prompt
     assert '"final_answer"' in prompt
+    assert '"original_answer_timing"' not in prompt
+
+
+def test_shutdown_targets_only_the_owned_daemon(tmp_path):
+    import json
+    marker = tmp_path / "shutdown-args.json"
+    script = tmp_path / "fake-shutdown"
+    script.write_text(f"#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\n"
+                      f"Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+    script.chmod(0o755)
+    socket = tmp_path / "owned.sock"
+    socket.touch()
+    asyncio.run(stop_owned_daemon({"binary": str(script), "daemon_socket": str(socket)}))
+    assert json.loads(marker.read_text()) == ["shutdown", "--daemon-socket", str(socket), "--force"]
+    marker.unlink()
+    asyncio.run(stop_owned_daemon({"binary": str(script)}))
+    assert not marker.exists()
 
 
 def test_missing_credentials_fails_before_starting_process(tmp_path, monkeypatch):

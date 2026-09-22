@@ -2,7 +2,7 @@
 
 通过本机 `prime-agent` 对已有回答做两阶段评测，输出与 `demo_output.jsonl` 一致的 schema 3.1。
 
-[实施计划](docs/implementation-plan.md) · [初版 5 条样本验收](docs/acceptance.md)
+[实施计划](docs/implementation-plan.md) · [新版 5 条实跑验收](docs/acceptance.md) · [旧产物清理](docs/cleanup.md)
 
 1. **有标准答案的客观题**：`gpt-5.4-mini` 只看问题、标准答案、最终回复，独立判对错。
 2. **两两比较**：`gpt-5.6-luna` 比较已有回答，可查阅本题完整链路和使用本地计算。
@@ -21,6 +21,8 @@ uv run prime-eval preflight
 
 `prepare` 检查官方最新稳定版，必要时更新。检查有效期为 24 小时；运行记录固定二进制、版本与 SHA256。同一个 run 恢复时不得换 prime-agent 版本。
 
+每次运行使用独立 daemon socket，任务结束或中断时关闭此次评测的后台进程，避免共享后台进程的会话阻塞。
+
 API key 只从 `PRIME_EVAL_API_KEY` 环境变量读取，不写进命令参数、模型配置或日志。在 zsh 中可以隐藏输入：
 
 ```bash
@@ -32,11 +34,19 @@ uv run prime-eval validate --run eval_output/batch-001
 
 也可复制 `.env.example` 为本地 `.env`，填入自己的 key，然后执行 `uv run --env-file .env prime-eval run --run-id batch-001`。`.env` 已被 Git 忽略。
 
-若要先用原来的两题联调：
+先跑固定的 5 条比较，覆盖宏观查询、财务计算、市场异动分析及耗时缺失：
 
 ```bash
-uv run prime-eval run --batch 0b291c6224d24a9e --run-id debug-001
+uv run prime-eval run --run-id smoke-5-v2 \
+  --case 1_数据查询_6292句_20260911_1955 \
+  --case 14_多轮选股_258题_20260911_Q023_2_T08_multi \
+  --case 市场热点与异动归因_20题_20260921_Q003 \
+  --case 市场热点与异动归因_20题_20260921_Q004 \
+  --case 市场热点与异动归因_20题_20260921_Q007
+uv run prime-eval validate --run eval_output/smoke-5-v2
 ```
+
+这五个 case 在当前输入中各有一个有效版本对，因此恰好生成 5 条比较；有标准答案的其中一题另需 2 次 Mini 判定。若此 run 已存在，保持代码/配置不变时加 `--resume`，否则换一个 run-id。`--limit-cases 5` 只限制题数，不保证只有五组配对。
 
 ## 分阶段、恢复与增量
 
@@ -67,6 +77,7 @@ uv run prime-eval run --run-id batch-002 --resume --retry-failed
 | 位置 | 内容 |
 |---|---|
 | `results/*__vs__*.jsonl` | 正式评测记录；最多六份，只有有效结果的组合才生成文件 |
+| `task_summaries.jsonl`、`task_summaries.md` | 每条任务完成即更新的问题明细、结论、A/B 优劣势、原始回答耗时、得分点和 red flags |
 | `correctness.jsonl` | 每个 case×版本唯一的正确性记录；主观题明确标记未评 |
 | `skipped.jsonl` | 输入缺失或冲突导致的跳过 |
 | `failures.jsonl` | 模型调用失败或前置任务阻塞 |
@@ -85,6 +96,20 @@ uv run prime-eval run --run-id batch-002 --resume --retry-failed
 `message_index` 是各自原始 `messages` 数组从 0 开始的索引。嵌套原文路径保存在审计记录。`comparison_id` 由批次、case、版本对稳定生成。
 
 各组可能使用不同题集，报告提供实际 case 列表及分母。正确率只统计有标准答案的唯一 case×版本；主观题跳过和客观题未判定分别列出，`null` 不算错误。
+
+## 逐题总结
+
+每次比较在同一个严格工具提交中给出 `task_analysis`，不新增总结模型调用。程序将它与既有 verdict、findings 和输入数据关联，生成下面的总结：
+
+- **问题明细**：原始问句、具体题型、对象/日期/口径、核心交付要求。
+- **测评结论**：决定胜负的具体差异，结合质量与等待成本分析。
+- **候选 A/B 优劣势**：标明实际版本，每项写清实际表现、对应要求、影响和原文证据；不以“更完整/更严谨”代替具体分析。
+- **原始回答耗时**：首 token、首回答、完成时间与来源字段，另附质量与耗时的取舍说明。
+- **得分点与 red flags**：按此类任务列出简短、可检查的加分动作和不能犯的错误；实际是否触犯，以有证据的 findings 为准。
+
+比较 JSONL 仍保持 demo schema 3.1；补充总结通过 `comparison_id` 关联，避免破坏现有消费方。结论和优劣势复用同一次提交，不由第二次模型调用重写。`validate` 同时检查 JSONL 总结、可读报告、耗时来源与原比较记录的一致性。
+
+耗时读取 `meta.first_token_time_cost`、`meta.first_answer_time_cost`、`meta.finish_answer_time_cost`。`inputs.timing_unit="ms"` 声明当前采集口径，统一换算为秒；不同版本可在其 `inputs.versions` 中覆盖为 `s`。缺失或无效数值保持 null，缺少任一方完成时间时不计算快慢差值。来源值及单位一并保留；裁判自身的评测耗时仅在审计记录中统计，不能代替被评回答的耗时。
 
 ## 为什么输出不依赖“请返回 JSON”
 

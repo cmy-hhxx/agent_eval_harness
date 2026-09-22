@@ -202,7 +202,8 @@ export default function (pi) {
         }
         if (task.stage === "pairwise") {
           const editorial = [evaluation.verdict.reason, ...Object.values(evaluation.evaluations).flatMap(review =>
-            [review.summary, ...review.findings.flatMap(finding => [finding.text, finding.reason])])];
+            [review.summary, ...review.findings.flatMap(finding => [finding.text, finding.reason])]),
+            ...textLeaves(evaluation.task_analysis).map(leaf => leaf.text)];
           if (editorial.some(text => /无标准答案|没有标准答案|未进行独立正确性|未进行正确性判定|未做独立正确性/.test(text))) {
             throw new Error("请删除评测流程说明，只描述回答本身的具体优劣和差异，再次提交。");
           }

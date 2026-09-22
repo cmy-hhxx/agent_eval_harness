@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -9,7 +10,8 @@ from typing import Any
 
 from .core import (Config, EvaluationPlan, Json, Record, atomic_text, digest, read_json,
                    validate_result, write_json, write_jsonl)
-from .prime import JudgeError, invoke, prepared_prime, probe_prime, redact
+from .prime import JudgeError, invoke, prepared_prime, probe_prime, redact, stop_owned_daemon
+from .summaries import render_summaries, task_summary
 
 SUBJECTIVE_CORRECTNESS = {"is_correct": None, "correctness_reason": "", "evidence": []}
 
@@ -45,6 +47,7 @@ def export_results(run: Path) -> Json:
     correctness: list[Json] = [{**identity, **SUBJECTIVE_CORRECTNESS, "assessment_status": "subjective_not_assessed"}
                                for identity in manifest.get("subjective_inputs", [])]
     outcomes: list[Json] = []
+    summaries: list[Json] = []
     result_count = 0
     statuses: Counter[str] = Counter()
     usage: Counter[str] = Counter()
@@ -64,15 +67,16 @@ def export_results(run: Path) -> Json:
                          "candidates": task["candidates"], "reason": result["evaluation"]["verdict"]["reason"] if not_comparable else result.get("reason"),
                          "cached": result.get("cached", False), "raw_artifact": result.get("raw_artifact"),
                          "duration_seconds": result.get("duration_seconds")})
-        if status != "succeeded":
+        if status not in ("succeeded", "not_comparable"):
             continue
         evaluation = result["evaluation"]
         if task["stage"] == "correctness":
             correctness.append({**task["candidates"]["A"], **evaluation, "task_id": task["id"], "assessment_status": "assessed"})
             continue
-        if evaluation["verdict"]["result"] == "not_comparable":
-            continue
         row = comparison_row(run, task, evaluation)
+        summaries.append(task_summary(task, row, evaluation["task_analysis"]))
+        if not_comparable:
+            continue
         groups["__vs__".join(task["pair"])].append(row)
         result_count += 1
     output = run / "results"
@@ -86,6 +90,9 @@ def export_results(run: Path) -> Json:
             old.unlink()
     write_jsonl(run / "correctness.jsonl", correctness)
     write_jsonl(run / "task_outcomes.jsonl", outcomes)
+    summaries.sort(key=lambda item: (item["case"]["batch_id"], item["case"]["case_id"], item["comparison_id"]))
+    write_jsonl(run / "task_summaries.jsonl", summaries)
+    atomic_text(run / "task_summaries.md", render_summaries(summaries))
     failures = [item for item in outcomes if item["status"] in ("failed", "blocked")]
     write_jsonl(run / "failures.jsonl", failures)
     write_jsonl(run / "not_comparable.jsonl", [item for item in outcomes if item["status"] == "not_comparable"])
@@ -134,6 +141,7 @@ def export_results(run: Path) -> Json:
         accuracy = f"{stats['accuracy_among_decidable']:.1%}" if stats["accuracy_among_decidable"] is not None else "—"
         lines.append(f"| {name} | {stats['correct']} | {stats['incorrect']} | {stats['undetermined']} | {stats['subjective_not_assessed']} | {accuracy} |")
     lines += ["", "缺失配对见 skipped.jsonl；输入异常见 preflight.json；任务失败见 failures.jsonl。",
+              "逐题的问题明细、结论、A/B优劣势、原始回答耗时、得分点与红线见 [逐题总结](task_summaries.md)。",
               "每次调用的原始事件、提示词与耗时位于 tasks/；缓存命中记录保留原始调用目录链接。"]
     atomic_text(run / "report.md", "\n".join(lines) + "\n")
     return summary
@@ -146,6 +154,8 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
         prime = prepared_prime(config)
     fingerprint = digest({"config": config.fingerprint(), "prime": prime})
     stage_fingerprints = {name: digest({"config": config.fingerprint(name), "prime": prime}) for name in ("correctness", "pairwise")}
+    # Short, run-specific socket avoids the user's shared daemon and Unix path-length limits.
+    runtime_prime = {**prime, "daemon_socket": str(Path(tempfile.gettempdir()) / f"pe-{os.getuid()}-{digest(str(run))[:16]}.sock")}
     lookup = plan.records
     checks: dict[tuple[str, str, str], Json] = {}
     pair_tasks = []
@@ -215,7 +225,7 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
                 attempt_dir = task_dir / f"attempt-{attempts + attempt + 1:03d}"
                 try:
                     async with semaphore:
-                        value = await invoke(config, prime, task["stage"], candidates, task["reference"], correctness,
+                        value = await invoke(config, runtime_prime, task["stage"], candidates, task["reference"], correctness,
                                              attempt_dir, {k: run / "inputs" / f"{r.hash}.json" for k, r in candidates.items()})
                     result = {**value, "status": "succeeded", "cached": False, "raw_artifact": str(attempt_dir), "cache_key": cache_key}
                     write_json(cache_file, result)
@@ -261,6 +271,7 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
         await asyncio.gather(*futures, return_exceptions=True)
         raise
     finally:
+        await stop_owned_daemon(runtime_prime)
         manifest["finished_at"] = time.time()
         write_json(manifest_file, manifest)
         export_results(run)
@@ -275,6 +286,7 @@ def validate_run(run: Path) -> Json:
     seen: set[tuple[str, str, tuple[str, ...]]] = set()
     consistency: dict[tuple[str, str, str], tuple[Any, str]] = {}
     expected_rows: dict[str, Json] = {}
+    expected_summaries: list[Json] = []
     for task in manifest["tasks"]:
         path = run / "tasks" / task["id"] / "result.json"
         if not path.exists():
@@ -294,9 +306,14 @@ def validate_run(run: Path) -> Json:
         try:
             viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in result.get("viewed_images", [])}
             validate_result(schema, task["stage"], result["evaluation"], candidates, viewed)
-            if task["stage"] == "pairwise" and result["evaluation"]["verdict"]["result"] != "not_comparable":
+            if task["stage"] == "pairwise":
                 expected = comparison_row(run, task, result["evaluation"])
-                expected_rows[expected["comparison_id"]] = {"row": expected, "file": "__vs__".join(task["pair"]) + ".jsonl"}
+                for label, record in candidates.items():
+                    if task["candidates"][label]["answer_timing"] != record.answer_timing:
+                        raise ValueError("原始回答耗时与输入快照不一致")
+                expected_summaries.append(task_summary(task, expected, result["evaluation"]["task_analysis"]))
+                if result["evaluation"]["verdict"]["result"] != "not_comparable":
+                    expected_rows[expected["comparison_id"]] = {"row": expected, "file": "__vs__".join(task["pair"]) + ".jsonl"}
         except Exception as error:
             errors.append(f"{task['id']}: {error}")
     for path in sorted((run / "results").glob("*.jsonl")):
@@ -334,6 +351,16 @@ def validate_run(run: Path) -> Json:
                 expected += 1
     if count != expected:
         errors.append(f"输出数量 {count} 与成功比较数 {expected} 不一致")
+    expected_summaries.sort(key=lambda item: (item["case"]["batch_id"], item["case"]["case_id"], item["comparison_id"]))
+    try:
+        import json
+        actual = [json.loads(line) for line in (run / "task_summaries.jsonl").read_text().splitlines() if line]
+        if actual != expected_summaries:
+            errors.append("逐题总结与任务、原始耗时或比较结论不一致")
+        if (run / "task_summaries.md").read_text() != render_summaries(expected_summaries):
+            errors.append("逐题 Markdown 总结与结构化记录不一致")
+    except (OSError, ValueError) as error:
+        errors.append(f"逐题总结缺失或损坏: {error}")
     result = {"valid": not errors, "comparisons": count, "errors": errors}
     write_json(run / "validation.json", result)
     return result
