@@ -99,13 +99,17 @@ async def stop_owned_daemon(prime: Json) -> None:
     socket = prime.get("daemon_socket")
     if not socket or not Path(socket).exists():
         return
-    proc = await asyncio.create_subprocess_exec(prime["binary"], "shutdown", "--daemon-socket", socket, "--force",
-                                                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-    try:
-        await asyncio.wait_for(proc.wait(), 15)
-    except TimeoutError:
-        proc.kill()
-        await proc.wait()
+    # Prime 0.9.5's shutdown command targets every daemon and has no socket option.
+    # Resolve only the processes holding this run's unique Unix socket instead.
+    proc = await asyncio.create_subprocess_exec("lsof", "-t", "--", socket,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), 5)
+    for value in set(stdout.split()):
+        if value.isdigit():
+            try:
+                os.kill(int(value), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
 
 async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, Record], reference: Any,

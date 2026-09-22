@@ -21,7 +21,7 @@ uv run prime-eval preflight
 
 `prepare` 检查官方最新稳定版，必要时更新。检查有效期为 24 小时；运行记录固定二进制、版本与 SHA256。同一个 run 恢复时不得换 prime-agent 版本。
 
-每次运行使用独立 daemon socket，任务结束或中断时关闭此次评测的后台进程，避免共享后台进程的会话阻塞。
+每次运行使用独立 daemon socket，任务结束或中断时使用本机 `lsof` 定位并关闭持有该 socket 的进程，避免共享后台进程的会话阻塞。macOS 自带 `lsof`；不会调用停止全部 Prime 服务的全局 shutdown。
 
 API key 只从 `PRIME_EVAL_API_KEY` 环境变量读取，不写进命令参数、模型配置或日志。在 zsh 中可以隐藏输入：
 

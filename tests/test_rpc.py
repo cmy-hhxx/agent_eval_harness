@@ -59,20 +59,28 @@ for line in sys.stdin:
     assert '"original_answer_timing"' not in prompt
 
 
-def test_shutdown_targets_only_the_owned_daemon(tmp_path):
-    import json
-    marker = tmp_path / "shutdown-args.json"
-    script = tmp_path / "fake-shutdown"
-    script.write_text(f"#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\n"
-                      f"Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n")
-    script.chmod(0o755)
+def test_shutdown_targets_only_the_owned_daemon(tmp_path, monkeypatch):
+    import signal
+    import prime_eval.prime as prime_module
     socket = tmp_path / "owned.sock"
     socket.touch()
-    asyncio.run(stop_owned_daemon({"binary": str(script), "daemon_socket": str(socket)}))
-    assert json.loads(marker.read_text()) == ["shutdown", "--daemon-socket", str(socket), "--force"]
-    marker.unlink()
-    asyncio.run(stop_owned_daemon({"binary": str(script)}))
-    assert not marker.exists()
+    calls, killed = [], []
+
+    class Process:
+        async def communicate(self):
+            return b"12345\n12345\n", b""
+
+    async def spawn(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    monkeypatch.setattr(prime_module.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(prime_module.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    asyncio.run(stop_owned_daemon({"binary": "unused", "daemon_socket": str(socket)}))
+    assert calls == [("lsof", "-t", "--", str(socket))]
+    assert killed == [(12345, signal.SIGTERM)]
+    asyncio.run(stop_owned_daemon({"binary": "unused"}))
+    assert len(calls) == 1
 
 
 def test_missing_credentials_fails_before_starting_process(tmp_path, monkeypatch):
