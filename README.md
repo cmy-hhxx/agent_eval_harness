@@ -39,8 +39,14 @@ uv run prime-eval preflight --batch <batch-id> --case <case-id>
 
 ## 评测流程
 
-1. **正确性阶段**：有标准答案时，`gpt-5.4-mini` 只接收问题、标准答案和最终回答，输出 `is_correct`、理由和证据。无标准答案的输入跳过此阶段，输出中保留 `is_correct=null`。
+1. **正确性阶段**：有标准答案时，`gpt-5.6-luna` 只接收问题、标准答案和最终回答，输出 `is_correct`、理由和证据。无标准答案的输入跳过此阶段，输出中保留 `is_correct=null`。
 2. **两两比较阶段**：`gpt-5.6-luna` 比较两个版本的最终回答和可按需读取的完整链路，输出胜负、具体优缺点、任务分析、得分点、red flags 和可比较时的原始回答耗时。
+
+每份比较草稿由独立上下文的 `gpt-5.6-luna` 做轻量质检，预算15秒。只对明确影响胜负的算术、比较方向、证据或新增硬要求问题触发一次修订，修订预算30秒；次要点评和文风只留建议。修订后不循环复核；质检超时或修订失败仍保留已完成的原评测，状态写入 `quality_reviews.jsonl`，不中断交付。两个预算不包括本地进程回收时间。质检使用严格工具 schema，意见只能选择有效字段，原文由程序恢复。
+
+质检状态：`passed` 未检出问题；`advisory` 只有建议；`revised` 已修订、未再次复核；`unavailable` 质检未完成；`unresolved` 已发现硬伤但未修复。最后两类保留原评测供查看，不应当成已确认的正式排名依据。任务收据绑定评测文本哈希，防止恢复时混入事后改写。`tasks/<task-id>/attempt-*/` 保留原稿、质检意见和自动修订；不人工改写成功结果。
+
+结论先行，使用实际版本名称；平局在理由中明确“两个都好”或“两个都差”，JSONL 的 `result` 仍保持 `win/tie`。采纳《自动评测高质量表述要点》的事实、位置、依据与影响要求；不强制凑三段或填空项，不把示例中的事实、投资偏好和附加字段变成通用扣分项。得分点和红线描述同类任务，具体公司、日期和数值放在本题分析中。
 
 同一 case 的问题或标准答案冲突时不生成配对；缺少某个版本只跳过涉及它的配对。候选 A/B 由固定种子随机分配，结果始终关联回真实版本 ID。
 
@@ -92,13 +98,17 @@ uv run prime-eval status --run eval_output/batch-001
 
 | 配置项 | 默认值 |
 | --- | --- |
-| `judge.correctness` | `gpt-5.4-mini`，`low`，4096 输出 token |
+| `judge.correctness` | `gpt-5.6-luna`，`low`，4096 输出 token |
 | `judge.pairwise` | `gpt-5.6-luna`，`low`，8192 输出 token |
+| `judge.audit` | `gpt-5.6-luna`，`low`，4096 输出 token |
 | `execution.concurrency` | 8 |
 | `execution.timeout_seconds` | 300 |
 | `execution.idle_timeout_seconds` | 45 |
-| `execution.retries` | 2 次临时错误重试 |
+| `execution.retries` | 默认不自动重试，失败任务可用 --retry-failed 重跑 |
 | `execution.repair_attempts` | 1 次结构修复 |
+| `execution.audit_timeout_seconds` | 15 秒 |
+| `execution.quality_repair_timeout_seconds` | 30 秒 |
+| `execution.quality_repair_attempts` | 最多1次修订，不循环复核 |
 | `execution.max_tool_calls` | 8 |
 | `execution.initial_context_chars` | 16000 |
 | `execution.report_interval_seconds` | 30 |

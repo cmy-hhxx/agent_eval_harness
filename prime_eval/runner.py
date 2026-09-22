@@ -14,6 +14,7 @@ from .core import (Config, EvaluationPlan, Json, Record, atomic_text, digest, re
                    validate_result, write_json, write_jsonl)
 from .prime import JudgeError, invoke, prepared_prime, probe_prime, redact, stop_owned_daemon
 from .presentation import display_text, role_names, save_presentation, version_names
+from .quality import validate_quality_receipt
 from .summaries import render_summaries, task_summary
 
 SUBJECTIVE_CORRECTNESS = {"is_correct": None, "correctness_reason": "", "evidence": []}
@@ -60,6 +61,7 @@ def export_results(run: Path) -> Json:
                                for identity in manifest.get("subjective_inputs", [])]
     outcomes: list[Json] = []
     summaries: list[Json] = []
+    quality_reviews: list[Json] = []
     result_count = 0
     statuses: Counter[str] = Counter()
     usage: Counter[str] = Counter()
@@ -87,6 +89,8 @@ def export_results(run: Path) -> Json:
             correctness.append({**task["candidates"]["A"], **evaluation, "task_id": task["id"], "assessment_status": "assessed"})
             continue
         row = comparison_row(run, task, evaluation, names)
+        if "quality_audit" in result:
+            quality_reviews.append({"task_id": task["id"], "case": row["case"], **result["quality_audit"]})
         summaries.append(task_summary(task, row, evaluation["task_analysis"]))
         if not_comparable:
             continue
@@ -105,13 +109,14 @@ def export_results(run: Path) -> Json:
         record["name"] = names[record["version"]]
     write_jsonl(run / "correctness.jsonl", correctness)
     write_jsonl(run / "task_outcomes.jsonl", outcomes)
+    write_jsonl(run / "quality_reviews.jsonl", quality_reviews)
     summaries.sort(key=lambda item: (item["case"]["batch_id"], item["case"]["case_id"], item["comparison_id"]))
     write_jsonl(run / "task_summaries.jsonl", summaries)
     atomic_text(run / "task_summaries.md", render_summaries(summaries))
     failures = [item for item in outcomes if item["status"] in ("failed", "blocked")]
     write_jsonl(run / "failures.jsonl", failures)
     write_jsonl(run / "not_comparable.jsonl", [item for item in outcomes if item["status"] == "not_comparable"])
-    for metrics_file in (run / "tasks").glob("*/attempt-*/metrics.json"):
+    for metrics_file in (run / "tasks").rglob("metrics.json"):
         for key, value in read_json(metrics_file)["usage"].items():
             usage[key] += value
     per_version: Json = {}
@@ -140,6 +145,7 @@ def export_results(run: Path) -> Json:
                "task_statuses": dict(statuses), "completed_comparisons": result_count,
                "result_files": [str(output / f"{pair}.jsonl") for pair in sorted(groups)],
                "correctness": per_version, "pairs": pair_summary, "usage_this_run_including_failed_attempts": dict(usage),
+               "quality_audit_statuses": dict(Counter(item["status"] for item in quality_reviews)),
                "wall_seconds": (manifest.get("finished_at") or time.time()) - manifest["started_at"],
                "note": "胜率分母为各配对实际成功评测数；正确性仅统计有标准答案的唯一批次/case/版本，主观题与未判定单列。"}
     write_json(run / "summary.json", summary)
@@ -155,6 +161,7 @@ def export_results(run: Path) -> Json:
         accuracy = f"{stats['accuracy_among_decidable']:.1%}" if stats["accuracy_among_decidable"] is not None else "—"
         lines.append(f"| {name} | {stats['correct']} | {stats['incorrect']} | {stats['undetermined']} | {stats['subjective_not_assessed']} | {accuracy} |")
     lines += ["", "缺失配对见 skipped.jsonl；输入异常见 preflight.json；任务失败见 failures.jsonl。",
+              "轻量质检状态与建议见 quality_reviews.jsonl；unavailable 表示未完成质检，unresolved 表示硬伤未修复，revised 表示已修改但未二次复核。它们不等于复核通过。",
               "逐题的问题明细、结论、各版本优劣势、原始回答耗时、得分点与红线见 [逐题总结](task_summaries.md)。",
               "每次调用的原始事件、提示词与耗时位于 tasks/；缓存命中记录保留原始调用目录链接。"]
     atomic_text(run / "report.md", "\n".join(lines) + "\n")
@@ -188,6 +195,8 @@ def validated_previous(path: Path, schema: Json, stage: str, candidates: dict[st
         if result["status"] == "succeeded":
             viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in result.get("viewed_images", [])}
             validate_result(schema, stage, result["evaluation"], candidates, viewed)
+            if stage == "pairwise" and "audit" in schema["$defs"]:
+                validate_quality_receipt(result)
         return result
     except (OSError, ValueError, KeyError, TypeError, ValidationError):
         return None
@@ -312,6 +321,8 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
                         progress(task, "running")
                         value = await invoke(config, runtime_prime, task["stage"], candidates, task["reference"], correctness,
                                              attempt_dir, {k: run / "inputs" / f"{r.hash}.json" for k, r in candidates.items()})
+                        if task["stage"] == "pairwise":
+                            validate_quality_receipt(value)
                     result = {**value, "status": "succeeded", "cached": False, "raw_artifact": str(attempt_dir), "cache_key": cache_key}
                     fresh_success = True
                     break
@@ -413,6 +424,8 @@ def validate_run(run: Path) -> Json:
             viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in result.get("viewed_images", [])}
             validate_result(schema, task["stage"], result["evaluation"], candidates, viewed)
             if task["stage"] == "pairwise":
+                if "audit" in schema["$defs"]:
+                    validate_quality_receipt(result)
                 expected = comparison_row(run, task, result["evaluation"], names)
                 for label, record in candidates.items():
                     if task["candidates"][label]["answer_timing"] != record.answer_timing:

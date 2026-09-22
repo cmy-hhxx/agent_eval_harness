@@ -37,14 +37,19 @@ def task_summary(task: Json, row: Json, analysis: Json) -> Json:
 def render_summaries(summaries: list[Json]) -> str:
     lines: list[str] = []
     verdicts = {"tie": "平局", "not_comparable": "材料不足以比较"}
+    stages = {"context_recall": "上下文回溯", "reasoning": "推理", "execution": "工具执行", "final_answer": "最终回答"}
     for item in summaries:
-        lines += [f"# {item['case']['case_id']}", "", "## 问题", ""]
+        conclusion = item["conclusion"]
+        title = f"{conclusion['winner_name']}更好" if conclusion["result"] == "win" else verdicts[conclusion["result"]]
+        reason = conclusion["reason"]
+        if conclusion["result"] == "tie" and reason.startswith(("两个都好。", "两个都差。")):
+            title = reason.split("。", 1)[0]
+        reason = reason.removeprefix(title + "。")
+        lines += [f"# {item['case']['case_id']}", "", f"**结论：{title}**。{reason}", "", "## 问题", ""]
         lines.extend("> " + line for line in item["question"].splitlines())
         lines += ["", item["goal"], "", "**要点**", ""]
         lines.extend(f"- {text}" for text in item["requirements"])
-        conclusion = item["conclusion"]
-        title = f"{conclusion['winner_name']} 更好" if conclusion["result"] == "win" else verdicts[conclusion["result"]]
-        lines += ["", "## 结论", "", f"**{title}**。{conclusion['reason']}", ""]
+        lines += [""]
         timing_lines = []
         for label, timing in item["timing"]["measurements"].items():
             if timing["finish_seconds"] is not None:
@@ -61,7 +66,7 @@ def render_summaries(summaries: list[Json]) -> str:
                     continue
                 lines += [f"### {title}", ""]
                 for finding in review[key]:
-                    lines += [f"- **{finding['text']}**：{finding['reason']}", ""]
+                    lines += [f"- **{stages[finding['stage']]}｜{finding['text']}**：{finding['reason']}", ""]
                     for evidence in finding["evidence"]:
                         quote = evidence["quote"].replace("\n", " ")
                         lines += [f"> 原始消息 #{evidence['message_index']}：{quote}", ""]

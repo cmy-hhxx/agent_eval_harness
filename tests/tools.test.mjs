@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculate, checkEvidence, textLeaves } from "../extensions/evaluation-tools.js";
+import { calculate, checkAudit, checkEvidence, textLeaves } from "../extensions/evaluation-tools.js";
 import extension from "../extensions/evaluation-tools.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -19,6 +19,40 @@ test("nested evidence is checked against raw text including Unicode separators",
   assert.equal(textLeaves(records.A.messages[0])[0].text, "a\u2028b\n原始文本");
   assert.throws(() => checkEvidence({ evidence: [{ message_index: 0, quote: "伪造引文" }] }, "correctness", records, new Set()));
   assert.throws(() => checkEvidence({ evidence: [{ message_index: 0, quote: "[图像观察]趋势上升" }] }, "correctness", records, new Set()));
+});
+
+test("audit findings must quote a real draft field", () => {
+  const draft = { verdict: { reason: "候选完成得更少" }, task_analysis: { red_flags: ["本题209.93%"] } };
+  checkAudit({ issues: [{ path: "/verdict/reason", quote: "完成得更少" },
+    { path: "/task_analysis/red_flags/0", quote: "209.93%" }] }, draft);
+  for (const issue of [{ path: "/missing", quote: "原文" }, { path: "/verdict/reason", quote: "伪造原文" }]) {
+    assert.throws(() => checkAudit({ issues: [issue] }, draft));
+  }
+});
+
+test("audit uses strict schema and can return issues without rewriting a verdict", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prime-eval-audit-"));
+  const original = process.env.PRIME_EVAL_TASK;
+  try {
+    const task = path.join(dir, "task.json");
+    fs.writeFileSync(task, JSON.stringify({ stage: "audit", inputs: {}, evidence_bank: [],
+      max_tool_calls: 8, max_submissions: 2, draft: { verdict: { reason: "赢家完成得更少" } },
+      schema: { type: "object", properties: { issues: { type: "array" } }, required: ["issues"], additionalProperties: false } }));
+    process.env.PRIME_EVAL_TASK = task;
+    const hooks = {}, tools = {};
+    extension({ registerTool: tool => { tools[tool.name] = tool; }, on: (name, hook) => { hooks[name] = hook; }, setActiveTools() {} });
+    const payload = hooks.before_provider_request({ payload: { tools: [{ type: "function", function: { name: "submit_evaluation" } }] } });
+    assert.equal(payload.tools[0].function.strict, true);
+    const issue = { category: "consistency", path: "/verdict/reason", problem: "比较方向反了", instruction: "核对方向" };
+    const result = await tools.submit_evaluation.execute("audit", { issues: [issue] });
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details.evaluation, { issues: [{ ...issue, quote: "赢家完成得更少" }] });
+    assert.deepEqual(result.details.evidence_locations, []);
+  } finally {
+    if (original === undefined) delete process.env.PRIME_EVAL_TASK;
+    else process.env.PRIME_EVAL_TASK = original;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("strict submission uses per-candidate reference enum and expands to output evidence", async () => {
@@ -85,13 +119,13 @@ test("numeric comparisons cannot submit until both candidates have been calculat
     assert.equal(canSubmit(), false);
     await tools.calculate.execute("b", { candidate: "B", operation: "divide", operands: ["4", "2"] });
     assert.equal(canSubmit(), true);
-    const params = { verdict: { result: "A_better", reason: "A耗时数据缺失，不能据此奖励速度。" },
+    const params = { verdict: { result: "A_better", reason: "【候选A】更好。A耗时数据缺失，不能据此奖励速度。" },
       task_analysis: { timing_analysis: "" },
       evaluations: Object.fromEntries(["A", "B"].map(candidate => [candidate, { summary: "4除以2得2。", findings: [
         { text: "算式正确", reason: "结果是2。", evidence: [{ ref: `${candidate}-0` }] },
       ] }])) };
     assert.equal((await tools.submit_evaluation.execute("bad", params)).isError, true);
-    params.verdict.reason = "直接给出算式和结果。";
+    params.verdict.reason = "【候选A】更好。直接给出算式和结果。";
     assert.equal((await tools.submit_evaluation.execute("ok", params)).terminate, true);
   } finally {
     if (original === undefined) delete process.env.PRIME_EVAL_TASK;

@@ -34,7 +34,7 @@ for line in sys.stdin:
     typ=cmd['type']
     if typ=='abort': break
     if typ=='get_state':
-        emit({'type':'response','command':typ,'success':True,'data':{'model':{'id':'gpt-5.4-mini','provider':'evaluation-gateway'},'thinkingLevel':'low'}})
+        emit({'type':'response','command':typ,'success':True,'data':{'model':{'id':'gpt-5.6-luna','provider':'evaluation-gateway'},'thinkingLevel':'low'}})
     elif typ.startswith('set_auto_'):
         emit({'type':'response','command':typ,'success':True})
     elif typ=='prompt':
@@ -104,7 +104,7 @@ for line in sys.stdin:
     cmd=json.loads(line)
     typ=cmd['type']
     if typ=='prompt': time.sleep(60)
-    data={'model':{'id':'gpt-5.4-mini','provider':'evaluation-gateway'},'thinkingLevel':'low'} if typ=='get_state' else {}
+    data={'model':{'id':'gpt-5.6-luna','provider':'evaluation-gateway'},'thinkingLevel':'low'} if typ=='get_state' else {}
     print(json.dumps({'type':'response','command':typ,'success':True,'data':data}),flush=True)
 ''')
     script.chmod(0o755)
@@ -143,3 +143,32 @@ def test_missing_timing_is_excluded_and_empty_analysis_is_schema_constrained(tmp
     assert task["timing_comparable"] is both_timed
     timing_schema = task["schema"]["properties"]["task_analysis"]["properties"]["timing_analysis"]
     assert (timing_schema.get("enum") == [""]) is (not both_timed)
+
+
+def test_audit_paths_are_native_choices_and_quotes_are_recovered_locally(tmp_path, monkeypatch):
+    import json
+    import prime_eval.prime as prime_module
+    config = load_config(ROOT / "configs/eval.toml")
+    monkeypatch.setenv("PRIME_EVAL_API_KEY", "fake-local-test-key")
+
+    async def stop_before_rpc(*args, **kwargs):
+        raise RuntimeError("inspect audit schema")
+
+    monkeypatch.setattr(prime_module.asyncio, "create_subprocess_exec", stop_before_rpc)
+    draft = {"verdict": {"result": "A_better", "reason": "赢家却完成得更少"},
+             "evaluations": {"A": {"summary": "评语", "findings": [{"text": "标题", "reason": "理由",
+                            "evidence": [{"message_index": 0, "quote": "原始材料"}]}]}},
+             "task_analysis": {"red_flags": ["规则"]}}
+    data = {"batch_id": "batch", "case_id": "case", "meta": {"ok": True},
+            "messages": [{"role": "user", "content": "问题"}, {"role": "assistant", "content": "回答"}]}
+    records = {label: adapt(data, config.versions[i], "test.jsonl", 1, None)
+               for i, label in enumerate(("A", "B"))}
+    with pytest.raises(RuntimeError, match="inspect audit"):
+        asyncio.run(prime_module._invoke(config, {"binary": "fake"}, "audit", records, None, {}, tmp_path, {}, {"draft": draft}))
+    schema = json.loads((tmp_path / "task.json").read_text())["schema"]
+    issue = schema["properties"]["issues"]["items"]
+    choices = issue["properties"]["path"]["enum"]
+    assert "/verdict/reason" in choices
+    assert "/task_analysis/red_flags/0" in choices
+    assert not any("evidence" in path or path.startswith("/draft/") for path in choices)
+    assert "quote" not in issue["required"] and "quote" not in issue["properties"]

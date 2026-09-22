@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from prime_eval.core import adapt, artifact_evidence, build_plan, initial_evidence, load_config, read_json, validate_result, write_json, write_jsonl
+from prime_eval.core import adapt, artifact_evidence, build_plan, initial_evidence, digest, load_config, read_json, validate_result, write_json, write_jsonl
 from prime_eval.presentation import display_text, save_presentation
 from prime_eval.runner import comparison_row, export_results, read_progress, run_evaluation, validate_run
 from prime_eval.summaries import compare_timing, render_summaries, task_summary
@@ -105,13 +105,19 @@ def fake_evaluation(stage, candidates):
     if stage == "correctness":
         record = candidates["A"]
         return {"is_correct": True, "correctness_reason": "与标准答案一致。", "evidence": [{"message_index": record.final_index, "quote": "答案是 4"}]}
-    return {"verdict": {"result": "A_better", "reason": "A 的表达更直接。"},
+    return {"verdict": {"result": "A_better", "reason": "【候选A】更好。表达更直接。"},
             "task_analysis": {"task_type": "整数加法", "goal": "计算2+2的结果", "requirements": ["给出数值4"],
                               "scoring_points": ["算式与结果一致"], "red_flags": ["将2+2算成5"],
                               "timing_analysis": ""},
             "evaluations": {label: {"summary": "完成任务。", "findings": [{"type": "strength", "dimension": "completeness", "stage": "final_answer",
                           "importance": "high", "text": "回答核心问题", "reason": "给出结果。",
                           "evidence": [{"message_index": r.final_index, "quote": "答案是 4"}]}]} for label, r in candidates.items()}}
+
+
+def fake_receipt(stage, candidates):
+    evaluation = fake_evaluation(stage, candidates)
+    return {"evaluation": evaluation,
+            **({"quality_audit": {"evaluation_hash": digest(evaluation), "status": "passed", "issues": []}} if stage == "pairwise" else {})}
 
 
 def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
@@ -128,7 +134,7 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
         write_json(directory / "metrics.json", {"usage": {"input": 10, "output": 5}})
         if stage == "correctness":
             assert reference is not None
-        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": [], "usage": {}, "duration_seconds": 0.01}
+        return {**fake_receipt(stage, candidates), "viewed_images": [], "usage": {}, "duration_seconds": 0.01}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     plan = build_plan(config)
@@ -203,7 +209,7 @@ def test_summary_tampering_is_detected(config, tmp_path, monkeypatch):
 
     async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
         directory.mkdir(parents=True)
-        return {"evaluation": fake_evaluation(stage, candidates), "duration_seconds": 99, "viewed_images": []}
+        return {**fake_receipt(stage, candidates), "duration_seconds": 99, "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     run = tmp_path / "run"
@@ -229,7 +235,7 @@ def test_comparison_does_not_explain_subjective_evaluation_process(config):
     record = adapt(raw(reference=None), config.versions[0], "input.jsonl", 1, None)
     candidates = {"A": record, "B": record}
     result = fake_evaluation("pairwise", candidates)
-    result["verdict"]["reason"] = "A更直接，且本题无标准答案、未进行独立正确性判定。"
+    result["verdict"]["reason"] = "【候选A】更好。且本题无标准答案、未进行独立正确性判定。"
     with pytest.raises(ValueError, match="流程说明"):
         validate_result(config.schema, "pairwise", result, candidates)
 
@@ -250,9 +256,32 @@ def test_version_names_replace_roles_without_changing_quotes_or_stock_terms(conf
     result = fake_evaluation("pairwise", records)
     row = comparison_row(tmp_path, task, result)
     assert set(row["models"]) == {"a_fast", "a_expert"}
-    assert row["verdict"] == {"result": "win", "winner_version": "a_expert", "winner_name": "A组Expert", "reason": "A组Expert 的表达更直接。"}
+    assert row["verdict"] == {"result": "win", "winner_version": "a_expert", "winner_name": "A组Expert", "reason": "A组Expert更好。表达更直接。"}
     result["verdict"]["result"] = "tie"
     assert comparison_row(tmp_path, task, result)["verdict"]["winner_version"] is None
+
+
+def test_verdict_opening_agrees_with_winner_and_ties_are_explicit(config, tmp_path):
+    records = {label: adapt(raw(reference=None), config.versions[i], "in.jsonl", 1, None)
+               for i, label in enumerate(("A", "B"))}
+    result = fake_evaluation("pairwise", records)
+    result["verdict"]["reason"] = "【候选B】更好。"
+    with pytest.raises(ValueError, match="结论开头"):
+        validate_result(config.schema, "pairwise", result, records)
+    result["verdict"]["result"] = "tie"
+    result["verdict"]["reason"] = "质量相当。"
+    with pytest.raises(ValueError, match="两个都好"):
+        validate_result(config.schema, "pairwise", result, records)
+    for opening in ("两个都好。", "两个都差。"):
+        result["verdict"]["reason"] = opening + "双方情况如下。"
+        validate_result(config.schema, "pairwise", result, records)
+        task = {"candidates": {key: {**r.identity(), "llm": None} for key, r in records.items()},
+                "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+        save_presentation(tmp_path, config)
+        row = comparison_row(tmp_path, task, result)
+        markdown = render_summaries([task_summary(task, row, result["task_analysis"])])
+        assert markdown.index("**结论：" + opening[:-1]) < markdown.index("## 问题")
+        assert "平局" not in markdown
 
 
 def test_full_answer_survives_soft_budget_and_history_prefers_recent(config):
@@ -289,7 +318,7 @@ def test_subjective_comparison_runs_while_correctness_is_pending(config, tmp_pat
             elif reference is None:
                 subjective_finished.set()
             calls.append((stage, reference))
-            return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+            return {**fake_receipt(stage, candidates), "viewed_images": []}
 
         monkeypatch.setattr(runner, "invoke", invoke)
         return await run_evaluation(config, build_plan(config), tmp_path / "pipeline", False)
@@ -320,7 +349,7 @@ def test_interruption_resume_and_corrupt_receipt_recovery(config, tmp_path, monk
         if case == "q2" and not interrupted:
             interrupted = True
             raise asyncio.CancelledError()
-        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+        return {**fake_receipt(stage, candidates), "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     monkeypatch.setattr(runner, "export_results", export)
@@ -361,7 +390,7 @@ def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, t
         directory.mkdir(parents=True)
         if len(calls) == 1:
             raise JudgeError("synthetic failure")
-        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
+        return {**fake_receipt(stage, candidates), "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     run, plan = tmp_path / "run", build_plan(config)
@@ -393,10 +422,10 @@ def test_editorial_omits_missing_metadata_but_keeps_real_answer_omissions(config
                for i, label in enumerate(("A", "B"))}
     evaluation = fake_evaluation("pairwise", records)
     for phrase in ("A组Fast耗时数据缺失，不能据此奖励速度。", "双方缺少原始回答完成时间，不比较快慢。", "未发现有证据支持的明显问题。"):
-        evaluation["verdict"]["reason"] = phrase
+        evaluation["verdict"]["reason"] = "【候选A】更好。" + phrase
         with pytest.raises(ValueError, match="占位话"):
             validate_result(config.schema, "pairwise", evaluation, records)
-    evaluation["verdict"]["reason"] = "用户要机器人板块的涨停家数，答案没有给。"
+    evaluation["verdict"]["reason"] = "【候选A】更好。用户要机器人板块的涨停家数，对方答案没有给。"
     validate_result(config.schema, "pairwise", evaluation, records)
     evaluation["task_analysis"]["timing_analysis"] = "慢了70秒。"
     with pytest.raises(ValueError, match="空字符串"):

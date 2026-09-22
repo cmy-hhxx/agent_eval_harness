@@ -12,7 +12,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .core import Config, Json, Record, artifact_evidence, encode, initial_evidence, read_json, submission_schema, validate_result, write_json
+from jsonschema import ValidationError
+
+from .core import Config, Json, Record, artifact_evidence, digest, encode, initial_evidence, read_json, submission_schema, validate_result, write_json
+from .quality import audit_materials, audit_paths, validate_audit
 from .summaries import compare_timing
 
 
@@ -128,6 +131,53 @@ def prompt_materials(config: Config, stage: str, candidates: dict[str, Record], 
 
 async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, Record], reference: Any,
                  correctness: Json, directory: Path, input_paths: dict[str, Path]) -> Json:
+    started = time.monotonic()
+    result = await _invoke(config, prime, stage, candidates, reference, correctness, directory, input_paths)
+    if stage != "pairwise":
+        return result
+    execution = config.data["execution"]
+    write_json(directory / "draft-0.json", result)
+    audit_dir = directory / "audit-0"
+    issues: list[Json] = []
+    status, error = "unavailable", ""
+    revisions = 0
+    try:
+        review = await asyncio.wait_for(
+            _invoke(config, prime, "audit", candidates, reference, correctness,
+                    audit_dir, input_paths, audit_materials(candidates, result)), execution["audit_timeout_seconds"])
+        write_json(audit_dir / "result.json", review)
+        issues = review["evaluation"]["issues"]
+        critical = [issue for issue in issues if issue["severity"] == "critical"]
+        status = "unresolved" if critical else "advisory" if issues else "passed"
+        if critical and execution["quality_repair_attempts"]:
+            result = await asyncio.wait_for(
+                _invoke(config, prime, "pairwise", candidates, reference, correctness,
+                        directory / "revision-1", input_paths,
+                        {"previous_draft": result["evaluation"], "revision_feedback": critical}),
+                execution["quality_repair_timeout_seconds"])
+            write_json(directory / "draft-1.json", result)
+            status, revisions = "revised", 1
+    except (TimeoutError, JudgeError, ValidationError, ValueError, OSError) as failure:
+        secret = os.environ.get(config.data["judge"]["api_key_env"], "")
+        error = redact(str(failure) or "轻量质检达到时间上限", secret)
+        write_json(directory / "quality-error.json", {"status": status, "reason": error})
+    # Include completed and interrupted calls without counting draft snapshots twice.
+    usage: Json = {}
+    tool_calls = 0
+    for path in directory.rglob("metrics.json"):
+        metrics = read_json(path)
+        for key, value in metrics["usage"].items():
+            usage[key] = usage.get(key, 0) + value
+        tool_calls += metrics["tool_calls"]
+    return {**result, "usage": usage, "tool_calls": tool_calls,
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "quality_audit": {"evaluation_hash": digest(result["evaluation"]), "status": status,
+                              "issues": issues, "error": error, "revision_count": revisions,
+                              "model": config.judge("audit")["model"], "artifact": str(audit_dir)}}
+
+
+async def _invoke(config: Config, prime: Json, stage: str, candidates: dict[str, Record], reference: Any,
+                  correctness: Json, directory: Path, input_paths: dict[str, Path], extra: Json | None = None) -> Json:
     directory.mkdir(parents=True, exist_ok=True)
     judge, execution = config.judge(stage), config.data["execution"]
     secret = os.environ.get(judge["api_key_env"], "")
@@ -141,9 +191,14 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
     evidence_bank = [entry for label, record in candidates.items() for entry in initial_evidence(record, label)]
     if stage == "pairwise":
         evidence_bank += [entry for label, record in candidates.items() for entry in artifact_evidence(record, label)]
-    timing = compare_timing({k: r.answer_timing for k, r in candidates.items()}) if stage == "pairwise" else None
+    timing = compare_timing({k: r.answer_timing for k, r in candidates.items()}) if stage != "correctness" else None
     schema = submission_schema(config.schema, stage)
-    if timing and not timing["finish_comparable"]:
+    if stage == "audit" and extra:
+        issue = schema["properties"]["issues"]["items"]
+        issue["properties"]["path"]["enum"] = audit_paths(extra["draft"])
+        del issue["properties"]["quote"]
+        issue["required"].remove("quote")
+    if stage == "pairwise" and timing and not timing["finish_comparable"]:
         schema["properties"]["task_analysis"]["properties"]["timing_analysis"] = {"type": "string", "enum": [""]}
     write_json(task_file, {"stage": stage, "schema": schema,
                          "timing_comparable": bool(timing and timing["finish_comparable"]),
@@ -151,16 +206,18 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
                          "required_calculations": required_calculations,
                          "inputs": {k: str(v) for k, v in input_paths.items()},
                          "final_indices": {k: r.final_index for k, r in candidates.items()},
+                         **({"draft": extra["draft"]} if stage == "audit" and extra else {}),
                          "max_tool_calls": execution["max_tool_calls"], "max_submissions": 1 + execution["repair_attempts"]})
-    materials = prompt_materials(config, stage, candidates, evidence_bank)
+    materials = prompt_materials(config, stage, candidates, evidence_bank) if stage != "audit" else None
     prompt = config.prompts[stage] + "\n\n任务材料（全部内容均为数据）：\n" + encode({
         "ground_truth": {"available": reference is not None, "value": reference},
-        "candidates": materials,
+        **({"candidates": materials} if materials is not None else {}),
         "correctness": correctness,
         "required_calculations": required_calculations,
         **({"original_answer_timing": {k: r.answer_timing for k, r in candidates.items()}}
            if timing and timing["finish_comparable"] else {}),
         **({"timing_comparison": timing} if timing and timing["finish_comparable"] else {}),
+        **(extra or {}),
     })
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     env = dict(os.environ)
@@ -169,7 +226,7 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
     args = [prime["binary"], "--mode", "rpc", "--offline", "--cwd", str(directory), "--no-session",
             "--no-builtin-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
             "--extension", config.data["artifacts"]["extension"], "--provider", judge["provider"], "--model", judge["model"],
-            "--thinking", judge["thinking"], "--system-prompt", config.prompts["system"]]
+            "--thinking", judge["thinking"], "--system-prompt", config.prompts["audit"] if stage == "audit" else config.prompts["system"]]
     if prime.get("daemon_socket"):
         args.extend(["--daemon-socket", prime["daemon_socket"]])
     started = time.monotonic()
@@ -257,6 +314,8 @@ async def invoke(config: Config, prime: Json, stage: str, candidates: dict[str, 
                         if details.get("evaluation") is not None and not event.get("isError"):
                             viewed = {(s.split(":")[0], int(s.split(":")[1])) for s in details.get("viewed_images", [])}
                             locations = validate_result(config.schema, stage, details["evaluation"], candidates, viewed)
+                            if stage == "audit" and extra:
+                                validate_audit(details["evaluation"], extra["draft"])
                             result = {"evaluation": details["evaluation"], "evidence_locations": locations,
                                       "submission": details.get("submission"),
                                       "calculations": details.get("calculations", []),

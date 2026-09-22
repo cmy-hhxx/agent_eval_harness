@@ -71,6 +71,22 @@ export function checkEvidence(result, stage, records, viewed) {
   return locations;
 }
 
+export function checkAudit(audit, draft) {
+  for (const issue of audit.issues) {
+    if (!issue.path.startsWith("/")) throw new Error("复核 path 必须是 JSON Pointer");
+    let value = draft;
+    for (const key of issue.path.slice(1).split("/").map(k => k.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+      if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) {
+        throw new Error(`复核 path 不存在: ${issue.path}`);
+      }
+      value = value[key];
+    }
+    if (typeof value !== "string" || !issue.quote || !value.includes(issue.quote)) {
+      throw new Error(`复核 quote 不是草稿逐字原文: ${issue.path}`);
+    }
+  }
+}
+
 export default function (pi) {
   const task = JSON.parse(fs.readFileSync(process.env.PRIME_EVAL_TASK, "utf8"));
   const records = Object.fromEntries(Object.entries(task.inputs).map(([key, file]) => [key, JSON.parse(fs.readFileSync(file, "utf8"))]));
@@ -90,6 +106,18 @@ export default function (pi) {
   const textResult = value => ({ content: [{ type: "text", text: JSON.stringify(value) }], details: value });
   const expandSubmission = params => {
     const result = structuredClone(params);
+    if (task.stage === "audit") {
+      for (const issue of result.issues) {
+        let value = task.draft;
+        for (const key of issue.path.slice(1).split("/").map(k => k.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+          if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) throw new Error("复核 path 不存在");
+          value = value[key];
+        }
+        if (typeof value !== "string") throw new Error("复核 path 必须指向具体评语字段");
+        issue.quote = value;
+      }
+      return result;
+    }
     const expand = (evidence, candidate) => evidence.map(item => {
       const entry = bank.get(item.ref);
       if (!entry || entry.candidate !== candidate) throw new Error("引用编号不存在或属于另一候选");
@@ -186,7 +214,9 @@ export default function (pi) {
       details: { candidate: params.candidate, message_index: params.message_index, path: image.path } };
   });
   pi.registerTool({
-    name: "submit_evaluation", label: "提交评测", description: "提交最终结构化评测。evidence 只选择已提供的 ref 编号；程序自动恢复原文引用，成功后立即结束任务。",
+    name: "submit_evaluation", label: "提交评测", description: task.stage === "audit"
+      ? "提交复核问题列表；path 只选择 schema 中的有效字段，程序自动恢复对应原文。没有明确问题时 issues 为空数组。"
+      : "提交最终结构化评测。evidence 只选择已提供的 ref 编号；程序自动恢复原文引用，成功后立即结束任务。",
     parameters: task.schema,
     async execute(_id, params) {
       if (++submissions > task.max_submissions) {
@@ -194,6 +224,7 @@ export default function (pi) {
       }
       try {
         const evaluation = expandSubmission(params);
+        if (task.stage === "audit") checkAudit(evaluation, task.draft);
         if ((task.required_calculations || []).some(candidate => !calculations.some(item => item.candidate === candidate))) {
           throw new Error("必须分别核算双方最终回答中的关键算式，不能只检查一方。");
         }
@@ -201,6 +232,10 @@ export default function (pi) {
           throw new Error("请用‘该回答’表述独立正确性理由，不能使用候选 A/B，避免配对后位置误指。");
         }
         if (task.stage === "pairwise") {
+          const openings = { A_better: ["【候选A】更好。"], B_better: ["【候选B】更好。"], tie: ["两个都好。", "两个都差。"] };
+          if (openings[evaluation.verdict.result] && !openings[evaluation.verdict.result].some(prefix => evaluation.verdict.reason.startsWith(prefix))) {
+            throw new Error("结论开头必须与胜负一致；平局明确两个都好或两个都差。");
+          }
           const editorial = [evaluation.verdict.reason, ...Object.values(evaluation.evaluations).flatMap(review =>
             [review.summary, ...review.findings.flatMap(finding => [finding.text, finding.reason])]),
             ...textLeaves(evaluation.task_analysis).map(leaf => leaf.text)];
@@ -218,7 +253,7 @@ export default function (pi) {
         if (task.stage === "correctness" && evaluation.evidence.some(e => e.message_index !== task.final_indices.A)) {
           throw new Error("独立判对错只允许引用已提供的最终回答");
         }
-        const locations = checkEvidence(evaluation, task.stage, records, viewed);
+        const locations = task.stage === "audit" ? [] : checkEvidence(evaluation, task.stage, records, viewed);
         return { content: [{ type: "text", text: "评测已提交。" }],
           details: { evaluation, submission: params, calculations, evidence_locations: locations, viewed_images: [...viewed] }, terminate: true };
       } catch (error) {
@@ -233,7 +268,7 @@ export default function (pi) {
       evidence.items.properties.ref.enum = [...bank.values()].filter(entry => entry.candidate === candidate).map(entry => entry.ref);
     };
     if (task.stage === "correctness") setRefs(schema.properties.evidence, "A");
-    else for (const candidate of Object.keys(records)) {
+    else if (task.stage === "pairwise") for (const candidate of Object.keys(records)) {
       setRefs(schema.properties.evaluations.properties[candidate].properties.findings.items.properties.evidence, candidate);
     }
     for (const tool of payload.tools || []) {
