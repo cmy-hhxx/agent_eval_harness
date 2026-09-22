@@ -91,7 +91,7 @@ class Config:
 
     def judge(self, stage: str) -> Json:
         shared = self.data["judge"]
-        return {**{k: v for k, v in shared.items() if k not in ("correctness", "pairwise", "audit")}, **shared[stage]}
+        return {**{k: v for k, v in shared.items() if k not in ("correctness", "pairwise")}, **shared[stage]}
 
     def fingerprint(self, stage: str | None = None) -> str:
         # Paths/filtering/concurrency do not change an individual judgment.
@@ -100,11 +100,6 @@ class Config:
         return digest({
             "judge": self.judge(stage) if stage else self.data["judge"],
             "schema": stage_schema(self.schema, stage) if stage else self.schema,
-            "audit": {"judge": self.judge("audit"), "prompt": self.prompts["audit"],
-                      "schema": stage_schema(self.schema, "audit"),
-                      "repairs": execution["quality_repair_attempts"],
-                      "timeout": execution["audit_timeout_seconds"],
-                      "repair_timeout": execution["quality_repair_timeout_seconds"]} if stage == "pairwise" else None,
             "prompts": {k: v for k, v in self.prompts.items() if not stage or k in ("system", stage, "repair")},
             "extension": Path(self.data["artifacts"]["extension"]).read_text(),
             "adapter": ADAPTER_VERSION, "engine": engine,
@@ -136,18 +131,13 @@ def load_config(path: Path) -> Config:
     if any(not isinstance(name, str) or not name.strip() for name in display_names) or len(set(display_names)) != len(versions):
         raise ValueError("display_name 必须非空且不得重复")
     data["execution"].setdefault("report_interval_seconds", 30)
-    data["execution"].setdefault("audit_timeout_seconds", 15)
-    data["execution"].setdefault("quality_repair_timeout_seconds", 30)
-    for key in ("concurrency", "timeout_seconds", "idle_timeout_seconds", "max_tool_calls", "initial_context_chars", "report_interval_seconds", "audit_timeout_seconds", "quality_repair_timeout_seconds"):
+    for key in ("concurrency", "timeout_seconds", "idle_timeout_seconds", "max_tool_calls", "initial_context_chars", "report_interval_seconds"):
         if not isinstance(data["execution"][key], int) or data["execution"][key] <= 0:
             raise ValueError(f"execution.{key} 必须为正整数")
-    data["execution"].setdefault("quality_repair_attempts", 1)
-    for key in ("retries", "repair_attempts", "quality_repair_attempts", "retry_delay_seconds"):
+    for key in ("retries", "repair_attempts", "retry_delay_seconds"):
         if not isinstance(data["execution"][key], int) or data["execution"][key] < 0:
             raise ValueError(f"execution.{key} 必须为非负整数")
-    if data["execution"]["quality_repair_attempts"] > 1:
-        raise ValueError("quality_repair_attempts 只允许0或1，轻量质检不循环审稿")
-    for stage in ("correctness", "pairwise", "audit"):
+    for stage in ("correctness", "pairwise"):
         for key in ("context_window", "max_output_tokens"):
             if not isinstance(data["judge"][stage][key], int) or data["judge"][stage][key] <= 0:
                 raise ValueError(f"judge.{stage}.{key} 必须为正整数")
@@ -431,9 +421,7 @@ def artifact_evidence(record: Record, candidate: str) -> list[Json]:
 
 def validate_result(schema: Json, stage: str, result: Json, candidates: dict[str, Record], viewed: set[tuple[str, int]] | None = None) -> list[Json]:
     Draft202012Validator(stage_schema(schema, stage) if stage != "output" else schema).validate(result)
-    if stage == "audit":
-        return []
-    if stage == "pairwise" and "audit" in schema["$defs"]:
+    if stage == "pairwise":
         verdict = result["verdict"]
         openings = {"A_better": ("【候选A】更好。",), "B_better": ("【候选B】更好。",),
                     "tie": ("两个都好。", "两个都差。")}

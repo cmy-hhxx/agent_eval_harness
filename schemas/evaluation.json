@@ -95,19 +95,6 @@
         }
       }
     },
-    "audit": {
-      "type": "object", "additionalProperties": false, "required": ["issues"],
-      "properties": {"issues": {"type": "array", "maxItems": 6, "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["severity", "category", "path", "quote", "problem", "instruction"],
-        "properties": {
-          "severity": {"enum": ["critical", "minor"]},
-          "category": {"enum": ["consistency", "requirement", "evidence", "numerical", "rubric", "wording"]},
-          "path": {"type": "string", "minLength": 1}, "quote": {"type": "string", "minLength": 1},
-          "problem": {"type": "string", "minLength": 1}, "instruction": {"type": "string", "minLength": 1}
-        }
-      }}}
-    },
     "evaluation": {
       "type": "object", "additionalProperties": false,
       "required": ["is_correct", "correctness_reason", "summary", "findings"],

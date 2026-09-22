@@ -71,22 +71,6 @@ export function checkEvidence(result, stage, records, viewed) {
   return locations;
 }
 
-export function checkAudit(audit, draft) {
-  for (const issue of audit.issues) {
-    if (!issue.path.startsWith("/")) throw new Error("复核 path 必须是 JSON Pointer");
-    let value = draft;
-    for (const key of issue.path.slice(1).split("/").map(k => k.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-      if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) {
-        throw new Error(`复核 path 不存在: ${issue.path}`);
-      }
-      value = value[key];
-    }
-    if (typeof value !== "string" || !issue.quote || !value.includes(issue.quote)) {
-      throw new Error(`复核 quote 不是草稿逐字原文: ${issue.path}`);
-    }
-  }
-}
-
 export default function (pi) {
   const task = JSON.parse(fs.readFileSync(process.env.PRIME_EVAL_TASK, "utf8"));
   const records = Object.fromEntries(Object.entries(task.inputs).map(([key, file]) => [key, JSON.parse(fs.readFileSync(file, "utf8"))]));
@@ -106,18 +90,6 @@ export default function (pi) {
   const textResult = value => ({ content: [{ type: "text", text: JSON.stringify(value) }], details: value });
   const expandSubmission = params => {
     const result = structuredClone(params);
-    if (task.stage === "audit") {
-      for (const issue of result.issues) {
-        let value = task.draft;
-        for (const key of issue.path.slice(1).split("/").map(k => k.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-          if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) throw new Error("复核 path 不存在");
-          value = value[key];
-        }
-        if (typeof value !== "string") throw new Error("复核 path 必须指向具体评语字段");
-        issue.quote = value;
-      }
-      return result;
-    }
     const expand = (evidence, candidate) => evidence.map(item => {
       const entry = bank.get(item.ref);
       if (!entry || entry.candidate !== candidate) throw new Error("引用编号不存在或属于另一候选");
@@ -200,6 +172,18 @@ export default function (pi) {
     calculations.push(result);
     return textResult(result);
   });
+  const calculation = properties({
+    operation: { type: "string", enum: ["add", "subtract", "multiply", "divide"] },
+    operands: { type: "array", minItems: 2, maxItems: 20, items: { type: "string" } },
+  }, ["operation", "operands"]);
+  register("calculate_pair", "一次核算双方各自的关键算式，减少模型往返。A、B的操作数分别取自各自回答。", properties({
+    A: calculation, B: calculation,
+  }, ["A", "B"]), params => {
+    const results = ["A", "B"].map(candidate => ({ candidate,
+      ...calculate(params[candidate].operation, params[candidate].operands) }));
+    calculations.push(...results);
+    return textResult({ calculations: results });
+  });
   register("view_image", "查看某条消息中已有的内嵌图像。禁止下载远程图像；image_index 从 0 开始。", properties({
     candidate, message_index: index, image_index: index,
   }, ["candidate", "message_index"]), params => {
@@ -214,9 +198,7 @@ export default function (pi) {
       details: { candidate: params.candidate, message_index: params.message_index, path: image.path } };
   });
   pi.registerTool({
-    name: "submit_evaluation", label: "提交评测", description: task.stage === "audit"
-      ? "提交复核问题列表；path 只选择 schema 中的有效字段，程序自动恢复对应原文。没有明确问题时 issues 为空数组。"
-      : "提交最终结构化评测。evidence 只选择已提供的 ref 编号；程序自动恢复原文引用，成功后立即结束任务。",
+    name: "submit_evaluation", label: "提交评测", description: "提交最终结构化评测。evidence 只选择已提供的 ref 编号；程序自动恢复原文引用，成功后立即结束任务。",
     parameters: task.schema,
     async execute(_id, params) {
       if (++submissions > task.max_submissions) {
@@ -224,7 +206,6 @@ export default function (pi) {
       }
       try {
         const evaluation = expandSubmission(params);
-        if (task.stage === "audit") checkAudit(evaluation, task.draft);
         if ((task.required_calculations || []).some(candidate => !calculations.some(item => item.candidate === candidate))) {
           throw new Error("必须分别核算双方最终回答中的关键算式，不能只检查一方。");
         }
@@ -253,7 +234,7 @@ export default function (pi) {
         if (task.stage === "correctness" && evaluation.evidence.some(e => e.message_index !== task.final_indices.A)) {
           throw new Error("独立判对错只允许引用已提供的最终回答");
         }
-        const locations = task.stage === "audit" ? [] : checkEvidence(evaluation, task.stage, records, viewed);
+        const locations = checkEvidence(evaluation, task.stage, records, viewed);
         return { content: [{ type: "text", text: "评测已提交。" }],
           details: { evaluation, submission: params, calculations, evidence_locations: locations, viewed_images: [...viewed] }, terminate: true };
       } catch (error) {
@@ -283,7 +264,7 @@ export default function (pi) {
       payload.tools = payload.tools.filter(tool => (tool.function || tool).name !== "submit_evaluation");
     }
     // Native constrained tool decoding, not an instruction to produce JSON text.
-    const forcedTool = pendingCalculations.length ? "calculate" : "submit_evaluation";
+    const forcedTool = pendingCalculations.length ? (task.stage === "pairwise" ? "calculate_pair" : "calculate") : "submit_evaluation";
     payload.tool_choice = calls >= task.max_tool_calls
       ? (payload.messages ? { type: "function", function: { name: forcedTool } }
         : { type: "function", name: forcedTool }) : "required";
@@ -296,6 +277,6 @@ export default function (pi) {
   });
   pi.on("session_start", () => {
     pi.setActiveTools(task.stage === "correctness" ? ["calculate", "submit_evaluation"]
-      : ["read_trace", "search_trace", "calculate", "view_image", "submit_evaluation"]);
+      : ["read_trace", "search_trace", "calculate", "calculate_pair", "view_image", "submit_evaluation"]);
   });
 }

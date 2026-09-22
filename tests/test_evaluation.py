@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from prime_eval.core import adapt, artifact_evidence, build_plan, initial_evidence, digest, load_config, read_json, validate_result, write_json, write_jsonl
+from prime_eval.core import adapt, artifact_evidence, build_plan, initial_evidence, load_config, read_json, validate_result, write_json, write_jsonl
 from prime_eval.presentation import display_text, save_presentation
 from prime_eval.runner import comparison_row, export_results, read_progress, run_evaluation, validate_run
 from prime_eval.summaries import compare_timing, render_summaries, task_summary
@@ -114,11 +114,6 @@ def fake_evaluation(stage, candidates):
                           "evidence": [{"message_index": r.final_index, "quote": "答案是 4"}]}]} for label, r in candidates.items()}}
 
 
-def fake_receipt(stage, candidates):
-    evaluation = fake_evaluation(stage, candidates)
-    return {"evaluation": evaluation,
-            **({"quality_audit": {"evaluation_hash": digest(evaluation), "status": "passed", "issues": []}} if stage == "pairwise" else {})}
-
 
 def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
     import prime_eval.runner as runner
@@ -134,7 +129,7 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
         write_json(directory / "metrics.json", {"usage": {"input": 10, "output": 5}})
         if stage == "correctness":
             assert reference is not None
-        return {**fake_receipt(stage, candidates), "viewed_images": [], "usage": {}, "duration_seconds": 0.01}
+        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": [], "usage": {}, "duration_seconds": 0.01}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     plan = build_plan(config)
@@ -209,7 +204,7 @@ def test_summary_tampering_is_detected(config, tmp_path, monkeypatch):
 
     async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
         directory.mkdir(parents=True)
-        return {**fake_receipt(stage, candidates), "duration_seconds": 99, "viewed_images": []}
+        return {"evaluation": fake_evaluation(stage, candidates), "duration_seconds": 99, "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     run = tmp_path / "run"
@@ -318,7 +313,7 @@ def test_subjective_comparison_runs_while_correctness_is_pending(config, tmp_pat
             elif reference is None:
                 subjective_finished.set()
             calls.append((stage, reference))
-            return {**fake_receipt(stage, candidates), "viewed_images": []}
+            return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
 
         monkeypatch.setattr(runner, "invoke", invoke)
         return await run_evaluation(config, build_plan(config), tmp_path / "pipeline", False)
@@ -349,7 +344,7 @@ def test_interruption_resume_and_corrupt_receipt_recovery(config, tmp_path, monk
         if case == "q2" and not interrupted:
             interrupted = True
             raise asyncio.CancelledError()
-        return {**fake_receipt(stage, candidates), "viewed_images": []}
+        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     monkeypatch.setattr(runner, "export_results", export)
@@ -390,7 +385,7 @@ def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, t
         directory.mkdir(parents=True)
         if len(calls) == 1:
             raise JudgeError("synthetic failure")
-        return {**fake_receipt(stage, candidates), "viewed_images": []}
+        return {"evaluation": fake_evaluation(stage, candidates), "viewed_images": []}
 
     monkeypatch.setattr(runner, "invoke", invoke)
     run, plan = tmp_path / "run", build_plan(config)

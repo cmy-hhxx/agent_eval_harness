@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculate, checkAudit, checkEvidence, textLeaves } from "../extensions/evaluation-tools.js";
+import { calculate, checkEvidence, textLeaves } from "../extensions/evaluation-tools.js";
 import extension from "../extensions/evaluation-tools.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -19,40 +19,6 @@ test("nested evidence is checked against raw text including Unicode separators",
   assert.equal(textLeaves(records.A.messages[0])[0].text, "a\u2028b\n原始文本");
   assert.throws(() => checkEvidence({ evidence: [{ message_index: 0, quote: "伪造引文" }] }, "correctness", records, new Set()));
   assert.throws(() => checkEvidence({ evidence: [{ message_index: 0, quote: "[图像观察]趋势上升" }] }, "correctness", records, new Set()));
-});
-
-test("audit findings must quote a real draft field", () => {
-  const draft = { verdict: { reason: "候选完成得更少" }, task_analysis: { red_flags: ["本题209.93%"] } };
-  checkAudit({ issues: [{ path: "/verdict/reason", quote: "完成得更少" },
-    { path: "/task_analysis/red_flags/0", quote: "209.93%" }] }, draft);
-  for (const issue of [{ path: "/missing", quote: "原文" }, { path: "/verdict/reason", quote: "伪造原文" }]) {
-    assert.throws(() => checkAudit({ issues: [issue] }, draft));
-  }
-});
-
-test("audit uses strict schema and can return issues without rewriting a verdict", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prime-eval-audit-"));
-  const original = process.env.PRIME_EVAL_TASK;
-  try {
-    const task = path.join(dir, "task.json");
-    fs.writeFileSync(task, JSON.stringify({ stage: "audit", inputs: {}, evidence_bank: [],
-      max_tool_calls: 8, max_submissions: 2, draft: { verdict: { reason: "赢家完成得更少" } },
-      schema: { type: "object", properties: { issues: { type: "array" } }, required: ["issues"], additionalProperties: false } }));
-    process.env.PRIME_EVAL_TASK = task;
-    const hooks = {}, tools = {};
-    extension({ registerTool: tool => { tools[tool.name] = tool; }, on: (name, hook) => { hooks[name] = hook; }, setActiveTools() {} });
-    const payload = hooks.before_provider_request({ payload: { tools: [{ type: "function", function: { name: "submit_evaluation" } }] } });
-    assert.equal(payload.tools[0].function.strict, true);
-    const issue = { category: "consistency", path: "/verdict/reason", problem: "比较方向反了", instruction: "核对方向" };
-    const result = await tools.submit_evaluation.execute("audit", { issues: [issue] });
-    assert.equal(result.terminate, true);
-    assert.deepEqual(result.details.evaluation, { issues: [{ ...issue, quote: "赢家完成得更少" }] });
-    assert.deepEqual(result.details.evidence_locations, []);
-  } finally {
-    if (original === undefined) delete process.env.PRIME_EVAL_TASK;
-    else process.env.PRIME_EVAL_TASK = original;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test("strict submission uses per-candidate reference enum and expands to output evidence", async () => {
@@ -94,7 +60,8 @@ test("strict submission uses per-candidate reference enum and expands to output 
   }
 });
 
-test("numeric comparisons cannot submit until both candidates have been calculated", async () => {
+for (const mode of ["single", "pair"]) {
+test(`numeric comparisons require bilateral calculations (${mode})`, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prime-eval-math-"));
   const original = process.env.PRIME_EVAL_TASK;
   try {
@@ -115,9 +82,23 @@ test("numeric comparisons cannot submit until both candidates have been calculat
       ({ type: "function", function: { name: tool.name, parameters: tool.parameters } })) } });
     const canSubmit = () => payload().tools.some(tool => tool.function.name === "submit_evaluation");
     assert.equal(canSubmit(), false);
-    await tools.calculate.execute("a", { candidate: "A", operation: "divide", operands: ["4", "2"] });
-    assert.equal(canSubmit(), false);
-    await tools.calculate.execute("b", { candidate: "B", operation: "divide", operands: ["4", "2"] });
+    if (mode === "single") {
+      await tools.calculate.execute("a", { candidate: "A", operation: "divide", operands: ["4", "2"] });
+      assert.equal(canSubmit(), false);
+      await tools.calculate.execute("b", { candidate: "B", operation: "divide", operands: ["4", "2"] });
+    } else {
+      const rejected = await tools.calculate_pair.execute("bad-pair", {
+        A: { operation: "divide", operands: ["4", "2"] }, B: { operation: "divide", operands: ["4", "0"] },
+      });
+      assert.equal(rejected.isError, true);
+      assert.equal(canSubmit(), false);
+      const result = await tools.calculate_pair.execute("pair", {
+        A: { operation: "divide", operands: ["174205820.63", "12889714.19"] },
+        B: { operation: "divide", operands: ["17400", "1288.97"] },
+      });
+      assert.deepEqual(result.details.calculations.map(c => [c.candidate, Number(c.result).toFixed(2)]),
+        [["A", "13.52"], ["B", "13.50"]]);
+    }
     assert.equal(canSubmit(), true);
     const params = { verdict: { result: "A_better", reason: "【候选A】更好。A耗时数据缺失，不能据此奖励速度。" },
       task_analysis: { timing_analysis: "" },
@@ -133,3 +114,4 @@ test("numeric comparisons cannot submit until both candidates have been calculat
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+}
