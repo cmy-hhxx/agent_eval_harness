@@ -21,7 +21,7 @@ test("nested evidence is checked against raw text including Unicode separators",
   assert.throws(() => checkEvidence({ evidence: [{ message_index: 0, quote: "[图像观察]趋势上升" }] }, "correctness", records, new Set()));
 });
 
-test("strict submission uses per-candidate reference enum and expands to demo evidence", async () => {
+test("strict submission uses per-candidate reference enum and expands to output evidence", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prime-eval-test-"));
   const original = process.env.PRIME_EVAL_TASK;
   try {

@@ -363,7 +363,7 @@ def stage_schema(schema: Json, stage: str) -> Json:
 
 
 def submission_schema(schema: Json, stage: str) -> Json:
-    """Use verified source handles on the wire; expand them to demo evidence locally."""
+    """Use verified source handles on the wire; expand them to output evidence locally."""
     result = stage_schema(schema, stage)
 
     def replace(node: Any) -> None:
