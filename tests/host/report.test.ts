@@ -24,7 +24,7 @@ for (const objective of [false, true])
         const inputs = Object.fromEntries(
           versions.map((version, i) => [
             i === 0 ? "A" : "B",
-            raw("q1", reference, version === "a_fast" ? "2+2=4（【候选A】为原文）" : "2+2=5"),
+            raw("q1", reference, version === "a_fast" ? "2+2=4（【候选A】、候选B、B的问题小于A为原文）" : "2+2=5"),
           ]),
         );
         const candidates = Object.fromEntries(
@@ -51,7 +51,7 @@ for (const objective of [false, true])
               attemptId: "test",
               evaluation: {
                 is_correct: candidate.version === "a_fast",
-                correctness_reason: candidate.version === "a_fast" ? "结果是4。" : "结果应为4。",
+                correctness_reason: candidate.version === "a_fast" ? "候选A结果是4。" : "【候选A】结果应为4。",
                 evidence: [{ message_index: 1, quote: String(inputs[label].messages[1].content) }],
               },
               audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", cached: false, acceptedAt: 0,
@@ -61,9 +61,15 @@ for (const objective of [false, true])
           Object.entries(inputs).map(([label, input]) => [label, String(input.messages[1].content)]),
         ));
         const winner = reverse ? "B" : "A", loser = reverse ? "A" : "B";
-        result.verdict = { result: reverse ? "B_better" : "A_better", reason: "【候选A】与【候选B】存在结果差异。" };
+        result.verdict = { result: reverse ? "B_better" : "A_better", reason: "【候选A】与【候选B】存在结果差异。B的问题小于A的缺陷。" };
+        result.evaluations[winner].summary = "候选A与候选 B相比，A更完整，B更快。A股、B股、A+H、A浪、AI、EBITDA、方案A、中枢A/B、A/B/C均为题目术语。";
         result.evaluations[loser].summary = "加法结果错误。";
         result.evaluations[loser].findings[0].type = "problem";
+        result.evaluations[winner].findings[0].reason = "相较B，A更完整。";
+        result.evaluations[winner].findings[0].assessment.impact = "B的问题小于A的缺陷。";
+        result.task_analysis.scoring_points = ["比较A与B的交付质量。"];
+        result.task_analysis.timing_analysis = "A与B的耗时相同。";
+        result.decision_basis.tradeoff = "B的优点不能抵消A的优势。";
         const snapshots = Object.fromEntries(Object.entries(candidates).map(([label, c]) => [c.input_hash, inputs[label]]));
         validateEvaluation(task, snapshots, result, emptyAudit());
         const row = await comparisonRow(directory, task, result, receipts, { a_fast: "A组Fast", aa_fast: "AA组Fast" });
@@ -73,16 +79,22 @@ for (const objective of [false, true])
         assert.deepEqual(row.case, { batch_id: "b1", case_id: "q1" });
         assert.deepEqual(row.verdict, {
           result: "win", winner_version: "a_fast", winner_name: "A组Fast",
-          reason: reverse ? "AA组Fast与A组Fast存在结果差异。" : "A组Fast与AA组Fast存在结果差异。",
+          reason: reverse ? "AA组Fast与A组Fast存在结果差异。A组Fast的问题小于AA组Fast的缺陷。" : "A组Fast与AA组Fast存在结果差异。AA组Fast的问题小于A组Fast的缺陷。",
         });
         const reviews = row.evaluations as Record<string, Review & CorrectnessResult>;
         assert.equal(reviews.a_fast.is_correct, objective ? true : null);
         assert.equal(reviews.aa_fast.is_correct, objective ? false : null);
-        assert.equal(reviews.a_fast.correctness_reason, objective ? "结果是4。" : "");
-        assert.equal(reviews.aa_fast.correctness_reason, objective ? "结果应为4。" : "");
+        assert.equal(reviews.a_fast.correctness_reason, objective ? "A组Fast结果是4。" : "");
+        assert.equal(reviews.aa_fast.correctness_reason, objective ? "AA组Fast结果应为4。" : "");
+        const labelA = reverse ? "AA组Fast" : "A组Fast", labelB = reverse ? "A组Fast" : "AA组Fast";
+        assert.equal(reviews.a_fast.summary, `${labelA}与${labelB}相比，${labelA}更完整，${labelB}更快。A股、B股、A+H、A浪、AI、EBITDA、方案A、中枢A/B、A/B/C均为题目术语。`);
+        assert.equal(reviews.a_fast.findings[0].reason, `相较${labelB}，${labelA}更完整。`);
+        assert.equal(reviews.a_fast.findings[0].assessment.impact, `${labelB}的问题小于${labelA}的缺陷。`);
+        assert.deepEqual((row.task_analysis as { scoring_points: string[] }).scoring_points, [`比较${labelA}与${labelB}的交付质量。`]);
+        assert.equal((row.task_analysis as { timing_analysis: string }).timing_analysis, `${labelA}与${labelB}的耗时相同。`);
         assert.deepEqual(reviews.a_fast.findings[0].evidence, result.evaluations[winner].findings[0].evidence);
         assert.deepEqual(row.decision_basis, {
-          tradeoff: result.decision_basis.tradeoff,
+          tradeoff: `${labelB}的优点不能抵消${labelA}的优势。`,
           decisive_findings: versions.map((candidate) => ({ candidate, finding_index: 0 })),
           counterevidence: [],
         });

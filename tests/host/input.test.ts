@@ -154,3 +154,36 @@ test("provenance resolves only references in the finding quote", () => {
   assert.deepEqual(trace.tools, []);
   assert.deepEqual(trace.candidate_tools, ["FinQuery", "Search"]);
 });
+
+test("submission feedback locates every invalid quote and missing counterevidence", async () => {
+  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+  try {
+    const plan = await buildPlan(config),
+      result = pairResult();
+    result.verdict.result = "A_better";
+    const problem = structuredClone(result.evaluations.A.findings[0]);
+    problem.type = "problem";
+    result.evaluations.A.findings.push(problem);
+    result.evaluations.A.findings[0].evidence[0].quote = "invented A";
+    result.evaluations.B.findings[0].evidence[0].quote = "invented B";
+    assert.throws(() => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit()), (error: unknown) => {
+      assert(error instanceof Error);
+      for (const location of [
+        "counterevidence 缺少 A:1",
+        "counterevidence 缺少 B:0",
+        "evaluations.A.findings[0].evidence[0]",
+        "evaluations.B.findings[0].evidence[0]",
+      ]) assert(error.message.includes(location), error.message);
+      return true;
+    });
+    result.decision_basis.counterevidence = [
+      { candidate: "A", finding_index: 1 },
+      { candidate: "B", finding_index: 0 },
+    ];
+    result.evaluations.A.findings[0].evidence[0].quote = "2+2=4";
+    result.evaluations.B.findings[0].evidence[0].quote = "2+2=4";
+    validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit());
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

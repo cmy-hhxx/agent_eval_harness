@@ -52,6 +52,8 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         executionMode: "sequential",
         async execute(_id, args, signal) {
           const result = await options.execute(tool.name, args, signal);
+          if (result.isError)
+            throw new Error(result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n"));
           return { ...result, content: sdkContent(result.content), details: result.details ?? {} };
         },
       }));

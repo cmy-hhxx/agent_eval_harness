@@ -261,3 +261,43 @@ test("token budget aborts at the model response boundary", async () => {
     await fixture.close();
   }
 });
+
+for (const message of ["Connection error.", "terminated"])
+  test(`transient SDK error is retryable: ${message}`, async () => {
+    const fixture = await harness(async (options) => ({
+      async run() {
+        options.onEvent({ type: "message_end", message: {
+          role: "assistant", stopReason: "error", errorMessage: message,
+        } });
+      },
+      async abort() {},
+      async dispose() {},
+    }));
+    try {
+      await fixture.start();
+      const status = await fixture.done();
+      assert.equal(status.error, message);
+      assert.equal(status.retryable, true);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+test("repair exhaustion preserves its cause instead of a generic SDK abort", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      await options.execute("submit_evaluation", {});
+      throw new Error("This operation was aborted");
+    },
+    async abort() {},
+    async dispose() {},
+  }), { repairAttempts: 0 });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.error, "Submission repair budget exhausted");
+    assert.equal(status.retryable, false);
+  } finally {
+    await fixture.close();
+  }
+});

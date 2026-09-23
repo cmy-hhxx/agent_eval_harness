@@ -20,8 +20,12 @@ export const SYSTEM_PROMPT = `你是中文评测编辑。按照任务输出契�
 先理解共同要求，再判断表现；这是一条方法建议，不要求调用固定工具或遵循固定步骤。候选位置不代表模型身份，回答长度、工具数量与引用数量不天然代表质量。
 完整材料在 inputs/ 下，可以使用材料工具，也可以 execute_code 编写 Python 或 shell 分析。不得改写用于评测的原始材料。无需检查所有细枝末节，证据充分后即可提交。
 输出用 submit_evaluation 提交。证据直接给原始 message_index 和逐字 quote；也可复制工具返回的 evidence 对象。不得伪造证据，推理文本不能独自证明外部事实。
+quote 必须是该候选对应原始消息中实际存在的一段连续文字。优先复制足以证明发现的短句，保留原文标点、空格、换行和 Markdown；不得改写、添加省略号、拼接不相邻片段或把概括放进 quote。多处证据拆成多个 evidence；不确定原文时可用 search_trace 获取并原样复制 evidence。message_index 是原始消息索引，不是 catalog 的行号。
 数值比较建议核算双方，并关注可能改变结论的反向证据。图片只有实际使用 view_image 观察后才能以“[图像观察]”引用；源码不等于图片。
 评语中用【候选A】、【候选B】指代候选，Host 会还原实际版本名称。结论清楚、具体，不填充空泛优缺点；原始回答耗时和本次裁判耗时不可混淆。
+只保留影响评价的关键 findings，通常每方 1–3 条即可，不必凑满六条；每条用简洁评语串起观察、证据和影响，避免在 summary、reason、impact 中重复长篇论述。所有 requirement_index、finding_index 从 0 开始，必须指向最终提交数组的真实位置。
+decision_basis 的提交规则：除 not_comparable 外，decisive_findings 必须同时引用 A、B 的已确认（established）发现，平局也一样。选择赢家时，决定性发现必须包含赢家优势或输家问题。counterevidence 必须完整列出「赢家的所有 medium/high、established 的 problem」和「输家的所有 medium/high、established 的 strength」，即使已在其他字段提到也必须列出对应索引；在 tradeoff 解释这些反向证据为何没有推翻结论。不得为了通过校验降低发现的重要性或证据确定性。
+提交前核对原文、双方索引与完整反向证据。提交被拒绝表示评测尚未完成，应按错误修正后重新调用 submit_evaluation；普通文字回复不能代替提交。任何一方缺少原始完成耗时时 timing_analysis 必须为 ""。
 任务时间和工具预算由 Host 提供。预算不足以继续探索时，根据已有证据提交；材料不足可选择 not_comparable，不要为了完成任务编造结论。`;
 
 function expand(value: unknown): unknown {
@@ -61,6 +65,7 @@ export function validateEvaluation(
   if (!validator(result)) throw new Error("输出结构无效：" + ajv.errorsText(validator.errors));
   if (data.stage === "pairwise") comparisonPair(Object.values(data.candidates).map((r) => r.version));
   const pairwise = result as PairwiseResult;
+  const repairErrors: string[] = [];
   if (data.stage === "pairwise") {
     const { evaluations, references, analysis } = {
       evaluations: pairwise.evaluations,
@@ -104,7 +109,7 @@ export function validateEvaluation(
             finding.assessment.evidence_status === "established" &&
             !references.counterevidence.some((r) => r.candidate === candidate && r.finding_index === index)
           )
-            throw new Error("遗漏已确认的重要反向证据");
+            repairErrors.push(`遗漏已确认的重要反向证据：counterevidence 缺少 ${candidate}:${index}`);
         });
     if (
       Object.values(data.candidates).some((r) => r.answer_timing.finish_seconds === null) &&
@@ -116,9 +121,11 @@ export function validateEvaluation(
     const raw = inputs[task.inputIds[label]] as RawInput;
     const evidence =
       data.stage === "correctness"
-        ? (result as CorrectnessResult).evidence
-        : pairwise.evaluations[label].findings.flatMap((f) => f.evidence);
-    for (const item of evidence) {
+        ? (result as CorrectnessResult).evidence.map((item, i) => ({ item, location: `evidence[${i}]` }))
+        : pairwise.evaluations[label].findings.flatMap((f, i) =>
+            f.evidence.map((item, j) => ({ item, location: `evaluations.${label}.findings[${i}].evidence[${j}]` })),
+          );
+    for (const { item, location } of evidence) {
       if (data.stage === "correctness" && item.message_index !== candidate.final_index)
         throw new Error("独立判对错只能引用最终回答");
       const message = raw.messages[item.message_index];
@@ -127,9 +134,10 @@ export function validateEvaluation(
         if (!audit.viewedImages.includes(`${label}:${item.message_index}`))
           throw new Error("不能引用未查看的图片");
       } else if (!strings(message).some(([, text]) => text.includes(item.quote)))
-        throw new Error("quote 不是对应消息的逐字原文");
+        repairErrors.push(`quote 不是对应消息的逐字原文：${location}，候选 ${label} 的原始 message_index=${item.message_index}；请读取该消息并复制连续原文`);
     }
   }
+  if (repairErrors.length) throw new Error(repairErrors.join("\n"));
 }
 
 export const pairwisePack: EvaluationPack = {

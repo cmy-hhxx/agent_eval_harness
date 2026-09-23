@@ -40,6 +40,11 @@ for (const engine of ["pi", "prime"] as Engine[])
                 }
               : pairResult()
             : { language: "python", code: "print(2+2)" };
+          if (engine === "pi" && ranCode && !messages.some((m) =>
+            m.role === "tool" && String(m.content).includes("quote 不是对应消息的逐字原文"))) {
+            const result = args as { evidence?: { quote: string }[]; evaluations?: ReturnType<typeof pairResult>["evaluations"] };
+            (result.evidence || result.evaluations!.A.findings[0].evidence)[0].quote = "invented";
+          }
           const event = {
             id: "fixture-" + requests.length,
             object: "chat.completion.chunk",
@@ -117,11 +122,18 @@ for (const engine of ["pi", "prime"] as Engine[])
         assert.deepEqual(serverErrors, []);
         const failures = await readFile(path.join(config.outputDir, options.runId, "failures.jsonl"), "utf8");
         assert.equal(summary.completed_comparisons, 1, failures);
-        assert.equal(requests.length, 6, "submit must terminate without another model request");
+        const expectedRequests = engine === "pi" ? 9 : 6;
+        assert.equal(requests.length, expectedRequests, "submit must terminate without another model request");
+        if (engine === "pi") {
+          const task = options.plan.tasks[0];
+          const events = (await readFile(path.join(config.outputDir, options.runId, "tasks", task.id, "attempt-001/events.jsonl"), "utf8"))
+            .trim().split("\n").map((line) => JSON.parse(line));
+          assert(events.some((e) => e.type === "model" && e.data?.type === "tool_execution_end" && e.data?.isError === true));
+        }
         const validation = await validateRun(path.join(config.outputDir, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));
         await runEvaluation({ ...options, resume: true });
-        assert.equal(requests.length, 6);
+        assert.equal(requests.length, expectedRequests);
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
           assert(["4096", "8192"].includes(String(payload.max_completion_tokens)));

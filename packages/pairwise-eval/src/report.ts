@@ -26,7 +26,11 @@ import { validateEvaluation } from "./index.js";
 function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
     return (
-      key === "quote" ? value : value.replaceAll("【候选A】", names.A).replaceAll("【候选B】", names.B)
+      key === "quote" ? value : value.replace(
+        /【候选([AB])】|候选\s*([AB])(?![A-Za-z0-9_])|(?:中枢\s*A\s*\/\s*B|A\s*\/\s*B\s*\/\s*C|(?:公司|方案|情景|选项|计划|路径|项目|中枢)\s*[AB])|(?<![A-Za-z0-9_])([AB])(?![A-Za-z0-9_]|组|\s*(?:股|[+＋]\s*H|浪|类|级|轮|款|型))/gu,
+        (match, bracketed: string | undefined, candidate: string | undefined, bare: string | undefined) =>
+          names[bracketed || candidate || bare || ""] || match,
+      )
     ) as T;
   if (Array.isArray(value)) return value.map((v) => display(v, names)) as T;
   if (value && typeof value === "object")
@@ -63,7 +67,7 @@ export async function comparisonRow(
     });
     evaluations[c.version] = {
       is_correct: correctness.is_correct,
-      correctness_reason: correctness.correctness_reason,
+      correctness_reason: display(correctness.correctness_reason, { A: labels[label] }),
       ...review,
     };
   }
@@ -186,7 +190,7 @@ export async function reportRun(run: string): Promise<JsonObject> {
     if (data.stage === "correctness") {
       correctness.push({
         ...data.candidates.A,
-        ...(receipt.evaluation as CorrectnessResult),
+        ...display(receipt.evaluation as CorrectnessResult, { A: names[data.candidates.A.version] || data.candidates.A.name }),
         task_id: task.id,
         assessment_status: "assessed",
       });
