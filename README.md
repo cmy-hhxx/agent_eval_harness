@@ -34,7 +34,7 @@ npm run eval -- run --engine prime --run-id prime-001
 
 | 想了解什么 | 入口 |
 |---|---|
-| 配置、命令、目录、恢复与部署 | [使用指南](docs/usage.md) |
+| 配置、命令、目录、恢复与 Worker | [使用指南](docs/usage.md) |
 | 输入、配对、结果与证据规则 | [数据契约](docs/contract.md) |
 | Host / Worker、模块边界与扩展 | [架构](docs/architecture.md) |
 | 开发、测试、依赖与文档维护 | [开发指南](docs/development.md) |

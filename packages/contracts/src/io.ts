@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Artifact, JsonObject } from "./index.js";
@@ -44,13 +47,14 @@ export async function exists(file: string): Promise<boolean> {
 export async function readJson<T = JsonObject>(file: string): Promise<T> {
   return JSON.parse(await readFile(file, "utf8")) as T;
 }
-export async function atomicText(file: string, value: string): Promise<void> {
+export async function atomicWrite(file: string, value: string | Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = path.join(path.dirname(file), "." + path.basename(file) + "-" + randomUUID());
   try {
     const handle = await open(temp, "wx");
     try {
-      await handle.writeFile(value);
+      if (typeof value === "string" || value instanceof Uint8Array) await handle.writeFile(value);
+      else for await (const chunk of value) await handle.writeFile(chunk);
       await handle.sync();
     } finally {
       await handle.close();
@@ -67,10 +71,65 @@ export async function atomicText(file: string, value: string): Promise<void> {
   }
 }
 export async function writeJson(file: string, value: unknown): Promise<void> {
-  await atomicText(file, JSON.stringify(value, null, 2) + "\n");
+  await atomicWrite(file, JSON.stringify(value, null, 2) + "\n");
 }
-export async function writeJsonl(file: string, rows: unknown[]): Promise<void> {
-  await atomicText(file, rows.map(canonical).join("\n") + (rows.length ? "\n" : ""));
+async function* gzip(source: () => Readable): AsyncGenerator<Uint8Array> {
+  // Open the source only once atomicWrite is ready to consume it and handle errors.
+  const input = source(), stream = input.pipe(createGzip());
+  input.on("error", (error) => stream.destroy(error));
+  try {
+    yield* stream;
+  } finally {
+    input.destroy();
+    stream.destroy();
+  }
+}
+export async function writeJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
+  const lines = Readable.from((function* () {
+    for (const row of rows) yield Buffer.from(canonical(row) + "\n");
+  })());
+  await atomicWrite(file, file.endsWith(".gz") ? gzip(() => lines) : lines);
+}
+export async function* readJsonl(file: string): AsyncGenerator<unknown> {
+  const source = createReadStream(file);
+  const stream = file.endsWith(".gz") ? source.pipe(createGunzip()) : source;
+  source.on("error", (error) => stream.destroy(error));
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for await (const chunk of stream) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let end: number;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (line.trim()) yield JSON.parse(line);
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) yield JSON.parse(buffer);
+  } finally {
+    source.destroy();
+  }
+}
+export async function compressFile(file: string): Promise<void> {
+  await atomicWrite(file + ".gz", gzip(() => createReadStream(file)));
+  await rm(file);
+}
+export async function readInputs(run: string): Promise<Record<string, unknown>> {
+  const inputs: Record<string, unknown> = {};
+  for await (const row of readJsonl(path.join(run, "inputs.jsonl.gz"))) {
+    const { id, value } = row as { id: string; value: unknown };
+    safeId(id);
+    if (Object.hasOwn(inputs, id)) throw new Error(`Duplicate input snapshot: ${id}`);
+    inputs[id] = value;
+  }
+  return inputs;
+}
+export async function writeInputs(run: string, inputs: Record<string, unknown>): Promise<void> {
+  await writeJsonl(path.join(run, "inputs.jsonl.gz"), (function* () {
+    for (const [id, value] of Object.entries(inputs)) yield { id, value };
+  })());
 }
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

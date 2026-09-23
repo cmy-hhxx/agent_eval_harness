@@ -12,7 +12,7 @@ import {
   type Submission,
   type WorkerEvent,
 } from "../../packages/contracts/src/index.js";
-import { body, digest, json, listen, request } from "../../packages/contracts/src/io.js";
+import { body, exists, json, listen, object, readJson, request } from "../../packages/contracts/src/io.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { RunStore } from "../../apps/host/src/store.js";
@@ -80,12 +80,12 @@ async function harness(
     inputs: Object.entries(task.inputIds).map(([name, id]) => ({
       id,
       name,
-      digest: digest(plan.inputs[id]),
     })),
     hostUrl: host.url,
     deadline: Date.now() + 10000,
   };
   return {
+    directory,
     spec,
     worker,
     store,
@@ -140,6 +140,53 @@ test("lost submission acknowledgement is recovered by ID; SSE replay is contiguo
       events.map((_, i) => i + 1),
     );
     assert.deepEqual(await read(2), events.slice(2));
+  } finally {
+    await fixture.close();
+  }
+});
+test("stream log keeps deltas and final messages without repeated snapshots; release follows settlement", async () => {
+  const finalMessage = { role: "assistant", content: "你好", usage: { input: 8, output: 2, totalTokens: 10 } };
+  let workdir = "";
+  const partial = { role: "assistant", content: "重复快照".repeat(10000) };
+  const fixture = await harness(async (options) => {
+    workdir = options.workdir;
+    assert(await exists(path.join(workdir, "inputs/A.json")));
+    await assert.rejects(request(fixture.worker.url + "/v1/attempts/attempt", "DELETE"), /still running/);
+    return {
+      async run() {
+        options.onEvent({ type: "message_start", message: partial });
+        for (const delta of ["你", "好"])
+          options.onEvent({ type: "message_update", message: partial,
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial } });
+        options.onEvent({ type: "message_end", message: finalMessage });
+        options.onEvent({ type: "turn_end", message: finalMessage, toolResults: [partial] });
+        options.onEvent({ type: "agent_end", messages: [partial, finalMessage], willRetry: false });
+        await options.execute("submit_evaluation", pairResult());
+      },
+      async abort() {},
+      async dispose() {},
+    };
+  });
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(await exists(workdir), false);
+    const response = await fetch(fixture.worker.url + "/v1/attempts/attempt/events");
+    const text = await response.text();
+    const events = text.split("\n").filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)) as WorkerEvent);
+    const model = events.filter((event) => event.type === "model").map((event) => object(event.data));
+    assert(text.length < 15000);
+    assert.deepEqual(model.find((event) => event.type === "message_end")?.message, finalMessage);
+    assert.equal(model.filter((event) => event.type === "message_update")
+      .map((event) => object(event.assistantMessageEvent).delta).join(""), "你好");
+    assert.equal(partial.content.length, 40000, "logging must not mutate SDK state");
+    const metrics = await readJson<{ usage: { totalTokens: number } }>(path.join(fixture.directory, "worker/attempt/metrics.json"));
+    assert.equal(metrics.usage.totalTokens, 10);
+    await request(fixture.worker.url + "/v1/attempts/attempt", "DELETE");
+    assert.equal(await exists(path.join(fixture.directory, "worker/attempt")), false);
+    await request(fixture.worker.url + "/v1/attempts/attempt", "DELETE");
+    await assert.rejects(request(fixture.worker.url + "/v1/attempts", "POST", fixture.spec), /already released/);
   } finally {
     await fixture.close();
   }

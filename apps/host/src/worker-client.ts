@@ -74,7 +74,7 @@ export async function consumeEvents(
   attemptId: string,
   file: string,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   let cursor = 0;
   await mkdir(path.dirname(file), { recursive: true });
   while (!signal.aborted) {
@@ -96,12 +96,13 @@ export async function consumeEvents(
           if (event.seq !== cursor + 1) throw new Error("Event sequence gap");
           await appendFile(file, JSON.stringify(event) + "\n");
           cursor = event.seq;
-          if (event.type === "finished") return;
+          if (event.type === "finished") return true;
         }
       }
     } catch (error) {
-      if (signal.aborted) return;
+      if (signal.aborted) return false;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
+  return false;
 }

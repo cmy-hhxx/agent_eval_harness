@@ -1,6 +1,24 @@
 import type { ModelConfig, ToolContent } from "../../contracts/src/index.js";
 import { object } from "../../contracts/src/io.js";
 
+export function modelEventForLog(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const event = object(value);
+  // SDK stream updates repeat the entire growing message; keep only the delta.
+  if (event.type === "message_update") {
+    const { message: _message, assistantMessageEvent, ...rest } = event;
+    if (!assistantMessageEvent || typeof assistantMessageEvent !== "object" || Array.isArray(assistantMessageEvent))
+      return rest;
+    const { partial: _partial, ...update } = object(assistantMessageEvent);
+    return { ...rest, assistantMessageEvent: update };
+  }
+  if (["message_start", "turn_end", "agent_end"].includes(String(event.type))) {
+    const { message: _message, messages: _messages, toolResults: _results, ...rest } = event;
+    return rest;
+  }
+  return value;
+}
+
 export function providerConfig(config: ModelConfig) {
   return {
     baseUrl: config.baseUrl,

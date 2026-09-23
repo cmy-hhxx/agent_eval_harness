@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { cp, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { root } from "./lib.mjs";
@@ -46,12 +46,16 @@ try {
   await symlink(path.join(root, ".cache"), path.join(checkout, ".cache"));
   for (const [name, target] of [
     ["node", process.execPath],
-    ["npm", (await exec("which", ["npm"])).stdout.trim()],
     ["uv", (await exec("which", ["uv"])).stdout.trim()],
     ["python", path.join(root, ".venv/bin/python")],
     ["python3", path.join(root, ".venv/bin/python")],
   ])
     await symlink(await realpath(target), path.join(bin, name));
+  // mise's npm launcher resolves its installation relative to its invocation path.
+  const npm = await realpath((await exec("which", ["npm"])).stdout.trim());
+  await writeFile(path.join(bin, "npm"), `#!/bin/sh\nexec '${npm.replaceAll("'", "'\\''")}' "$@"\n`, {
+    mode: 0o755,
+  });
   console.log("Clean checkout with only Node/npm/uv/Python on PATH; no global pi or prime-agent.");
   await run("npm", ["run", "bootstrap"]);
   // Build each adapter independently before the full host is built.

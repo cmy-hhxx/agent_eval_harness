@@ -22,6 +22,7 @@ import {
   HttpError,
   body,
   canonical,
+  compressFile,
   digest,
   errorText,
   exists,
@@ -34,6 +35,7 @@ import {
   safeId,
   sha256,
   writeJson,
+  writeInputs,
 } from "../../../packages/contracts/src/io.js";
 import { loadIdentity, treeHash } from "../../../packages/worker/src/identity.js";
 import { RunStore } from "./store.js";
@@ -110,9 +112,6 @@ export async function runEvaluation(options: RunOptions) {
       manifest = await readJson<RunManifest>(manifestFile);
       if (manifest.format !== "dual-agent-eval/1" || manifest.fingerprint !== fingerprint)
         throw new Error("输入、底座、代码、模型或评测契约已变化，请使用新 run ID");
-      for (const [id, ref] of Object.entries(manifest.inputs))
-        if (digest(await readJson(path.join(run, "inputs", `${safeId(id)}.json`))) !== ref.digest)
-          throw new Error(`Input snapshot changed: ${id}`);
     } else {
       manifest = {
         format: "dual-agent-eval/1",
@@ -123,18 +122,16 @@ export async function runEvaluation(options: RunOptions) {
         config: options.config,
         tasks: options.plan.tasks,
         inputs: Object.fromEntries(
-          Object.entries(options.plan.inputs).map(([id, value]) => [
+          Object.keys(options.plan.inputs).map((id) => [
             id,
-            { id, digest: digest(value), name: id },
+            { id, name: id },
           ]),
         ),
         states: Object.fromEntries(options.plan.tasks.map((t) => [t.id, { status: "pending", attempts: 0 }])),
         preflight: options.plan.summary,
         startedAt: Date.now(),
       };
-      for (const [id, value] of Object.entries(options.plan.inputs))
-        await writeJson(path.join(run, "inputs", `${id}.json`), value);
-      await writeJson(path.join(run, "preflight.json"), options.plan.summary);
+      await writeInputs(run, options.plan.inputs);
       for (const [name, value] of Object.entries(options.pack.snapshots?.() || {}))
         await writeJson(path.join(run, safeId(name)), value);
     }
@@ -145,7 +142,7 @@ export async function runEvaluation(options: RunOptions) {
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
       if (receipt) {
-        options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit);
+        options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit, await store.dependencies(task));
         state.status = "succeeded";
       } else if (state.status === "succeeded") throw new Error(`Committed receipt missing: ${task.id}`);
       else if (state.status === "running" || state.status === "cancelled" || options.retryFailed) {
@@ -242,12 +239,7 @@ export async function runEvaluation(options: RunOptions) {
       let workerUrl = worker.url;
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id],
-        dependencies: Record<string, SubmissionReceipt> = {};
-      for (const [label, id] of Object.entries(task.dependencies)) {
-        const receipt = await current.receipt(id);
-        if (!receipt) throw new Error("Dependency missing");
-        dependencies[label] = receipt;
-      }
+        dependencies = await current.dependencies(task);
       const prepared = options.pack.prepare(task, options.plan.inputs, dependencies);
       const model = options.modelForStage(task.stage);
       const cacheKey = digest({
@@ -269,7 +261,7 @@ export async function runEvaluation(options: RunOptions) {
       if (await exists(cachedFile)) {
         try {
           const receipt = await readJson<SubmissionReceipt>(cachedFile);
-          options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit);
+          options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit, dependencies);
           for (const artifact of receipt.audit.artifacts)
             if (
               sha256(await readFile(path.join(cache, "artifacts", safeId(artifact.id)))) !== artifact.digest
@@ -339,7 +331,8 @@ export async function runEvaluation(options: RunOptions) {
           `attempt-${state.attempts.toString().padStart(3, "0")}`,
         );
         const eventController = new AbortController();
-        let stream: Promise<void> | undefined, status: AttemptStatus | undefined;
+        let stream: Promise<boolean> | undefined, status: AttemptStatus | undefined;
+        let eventsSaved = false, metricsSaved = false;
         try {
           options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
           try {
@@ -390,7 +383,9 @@ export async function runEvaluation(options: RunOptions) {
           // Drain terminal events when available, then close a disconnected stream.
           if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
           eventController.abort();
-          await stream;
+          eventsSaved = (await stream) ?? false;
+          const eventsFile = path.join(attemptDir, "events.jsonl");
+          if (await exists(eventsFile)) await compressFile(eventsFile);
         }
         const receipt = await current.receipt(task.id);
         // A failed connection does not imply the old session has stopped. Settle it before reuse.
@@ -431,6 +426,7 @@ export async function runEvaluation(options: RunOptions) {
             AbortSignal.timeout(1000),
           );
           await writeJson(path.join(attemptDir, "metrics.json"), metrics);
+          metricsSaved = true;
         } catch {
           /* A crashed worker may not have finalized its usage ledger. Events remain available. */
         }
@@ -454,6 +450,10 @@ export async function runEvaluation(options: RunOptions) {
           } catch (error) {
             options.onProgress?.(`收据已保存，附属产物未完成：${errorText(error)}`);
           }
+          if (copied && eventsSaved && metricsSaved)
+            await request(`${workerUrl}/v1/attempts/${spec.attemptId}`, "DELETE").catch((error) => {
+              options.onProgress?.(`Worker 副本未释放：${errorText(error)}`);
+            });
           options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
           return;
         }

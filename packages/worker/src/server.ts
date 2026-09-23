@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -33,6 +33,7 @@ import {
   writeJson,
 } from "../../contracts/src/io.js";
 import { createRegistry, textResult, ToolRuntime, type ToolRegistry } from "../../tools/src/index.js";
+import { modelEventForLog } from "./sdk-utils.js";
 
 interface Running {
   spec: AttemptSpec;
@@ -54,6 +55,7 @@ export async function startWorker(
 ) {
   await mkdir(directory, { recursive: true });
   const attempts = new Map<string, Running>();
+  const released = new Set<string>();
   let active: string | null = null;
   const emit = (attempt: Running, type: WorkerEvent["type"], value: unknown) => {
     const secret = process.env[attempt.spec.model.apiKeyEnv] || "";
@@ -115,7 +117,6 @@ export async function startWorker(
           undefined,
           controller.signal,
         );
-        if (digest(value) !== ref.digest) throw new Error("Input snapshot digest mismatch");
         inputs.set(ref.name, value);
         await writeJson(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`), value);
       }
@@ -224,7 +225,7 @@ export async function startWorker(
         },
         onEvent(value) {
           activity();
-          emit(attempt, "model", value);
+          emit(attempt, "model", modelEventForLog(value));
           if (!value || typeof value !== "object") return;
           const event = value as {
             type?: string;
@@ -263,6 +264,7 @@ export async function startWorker(
       controller.abort();
       try {
         await attempt.session?.dispose();
+        await rm(path.join(attempt.directory, "workspace"), { recursive: true, force: true });
       } catch (error) {
         attempt.status.error ??= `Cleanup: ${errorText(error)}`;
       }
@@ -325,6 +327,7 @@ export async function startWorker(
       if (!spec.model || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(spec.model.apiKeyEnv))
         throw new HttpError(400, "Invalid model credential reference");
       const previous = attempts.get(spec.attemptId);
+      if (released.has(spec.attemptId)) throw new HttpError(409, "Attempt already released");
       if (previous) {
         if (canonical(previous.spec) !== canonical(spec))
           throw new HttpError(409, "Attempt ID already used with different contents");
@@ -359,6 +362,15 @@ export async function startWorker(
       const id = safeId(parts[2]),
         attempt = attempts.get(id),
         attemptDir = path.join(directory, id);
+      if (req.method === "DELETE" && parts.length === 3) {
+        if (released.has(id)) return json(res, { released: true });
+        if (attempt && !attempt.settled) throw new HttpError(409, "Attempt still running");
+        if (!attempt) throw new HttpError(404, "Unknown attempt");
+        await rm(attemptDir, { recursive: true, force: true });
+        attempts.delete(id);
+        released.add(id);
+        return json(res, { released: true });
+      }
       if (!attempt && !(await exists(path.join(attemptDir, "spec.json"))))
         throw new HttpError(404, "Unknown attempt");
       if (req.method === "GET" && parts.length === 3)

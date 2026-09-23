@@ -10,11 +10,12 @@ import type {
 } from "../../contracts/src/index.js";
 import { emptyUsage } from "../../contracts/src/index.js";
 import {
-  atomicText,
+  atomicWrite,
   canonical,
   digest,
   exists,
   readJson,
+  readInputs,
   writeJson,
   writeJsonl,
 } from "../../contracts/src/io.js";
@@ -37,13 +38,13 @@ function display<T>(value: T, names: Record<string, string>, key = ""): T {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, display(v, names, k)])) as T;
   return value;
 }
-export async function comparisonRow(
-  run: string,
+export function comparisonRow(
+  inputs: Record<string, unknown>,
   task: PlannedTask,
   result: PairwiseResult,
   receipts: Map<string, SubmissionReceipt>,
   names: Record<string, string>,
-): Promise<JsonObject> {
+): JsonObject {
   const data = task.data as TaskData,
     a = data.candidates.A;
   if (
@@ -60,7 +61,7 @@ export async function comparisonRow(
       : { is_correct: null, correctness_reason: "" };
     if (!correctness) throw new Error("缺少正确性任务收据");
     const review = display(structuredClone(result.evaluations[label]), labels);
-    const raw = await readJson<RawInput>(path.join(run, "inputs", `${c.input_hash}.json`));
+    const raw = inputs[c.input_hash] as RawInput;
     const traces = annotateFindings(raw, review.findings);
     review.findings.forEach((finding, i) => {
       finding.stage_trace = traces[i];
@@ -74,7 +75,7 @@ export async function comparisonRow(
   const winner =
     result.verdict.result === "A_better" ? "A" : result.verdict.result === "B_better" ? "B" : null;
   return {
-    schema_version: "3.4",
+    schema_version: "3.5",
     evaluation_type: "pairwise_model_comparison",
     comparison_id: "cmp_" + digest({ batch: a.batch_id, case: a.case_id, pair: data.pair }).slice(0, 32),
     case: { batch_id: a.batch_id, case_id: a.case_id },
@@ -114,16 +115,7 @@ export async function reportRun(run: string): Promise<JsonObject> {
   const config = manifest.config as EvalConfig,
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
-  const inputs = Object.fromEntries(
-    await Promise.all(
-      Object.keys(manifest.inputs).map(async (id) => [
-        id,
-        await readJson(path.join(run, "inputs", `${id}.json`)),
-      ]),
-    ),
-  );
-  for (const [id, ref] of Object.entries(manifest.inputs))
-    if (digest(inputs[id]) !== ref.digest) throw new Error(`Input snapshot changed: ${id}`);
+  const inputs = await readInputs(run);
   for (const task of manifest.tasks) {
     const file = path.join(run, "tasks", task.id, "result.json");
     if (await exists(file)) {
@@ -134,9 +126,14 @@ export async function reportRun(run: string): Promise<JsonObject> {
         receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation])
       )
         throw new Error(`Invalid receipt: ${task.id}`);
-      validateEvaluation(task, inputs, receipt.evaluation, receipt.audit);
       receipts.set(task.id, receipt);
     }
+  }
+  for (const task of manifest.tasks) {
+    const receipt = receipts.get(task.id);
+    if (receipt) validateEvaluation(task, inputs, receipt.evaluation, receipt.audit,
+      Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)])),
+    );
   }
   const groups: Record<string, JsonObject[]> = {},
     outcomes: JsonObject[] = [],
@@ -197,7 +194,7 @@ export async function reportRun(run: string): Promise<JsonObject> {
       continue;
     }
     const result = receipt.evaluation as PairwiseResult,
-      row = await comparisonRow(run, task, result, receipts, names);
+      row = comparisonRow(inputs, task, result, receipts, names);
     if (status !== "not_comparable") {
       if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
       (groups[data.pair!.join("__vs__")] ??= []).push(row);
@@ -221,7 +218,7 @@ export async function reportRun(run: string): Promise<JsonObject> {
       ]),
     );
     summaries.push({
-      summary_version: "1.1",
+      summary_version: "1.2",
       comparison_id: row.comparison_id,
       case: row.case,
       question: data.candidates.A.question,
@@ -244,10 +241,14 @@ export async function reportRun(run: string): Promise<JsonObject> {
       scoring_points: analysis.scoring_points,
       red_flags: analysis.red_flags,
     });
+    const verdict = row.verdict as JsonObject;
+    const verdictLabel = verdict.winner_name
+      ? `${verdict.winner_name}更好`
+      : ({ both_good: "都好", both_bad: "都差", not_comparable: "不可比较" } as Record<string, string>)[String(verdict.result)];
     markdown.push(
       `# ${data.candidates.A.case_id}`,
       "",
-      `**结论**：${(row.verdict as JsonObject).reason}`,
+      `**结论（${verdictLabel}）**：${verdict.reason}`,
       "",
       "## 问题",
       "",
@@ -303,7 +304,7 @@ export async function reportRun(run: string): Promise<JsonObject> {
   await writeJsonl(path.join(run, "correctness.jsonl"), correctness);
   await writeJsonl(path.join(run, "task_outcomes.jsonl"), outcomes);
   await writeJsonl(path.join(run, "task_summaries.jsonl"), summaries);
-  await atomicText(path.join(run, "task_summaries.md"), markdown.join("\n"));
+  await atomicWrite(path.join(run, "task_summaries.md"), markdown.join("\n"));
   await writeJsonl(
     path.join(run, "failures.jsonl"),
     outcomes.filter((v) => ["failed", "blocked", "cancelled", "timed_out"].includes(String(v.status))),
@@ -316,13 +317,13 @@ export async function reportRun(run: string): Promise<JsonObject> {
   const pairs = Object.fromEntries(
     Object.entries(groups).map(([pair, rows]) => {
       const wins = Object.fromEntries(pair.split("__vs__").map((v) => [v, 0]));
-      let ties = 0;
+      const counts = { both_good: 0, both_bad: 0 };
       for (const row of rows) {
-        const v = row.verdict as { result: string; winner_version: string };
-        if (v.result === "tie") ties++;
-        else wins[v.winner_version]++;
+        const v = row.verdict as { result: "win" | "both_good" | "both_bad"; winner_version: string };
+        if (v.result === "win") wins[v.winner_version]++;
+        else counts[v.result]++;
       }
-      return [pair, { evaluated: rows.length, wins, ties, case_ids: rows.map((r) => r.case) }];
+      return [pair, { evaluated: rows.length, wins, ...counts, case_ids: rows.map((r) => r.case) }];
     }),
   );
   const attemptUsage = emptyUsage();
@@ -389,11 +390,11 @@ export async function reportRun(run: string): Promise<JsonObject> {
     wall_seconds: ((manifest.finishedAt || Date.now()) - manifest.startedAt) / 1000,
   };
   await writeJson(path.join(run, "summary.json"), summary);
-  await atomicText(
+  await atomicWrite(
     path.join(run, "report.md"),
-    `# 评测运行 ${manifest.runId}\n\n状态：${manifest.status}；完成比较：${summary.completed_comparisons}。\n\n| 配对 | 有效比较 | 胜出数量 | 平局 |\n|---|---:|---|---:|\n` +
+    `# 评测运行 ${manifest.runId}\n\n状态：${manifest.status}；完成比较：${summary.completed_comparisons}。\n\n| 配对 | 有效比较 | 胜出数量 | 都好 | 都差 |\n|---|---:|---|---:|---:|\n` +
       Object.entries(pairs)
-        .map(([name, v]) => `| ${name} | ${v.evaluated} | ${JSON.stringify(v.wins)} | ${v.ties} |`)
+        .map(([name, v]) => `| ${name} | ${v.evaluated} | ${JSON.stringify(v.wins)} | ${v.both_good} | ${v.both_bad} |`)
         .join("\n") +
       "\n\n[逐题总结](task_summaries.md) · 失败见 failures.jsonl，缺失配对见 skipped.jsonl。\n",
   );

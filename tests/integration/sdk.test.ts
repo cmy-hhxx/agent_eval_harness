@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Engine } from "../../packages/contracts/src/index.js";
-import { ROOT, body, listen, object } from "../../packages/contracts/src/io.js";
+import type { Engine, WorkerEvent } from "../../packages/contracts/src/index.js";
+import { ROOT, body, listen, object, readJsonl } from "../../packages/contracts/src/io.js";
 import { buildPlan, loadConfig } from "../../packages/pairwise-eval/src/input.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { runEvaluation } from "../../apps/host/src/runner.js";
@@ -126,9 +126,10 @@ for (const engine of ["pi", "prime"] as Engine[])
         assert.equal(requests.length, expectedRequests, "submit must terminate without another model request");
         if (engine === "pi") {
           const task = options.plan.tasks[0];
-          const events = (await readFile(path.join(config.outputDir, options.runId, "tasks", task.id, "attempt-001/events.jsonl"), "utf8"))
-            .trim().split("\n").map((line) => JSON.parse(line));
-          assert(events.some((e) => e.type === "model" && e.data?.type === "tool_execution_end" && e.data?.isError === true));
+          const events: WorkerEvent[] = [];
+          for await (const event of readJsonl(path.join(config.outputDir, options.runId, "tasks", task.id, "attempt-001/events.jsonl.gz")))
+            events.push(event as WorkerEvent);
+          assert(events.some((e) => e.type === "model" && object(e.data).type === "tool_execution_end" && object(e.data).isError === true));
         }
         const validation = await validateRun(path.join(config.outputDir, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));

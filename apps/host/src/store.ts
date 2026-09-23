@@ -10,6 +10,7 @@ import {
 import type {
   AttemptSpec,
   EvaluationPack,
+  PlannedTask,
   RunManifest,
   Submission,
   SubmissionReceipt,
@@ -37,6 +38,15 @@ export class RunStore {
   async receipt(taskId: string): Promise<SubmissionReceipt | undefined> {
     const file = path.join(this.run, "tasks", taskId, "result.json");
     return (await exists(file)) ? readJson<SubmissionReceipt>(file) : undefined;
+  }
+  async dependencies(task: PlannedTask): Promise<Record<string, SubmissionReceipt>> {
+    const dependencies: Record<string, SubmissionReceipt> = {};
+    for (const [label, id] of Object.entries(task.dependencies)) {
+      const receipt = await this.receipt(id);
+      if (!receipt) throw new Error(`Dependency missing: ${id}`);
+      dependencies[label] = receipt;
+    }
+    return dependencies;
   }
   async findSubmission(id: string): Promise<SubmissionReceipt> {
     for (const task of this.manifest.tasks) {
@@ -127,7 +137,7 @@ export class RunStore {
     )
       throw new HttpError(400, "Invalid tool audit");
     try {
-      this.pack.validate(task, this.inputs, value.evaluation, value.audit);
+      this.pack.validate(task, this.inputs, value.evaluation, value.audit, await this.dependencies(task));
     } catch (error) {
       throw new HttpError(422, error instanceof Error ? error.message : String(error));
     }

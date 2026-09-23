@@ -32,11 +32,11 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 `.run-lock` 排除第二个 Host。进程不存在时回收陈旧锁；初始化不完整或遗留 `.run-lock.reclaim` 时拒绝继续，确认原进程停止后再清理。锁不提供跨机高可用。
 
-每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；清理完成后才对外报告最终状态。失联先查收据，无收据才可重试。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
+每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；会话与临时工作目录清理完成后才对外报告最终状态。成功任务的事件、用量与产物归档到 Host 后，Host 通知 Worker 释放该 attempt 的磁盘与内存副本。失联先查收据，无收据才可重试。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
 
 ## HTTP V1
 
-请求用任务、输入和产物 ID，不传 Host 本机路径。输入下载后核验内容哈希，产物按哈希读取。模型配置仅含 `apiKeyEnv`，实际密钥从环境注入。首版只支持可信单机调用，未配置远程认证，不应直接暴露公网。
+请求用任务、输入和产物 ID，不传 Host 本机路径。输入按内容 ID 去重，下载时不重复校验哈希；产物按哈希读取。模型配置仅含 `apiKeyEnv`，实际密钥从环境注入。首版只支持可信单机调用，未配置远程认证，不应直接暴露公网。
 
 | 接口 | 行为 |
 |---|---|
@@ -47,11 +47,12 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 | Worker `GET /v1/attempts/:id/events?after=N` | SSE 续读，也支持 Last-Event-ID |
 | Worker `GET /v1/attempts/:id/artifacts/:id` | 产物字节 |
 | Worker `GET /v1/attempts/:id/metrics` | 最终用量和工具审计 |
+| Worker `DELETE /v1/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
 | Host `GET /v1/inputs/:id` | 原始快照 |
 | Host `POST /v1/submissions` | 校验、原子提交 |
 | Host `GET /v1/submissions/:id` | 确认已保存收据 |
 
-事件包含 `seq/attemptId/time/type/data`，在单个 attempt 内连续编号。Host 检测缺口、去重并续读；模型结束事件不代表提交成功。
+事件包含 `seq/attemptId/time/type/data`，在单个 attempt 内连续编号。Host 检测缺口、去重并续读；模型结束事件不代表提交成功。流式更新仅记录增量，完整消息保存在 `message_end`；开始、回合结束和会话结束事件不重复保存消息正文。
 
 ## 任务包和底座路由
 

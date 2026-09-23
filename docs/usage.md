@@ -70,11 +70,11 @@ npm run eval -- run --engine pi --run-id pi-001 --resume --retry-failed
 
 | 文件 | 用途 |
 |---|---|
-| `manifest.json`、`preflight.json` | 配置、指纹、输入、任务与状态 |
+| `manifest.json` | 配置、指纹、输入引用、预检、任务与状态 |
 | `contract.json`、`output_schema.json` | 提示词、契约与 schema 快照 |
-| `inputs/` | 原始输入快照 |
+| `inputs.jsonl.gz` | 按内容 ID 去重的完整输入快照，每行 `{id,value}` |
 | `tasks/<id>/result.json` | 成功收据、用量与工具审计 |
-| `tasks/<id>/attempt-NNN/` | 尝试的参数、事件、状态、错误和用量 |
+| `tasks/<id>/attempt-NNN/` | 尝试的参数、状态、错误、用量及压缩事件 `events.jsonl.gz` |
 | `tasks/<id>/artifacts/` | 脚本、stdout/stderr 和生成文件 |
 | `results/*.jsonl` | 正式配对结果 |
 | `task_summaries.jsonl`、`task_summaries.md` | 逐题结论、双方优缺点和耗时 |
@@ -84,7 +84,9 @@ npm run eval -- run --engine pi --run-id pi-001 --resume --retry-failed
 
 `report` 根据收据重建导出，要求运行自己的 schema 快照；`validate` 检查输入、收据、产物和导出映射，均不调用模型。用量区分成功收据和所有已记录 attempt；崩溃时缺失的完整用量会显式标记。
 
-## Worker 与部署
+输入快照独立于 `data/inputs/`，保留原始消息、图片和元数据，不对输入重复做哈希校验。Worker 运行时的 `workspace/inputs/` 是代码工具所需的临时副本，会随工作目录释放。成功任务在 Host 收齐事件、用量与工具产物后删除 Worker 副本；失败或收集不完整的记录保留在 `workers/`。事件在运行中追加到 `events.jsonl`，Host 结束收集后压缩；进程崩溃时可能留下未压缩日志。
+
+## 独立运行 Worker
 
 默认由 Host 管理 Worker 进程。需要单独启动时：
 
@@ -95,7 +97,5 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
 ```
 
 外部 Worker 由调用方管理，所有进程使用相同的模型 URL 和 key。Worker 只监听回环地址，适用于可信单机调用。
-
-[Dockerfile](../Dockerfile) 构建整套系统，输入挂载到 `/app/data/inputs`，输出挂载到 `/app/data/runs`，用 Docker `--env-file .env` 注入模型配置。当前未验证容器构建；构建时 doctor 使用占位 URL 且不调用模型，运行时必须设置实际 URL 和 key。
 
 代码工具工作目录不是安全沙箱；取消、超时和 Worker 退出会回收所属进程组。需要隔离不可信代码时，应在受限部署环境运行整个系统。

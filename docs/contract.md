@@ -6,10 +6,10 @@
 
 - 输入与配对：[input.ts](../packages/pairwise-eval/src/input.ts)。
 - 提示词、提交校验：[index.ts](../packages/pairwise-eval/src/index.ts)。
-- 结果结构：[evaluation.json](../packages/pairwise-eval/resources/evaluation.json)，当前 schema `3.4`。
+- 结果结构：[evaluation.json](../packages/pairwise-eval/resources/evaluation.json)，当前 schema `3.5`。
 - 导出与工具回溯：[report.ts](../packages/pairwise-eval/src/report.ts)、[annotations.ts](../packages/pairwise-eval/src/annotations.ts)。
 
-当前任务契约为 `pairwise/autonomous-v1`。版本标识用于识别运行内容，不构成历史兼容承诺。
+当前任务契约为 `pairwise/autonomous-v2`。版本标识用于识别运行内容，不构成历史兼容承诺。
 
 ## 输入
 
@@ -45,17 +45,30 @@ A / AA 是当前两种输入结构的适配器。保持原始消息和多模态�
 
 有标准答案时，对参与配对的每份回答独立判对错；每个配对只等待自身正确性依赖。无标准答案时跳过该阶段，输出 `is_correct=null`、`correctness_reason=""`。
 
-Agent 自主决定读取、检索、图片观察和计算步骤；没有强制的 `set_task_contract`、双方计算或工具顺序。通过 `submit_evaluation` 提交，Host 保存有效收据后才算完成。退出、超时或模型报错不能转换成平局。
+Agent 自主决定读取、检索、图片观察和计算步骤；没有强制的 `set_task_contract`、双方计算或工具顺序。通过 `submit_evaluation` 提交，Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态，不能转换成都好、都差或不可比较。
 
-提交包含双方评语与 findings、`task_analysis`、`decision_basis`。每条 finding 通过从 0 开始的 `requirement_index` 关联任务要求，区分观察、证据确定性和影响。决定性发现必须引用双方；不确定的发现不能决定胜负或平局；重要且已确认的反向证据必须交代取舍。
+对比判决只有以下五种，不接受普通平局：
 
-有赢家时，`counterevidence` 必须列出赢家的所有中高重要性、已确认问题，以及输家的所有中高重要性、已确认优势。提交校验会一并反馈缺失索引和非逐字引文的具体位置，供裁判在修正预算内重新提交。
+| 判决 | 条件 |
+|---|---|
+| `A_better` / `B_better` | 存在影响核心交付、可靠性或实际可用性的实质差异，证据支持所选赢家 |
+| `both_good`（都好） | 双方满足全部核心要求，无实质胜者；每方每项要求都有决定性引用指向中高重要性、已确认优势，且不存在严重问题（含可能推翻结论的未决问题） |
+| `both_bad`（都差） | 双方都因严重缺陷无法完成核心任务，无实质胜者；决定性引用分别包含双方已确认的严重问题，缺陷可以不同 |
+| `not_comparable` | 缺少决定性材料，无法可靠评价；不能用于回避难以取舍 |
+
+`task_analysis.requirements` 只列核心验收要求，额外加分项列在 `scoring_points`。`high` 表示决定核心任务成败的优势或缺陷，`medium` 表示影响质量但不单独阻断任务的因素，`low` 表示轻微差异。双方都不错或都有错误，也必须比较是否存在实质差异；不能因有小瑕疵、没有标准答案或事实未确认就判都差。
+
+有标准答案时，都好要求双方独立正确性收据均为 `true`；正确性为 `false` 或 `null` 时拒绝都好。独立判对不能直接推出都好，其他核心要求仍须满足；判对后可以因其他核心要求失败而都差，但不能再以已确认的严重正确性错误支持都差。Host 在接收提交、复用缓存、恢复和离线校验时使用对应依赖收据检查这些关系。
+
+提交包含双方评语与 findings、`task_analysis`、`decision_basis`。每条 finding 通过从 0 开始的 `requirement_index` 关联任务要求，区分观察、证据确定性和影响。除不可比较外，决定性发现必须引用双方已确认发现。`tradeoff` 解释关键差异和反向证据为何支持该判决；都好/都差还须解释为何没有实质胜者。
+
+`counterevidence` 必须完整列出所有中高重要性、已确认的反向证据：有赢家时为赢家问题和输家优势，都好时为双方问题，都差时为双方优势。提交校验会一并反馈缺失索引、判决矛盾和非逐字引文的具体位置，供裁判在修正预算内重新提交。校验只能检查结构与证据关系，不能代替事实和影响判断。
 
 ## 证据与导出
 
 文字证据必须给出原始 `message_index` 和逐字 `quote`。图片证据使用 `[图像观察]`，且工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 
-正式结果使用 `win` / `tie`；赢家、双方评语及判决引用均映射到稳定版本 ID。`not_comparable` 单列保存，不进入正式配对结果。评语中的 `【候选A】` / `【候选B】`、`候选A` / `候选B` 及独立 A / B 代号会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。
+正式结果使用 `win` / `both_good` / `both_bad`；后两种的赢家字段均为 `null`。赢家、双方评语及判决引用均映射到稳定版本 ID。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数；不再输出 `ties`。`not_comparable` 单列保存，不进入正式配对结果或有效比较数，失败也不计入上述分类。评语中的 `【候选A】` / `【候选B】`、`候选A` / `候选B` 及独立 A / B 代号会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。
 
 独立判对错任务只使用候选 A，其理由按该任务的实际版本还原；不能套用后续配对任务的 A/B 位置。
 

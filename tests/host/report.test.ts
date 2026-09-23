@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "../../packages/contracts/src/index.js";
-import { writeJson } from "../../packages/contracts/src/io.js";
+import { writeInputs, writeJson } from "../../packages/contracts/src/io.js";
 import { adapt } from "../../packages/pairwise-eval/src/input.js";
 import { outputSchema, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { comparisonRow, reportRun } from "../../packages/pairwise-eval/src/report.js";
@@ -43,7 +43,6 @@ for (const objective of [false, true])
         };
         const receipts = new Map<string, SubmissionReceipt>();
         for (const [label, candidate] of Object.entries(candidates)) {
-          await writeJson(path.join(directory, "inputs", candidate.input_hash + ".json"), inputs[label]);
           if (objective)
             receipts.set("check-" + label, {
               submissionId: "check-" + label,
@@ -71,8 +70,9 @@ for (const objective of [false, true])
         result.task_analysis.timing_analysis = "A与B的耗时相同。";
         result.decision_basis.tradeoff = "B的优点不能抵消A的优势。";
         const snapshots = Object.fromEntries(Object.entries(candidates).map(([label, c]) => [c.input_hash, inputs[label]]));
-        validateEvaluation(task, snapshots, result, emptyAudit());
-        const row = await comparisonRow(directory, task, result, receipts, { a_fast: "A组Fast", aa_fast: "AA组Fast" });
+        const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]));
+        validateEvaluation(task, snapshots, result, emptyAudit(), dependencies);
+        const row = comparisonRow(snapshots, task, result, receipts, { a_fast: "A组Fast", aa_fast: "AA组Fast" });
         assert(validateOutput(row), JSON.stringify(validateOutput.errors));
         if (comparisonId !== undefined) assert.equal(row.comparison_id, comparisonId);
         comparisonId = row.comparison_id;
@@ -100,7 +100,7 @@ for (const objective of [false, true])
         });
         const changed = structuredClone(snapshots);
         changed[candidates[winner].input_hash].messages[1].content = "被改写的回答";
-        assert.throws(() => validateEvaluation(task, changed, result, emptyAudit()), /原文/);
+        assert.throws(() => validateEvaluation(task, changed, result, emptyAudit(), dependencies), /原文/);
       }
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -126,6 +126,7 @@ test("report requires the run's own schema snapshot", async () => {
     await writeJson(path.join(directory, "manifest.json"), {
       format: "dual-agent-eval/1", config, inputs: {}, tasks: [], states: {},
     });
+    await writeInputs(directory, {});
     await assert.rejects(reportRun(directory), /ENOENT.*output_schema\.json/);
   } finally {
     await rm(directory, { recursive: true, force: true });

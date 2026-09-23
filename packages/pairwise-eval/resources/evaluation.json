@@ -15,7 +15,7 @@
     "decision_basis"
   ],
   "properties": {
-    "schema_version": { "const": "3.4" },
+    "schema_version": { "const": "3.5" },
     "evaluation_type": { "const": "pairwise_model_comparison" },
     "comparison_id": { "type": "string", "minLength": 1 },
     "case": {
@@ -185,7 +185,7 @@
       "additionalProperties": false,
       "required": ["result", "winner_version", "winner_name", "reason"],
       "properties": {
-        "result": { "enum": ["win", "tie"] },
+        "result": { "enum": ["win", "both_good", "both_bad"] },
         "winner_version": { "type": ["string", "null"] },
         "winner_name": { "type": ["string", "null"] },
         "reason": { "type": "string", "minLength": 1 }
@@ -245,7 +245,7 @@
           "additionalProperties": false,
           "required": ["result", "reason"],
           "properties": {
-            "result": { "enum": ["A_better", "B_better", "tie", "not_comparable"] },
+            "result": { "enum": ["A_better", "B_better", "both_good", "both_bad", "not_comparable"] },
             "reason": { "type": "string", "minLength": 1 }
           }
         },

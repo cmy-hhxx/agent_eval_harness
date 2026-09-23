@@ -112,7 +112,7 @@ export interface FindingRef {
   finding_index: number;
 }
 export interface PairwiseResult {
-  verdict: { result: "A_better" | "B_better" | "tie" | "not_comparable"; reason: string };
+  verdict: { result: "A_better" | "B_better" | "both_good" | "both_bad" | "not_comparable"; reason: string };
   evaluations: Record<string, Review>;
   task_analysis: TaskAnalysis;
   decision_basis: { decisive_findings: FindingRef[]; counterevidence: FindingRef[]; tradeoff: string };

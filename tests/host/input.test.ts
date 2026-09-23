@@ -1,14 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { buildPlan, comparisonPair, loadConfig } from "../../packages/pairwise-eval/src/input.js";
 import { pairwisePack, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { annotateFindings } from "../../packages/pairwise-eval/src/annotations.js";
 import type { Finding } from "../../packages/pairwise-eval/src/types.js";
 import { emptyAudit, fixtureConfig, pairResult, raw } from "./fixtures.js";
 import path from "node:path";
-import { ArtifactStore, ROOT } from "../../packages/contracts/src/io.js";
+import { ArtifactStore, ROOT, compressFile, readInputs, writeInputs, writeJsonl } from "../../packages/contracts/src/io.js";
 import { createRegistry, ToolRuntime } from "../../packages/tools/src/index.js";
+
+test("compressed input archive preserves full records and rejects truncated storage", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const inputs = {
+      first: { ...raw(), trace: "中文与 emoji 🦊\n".repeat(10000), image: "data:image/png;base64,aW1hZ2U=" },
+      second: raw("q2", null),
+    };
+    await writeInputs(directory, inputs);
+    assert.deepEqual(await readInputs(directory), inputs);
+    const file = path.join(directory, "inputs.jsonl.gz"), bytes = await readFile(file);
+    assert(bytes.length < JSON.stringify(inputs).length / 10);
+    await assert.rejects(writeJsonl(file, (function* () {
+      yield { id: "replacement", value: {} };
+      throw new Error("Input producer failed");
+    })()), /Input producer failed/);
+    assert((await readFile(file)).equals(bytes), "failed archive writes must preserve the previous file");
+    await assert.rejects(compressFile(path.join(directory, "missing.jsonl")), /ENOENT/);
+    await writeFile(file, bytes.subarray(0, bytes.length - 10));
+    await assert.rejects(readInputs(directory), /unexpected end/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("configuration resolves the shared gateway and uses the data directory", async () => {
   const file = path.join(ROOT, "configs/host.json");
@@ -48,7 +72,7 @@ test("image observations require an actual image tool audit", async () => {
       result = pairResult(),
       audit = emptyAudit();
     result.evaluations.A.findings[0].evidence[0].quote = "[图像观察]图片呈现结果";
-    assert.throws(() => validateEvaluation(task, plan.inputs, result, audit), /未查看/);
+    assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
         attemptId: "image",
@@ -66,7 +90,7 @@ test("image observations require an actual image tool audit", async () => {
       new AbortController().signal,
     );
     assert.equal(viewed.content[1].type, "image");
-    validateEvaluation(task, plan.inputs, result, audit);
+    validateEvaluation(task, plan.inputs, result, audit, {});
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -118,16 +142,16 @@ test("subjective inputs skip correctness, and direct evidence needs no forced to
     assert.deepEqual(task.dependencies, {});
     const prepared = pairwisePack.prepare(task, plan.inputs, {});
     assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
-    validateEvaluation(task, plan.inputs, pairResult(), emptyAudit());
+    validateEvaluation(task, plan.inputs, pairResult(), emptyAudit(), {});
     const bad = pairResult();
     bad.evaluations.A.findings[0].evidence[0].quote = "fabricated";
-    assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit()), /原文/);
+    assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文/);
     const uncertain = pairResult();
     uncertain.evaluations.A.findings[0].assessment.evidence_status = "uncertain";
-    assert.throws(() => validateEvaluation(task, plan.inputs, uncertain, emptyAudit()), /不确定/);
+    assert.throws(() => validateEvaluation(task, plan.inputs, uncertain, emptyAudit(), {}), /不确定/);
     const wrong = pairResult();
     wrong.decision_basis.decisive_findings[0].finding_index = 7;
-    assert.throws(() => validateEvaluation(task, plan.inputs, wrong, emptyAudit()), /不存在/);
+    assert.throws(() => validateEvaluation(task, plan.inputs, wrong, emptyAudit(), {}), /不存在/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -166,7 +190,7 @@ test("submission feedback locates every invalid quote and missing counterevidenc
     result.evaluations.A.findings.push(problem);
     result.evaluations.A.findings[0].evidence[0].quote = "invented A";
     result.evaluations.B.findings[0].evidence[0].quote = "invented B";
-    assert.throws(() => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit()), (error: unknown) => {
+    assert.throws(() => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {}), (error: unknown) => {
       assert(error instanceof Error);
       for (const location of [
         "counterevidence 缺少 A:1",
@@ -182,7 +206,7 @@ test("submission feedback locates every invalid quote and missing counterevidenc
     ];
     result.evaluations.A.findings[0].evidence[0].quote = "2+2=4";
     result.evaluations.B.findings[0].evidence[0].quote = "2+2=4";
-    validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit());
+    validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {});
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

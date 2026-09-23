@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentBackend, ModelConfig } from "../../packages/contracts/src/index.js";
+import { exists, readInputs, readJsonl } from "../../packages/contracts/src/io.js";
 import { startWorker } from "../../packages/worker/src/server.js";
 import { runEvaluation } from "../../apps/host/src/runner.js";
 import { validateRun } from "../../apps/host/src/validate.js";
@@ -68,7 +69,21 @@ test("two workers execute dependency graph, archive receipts, resume and reuse c
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
     assert.equal(calls, 6);
-    assert.equal((await validateRun(path.join(config.outputDir, "first"))).valid, true);
+    const run = path.join(config.outputDir, "first");
+    assert.deepEqual(await readInputs(run), plan.inputs);
+    assert.equal(await exists(path.join(run, "inputs")), false);
+    assert.equal(await exists(path.join(run, "preflight.json")), false);
+    for (const task of plan.tasks) {
+      const attempt = path.join(run, "tasks", task.id, "attempt-001");
+      const events = [];
+      for await (const event of readJsonl(path.join(attempt, "events.jsonl.gz"))) events.push(event);
+      assert.equal((events.at(-1) as { type: string }).type, "finished");
+      assert.equal(await exists(path.join(attempt, "events.jsonl")), false);
+    }
+    assert.deepEqual(await readdir(path.join(directory, "w1")), []);
+    assert.deepEqual(await readdir(path.join(directory, "w2")), []);
+    for (const version of config.inputs.versions) await rm(version.path);
+    assert.equal((await validateRun(run)).valid, true, "archived evidence is independent of source files");
     await runEvaluation({ ...options, resume: true });
     assert.equal(calls, 6);
     await runEvaluation({ ...options, runId: "second" });
@@ -79,7 +94,7 @@ test("two workers execute dependency graph, archive receipts, resume and reuse c
     await rm(directory, { recursive: true, force: true });
   }
 });
-test("agent ending without submit remains a failure instead of a tie", async () => {
+test("agent ending without submit remains a failure instead of a verdict", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   const backend: AgentBackend = {
     identity: fakeIdentity,

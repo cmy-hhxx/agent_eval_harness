@@ -7,6 +7,7 @@ import {
   errorText,
   exists,
   readJson,
+  readInputs,
   sha256,
   writeJson,
 } from "../../../packages/contracts/src/io.js";
@@ -19,17 +20,10 @@ export async function validateRun(run: string) {
   if (manifest.format !== "dual-agent-eval/1")
     throw new Error("不支持此运行格式；请使用当前版本新建 run。");
   const errors: string[] = [],
-    inputs: Record<string, unknown> = {},
     receipts = new Map<string, SubmissionReceipt>();
-  for (const [id, ref] of Object.entries(manifest.inputs)) {
-    try {
-      const value = await readJson(path.join(run, "inputs", `${id}.json`));
-      if (digest(value) !== ref.digest) throw new Error("Input digest mismatch");
-      inputs[id] = value;
-    } catch (error) {
-      errors.push(`${id}: ${errorText(error)}`);
-    }
-  }
+  const inputs = await readInputs(run);
+  for (const id of Object.keys(manifest.inputs))
+    if (!Object.hasOwn(inputs, id)) errors.push(`${id}: missing input`);
   for (const task of manifest.tasks) {
     const file = path.join(run, "tasks", task.id, "result.json");
     if (!(await exists(file))) {
@@ -44,7 +38,6 @@ export async function validateRun(run: string) {
         receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation])
       )
         throw new Error("Receipt identity mismatch");
-      pairwisePack.validate(task, inputs, receipt.evaluation, receipt.audit);
       for (const artifact of receipt.audit.artifacts)
         if (
           sha256(await readFile(path.join(run, "tasks", task.id, "artifacts", artifact.id))) !==
@@ -52,6 +45,17 @@ export async function validateRun(run: string) {
         )
           throw new Error("Artifact hash mismatch");
       receipts.set(task.id, receipt);
+    } catch (error) {
+      errors.push(`${task.id}: ${errorText(error)}`);
+    }
+  }
+  for (const task of manifest.tasks) {
+    const receipt = receipts.get(task.id);
+    if (!receipt) continue;
+    try {
+      pairwisePack.validate(task, inputs, receipt.evaluation, receipt.audit,
+        Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)])),
+      );
     } catch (error) {
       errors.push(`${task.id}: ${errorText(error)}`);
     }
@@ -65,7 +69,7 @@ export async function validateRun(run: string) {
       try {
         const value = receipts.get(task.id)!.evaluation as PairwiseResult;
         if (value.verdict.result === "not_comparable") continue;
-        const row = await comparisonRow(run, task, value, receipts, names),
+        const row = comparisonRow(inputs, task, value, receipts, names),
           name = (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
         if (!expected.has(name)) expected.set(name, []);
         expected.get(name)!.push(canonical(row));

@@ -32,7 +32,7 @@ node scripts/test-clean.mjs
 
 SDK 集成测试使用真实 vendored SDK、独立 Worker、本地模拟网关和 Python 代码工具，不调用付费模型。测试直接验证当前行为，不从历史实现生成预期结果。真实裁判质量另按[质量指南](quality.md)人工复核。
 
-`test-clean` 复制可入库文件到临时目录，仅共享下载缓存，在没有全局 Agent CLI、已安装依赖或原虚拟环境的环境中安装、分别构建两个 adapter、运行 doctor 和测试。它使用本地占位 URL 和测试密钥，不读取个人 `.env` 或真实输入。
+`test-clean` 复制可入库文件到临时目录，仅共享下载缓存，在没有全局 Agent CLI、已安装依赖或原虚拟环境的环境中安装、分别构建两个 adapter、运行 doctor 和测试。npm 通过原安装路径调用，避免 mise 启动器在临时目录错误解析相对路径。它使用本地占位 URL 和测试密钥，不读取个人 `.env` 或真实输入。
 
 ## 构建与依赖
 

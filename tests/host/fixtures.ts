@@ -27,7 +27,7 @@ export function raw(caseId = "q1", reference: unknown = "4", answer = "2+2=4"): 
 }
 export function pairResult(answers: Record<string, string> = { A: "2+2=4", B: "2+2=4" }): PairwiseResult {
   return {
-    verdict: { result: "tie", reason: "两个都好。双方正确回答加法结果。" },
+    verdict: { result: "both_good", reason: "两个都好。双方正确回答加法结果。" },
     task_analysis: {
       task_type: "整数加法",
       goal: "计算2+2",

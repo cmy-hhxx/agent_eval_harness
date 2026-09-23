@@ -40,7 +40,6 @@ export interface EvaluationSpec {
 }
 export interface InputRef {
   id: string;
-  digest: string;
   name: string;
 }
 export interface EngineIdentity {
@@ -186,7 +185,13 @@ export interface EvaluationPack {
     evaluation: EvaluationSpec;
     prompt: string;
   };
-  validate(task: PlannedTask, inputs: Record<string, unknown>, evaluation: unknown, audit: ToolAudit): void;
+  validate(
+    task: PlannedTask,
+    inputs: Record<string, unknown>,
+    evaluation: unknown,
+    audit: ToolAudit,
+    dependencies: Record<string, SubmissionReceipt | undefined>,
+  ): void;
   report(run: string): Promise<JsonObject>;
 }
 export interface TaskState {
