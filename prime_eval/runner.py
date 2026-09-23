@@ -10,7 +10,8 @@ from typing import Any
 
 from jsonschema import ValidationError
 
-from .core import (Config, EvaluationPlan, Json, Record, atomic_text, digest, read_json,
+from .annotations import annotate_findings
+from .core import (Config, EvaluationPlan, Json, Record, atomic_text, comparison_pair, digest, read_json,
                    validate_result, write_json, write_jsonl)
 from .prime import JudgeError, invoke, prepared_prime, probe_prime, redact, stop_owned_daemon
 from .presentation import display_text, role_names, save_presentation, version_names
@@ -20,6 +21,8 @@ SUBJECTIVE_CORRECTNESS = {"is_correct": None, "correctness_reason": "", "evidenc
 
 
 def task_descriptor(stage: str, candidates: dict[str, Record], reference: Any, fingerprint: str) -> Json:
+    if stage == "pairwise":
+        comparison_pair([r.version for r in candidates.values()])
     identity = {k: {**r.identity(), "llm": r.llm} for k, r in candidates.items()}
     task_id = stage + "-" + digest({"stage": stage, "inputs": {k: r.hash for k, r in candidates.items()},
                                   "identities": {k: r.key for k, r in candidates.items()},
@@ -27,7 +30,14 @@ def task_descriptor(stage: str, candidates: dict[str, Record], reference: Any, f
     return {"id": task_id, "stage": stage, "candidates": identity, "reference": reference}
 
 
+def validate_task_pair(task: Json) -> None:
+    pair = comparison_pair([r["version"] for r in task["candidates"].values()])
+    if task.get("pair") != list(pair):
+        raise ValueError("任务配对与候选版本不一致，配对必须使用固定的 A组、AA组顺序")
+
+
 def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str] | None = None) -> Json:
+    validate_task_pair(task)
     a = task["candidates"]["A"]
     names = names if names is not None else version_names(run)
     display = role_names(task, names)
@@ -40,8 +50,8 @@ def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str
     verdict = evaluation["verdict"]
     winner = verdict["result"][0] if verdict["result"] in ("A_better", "B_better") else None
     reason = display_text(verdict["reason"], display)
-    return {
-        "schema_version": "3.2", "evaluation_type": "pairwise_model_comparison",
+    row = {
+        "schema_version": "3.3", "evaluation_type": "pairwise_model_comparison",
         "comparison_id": "cmp_" + digest({"batch": a["batch_id"], "case": a["case_id"], "pair": task["pair"]})[:32],
         "case": {"batch_id": a["batch_id"], "case_id": a["case_id"]},
         "ground_truth": {"available": task["reference"] is not None, "value": task["reference"]},
@@ -51,10 +61,20 @@ def comparison_row(run: Path, task: Json, evaluation: Json, names: dict[str, str
                     "winner_name": display[winner] if winner else None,
                     "reason": reason}, "evaluations": evaluations,
     }
+    for identity in task["candidates"].values():
+        snapshot = run / "inputs" / f"{identity['input_hash']}.json"
+        if snapshot.is_file():
+            findings = evaluations[identity["version"]]["findings"]
+            for finding, extra in zip(findings, annotate_findings(read_json(snapshot), findings), strict=True):
+                finding.update(extra)
+    return row
 
 
 def export_results(run: Path) -> Json:
     manifest = read_json(run / "manifest.json")
+    for task in manifest["tasks"]:
+        if task["stage"] == "pairwise":
+            validate_task_pair(task)
     names = version_names(run)
     groups: dict[str, list[Json]] = defaultdict(list)
     correctness: list[Json] = [{**identity, **SUBJECTIVE_CORRECTNESS, "assessment_status": "subjective_not_assessed"}
@@ -142,10 +162,10 @@ def export_results(run: Path) -> Json:
                "result_files": [str(output / f"{pair}.jsonl") for pair in sorted(groups)],
                "correctness": per_version, "pairs": pair_summary, "usage_this_run_including_failed_attempts": dict(usage),
                "wall_seconds": (manifest.get("finished_at") or time.time()) - manifest["started_at"],
-               "note": "胜率分母为各配对实际成功评测数；正确性仅统计有标准答案的唯一批次/case/版本，主观题与未判定单列。"}
+               "note": "仅比较 A Fast ↔ AA Fast、A Expert ↔ AA Expert。胜率分母为各配对实际成功评测数；正确性仅统计有标准答案的唯一批次/case/版本，主观题与未判定单列。"}
     write_json(run / "summary.json", summary)
     lines = [f"# 评测运行 {manifest['run_id']}", "", f"状态：{manifest['status']}；完成比较：{result_count}。", "",
-             "各组合题集可能不同，不能直接将胜率当成同题集排名。", "",
+             "仅比较 A Fast ↔ AA Fast、A Expert ↔ AA Expert。各组合题集可能不同，不能直接将胜率当成同题集排名。", "",
              "| 配对 | 有效比较 | 胜出数量 | 平局 |", "|---|---:|---|---:|"]
     for pair, stats in pair_summary.items():
         pair_title = " / ".join(names[key] for key in pair.split("__vs__"))
@@ -195,6 +215,8 @@ def validated_previous(path: Path, schema: Json, stage: str, candidates: dict[st
 
 
 async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume: bool, retry_failed: bool = False, stage: str = "all") -> Json:
+    for a, b in plan.pairs:
+        comparison_pair([a.version, b.version])
     if resume and (run / "manifest.json").exists():
         prime = probe_prime(config.data["judge"]["prime_binary"])
     else:
@@ -216,7 +238,7 @@ async def run_evaluation(config: Config, plan: EvaluationPlan, run: Path, resume
             ordered.reverse()
         candidates: dict[str, Record] = dict(zip(("A", "B"), ordered))
         task = task_descriptor("pairwise", candidates, reference, stage_fingerprints["pairwise"])
-        task.update({"pair": [a.version, b.version], "dependencies": {k: checks[r.key]["id"] if reference is not None else None for k, r in candidates.items()}})
+        task.update({"pair": list(comparison_pair([a.version, b.version])), "dependencies": {k: checks[r.key]["id"] if reference is not None else None for k, r in candidates.items()}})
         pair_tasks.append(task)
     tasks = list(checks.values()) + pair_tasks
     selection = digest([task["id"] for task in tasks])
@@ -395,6 +417,12 @@ def validate_run(run: Path) -> Json:
     expected_rows: dict[str, Json] = {}
     expected_summaries: list[Json] = []
     for task in manifest["tasks"]:
+        if task["stage"] == "pairwise":
+            try:
+                validate_task_pair(task)
+            except ValueError as error:
+                errors.append(f"{task['id']}: {error}")
+                continue
         path = run / "tasks" / task["id"] / "result.json"
         if not path.exists():
             errors.append(f"未完成任务: {task['id']}")
@@ -424,23 +452,31 @@ def validate_run(run: Path) -> Json:
         except Exception as error:
             errors.append(f"{task['id']}: {error}")
     for path in sorted((run / "results").glob("*.jsonl")):
+        try:
+            pair = comparison_pair(path.stem.split("__vs__"))
+            if path.stem != "__vs__".join(pair):
+                raise ValueError("结果文件名必须使用固定的 A组、AA组顺序")
+        except ValueError as error:
+            errors.append(f"{path.name}: {error}")
+            continue
         with path.open(encoding="utf-8") as stream:
             for line, text in enumerate(stream, 1):
                 try:
                     import json
                     row = json.loads(text)
                     Draft202012Validator(output_schema).validate(row)
+                    comparison_pair(list(row["models"]))
                     expected = expected_rows.get(row["comparison_id"])
                     if not expected or row != expected["row"] or path.name != expected["file"]:
                         raise ValueError("结果与原始任务、正确性记录或候选映射不一致")
                     batch, case = row["case"]["batch_id"], row["case"]["case_id"]
-                    pair = tuple(sorted(m["version"] for m in row["models"].values()))
+                    pair = tuple(sorted(row["models"]))
                     key = (batch, case, pair)
                     if key in seen or len(set(pair)) != 2:
                         raise ValueError("重复配对或自身比较")
                     seen.add(key)
                     for label in row["models"]:
-                        identity = (batch, case, row["models"][label]["version"])
+                        identity = (batch, case, label)
                         check = row["evaluations"][label]
                         value = (check["is_correct"], check["correctness_reason"])
                         if identity in consistency and consistency[identity] != value:

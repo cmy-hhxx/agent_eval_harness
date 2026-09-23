@@ -122,13 +122,13 @@ def test_missing_timing_is_excluded_and_empty_analysis_is_schema_constrained(tmp
     config = load_config(ROOT / "configs/eval.toml")
     monkeypatch.setenv("PRIME_EVAL_API_KEY", "fake-local-test-key")
     records = {}
-    for i, label in enumerate(("A", "B")):
+    for i, label in ((0, "A"), (2, "B")):
         data = {"batch_id": "batch", "case_id": "case", "meta": {"ok": True},
                 "messages": [{"role": "user", "type": "message", "content": "问题"},
                              {"role": "assistant", "type": "message", "content": "具体回答"}]}
         if label == "A" or both_timed:
             data["meta"]["finish_answer_time_cost"] = 1000
-        records[label] = adapt(data, config.versions[i], "test.jsonl", 1, None)
+        records[label] = adapt(data, config.versions[i] | {"adapter": "a"}, "test.jsonl", 1, None)
 
     async def stop_before_rpc(*args, **kwargs):
         raise RuntimeError("inspect prepared request")

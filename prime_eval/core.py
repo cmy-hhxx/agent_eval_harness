@@ -17,6 +17,14 @@ from jsonschema import Draft202012Validator
 
 Json = dict[str, Any]
 ADAPTER_VERSION = "1"
+ALLOWED_PAIRS = (("a_fast", "aa_fast"), ("a_expert", "aa_expert"))
+
+
+def comparison_pair(versions: list[str]) -> tuple[str, str]:
+    for pair in ALLOWED_PAIRS:
+        if len(versions) == 2 and set(versions) == set(pair):
+            return pair
+    raise ValueError(f"不允许的对比: {versions}；仅允许 A Fast ↔ AA Fast、A Expert ↔ AA Expert")
 
 
 def encode(value: Any) -> str:
@@ -284,6 +292,7 @@ class EvaluationPlan:
                 "correctness_tasks": len({r.key for pair in self.pairs for r in pair if self.references[r.key[:2]] is not None}),
                 "subjective_inputs_skipping_correctness": len({r.key for pair in self.pairs for r in pair if self.references[r.key[:2]] is None}),
                 "pairwise_tasks": len(self.pairs),
+                "allowed_pairs": [list(pair) for pair in ALLOWED_PAIRS],
                 "pair_counts": {name: sum(f"{a.version}__vs__{b.version}" == name for a, b in self.pairs)
                                 for name in sorted({f"{a.version}__vs__{b.version}" for a, b in self.pairs})},
                 "issues": self.issues, "skipped": self.skipped}
@@ -332,6 +341,7 @@ def build_plan(config: Config, batches: list[str] | None = None, cases: list[str
                     plan.issues.append({"source": str(path), "line": line, "identity": key, "reason": str(error)})
     selected_cases = sorted(all_cases)[:limit] if limit is not None else sorted(all_cases)
     plan.records = {key: record for key, record in plan.records.items() if key[:2] in selected_cases}
+    configured = {v["id"] for v in config.versions}
     for batch, case in selected_cases:
         records = [plan.records[(batch, case, v["id"])] for v in config.versions if (batch, case, v["id"]) in plan.records]
         references = {encode(r.reference): r.reference for r in records if r.reference is not None}
@@ -339,14 +349,16 @@ def build_plan(config: Config, batches: list[str] | None = None, cases: list[str
         plan.references[(batch, case)] = next(iter(references.values()), None)
         if conflict:
             plan.issues.append({"batch_id": batch, "case_id": case, "reason": "question_or_reference_conflict"})
-        for a, b in itertools.combinations(config.versions, 2):
-            left, right = plan.records.get((batch, case, a["id"])), plan.records.get((batch, case, b["id"]))
+        for a, b in ALLOWED_PAIRS:
+            if not {a, b} <= configured:
+                continue
+            left, right = plan.records.get((batch, case, a)), plan.records.get((batch, case, b))
             if left and right and not conflict:
                 plan.pairs.append((left, right))
             else:
-                plan.skipped.append({"batch_id": batch, "case_id": case, "versions": [a["id"], b["id"]],
+                plan.skipped.append({"batch_id": batch, "case_id": case, "versions": [a, b],
                                      "reason": "case_conflict" if conflict else "missing_or_invalid_answer",
-                                     "missing": [v["id"] for v, r in ((a, left), (b, right)) if r is None]})
+                                     "missing": [v for v, r in ((a, left), (b, right)) if r is None]})
     return plan
 
 
@@ -368,6 +380,8 @@ def submission_schema(schema: Json, stage: str) -> Json:
 
     def replace(node: Any) -> None:
         if isinstance(node, dict):
+            # Tool provenance is derived locally from the original trace, never guessed by the judge.
+            node.get("properties", {}).pop("stage_trace", None)
             if "evidence" in node.get("properties", {}):
                 node["properties"]["evidence"]["items"] = {
                     "type": "object", "additionalProperties": False, "required": ["ref"],
@@ -420,6 +434,8 @@ def artifact_evidence(record: Record, candidate: str) -> list[Json]:
 
 
 def validate_result(schema: Json, stage: str, result: Json, candidates: dict[str, Record], viewed: set[tuple[str, int]] | None = None) -> list[Json]:
+    if stage == "pairwise":
+        comparison_pair([r.version for r in candidates.values()])
     Draft202012Validator(stage_schema(schema, stage) if stage != "output" else schema).validate(result)
     if stage == "pairwise":
         verdict = result["verdict"]

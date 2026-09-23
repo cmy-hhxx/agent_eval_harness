@@ -67,6 +67,12 @@ def render_summaries(summaries: list[Json]) -> str:
                 lines += [f"### {title}", ""]
                 for finding in review[key]:
                     lines += [f"- **{stages[finding['stage']]}｜{finding['text']}**：{finding['reason']}", ""]
+                    trace = finding.get("stage_trace", {})
+                    locations = [f"{item['tool_name']}（消息 #{item['message_index']}）"
+                                 for item in trace.get("locations", []) if item["tool_name"]]
+                    if locations:
+                        confidence = {"high": "高", "medium": "中", "none": "无"}[trace["confidence"]]
+                        lines += [f"工具回溯（{confidence}置信度）：" + "、".join(locations) + "。", ""]
                     for evidence in finding["evidence"]:
                         quote = evidence["quote"].replace("\n", " ")
                         lines += [f"> 原始消息 #{evidence['message_index']}：{quote}", ""]

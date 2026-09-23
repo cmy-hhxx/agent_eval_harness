@@ -45,14 +45,81 @@ def test_alignment_missing_and_batches(config):
     fill(config, [[raw("q1"), raw("q2"), raw("q1", "b2")],
                   [raw("q2"), raw("q1"), raw("q1", "b2")], [raw("q1")], []])
     plan = build_plan(config)
-    assert len(plan.pairs) == 5
-    assert plan.summary()["correctness_tasks"] == 7
-    assert len(plan.skipped) == 13
+    assert len(plan.pairs) == 1
+    assert plan.summary()["correctness_tasks"] == 2
+    assert len(plan.skipped) == 5
     assert all(a.key[:2] == b.key[:2] for a, b in plan.pairs)
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_full_case_has_only_two_pairs_independent_of_config_order(config, reverse):
+    fill(config, [[raw()] for _ in range(4)])
+    if reverse:
+        config.versions.reverse()
+    plan = build_plan(config)
+    assert [(a.version, b.version) for a, b in plan.pairs] == [
+        ("a_fast", "aa_fast"), ("a_expert", "aa_expert")]
+    assert plan.skipped == []
+    assert plan.summary()["correctness_tasks"] == 4
+
+
+@pytest.mark.parametrize("left", range(4))
+@pytest.mark.parametrize("right", range(4))
+def test_pair_policy_covers_all_version_combinations(config, left, right):
+    fill(config, [[raw()] if i in (left, right) else [] for i in range(4)])
+    plan = build_plan(config)
+    allowed = {left, right} in ({0, 2}, {1, 3})
+    assert len(plan.pairs) == int(allowed)
+    assert plan.summary()["correctness_tasks"] == 2 * int(allowed)
+    assert all(s["versions"] in (["a_fast", "aa_fast"], ["a_expert", "aa_expert"]) for s in plan.skipped)
+    records = {label: adapt(raw(), config.versions[i], "input.jsonl", 1, None)
+               for label, i in (("A", left), ("B", right))}
+    evaluation = fake_evaluation("pairwise", records)
+    if allowed:
+        validate_result(config.schema, "pairwise", evaluation, records)
+    else:
+        with pytest.raises(ValueError, match="不允许的对比"):
+            validate_result(config.schema, "pairwise", evaluation, records)
+
+
+def test_runner_rejects_forbidden_plan_before_prime_or_cache(config, tmp_path, monkeypatch):
+    import prime_eval.runner as runner
+    fill(config, [[raw()] for _ in range(4)])
+    plan = build_plan(config)
+    plan.pairs = [(plan.records[("b1", "q1", "a_fast")], plan.records[("b1", "q1", "a_expert")])]
+
+    def unexpected_prime(_):
+        pytest.fail("非法配对不能启动 Prime")
+
+    monkeypatch.setattr(runner, "prepared_prime", unexpected_prime)
+    with pytest.raises(ValueError, match="不允许的对比"):
+        asyncio.run(run_evaluation(config, plan, tmp_path / "run", False))
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize("versions,pair", [
+    ((0, 1), ["a_fast", "a_expert"]),
+    ((0, 1), ["a_fast", "aa_fast"]),  # A legal filename cannot disguise illegal candidates.
+    ((0, 2), ["a_expert", "aa_expert"]),
+    ((0, 2), ["aa_fast", "a_fast"]),
+])
+def test_export_and_validation_reject_illegal_or_mislabeled_tasks(config, tmp_path, versions, pair):
+    records = {label: adapt(raw(reference=None), config.versions[i], "input.jsonl", 1, None)
+               for label, i in zip(("A", "B"), versions)}
+    task = {"id": "legacy", "stage": "pairwise", "pair": pair,
+            "candidates": {label: r.identity() for label, r in records.items()}}
+    save_presentation(tmp_path, config)
+    write_json(tmp_path / "schema.json", config.schema)
+    write_json(tmp_path / "manifest.json", {"tasks": [task]})
+    with pytest.raises(ValueError, match="不允许的对比|任务配对"):
+        export_results(tmp_path)
+    assert not (tmp_path / "results").exists()
+    errors = validate_run(tmp_path)["errors"]
+    assert any("不允许的对比" in error or "任务配对" in error for error in errors)
+
+
 def test_duplicate_does_not_choose_arbitrary_input(config):
-    fill(config, [[raw(), raw()], [raw()], [raw()], []])
+    fill(config, [[raw(), raw()], [raw()], [raw()], [raw()]])
     plan = build_plan(config)
     assert len(plan.pairs) == 1
     assert all(r.version != "a_fast" for pair in plan.pairs for r in pair)
@@ -60,7 +127,7 @@ def test_duplicate_does_not_choose_arbitrary_input(config):
 
 
 def test_reference_conflict_isolates_case(config):
-    fill(config, [[raw(reference="4"), raw("ok")], [raw(reference="5"), raw("ok")]])
+    fill(config, [[raw(reference="4"), raw("ok")], [], [raw(reference="5"), raw("ok")]])
     plan = build_plan(config)
     assert len(plan.pairs) == 1
     assert plan.pairs[0][0].case == "ok"
@@ -70,7 +137,7 @@ def test_reference_conflict_isolates_case(config):
 def test_subjective_skips_correctness_and_empty_answer(config):
     invalid = raw("empty")
     invalid["messages"] = []
-    fill(config, [[raw(reference=None), invalid], [raw(reference=None), raw("empty")]])
+    fill(config, [[raw(reference=None), invalid], [], [raw(reference=None), raw("empty")]])
     plan = build_plan(config)
     assert len(plan.pairs) == 1
     assert plan.summary()["correctness_tasks"] == 0
@@ -138,12 +205,12 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
     assert calls == ["correctness"] * 4
     assert first["status"] == "correctness_complete"
     second = asyncio.run(run_evaluation(config, plan, run, True, stage="pairwise"))
-    assert calls == ["correctness"] * 4 + ["pairwise"] * 12
-    assert second["completed_comparisons"] == 12
-    assert len(second["result_files"]) == 6
+    assert calls == ["correctness"] * 4 + ["pairwise"] * 4
+    assert second["completed_comparisons"] == 4
+    assert len(second["result_files"]) == 2
     assert validate_run(run)["valid"]
     summaries = [json.loads(line) for line in (run / "task_summaries.jsonl").read_text().splitlines()]
-    assert len(summaries) == 12
+    assert len(summaries) == 4
     assert summaries[0]["question"] == "2+2是多少？"
     assert summaries[0]["scoring_points"] == ["算式与结果一致"]
     assert summaries[0]["red_flags"] == ["将2+2算成5"]
@@ -153,9 +220,15 @@ def test_two_stages_resume_cache_and_consistency(config, tmp_path, monkeypatch):
     assert second["correctness"]["A组Fast"]["subjective_not_assessed"] == 1
     assert second["correctness"]["A组Fast"]["correct"] == 1
     asyncio.run(run_evaluation(config, plan, run, True))
-    assert len(calls) == 16
+    assert len(calls) == 8
     asyncio.run(run_evaluation(config, plan, tmp_path / "new-run", False))
-    assert len(calls) == 16
+    assert len(calls) == 8
+    forbidden = run / "results" / "a_fast__vs__a_expert.jsonl"
+    forbidden.write_text("")
+    assert any("不允许的对比" in error for error in validate_run(run)["errors"])
+    export_results(run)
+    assert not forbidden.exists()
+    assert validate_run(run)["valid"]
     result_file = next((run / "results").glob("*.jsonl"))
     rows = [json.loads(line) for line in result_file.read_text().split("\n") if line]
     next(iter(rows[0]["models"].values()))["trace_id"] = "wrong-trace"
@@ -186,7 +259,7 @@ def test_answer_timing_conversion_missing_values_and_comparison(config):
 def test_task_analysis_is_required_and_checked_for_workflow_narration(config):
     from jsonschema import ValidationError
     record = adapt(raw(reference=None), config.versions[0], "input.jsonl", 1, None)
-    candidates = {"A": record, "B": record}
+    candidates = {"A": record, "B": adapt(raw(reference=None), config.versions[2], "b.jsonl", 1, None)}
     result = fake_evaluation("pairwise", candidates)
     del result["task_analysis"]
     with pytest.raises(ValidationError, match="task_analysis"):
@@ -199,7 +272,7 @@ def test_task_analysis_is_required_and_checked_for_workflow_narration(config):
 
 def test_summary_tampering_is_detected(config, tmp_path, monkeypatch):
     import prime_eval.runner as runner
-    fill(config, [[raw(reference=None)], [raw(reference=None)]])
+    fill(config, [[raw(reference=None)], [], [raw(reference=None)]])
     monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake", "version": "0", "sha256": "fake"})
 
     async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
@@ -226,9 +299,53 @@ def test_stage_config_is_decoupled(config):
     assert config.fingerprint("correctness") != first
 
 
+def test_report_regenerates_compact_tool_trace_from_inputs(config, tmp_path, monkeypatch):
+    import prime_eval.runner as runner
+    data = raw(reference=None, answer="答案是 4 [^1]")
+    data["messages"][1:1] = [
+        {"type": "function_call", "name": "Search", "call_id": "s1", "arguments": "查询"},
+        {"type": "function_call_output", "call_id": "s1", "output": "<referencable-result>\nID: 1\n答案是 4"},
+    ]
+    fill(config, [[data], [], [data]])
+    monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
+
+    async def invoke(cfg, prime, stage, candidates, reference, correctness, directory, paths):
+        directory.mkdir(parents=True)
+        evaluation = fake_evaluation(stage, candidates)
+        for review in evaluation["evaluations"].values():
+            review["findings"][0]["evidence"][0]["quote"] = "答案是 4 [^1]"
+        return {"evaluation": evaluation, "viewed_images": []}
+
+    monkeypatch.setattr(runner, "invoke", invoke)
+    run = tmp_path / "run"
+    asyncio.run(run_evaluation(config, build_plan(config), run, False))
+    path = run / "results/a_fast__vs__aa_fast.jsonl"
+    row = json.loads(path.read_text())
+    finding = row["evaluations"]["a_fast"]["findings"][0]
+    assert finding["stage"] == "final_answer"
+    assert finding["stage_trace"] == {
+        "tools": ["Search"], "confidence": "high", "source": "quote_reference",
+        "locations": [{"message_index": 2, "tool_name": "Search"}],
+    }
+    assert not {"stage_detail", "stage_tools", "stage_locations"} & finding.keys()
+    summary = json.loads((run / "task_summaries.jsonl").read_text())
+    assert summary["candidates"]["a_fast"]["strengths"][0]["stage_trace"] == finding["stage_trace"]
+    assert "工具回溯（高置信度）：Search（消息 #2）" in (run / "task_summaries.md").read_text()
+    export_results(run)
+    assert json.loads(path.read_text()) == row and validate_run(run)["valid"]
+    config.versions[0]["display_name"] = "实验组Fast"
+    save_presentation(run, config)
+    export_results(run)
+    assert validate_run(run)["valid"]
+    row = json.loads(path.read_text())
+    row["evaluations"]["a_fast"]["findings"][0]["stage_trace"]["tools"] = ["FinQuery"]
+    write_jsonl(path, [row])
+    assert not validate_run(run)["valid"]
+
+
 def test_comparison_does_not_explain_subjective_evaluation_process(config):
     record = adapt(raw(reference=None), config.versions[0], "input.jsonl", 1, None)
-    candidates = {"A": record, "B": record}
+    candidates = {"A": record, "B": adapt(raw(reference=None), config.versions[2], "b.jsonl", 1, None)}
     result = fake_evaluation("pairwise", candidates)
     result["verdict"]["reason"] = "【候选A】更好。且本题无标准答案、未进行独立正确性判定。"
     with pytest.raises(ValueError, match="流程说明"):
@@ -236,22 +353,22 @@ def test_comparison_does_not_explain_subjective_evaluation_process(config):
 
 
 def test_version_names_replace_roles_without_changing_quotes_or_stock_terms(config, tmp_path):
-    names = {"A": "AA组Expert", "B": "A组Fast"}
+    names = {"A": "AA组Fast", "B": "A组Fast"}
     value = {"summary": "【候选A】更慢；候选 B更快。A使用原始数据，A/B都提及A股、B类及ETF、GDP、ABC。",
              "evidence": [{"quote": "A/B都提及A股"}]}
     mapped = display_text(value, names)
-    assert mapped["summary"] == "AA组Expert更慢；A组Fast更快。AA组Expert使用原始数据，AA组Expert/A组Fast都提及A股、B类及ETF、GDP、ABC。"
+    assert mapped["summary"] == "AA组Fast更慢；A组Fast更快。AA组Fast使用原始数据，AA组Fast/A组Fast都提及A股、B类及ETF、GDP、ABC。"
     assert mapped["evidence"] == value["evidence"]
     assert value["summary"].startswith("【候选A】")
     records = {label: adapt(raw(reference=None), config.versions[index], "in.jsonl", 1, None)
-               for label, index in (("A", 1), ("B", 0))}
+               for label, index in (("A", 2), ("B", 0))}
     task = {"candidates": {key: {**r.identity(), "llm": None} for key, r in records.items()},
-            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "aa_fast"]}
     save_presentation(tmp_path, config)
     result = fake_evaluation("pairwise", records)
     row = comparison_row(tmp_path, task, result)
-    assert set(row["models"]) == {"a_fast", "a_expert"}
-    assert row["verdict"] == {"result": "win", "winner_version": "a_expert", "winner_name": "A组Expert", "reason": "A组Expert更好。表达更直接。"}
+    assert set(row["models"]) == {"a_fast", "aa_fast"}
+    assert row["verdict"] == {"result": "win", "winner_version": "aa_fast", "winner_name": "AA组Fast", "reason": "AA组Fast更好。表达更直接。"}
     result["verdict"]["result"] = "tie"
     assert comparison_row(tmp_path, task, result)["verdict"]["winner_version"] is None
 
@@ -259,11 +376,11 @@ def test_version_names_replace_roles_without_changing_quotes_or_stock_terms(conf
 @pytest.mark.parametrize("supplement", [[], ["A"], ["A", "B"]])
 def test_numeric_export_preserves_grounded_verdict(config, tmp_path, supplement):
     records = {label: adapt(raw(reference=None, answer=answer), config.versions[index], "in.jsonl", 1, None)
-               for label, index, answer in (("A", 1, "2+2=4"), ("B", 0, "2+3=5"))}
+               for label, index, answer in (("A", 2, "2+2=4"), ("B", 0, "2+3=5"))}
     task = {"id": "numeric", "stage": "pairwise",
             "candidates": {key: {**record.identity(), "llm": None} for key, record in records.items()},
             "dependencies": {"A": None, "B": None}, "reference": None,
-            "pair": ["a_fast", "a_expert"]}
+            "pair": ["a_fast", "aa_fast"]}
     save_presentation(tmp_path, config)
     evaluation = fake_evaluation("pairwise", records)
     evaluation["verdict"]["reason"] = (
@@ -280,10 +397,10 @@ def test_numeric_export_preserves_grounded_verdict(config, tmp_path, supplement)
     write_json(tmp_path / "manifest.json", {"run_id": "numeric", "status": "finished", "tasks": [task],
                                             "preflight": {}, "started_at": 0, "finished_at": 1})
     export_results(tmp_path)
-    row = json.loads((tmp_path / "results" / "a_fast__vs__a_expert.jsonl").read_text())
-    expected = display_text(evaluation["verdict"]["reason"], {"A": "A组Expert", "B": "A组Fast"})
+    row = json.loads((tmp_path / "results" / "a_fast__vs__aa_fast.jsonl").read_text())
+    expected = display_text(evaluation["verdict"]["reason"], {"A": "AA组Fast", "B": "A组Fast"})
     assert row["verdict"]["reason"] == expected
-    assert row["verdict"]["winner_version"] == "a_expert"
+    assert row["verdict"]["winner_version"] == "aa_fast"
     summary = json.loads((tmp_path / "task_summaries.jsonl").read_text())
     assert summary["conclusion"]["reason"] == expected
     assert expected.split("。", 1)[1] in render_summaries([summary])
@@ -292,7 +409,7 @@ def test_numeric_export_preserves_grounded_verdict(config, tmp_path, supplement)
 
 def test_verdict_opening_agrees_with_winner_and_ties_are_explicit(config, tmp_path):
     records = {label: adapt(raw(reference=None), config.versions[i], "in.jsonl", 1, None)
-               for i, label in enumerate(("A", "B"))}
+               for i, label in ((0, "A"), (2, "B"))}
     result = fake_evaluation("pairwise", records)
     result["verdict"]["reason"] = "【候选B】更好。"
     with pytest.raises(ValueError, match="结论开头"):
@@ -305,7 +422,7 @@ def test_verdict_opening_agrees_with_winner_and_ties_are_explicit(config, tmp_pa
         result["verdict"]["reason"] = opening + "双方情况如下。"
         validate_result(config.schema, "pairwise", result, records)
         task = {"candidates": {key: {**r.identity(), "llm": None} for key, r in records.items()},
-                "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+                "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "aa_fast"]}
         save_presentation(tmp_path, config)
         row = comparison_row(tmp_path, task, result)
         markdown = render_summaries([task_summary(task, row, result["task_analysis"])])
@@ -333,7 +450,7 @@ def test_full_answer_survives_soft_budget_and_history_prefers_recent(config):
 
 def test_subjective_comparison_runs_while_correctness_is_pending(config, tmp_path, monkeypatch):
     import prime_eval.runner as runner
-    fill(config, [[raw(), raw("subjective", reference=None)] for _ in range(2)])
+    fill(config, [[raw(), raw("subjective", reference=None)] if i != 1 else [] for i in range(3)])
     monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
     calls = []
 
@@ -359,7 +476,7 @@ def test_subjective_comparison_runs_while_correctness_is_pending(config, tmp_pat
 
 def test_interruption_resume_and_corrupt_receipt_recovery(config, tmp_path, monkeypatch):
     import prime_eval.runner as runner
-    fill(config, [[raw("q1", reference=None), raw("q2", reference=None)] for _ in range(2)])
+    fill(config, [[raw("q1", reference=None), raw("q2", reference=None)] if i != 1 else [] for i in range(3)])
     monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
     monkeypatch.setattr(runner, "probe_prime", lambda _: {"binary": "fake"})
     calls = []
@@ -409,7 +526,7 @@ def test_interruption_resume_and_corrupt_receipt_recovery(config, tmp_path, monk
 def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, tmp_path, monkeypatch):
     import prime_eval.runner as runner
     from prime_eval.prime import JudgeError
-    fill(config, [[raw(reference=None)] for _ in range(2)])
+    fill(config, [[raw(reference=None)], [], [raw(reference=None)]])
     monkeypatch.setattr(runner, "prepared_prime", lambda _: {"binary": "fake"})
     monkeypatch.setattr(runner, "probe_prime", lambda _: {"binary": "fake"})
     calls = []
@@ -428,7 +545,7 @@ def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, t
     assert len(calls) == 1
     asyncio.run(run_evaluation(config, plan, run, True, retry_failed=True))
     assert len(calls) == 2
-    fill(config, [[raw(reference=None), raw("q2", reference=None)] for _ in range(2)])
+    fill(config, [[raw(reference=None), raw("q2", reference=None)] if i != 1 else [] for i in range(3)])
     new_run = tmp_path / "incremental"
     result = asyncio.run(run_evaluation(config, build_plan(config), new_run, False))
     assert calls == ["q1", "q1", "q2"]
@@ -448,7 +565,7 @@ def test_failed_tasks_require_retry_flag_and_new_inputs_reuse_existing(config, t
 
 def test_editorial_omits_missing_metadata_but_keeps_real_answer_omissions(config, tmp_path):
     records = {label: adapt(raw(reference=None), config.versions[i], "in.jsonl", 1, None)
-               for i, label in enumerate(("A", "B"))}
+               for i, label in ((0, "A"), (2, "B"))}
     evaluation = fake_evaluation("pairwise", records)
     for phrase in ("A组Fast耗时数据缺失，不能据此奖励速度。", "双方缺少原始回答完成时间，不比较快慢。", "未发现有证据支持的明显问题。"):
         evaluation["verdict"]["reason"] = "【候选A】更好。" + phrase
@@ -467,12 +584,12 @@ def test_editorial_omits_missing_metadata_but_keeps_real_answer_omissions(config
     records["B"].raw["meta"].pop("finish_answer_time_cost")
     evaluation["task_analysis"]["timing_analysis"] = ""
     task = {"candidates": {label: {**r.identity(), "llm": None} for label, r in records.items()},
-            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "a_expert"]}
+            "dependencies": {"A": None, "B": None}, "reference": None, "pair": ["a_fast", "aa_fast"]}
     save_presentation(tmp_path, config)
     row = comparison_row(tmp_path, task, evaluation)
     markdown = render_summaries([task_summary(task, row, evaluation["task_analysis"])])
     assert "A组Fast 8.000秒" in markdown
-    for absent in ("A组Expert 0.000", "缺失", "未发现", "### 不足", "是否触犯", "比较记录", "首 token"):
+    for absent in ("AA组Fast 0.000", "缺失", "未发现", "### 不足", "是否触犯", "比较记录", "首 token"):
         assert absent not in markdown
 
 

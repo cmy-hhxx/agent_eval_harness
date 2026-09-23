@@ -1,5 +1,6 @@
 # Paths are relative to this file. A run can contain several batches.
 [inputs]
+# 固定配对：a_fast ↔ aa_fast、a_expert ↔ aa_expert；不按版本顺序生成全组合。
 batches = []
 case_ids = []
 # Unit of meta.*_time_cost from the input collector; a version may override it.
@@ -53,15 +54,15 @@ context_window = 1050000
 max_output_tokens = 8192
 
 [execution]
-concurrency = 8
-timeout_seconds = 300
-idle_timeout_seconds = 45
-retries = 0
-retry_delay_seconds = 5
-repair_attempts = 1
-max_tool_calls = 8
+concurrency = 4
+timeout_seconds = 900
+idle_timeout_seconds = 600
+retries = 1
+retry_delay_seconds = 10
+repair_attempts = 2
+max_tool_calls = 12
 initial_context_chars = 16000
-report_interval_seconds = 30
+report_interval_seconds = 15
 seed = "prime-eval-v1"
 
 [prompts]
