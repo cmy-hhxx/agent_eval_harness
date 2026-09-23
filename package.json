@@ -1,0 +1,19 @@
+{
+  "name": "dual-agent-eval", "version": "0.1.0", "private": true, "type": "module",
+  "engines": { "node": "24.14.1", "npm": "11.11.0" },
+  "packageManager": "npm@11.11.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "imports": { "#pi-sdk": "./vendor/pi/packages/coding-agent/dist/index.js", "#prime-sdk": "./vendor/prime-agent/packages/coding-agent/dist/index.js" },
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "build": "node scripts/build.mjs",
+    "build:app": "node scripts/build-app.mjs",
+    "typecheck": "tsc --noEmit",
+    "doctor": "node --env-file-if-exists=.env scripts/doctor.mjs",
+    "eval": "node --env-file-if-exists=.env dist/apps/host/src/cli.js",
+    "test": "npm run build:app && node --test dist/tests/host/*.test.js",
+    "test:integration": "npm run build:app && node --test dist/tests/integration/*.test.js"
+  },
+  "dependencies": { "ajv": "8.17.1" },
+  "devDependencies": { "@types/node": "24.10.0", "typescript": "5.9.3" }
+}

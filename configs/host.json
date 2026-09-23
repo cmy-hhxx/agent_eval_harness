@@ -1,0 +1,24 @@
+{
+  "inputs": {
+    "timing_unit": "ms",
+    "versions": [
+      {"id":"a_fast","name":"A Fast","display_name":"A组Fast","path":"../data/inputs/a_fast.jsonl","adapter":"a"},
+      {"id":"a_expert","name":"A Expert","display_name":"A组Expert","path":"../data/inputs/a_expert.jsonl","adapter":"a"},
+      {"id":"aa_fast","name":"AA Fast","display_name":"AA组Fast","path":"../data/inputs/aa_fast.jsonl","adapter":"aa"},
+      {"id":"aa_expert","name":"AA Expert","display_name":"AA组Expert","path":"../data/inputs/aa_expert.jsonl","adapter":"aa"}
+    ]
+  },
+  "judge": {
+    "provider":"evaluation-gateway",
+    "baseUrlEnv":"EVAL_BASE_URL",
+    "api":"openai-completions","apiKeyEnv":"EVAL_API_KEY",
+    "correctness":{"model":"gpt-5.6-luna","thinking":"low","contextWindow":1050000,"maxOutputTokens":4096},
+    "pairwise":{"model":"gpt-5.6-luna","thinking":"low","contextWindow":1050000,"maxOutputTokens":8192}
+  },
+  "execution": {
+    "concurrency":4,"timeoutSeconds":900,"idleTimeoutSeconds":600,"maxToolCalls":12,
+    "repairAttempts":2,"retries":1,"retryDelaySeconds":10,"codeTimeoutSeconds":60,
+    "maxOutputChars":16000,"initialContextChars":16000,"seed":"prime-eval-v1"
+  },
+  "outputDir":"../data/runs","cacheDir":"../.cache/evaluations"
+}

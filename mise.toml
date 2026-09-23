@@ -1,0 +1,8 @@
+[tools]
+node = "24.14.1"
+"npm:npm" = "11.11.0"
+python = "3.12.12"
+uv = "0.9.27"
+
+[env]
+HUSKY = "0"

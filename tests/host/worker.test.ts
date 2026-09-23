@@ -1,0 +1,263 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
+import path from "node:path";
+import {
+  DEFAULT_POLICY,
+  PROTOCOL_VERSION,
+  type AgentBackend,
+  type AttemptSpec,
+  type AttemptStatus,
+  type RunManifest,
+  type Submission,
+  type WorkerEvent,
+} from "../../packages/contracts/src/index.js";
+import { body, digest, json, listen, request } from "../../packages/contracts/src/io.js";
+import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
+import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
+import { RunStore } from "../../apps/host/src/store.js";
+import { startWorker } from "../../packages/worker/src/server.js";
+import { fakeIdentity, fixtureConfig, pairResult, raw } from "./fixtures.js";
+
+async function harness(
+  create: AgentBackend["createSession"],
+  policy: Partial<typeof DEFAULT_POLICY> = {},
+  dropAck = false,
+) {
+  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+  const plan = await buildPlan(config),
+    task = plan.tasks[0];
+  const manifest: RunManifest = {
+    format: "dual-agent-eval/1",
+    runId: "test",
+    status: "running",
+    fingerprint: "fixture",
+    engine: fakeIdentity,
+    config,
+    tasks: plan.tasks,
+    inputs: {},
+    states: { [task.id]: { status: "pending", attempts: 0 } },
+    preflight: plan.summary,
+    startedAt: Date.now(),
+  };
+  const store = new RunStore(path.join(directory, "run"), manifest, plan.inputs, pairwisePack);
+  let posts = 0,
+    lookups = 0;
+  const host = await listen(async (req, res, url) => {
+    if (req.method === "POST") {
+      posts++;
+      const receipt = await store.accept((await body(req)) as Submission);
+      if (dropAck && posts === 1) res.destroy();
+      else json(res, receipt);
+    } else if (url.pathname.includes("/submissions/")) {
+      lookups++;
+      json(res, await store.findSubmission(url.pathname.split("/").at(-1)!));
+    } else json(res, plan.inputs[url.pathname.split("/").at(-1)!]);
+  });
+  const worker = await startWorker(
+    { identity: fakeIdentity, createSession: create },
+    path.join(directory, "worker"),
+  );
+  const prepared = pairwisePack.prepare(task, plan.inputs, {});
+  const spec: AttemptSpec = {
+    protocolVersion: PROTOCOL_VERSION,
+    runId: "test",
+    taskId: task.id,
+    attemptId: "attempt",
+    engine: fakeIdentity,
+    ...prepared,
+    model: {
+      provider: "fixture",
+      baseUrl: "http://127.0.0.1",
+      api: "openai-completions",
+      apiKeyEnv: "FIXTURE_KEY",
+      model: "fixture",
+      thinking: "off",
+      contextWindow: 10000,
+      maxOutputTokens: 1000,
+    },
+    policy: { ...DEFAULT_POLICY, ...policy },
+    inputs: Object.entries(task.inputIds).map(([name, id]) => ({
+      id,
+      name,
+      digest: digest(plan.inputs[id]),
+    })),
+    hostUrl: host.url,
+    deadline: Date.now() + 10000,
+  };
+  return {
+    spec,
+    worker,
+    store,
+    counts: () => ({ posts, lookups }),
+    async start() {
+      await store.activate(spec);
+      await request(worker.url + "/v1/attempts", "POST", spec);
+    },
+    async done() {
+      for (let i = 0; i < 200; i++) {
+        const status = await request<AttemptStatus>(worker.url + "/v1/attempts/attempt");
+        if (status.state !== "running") return status;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error("Worker did not settle");
+    },
+    async close() {
+      await worker.close();
+      await host.close();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+test("lost submission acknowledgement is recovered by ID; SSE replay is contiguous", async () => {
+  const fixture = await harness(
+    async (options) => ({
+      async run() {
+        const accepted = await options.execute("submit_evaluation", pairResult());
+        assert.equal(accepted.terminate, true);
+      },
+      async abort() {},
+      async dispose() {},
+    }),
+    {},
+    true,
+  );
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    assert.deepEqual(fixture.counts(), { posts: 1, lookups: 1 });
+    const read = async (after: number) => {
+      const response = await fetch(`${fixture.worker.url}/v1/attempts/attempt/events?after=${after}`);
+      return (await response.text())
+        .split("\n")
+        .filter((l) => l.startsWith("data: "))
+        .map((l) => JSON.parse(l.slice(6)) as WorkerEvent);
+    };
+    const events = await read(0);
+    assert.equal(events.at(-1)?.type, "finished");
+    assert.deepEqual(
+      events.map((e) => e.seq),
+      events.map((_, i) => i + 1),
+    );
+    assert.deepEqual(await read(2), events.slice(2));
+  } finally {
+    await fixture.close();
+  }
+});
+test("exhausted exploration budget still permits submission and two repairs", async () => {
+  const fixture = await harness(
+    async (options) => ({
+      async run() {
+        await options.execute("read_trace", { candidate: "A", message_index: 1 });
+        assert.equal(
+          (await options.execute("read_trace", { candidate: "B", message_index: 1 })).isError,
+          true,
+        );
+        const invalid = pairResult();
+        invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+        assert.equal((await options.execute("submit_evaluation", invalid)).isError, true);
+        assert.equal((await options.execute("submit_evaluation", {})).isError, true);
+        assert.equal((await options.execute("submit_evaluation", pairResult())).terminate, true);
+      },
+      async abort() {},
+      async dispose() {},
+    }),
+    { maxToolCalls: 1, repairAttempts: 2 },
+  );
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.audit.calls, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+for (const reason of ["idle", "deadline", "cancel"] as const)
+  test(`worker ${reason} aborts and disposes its own session`, async () => {
+    let disposed = false,
+      release: () => void = () => {};
+    const fixture = await harness(
+      async () => ({
+        run: () =>
+          new Promise<void>((r) => {
+            release = r;
+          }),
+        async abort() {
+          release();
+        },
+        async dispose() {
+          disposed = true;
+        },
+      }),
+      { idleTimeoutSeconds: reason === "idle" ? 1 : 10 },
+    );
+    try {
+      if (reason === "deadline") fixture.spec.deadline = Date.now() + 200;
+      await fixture.start();
+      if (reason === "cancel") {
+        await new Promise((r) => setTimeout(r, 100));
+        await request(fixture.worker.url + "/v1/attempts/attempt/cancel", "POST", {});
+      }
+      const status = await fixture.done();
+      assert.equal(status.state, reason === "cancel" ? "cancelled" : "timed_out");
+      assert.equal(disposed, true);
+      assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+test("mismatched engine and unknown tools are refused before a model session", async () => {
+  let sessions = 0;
+  const fixture = await harness(async () => {
+    sessions++;
+    throw new Error("Must not start");
+  });
+  try {
+    await assert.rejects(
+      request(fixture.worker.url + "/v1/attempts", "POST", {
+        ...fixture.spec,
+        engine: { ...fakeIdentity, version: "changed" },
+      }),
+      /fingerprint/,
+    );
+    await assert.rejects(
+      request(fixture.worker.url + "/v1/attempts", "POST", {
+        ...fixture.spec,
+        evaluation: { ...fixture.spec.evaluation, toolNames: ["unavailable"] },
+      }),
+      /Tool unavailable/,
+    );
+    assert.equal(sessions, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+test("token budget aborts at the model response boundary", async () => {
+  let aborted = false;
+  const fixture = await harness(
+    async (options) => ({
+      async run() {
+        options.onEvent({
+          type: "message_end",
+          message: { role: "assistant", usage: { input: 8, output: 2, totalTokens: 10 } },
+        });
+        await options.execute("read_trace", { candidate: "A", message_index: 1 });
+      },
+      async abort() {
+        aborted = true;
+      },
+      async dispose() {},
+    }),
+    { maxTokens: 10 },
+  );
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.match(status.error || "", /Token budget/);
+    assert(aborted);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally {
+    await fixture.close();
+  }
+});

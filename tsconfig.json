@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "strict": true, "noUncheckedIndexedAccess": false, "esModuleInterop": true,
+    "noUnusedLocals": true, "noUnusedParameters": true,
+    "skipLibCheck": true, "rootDir": ".", "outDir": "dist", "declaration": true,
+    "sourceMap": true, "resolveJsonModule": true,
+    "paths": {
+      "#pi-sdk": ["./vendor/pi/packages/coding-agent/dist/index.d.ts"],
+      "#prime-sdk": ["./vendor/prime-agent/packages/coding-agent/dist/index.d.ts"],
+      "@eval/agent-pi": ["./packages/agent-pi/src/index.ts"],
+      "@eval/agent-prime": ["./packages/agent-prime/src/index.ts"],
+      "@eval/contracts": ["./packages/contracts/src/index.ts"],
+      "@eval/tools": ["./packages/tools/src/index.ts"],
+      "@eval/worker": ["./packages/worker/src/server.ts"],
+      "@eval/pairwise-eval": ["./packages/pairwise-eval/src/index.ts"]
+    }
+  },
+  "include": ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts", "tests/host/**/*.ts", "tests/integration/**/*.ts"],
+  "exclude": ["vendor", "node_modules", "dist"]
+}

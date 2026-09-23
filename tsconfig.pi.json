@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["packages/agent-pi/src/**/*.ts", "packages/worker/src/**/*.ts", "packages/contracts/src/**/*.ts", "packages/tools/src/**/*.ts"]
+}
