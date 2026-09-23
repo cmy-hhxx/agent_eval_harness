@@ -1,0 +1,29 @@
+{
+  "description": "独立于原五条金融题的判分探针。每组分别测试原始题、位置交换、无关排版、等价问法、重复运行、修正错误。预期仅依据题目中给定的信息。",
+  "groups": [
+    {
+      "id": "extract",
+      "question": "已知记录：门店代号Q，闭店时间18:30。请只提取闭店时间。",
+      "paraphrase": "记录写明门店Q在18:30闭店。请回答记录中的闭店时间，仅输出该时间。",
+      "correct": "18:30",
+      "incorrect": "17:30",
+      "formatted": "**18:30**"
+    },
+    {
+      "id": "sort",
+      "question": "把数字9、2、5按从小到大排列，输出排序后的数字。",
+      "paraphrase": "请将9、2、5升序排列，回答排列后的数字。",
+      "correct": "2、5、9",
+      "incorrect": "2、9、5",
+      "formatted": "2，5，9"
+    }
+  ],
+  "variants": [
+    {"id": "base", "question": "question", "a": "correct", "b": "incorrect", "expected": "a_fast"},
+    {"id": "swapped", "question": "question", "a": "incorrect", "b": "correct", "expected": "aa_fast"},
+    {"id": "format", "question": "question", "a": "formatted", "b": "incorrect", "expected": "a_fast"},
+    {"id": "paraphrase", "question": "paraphrase", "a": "correct", "b": "incorrect", "expected": "a_fast"},
+    {"id": "repeat", "question": "question", "a": "correct", "b": "incorrect", "expected": "a_fast"},
+    {"id": "repaired", "question": "question", "a": "correct", "b": "correct", "expected": "tie"}
+  ]
+}

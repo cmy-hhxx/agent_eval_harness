@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evaluation_type", "comparison_id", "case", "ground_truth", "models", "verdict", "evaluations", "task_analysis", "decision_basis"],
+  "properties": {
+    "schema_version": {"const": "3.4"},
+    "evaluation_type": {"const": "pairwise_model_comparison"},
+    "comparison_id": {"type": "string", "minLength": 1},
+    "case": {
+      "type": "object", "additionalProperties": false,
+      "required": ["batch_id", "case_id"],
+      "properties": {"batch_id": {"type": "string", "minLength": 1}, "case_id": {"type": "string", "minLength": 1}}
+    },
+    "ground_truth": {
+      "type": "object", "additionalProperties": false, "required": ["available", "value"],
+      "properties": {"available": {"type": "boolean"}, "value": {}}
+    },
+    "models": {
+      "type": "object", "minProperties": 2, "maxProperties": 2,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": {"$ref": "#/$defs/model"}
+    },
+    "task_analysis": {"$ref": "#/$defs/task_analysis"},
+    "decision_basis": {"$ref": "#/$defs/decision_basis"},
+    "verdict": {"$ref": "#/$defs/verdict"},
+    "evaluations": {
+      "type": "object", "minProperties": 2, "maxProperties": 2,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": {"$ref": "#/$defs/evaluation"}
+    }
+  },
+  "$defs": {
+    "assessment": {"type": "object", "additionalProperties": false, "required": ["requirement_index", "observation", "evidence_status", "impact"], "properties": {"requirement_index": {"type": "integer", "minimum": 0}, "observation": {"type": "string", "minLength": 1}, "evidence_status": {"enum": ["established", "uncertain"]}, "impact": {"type": "string", "minLength": 1}}},
+    "finding_ref": {"type": "object", "additionalProperties": false, "required": ["candidate", "finding_index"], "properties": {"candidate": {"type": "string", "minLength": 1}, "finding_index": {"type": "integer", "minimum": 0}}},
+    "decision_basis": {"type": "object", "additionalProperties": false, "required": ["decisive_findings", "counterevidence", "tradeoff"], "properties": {"decisive_findings": {"type": "array", "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/finding_ref"}}, "counterevidence": {"type": "array", "maxItems": 12, "uniqueItems": true, "items": {"$ref": "#/$defs/finding_ref"}}, "tradeoff": {"type": "string", "minLength": 1}}},
+    "model": {
+      "type": "object", "additionalProperties": false, "required": ["version", "llm", "trace_id"],
+      "properties": {"version": {"type": "string", "minLength": 1}, "llm": {"type": ["string", "null"]}, "trace_id": {"type": ["string", "null"]}}
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false, "required": ["message_index", "quote"],
+      "properties": {"message_index": {"type": "integer", "minimum": 0}, "quote": {"type": "string", "minLength": 1}}
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "dimension", "stage", "importance", "text", "reason", "evidence", "assessment"],
+      "properties": {
+        "type": {"enum": ["strength", "problem"]},
+        "dimension": {"enum": ["correctness", "completeness", "instruction_following", "evidence_quality", "reasoning", "format", "relevance", "efficiency"]},
+        "stage": {"enum": ["context_recall", "reasoning", "execution", "final_answer"]},
+        "importance": {"enum": ["high", "medium", "low"]},
+        "text": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}},
+        "assessment": {"$ref": "#/$defs/assessment"},
+        "stage_trace": {
+          "type": "object", "additionalProperties": false,
+          "required": ["tools", "locations", "confidence", "source"],
+          "properties": {
+            "tools": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "candidate_tools": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "confidence": {"enum": ["high", "medium", "none"]},
+            "source": {"enum": ["evidence_message", "quote_reference", "same_turn_tool_chain", "none"]},
+            "locations": {
+              "type": "array", "minItems": 1,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["message_index", "tool_name"],
+                "properties": {
+                  "message_index": {"type": "integer", "minimum": 0},
+                  "tool_name": {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object", "additionalProperties": false, "required": ["summary", "findings"],
+      "properties": {"summary": {"type": "string", "minLength": 1}, "findings": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"$ref": "#/$defs/finding"}}}
+    },
+    "correctness": {
+      "type": "object", "additionalProperties": false, "required": ["is_correct", "correctness_reason", "evidence"],
+      "properties": {
+        "is_correct": {"type": ["boolean", "null"]}, "correctness_reason": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}}
+      }
+    },
+    "verdict": {
+      "type": "object", "additionalProperties": false, "required": ["result", "winner_version", "winner_name", "reason"],
+      "properties": {
+        "result": {"enum": ["win", "tie"]},
+        "winner_version": {"type": ["string", "null"]}, "winner_name": {"type": ["string", "null"]},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [{"if": {"properties": {"result": {"const": "win"}}},
+        "then": {"properties": {"winner_version": {"type": "string", "minLength": 1}, "winner_name": {"type": "string", "minLength": 1}}},
+        "else": {"properties": {"winner_version": {"type": "null"}, "winner_name": {"type": "null"}}}}]
+    },
+    "task_analysis": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_type", "goal", "requirements", "scoring_points", "red_flags", "timing_analysis"],
+      "properties": {
+        "task_type": {"type": "string", "minLength": 1},
+        "goal": {"type": "string", "minLength": 1},
+        "requirements": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
+        "scoring_points": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
+        "red_flags": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1}},
+        "timing_analysis": {"type": "string"}
+      }
+    },
+    "pairwise": {
+      "type": "object", "additionalProperties": false, "required": ["verdict", "evaluations", "task_analysis", "decision_basis"],
+      "properties": {
+        "decision_basis": {"$ref": "#/$defs/decision_basis"},
+        "task_analysis": {"$ref": "#/$defs/task_analysis"},
+        "verdict": {
+          "type": "object", "additionalProperties": false, "required": ["result", "reason"],
+          "properties": {"result": {"enum": ["A_better", "B_better", "tie", "not_comparable"]}, "reason": {"type": "string", "minLength": 1}}
+        },
+        "evaluations": {
+          "type": "object", "additionalProperties": false, "required": ["A", "B"],
+          "properties": {"A": {"$ref": "#/$defs/review"}, "B": {"$ref": "#/$defs/review"}}
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["is_correct", "correctness_reason", "summary", "findings"],
+      "properties": {
+        "is_correct": {"type": ["boolean", "null"]}, "correctness_reason": {"type": "string"},
+        "summary": {"type": "string", "minLength": 1}, "findings": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"$ref": "#/$defs/finding"}}
+      },
+      "allOf": [{"if": {"properties": {"is_correct": {"type": "boolean"}}}, "then": {"properties": {"correctness_reason": {"minLength": 1}}}}]
+    }
+  }
+}

@@ -5,3 +5,6 @@ __pycache__/
 eval_input/
 eval_output/
 .eval-cache/
+eval_output_pi/
+.pi-eval-cache/
+eval_comparison/

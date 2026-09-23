@@ -4,6 +4,8 @@ Prime Eval 使用本机 `prime-agent` 对已有回答做可追溯的两阶段评
 
 相关说明：[输入与输出契约](版本对比处理说明.md) · [输入数据说明](eval_input整理说明.md) · [配对限制修改计划](评测配对限制修改计划.md)
 
+本地 pi agent 实现位于独立模块 [`pi_eval/`](pi_eval/README.md)，使用 `uv run pi-eval` 和 `configs/pi-eval.toml`。pi 在两阶段评测中增加预先固定标准与判决依据审计，使用 schema 3.4。两模块不互相导入，pi 的提示词、schema、扩展、缓存及输出目录独立维护；现有 Prime 命令和评测方式保持不变。
+
 ## 运行环境
 
 - Python 3.12，依赖由 `uv` 和 `uv.lock` 管理。
@@ -119,7 +121,7 @@ uv run prime-eval status --run eval_output/batch-001
 ```bash
 uv run pytest -q
 uv run pyright
-node --test tests/tools.test.mjs
+node --test tests/tools.test.mjs tests/pi-tools.test.mjs
 uv run prime-eval validate --run eval_output/<run-id>
 ```
 

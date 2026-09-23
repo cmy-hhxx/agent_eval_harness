@@ -1,0 +1,79 @@
+# Paths are relative to this file. A run can contain several batches.
+[inputs]
+# 固定配对：a_fast ↔ aa_fast、a_expert ↔ aa_expert；不按版本顺序生成全组合。
+batches = []
+case_ids = []
+# Unit of meta.*_time_cost from the input collector; a version may override it.
+timing_unit = "ms"
+
+[[inputs.versions]]
+id = "a_fast"
+name = "A Fast"
+display_name = "A组Fast"
+path = "../eval_input/a_fast.jsonl"
+adapter = "a"
+
+[[inputs.versions]]
+id = "a_expert"
+name = "A Expert"
+display_name = "A组Expert"
+path = "../eval_input/a_expert.jsonl"
+adapter = "a"
+
+[[inputs.versions]]
+id = "aa_fast"
+name = "AA Fast"
+display_name = "AA组Fast"
+path = "../eval_input/aa_fast.jsonl"
+adapter = "aa"
+
+[[inputs.versions]]
+id = "aa_expert"
+name = "AA Expert"
+display_name = "AA组Expert"
+path = "../eval_input/aa_expert.jsonl"
+adapter = "aa"
+
+[judge]
+pi_binary = "pi"
+provider = "evaluation-gateway"
+base_url = "https://internal-idc-equ.ainvest.com/ind/iwc-aime-model/litellm/v1"
+api = "openai-completions"
+api_key_env = "PRIME_EVAL_API_KEY"
+
+[judge.correctness]
+model = "gpt-5.6-luna"
+thinking = "low"
+context_window = 1050000
+max_output_tokens = 4096
+
+[judge.pairwise]
+model = "gpt-5.6-luna"
+thinking = "low"
+context_window = 1050000
+max_output_tokens = 8192
+
+[execution]
+concurrency = 4
+timeout_seconds = 900
+idle_timeout_seconds = 600
+retries = 1
+retry_delay_seconds = 10
+repair_attempts = 2
+max_tool_calls = 12
+initial_context_chars = 16000
+report_interval_seconds = 15
+# 保持与原评测相同的盲测顺序；这只是随机种子，不依赖 Prime 模块。
+seed = "prime-eval-v1"
+
+[prompts]
+system = "../pi_eval/prompts/system.md"
+correctness = "../pi_eval/prompts/correctness.md"
+pairwise = "../pi_eval/prompts/pairwise.md"
+repair = "../pi_eval/prompts/repair.md"
+
+[artifacts]
+output_dir = "../eval_output_pi"
+cache_dir = "../.pi-eval-cache"
+schema = "../pi_eval/schemas/evaluation.json"
+extension = "../pi_eval/extensions/evaluation-tools.js"
