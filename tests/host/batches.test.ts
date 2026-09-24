@@ -19,7 +19,7 @@ function sample(batch: string, id = "q1", reference: unknown = null): RawInput {
 function runState(config: EvalConfig, plan: TaskPlan): RunState {
   return {
     manifest: {
-      format: "dual-agent-eval/5", debug: false, runId: "batches", status: "finished", engine: fakeIdentity, config, tasks: plan.tasks, inputs: {},
+      format: "dual-agent-eval/6", debug: false, runId: "batches", status: "finished", engine: fakeIdentity, config, tasks: plan.tasks, inputs: {},
       states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "pending", attempts: 0 }])),
       preflight: plan.summary, startedAt: 0, finishedAt: 1000,
     },
@@ -73,9 +73,9 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       plan.tasks.map(({ id, dependencies, inputIds }) => ({ id, dependencies, inputIds })));
     assert.deepEqual(reordered.summary, plan.summary);
 
-    const state = runState(config, plan), run = path.join(directory, "run");
+    const state = runState(config, reordered), run = path.join(directory, "run");
     for (const task of plan.tasks) accept(state, task.id, pairResult());
-    await writeRunState(run, state, plan.inputs);
+    await writeRunState(run, state);
     const stats = await reportRun(run);
     assert.equal(stats.completed_comparisons, 440);
     assert.equal((stats.planned as JsonObject).cases, 220);
@@ -210,7 +210,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
       }
       accept(state, task.id, result);
     }
-    await writeRunState(run, state, plan.inputs);
+    await writeRunState(run, state);
     const stats = await reportRun(run), daily = stats.by_batch as Record<string, BatchStats>;
     assert.equal((stats.planned as JsonObject).cases, 8);
     assert.equal(stats.completed_comparisons, 4);

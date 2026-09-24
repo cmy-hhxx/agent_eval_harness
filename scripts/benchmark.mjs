@@ -5,7 +5,7 @@ import path from "node:path";
 import { exists, readJson, readJsonl, writeJson, canonical } from "../dist/packages/contracts/src/io.js";
 import { readRunState, loadRunInputs } from "../dist/packages/pairwise-eval/src/run-data.js";
 import { pairwisePack } from "../dist/packages/pairwise-eval/src/index.js";
-import { loadConfig } from "../dist/packages/pairwise-eval/src/input.js";
+import { loadConfig, readInputSource } from "../dist/packages/pairwise-eval/src/input.js";
 import { cite, evidenceSources } from "../dist/packages/tools/src/evidence.js";
 import { runEvaluation } from "../dist/apps/host/src/runner.js";
 
@@ -16,6 +16,27 @@ const { values, positionals: [command] } = parseArgs({ allowPositionals: true, o
 } });
 const limit = Number(values.limit);
 if (!Number.isInteger(limit) || limit < 1) throw new Error("--limit must be positive");
+
+async function loadFixtures(file) {
+  const saved = await readJson(file);
+  if (saved.format !== "eval-offline-fixtures/2") throw new Error("Regenerate the fixture index with benchmark collect");
+  const sources = new Map(), inputs = {};
+  for (const [id, ref] of Object.entries(saved.inputs)) {
+    if (!sources.has(ref.source)) {
+      const source = await readInputSource(ref.source);
+      sources.set(ref.source, { revision: source.revision, lines: source.text.replace(/^\uFEFF/, "").split(/\r?\n/) });
+    }
+    const source = sources.get(ref.source);
+    if (source.revision !== ref.revision) throw new Error("Fixed fixture source changed: " + ref.source);
+    inputs[id] = JSON.parse(source.lines[ref.line - 1]);
+  }
+  for (const fixture of saved.fixtures) {
+    fixture.inputs = Object.fromEntries(fixture.inputIds.map((id) => [id, inputs[id]]));
+    for (const task of [fixture.task, ...fixture.dependencyTasks])
+      for (const candidate of Object.values(task.data.candidates)) candidate.source_revision = saved.inputs[candidate.input_id].revision;
+  }
+  return saved;
+}
 
 // Convert only exact matches. Unresolvable evidence remains invalid; never repair judgments.
 function wireDraft(fixture) {
@@ -54,7 +75,7 @@ if (command === "collect") {
   if (await exists(values.output)) throw new Error("Fixed fixture set already exists; choose a new output path");
   const candidates = [];
   for (const run of values.run) {
-    const state = await readRunState(run), inputs = await loadRunInputs(run, state.manifest);
+    const state = await readRunState(run), inputs = await loadRunInputs(state.manifest);
     for (const task of state.manifest.tasks) {
       const directory = path.join(run, "_internal/tasks", task.id);
       if (!await exists(directory)) continue;
@@ -84,12 +105,16 @@ if (command === "collect") {
   const selected = [...distinct.values()];
   for (const fixture of candidates) if (!selected.includes(fixture) && selected.length < limit) selected.push(fixture);
   const fixtures = selected.slice(0, limit);
-  await writeJson(values.output, { format: "eval-offline-fixtures/1", note: "留存失败草稿的固定回归集，不代表全量首次通过率", observed_rejections: candidates.length, fixtures });
+  const inputs = {};
+  for (const fixture of fixtures) for (const task of [fixture.task, ...fixture.dependencyTasks])
+    for (const c of Object.values(task.data.candidates)) inputs[c.input_id] = { source: c.source, line: c.line, revision: c.source_revision };
+  await writeJson(values.output, { format: "eval-offline-fixtures/2", note: "固定草稿与源文件引用，不复制输入，也不代表全量首次通过率", observed_rejections: candidates.length,
+    inputs, fixtures: fixtures.map(({ inputs, ...fixture }) => ({ ...fixture, inputIds: Object.keys(inputs) })) });
   console.log(JSON.stringify({ file: path.resolve(values.output), observed_rejections: candidates.length, selected: fixtures.length,
     mechanically_valid: fixtures.filter((f) => f.expected.accepted).length }, null, 2));
 } else if (command === "replay") {
   if (!values.fixtures) throw new Error("replay --fixtures FIXTURES.json [--output REPORT.json]");
-  const { fixtures } = await readJson(values.fixtures);
+  const { fixtures } = await loadFixtures(values.fixtures);
   const results = fixtures.map((fixture) => { const actual = evaluate(fixture); return { source: fixture.source, expected: fixture.expected, actual, matches: canonical(actual) === canonical(fixture.expected) }; });
   const report = { total: results.length, accepted: results.filter((r) => r.actual.accepted).length, regressions: results.filter((r) => !r.matches).length, results };
   if (values.output) await writeJson(values.output, report);
@@ -97,7 +122,7 @@ if (command === "collect") {
 } else if (command === "run") {
   if (!values.fixtures || !values["run-id"]) throw new Error("run --fixtures FIXTURES.json --run-id ID [--engine pi|prime] [--limit 4] [--swap] [--execute]");
   if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
-  const { fixtures } = await readJson(values.fixtures);
+  const { fixtures } = await loadFixtures(values.fixtures);
   const selected = [...new Map(fixtures.filter((f) => f.task.stage === "pairwise").map((f) => [f.task.id, f])).values()].slice(0, limit);
   if (!selected.length) throw new Error("No pairwise fixtures");
   const originals = [...new Map(selected.flatMap((f) => [...f.dependencyTasks, f.task]).map((t) => [t.id, t])).values()];

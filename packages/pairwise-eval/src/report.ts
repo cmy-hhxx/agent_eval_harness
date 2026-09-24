@@ -113,19 +113,21 @@ export function comparisonRow(
   };
 }
 export function createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void> {
-  const written = new Set<string>();
+  const written = new Map<string, NonNullable<SubmissionReceipt["exported"]>>();
   const directory = path.join(run, "results");
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   const validateOutput = ajv.compile(outputSchema);
   let initialized = false;
   return async ({ manifest, receipts: accepted }) => {
     try {
+      for (const [id, exported] of written) if (accepted[id]) accepted[id].exported = exported;
       const pending = manifest.tasks.filter((task) => task.stage === "pairwise" && accepted[task.id] && !written.has(task.id));
       if (initialized && !pending.length) return;
       const config = manifest.config as EvalConfig;
       const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
       const receipts = new Map(Object.entries(accepted));
       const groups: Record<string, JsonObject[]> = {};
+      const exports = new Map<string, NonNullable<SubmissionReceipt["exported"]>>();
       for (const task of pending) {
         const receipt = accepted[task.id], data = task.data as TaskData;
         const result = receipt.evaluation as PairwiseResult;
@@ -135,6 +137,7 @@ export function createResultWriter(run: string, inputs: Record<string, unknown>)
           throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
         const file = notComparable ? "not_comparable.jsonl" : data.pair!.join("__vs__") + ".jsonl";
         (groups[file] ??= []).push(row);
+        exports.set(task.id, { comparisonId: String(row.comparison_id), file, row });
       }
       if (!initialized) {
         // Recover from the durable receipts, including a crash between checkpoint and append.
@@ -145,7 +148,10 @@ export function createResultWriter(run: string, inputs: Record<string, unknown>)
       } else {
         for (const [file, rows] of Object.entries(groups)) await appendJsonl(path.join(directory, file), rows);
       }
-      for (const task of pending) written.add(task.id);
+      for (const task of pending) {
+        accepted[task.id].exported = exports.get(task.id)!;
+        written.set(task.id, accepted[task.id].exported!);
+      }
       initialized = true;
     } catch (error) {
       // A failed append may leave a partial line; rebuild before attempting another append.
@@ -239,7 +245,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const config = manifest.config as EvalConfig,
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
-  const inputs = await loadRunInputs(run, manifest);
+  const needsInputs = manifest.tasks.some((task) => task.stage === "pairwise" && state.receipts[task.id] && !state.receipts[task.id].exported);
+  const inputs = needsInputs ? await loadRunInputs(manifest) : {};
   for (const task of manifest.tasks) {
     const receipt = state.receipts[task.id];
     if (receipt) {

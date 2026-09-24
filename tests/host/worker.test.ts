@@ -31,7 +31,7 @@ async function harness(
   const plan = await buildPlan(config),
     task = plan.tasks[0];
   const manifest: RunManifest = {
-    format: "dual-agent-eval/5",
+    format: "dual-agent-eval/6",
     debug: false,
     runId: "test",
     status: "running",
@@ -419,7 +419,7 @@ test("token budget aborts at the model response boundary", async () => {
   }
 });
 
-for (const message of ["Connection error.", "terminated"])
+for (const message of ["Connection error.", "terminated", "Request timed out."])
   test(`transient SDK error is retryable: ${message}`, async () => {
     const fixture = await harness(async (options) => ({
       async run() {

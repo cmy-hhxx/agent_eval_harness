@@ -39,7 +39,9 @@ import {
 } from "../../../packages/contracts/src/io.js";
 import { loadIdentity } from "../../../packages/worker/src/identity.js";
 import type { FailureContext } from "../../../packages/contracts/src/index.js";
-import { loadRunInputs, writeRunInputs } from "../../../packages/pairwise-eval/src/run-data.js";
+import { loadRunInputs } from "../../../packages/pairwise-eval/src/run-data.js";
+import { inputRevision, inputSources } from "../../../packages/pairwise-eval/src/input.js";
+import type { Candidate } from "../../../packages/pairwise-eval/src/types.js";
 import { progressSnapshot } from "./progress.js";
 import { RunStore } from "./store.js";
 import { consumeEvents, spawnWorker } from "./worker-client.js";
@@ -94,7 +96,7 @@ export async function runEvaluation(options: RunOptions) {
     if (await exists(path.join(run, "state.json"))) {
       saved = await options.pack.readRun(run);
       if (options.pack.reconcile) inputs = (await options.pack.reconcile(run, saved, options.config)).inputs;
-      else inputs = await loadRunInputs(run, saved.manifest);
+      else inputs = await loadRunInputs(saved.manifest);
       saved.manifest.engine = identity;
       if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
@@ -105,7 +107,7 @@ export async function runEvaluation(options: RunOptions) {
         usage: emptyUsage(),
         recordedAttempts: 0,
         manifest: {
-          format: "dual-agent-eval/5",
+          format: "dual-agent-eval/6",
           debug: options.debug ?? false,
           runId: options.runId,
           status: "running",
@@ -124,7 +126,11 @@ export async function runEvaluation(options: RunOptions) {
     }
     const manifest = saved.manifest;
     manifest.concurrency = desiredConcurrency;
-    await writeRunInputs(run, inputs);
+    const unfinished = new Set(manifest.tasks.filter((t) => !saved.receipts[t.id]).flatMap((t) => Object.values(t.inputIds)));
+    for (const [source, candidates] of inputSources(((manifest.inputCatalog || []) as Candidate[]).filter((c) => unfinished.has(c.input_id)))) {
+      const revision = await inputRevision(source);
+      if (candidates.some((c) => c.source_revision !== revision)) throw new Error("规划后输入源文件已变化，请重新运行：" + source);
+    }
     for (const engine of new Set(manifest.tasks.map(engineForTask))) identities[engine] ??= await loadIdentity(engine);
     const working = manifest.debug ? internalPath(run) : (temporary = await mkdtemp(path.join(tmpdir(), "eval-run-")));
     if (manifest.debug) {

@@ -28,7 +28,7 @@ flowchart LR
 
 ## 生命周期
 
-Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 为 UUID，同次提交重发沿用原 ID；相同 ID 内容冲突时拒绝。`state.json` 原子保存完整计划、收据、草稿与错误，输入快照单独保存在 `inputs/`。状态落盘、正式结果追加并刷盘后才确认。提交、取消和替换 attempt 串行化，旧输入的过期提交不能覆盖新任务。结构与引用校验继续保留，不计算内容摘要。
+Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 为 UUID，同次提交重发沿用原 ID；相同 ID 内容冲突时拒绝。`state.json` 原子保存任务索引、收据引用、草稿与错误；候选登记一次，输入直接引用原文件；正式判决落盘后不在状态中重复保存。状态落盘、正式结果追加并刷盘后才确认。提交、取消和替换 attempt 串行化，旧输入的过期提交不能覆盖新任务。结构与引用校验继续保留，不计算内容摘要。
 
 `.run-lock` 排除第二个 Host。进程不存在时回收陈旧锁；初始化不完整或遗留 `.run-lock.reclaim` 时拒绝继续，确认原进程停止后再清理。锁不提供跨机高可用。
 
@@ -38,7 +38,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 路由使用 `/v1` 命名空间；Host 和 Worker 通过 `PROTOCOL_VERSION` 核对运行时协议，当前值为 3。
 
-请求用任务、输入和产物 ID，不传 Host 本机路径。输入与任务按业务标识首次登记持久化 UUID，产物使用 UUID。输入更新直接比较对象，不计算哈希。模型配置仅含 `apiKeyEnv`，实际密钥从环境注入。首版只支持可信单机调用，未配置远程认证，不应直接暴露公网。
+请求用任务、输入和产物 ID，不传 Host 本机路径。输入与任务按业务标识首次登记持久化 UUID，产物使用 UUID。文件修订取自文件系统元数据，不计算哈希；已接受任务不因文件变化重评，未完成任务使用当前材料。模型配置仅含 `apiKeyEnv`，实际密钥从环境注入。首版只支持可信单机调用，未配置远程认证，不应直接暴露公网。
 
 | 接口 | 行为 |
 |---|---|
@@ -50,7 +50,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 | Worker `GET /v1/attempts/:id/artifacts/:id` | 产物字节 |
 | Worker `GET /v1/attempts/:id/record` | 已结束尝试的完整记录，包括最终用量、工具审计及未接受提交 |
 | Worker `DELETE /v1/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
-| Host `GET /v1/inputs/:id` | 原始快照 |
+| Host `GET /v1/inputs/:id` | 本次读取的原始输入 |
 | Host `POST /v1/submissions` | 校验、原子提交 |
 | Host `GET /v1/submissions/:id` | 确认已保存收据 |
 | Host `POST /v1/tasks/:id/checkpoint` | 持久化最后草稿、结构化错误和修复计数 |
@@ -61,7 +61,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 ## 任务包和底座路由
 
-实现 `EvaluationPack`：`plan` 生成任务与依赖；`reconcile` 合并原批次输入并使受影响结果失效；`prepare` 返回契约和 prompt；`resolve` 展开证据和发现 ID；`validate` 执行业务校验；`readRun` / `writeRun` 负责状态与结果引用的读写；`createResultWriter` 创建每个 run 的结果写入器，在 Host 的串行保存队列中、状态落盘后恢复或追加结果；`report` 重建最终结果与展示；可用 `snapshots` 保存契约快照。Host 使用内存中的完整运行状态，任务包决定精简的磁盘结构。传给 `runEvaluation`，不修改 Adapter。
+实现 `EvaluationPack`：`plan` 生成任务与依赖；`reconcile` 保留已接受任务，为未完成和新增任务更新原批次输入；`prepare` 返回契约和 prompt；`resolve` 展开证据和发现 ID；`validate` 执行业务校验；`readRun` / `writeRun` 负责状态与结果引用的读写；`createResultWriter` 创建每个 run 的结果写入器，在 Host 的串行保存队列中、状态落盘后恢复或追加结果；`report` 重建最终结果与展示；可用 `snapshots` 保存契约快照。Host 使用内存中的完整运行状态，任务包决定精简的磁盘结构。传给 `runEvaluation`，不修改 Adapter。
 
 `AttemptSpec` 包含任务标识、引擎版本与构建 UUID、模型、输入引用、预算、截止时间和评测契约。Host 不依赖上游 SDK 类型；底座公共接口只覆盖创建、运行、事件、取消和释放。
 

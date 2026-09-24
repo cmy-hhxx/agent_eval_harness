@@ -73,7 +73,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤；没有强制�
 
 配对结果 JSONL（含 `not_comparable.jsonl`）和逐题总结 JSONL 的每行都以 `request_time`、`has_standard_answer` 两个顶层字段开头。`request_time` 取固定配对顺序中第一个版本（`a_fast` 或 `a_expert`）的输入原值，缺失时为 `null`，不受盲测 A/B 交换影响；`has_standard_answer` 为布尔值，表示本题是否有有效标准答案、是否进入客观题独立判对流程，与 `ground_truth.available` 一致。
 
-内部提交使用工具或初始材料提供的 `evidence_id`，绑定输入快照、消息和原文位置；程序展开为正式结果的 `message_index + quote`。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
+内部提交使用工具或初始材料提供的 `evidence_id`，绑定输入修订、消息和原文位置；程序展开为正式结果的 `message_index + quote`。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 
 正式结果使用 `win` / `both_good` / `both_bad`；后两种的赢家字段均为 `null`。赢家、双方评语及判决引用均映射到稳定版本 ID。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数；不再输出 `ties`。`not_comparable` 单列保存，不进入正式配对结果或有效比较数，失败也不计入上述分类。评语中的 `【候选A】` / `【候选B】`、`候选A` / `候选B` 及独立 A / B 代号会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。
 

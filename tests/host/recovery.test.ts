@@ -25,7 +25,7 @@ async function fixture(rows = [raw("q", null)]) {
     task = plan.tasks[0];
   const run = path.join(directory, "run");
   const manifest: RunManifest = {
-    format: "dual-agent-eval/5",
+    format: "dual-agent-eval/6",
     debug: false,
     runId: "test",
     status: "running",
@@ -82,16 +82,17 @@ test("duplicate submissions commit once and return the same receipt", async () =
     assert.deepEqual(results[0], results[1]);
     assert.deepEqual(results[0], results[2]);
     assert.deepEqual(await store.findSubmission(value.submissionId), results[0]);
-    assert.deepEqual(await readdir(store.run), ["inputs", "results", "state.json"]);
+    assert.deepEqual(await readdir(store.run), ["results", "state.json"]);
     const file = path.join(store.run, "results/a_fast__vs__aa_fast.jsonl");
     const text = await readFile(file, "utf8");
     assert.equal(text.trim().split("\n").length, 1);
     assert.deepEqual(Object.keys(JSON.parse(text)).slice(0, 2), ["request_time", "has_standard_answer"]);
-    await rm(file);
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.pack);
     await restored.save();
-    assert.equal(await readFile(file, "utf8"), text, "checkpointed receipts restore a missing live export");
-    assert.deepEqual(await restored.accept(value), results[0], "state.json alone recovers the committed receipt");
+    assert.equal(await readFile(file, "utf8"), text, "compact checkpoints preserve durable exports");
+    assert.deepEqual(await restored.accept(value), results[0], "state references recover the exact committed receipt");
+    await rm(file);
+    await assert.rejects(readRunState(store.run), /结果文件缺失/);
     const changed = { ...value, evaluation: { ...pairResult(), unexpected: true } };
     await assert.rejects(store.accept(changed), /committed receipt/);
     await assert.rejects(store.accept({ ...value, usage: { ...value.usage, totalTokens: 5 } }), /committed receipt/);

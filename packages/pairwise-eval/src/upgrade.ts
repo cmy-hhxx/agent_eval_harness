@@ -1,10 +1,11 @@
-import { cp, mkdir, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { EngineIdentity, JsonObject, PlannedTask, RunManifest, RunState, SubmissionReceipt, TaskState } from "../../contracts/src/index.js";
-import { exists, internalPath, readInputs, readJson, runLock, writeJson } from "../../contracts/src/io.js";
-import { candidateKey } from "./input.js";
-import { evaluationFromRow, readRunState, writeRunInputs, writeRunState } from "./run-data.js";
+import { exists, internalPath, readInputs, readJson, runLock } from "../../contracts/src/io.js";
+import { candidateKey, inputSources, readInputSource } from "./input.js";
+import { evaluationFromRow, loadRunInputs, readRunState, writeRunState } from "./run-data.js";
 import type { Candidate, EvalConfig, TaskData } from "./types.js";
 
 interface LegacyReceipt extends Omit<SubmissionReceipt, "evaluation" | "exported"> {
@@ -43,7 +44,7 @@ async function convert(run: string): Promise<{ state: RunState; inputs: Record<s
   delete config.cacheDir;
   delete (config.execution as unknown as JsonObject).seed;
   const identity = metadata.engine as EngineIdentity & { sourceDigest?: string; buildDigest?: string };
-  const state: RunState = { manifest: { ...metadata, config, format: "dual-agent-eval/5", engine: {
+  const state: RunState = { manifest: { ...metadata, config, format: "dual-agent-eval/6", engine: {
     engine: identity.engine, version: identity.version, commit: identity.commit, buildId: identity.buildId || randomUUID(),
   }, tasks, states: {}, inputs: {}, preflight: plan.summary }, receipts: {}, usage, recordedAttempts };
   for (const task of tasks) {
@@ -86,26 +87,69 @@ async function convert(run: string): Promise<{ state: RunState; inputs: Record<s
   return { state, inputs: Object.fromEntries(Object.keys(state.manifest.inputs).map((id) => [id, inputs[id]])) };
 }
 
+async function convertV5(run: string): Promise<{ state: RunState; inputs: Record<string, unknown> }> {
+  const old = await readJson<LegacyState & { plan: PlannedTask[]; inputs: Record<string, unknown>; preflight: JsonObject }>(path.join(run, "state.json"));
+  const { plan, tasks, usage, recordedAttempts, ...metadata } = old;
+  const state: RunState = { manifest: { ...metadata, format: "dual-agent-eval/6", tasks: plan, inputs: {}, preflight: metadata.preflight as JsonObject, states: {} }, receipts: {}, usage, recordedAttempts };
+  const files = new Map<string, Map<string, JsonObject>>();
+  for (const task of plan) {
+    const { receipt, ...status } = tasks[task.id];
+    state.manifest.states[task.id] = status;
+    if (!receipt) continue;
+    const { exported, ...rest } = receipt;
+    if (!exported) { state.receipts[task.id] = rest as SubmissionReceipt; continue; }
+    const file = path.join(run, "results", exported.file || (task.data as TaskData).pair!.join("__vs__") + ".jsonl");
+    if (!files.has(file)) files.set(file, new Map((await readFile(file, "utf8")).trim().split("\n").filter(Boolean)
+      .map((line) => { const row = JSON.parse(line); return [String(row.comparison_id), row]; })));
+    const row = files.get(file)!.get(exported.comparisonId);
+    if (!row) throw new Error("已有结果引用缺失：" + exported.comparisonId);
+    state.receipts[task.id] = { ...rest, exported: { comparisonId: exported.comparisonId, file: exported.file, row } } as SubmissionReceipt;
+  }
+  const inputs = Object.fromEntries(await Promise.all(Object.keys(old.inputs).map(async (id) =>
+    [id, await readJson(path.join(run, "inputs", id + ".json"))])));
+  return { state, inputs };
+}
+async function registerSources(state: RunState, inputs: Record<string, unknown>): Promise<void> {
+  const catalog = state.manifest.inputCatalog as Candidate[] || state.manifest.tasks.flatMap((t) => Object.values((t.data as TaskData).candidates));
+  const records = [...catalog, ...state.manifest.tasks.flatMap((t) => Object.values((t.data as TaskData).candidates))];
+  for (const [source, candidates] of inputSources(records)) {
+    const { text, revision } = await readInputSource(source), lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+    for (const c of candidates) {
+      if (!isDeepStrictEqual(JSON.parse(lines[c.line - 1]), inputs[c.input_id]))
+        throw new Error("源文件与旧输入不一致，保留材料并停止去重：" + source + ":" + c.line);
+      c.source_revision = revision;
+    }
+  }
+  state.manifest.inputCatalog = [...new Map(records.map((c) => [c.input_id, c])).values()];
+  state.manifest.inputs = Object.fromEntries((state.manifest.inputCatalog as Candidate[]).map((c) => [c.input_id, { id: c.input_id, name: c.input_id }]));
+}
+async function removeCopies(run: string, state: RunState): Promise<void> {
+  const directory = path.join(run, "inputs");
+  if (!await exists(directory)) return;
+  const inputs = await loadRunInputs(state.manifest);
+  for (const name of await readdir(directory)) {
+    const id = name.endsWith(".json") ? name.slice(0, -5) : "";
+    if (Object.hasOwn(inputs, id) && isDeepStrictEqual(await readJson(path.join(directory, name)), inputs[id]))
+      await rm(path.join(directory, name));
+  }
+  if (!(await readdir(directory)).length) await rm(directory, { recursive: true });
+}
 export async function upgradeRun(run: string, apply = false): Promise<JsonObject> {
   const release = await runLock(run);
   try {
     const current = await readJson<{ format: string }>(path.join(run, "state.json"));
-    if (current.format === "dual-agent-eval/5") return { upgraded: false, format: current.format, reason: "already_current" };
-    const { state, inputs } = await convert(run);
-    const preview = { run_id: state.manifest.runId, tasks: state.manifest.tasks.length,
-      accepted: Object.keys(state.receipts).length, format: "dual-agent-eval/5", applied: apply };
-    if (!apply) return preview;
-    const backup = run + ".before-v5";
-    // The original state is replaced last; retry safely finishes an interrupted upgrade.
-    if (!await exists(path.join(backup, "backup-complete.json"))) {
-      await mkdir(backup, { recursive: true });
-      for (const name of await readdir(run)) if (name !== ".run-lock")
-        await cp(path.join(run, name), path.join(backup, name), { recursive: true });
-      await writeJson(path.join(backup, "backup-complete.json"), { run_id: state.manifest.runId });
+    if (current.format === "dual-agent-eval/6") {
+      if (apply) await removeCopies(run, await readRunState(run));
+      return { upgraded: false, format: current.format, reason: "already_current" };
     }
-    await writeRunInputs(run, inputs);
+    const { state, inputs } = current.format === "dual-agent-eval/5" ? await convertV5(run) : await convert(run);
+    await registerSources(state, inputs);
+    const preview = { run_id: state.manifest.runId, tasks: state.manifest.tasks.length,
+      accepted: Object.keys(state.receipts).length, format: "dual-agent-eval/6", applied: apply };
+    if (!apply) return preview;
+    // Atomic state replacement precedes deleting verified copies. Re-running finishes interrupted cleanup.
     await writeRunState(run, state);
-    await readRunState(run);
-    return { ...preview, backup };
+    await removeCopies(run, await readRunState(run));
+    return preview;
   } finally { await release(); }
 }

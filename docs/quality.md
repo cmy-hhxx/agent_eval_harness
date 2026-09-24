@@ -30,7 +30,7 @@
 
 自动测试检查结构、映射、引用和故障处理；模拟网关不证明模型事实判断正确。修改提示词、模型或关键预算时：
 
-1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入快照 ID、模型、底座、契约和预算。
+1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入修订 ID、模型、底座、契约和预算。
 2. 两个底座使用相同题集。人工核查决定性发现、影响与反向证据，记录人工判断及分歧原因。
 3. 使用显式 A/B 位置交换，检查稳定版本映射与判决一致性。
 4. 改变一个关键事实，确认依赖任务失效并复核结论是否合理响应。
@@ -47,6 +47,8 @@ npm run benchmark -- collect --run data/runs/pi-001 --output .artifacts/regressi
 npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
 npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
 ```
+
+回归集保存固定草稿、预期结果和原始输入引用，不嵌入输入副本。源文件修订变化时回放明确报错，避免把新材料用于旧草稿。
 
 `run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行输出到 `.artifacts/model-benchmarks/`，要求新 run ID。统计保存在 `stats.json`，包括首次通过率、重复错误、attempts/Token 和 P50/P95。只有保留了内容提交计数的任务参与首次通过率统计；留存 debug attempts 既不是全量尝试，也不是首次通过率的分母。
 

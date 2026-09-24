@@ -210,7 +210,7 @@ export interface EvaluationPack {
   report(run: string): Promise<JsonObject>;
   createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
   readRun(run: string): Promise<RunState>;
-  writeRun(run: string, state: RunState, inputs?: Record<string, unknown>): Promise<void>;
+  writeRun(run: string, state: RunState): Promise<void>;
 }
 export interface TaskState {
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
@@ -225,7 +225,7 @@ export interface TaskState {
   artifactStatus?: { status: "available" | "missing" | "not_retained"; source: string; error?: string };
 }
 export interface RunManifest {
-  format: "dual-agent-eval/5";
+  format: "dual-agent-eval/6";
   debug: boolean;
   runId: string;
   status: "running" | "finished" | "interrupted";
@@ -234,7 +234,6 @@ export interface RunManifest {
   tasks: PlannedTask[];
   inputs: Record<string, InputRef>;
   inputCatalog?: unknown[];
-  retiredTasks?: PlannedTask[];
   states: Record<string, TaskState>;
   preflight: JsonObject;
   startedAt: number;

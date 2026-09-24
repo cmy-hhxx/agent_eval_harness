@@ -138,7 +138,7 @@ test("report requires the run's own schema snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     await writeJson(path.join(directory, "state.json"), {
-      format: "dual-agent-eval/5", debug: true, config, plan: [], inputs: {}, preflight: {}, tasks: {}, usage: {}, recordedAttempts: 0,
+      format: "dual-agent-eval/6", debug: true, config, plan: [], inputs: {}, preflight: {}, tasks: {}, usage: {}, recordedAttempts: 0,
     });
     await writeJson(path.join(directory, "_internal", "plan.json"), { tasks: [], summary: {} });
     await writeInputs(directory, {});

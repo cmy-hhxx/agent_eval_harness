@@ -220,10 +220,10 @@ for (const reverse of [false, true])
         receipts[task.id] = receipt(task.id, result);
       }
       const manifest: RunManifest = {
-        format: "dual-agent-eval/5", debug: true, runId: "verdicts", status: "finished",
+        format: "dual-agent-eval/6", debug: true, runId: "verdicts", status: "finished",
         engine: fakeIdentity, config, tasks: plan.tasks, inputs: {}, states, preflight: plan.summary, startedAt: 0, finishedAt: 1000,
       };
-      await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 }, plan.inputs);
+      await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 });
       await writeJson(path.join(directory, "_internal", "output_schema.json"), outputSchema);
       await writeInputs(directory, plan.inputs);
       const summary = await reportRun(directory, { details: true });

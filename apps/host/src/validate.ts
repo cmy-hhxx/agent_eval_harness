@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import type { SubmissionReceipt } from "../../../packages/contracts/src/index.js";
+import type { SubmissionReceipt, ValidationIssue } from "../../../packages/contracts/src/index.js";
 import {
   canonical,
   errorText,
@@ -22,19 +22,20 @@ export async function validateRun(run: string) {
   const state = await readRunState(run), manifest = state.manifest;
   const errors: string[] = [], evidenceErrors: string[] = [], artifactErrors: string[] = [],
     receipts = new Map<string, SubmissionReceipt>();
-  const inputs = await loadRunInputs(run, manifest);
-  for (const id of Object.keys(manifest.inputs))
-    if (!Object.hasOwn(inputs, id)) errors.push(`${id}: missing input`);
+  const inputIssues: ValidationIssue[] = [];
+  const inputs = await loadRunInputs(manifest, inputIssues);
+  evidenceErrors.push(...inputIssues.map((issue) => issue.message));
   const config = manifest.config as EvalConfig;
   const catalog = manifest.inputCatalog as Candidate[] || manifest.tasks.flatMap((task) => Object.values((task.data as TaskData).candidates));
   for (const candidate of new Map(catalog.map((candidate) => [candidateKey(candidate), candidate])).values()) {
+    if (!Object.hasOwn(inputs, candidate.input_id)) continue;
     try {
       const version = config.inputs.versions.find((version) => version.id === candidate.version);
       if (!version) throw new Error("Input version is not registered");
       const actual = adapt(inputs[candidate.input_id] as RawInput, version, candidate.source, candidate.line, config.inputs.default_batch_id);
       if (candidateKey(actual) !== candidateKey(candidate) || actual.question !== candidate.question || actual.final_index !== candidate.final_index)
         throw new Error("Input snapshot business identity or message structure differs from its registered candidate");
-    } catch (error) { errors.push(`${candidate.input_id}: ${errorText(error)}`); }
+    } catch (error) { evidenceErrors.push(`${candidate.input_id}: ${errorText(error)}`); }
   }
   for (const task of manifest.tasks) {
     const receipt = state.receipts[task.id];
@@ -57,7 +58,7 @@ export async function validateRun(run: string) {
     const receipt = receipts.get(task.id);
     if (!receipt) continue;
     try {
-      pairwisePack.validate(task, inputs, receipt.evaluation, receipt.audit,
+      if (Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id))) pairwisePack.validate(task, inputs, receipt.evaluation, receipt.audit,
         Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)])),
       );
     } catch (error) {
@@ -82,7 +83,7 @@ export async function validateRun(run: string) {
         const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
           name = value.verdict.result === "not_comparable" ? "not_comparable.jsonl" : (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
         if (value.verdict.result !== "not_comparable" && !outputValidator(row)) throw new Error("正式结果结构无效：" + JSON.stringify(outputValidator.errors));
-        if (receipt.exported && canonical(row) !== canonical(comparisonRow(inputs, task, value, receipts, names)))
+        if (receipt.exported && Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id)) && canonical(row) !== canonical(comparisonRow(inputs, task, value, receipts, names)))
           throw new Error("正式结果与已接受收据不一致");
         if (!expected.has(name)) expected.set(name, []);
         expected.get(name)!.push(canonical(row));

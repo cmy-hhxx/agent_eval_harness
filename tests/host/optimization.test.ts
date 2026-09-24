@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import { emptyUsage, type AgentBackend, type RunState, type TaskPlan } from "../../packages/contracts/src/index.js";
-import { readJson, writeJson, writeJsonl, ValidationError } from "../../packages/contracts/src/io.js";
+import { readJson, writeJsonl, ValidationError } from "../../packages/contracts/src/io.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
+import { createResultWriter } from "../../packages/pairwise-eval/src/report.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { resolveSubmission } from "../../packages/pairwise-eval/src/submissions.js";
-import { readRunState, reconcileRun, writeRunInputs, writeRunState } from "../../packages/pairwise-eval/src/run-data.js";
+import { readRunState, reconcileRun, writeRunState } from "../../packages/pairwise-eval/src/run-data.js";
 import { evidenceId, evidenceSources, cite, resolveEvidence } from "../../packages/tools/src/evidence.js";
 import type { EvalConfig, PairwiseResult, RawInput, TaskData } from "../../packages/pairwise-eval/src/types.js";
 import { runEvaluation } from "../../apps/host/src/runner.js";
@@ -16,7 +17,7 @@ import { startWorker } from "../../packages/worker/src/server.js";
 import { draftFor, emptyAudit, fakeIdentity, fixtureConfig, pairResult, raw } from "./fixtures.js";
 
 function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
-  return { manifest: { format: "dual-agent-eval/5", debug: false, runId: "test", status: "finished", engine: fakeIdentity,
+  return { manifest: { format: "dual-agent-eval/6", debug: false, runId: "test", status: "finished", engine: fakeIdentity,
     config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: Object.fromEntries(Object.keys(plan.inputs).map((id) => [id, { id, name: id }])),
     states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "succeeded", attempts: 1 }])), preflight: plan.summary, startedAt: 1 },
     receipts: Object.fromEntries(plan.tasks.map((task) => [task.id, { taskId: task.id, attemptId: "old", submissionId: task.id,
@@ -56,12 +57,13 @@ test("preflight keeps unknown-batch errors under a selection and aggregates inde
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("saved scope survives narrower selection, moved inputs, replacement, invalid updates and added pairs", async () => {
+test("accepted work survives narrower selection, changed or missing inputs; new pairs are added", async () => {
   const rows = ["b1", "b2"].map((batch_id) => ({ ...raw("q", null), batch_id }));
   const { directory, config } = await fixtureConfig([rows, [raw("q", null)], rows, []]);
   try {
     const plan = await buildPlan(config), state = stateFor(config, plan), run = path.join(directory, "run");
-    await writeRunInputs(run, plan.inputs); await writeRunState(run, state);
+    await createResultWriter(run, plan.inputs)(state);
+    await writeRunState(run, state);
     const restored = await readRunState(run), narrowed = structuredClone(config);
     narrowed.inputs.batches = ["b1"];
     for (const version of narrowed.inputs.versions) {
@@ -77,18 +79,19 @@ test("saved scope survives narrower selection, moved inputs, replacement, invali
     await writeJsonl(narrowed.inputs.versions[3].path, [raw("q", null)]);
     const replacement = await reconcileRun(run, restored, narrowed);
     assert.equal(replacement.tasks.length, 3);
-    assert.equal(Object.keys(restored.receipts).length, 1);
+    assert.equal(Object.keys(restored.receipts).length, 2);
     const affected = replacement.tasks.find((t) => t.id === plan.tasks.find((t) => (t.data as TaskData).candidates.A.batch_id === "b1")!.id)!;
-    assert.equal((affected.data as TaskData).revision, 2);
+    assert.equal((affected.data as TaskData).revision, 1);
     assert.equal((affected.data as TaskData).comparisonId, (plan.tasks.find((t) => t.id === affected.id)!.data as TaskData).comparisonId);
     assert.equal(restored.manifest.states[affected.id].attempts, 1);
     assert.equal(restored.usage.totalTokens, 123);
     await writeRunState(run, restored); // crash after state replacement, before result rebuilding
     const recovered = await readRunState(run);
-    assert.equal(Object.keys(recovered.receipts).length, 1);
+    assert.equal(Object.keys(recovered.receipts).length, 2);
     await writeJsonl(narrowed.inputs.versions[0].path, [{ ...changed, request_time: "" }, rows[1]]);
     const invalid = await reconcileRun(run, recovered, narrowed);
-    assert.deepEqual(invalid.tasks.map((t) => t.inputIds), replacement.tasks.map((t) => t.inputIds));
+    assert.deepEqual(invalid.tasks.filter((t) => recovered.receipts[t.id]).map((t) => t.inputIds),
+      replacement.tasks.filter((t) => recovered.receipts[t.id]).map((t) => t.inputIds));
     assert((invalid.summary.issues as unknown[]).length);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -103,6 +106,39 @@ test("shared reference changes invalidate all dependent checks and pairs", async
     assert.deepEqual(next.tasks.map((t) => t.id), first.tasks.map((t) => t.id));
     assert(next.tasks.every((t) => (t.data as TaskData).revision === 2));
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("resume skips accepted cases after edits and evaluates only unfinished and newly added cases", async () => {
+  const rows = [raw("done", null), raw("todo", null)];
+  const { directory, config } = await fixtureConfig([rows, [], rows, []]);
+  const calls: string[] = []; let resumed = false;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
+    async run() {
+      const input = await readJson<RawInput>(path.join(options.workdir, "inputs/A.json"));
+      calls.push(input.case_id!);
+      if (input.case_id === "todo" && !resumed) throw new Error("stop before submission");
+      await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+    }, async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker"));
+  try {
+    const options = optionsFor(config, await buildPlan(config), [worker.url]);
+    assert.equal((await runEvaluation(options)).completed_comparisons, 1);
+    const run = path.join(config.outputDir, "test"), before = await readRunState(run);
+    const accepted = before.manifest.tasks.find((t) => before.receipts[t.id])!;
+    const original = before.receipts[accepted.id];
+    const changed = [{ ...raw("todo", null), request_time: "new-time" }, raw("new", null), raw("done", "4", "changed completed answer")];
+    for (const version of config.inputs.versions.filter((v) => ["a_fast", "aa_fast"].includes(v.id))) await writeJsonl(version.path, changed);
+    resumed = true;
+    assert.equal((await runEvaluation(options)).completed_comparisons, 3);
+    assert.deepEqual(calls.sort(), ["done", "new", "todo", "todo"]);
+    const after = await readRunState(run);
+    assert.deepEqual(after.receipts[accepted.id], original);
+    assert.deepEqual(after.manifest.tasks.find((t) => t.id === accepted.id), accepted);
+    assert.equal((await validateRun(run)).results.valid, true);
+    for (const version of config.inputs.versions) await rm(version.path);
+    assert.equal((await runEvaluation(options)).completed_comparisons, 3);
+    assert.equal(calls.length, 4, "accepted work does not require a second model call or an input backup");
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("raw strings, Markdown, numeric JSON and pages resolve exactly; foreign snapshots and indexes fail", () => {
@@ -213,14 +249,15 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     assert.equal(validation.completed_comparisons, 1);
     const before = await readRunState(run);
     const file = path.join(run, "results/a_fast__vs__aa_fast.jsonl");
-    const row = JSON.parse(await readFile(file, "utf8")); row.verdict.reason = "tampered";
+    const row = JSON.parse(await readFile(file, "utf8")); row.schema_version = "invalid";
     await writeJsonl(file, [row]);
     assert.equal((await validateRun(run)).valid, false);
     assert.equal(Object.keys(before.receipts).length, 1);
     await writeJsonl(file, [before.receipts[before.manifest.tasks[0].id].exported!.row]);
-    const inputFile = path.join(run, "inputs", Object.keys(before.manifest.inputs)[0] + ".json");
-    const input = await readJson(inputFile); input.case_id = "another-case";
-    await writeJson(inputFile, input);
-    assert.equal((await validateRun(run)).results.valid, false);
+    const inputFile = (before.manifest.tasks[0].data as TaskData).candidates.A.source;
+    await writeJsonl(inputFile, [raw("another-case", null)]);
+    const changed = await validateRun(run);
+    assert.equal(changed.results.valid, true);
+    assert.equal(changed.evidence.valid, false);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

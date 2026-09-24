@@ -317,7 +317,7 @@ export async function startWorker(
       else if (attempt.status.state === "running") {
         attempt.status.state = "failed";
         attempt.status.error = redact(errorText(controller.signal.aborted ? controller.signal.reason : error), [process.env[spec.model.apiKeyEnv] || ""]);
-        attempt.status.retryable = !controller.signal.aborted && /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout/i.test(
+        attempt.status.retryable = !controller.signal.aborted && /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout|timed\s+out/i.test(
           attempt.status.error,
         );
       }

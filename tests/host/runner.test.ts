@@ -91,16 +91,16 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     for (const task of plan.tasks.filter((task) => task.stage === "pairwise")) {
       const stored = (checkpoint.tasks as Record<string, { receipt: Record<string, unknown> }>)[task.id].receipt;
       assert(stored.exported);
-      assert(stored.evaluation, "accepted values remain available for crash recovery");
+      assert.equal(stored.evaluation, undefined, "formal verdicts are referenced, not copied into state");
     }
     assert(!JSON.stringify(summary).includes("case_ids"));
     assert(Buffer.byteLength(JSON.stringify(summary, null, 2)) < 5000);
-    assert.deepEqual((await readdir(run)).sort(), ["_internal", "inputs", "report.md", "results", "state.json", "stats.json", "task_summaries.md"]);
+    assert.deepEqual((await readdir(run)).sort(), ["_internal", "report.md", "results", "state.json", "stats.json", "task_summaries.md"]);
     assert.equal(await exists(internalPath(run, "exports")), false);
     assert.equal(await exists(internalPath(run, "diagnostics", "failures.jsonl")), false);
     assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), true);
-    assert.deepEqual(await loadRunInputs(run, (await readRunState(run)).manifest), plan.inputs);
-    assert.equal(await exists(path.join(run, "inputs")), true);
+    assert.deepEqual(await loadRunInputs((await readRunState(run)).manifest), plan.inputs);
+    assert.equal(await exists(path.join(run, "inputs")), false);
     assert.equal(await exists(path.join(run, "preflight.json")), false);
     for (const task of plan.tasks) {
       const attempt = path.join(run, "_internal", "tasks", task.id, "attempt-001");
@@ -112,8 +112,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     }
     assert.deepEqual(await readdir(path.join(directory, "w1")), []);
     assert.deepEqual(await readdir(path.join(directory, "w2")), []);
-    for (const version of config.inputs.versions) await rm(version.path);
-    assert.equal((await validateRun(run)).valid, true, "archived evidence is independent of source files");
+    assert.equal((await validateRun(run)).valid, true, "evidence reads the original source files");
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：通过/);
     await reportRun(run, { details: true });
     assert.equal(await exists(internalPath(run, "exports", "task_summaries.jsonl")), true);
@@ -305,7 +304,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     assert.deepEqual(calls, { pi: 3, prime: 3 });
     assert.equal(workdirs.size, 6);
     const run = path.join(config.outputDir, "mixed");
-    assert.deepEqual((await readdir(run)).sort(), ["inputs", "report.md", "results", "state.json", "stats.json", "task_summaries.md"]);
+    assert.deepEqual((await readdir(run)).sort(), ["report.md", "results", "state.json", "stats.json", "task_summaries.md"]);
     assert.doesNotMatch(await readFile(path.join(run, "report.md"), "utf8"), /_internal/);
     assert.equal((await validateRun(run)).valid, true);
     await reportRun(run);
@@ -401,7 +400,9 @@ test(`same run ID resumes with changed model, budget and build (debug: ${debug})
     assert.equal((unchanged.planned as { cases: number }).cases, 2);
     assert.deepEqual(Object.keys(unchanged.by_batch as object), ["2026-09-23", "2026-09-24"]);
     assert.deepEqual(Object.values(calls).sort(), [1, 2]);
-    assert.equal((await validateRun(run)).valid, true);
+    const validation = await validateRun(run);
+    assert.equal(validation.results.valid, true);
+    assert.equal(validation.evidence.valid, false, "changed source is not presented as the accepted input revision");
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });

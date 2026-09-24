@@ -33,6 +33,23 @@ export function strings(value: unknown, prefix = ""): [string, string][] {
   );
 }
 const normalize = (text: string) => text.replace(/\s+/gu, "");
+export async function inputRevision(source: string): Promise<string> {
+  const info = await stat(source, { bigint: true });
+  return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":");
+}
+export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> {
+  const sources = new Map<string, Candidate[]>();
+  for (const c of candidates) {
+    if (!sources.has(c.source)) sources.set(c.source, []);
+    sources.get(c.source)!.push(c);
+  }
+  return sources;
+}
+export async function readInputSource(source: string): Promise<{ text: string; revision: string }> {
+  const revision = await inputRevision(source), text = await readFile(source, "utf8");
+  if (await inputRevision(source) !== revision) throw new Error("读取期间输入文件发生变化，请重试：" + source);
+  return { text, revision };
+}
 async function inputFiles(target: string, versionId: string): Promise<string[]> {
   const info = await stat(target);
   if (!info.isDirectory()) return [target];
@@ -231,7 +248,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     previous?.tasks.flatMap((task) => Object.values((task.data as TaskData).candidates)) || [])
     .map((record) => [candidateKey(record), record]));
   const records = new Map<string, Candidate>(),
-    sourceTexts = new Map<string, string>(),
+    sourceTexts = new Map<string, { text: string; revision: string }>(),
     inputs: Record<string, unknown> = {},
     cases = new Map<string, [string, string]>(),
     locations = new Map<string, { version: string; source: string; line: number }[]>();
@@ -253,13 +270,13 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       continue;
     }
     for (const source of files) {
-      try { if (!sourceTexts.has(source)) sourceTexts.set(source, await readFile(source, "utf8")); }
+      try { if (!sourceTexts.has(source)) sourceTexts.set(source, await readInputSource(source)); }
       catch (error) {
         issues.push({ source, reason: "input_file_unreadable", version: version.id,
           errors: [{ category: "file", code: "input_file_unavailable", path: source, expected: "可读取的输入文件", actual: (error as NodeJS.ErrnoException).code || null, message: errorText(error) }] });
         continue;
       }
-      const text = sourceTexts.get(source)!;
+      const { text, revision } = sourceTexts.get(source)!;
       for (const [index, line] of text
         .replace(/^\uFEFF/, "")
         .split(/\r?\n/)
@@ -289,8 +306,11 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
             seen.add(key);
           }
           const record = adapt(raw, version, source, index + 1, config.inputs.default_batch_id);
+          record.source_revision = revision;
           const old = oldRecords.get(candidateKey(record));
-          if (old && isDeepStrictEqual(previous?.inputs[old.input_id], raw)) record.input_id = old.input_id;
+          if (old && (Object.hasOwn(previous!.inputs, old.input_id)
+            ? isDeepStrictEqual(previous!.inputs[old.input_id], raw)
+            : old.source_revision === revision && old.line === record.line)) record.input_id = old.input_id;
           if (key && !invalid.has(key)) {
             records.set(key, record);
             inputs[record.input_id] = raw;
@@ -315,10 +335,10 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       }
     }
   }
-  // Missing or invalid new materials do not erase the last valid snapshot.
+  // Keep registered work on invalid scans; the caller must not run it without its original material.
   for (const [key, record] of oldRecords) if (!records.has(key)) {
     records.set(key, record);
-    inputs[record.input_id] = previous!.inputs[record.input_id];
+    if (Object.hasOwn(previous!.inputs, record.input_id)) inputs[record.input_id] = previous!.inputs[record.input_id];
     cases.set(canonical([record.batch_id, record.case_id]), [record.batch_id, record.case_id]);
   }
   const selected = [...cases.values()]

@@ -62,6 +62,7 @@ export interface Candidate {
   trace_id: string | null;
   source: string;
   line: number;
+  source_revision?: string;
   question: string;
   answer_timing: Timing;
   final_index: number;

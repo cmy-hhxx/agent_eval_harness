@@ -25,7 +25,6 @@ export class RunStore {
   readonly attempts = new Map<string, AttemptSpec>();
   private writes = Promise.resolve();
   private submissions = Promise.resolve();
-  private inputsSaved = false;
   private committedReceipts: Record<string, SubmissionReceipt>;
   private readonly writeResults: (state: RunState) => Promise<void>;
   constructor(run: string, state: RunState, inputs: Record<string, unknown>, pack: EvaluationPack) {
@@ -40,9 +39,15 @@ export class RunStore {
   save(): Promise<void> {
     const snapshot = structuredClone(this.state);
     const next = this.writes.then(async () => {
-      await this.pack.writeRun(this.run, snapshot, this.inputsSaved ? undefined : this.inputs);
-      this.inputsSaved = true;
+      const pending = snapshot.manifest.tasks.some((task) => task.stage === "pairwise" && snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported);
+      await this.pack.writeRun(this.run, snapshot);
       await this.writeResults(snapshot);
+      // Drop recovery payloads only after their formal result rows are durable.
+      // If this optional compaction fails, the earlier full checkpoint still recovers the accepted result.
+      if (pending) await this.pack.writeRun(this.run, snapshot).catch(() => {});
+      for (const [id, receipt] of Object.entries(snapshot.receipts))
+        if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
+          this.state.receipts[id].exported = receipt.exported;
       this.committedReceipts = snapshot.receipts;
     });
     this.writes = next.catch(() => {});
