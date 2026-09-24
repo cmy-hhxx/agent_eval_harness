@@ -28,13 +28,15 @@ flowchart LR
 
 ## 生命周期
 
-Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 来自 attempt 和结果的内容哈希；重复请求返回原收据。先原子写收据，再更新 manifest；两者之间崩溃时重启优先读取收据。提交、取消和替换 attempt 在 Host 内串行化，过期结果不能覆盖结果。
+Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 来自 attempt 和结果的内容哈希；重复请求返回原确认。任务状态与尚未导出的收据在 `state.json` 中原子保存，落盘后才确认提交；结果写入后，状态只保留元数据和结果引用。读取引用时校验结果内容摘要。提交、取消和替换 attempt 在 Host 内串行化，过期结果不能覆盖结果。
 
 `.run-lock` 排除第二个 Host。进程不存在时回收陈旧锁；初始化不完整或遗留 `.run-lock.reclaim` 时拒绝继续，确认原进程停止后再清理。锁不提供跨机高可用。
 
-每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；会话与临时工作目录清理完成后才对外报告最终状态。成功任务的事件、用量与产物归档到 Host 后，Host 通知 Worker 释放该 attempt 的磁盘与内存副本。失联先查收据，无收据才可重试。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
+每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；会话与临时工作目录清理完成后才对外报告最终状态。默认 Host 只保留 `state.json` 中的收据、状态和用量，托管 Worker 使用系统临时目录并在结束时清除。开启 debug 后，参数、状态、用量、失败原因及未接受提交合并到 `_internal/` 的 `attempt.json`，事件单独压缩；记录与工具产物收齐后才释放 Worker 副本。失联先查收据，无收据才可重试。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
 
 ## HTTP V1
+
+路由使用 `/v1` 命名空间；Host 和 Worker 通过 `PROTOCOL_VERSION` 核对运行时协议，当前值为 2。
 
 请求用任务、输入和产物 ID，不传 Host 本机路径。输入按内容 ID 去重，下载时不重复校验哈希；产物按哈希读取。模型配置仅含 `apiKeyEnv`，实际密钥从环境注入。首版只支持可信单机调用，未配置远程认证，不应直接暴露公网。
 
@@ -46,7 +48,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 | Worker `POST /v1/attempts/:id/cancel` | 中断所属会话与进程 |
 | Worker `GET /v1/attempts/:id/events?after=N` | SSE 续读，也支持 Last-Event-ID |
 | Worker `GET /v1/attempts/:id/artifacts/:id` | 产物字节 |
-| Worker `GET /v1/attempts/:id/metrics` | 最终用量和工具审计 |
+| Worker `GET /v1/attempts/:id/record` | 已结束尝试的完整记录，包括最终用量、工具审计及未接受提交 |
 | Worker `DELETE /v1/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
 | Host `GET /v1/inputs/:id` | 原始快照 |
 | Host `POST /v1/submissions` | 校验、原子提交 |
@@ -56,7 +58,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 ## 任务包和底座路由
 
-实现 `EvaluationPack`：`plan` 生成任务与依赖；`prepare` 返回契约和 prompt；`validate` 执行业务校验；`report` 从收据生成展示；可用 `snapshots` 保存契约快照。传给 `runEvaluation`，不修改 Adapter。
+实现 `EvaluationPack`：`plan` 生成任务与依赖；`prepare` 返回契约和 prompt；`validate` 执行业务校验；`readRun` / `writeRun` 负责状态与结果引用的读写；`report` 生成结果与展示；可用 `snapshots` 保存契约快照。Host 使用内存中的完整运行状态，任务包决定精简的磁盘结构。传给 `runEvaluation`，不修改 Adapter。
 
 `AttemptSpec` 包含任务标识、引擎指纹、模型、输入引用、预算、截止时间和评测契约。Host 不依赖上游 SDK 类型；底座公共接口只覆盖创建、运行、事件、取消和释放。
 
@@ -69,7 +71,7 @@ await runEvaluation({
 });
 ```
 
-路由进入运行指纹，不能在同一 run 恢复时更换。CLI 选择统一底座，Host 库支持混合池；实际并发始终受总配置限制。
+路由进入运行指纹和缓存键。同 run ID 沿用原任务清单及 A/B 分配，保留已完成收据，未完成任务按当前路由和参数继续。CLI 选择统一底座，Host 库支持混合池；实际并发始终受总配置限制。
 
 ## 新工具
 

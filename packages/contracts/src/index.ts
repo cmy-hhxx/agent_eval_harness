@@ -1,7 +1,7 @@
 export type Engine = "pi" | "prime";
 export type JsonSchema = Record<string, unknown>;
 export type JsonObject = Record<string, unknown>;
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export interface Policy {
   timeoutSeconds: number;
@@ -115,6 +115,7 @@ export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
   cached: boolean;
+  exported?: { comparisonId: string; digest: string; row: JsonObject; file?: string };
 }
 export interface ToolContext {
   attemptId: string;
@@ -160,6 +161,14 @@ export interface AttemptStatus {
   error?: string;
   retryable?: boolean;
 }
+export interface AttemptRecord {
+  spec: AttemptSpec;
+  status?: AttemptStatus;
+  metrics?: { usage: Usage; audit: ToolAudit };
+  pendingSubmission?: Submission;
+  error?: string;
+  artifactError?: string;
+}
 export interface PlannedTask {
   id: string;
   stage: string;
@@ -193,6 +202,8 @@ export interface EvaluationPack {
     dependencies: Record<string, SubmissionReceipt | undefined>,
   ): void;
   report(run: string): Promise<JsonObject>;
+  readRun(run: string): Promise<RunState>;
+  writeRun(run: string, state: RunState): Promise<void>;
 }
 export interface TaskState {
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
@@ -202,7 +213,8 @@ export interface TaskState {
   cacheKey?: string;
 }
 export interface RunManifest {
-  format: "dual-agent-eval/1";
+  format: "dual-agent-eval/4";
+  debug: boolean;
   runId: string;
   status: "running" | "finished" | "interrupted";
   fingerprint: string;
@@ -214,4 +226,10 @@ export interface RunManifest {
   preflight: JsonObject;
   startedAt: number;
   finishedAt?: number;
+}
+export interface RunState {
+  manifest: RunManifest;
+  receipts: Record<string, SubmissionReceipt>;
+  usage: Usage;
+  recordedAttempts: number;
 }

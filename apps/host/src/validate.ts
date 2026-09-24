@@ -1,46 +1,44 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { RunManifest, SubmissionReceipt } from "../../../packages/contracts/src/index.js";
+import type { SubmissionReceipt } from "../../../packages/contracts/src/index.js";
 import {
   canonical,
   digest,
   errorText,
   exists,
+  internalPath,
   readJson,
-  readInputs,
   sha256,
   writeJson,
 } from "../../../packages/contracts/src/io.js";
 import { pairwisePack } from "../../../packages/pairwise-eval/src/index.js";
-import { comparisonRow } from "../../../packages/pairwise-eval/src/report.js";
+import { comparisonRow, writeOverview } from "../../../packages/pairwise-eval/src/report.js";
+import { loadRunInputs, readRunState } from "../../../packages/pairwise-eval/src/run-data.js";
 import type { EvalConfig, PairwiseResult, TaskData } from "../../../packages/pairwise-eval/src/types.js";
 
 export async function validateRun(run: string) {
-  const manifest = await readJson<RunManifest>(path.join(run, "manifest.json"));
-  if (manifest.format !== "dual-agent-eval/1")
-    throw new Error("不支持此运行格式；请使用当前版本新建 run。");
+  const state = await readRunState(run), manifest = state.manifest;
   const errors: string[] = [],
     receipts = new Map<string, SubmissionReceipt>();
-  const inputs = await readInputs(run);
+  const inputs = await loadRunInputs(run, manifest);
   for (const id of Object.keys(manifest.inputs))
     if (!Object.hasOwn(inputs, id)) errors.push(`${id}: missing input`);
   for (const task of manifest.tasks) {
-    const file = path.join(run, "tasks", task.id, "result.json");
-    if (!(await exists(file))) {
+    const receipt = state.receipts[task.id];
+    if (!receipt) {
       if (manifest.states[task.id]?.status === "succeeded") errors.push(`${task.id}: missing receipt`);
       continue;
     }
     try {
-      const receipt = await readJson<SubmissionReceipt>(file);
       if (
         receipt.taskId !== task.id ||
         receipt.status !== "succeeded" ||
-        receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation])
+        (!receipt.exported && receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation]))
       )
         throw new Error("Receipt identity mismatch");
-      for (const artifact of receipt.audit.artifacts)
+      if (manifest.debug) for (const artifact of receipt.audit.artifacts)
         if (
-          sha256(await readFile(path.join(run, "tasks", task.id, "artifacts", artifact.id))) !==
+          sha256(await readFile(internalPath(run, "tasks", task.id, "artifacts", artifact.id))) !==
           artifact.digest
         )
           throw new Error("Artifact hash mismatch");
@@ -67,10 +65,10 @@ export async function validateRun(run: string) {
   for (const task of manifest.tasks)
     if (task.stage === "pairwise" && receipts.has(task.id)) {
       try {
-        const value = receipts.get(task.id)!.evaluation as PairwiseResult;
-        if (value.verdict.result === "not_comparable") continue;
-        const row = comparisonRow(inputs, task, value, receipts, names),
-          name = (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
+        const receipt = receipts.get(task.id)!;
+        const value = receipt.evaluation as PairwiseResult;
+        const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
+          name = value.verdict.result === "not_comparable" ? "not_comparable.jsonl" : (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
         if (!expected.has(name)) expected.set(name, []);
         expected.get(name)!.push(canonical(row));
       } catch (error) {
@@ -94,9 +92,16 @@ export async function validateRun(run: string) {
   }
   const validation = {
     valid: errors.length === 0,
-    completed_comparisons: [...expected.values()].reduce((n, rows) => n + rows.length, 0),
+    completed_comparisons: [...expected].reduce((n, [name, rows]) => n + (name === "not_comparable.jsonl" ? 0 : rows.length), 0),
     errors,
+    artifacts_checked: manifest.debug,
   };
-  await writeJson(path.join(run, "validation.json"), validation);
+  const file = path.join(run, "stats.json");
+  const summary = await exists(file) ? await readJson(file) : undefined;
+  const { errors: _errors, ...counts } = validation;
+  await writeJson(file, { ...summary, validation: { ...counts, error_count: errors.length } });
+  if (manifest.debug && errors.length)
+    await writeJson(internalPath(run, "diagnostics", "validation.json"), validation);
+  if (summary?.task_statuses) await writeOverview(run, summary, validation);
   return validation;
 }

@@ -5,7 +5,8 @@
 ## 唯一规则来源
 
 - 输入与配对：[input.ts](../packages/pairwise-eval/src/input.ts)。
-- 提示词、提交校验：[index.ts](../packages/pairwise-eval/src/index.ts)。
+- 提示词：[系统规则](../packages/pairwise-eval/resources/prompts/system.md)、[独立判对错](../packages/pairwise-eval/resources/prompts/correctness.md)、[配对比较](../packages/pairwise-eval/resources/prompts/pairwise.md)。
+- 提示词加载与提交校验：[index.ts](../packages/pairwise-eval/src/index.ts)。
 - 结果结构：[evaluation.json](../packages/pairwise-eval/resources/evaluation.json)，当前 schema `3.5`。
 - 导出与工具回溯：[report.ts](../packages/pairwise-eval/src/report.ts)、[annotations.ts](../packages/pairwise-eval/src/annotations.ts)。
 
@@ -56,7 +57,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤；没有强制�
 | `both_bad`（都差） | 双方都因严重缺陷无法完成核心任务，无实质胜者；决定性引用分别包含双方已确认的严重问题，缺陷可以不同 |
 | `not_comparable` | 缺少决定性材料，无法可靠评价；不能用于回避难以取舍 |
 
-`task_analysis.requirements` 只列核心验收要求，额外加分项列在 `scoring_points`。`high` 表示决定核心任务成败的优势或缺陷，`medium` 表示影响质量但不单独阻断任务的因素，`low` 表示轻微差异。双方都不错或都有错误，也必须比较是否存在实质差异；不能因有小瑕疵、没有标准答案或事实未确认就判都差。
+`task_analysis.requirements` 只列核心验收要求，额外加分项列在 `scoring_points`。`high` 表示决定核心任务成败的优势或缺陷，`medium` 表示影响质量但不单独阻断任务的因素，`low` 表示轻微差异。先判断双方是否完成核心任务，再比较差异是否具体改变关键结论、核心交付的可靠性或实际可用性。都好允许解法、补充内容和轻微瑕疵不同；都差允许双方各有局部优点或不同缺陷。核心交付同样缺失或失效时，仅有更丰富的方法说明不足以胜出；一方完成更多可独立使用的核心子任务，即使另有错误，仍可构成实质优势。
 
 有标准答案时，都好要求双方独立正确性收据均为 `true`；正确性为 `false` 或 `null` 时拒绝都好。独立判对不能直接推出都好，其他核心要求仍须满足；判对后可以因其他核心要求失败而都差，但不能再以已确认的严重正确性错误支持都差。Host 在接收提交、复用缓存、恢复和离线校验时使用对应依赖收据检查这些关系。
 

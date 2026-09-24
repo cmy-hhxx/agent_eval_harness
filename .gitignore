@@ -12,3 +12,4 @@ dist/
 .DS_Store
 vendor/**/.venv/
 vendor/**/build/
+.servers.conf

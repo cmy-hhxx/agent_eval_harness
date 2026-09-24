@@ -19,7 +19,7 @@ test("compressed input archive preserves full records and rejects truncated stor
     };
     await writeInputs(directory, inputs);
     assert.deepEqual(await readInputs(directory), inputs);
-    const file = path.join(directory, "inputs.jsonl.gz"), bytes = await readFile(file);
+    const file = path.join(directory, "_internal/inputs.jsonl.gz"), bytes = await readFile(file);
     assert(bytes.length < JSON.stringify(inputs).length / 10);
     await assert.rejects(writeJsonl(file, (function* () {
       yield { id: "replacement", value: {} };
@@ -133,6 +133,28 @@ test("duplicate input invalidates only affected pair; conflicting question inval
     await rm(second.directory, { recursive: true, force: true });
   }
 });
+test("prompt resources reach both task stages and the run snapshot", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const plan = await buildPlan(config);
+    const prompts = path.join(ROOT, "packages/pairwise-eval/resources/prompts");
+    const system = (await readFile(path.join(prompts, "system.md"), "utf8")).trim();
+    const instructions: Record<string, string> = {};
+    for (const stage of ["correctness", "pairwise"]) {
+      const instruction = (await readFile(path.join(prompts, `${stage}.md`), "utf8")).trim();
+      instructions[stage] = instruction;
+      const task = plan.tasks.find((item) => item.stage === stage)!;
+      const prepared = pairwisePack.prepare(task, plan.inputs, {});
+      assert.equal(prepared.evaluation.systemPrompt, system);
+      assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
+      assert(prepared.prompt.includes("计算2+2"));
+    }
+    const snapshot = pairwisePack.snapshots!()["contract.json"] as Record<string, unknown>;
+    assert.equal(snapshot.systemPrompt, system);
+    assert.deepEqual(snapshot.instructions, instructions);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("subjective inputs skip correctness, and direct evidence needs no forced tool calls", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   try {

@@ -8,6 +8,7 @@ import { digest, readJsonl, writeInputs, writeJson } from "../../packages/contra
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { outputSchema, pairwisePack, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { comparisonRow, reportRun } from "../../packages/pairwise-eval/src/report.js";
+import { writeRunState } from "../../packages/pairwise-eval/src/run-data.js";
 import type { PairwiseResult, TaskData } from "../../packages/pairwise-eval/src/types.js";
 import { validateRun } from "../../apps/host/src/validate.js";
 import { runEvaluation } from "../../apps/host/src/runner.js";
@@ -141,6 +142,7 @@ for (const reverse of [false, true])
       const names = { a_fast: "A组Fast", aa_fast: "AA组Fast" };
       const validateOutput = new Ajv2020({ strict: false }).compile(outputSchema);
       const states: RunManifest["states"] = {};
+      const receipts: Record<string, SubmissionReceipt> = {};
       for (const task of plan.tasks) {
         const data = task.data as TaskData;
         if (reverse) {
@@ -175,16 +177,16 @@ for (const reverse of [false, true])
             assert(!validateOutput({ ...row, verdict: { ...verdict, result: "tie" } }));
           }
         }
-        await writeJson(path.join(directory, "tasks", task.id, "result.json"), receipt(task.id, result));
+        receipts[task.id] = receipt(task.id, result);
       }
       const manifest: RunManifest = {
-        format: "dual-agent-eval/1", runId: "verdicts", status: "finished", fingerprint: "test",
+        format: "dual-agent-eval/4", debug: true, runId: "verdicts", status: "finished", fingerprint: "test",
         engine: fakeIdentity, config, tasks: plan.tasks, inputs: {}, states, preflight: plan.summary, startedAt: 0, finishedAt: 1000,
       };
-      await writeJson(path.join(directory, "manifest.json"), manifest);
-      await writeJson(path.join(directory, "output_schema.json"), outputSchema);
+      await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 });
+      await writeJson(path.join(directory, "_internal", "output_schema.json"), outputSchema);
       await writeInputs(directory, plan.inputs);
-      const summary = await reportRun(directory);
+      const summary = await reportRun(directory, { details: true });
       assert.equal(summary.completed_comparisons, 4);
       const stats = (summary.pairs as Record<string, Record<string, unknown>>).a_fast__vs__aa_fast;
       assert.deepEqual(stats.wins, { a_fast: 1, aa_fast: 1 });
@@ -193,7 +195,7 @@ for (const reverse of [false, true])
       assert(!Object.hasOwn(stats, "ties"));
       assert.deepEqual(summary.task_statuses, { succeeded: 4, not_comparable: 1, failed: 1 });
       const summaries = [];
-      for await (const row of readJsonl(path.join(directory, "task_summaries.jsonl"))) summaries.push(row);
+      for await (const row of readJsonl(path.join(directory, "_internal/exports/task_summaries.jsonl"))) summaries.push(row);
       assert.equal(summaries.length, 5);
       const markdown = await readFile(path.join(directory, "task_summaries.md"), "utf8");
       assert(markdown.includes("结论（都好）"));

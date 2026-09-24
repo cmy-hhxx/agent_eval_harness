@@ -1,10 +1,8 @@
-import path from "node:path";
 import {
   HttpError,
   canonical,
   digest,
-  exists,
-  readJson,
+  internalPath,
   writeJson,
 } from "../../../packages/contracts/src/io.js";
 import type {
@@ -12,6 +10,7 @@ import type {
   EvaluationPack,
   PlannedTask,
   RunManifest,
+  RunState,
   Submission,
   SubmissionReceipt,
 } from "../../../packages/contracts/src/index.js";
@@ -19,25 +18,33 @@ import type {
 export class RunStore {
   readonly run: string;
   readonly manifest: RunManifest;
+  readonly state: RunState;
   readonly inputs: Record<string, unknown>;
   readonly pack: EvaluationPack;
   readonly attempts = new Map<string, AttemptSpec>();
   private writes = Promise.resolve();
   private submissions = Promise.resolve();
-  constructor(run: string, manifest: RunManifest, inputs: Record<string, unknown>, pack: EvaluationPack) {
+  private committedReceipts: Record<string, SubmissionReceipt>;
+  constructor(run: string, state: RunState, inputs: Record<string, unknown>, pack: EvaluationPack) {
     this.run = run;
-    this.manifest = manifest;
+    this.state = state;
+    this.manifest = state.manifest;
+    this.committedReceipts = structuredClone(state.receipts);
     this.inputs = inputs;
     this.pack = pack;
   }
   save(): Promise<void> {
-    const next = this.writes.then(() => writeJson(path.join(this.run, "manifest.json"), this.manifest));
+    const snapshot = structuredClone(this.state);
+    const next = this.writes.then(async () => {
+      await this.pack.writeRun(this.run, snapshot);
+      this.committedReceipts = snapshot.receipts;
+    });
     this.writes = next.catch(() => {});
     return next;
   }
   async receipt(taskId: string): Promise<SubmissionReceipt | undefined> {
-    const file = path.join(this.run, "tasks", taskId, "result.json");
-    return (await exists(file)) ? readJson<SubmissionReceipt>(file) : undefined;
+    await this.writes;
+    return this.committedReceipts[taskId];
   }
   async dependencies(task: PlannedTask): Promise<Record<string, SubmissionReceipt>> {
     const dependencies: Record<string, SubmissionReceipt> = {};
@@ -68,15 +75,15 @@ export class RunStore {
     state.attempts++;
     state.reason = undefined;
     this.attempts.set(spec.attemptId, spec);
-    await writeJson(
-      path.join(
+    if (this.manifest.debug) await writeJson(
+      internalPath(
         this.run,
         "tasks",
         spec.taskId,
         `attempt-${state.attempts.toString().padStart(3, "0")}`,
-        "spec.json",
+        "attempt.json",
       ),
-      spec,
+      { spec },
     );
     await this.save();
   }
@@ -113,9 +120,9 @@ export class RunStore {
       if (
         old.submissionId === value.submissionId &&
         old.attemptId === value.attemptId &&
-        canonical(old.evaluation) === canonical(value.evaluation)
+        (old.exported || canonical(old.evaluation) === canonical(value.evaluation))
       )
-        return old;
+        return { ...old, evaluation: value.evaluation };
       throw new HttpError(409, "Task already has a committed receipt");
     }
     const state = this.manifest.states[task.id],
@@ -147,10 +154,16 @@ export class RunStore {
       cached: false,
       acceptedAt: Date.now(),
     };
-    await writeJson(path.join(this.run, "tasks", task.id, "result.json"), receipt);
+    this.state.receipts[task.id] = receipt;
     state.status = "succeeded";
     state.reason = undefined;
-    await this.save();
+    try {
+      await this.save();
+    } catch (error) {
+      delete this.state.receipts[task.id];
+      state.status = "running";
+      throw error;
+    }
     return receipt;
   }
 }

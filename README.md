@@ -28,7 +28,7 @@ npm run eval -- run --engine pi --run-id pi-001
 npm run eval -- run --engine prime --run-id prime-001
 ```
 
-结果位于 `data/runs/<run-id>/`。只比较 Fast ↔ Fast、Expert ↔ Expert，候选盲测后恢复稳定版本 ID。Host 保存有效收据后才算任务成功。
+结果位于 `data/runs/<run-id>/`，以普通文件和目录交付，不制作压缩包。重复使用同一个 `--run-id` 自动续跑；`state.json` 保存进度，`stats.json` 汇总结果、Token 和缓存命中，加 `--debug` 才保留 `_internal/` 排查文件。只比较 Fast ↔ Fast、Expert ↔ Expert，候选盲测后恢复稳定版本 ID。Host 保存有效收据后才算任务成功。
 
 ## 文档
 

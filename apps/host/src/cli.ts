@@ -4,6 +4,7 @@ import type { Engine, ModelConfig } from "../../../packages/contracts/src/index.
 import { ROOT, errorText, readJson, redact, runLock } from "../../../packages/contracts/src/io.js";
 import { loadConfig } from "../../../packages/pairwise-eval/src/input.js";
 import { pairwisePack } from "../../../packages/pairwise-eval/src/index.js";
+import { reportRun } from "../../../packages/pairwise-eval/src/report.js";
 import { runEvaluation } from "./runner.js";
 import { validateRun } from "./validate.js";
 
@@ -15,22 +16,24 @@ async function main(): Promise<void> {
       engine: { type: "string", default: "pi" },
       "run-id": { type: "string" },
       run: { type: "string" },
-      resume: { type: "boolean" },
-      "retry-failed": { type: "boolean" },
+      debug: { type: "boolean" },
       batch: { type: "string", multiple: true },
       case: { type: "string", multiple: true },
       "limit-cases": { type: "string" },
       worker: { type: "string", multiple: true },
       help: { type: "boolean" },
+      details: { type: "boolean" },
     },
   });
   const command = positionals[0];
   if (values.help || !command) {
     console.log(
-      "eval preflight|run|status|validate|report --config configs/host.json\nrun: --engine pi|prime --run-id ID [--resume --retry-failed] [--worker URL ...]\nselection: --batch ID --case ID --limit-cases N\nstatus/validate/report: --run data/runs/ID",
+      "eval preflight|run|status|validate|report --config configs/host.json\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\nstatus/validate/report: --run data/runs/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态",
     );
     return;
   }
+  if (values.details && command !== "report") throw new Error("--details 仅用于 report");
+  if (values.debug && command !== "run") throw new Error("--debug 仅用于 run");
   if (["status", "validate", "report"].includes(command)) {
     if (!values.run) throw new Error("--run required");
     const run = path.resolve(values.run);
@@ -39,10 +42,10 @@ async function main(): Promise<void> {
     try {
       result =
         command === "status"
-          ? await readJson(path.join(run, "manifest.json"))
+          ? await readJson(path.join(run, "state.json"))
           : command === "validate"
             ? await validateRun(run)
-            : await pairwisePack.report(run);
+            : await reportRun(run, { details: values.details });
     } finally {
       await release();
     }
@@ -66,7 +69,6 @@ async function main(): Promise<void> {
   }
   if (command !== "run") throw new Error("Unknown command");
   if (!plan.tasks.length) throw new Error("没有可评配对，请先查看 preflight");
-  if (values.resume && !values["run-id"]) throw new Error("--resume requires --run-id");
   const engine = values.engine as Engine;
   if (!["pi", "prime"].includes(engine)) throw new Error("--engine must be pi or prime");
   if (!process.env[config.judge.apiKeyEnv])
@@ -91,8 +93,7 @@ async function main(): Promise<void> {
       concurrency: config.execution.concurrency,
       retries: config.execution.retries,
       retryDelaySeconds: config.execution.retryDelaySeconds,
-      resume: values.resume,
-      retryFailed: values["retry-failed"],
+      debug: values.debug,
       workerUrls: values.worker,
       signal: controller.signal,
       onProgress: console.log,

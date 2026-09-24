@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_POLICY,
@@ -11,6 +11,7 @@ import {
   type Submission,
 } from "../../packages/contracts/src/index.js";
 import { digest, runLock } from "../../packages/contracts/src/io.js";
+import { readRunState } from "../../packages/pairwise-eval/src/run-data.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { RunStore } from "../../apps/host/src/store.js";
@@ -22,7 +23,8 @@ async function fixture() {
     task = plan.tasks[0];
   const run = path.join(directory, "run");
   const manifest: RunManifest = {
-    format: "dual-agent-eval/1",
+    format: "dual-agent-eval/4",
+    debug: false,
     runId: "test",
     status: "running",
     fingerprint: "test",
@@ -34,7 +36,7 @@ async function fixture() {
     preflight: plan.summary,
     startedAt: Date.now(),
   };
-  const store = new RunStore(run, manifest, plan.inputs, pairwisePack),
+  const store = new RunStore(run, { manifest, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 }, plan.inputs, pairwisePack),
     prepared = pairwisePack.prepare(task, plan.inputs, {});
   const spec: AttemptSpec = {
     protocolVersion: PROTOCOL_VERSION,
@@ -78,8 +80,28 @@ test("duplicate submissions commit once and return the same receipt", async () =
     assert.deepEqual(results[0], results[1]);
     assert.deepEqual(results[0], results[2]);
     assert.deepEqual(await store.findSubmission(value.submissionId), results[0]);
+    assert.deepEqual(await readdir(store.run), ["state.json"]);
+    const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.pack);
+    assert.deepEqual(await restored.accept(value), results[0], "state.json alone recovers the committed receipt");
     const changed = { ...value, evaluation: { ...pairResult(), unexpected: true } };
     await assert.rejects(store.accept(changed), /Invalid submission/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+test("a failed state write cannot acknowledge or expose an uncommitted receipt", async () => {
+  const { directory, store, spec, value } = await fixture();
+  try {
+    await store.activate(spec);
+    const file = path.join(store.run, "state.json");
+    await rm(file);
+    await mkdir(file);
+    await assert.rejects(store.accept(value));
+    assert.equal(await store.receipt(spec.taskId), undefined);
+    await assert.rejects(store.findSubmission(value.submissionId), /not accepted/);
+    await rm(file, { recursive: true });
+    const receipt = await store.accept(value);
+    assert.deepEqual((await readRunState(store.run)).receipts[spec.taskId], receipt);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

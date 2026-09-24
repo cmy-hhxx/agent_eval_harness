@@ -110,8 +110,8 @@ for (const objective of [false, true])
 test("report and validate reject unsupported run formats without a compatibility path", async () => {
   const { directory } = await fixtureConfig();
   try {
-    for (const manifest of [{}, { format: "unsupported" }]) {
-      await writeJson(path.join(directory, "manifest.json"), manifest);
+    for (const manifest of [{}, { format: "unsupported" }, { format: "dual-agent-eval/1" }]) {
+      await writeJson(path.join(directory, "state.json"), manifest);
       await assert.rejects(reportRun(directory), /不支持此运行格式/);
       await assert.rejects(validateRun(directory), /不支持此运行格式/);
     }
@@ -123,9 +123,10 @@ test("report and validate reject unsupported run formats without a compatibility
 test("report requires the run's own schema snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    await writeJson(path.join(directory, "manifest.json"), {
-      format: "dual-agent-eval/1", config, inputs: {}, tasks: [], states: {},
+    await writeJson(path.join(directory, "state.json"), {
+      format: "dual-agent-eval/4", debug: true, config, tasks: {}, usage: {}, recordedAttempts: 0,
     });
+    await writeJson(path.join(directory, "_internal", "plan.json"), { tasks: [], summary: {} });
     await writeInputs(directory, {});
     await assert.rejects(reportRun(directory), /ENOENT.*output_schema\.json/);
   } finally {

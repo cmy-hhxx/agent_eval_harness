@@ -4,25 +4,24 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type {
   JsonObject,
   PlannedTask,
-  RunManifest,
   SubmissionReceipt,
   Usage,
 } from "../../contracts/src/index.js";
-import { emptyUsage } from "../../contracts/src/index.js";
 import {
   atomicWrite,
   canonical,
   digest,
   exists,
+  internalPath,
   readJson,
-  readInputs,
   writeJson,
   writeJsonl,
 } from "../../contracts/src/io.js";
 import type { CorrectnessResult, EvalConfig, PairwiseResult, RawInput, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
 import { comparisonPair } from "./input.js";
-import { validateEvaluation } from "./index.js";
+import { outputSchema } from "./index.js";
+import { loadRunInputs, readRunState, writeRunState } from "./run-data.js";
 
 function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
@@ -108,42 +107,34 @@ export function comparisonRow(
     },
   };
 }
-export async function reportRun(run: string): Promise<JsonObject> {
-  const manifest = await readJson<RunManifest>(path.join(run, "manifest.json"));
-  if (manifest.format !== "dual-agent-eval/1")
-    throw new Error("不支持此运行格式；请使用当前版本新建 run。");
+export async function reportRun(run: string, options: { details?: boolean } = {}): Promise<JsonObject> {
+  const state = await readRunState(run), manifest = state.manifest;
+  if (options.details && !manifest.debug) throw new Error("--details 需要启用 --debug 的运行");
   const config = manifest.config as EvalConfig,
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
-  const inputs = await readInputs(run);
+  const inputs = await loadRunInputs(run, manifest);
   for (const task of manifest.tasks) {
-    const file = path.join(run, "tasks", task.id, "result.json");
-    if (await exists(file)) {
-      const receipt = await readJson<SubmissionReceipt>(file);
+    const receipt = state.receipts[task.id];
+    if (receipt) {
       if (
         receipt.status !== "succeeded" ||
         receipt.taskId !== task.id ||
-        receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation])
+        (!receipt.exported && receipt.submissionId !== digest([receipt.attemptId, receipt.evaluation]))
       )
         throw new Error(`Invalid receipt: ${task.id}`);
       receipts.set(task.id, receipt);
     }
   }
-  for (const task of manifest.tasks) {
-    const receipt = receipts.get(task.id);
-    if (receipt) validateEvaluation(task, inputs, receipt.evaluation, receipt.audit,
-      Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)])),
-    );
-  }
   const groups: Record<string, JsonObject[]> = {},
+    notComparable: JsonObject[] = [],
     outcomes: JsonObject[] = [],
     correctness: JsonObject[] = [],
     summaries: JsonObject[] = [];
   const statuses: Record<string, number> = {},
-    usage = emptyUsage(),
     subjective = new Set<string>(),
     markdown: string[] = [];
-  const savedSchema = await readJson(path.join(run, "output_schema.json"));
+  const savedSchema = manifest.debug ? await readJson(internalPath(run, "output_schema.json")) : outputSchema;
   const ajv = new Ajv2020({ strict: false, allErrors: true }),
     validateOutput = ajv.compile(savedSchema);
   for (const task of manifest.tasks) {
@@ -181,9 +172,15 @@ export async function reportRun(run: string): Promise<JsonObject> {
           ? (receipt!.evaluation as PairwiseResult).verdict.reason
           : manifest.states[task.id]?.reason || null,
     });
-    if (!receipt) continue;
-    if (!receipt.cached)
-      for (const key of Object.keys(usage) as (keyof Usage)[]) usage[key] += receipt.usage[key] || 0;
+    if (!receipt) {
+      markdown.push(
+        `# ${data.candidates.A.case_id}`, "",
+        `**状态**：${status}（${task.stage}）`, "",
+        `**原因**：${manifest.states[task.id]?.reason || "尚未完成"}`, "",
+        `**问题**：${data.candidates.A.question}`, "", "---", "",
+      );
+      continue;
+    }
     if (data.stage === "correctness") {
       correctness.push({
         ...data.candidates.A,
@@ -194,11 +191,14 @@ export async function reportRun(run: string): Promise<JsonObject> {
       continue;
     }
     const result = receipt.evaluation as PairwiseResult,
-      row = comparisonRow(inputs, task, result, receipts, names);
+      row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names);
     if (status !== "not_comparable") {
       if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
       (groups[data.pair!.join("__vs__")] ??= []).push(row);
-    }
+    } else notComparable.push(row);
+    receipt.exported = { comparisonId: String(row.comparison_id), digest: digest(row), row,
+      ...(status === "not_comparable" ? { file: "not_comparable.jsonl" } : {}),
+    };
     const analysis = row.task_analysis as PairwiseResult["task_analysis"];
     const measurements = Object.fromEntries(
       Object.values(data.candidates).map((c) => [c.version, c.answer_timing]),
@@ -298,22 +298,36 @@ export async function reportRun(run: string): Promise<JsonObject> {
   const results = path.join(run, "results");
   await mkdir(results, { recursive: true });
   for (const old of await readdir(results))
-    if (old.endsWith(".jsonl") && !groups[old.slice(0, -6)]) await rm(path.join(results, old));
+    if (old.endsWith(".jsonl") && !groups[old.slice(0, -6)] && !(old === "not_comparable.jsonl" && notComparable.length))
+      await rm(path.join(results, old));
   for (const [pair, rows] of Object.entries(groups))
     await writeJsonl(path.join(results, `${pair}.jsonl`), rows);
-  await writeJsonl(path.join(run, "correctness.jsonl"), correctness);
-  await writeJsonl(path.join(run, "task_outcomes.jsonl"), outcomes);
-  await writeJsonl(path.join(run, "task_summaries.jsonl"), summaries);
+  if (notComparable.length) await writeJsonl(path.join(results, "not_comparable.jsonl"), notComparable);
+  const exports = internalPath(run, "exports");
+  if (manifest.debug && (options.details || await exists(exports))) {
+    await writeJsonl(path.join(exports, "task_outcomes.jsonl"), outcomes);
+    await writeJsonl(path.join(exports, "task_summaries.jsonl"), summaries);
+  }
+  async function writeDetail(name: string, rows: unknown[]) {
+    if (!manifest.debug) return;
+    const file = internalPath(run, "diagnostics", name + ".jsonl");
+    if (rows.length) await writeJsonl(file, rows);
+    else await rm(file, { force: true });
+  }
+  await writeDetail("correctness", correctness.filter((row) => row.assessment_status === "assessed"));
+  const skipped = (manifest.preflight.skipped as JsonObject[] | undefined) || [];
+  if (skipped.length) markdown.push("# 跳过的输入", "", ...skipped.map((item) =>
+    `- ${item.batch_id} / ${item.case_id}：${item.reason}（${(item.versions as string[]).join("、")}）`), "");
   await atomicWrite(path.join(run, "task_summaries.md"), markdown.join("\n"));
-  await writeJsonl(
-    path.join(run, "failures.jsonl"),
+  await writeDetail(
+    "failures",
     outcomes.filter((v) => ["failed", "blocked", "cancelled", "timed_out"].includes(String(v.status))),
   );
-  await writeJsonl(
-    path.join(run, "not_comparable.jsonl"),
+  await writeDetail(
+    "not_comparable",
     outcomes.filter((v) => v.status === "not_comparable"),
   );
-  await writeJsonl(path.join(run, "skipped.jsonl"), (manifest.preflight.skipped as unknown[]) || []);
+  await writeDetail("skipped", (manifest.preflight.skipped as unknown[]) || []);
   const pairs = Object.fromEntries(
     Object.entries(groups).map(([pair, rows]) => {
       const wins = Object.fromEntries(pair.split("__vs__").map((v) => [v, 0]));
@@ -323,22 +337,13 @@ export async function reportRun(run: string): Promise<JsonObject> {
         if (v.result === "win") wins[v.winner_version]++;
         else counts[v.result]++;
       }
-      return [pair, { evaluated: rows.length, wins, ...counts, case_ids: rows.map((r) => r.case) }];
+      return [pair, { evaluated: rows.length, wins, ...counts }];
     }),
   );
-  const attemptUsage = emptyUsage();
-  let missingMetrics = 0;
-  for (const task of manifest.tasks)
-    for (let i = 1; i <= (manifest.states[task.id]?.attempts || 0); i++) {
-      const file = path.join(run, "tasks", task.id, `attempt-${String(i).padStart(3, "0")}`, "metrics.json");
-      if (!(await exists(file))) {
-        missingMetrics++;
-        continue;
-      }
-      const metrics = await readJson<{ usage: Usage }>(file);
-      for (const key of Object.keys(attemptUsage) as (keyof Usage)[])
-        attemptUsage[key] += metrics.usage[key] || 0;
-    }
+  const attemptUsage = state.usage;
+  const missingMetrics = Math.max(0,
+    Object.values(manifest.states).reduce((n, task) => n + task.attempts, 0) - state.recordedAttempts,
+  );
   const perVersion: Record<
     string,
     {
@@ -375,28 +380,67 @@ export async function reportRun(run: string): Promise<JsonObject> {
     stats.decidable_coverage = total ? decided / total : null;
     stats.accuracy_among_decidable = decided ? stats.correct / decided : null;
   }
+  const cacheHits = [...receipts.values()].filter((receipt) => receipt.cached).length;
+  const inputTokens = attemptUsage.input + attemptUsage.cacheRead + attemptUsage.cacheWrite;
   const summary = {
+    debug: manifest.debug,
     run_id: manifest.runId,
     status: manifest.status,
-    planned: manifest.preflight,
+    planned: {
+      cases: manifest.preflight.cases,
+      tasks: manifest.tasks.length,
+      skipped_pairs: skipped.length,
+      input_issues: (manifest.preflight.issues as unknown[] | undefined)?.length || 0,
+    },
     task_statuses: statuses,
     completed_comparisons: Object.values(groups).reduce((n, rows) => n + rows.length, 0),
-    result_files: Object.keys(groups).map((pair) => `results/${pair}.jsonl`),
     pairs,
-    per_version: perVersion,
-    usage_accepted_uncached: usage,
-    usage_all_recorded_attempts: attemptUsage,
+    ...(Object.values(perVersion).some((stats) => stats.evaluated) ? { per_version: perVersion } : {}),
+    tokens: attemptUsage,
     attempts_without_final_metrics: missingMetrics,
+    cache: {
+      task_results: {
+        hits: cacheHits,
+        accepted_receipts: receipts.size,
+        hit_rate: receipts.size ? cacheHits / receipts.size : null,
+      },
+      model_input: {
+        hit_rate: inputTokens ? attemptUsage.cacheRead / inputTokens : null,
+      },
+    },
     wall_seconds: ((manifest.finishedAt || Date.now()) - manifest.startedAt) / 1000,
   };
-  await writeJson(path.join(run, "summary.json"), summary);
+  // Replace statistics so rebuilt exports cannot retain an old validation result.
+  await writeJson(path.join(run, "stats.json"), summary);
+  await writeOverview(run, summary);
+  await writeRunState(run, state);
+  return summary;
+}
+
+export async function writeOverview(
+  run: string,
+  summary: JsonObject,
+  validation?: { valid: boolean; errors: string[]; artifacts_checked: boolean },
+): Promise<void> {
+  const statuses = summary.task_statuses as Record<string, number>;
+  const failures = ["failed", "blocked", "cancelled", "timed_out"].reduce((n, key) => n + (statuses[key] || 0), 0);
+  const skipped = (summary.planned as JsonObject).skipped_pairs;
+  const pairs = summary.pairs as Record<string, { evaluated: number; wins: Record<string, number>; both_good: number; both_bad: number }>;
+  const links = ["[逐题总结](task_summaries.md)", "[正式结果](results/)"];
+  for (const [name, label] of [["failures", "失败明细"], ["skipped", "跳过明细"], ["not_comparable", "不可比较明细"], ["correctness", "独立正确性"]])
+    if (summary.debug && await exists(internalPath(run, "diagnostics", name + ".jsonl")))
+      links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
   await atomicWrite(
     path.join(run, "report.md"),
-    `# 评测运行 ${manifest.runId}\n\n状态：${manifest.status}；完成比较：${summary.completed_comparisons}。\n\n| 配对 | 有效比较 | 胜出数量 | 都好 | 都差 |\n|---|---:|---|---:|---:|\n` +
+    `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；完成比较：${summary.completed_comparisons}。\n\n` +
+      `执行失败：${failures}；输入跳过配对：${skipped}；不可比较：${statuses.not_comparable || 0}。\n\n` +
+      `离线校验：${validation ? validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）` : "尚未校验"}。` +
+      (validation ? `[校验记录](stats.json)${validation.artifacts_checked ? "" : "（未保留 debug 产物，未校验附件字节）"}` : "") +
+      `\n\n累计 Token：${(summary.tokens as Usage).totalTokens}；缺少最终用量的尝试：${summary.attempts_without_final_metrics}。[统计与缓存命中](stats.json)\n\n` +
+      "| 配对 | 有效比较 | 胜出数量 | 都好 | 都差 |\n|---|---:|---|---:|---:|\n" +
       Object.entries(pairs)
         .map(([name, v]) => `| ${name} | ${v.evaluated} | ${JSON.stringify(v.wins)} | ${v.both_good} | ${v.both_bad} |`)
         .join("\n") +
-      "\n\n[逐题总结](task_summaries.md) · 失败见 failures.jsonl，缺失配对见 skipped.jsonl。\n",
+      "\n\n" + links.join(" · ") + "\n",
   );
-  return summary;
 }

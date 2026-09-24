@@ -8,6 +8,7 @@ import {
   type AgentBackend,
   type AgentSession,
   type AttemptSpec,
+  type AttemptRecord,
   type AttemptStatus,
   type Submission,
   type SubmissionReceipt,
@@ -89,6 +90,8 @@ export async function startWorker(
     const { spec, controller } = attempt,
       audit: ToolAudit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] },
       usage = emptyUsage();
+    const record: AttemptRecord = { spec };
+    const saveRecord = () => writeJson(path.join(attempt.directory, "attempt.json"), record);
     let accepted: SubmissionReceipt | undefined,
       submissions = 0,
       modelError: string | undefined;
@@ -107,7 +110,7 @@ export async function startWorker(
     };
     activity();
     try {
-      await writeJson(path.join(attempt.directory, "spec.json"), spec);
+      await saveRecord();
       await mkdir(path.join(attempt.directory, "workspace/inputs"), { recursive: true });
       const inputs = new Map<string, unknown>();
       for (const ref of spec.inputs) {
@@ -160,7 +163,8 @@ export async function startWorker(
             audit: structuredClone(audit),
             usage: { ...usage },
           };
-          await writeJson(path.join(attempt.directory, "pending-submission.json"), submission);
+          record.pendingSubmission = submission;
+          await saveRecord();
           for (let i = 0; i < 3; i++) {
             try {
               accepted = await request<SubmissionReceipt>(
@@ -188,6 +192,7 @@ export async function startWorker(
           }
           if (!accepted) throw new Error("Host did not acknowledge submission");
           await writeJson(path.join(attempt.directory, "receipt.json"), accepted);
+          delete record.pendingSubmission;
           emit(attempt, "submission", { accepted: true, submissionId: accepted.submissionId });
           return { ...textResult({ accepted: true, submissionId: accepted.submissionId }), terminate: true };
         },
@@ -268,10 +273,11 @@ export async function startWorker(
       } catch (error) {
         attempt.status.error ??= `Cleanup: ${errorText(error)}`;
       }
-      await writeJson(path.join(attempt.directory, "metrics.json"), { usage, audit });
       emit(attempt, "finished", attempt.status);
       await attempt.saved;
-      await writeJson(path.join(attempt.directory, "status.json"), attempt.status);
+      record.metrics = { usage, audit };
+      record.status = attempt.status;
+      await saveRecord();
       for (const client of attempt.clients.keys()) client.end();
       attempt.clients.clear();
       attempt.settled = true;
@@ -371,19 +377,19 @@ export async function startWorker(
         released.add(id);
         return json(res, { released: true });
       }
-      if (!attempt && !(await exists(path.join(attemptDir, "spec.json"))))
+      if (!attempt && !(await exists(path.join(attemptDir, "attempt.json"))))
         throw new HttpError(404, "Unknown attempt");
       if (req.method === "GET" && parts.length === 3)
         return json(
           res,
           attempt
             ? { ...attempt.status, state: attempt.settled ? attempt.status.state : "running" }
-            : await readJson(path.join(attemptDir, "status.json")).catch(() => ({
+            : (await readJson<AttemptRecord>(path.join(attemptDir, "attempt.json"))).status || {
                 state: "failed",
                 lastSeq: 0,
                 error: "Worker restarted",
                 retryable: true,
-              })),
+              },
         );
       if (req.method === "POST" && parts[3] === "cancel") {
         if (attempt) await stop(attempt, "cancelled", "Cancelled by host");
@@ -425,8 +431,10 @@ export async function startWorker(
         res.end(bytes);
         return;
       }
-      if (req.method === "GET" && parts[3] === "metrics")
-        return json(res, await readJson(path.join(attemptDir, "metrics.json")));
+      if (req.method === "GET" && parts[3] === "record") {
+        if (attempt && !attempt.settled) throw new HttpError(409, "Attempt still running");
+        return json(res, await readJson<AttemptRecord>(path.join(attemptDir, "attempt.json")));
+      }
     }
     throw new HttpError(404, "Not found");
   }, port);

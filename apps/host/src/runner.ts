@@ -1,9 +1,13 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   PROTOCOL_VERSION,
+  emptyUsage,
   type AttemptSpec,
+  type AttemptRecord,
+  type Artifact,
   type AttemptStatus,
   type Engine,
   type EngineIdentity,
@@ -11,7 +15,7 @@ import {
   type ModelConfig,
   type PlannedTask,
   type Policy,
-  type RunManifest,
+  type RunState,
   type Submission,
   type SubmissionReceipt,
   type TaskPlan,
@@ -26,6 +30,7 @@ import {
   digest,
   errorText,
   exists,
+  internalPath,
   json,
   listen,
   readJson,
@@ -54,8 +59,7 @@ export interface RunOptions {
   concurrency: number;
   retries: number;
   retryDelaySeconds: number;
-  resume?: boolean;
-  retryFailed?: boolean;
+  debug?: boolean;
   signal?: AbortSignal;
   workerUrls?: string[];
   identity?: EngineIdentity;
@@ -73,6 +77,7 @@ export async function runEvaluation(options: RunOptions) {
   options.signal?.addEventListener("abort", abort, { once: true });
   if (options.signal?.aborted) abort();
   let store: RunStore | undefined, http: Awaited<ReturnType<typeof listen>> | undefined;
+  let temporary: string | undefined;
   const busy = new Set<{ url: string }>();
   try {
     const identity = options.identity || (await loadIdentity(options.engine));
@@ -105,49 +110,57 @@ export async function runEvaluation(options: RunOptions) {
         ]),
       ),
     });
-    const manifestFile = path.join(run, "manifest.json");
-    let manifest: RunManifest;
-    if (await exists(manifestFile)) {
-      if (!options.resume) throw new Error("Run exists; use --resume or a new --run-id");
-      manifest = await readJson<RunManifest>(manifestFile);
-      if (manifest.format !== "dual-agent-eval/1" || manifest.fingerprint !== fingerprint)
-        throw new Error("输入、底座、代码、模型或评测契约已变化，请使用新 run ID");
+    let saved: RunState;
+    if (await exists(path.join(run, "state.json"))) {
+      saved = await options.pack.readRun(run);
+      saved.manifest.fingerprint = fingerprint;
+      saved.manifest.engine = identity;
+      if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
-      manifest = {
-        format: "dual-agent-eval/1",
-        runId: options.runId,
-        status: "running",
-        fingerprint,
-        engine: identity,
-        config: options.config,
-        tasks: options.plan.tasks,
-        inputs: Object.fromEntries(
-          Object.keys(options.plan.inputs).map((id) => [
-            id,
-            { id, name: id },
-          ]),
-        ),
-        states: Object.fromEntries(options.plan.tasks.map((t) => [t.id, { status: "pending", attempts: 0 }])),
-        preflight: options.plan.summary,
-        startedAt: Date.now(),
+      if ((await readdir(run)).some((name) => name !== ".run-lock"))
+        throw new Error("运行目录缺少 state.json，无法读取已有进度");
+      saved = {
+        receipts: {},
+        usage: emptyUsage(),
+        recordedAttempts: 0,
+        manifest: {
+          format: "dual-agent-eval/4",
+          debug: options.debug ?? false,
+          runId: options.runId,
+          status: "running",
+          fingerprint,
+          engine: identity,
+          config: options.config,
+          tasks: options.plan.tasks,
+          inputs: Object.fromEntries(
+            Object.keys(options.plan.inputs).map((id) => [id, { id, name: id }]),
+          ),
+          states: Object.fromEntries(options.plan.tasks.map((t) => [t.id, { status: "pending", attempts: 0 }])),
+          preflight: options.plan.summary,
+          startedAt: Date.now(),
+        },
       };
+    }
+    const manifest = saved.manifest;
+    const working = manifest.debug ? internalPath(run) : (temporary = await mkdtemp(path.join(tmpdir(), "eval-run-")));
+    if (manifest.debug) {
       await writeInputs(run, options.plan.inputs);
       for (const [name, value] of Object.entries(options.pack.snapshots?.() || {}))
-        await writeJson(path.join(run, safeId(name)), value);
+        await writeJson(internalPath(run, safeId(name)), value);
     }
-    store = new RunStore(run, manifest, options.plan.inputs, options.pack);
+    store = new RunStore(run, saved, options.plan.inputs, options.pack);
     manifest.status = "running";
     delete manifest.finishedAt;
+    await rm(path.join(run, "stats.json"), { force: true });
     for (const task of manifest.tasks) {
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
       if (receipt) {
-        options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit, await store.dependencies(task));
         state.status = "succeeded";
-      } else if (state.status === "succeeded") throw new Error(`Committed receipt missing: ${task.id}`);
-      else if (state.status === "running" || state.status === "cancelled" || options.retryFailed) {
+      } else {
         state.status = "pending";
         delete state.attemptId;
+        delete state.reason;
       }
     }
     await store.save();
@@ -182,7 +195,7 @@ export async function runEvaluation(options: RunOptions) {
           );
           i++
         )
-          owned.push(await spawnWorker(engine, path.join(run, "workers", `${engine}-${i}-${randomUUID()}`)));
+          owned.push(await spawnWorker(engine, path.join(working, "workers", `${engine}-${i}-${randomUUID()}`)));
       workerUrls = owned.map((w) => w.url);
     }
     const workers = await Promise.all(
@@ -211,28 +224,20 @@ export async function runEvaluation(options: RunOptions) {
     async function copyArtifacts(
       workerUrl: string,
       spec: AttemptSpec,
-      receipt: SubmissionReceipt,
+      artifacts: Artifact[],
       destination: string,
-    ): Promise<boolean> {
-      try {
-        for (const artifact of receipt.audit.artifacts) {
-          safeId(artifact.id);
-          const response = await fetch(
-            `${workerUrl}/v1/attempts/${spec.attemptId}/artifacts/${artifact.id}`,
-            { signal: AbortSignal.timeout(10000) },
-          );
-          if (!response.ok) throw new Error("Artifact unavailable");
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          if (sha256(bytes) !== artifact.digest) throw new Error("Artifact digest mismatch");
-          await mkdir(destination, { recursive: true });
-          await writeFile(path.join(destination, artifact.id), bytes);
-        }
-        return true;
-      } catch (error) {
-        await writeJson(path.join(run, "tasks", spec.taskId, "artifact-error.json"), {
-          reason: errorText(error),
-        });
-        return false;
+    ): Promise<void> {
+      for (const artifact of artifacts) {
+        safeId(artifact.id);
+        const response = await fetch(
+          `${workerUrl}/v1/attempts/${spec.attemptId}/artifacts/${artifact.id}`,
+          { signal: AbortSignal.timeout(10000) },
+        );
+        if (!response.ok) throw new Error("Artifact unavailable");
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (sha256(bytes) !== artifact.digest) throw new Error("Artifact digest mismatch");
+        await mkdir(destination, { recursive: true });
+        await writeFile(path.join(destination, artifact.id), bytes);
       }
     }
     async function execute(task: PlannedTask, worker: (typeof workers)[number]): Promise<void> {
@@ -267,11 +272,11 @@ export async function runEvaluation(options: RunOptions) {
               sha256(await readFile(path.join(cache, "artifacts", safeId(artifact.id)))) !== artifact.digest
             )
               throw new Error("Cached artifact corrupt");
-          if (receipt.audit.artifacts.length)
-            await cp(path.join(cache, "artifacts"), path.join(run, "tasks", task.id, "artifacts"), {
+          if (manifest.debug && receipt.audit.artifacts.length)
+            await cp(path.join(cache, "artifacts"), internalPath(run, "tasks", task.id, "artifacts"), {
               recursive: true,
             });
-          await writeJson(path.join(run, "tasks", task.id, "result.json"), { ...receipt, cached: true });
+          saved.receipts[task.id] = { ...receipt, cached: true };
           state.status = "succeeded";
           await current.save();
           options.onProgress?.(`cache ${task.stage} ${task.id}`);
@@ -303,7 +308,7 @@ export async function runEvaluation(options: RunOptions) {
           await previous.close();
           const replacement = await spawnWorker(
             identity.engine,
-            path.join(run, "workers", `${identity.engine}-${randomUUID()}`),
+            path.join(working, "workers", `${identity.engine}-${randomUUID()}`),
           );
           owned.push(replacement);
           workerUrl = replacement.url;
@@ -324,7 +329,7 @@ export async function runEvaluation(options: RunOptions) {
           deadline: Date.now() + options.policy.timeoutSeconds * 1000,
         };
         await current.activate(spec);
-        const attemptDir = path.join(
+        const attemptDir = internalPath(
           run,
           "tasks",
           task.id,
@@ -332,7 +337,7 @@ export async function runEvaluation(options: RunOptions) {
         );
         const eventController = new AbortController();
         let stream: Promise<boolean> | undefined, status: AttemptStatus | undefined;
-        let eventsSaved = false, metricsSaved = false;
+        let eventsSaved = false;
         try {
           options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
           try {
@@ -344,7 +349,7 @@ export async function runEvaluation(options: RunOptions) {
               throw error;
             }
           }
-          stream = consumeEvents(
+          if (manifest.debug) stream = consumeEvents(
             workerUrl,
             spec.attemptId,
             path.join(attemptDir, "events.jsonl"),
@@ -371,7 +376,6 @@ export async function runEvaluation(options: RunOptions) {
             if (status.state !== "running") break;
             await new Promise((resolve) => setTimeout(resolve, 100));
           }
-          if (status) await writeJson(path.join(attemptDir, "status.json"), status);
         } catch (error) {
           status = {
             state: "failed",
@@ -379,13 +383,6 @@ export async function runEvaluation(options: RunOptions) {
             error: redact(errorText(error), [process.env[model.apiKeyEnv] || ""]),
             retryable: true,
           };
-        } finally {
-          // Drain terminal events when available, then close a disconnected stream.
-          if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
-          eventController.abort();
-          eventsSaved = (await stream) ?? false;
-          const eventsFile = path.join(attemptDir, "events.jsonl");
-          if (await exists(eventsFile)) await compressFile(eventsFile);
         }
         const receipt = await current.receipt(task.id);
         // A failed connection does not imply the old session has stopped. Settle it before reuse.
@@ -418,31 +415,43 @@ export async function runEvaluation(options: RunOptions) {
             await new Promise((resolve) => setTimeout(resolve, 100));
           }
         }
+        // Wait for cancellation and cleanup before closing the terminal event stream.
+        if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
+        eventController.abort();
+        eventsSaved = (await stream) ?? false;
+        const eventsFile = path.join(attemptDir, "events.jsonl");
+        if (manifest.debug && await exists(eventsFile)) await compressFile(eventsFile);
+        let record: AttemptRecord = { spec, status };
         try {
-          const metrics = await request(
-            `${workerUrl}/v1/attempts/${spec.attemptId}/metrics`,
+          const archived = await request<AttemptRecord>(
+            `${workerUrl}/v1/attempts/${spec.attemptId}/record`,
             "GET",
             undefined,
             AbortSignal.timeout(1000),
           );
-          await writeJson(path.join(attemptDir, "metrics.json"), metrics);
-          metricsSaved = true;
+          if (canonical(archived.spec) !== canonical(spec)) throw new Error("Attempt record identity mismatch");
+          record = archived;
         } catch {
           /* A crashed worker may not have finalized its usage ledger. Events remain available. */
+        }
+        let copied = false;
+        try {
+          const artifacts = [...new Map([
+            ...(record.metrics?.audit.artifacts || []), ...(receipt?.audit.artifacts || []),
+          ].map((artifact) => [artifact.id, artifact])).values()];
+          const retained = manifest.debug ? artifacts : receipt?.audit.artifacts || [];
+          await copyArtifacts(workerUrl, spec, retained, path.join(working, "tasks", task.id, "artifacts"));
+          copied = true;
+        } catch (error) {
+          record.artifactError = errorText(error);
         }
         if (receipt) {
           state.status = "succeeded";
           await current.save();
-          const copied = await copyArtifacts(
-            workerUrl,
-            spec,
-            receipt,
-            path.join(run, "tasks", task.id, "artifacts"),
-          );
           try {
             if (copied) {
               if (receipt.audit.artifacts.length)
-                await cp(path.join(run, "tasks", task.id, "artifacts"), path.join(cache, "artifacts"), {
+                await cp(path.join(working, "tasks", task.id, "artifacts"), path.join(cache, "artifacts"), {
                   recursive: true,
                 });
               await writeJson(cachedFile, receipt);
@@ -450,14 +459,7 @@ export async function runEvaluation(options: RunOptions) {
           } catch (error) {
             options.onProgress?.(`收据已保存，附属产物未完成：${errorText(error)}`);
           }
-          if (copied && eventsSaved && metricsSaved)
-            await request(`${workerUrl}/v1/attempts/${spec.attemptId}`, "DELETE").catch((error) => {
-              options.onProgress?.(`Worker 副本未释放：${errorText(error)}`);
-            });
-          options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
-          return;
-        }
-        if (state.status === "running")
+        } else if (state.status === "running")
           await current.endAttempt(
             spec,
             status?.state === "timed_out"
@@ -467,8 +469,22 @@ export async function runEvaluation(options: RunOptions) {
                 : "failed",
             status?.error || "No committed receipt",
           );
-        await writeJson(path.join(attemptDir, "error.json"), { reason: state.reason });
+        if (!receipt) record.error = state.reason;
+        if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
+        if (record.metrics) {
+          for (const key of Object.keys(saved.usage) as (keyof typeof saved.usage)[])
+            saved.usage[key] += record.metrics.usage[key] || 0;
+          saved.recordedAttempts++;
+        }
         await current.save();
+        if ((!manifest.debug || (copied && eventsSaved && record.metrics)) && record.status && record.status.state !== "running")
+          await request(`${workerUrl}/v1/attempts/${spec.attemptId}`, "DELETE").catch((error) => {
+            options.onProgress?.(`Worker 副本未释放：${errorText(error)}`);
+          });
+        if (receipt) {
+          options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
+          return;
+        }
         if (controller.signal.aborted || !status?.retryable || retry === options.retries) return;
         // Cancel the old attempt before authorizing a replacement.
         await request(`${workerUrl}/v1/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
@@ -531,6 +547,7 @@ export async function runEvaluation(options: RunOptions) {
       await store.save();
     }
     await http?.close();
+    if (temporary) await rm(temporary, { recursive: true, force: true });
     await unlock();
   }
 }

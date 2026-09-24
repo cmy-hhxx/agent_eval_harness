@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 import type { Artifact, JsonObject } from "./index.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+export function internalPath(run: string, ...parts: string[]): string {
+  return path.join(run, "_internal", ...parts);
+}
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map((v) => canonical(v ?? null)).join(",") + "]";
   if (value && typeof value === "object")
@@ -118,7 +121,7 @@ export async function compressFile(file: string): Promise<void> {
 }
 export async function readInputs(run: string): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {};
-  for await (const row of readJsonl(path.join(run, "inputs.jsonl.gz"))) {
+  for await (const row of readJsonl(internalPath(run, "inputs.jsonl.gz"))) {
     const { id, value } = row as { id: string; value: unknown };
     safeId(id);
     if (Object.hasOwn(inputs, id)) throw new Error(`Duplicate input snapshot: ${id}`);
@@ -127,7 +130,7 @@ export async function readInputs(run: string): Promise<Record<string, unknown>> 
   return inputs;
 }
 export async function writeInputs(run: string, inputs: Record<string, unknown>): Promise<void> {
-  await writeJsonl(path.join(run, "inputs.jsonl.gz"), (function* () {
+  await writeJsonl(internalPath(run, "inputs.jsonl.gz"), (function* () {
     for (const [id, value] of Object.entries(inputs)) yield { id, value };
   })());
 }

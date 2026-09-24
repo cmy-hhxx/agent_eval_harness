@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   DEFAULT_POLICY,
   PROTOCOL_VERSION,
+  emptyUsage,
   type AgentBackend,
   type AttemptSpec,
   type AttemptStatus,
@@ -28,7 +29,8 @@ async function harness(
   const plan = await buildPlan(config),
     task = plan.tasks[0];
   const manifest: RunManifest = {
-    format: "dual-agent-eval/1",
+    format: "dual-agent-eval/4",
+    debug: false,
     runId: "test",
     status: "running",
     fingerprint: "fixture",
@@ -40,7 +42,7 @@ async function harness(
     preflight: plan.summary,
     startedAt: Date.now(),
   };
-  const store = new RunStore(path.join(directory, "run"), manifest, plan.inputs, pairwisePack);
+  const store = new RunStore(path.join(directory, "run"), { manifest, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 }, plan.inputs, pairwisePack);
   let posts = 0,
     lookups = 0;
   const host = await listen(async (req, res, url) => {
@@ -181,8 +183,8 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
     assert.equal(model.filter((event) => event.type === "message_update")
       .map((event) => object(event.assistantMessageEvent).delta).join(""), "你好");
     assert.equal(partial.content.length, 40000, "logging must not mutate SDK state");
-    const metrics = await readJson<{ usage: { totalTokens: number } }>(path.join(fixture.directory, "worker/attempt/metrics.json"));
-    assert.equal(metrics.usage.totalTokens, 10);
+    const record = await readJson<{ metrics: { usage: { totalTokens: number } } }>(path.join(fixture.directory, "worker/attempt/attempt.json"));
+    assert.equal(record.metrics.usage.totalTokens, 10);
     await request(fixture.worker.url + "/v1/attempts/attempt", "DELETE");
     assert.equal(await exists(path.join(fixture.directory, "worker/attempt")), false);
     await request(fixture.worker.url + "/v1/attempts/attempt", "DELETE");

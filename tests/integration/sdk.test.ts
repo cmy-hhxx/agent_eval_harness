@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Engine, WorkerEvent } from "../../packages/contracts/src/index.js";
-import { ROOT, body, listen, object, readJsonl } from "../../packages/contracts/src/io.js";
+import { ROOT, body, exists, listen, object, readJsonl } from "../../packages/contracts/src/io.js";
 import { buildPlan, loadConfig } from "../../packages/pairwise-eval/src/input.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { runEvaluation } from "../../apps/host/src/runner.js";
@@ -103,6 +103,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         const { correctness, pairwise, ...common } = config.judge;
         const options = {
           runId: "sdk-" + engine,
+          debug: engine === "pi",
           outputDir: config.outputDir,
           cacheDir: config.cacheDir,
           engine,
@@ -120,20 +121,21 @@ for (const engine of ["pi", "prime"] as Engine[])
         };
         const summary = await runEvaluation(options);
         assert.deepEqual(serverErrors, []);
-        const failures = await readFile(path.join(config.outputDir, options.runId, "failures.jsonl"), "utf8");
+        const failureFile = path.join(config.outputDir, options.runId, "_internal/diagnostics/failures.jsonl");
+        const failures = await exists(failureFile) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
         const expectedRequests = engine === "pi" ? 9 : 6;
         assert.equal(requests.length, expectedRequests, "submit must terminate without another model request");
         if (engine === "pi") {
           const task = options.plan.tasks[0];
           const events: WorkerEvent[] = [];
-          for await (const event of readJsonl(path.join(config.outputDir, options.runId, "tasks", task.id, "attempt-001/events.jsonl.gz")))
+          for await (const event of readJsonl(path.join(config.outputDir, options.runId, "_internal", "tasks", task.id, "attempt-001/events.jsonl.gz")))
             events.push(event as WorkerEvent);
           assert(events.some((e) => e.type === "model" && object(e.data).type === "tool_execution_end" && object(e.data).isError === true));
         }
         const validation = await validateRun(path.join(config.outputDir, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));
-        await runEvaluation({ ...options, resume: true });
+        await runEvaluation(options);
         assert.equal(requests.length, expectedRequests);
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
