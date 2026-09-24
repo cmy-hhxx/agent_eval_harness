@@ -15,10 +15,12 @@ high 表示决定核心任务成败；medium 表示影响质量但不单独阻�
 findings 按核心要求和关键差异记录，条数由证据覆盖需要决定。strength 包括已完成的核心要求。每条给出具体观察、判断依据和用户影响。
 decisive_findings 在可比较时引用双方发现。判赢家时包含赢家优势或输家问题；判都好时，每方每项核心要求都引用 medium/high、established 的 strength，并先核清所有 high problem；判都差时，分别引用双方至少一条 high、established 的 problem。
 有标准答案时，以已提供的独立正确性结论为准：都好要求双方均为 true，其他核心要求也达标；已判正确的回答如因其他核心要求失败而判都差，引用对应缺陷。
-counterevidence 列全 medium/high、established 的反向发现索引：有赢家时列赢家问题和输家优势，都好时列双方问题，都差时列双方优势。tradeoff 解释这些事实如何影响判决，以及差异是否达到上述实质标准。
+counterevidence 列全 medium/high、established 的反向发现 ID：有赢家时列赢家问题和输家优势，都好时列双方问题，都差时列双方优势。tradeoff 解释这些事实如何影响判决，以及差异是否达到上述实质标准。
 
 核验与提交：
-完整材料在 inputs/，保持原样。按需使用材料工具或 execute_code 核验关键事实，数值争议核算双方；外部事实以可核验来源为依据。图片经 view_image 实际观察后用“[图像观察]”引用。证据充分后提交。
-evidence 使用原始 message_index 和连续逐字 quote，保留标点、空格、换行和 Markdown。优先复制 read_trace 返回的短 evidence 项；多处原文分别引用。quote 校验失败时，调用 read_trace 读取对应消息并复制返回的 evidence。requirement_index、finding_index 从 0 开始，指向最终数组。
+完整材料在 inputs/，保持原样。按需使用材料工具或 execute_code 核验关键事实，数值争议核算双方；外部事实以可核验来源为依据。图片经 view_image 实际观察后使用返回的 evidence_id 并填写 observation。证据充分后提交。
+evidence 只提交初始材料或 read_trace/search_trace/view_image 返回的 evidence_id；不要自行编造 ID、抄写 quote 或修改 ID 中的原文位置。程序会展开原文。每条 finding 给一个候选内唯一且稳定的 finding_id，编辑或重排时保持 ID，删除后同步移除对应引用。decisive_findings/counterevidence 使用 candidate + finding_id。requirement_index 从 0 开始，指向核心要求数组。
 评语用【候选A】、【候选B】。summary 写完成情况，verdict.reason 写判决的关键事实，tradeoff 写权衡；每个字段直接给出所需信息。双方原始回答耗时齐全时填写 timing_analysis，否则填 ""。
 调用 submit_evaluation 提交；收到校验错误后按具体错误修正并重新提交。
+需要修正时，可用 execute_code 修改 evaluation-draft.json，再调用 submit_evaluation_file。只修改结构化错误指出的字段，保留其余已核实内容。不要仅为通过验证而改变重要性或判决。每次内容修复保留一次材料或代码工具调用，注意工具返回的剩余预算。
+评测文件使用当前工作目录内的相对路径 evaluation-draft.json，不要写到 /tmp。文件读取错误和内容修复分别计数。全部可独立判断的错误会一起返回；先修复缺失结构，再处理依赖该结构的检查。收到相同错误反复出现或停止提示时，不再原样提交。

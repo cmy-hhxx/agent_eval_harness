@@ -1,6 +1,7 @@
+import { draftFor } from "./fixtures.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_POLICY,
@@ -9,6 +10,7 @@ import {
   type AgentBackend,
   type AttemptSpec,
   type AttemptStatus,
+  type FailureContext,
   type RunManifest,
   type Submission,
   type WorkerEvent,
@@ -29,11 +31,10 @@ async function harness(
   const plan = await buildPlan(config),
     task = plan.tasks[0];
   const manifest: RunManifest = {
-    format: "dual-agent-eval/4",
+    format: "dual-agent-eval/5",
     debug: false,
     runId: "test",
     status: "running",
-    fingerprint: "fixture",
     engine: fakeIdentity,
     config,
     tasks: plan.tasks,
@@ -46,6 +47,10 @@ async function harness(
   let posts = 0,
     lookups = 0;
   const host = await listen(async (req, res, url) => {
+    if (url.pathname.endsWith("/checkpoint")) {
+      await store.checkpoint(task.id, await body(req) as FailureContext);
+      return json(res, { saved: true });
+    }
     if (req.method === "POST") {
       posts++;
       const receipt = await store.accept((await body(req)) as Submission);
@@ -63,6 +68,7 @@ async function harness(
   const prepared = pairwisePack.prepare(task, plan.inputs, {});
   const spec: AttemptSpec = {
     protocolVersion: PROTOCOL_VERSION,
+    inputRevision: 1,
     runId: "test",
     taskId: task.id,
     attemptId: "attempt",
@@ -115,7 +121,7 @@ test("lost submission acknowledgement is recovered by ID; SSE replay is contiguo
   const fixture = await harness(
     async (options) => ({
       async run() {
-        const accepted = await options.execute("submit_evaluation", pairResult());
+        const accepted = await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
         assert.equal(accepted.terminate, true);
       },
       async abort() {},
@@ -163,7 +169,7 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
         options.onEvent({ type: "message_end", message: finalMessage });
         options.onEvent({ type: "turn_end", message: finalMessage, toolResults: [partial] });
         options.onEvent({ type: "agent_end", messages: [partial, finalMessage], willRetry: false });
-        await options.execute("submit_evaluation", pairResult());
+        await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
       },
       async abort() {},
       async dispose() {},
@@ -204,9 +210,9 @@ test("exhausted exploration budget still permits submission and two repairs", as
         );
         const invalid = pairResult();
         invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
-        assert.equal((await options.execute("submit_evaluation", invalid)).isError, true);
-        assert.equal((await options.execute("submit_evaluation", {})).isError, true);
-        assert.equal((await options.execute("submit_evaluation", pairResult())).terminate, true);
+        assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError, true);
+        assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, {}))).isError, true);
+        assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate, true);
       },
       async abort() {},
       async dispose() {},
@@ -220,6 +226,108 @@ test("exhausted exploration budget still permits submission and two repairs", as
   } finally {
     await fixture.close();
   }
+});
+test("file submission repairs a rejected quote from inputs after exploration is exhausted", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      await options.execute("read_trace", { candidate: "A", message_index: 1 });
+      const invalid = pairResult();
+      invalid.evaluations.A.findings[0].evidence[0].quote = "2 + 2 = 4";
+      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError, true);
+      assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draftFor(options.spec, invalid));
+      const fixed = await options.execute("execute_code", {
+        language: "python",
+        code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\na=json.loads(Path('inputs/A.json').read_text())\nr['evaluations']['A']['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace("VALID_ID", JSON.stringify((draftFor(options.spec, pairResult()) as any).evaluations.A.findings[0].evidence[0].evidence_id)),
+      });
+      assert.notEqual(fixed.isError, true);
+      assert.equal((await options.execute("read_trace", { candidate: "B", message_index: 1 })).isError, true);
+      assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" })).terminate, true);
+    },
+    async abort() {},
+    async dispose() {},
+  }), { maxToolCalls: 1, repairAttempts: 1 });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt?.evaluation, pairResult());
+    assert.equal(receipt?.audit.calls, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+test("file loading errors do not consume content repairs", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const outside = path.join(options.workdir, "../outside.json");
+      await writeFile(outside, JSON.stringify(pairResult()));
+      await symlink(outside, path.join(options.workdir, "outside-link.json"));
+      assert.equal((await options.execute("submit_evaluation_file", { path: "outside-link.json" })).isError, true);
+      const invalid = pairResult();
+      invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+      await writeFile(path.join(options.workdir, "invalid.json"), JSON.stringify(draftFor(options.spec, invalid)));
+      assert.equal((await options.execute("submit_evaluation_file", { path: "invalid.json" })).isError, true);
+      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate, true);
+    },
+    async abort() {},
+    async dispose() {},
+  }), { repairAttempts: 1 });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(fixture.counts().posts, 2);
+    assert.deepEqual((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats, { contentSubmissions: 2, fileErrors: 1 });
+  } finally {
+    await fixture.close();
+  }
+});
+test("three file loading failures stop independently of the content budget", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (let i = 0; i < 3; i++) assert.equal((await options.execute("submit_evaluation_file", { path: "missing.json" })).isError, true);
+    }, async abort() {}, async dispose() {},
+  }), { repairAttempts: 0 });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.equal(status.failure?.fileErrors, 3);
+    assert.equal(status.failure?.contentSubmissions, 0);
+    assert.equal(fixture.counts().posts, 0);
+  } finally { await fixture.close(); }
+});
+test("different invalid field values do not count as repeated identical errors", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (const invalid of ["first", "second"]) {
+        const draft = pairResult() as unknown as { verdict: { result: string } };
+        draft.verdict.result = invalid;
+        assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, draft))).isError, true);
+      }
+      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate, true);
+    }, async abort() {}, async dispose() {},
+  }));
+  try { await fixture.start(); assert.equal((await fixture.done()).state, "succeeded"); }
+  finally { await fixture.close(); }
+});
+test("an unchanged error stops repair even when another field was fixed", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const invalid = pairResult();
+      invalid.evaluations.A.findings[0].evidence[0].quote = "wrong-a";
+      invalid.evaluations.B.findings[0].evidence[0].quote = "wrong-b";
+      await options.execute("submit_evaluation", draftFor(options.spec, invalid));
+      invalid.evaluations.B.findings[0].evidence[0].quote = "2+2=4";
+      await options.execute("submit_evaluation", draftFor(options.spec, invalid));
+    }, async abort() {}, async dispose() {},
+  }));
+  try {
+    await fixture.start(); const status = await fixture.done();
+    assert.equal(status.state, "failed"); assert.equal(status.failure?.repeatedErrors, 2);
+    assert.match(status.error || "", /Repeated validation errors/);
+  } finally { await fixture.close(); }
 });
 for (const reason of ["idle", "deadline", "cancel"] as const)
   test(`worker ${reason} aborts and disposes its own session`, async () => {
@@ -267,7 +375,7 @@ test("mismatched engine and unknown tools are refused before a model session", a
         ...fixture.spec,
         engine: { ...fakeIdentity, version: "changed" },
       }),
-      /fingerprint/,
+      /build/,
     );
     await assert.rejects(
       request(fixture.worker.url + "/v1/attempts", "POST", {
@@ -335,7 +443,7 @@ for (const message of ["Connection error.", "terminated"])
 test("repair exhaustion preserves its cause instead of a generic SDK abort", async () => {
   const fixture = await harness(async (options) => ({
     async run() {
-      await options.execute("submit_evaluation", {});
+      await options.execute("submit_evaluation", draftFor(options.spec, {}));
       throw new Error("This operation was aborted");
     },
     async abort() {},

@@ -3,6 +3,8 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "request_time",
+    "has_standard_answer",
     "schema_version",
     "evaluation_type",
     "comparison_id",
@@ -15,7 +17,9 @@
     "decision_basis"
   ],
   "properties": {
-    "schema_version": { "const": "3.5" },
+    "request_time": { "type": ["string", "null"], "minLength": 1 },
+    "has_standard_answer": { "type": "boolean" },
+    "schema_version": { "const": "3.6" },
     "evaluation_type": { "const": "pairwise_model_comparison" },
     "comparison_id": { "type": "string", "minLength": 1 },
     "case": {

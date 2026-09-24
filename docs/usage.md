@@ -19,13 +19,13 @@ EVAL_API_KEY=your-key
 
 | 配置 | 含义 |
 |---|---|
-| `inputs.versions` | 文件与版本 ID、展示名称、A / AA 适配器的对应关系 |
+| `inputs.versions` | 输入目录与版本 ID、展示名称、A / AA 适配器的对应关系；目录会递归读取各日期子目录下对应版本名的 JSONL |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `judge.baseUrlEnv` / `judge.apiKeyEnv` | 共用 URL / key 的环境变量名 |
 | `judge.api` | `openai-completions` 或 `openai-responses` |
 | `judge.correctness` / `judge.pairwise` | 各阶段的模型、thinking、上下文和输出 token 上限 |
-| `execution` | 并发、超时、工具预算、修正、重试和盲测种子 |
-| `outputDir` / `cacheDir` | 运行产物和任务缓存 |
+| `execution` | 并发、超时、工具预算、修正和重试 |
+| `outputDir` | 运行产物 |
 
 配置中的相对路径相对于配置文件目录解析。完整类型见 [EvalConfig](../packages/pairwise-eval/src/types.ts)，预算默认值见 [DEFAULT_POLICY](../packages/contracts/src/index.ts)。不在文档复制一套默认值。
 
@@ -33,9 +33,9 @@ EVAL_API_KEY=your-key
 
 | 位置 | 内容 | 是否入库 |
 |---|---|---|
-| `data/inputs/` | 四个版本的原始 JSONL | 否 |
+| `data/inputs/` | 按日期子目录保存四个版本的原始 JSONL | 否 |
 | `data/runs/<run-id>/` | 当前 Host 的全部运行产物 | 否 |
-| `.cache/evaluations/` | 当前任务缓存 | 否 |
+| `.cache/evaluations/` | 历史缓存目录，保留但不再读写 | 否 |
 | `.cache/npm/`、`.cache/uv/` | 下载缓存 | 否 |
 | `.runtime/`、`.venv/`、`dist/` | 可重建的执行环境和构建产物 | 否 |
 | `.artifacts/` | 开发验证日志、临时计划和检查结果 | 否 |
@@ -57,41 +57,71 @@ npm run eval -- report --run data/runs/pi-debug --details
 
 `preflight` 只检查输入，不调用模型；有输入问题返回退出码 2。没有有效配对时拒绝运行。`--config` 可指定配置；`--batch ID`、`--case ID` 可重复；`--limit-cases N` 按批次与 case 排序截取，不保证首题有有效配对。
 
-再次执行相同 `--run-id` 即自动续跑，无需额外参数。Host 从 `state.json` 读取任务进度，已完成结果从 `results/` 读取；两者一起保留。已完成任务不会再次调用模型，失败、中断等未完成任务从新 attempt 开始。代码、提示词、模型、预算、种子和底座变化不阻止续跑，未完成任务使用当前执行参数。任务清单与 A/B 分配按状态中保存的输入配置和种子重建；debug 模式直接读取计划快照。需要重新评测全部题目或更换任务清单时使用新 run ID。运行退出码：0 成功、2 有失败、130 被中断。
+输入的每日批次约定见[数据契约](contract.md#输入)。不指定 `--batch` 时处理全部输入批次，多个 `--batch` 取并集，并与 `--case` 条件取交集。同 case 出现在不同批次时分别计数，`--limit-cases` 限制整个选择结果的样本数。以下命令选择一个或两个日期批次；批次 ID 使用输入中的实际值：
 
-模型连接错误和流中断按 `execution.retries` 重试；提交修正预算耗尽会保留具体原因，不作为网络错误自动重试。Pi 会将工具拒绝反馈标记为 SDK 工具错误，供模型修正后重新提交。
+```bash
+npm run eval -- preflight --batch 2026-09-23
+npm run eval -- run --engine pi --run-id daily-0923-0924 --batch 2026-09-23 --batch 2026-09-24
+```
+
+再次执行相同 `--run-id` 自动续跑。Host 从 v5 `state.json` 读取完整任务清单、输入引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型和预算变化不阻止续跑；未变化的成功任务继续复用，其他 run 不复用结果。模型服务端缓存行为保持不变。
+
+续跑扫描原运行已选批次，按 `batch_id + case_id + version` 比较新输入与保存对象。输入移动但内容未变时不重评；唯一有效新记录替换旧快照，只使依赖它的正确性和配对判决失效。共享标准答案变化联动依赖任务，新增可评配对自动加入。无效或冲突输入报告错误并保留上一份有效材料，不按文件顺序覆盖。缩小本次 `--batch` 不删除原任务；新日期批次使用新 run ID。正式结果只保留每个比较的当前判决，累计 attempts/Token 包含被替换结果的历史执行成本。运行退出码：0 成功、2 有失败、130 被中断。
+
+内容修复、文件加载和传输错误使用独立预算。内容失败最多自动开启一次跨 attempt 续修，带入最后草稿和结构化反馈；连续两次出现相同字段、错误码及实际错误时停止。每次内容修复预留一次材料或代码工具调用；每 attempt 最多三次文件加载失败，路径/读取/JSON 解析错误不消耗内容修复次数。连接与流中断按 `execution.retries` 有界退避。
+
+运行中可调整并发并查看进度：
+
+```bash
+npm run eval -- concurrency --run data/runs/pi-001 --value 8
+npm run eval -- progress --run data/runs/pi-001
+```
+
+提高并发立即唤醒调度器并按需启动托管 Worker；降低并发停止补位，让健康任务自然完成。外部 Worker 只调整使用数量。默认并发保持配置值。进度包含排队、运行、接受、修复、失败分类、近期吞吐和最长无进展任务；至少五个耗时样本后才提供 ETA 区间。
+
+v4 状态必须显式升级：
+
+```bash
+npm run eval -- upgrade-run --run data/runs/pi-001
+npm run eval -- upgrade-run --run data/runs/pi-001 --apply
+```
+
+无 `--apply` 只预览。升级使用运行锁，先创建普通目录 `<run>.before-v5` 备份，再写输入快照，最后原子替换状态；中断后重跑同一命令可恢复。先在运行副本验证，再应用原目录。需要旧计划、输入快照及结果引用；材料缺失时明确报错。保留 run/task/comparison/submission ID、A/B 分配、判决和累计用量，不调用模型，不改写正式 JSONL。常规运行不保留旧格式分支。
 
 ## 运行产物
 
-所有交付文件位于 `data/runs/<run-id>/`，不生成 ZIP、tar 等压缩交付包。默认只有 `report.md`、`task_summaries.md`、`results/`、`state.json` 和 `stats.json`；运行中的 `.run-lock` 在退出时释放。
+所有交付文件位于 `data/runs/<run-id>/`，不生成 ZIP、tar 等压缩交付包。默认包含 `report.md`、`task_summaries.md`、`results/`、`inputs/`、`state.json` 和 `stats.json`；运行中的 `.run-lock` 在退出时释放。
 
 | 文件 | 用途 |
 |---|---|
-| `report.md` | 总览、异常数量、用量缺失和校验状态 |
-| `results/<pair>.jsonl` | 正式配对结果 |
-| `results/not_comparable.jsonl` | 不可比较结果，有记录时才生成，不计入正式比较数量 |
-| `task_summaries.md` | 逐题结论、双方优缺点、耗时，以及失败、不可比较和输入跳过原因 |
-| `state.json` | 续跑索引：配置、任务进度、收据元数据、结果引用和累计用量；每个任务一行，不重复保存已导出的评语和完整任务材料 |
+| `report.md` | 总览、分批样本与配对汇总、异常数量、用量缺失和校验状态 |
+| `results/<pair>.jsonl` | 正式配对结果，每接受一条成功提交就追加一行并刷盘，运行中即可读取 |
+| `results/not_comparable.jsonl` | 不可比较结果，同样逐条追加，有记录时才生成，不计入正式比较数量 |
+| `task_summaries.md` | 以 `batch_id / case_id` 标识逐题结论、双方优缺点、耗时，以及失败、不可比较、输入跳过原因和输入异常 |
+| `state.json` | 唯一进度账本：完整任务清单、输入引用、批次范围、预检、接受收据、最后失败草稿、错误与计数、累计用量 |
+| `inputs/<id>.json` | 普通模式也保存的不可变原始输入快照，ID 首次登记后持久化 |
 | `stats.json` | 仅保留数量、配对胜出、Token、缓存命中、耗时和校验汇总，不包含逐题 ID 或异常明细 |
 
-`stats.json` 的 `tokens` 汇总所有已记录尝试，包含失败和重试；`input` 为未命中缓存的输入，`cacheRead` / `cacheWrite` 为缓存读取/写入 Token，`output` 为输出，`totalTokens` 为总量。`cache.model_input.hit_rate` 是缓存读取 Token 占全部输入 Token（未缓存 + 读取 + 写入）的比例，无输入时为 `null`。`cache.task_results` 统计已接受收据中标记为缓存复用的数量和比例，包括导入时标记为缓存的收据；复用的历史用量不会重复计入当前尝试用量。
+`stats.json` 的 `by_batch` 按批次保存 `planned`、`task_statuses`、`completed_comparisons`、`pairs`，有独立正确性评测时包含 `per_version`，字段口径与总体统计一致。失败和待完成按任务计数，计划任务包含正确性和配对阶段；有效比较仅统计配对判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
+
+`stats.json` 的 `tokens` 汇总所有已记录尝试，包含失败和重试；`input` 为未命中缓存的输入，`cacheRead` / `cacheWrite` 为缓存读取/写入 Token，`output` 为输出，`totalTokens` 为总量。`cache.model_input.hit_rate` 是缓存读取 Token 占全部输入 Token（未缓存 + 读取 + 写入）的比例，无输入时为 `null`。不存在跨 run 结果缓存。`quality` 记录具有新提交统计的任务数量、首次通过率、重复错误率、修复次数、attempts/Token 及 P50/P95；缺少新统计的历史收据不推算首次通过率。
 
 加 `--debug` 才会额外保留 `_internal/`。该设置写入 `state.json`，后续同 ID 继续运行时沿用；可以给已有普通运行加 `--debug`，此前未保存的日志不会补回。
 
 | debug 文件 | 用途 |
 |---|---|
 | `_internal/contract.json`、`_internal/output_schema.json` | 提示词、契约与 schema 快照 |
-| `_internal/inputs.jsonl.gz` | 按内容 ID 去重的完整输入快照，每行 `{id,value}` |
-| `_internal/plan.json` | 完整任务清单及输入预检明细 |
 | `_internal/tasks/<id>/attempt-NNN/attempt.json` | 尝试的参数 `spec`、终态 `status`、最终用量与审计 `metrics`、失败原因及未接受的最后一次提交；未收齐的字段缺省 |
 | `_internal/tasks/<id>/attempt-NNN/events.jsonl.gz` | 尝试的压缩执行日志 |
 | `_internal/tasks/<id>/artifacts/` | 成功及失败尝试的脚本、stdout/stderr 和生成文件 |
 | `_internal/diagnostics/` | 有记录才生成的 `failures.jsonl`、`skipped.jsonl`、`not_comparable.jsonl`；`correctness.jsonl` 只包含实际独立评测，不生成占位行 |
 | `_internal/exports/` | `report --details` 按需生成的 `task_summaries.jsonl`、`task_outcomes.jsonl`；后续重建报告时一并刷新 |
 
-接受提交时先原子保存收据；`report` 写入结果后，将状态中的完整配对评语替换成结果引用。尚未导出的提交和依赖任务所需的正确性结论暂存于状态中，避免中断丢失。`report` 可以补写未导出的结果并重建报告、统计，使旧校验结果失效；`validate` 检查结果引用、证据和导出映射，统计中只记录错误数量，详细错误由命令输出，debug 模式另存诊断。默认读取原始输入，debug 模式使用自身快照并额外校验附件字节。两者均不调用模型。`report --details` 仅用于 debug 运行；崩溃时缺失的完整用量会显式标记。
+接受提交时先原子保存收据，再向结果 JSONL 追加并刷盘，两步完成后才确认；网络重发沿用同一提交 UUID，不产生重复行，同一 ID 的不同内容明确拒绝。续跑以持久化收据重建结果，补齐缺行，移除重复行、中断尾行及失效判决。状态中的规范化判决用于核对正式结果，不能用附件是否存在推断成功与否。
 
-默认模式的托管 Worker 在系统临时目录工作，结束时清理；任务缓存仍位于配置的 `cacheDir`。debug 模式的输入快照独立于 `data/inputs/`，保留原始消息、图片和元数据。成功、失败及取消的尝试均在 Host 收齐事件、最终记录和工具产物后释放 Worker 副本；收集不完整时保留在 `_internal/workers/`。debug 事件在运行中追加到 `events.jsonl`，Host 结束收集后压缩；进程崩溃时可能留下未压缩日志。
+`report` 重建展示并使旧校验结果失效；`validate` 分别报告正式结果、证据关系和可选附件。附件未保存或缺失不撤销成功收据，也不产生结果缺失错误。普通模式切 debug 不补造历史附件或重评成功任务。两条命令均使用运行自己的输入快照，不调用模型；`report --details` 仅用于 debug 运行。
+
+普通模式的 Worker 工作区临时存在，清理前保存最后草稿、错误与用量；debug 模式额外收集事件和产物，收集不完整时保留 Worker 副本。debug 事件运行中追加 `events.jsonl`，收集结束后压缩，崩溃时可能保留未压缩日志。
 
 ## 独立运行 Worker
 

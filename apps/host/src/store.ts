@@ -1,7 +1,7 @@
 import {
   HttpError,
   canonical,
-  digest,
+  safeId,
   internalPath,
   writeJson,
 } from "../../../packages/contracts/src/io.js";
@@ -13,6 +13,7 @@ import type {
   RunState,
   Submission,
   SubmissionReceipt,
+  FailureContext,
 } from "../../../packages/contracts/src/index.js";
 
 export class RunStore {
@@ -24,7 +25,9 @@ export class RunStore {
   readonly attempts = new Map<string, AttemptSpec>();
   private writes = Promise.resolve();
   private submissions = Promise.resolve();
+  private inputsSaved = false;
   private committedReceipts: Record<string, SubmissionReceipt>;
+  private readonly writeResults: (state: RunState) => Promise<void>;
   constructor(run: string, state: RunState, inputs: Record<string, unknown>, pack: EvaluationPack) {
     this.run = run;
     this.state = state;
@@ -32,11 +35,14 @@ export class RunStore {
     this.committedReceipts = structuredClone(state.receipts);
     this.inputs = inputs;
     this.pack = pack;
+    this.writeResults = pack.createResultWriter(run, inputs);
   }
   save(): Promise<void> {
     const snapshot = structuredClone(this.state);
     const next = this.writes.then(async () => {
-      await this.pack.writeRun(this.run, snapshot);
+      await this.pack.writeRun(this.run, snapshot, this.inputsSaved ? undefined : this.inputs);
+      this.inputsSaved = true;
+      await this.writeResults(snapshot);
       this.committedReceipts = snapshot.receipts;
     });
     this.writes = next.catch(() => {});
@@ -70,6 +76,7 @@ export class RunStore {
   private async activateExclusive(spec: AttemptSpec): Promise<void> {
     const state = this.manifest.states[spec.taskId];
     if (!state || (await this.receipt(spec.taskId))) throw new Error("Task already completed or unknown");
+    if (spec.inputRevision !== (state.revision || 1)) throw new HttpError(409, "Input revision superseded");
     state.status = "running";
     state.attemptId = spec.attemptId;
     state.attempts++;
@@ -110,19 +117,35 @@ export class RunStore {
     );
     return result;
   }
+  async checkpoint(taskId: string, failure: FailureContext): Promise<void> {
+    const operation = this.submissions.then(async () => {
+      const state = this.manifest.states[taskId];
+      if (!state || state.attemptId !== failure.attemptId || state.status !== "running")
+        throw new HttpError(409, "Attempt is cancelled or superseded");
+      state.failure = failure;
+      await this.save();
+    });
+    this.submissions = operation.catch(() => {});
+    return operation;
+  }
   private async acceptExclusive(value: Submission): Promise<SubmissionReceipt> {
     const task = this.manifest.tasks.find((t) => t.id === value.taskId);
     if (!task) throw new HttpError(404, "Unknown task");
-    if (value.submissionId !== digest([value.attemptId, value.evaluation]))
-      throw new HttpError(400, "Invalid submission ID");
+    safeId(value.submissionId);
+    for (const [id, receipt] of Object.entries(this.committedReceipts))
+      if (id !== task.id && receipt.submissionId === value.submissionId)
+        throw new HttpError(409, "Submission ID already belongs to another task");
     const old = await this.receipt(task.id);
     if (old) {
       if (
         old.submissionId === value.submissionId &&
         old.attemptId === value.attemptId &&
-        (old.exported || canonical(old.evaluation) === canonical(value.evaluation))
+        canonical(old.audit) === canonical(value.audit) &&
+        canonical(old.usage) === canonical(value.usage) &&
+        canonical(old.submissionStats) === canonical(value.submissionStats) &&
+        canonical(old.submitted ?? old.evaluation) === canonical(value.evaluation)
       )
-        return { ...old, evaluation: value.evaluation };
+        return old;
       throw new HttpError(409, "Task already has a committed receipt");
     }
     const state = this.manifest.states[task.id],
@@ -131,6 +154,7 @@ export class RunStore {
       state.status !== "running" ||
       state.attemptId !== value.attemptId ||
       !spec ||
+      spec.inputRevision !== (state.revision || 1) ||
       spec.deadline < Date.now()
     )
       throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
@@ -138,25 +162,30 @@ export class RunStore {
       !value.audit ||
       !Number.isInteger(value.audit.calls) ||
       value.audit.calls < 0 ||
-      value.audit.calls > spec.policy.maxToolCalls ||
+      value.audit.calls > spec.policy.maxToolCalls + spec.policy.repairAttempts ||
       !Array.isArray(value.audit.viewedImages) ||
       !Array.isArray(value.audit.artifacts)
     )
       throw new HttpError(400, "Invalid tool audit");
+    let evaluation: unknown;
     try {
-      this.pack.validate(task, this.inputs, value.evaluation, value.audit, await this.dependencies(task));
+      evaluation = this.pack.resolve ? this.pack.resolve(task, this.inputs, value.evaluation, value.audit) : value.evaluation;
+      this.pack.validate(task, this.inputs, evaluation, value.audit, await this.dependencies(task));
     } catch (error) {
+      if (error instanceof HttpError) throw error;
       throw new HttpError(422, error instanceof Error ? error.message : String(error));
     }
     const receipt: SubmissionReceipt = {
       ...value,
+      evaluation,
+      submitted: structuredClone(value.evaluation),
       status: "succeeded",
-      cached: false,
       acceptedAt: Date.now(),
     };
     this.state.receipts[task.id] = receipt;
     state.status = "succeeded";
     state.reason = undefined;
+    if (state.failure) state.failure = { ...state.failure, draft: undefined, errors: [], stopped: false };
     try {
       await this.save();
     } catch (error) {

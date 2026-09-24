@@ -21,6 +21,19 @@ async function context() {
   };
   return ctx;
 }
+test("trace search finds numeric tool fields and returns an exact structured quote", async () => {
+  const ctx = await context();
+  try {
+    const source = { type: "tool_result", output: { datas: [{ "数量[20240220]": 4444 }] } };
+    ctx.inputs.set("A", { messages: [source] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const result = await runtime.execute("search_trace", { candidate: "A", query: '"数量[20240220]": 4444' }, new AbortController().signal);
+    const details = result.details as { total: number; matches: { evidence: { message_index: number; quote: string } }[] };
+    assert.equal(details.total, 1);
+    assert.equal(details.matches[0].evidence.message_index, 0);
+    assert(JSON.stringify(source, null, 2).includes(details.matches[0].evidence.quote));
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("registered tools are available without engine-specific changes and budgets are enforced", async () => {
   const ctx = await context();
   try {

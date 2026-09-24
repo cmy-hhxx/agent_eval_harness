@@ -30,10 +30,28 @@
 
 自动测试检查结构、映射、引用和故障处理；模拟网关不证明模型事实判断正确。修改提示词、模型或关键预算时：
 
-1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入哈希、模型、底座、契约和预算。
+1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入快照 ID、模型、底座、契约和预算。
 2. 两个底座使用相同题集。人工核查决定性发现、影响与反向证据，记录人工判断及分歧原因。
-3. 改变盲测种子测试 A/B 位置交换，检查稳定版本映射与判决一致性。
-4. 改变一个关键事实，确认缓存失效并复核结论是否合理响应。
-5. 检查相同配置的缓存行为；研究裁判稳定性时使用独立 `cacheDir`，至少重复三次，记录分歧、用量、耗时及未完成率。
+3. 使用显式 A/B 位置交换，检查稳定版本映射与判决一致性。
+4. 改变一个关键事实，确认依赖任务失效并复核结论是否合理响应。
+5. 研究裁判稳定性时使用独立 run ID，至少重复三次，记录分歧、用量、耗时及未完成率。
 
 先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/`，不追加到本指南。
+
+## 离线回归与小样本入口
+
+先构建应用，再从留存失败草稿建立固定 JSON 回归集。`collect` 保留原草稿，只将逐字可定位的证据转成 ID；不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
+
+```bash
+npm run benchmark -- collect --run data/runs/pi-001 --output .artifacts/regression/fixtures.json --limit 32
+npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
+npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
+```
+
+`run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行输出到 `.artifacts/model-benchmarks/`，要求新 run ID。统计保存在 `stats.json`，包括首次通过率、重复错误、attempts/Token 和 P50/P95。只有保留了内容提交计数的任务参与首次通过率统计；留存 debug attempts 既不是全量尝试，也不是首次通过率的分母。
+
+```bash
+npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi --run .artifacts/model-benchmarks/sample-pi-swapped --output .artifacts/regression/stability.json
+```
+
+`compare` 按业务标识和版本配对比较判决，输出理由和决定性引用供人工抽查。离线通过只说明机械契约与证据定位行为一致，不能代替真实模型质量及交换稳定性复核。

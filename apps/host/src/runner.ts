@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,39 +17,36 @@ import {
   type Policy,
   type RunState,
   type Submission,
-  type SubmissionReceipt,
   type TaskPlan,
   type WorkerStatus,
 } from "../../../packages/contracts/src/index.js";
 import {
-  ROOT,
   HttpError,
   body,
   canonical,
   compressFile,
-  digest,
   errorText,
   exists,
   internalPath,
   json,
   listen,
-  readJson,
   redact,
   request,
   runLock,
+  readJson,
   safeId,
-  sha256,
   writeJson,
-  writeInputs,
 } from "../../../packages/contracts/src/io.js";
-import { loadIdentity, treeHash } from "../../../packages/worker/src/identity.js";
+import { loadIdentity } from "../../../packages/worker/src/identity.js";
+import type { FailureContext } from "../../../packages/contracts/src/index.js";
+import { loadRunInputs, writeRunInputs } from "../../../packages/pairwise-eval/src/run-data.js";
+import { progressSnapshot } from "./progress.js";
 import { RunStore } from "./store.js";
 import { consumeEvents, spawnWorker } from "./worker-client.js";
 
 export interface RunOptions {
   runId: string;
   outputDir: string;
-  cacheDir: string;
   engine: Engine;
   config: unknown;
   pack: EvaluationPack;
@@ -78,6 +75,10 @@ export async function runEvaluation(options: RunOptions) {
   if (options.signal?.aborted) abort();
   let store: RunStore | undefined, http: Awaited<ReturnType<typeof listen>> | undefined;
   let temporary: string | undefined;
+  let progressTimer: ReturnType<typeof setInterval> | undefined;
+  let wake: () => void = () => {};
+  let changed = new Promise<void>((resolve) => { wake = resolve; });
+  let desiredConcurrency = options.concurrency;
   const busy = new Set<{ url: string }>();
   try {
     const identity = options.identity || (await loadIdentity(options.engine));
@@ -88,32 +89,12 @@ export async function runEvaluation(options: RunOptions) {
     };
     for (const engine of new Set(options.plan.tasks.map(engineForTask)))
       identities[engine] ??= await loadIdentity(engine);
-    const program = digest([
-      await treeHash(path.join(ROOT, "apps")),
-      await treeHash(path.join(ROOT, "packages")),
-      await readFile(path.join(ROOT, "package-lock.json"), "utf8"),
-      await readFile(path.join(ROOT, "uv.lock"), "utf8"),
-      await readFile(path.join(ROOT, "mise.toml"), "utf8"),
-      await readFile(path.join(ROOT, "tsconfig.json"), "utf8"),
-    ]);
-    const fingerprint = digest({
-      program,
-      identities,
-      routing: Object.fromEntries(options.plan.tasks.map((t) => [t.id, engineForTask(t)])),
-      pack: [options.pack.id, options.pack.version],
-      plan: options.plan,
-      policy: options.policy,
-      models: Object.fromEntries(
-        [...new Set(options.plan.tasks.map((t) => t.stage))].map((stage) => [
-          stage,
-          options.modelForStage(stage),
-        ]),
-      ),
-    });
     let saved: RunState;
+    let inputs = options.plan.inputs;
     if (await exists(path.join(run, "state.json"))) {
       saved = await options.pack.readRun(run);
-      saved.manifest.fingerprint = fingerprint;
+      if (options.pack.reconcile) inputs = (await options.pack.reconcile(run, saved, options.config)).inputs;
+      else inputs = await loadRunInputs(run, saved.manifest);
       saved.manifest.engine = identity;
       if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
@@ -124,16 +105,16 @@ export async function runEvaluation(options: RunOptions) {
         usage: emptyUsage(),
         recordedAttempts: 0,
         manifest: {
-          format: "dual-agent-eval/4",
+          format: "dual-agent-eval/5",
           debug: options.debug ?? false,
           runId: options.runId,
           status: "running",
-          fingerprint,
           engine: identity,
           config: options.config,
           tasks: options.plan.tasks,
+          inputCatalog: options.plan.catalog,
           inputs: Object.fromEntries(
-            Object.keys(options.plan.inputs).map((id) => [id, { id, name: id }]),
+            Object.keys(inputs).map((id) => [id, { id, name: id }]),
           ),
           states: Object.fromEntries(options.plan.tasks.map((t) => [t.id, { status: "pending", attempts: 0 }])),
           preflight: options.plan.summary,
@@ -142,13 +123,15 @@ export async function runEvaluation(options: RunOptions) {
       };
     }
     const manifest = saved.manifest;
+    manifest.concurrency = desiredConcurrency;
+    await writeRunInputs(run, inputs);
+    for (const engine of new Set(manifest.tasks.map(engineForTask))) identities[engine] ??= await loadIdentity(engine);
     const working = manifest.debug ? internalPath(run) : (temporary = await mkdtemp(path.join(tmpdir(), "eval-run-")));
     if (manifest.debug) {
-      await writeInputs(run, options.plan.inputs);
       for (const [name, value] of Object.entries(options.pack.snapshots?.() || {}))
         await writeJson(internalPath(run, safeId(name)), value);
     }
-    store = new RunStore(run, saved, options.plan.inputs, options.pack);
+    store = new RunStore(run, saved, inputs, options.pack);
     manifest.status = "running";
     delete manifest.finishedAt;
     await rm(path.join(run, "stats.json"), { force: true });
@@ -165,12 +148,26 @@ export async function runEvaluation(options: RunOptions) {
     }
     await store.save();
     const current = store;
+    const lock = await readJson<{ pid: number; token: string }>(path.join(run, ".run-lock"));
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
+      if (url.pathname === "/v1/control/concurrency" && req.method === "POST") {
+        if (req.headers["x-run-token"] !== lock.token) throw new HttpError(403, "Invalid run control token");
+        const value = ((await body(req)) as { concurrency?: unknown }).concurrency;
+        if (!Number.isInteger(value) || Number(value) < 1) throw new HttpError(400, "concurrency must be positive");
+        desiredConcurrency = Number(value); manifest.concurrency = desiredConcurrency;
+        await current.save(); wake();
+        return json(res, progressSnapshot(saved));
+      }
+      if (url.pathname === "/v1/progress" && req.method === "GET") return json(res, progressSnapshot(saved));
       if (req.method === "GET" && parts[0] === "v1" && parts[1] === "inputs" && parts[2]) {
-        const value = options.plan.inputs[safeId(parts[2])];
+        const value = inputs[safeId(parts[2])];
         if (!value) throw new HttpError(404, "Unknown input");
         return json(res, value);
+      }
+      if (req.method === "POST" && parts[0] === "v1" && parts[1] === "tasks" && parts[3] === "checkpoint") {
+        await current.checkpoint(safeId(parts[2]), await body(req) as unknown as FailureContext);
+        return json(res, { saved: true });
       }
       if (req.method === "POST" && url.pathname === "/v1/submissions") {
         const value = (await body(req)) as Submission;
@@ -180,6 +177,8 @@ export async function runEvaluation(options: RunOptions) {
         return json(res, await current.findSubmission(safeId(parts[2])));
       throw new HttpError(404, "Not found");
     });
+    await writeJson(path.join(run, ".run-lock"), { ...lock, url: http.url });
+    progressTimer = setInterval(() => options.onProgress?.("progress " + JSON.stringify(progressSnapshot(saved))), 10000);
     let workerUrls = options.workerUrls || [];
     const pending = manifest.tasks.filter((t) => manifest.states[t.id].status === "pending");
     if (!workerUrls.length && pending.length) {
@@ -208,9 +207,9 @@ export async function runEvaluation(options: RunOptions) {
         !w.health.activeAttempt,
     );
     if (pending.length && !eligible.length)
-      throw new Error("No idle worker matches the selected engine fingerprint and protocol");
+      throw new Error("No idle worker matches the selected build and protocol");
     for (const task of pending) {
-      const prepared = options.pack.prepare(task, options.plan.inputs, {});
+      const prepared = options.pack.prepare(task, inputs, {});
       if (
         !eligible.some(
           (w) =>
@@ -235,7 +234,7 @@ export async function runEvaluation(options: RunOptions) {
         );
         if (!response.ok) throw new Error("Artifact unavailable");
         const bytes = new Uint8Array(await response.arrayBuffer());
-        if (sha256(bytes) !== artifact.digest) throw new Error("Artifact digest mismatch");
+        if (bytes.byteLength !== artifact.bytes) throw new Error("Artifact length mismatch");
         await mkdir(destination, { recursive: true });
         await writeFile(path.join(destination, artifact.id), bytes);
       }
@@ -245,47 +244,10 @@ export async function runEvaluation(options: RunOptions) {
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id],
         dependencies = await current.dependencies(task);
-      const prepared = options.pack.prepare(task, options.plan.inputs, dependencies);
+      const prepared = options.pack.prepare(task, inputs, dependencies);
       const model = options.modelForStage(task.stage);
-      const cacheKey = digest({
-        program,
-        identity,
-        task: task.id,
-        inputs: task.inputIds,
-        evaluation: prepared.evaluation,
-        prompt: prepared.prompt,
-        model,
-        policy: options.policy,
-        dependencies: Object.fromEntries(
-          Object.entries(dependencies).map(([key, value]) => [key, value.evaluation]),
-        ),
-      });
-      state.cacheKey = cacheKey;
-      const cache = path.join(options.cacheDir, cacheKey),
-        cachedFile = path.join(cache, "receipt.json");
-      if (await exists(cachedFile)) {
-        try {
-          const receipt = await readJson<SubmissionReceipt>(cachedFile);
-          options.pack.validate(task, options.plan.inputs, receipt.evaluation, receipt.audit, dependencies);
-          for (const artifact of receipt.audit.artifacts)
-            if (
-              sha256(await readFile(path.join(cache, "artifacts", safeId(artifact.id)))) !== artifact.digest
-            )
-              throw new Error("Cached artifact corrupt");
-          if (manifest.debug && receipt.audit.artifacts.length)
-            await cp(path.join(cache, "artifacts"), internalPath(run, "tasks", task.id, "artifacts"), {
-              recursive: true,
-            });
-          saved.receipts[task.id] = { ...receipt, cached: true };
-          state.status = "succeeded";
-          await current.save();
-          options.onProgress?.(`cache ${task.stage} ${task.id}`);
-          return;
-        } catch (error) {
-          options.onProgress?.(`忽略无效缓存：${errorText(error)}`);
-        }
-      }
-      for (let retry = 0; retry <= options.retries; retry++) {
+      let transportRetries = 0, contentRetries = 0;
+      for (;;) {
         if (controller.signal.aborted) {
           state.status = "cancelled";
           await current.save();
@@ -319,15 +281,19 @@ export async function runEvaluation(options: RunOptions) {
           runId: options.runId,
           taskId: task.id,
           attemptId: randomUUID(),
+          inputRevision: state.revision || 1,
           engine: identity,
           evaluation: prepared.evaluation,
           model,
           policy: options.policy,
           prompt: prepared.prompt,
+          recovery: state.failure,
           inputs: Object.entries(task.inputIds).map(([name, id]) => ({ ...manifest.inputs[id], name })),
           hostUrl,
           deadline: Date.now() + options.policy.timeoutSeconds * 1000,
         };
+        state.startedAt = state.lastProgressAt = Date.now();
+        let lastSeq = -1;
         await current.activate(spec);
         const attemptDir = internalPath(
           run,
@@ -373,6 +339,7 @@ export async function runEvaluation(options: RunOptions) {
               undefined,
               AbortSignal.timeout(10000),
             );
+            if (status.lastSeq !== lastSeq) { state.lastProgressAt = Date.now(); lastSeq = status.lastSeq; }
             if (status.state !== "running") break;
             await new Promise((resolve) => setTimeout(resolve, 100));
           }
@@ -439,26 +406,17 @@ export async function runEvaluation(options: RunOptions) {
           const artifacts = [...new Map([
             ...(record.metrics?.audit.artifacts || []), ...(receipt?.audit.artifacts || []),
           ].map((artifact) => [artifact.id, artifact])).values()];
-          const retained = manifest.debug ? artifacts : receipt?.audit.artifacts || [];
+          const retained = manifest.debug ? artifacts : [];
           await copyArtifacts(workerUrl, spec, retained, path.join(working, "tasks", task.id, "artifacts"));
           copied = true;
+          state.artifactStatus = { status: manifest.debug ? "available" : "not_retained", source: manifest.debug ? "run" : "worker-temporary" };
         } catch (error) {
           record.artifactError = errorText(error);
+          state.artifactStatus = { status: "missing", source: workerUrl, error: record.artifactError };
         }
         if (receipt) {
           state.status = "succeeded";
           await current.save();
-          try {
-            if (copied) {
-              if (receipt.audit.artifacts.length)
-                await cp(path.join(working, "tasks", task.id, "artifacts"), path.join(cache, "artifacts"), {
-                  recursive: true,
-                });
-              await writeJson(cachedFile, receipt);
-            }
-          } catch (error) {
-            options.onProgress?.(`收据已保存，附属产物未完成：${errorText(error)}`);
-          }
         } else if (state.status === "running")
           await current.endAttempt(
             spec,
@@ -469,8 +427,12 @@ export async function runEvaluation(options: RunOptions) {
                 : "failed",
             status?.error || "No committed receipt",
           );
-        if (!receipt) record.error = state.reason;
+        if (!receipt) {
+          record.error = state.reason;
+          if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
+        }
         if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
+        state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
         if (record.metrics) {
           for (const key of Object.keys(saved.usage) as (keyof typeof saved.usage)[])
             saved.usage[key] += record.metrics.usage[key] || 0;
@@ -485,15 +447,36 @@ export async function runEvaluation(options: RunOptions) {
           options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
           return;
         }
-        if (controller.signal.aborted || !status?.retryable || retry === options.retries) return;
+        if (controller.signal.aborted || state.failure?.stopped) return;
+        if (status?.retryable) { if (transportRetries++ >= options.retries) return; }
+        else if (state.failure?.draft && state.failure.errors.some((e) => ["structure", "evidence", "decision"].includes(e.category))) {
+          if (contentRetries++ >= 1) return;
+        } else return;
         // Cancel the old attempt before authorizing a replacement.
         await request(`${workerUrl}/v1/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, options.retryDelaySeconds * 1000 * 2 ** retry));
+        await new Promise((resolve) => setTimeout(resolve, status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, transportRetries - 1) : 0));
       }
     }
     const running = new Map<string, Promise<void>>();
     while (true) {
       if (controller.signal.aborted) break;
+      changed = new Promise<void>((resolve) => { wake = resolve; });
+      if (!options.workerUrls?.length) {
+        const waiting = manifest.tasks.filter((task) => manifest.states[task.id].status === "pending" &&
+          Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded"));
+        let slots = Math.max(0, desiredConcurrency - running.size);
+        for (const engine of new Set(waiting.map(engineForTask))) {
+          const target = Math.min(slots, waiting.filter((task) => engineForTask(task) === engine).length);
+          const idle = eligible.filter((worker) => !busy.has(worker) && worker.health.identity.engine === engine).length;
+          for (let i = idle; i < target && !controller.signal.aborted; i++) {
+            const worker = await spawnWorker(engine, path.join(working, "workers", `${engine}-${randomUUID()}`));
+            owned.push(worker);
+            const health = await request<WorkerStatus>(`${worker.url}/v1/health`);
+            eligible.push({ url: worker.url, health });
+          }
+          slots -= target;
+        }
+      }
       let scheduled = false;
       for (const task of manifest.tasks) {
         if (manifest.states[task.id].status !== "pending" || running.has(task.id)) continue;
@@ -505,14 +488,14 @@ export async function runEvaluation(options: RunOptions) {
           continue;
         }
         if (dependencies.some((s) => s !== "succeeded")) continue;
-        const required = options.pack.prepare(task, options.plan.inputs, {}).evaluation.toolNames;
+        const required = options.pack.prepare(task, inputs, {}).evaluation.toolNames;
         const worker = eligible.find(
           (w) =>
             !busy.has(w) &&
             w.health.identity.engine === engineForTask(task) &&
             required.every((name) => w.health.tools.includes(name)),
         );
-        if (!worker || running.size >= options.concurrency) continue;
+        if (!worker || running.size >= desiredConcurrency) continue;
         busy.add(worker);
         scheduled = true;
         const promise = execute(task, worker)
@@ -527,7 +510,7 @@ export async function runEvaluation(options: RunOptions) {
           });
         running.set(task.id, promise);
       }
-      if (running.size) await Promise.race(running.values());
+      if (running.size) await Promise.race([...running.values(), changed]);
       else if (!scheduled) break;
     }
     await Promise.all(running.values());
@@ -539,6 +522,7 @@ export async function runEvaluation(options: RunOptions) {
     await current.save();
     return await options.pack.report(run);
   } finally {
+    if (progressTimer) clearInterval(progressTimer);
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
     await Promise.all(owned.map((worker) => worker.close()));

@@ -20,7 +20,7 @@ npm run build
 npm run doctor
 ```
 
-将四个版本的 JSONL 放到 `data/inputs/`，在 [configs/host.json](configs/host.json) 核对文件映射与裁判模型：
+将四个版本按日期放到 `data/inputs/0922/`、`data/inputs/0923/` 等日期目录中，每个日期目录包含四个同名 JSONL；在 [configs/host.json](configs/host.json) 核对目录映射与裁判模型：
 
 ```bash
 npm run eval -- preflight
@@ -28,7 +28,7 @@ npm run eval -- run --engine pi --run-id pi-001
 npm run eval -- run --engine prime --run-id prime-001
 ```
 
-结果位于 `data/runs/<run-id>/`，以普通文件和目录交付，不制作压缩包。重复使用同一个 `--run-id` 自动续跑；`state.json` 保存进度，`stats.json` 汇总结果、Token 和缓存命中，加 `--debug` 才保留 `_internal/` 排查文件。只比较 Fast ↔ Fast、Expert ↔ Expert，候选盲测后恢复稳定版本 ID。Host 保存有效收据后才算任务成功。
+结果位于 `data/runs/<run-id>/`，以普通文件和目录交付，不制作压缩包。重复使用同一个 `--run-id` 自动续跑；`state.json` 保存唯一进度账本，普通模式也保留 `inputs/` 快照，`stats.json` 汇总结果、Token 和模型缓存命中，加 `--debug` 才保留 `_internal/` 排查文件。只比较 Fast ↔ Fast、Expert ↔ Expert，候选盲测后恢复稳定版本 ID。Host 保存有效收据后才算任务成功。同 run 扫描原批次，输入更新只重评受影响任务；不使用项目自有哈希或跨 run 结果缓存。
 
 ## 文档
 

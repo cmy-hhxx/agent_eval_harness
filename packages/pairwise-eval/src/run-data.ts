@@ -1,40 +1,45 @@
 import path from "node:path";
-import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState, TaskPlan } from "../../contracts/src/index.js";
-import { atomicWrite, digest, exists, internalPath, readInputs, readJson, readJsonl, safeId, writeJson } from "../../contracts/src/io.js";
-import { buildPlan } from "./input.js";
-import type { EvalConfig, PairwiseResult, TaskData } from "./types.js";
+import { mkdir, readFile } from "node:fs/promises";
+import type { JsonObject, PlannedTask, RunManifest, RunState, SubmissionReceipt, TaskState, TaskPlan } from "../../contracts/src/index.js";
+import { canonical, exists, readJson, safeId, writeJson } from "../../contracts/src/io.js";
+import { buildPlan, candidateKey } from "./input.js";
+import type { Candidate, EvalConfig, PairwiseResult, TaskData } from "./types.js";
 
-type SavedReceipt = Omit<SubmissionReceipt, "taskId" | "status" | "evaluation" | "exported"> & {
-  evaluation?: unknown;
-  exported?: { comparisonId: string; digest: string; file?: string };
-};
-interface Checkpoint extends Omit<RunManifest, "tasks" | "states" | "inputs" | "preflight"> {
-  tasks: Record<string, Pick<TaskState, "status" | "attempts" | "reason"> & { receipt?: SavedReceipt }>;
+type SavedReceipt = Omit<SubmissionReceipt, "exported"> & { exported?: { comparisonId: string; file?: string } };
+export interface Checkpoint extends Omit<RunManifest, "tasks" | "states"> {
+  plan: PlannedTask[];
+  tasks: Record<string, TaskState & { receipt?: SavedReceipt }>;
   usage: RunState["usage"];
   recordedAttempts: number;
 }
-
-export async function writeRunState(run: string, state: RunState): Promise<void> {
-  const { tasks, states, inputs: _inputs, preflight, ...metadata } = state.manifest;
-  if (metadata.debug && !await exists(internalPath(run, "plan.json")))
-    await writeJson(internalPath(run, "plan.json"), { tasks, summary: preflight });
-  const entries = tasks.map((task) => {
-    const { status, attempts, reason } = states[task.id];
-    const receipt = state.receipts[task.id];
-    let stored: SavedReceipt | undefined;
-    if (receipt) {
-      const { taskId: _taskId, status: _status, evaluation, exported, ...rest } = receipt;
-      stored = exported
-        ? { ...rest, exported: { comparisonId: exported.comparisonId, digest: exported.digest, file: exported.file } }
-        : { ...rest, evaluation };
-    }
-    return `    ${JSON.stringify(task.id)}: ${JSON.stringify({ status, attempts, reason, receipt: stored })}`;
-  });
-  const header = JSON.stringify({ ...metadata, usage: state.usage, recordedAttempts: state.recordedAttempts }, null, 2);
-  await atomicWrite(path.join(run, "state.json"), header.slice(0, -2) + ',\n  "tasks": {\n' + entries.join(',\n') + '\n  }\n}\n');
+export async function writeRunInputs(run: string, inputs: Record<string, unknown>): Promise<void> {
+  await mkdir(path.join(run, "inputs"), { recursive: true });
+  for (const [id, value] of Object.entries(inputs)) {
+    const file = path.join(run, "inputs", safeId(id) + ".json");
+    if (!await exists(file)) await writeJson(file, value);
+  }
+}
+export async function writeRunState(run: string, state: RunState, inputs?: Record<string, unknown>): Promise<void> {
+  const { tasks, states, ...metadata } = state.manifest;
+  metadata.inputCatalog ??= [...new Map(tasks.flatMap((task) => Object.values((task.data as TaskData).candidates))
+    .map((candidate) => [candidateKey(candidate), candidate])).values()];
+  if (inputs) await writeRunInputs(run, inputs);
+  if (!await exists(path.join(run, "inputs"))) throw new Error("必须先保存规划时读取的输入快照");
+  metadata.inputs = Object.fromEntries((metadata.inputCatalog as Candidate[]).map((c) => [c.input_id, { id: c.input_id, name: c.input_id }]));
+  const config = metadata.config as EvalConfig;
+  metadata.config = { ...config, inputs: { ...config.inputs, batches: config.inputs.batches || Object.keys(metadata.preflight.by_batch || {}) } };
+  const saved = Object.fromEntries(Object.entries(states).map(([id, status]) => {
+    const receipt = state.receipts[id];
+    if (!receipt) return [id, status];
+    const { exported, ...rest } = receipt;
+    return [id, { ...status, receipt: { ...rest,
+      ...(exported ? { exported: { comparisonId: exported.comparisonId, file: exported.file } } : {}),
+    } }];
+  }));
+  await writeJson(path.join(run, "state.json"), { ...metadata, plan: tasks, tasks: saved, usage: state.usage, recordedAttempts: state.recordedAttempts });
 }
 
-function evaluationFromRow(data: TaskData, row: JsonObject): PairwiseResult {
+export function evaluationFromRow(data: TaskData, row: JsonObject): PairwiseResult {
   const labels = Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) => [candidate.version, label]));
   const verdict = row.verdict as { result: string; winner_version: string | null; reason: string };
   const basis = row.decision_basis as PairwiseResult["decision_basis"];
@@ -60,44 +65,102 @@ function evaluationFromRow(data: TaskData, row: JsonObject): PairwiseResult {
 }
 
 export async function readRunState(run: string): Promise<RunState> {
-  const { tasks: savedTasks, usage, recordedAttempts, ...metadata } = await readJson<Checkpoint>(path.join(run, "state.json"));
-  if (metadata.format !== "dual-agent-eval/4") throw new Error("不支持此运行格式；请使用当前版本新建 run。");
-  const plan = metadata.debug
-    ? await readJson<Pick<TaskPlan, "tasks" | "summary">>(internalPath(run, "plan.json"))
-    : await buildPlan(metadata.config as EvalConfig);
-  const tasks = new Map(plan.tasks.map((task) => [task.id, task]));
-  const state: RunState = {
-    manifest: { ...metadata, tasks: [], inputs: {}, states: {}, preflight: plan.summary },
-    receipts: {}, usage, recordedAttempts,
-  };
-  const resultFiles = new Map<string, Map<string, JsonObject>>();
-  for (const [id, saved] of Object.entries(savedTasks)) {
-    const task = tasks.get(id);
-    if (!task) throw new Error(`找不到任务材料：${id}，请检查输入文件`);
-    state.manifest.tasks.push(task);
+  const { tasks: savedTasks, plan, usage, recordedAttempts, ...metadata } = await readJson<Checkpoint>(path.join(run, "state.json"));
+  if (metadata.format !== "dual-agent-eval/5") throw new Error("不支持此运行格式；请先运行 upgrade-run 显式升级。");
+  const state: RunState = { manifest: { ...metadata, tasks: plan, states: {} }, receipts: {}, usage, recordedAttempts };
+  for (const [id, { receipt: _receipt, ...status }] of Object.entries(savedTasks)) state.manifest.states[id] = status;
+  const files = new Map<string, Map<string, JsonObject>>();
+  for (const task of plan) {
+    const saved = savedTasks[task.id];
+    if (!saved) throw new Error("任务状态缺失：" + task.id);
     const { receipt, ...status } = saved;
-    state.manifest.states[id] = status;
-    for (const id of Object.values(task.inputIds)) state.manifest.inputs[id] = { id, name: id };
+    state.manifest.states[task.id] = status;
     if (!receipt) continue;
-    const { exported, ...rest } = receipt;
-    if (!exported) {
-      state.receipts[id] = { ...rest, evaluation: receipt.evaluation, taskId: id, status: "succeeded" };
+    if (!receipt.exported) { state.receipts[task.id] = receipt as SubmissionReceipt; continue; }
+    const data = task.data as TaskData;
+    const file = path.join(run, "results", safeId(receipt.exported.file || data.pair!.join("__vs__") + ".jsonl"));
+    if (!files.has(file)) {
+      const text = await exists(file) ? await readFile(file, "utf8") : "", rows = new Map<string, JsonObject>();
+      for (const line of text.slice(0, text.lastIndexOf("\n") + 1).split("\n")) if (line.trim()) {
+        const row = JSON.parse(line) as JsonObject;
+        const id = String(row.comparison_id), previous = rows.get(id);
+        if (previous && canonical(previous) !== canonical(row)) throw new Error("比较 ID 对应冲突结果：" + id);
+        rows.set(id, row);
+      }
+      files.set(file, rows);
+    }
+    const row = files.get(file)!.get(receipt.exported.comparisonId);
+    if (!row) {
+      if (!receipt.evaluation) throw new Error("结果文件缺失：" + receipt.exported.comparisonId);
+      const { exported: _exported, ...rest } = receipt;
+      state.receipts[task.id] = rest;
       continue;
     }
-    const data = task.data as TaskData;
-    const file = path.join(run, "results", safeId(exported.file || data.pair!.join("__vs__") + ".jsonl"));
-    if (!resultFiles.has(file)) {
-      const rows = new Map<string, JsonObject>();
-      for await (const row of readJsonl(file)) rows.set(String((row as JsonObject).comparison_id), row as JsonObject);
-      resultFiles.set(file, rows);
-    }
-    const row = resultFiles.get(file)!.get(exported.comparisonId);
-    if (!row || digest(row) !== exported.digest) throw new Error(`结果文件缺失或内容不一致：${exported.comparisonId}`);
-    state.receipts[id] = { ...rest, taskId: id, status: "succeeded", evaluation: evaluationFromRow(data, row), exported: { ...exported, row } };
+    if (canonical(row.case) !== canonical({ batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id }))
+      throw new Error("结果文件缺失或身份不一致：" + receipt.exported.comparisonId);
+    state.receipts[task.id] = { ...receipt, exported: { ...receipt.exported, row } };
   }
   return state;
 }
-
 export async function loadRunInputs(run: string, manifest: RunManifest): Promise<Record<string, unknown>> {
-  return manifest.debug ? readInputs(run) : (await buildPlan(manifest.config as EvalConfig)).inputs;
+  return Object.fromEntries(await Promise.all(Object.keys(manifest.inputs).map(async (id) =>
+    [id, await readJson(path.join(run, "inputs", safeId(id) + ".json"))],
+  )));
+}
+export async function reconcileRun(run: string, state: RunState, current: unknown): Promise<TaskPlan> {
+  const config = state.manifest.config as EvalConfig, supplied = current as EvalConfig;
+  const previous: TaskPlan = { tasks: state.manifest.tasks, inputs: await loadRunInputs(run, state.manifest),
+    summary: state.manifest.preflight, catalog: state.manifest.inputCatalog };
+  const selected: EvalConfig = { ...config, judge: supplied.judge, execution: supplied.execution, inputs: { ...config.inputs,
+    versions: config.inputs.versions.map((v) => ({ ...v, path: supplied.inputs.versions.find((item) => item.id === v.id)?.path || v.path })),
+  } };
+  const registered = [...(state.manifest.retiredTasks || []), ...previous.tasks];
+  const plan = await buildPlan(selected, { ...previous, tasks: registered });
+  // A conflicting case is not a valid replacement for its saved materials.
+  const conflicts = new Set((plan.summary.skipped as JsonObject[]).filter((item) => item.reason === "case_conflict")
+    .map((item) => canonical([item.batch_id, item.case_id])));
+  for (const task of previous.tasks) {
+    const a = (task.data as TaskData).candidates.A;
+    if (conflicts.has(canonical([a.batch_id, a.case_id]))) {
+      plan.tasks.push(task);
+      for (const candidate of Object.values((task.data as TaskData).candidates)) {
+        plan.inputs[candidate.input_id] = previous.inputs[candidate.input_id];
+        plan.catalog = (plan.catalog as Candidate[]).filter((c) => candidateKey(c) !== candidateKey(candidate));
+        plan.catalog.push(candidate);
+      }
+    }
+  }
+  // A case limit applies to additions, never removes already registered work.
+  for (const task of previous.tasks) {
+    const a = (task.data as TaskData).candidates.A;
+    if (!plan.tasks.some((t) => { const c = (t.data as TaskData).candidates.A; return c.batch_id === a.batch_id && c.case_id === a.case_id; })) {
+      plan.tasks.push(...previous.tasks.filter((t) => { const c = (t.data as TaskData).candidates.A; return c.batch_id === a.batch_id && c.case_id === a.case_id; }));
+      for (const c of (previous.catalog as Candidate[]).filter((c) => c.batch_id === a.batch_id && c.case_id === a.case_id)) {
+        plan.inputs[c.input_id] = previous.inputs[c.input_id];
+        (plan.catalog as Candidate[]).push(c);
+      }
+    }
+  }
+  const tasks = new Set(plan.tasks.map((task) => task.id));
+  state.manifest.retiredTasks = registered.filter((task) => !tasks.has(task.id));
+  for (const task of state.manifest.retiredTasks) {
+    state.manifest.states[task.id].status = "cancelled";
+    state.manifest.states[task.id].reason = "Current inputs no longer require this task";
+  }
+  for (const id of Object.keys(state.receipts)) if (!tasks.has(id)) delete state.receipts[id];
+  for (const task of plan.tasks) {
+    const revision = (task.data as TaskData).revision || 1;
+    const old = state.manifest.states[task.id];
+    if (!old || (old.revision || 1) !== revision) {
+      delete state.receipts[task.id];
+      state.manifest.states[task.id] = { status: "pending", attempts: old?.attempts || 0, revision };
+    }
+  }
+  await writeRunInputs(run, plan.inputs);
+  state.manifest.config = selected;
+  state.manifest.tasks = plan.tasks;
+  state.manifest.inputCatalog = plan.catalog;
+  state.manifest.inputs = Object.fromEntries(Object.keys(plan.inputs).map((id) => [id, { id, name: id }]));
+  state.manifest.preflight = plan.summary;
+  return plan;
 }

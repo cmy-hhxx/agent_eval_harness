@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { buildPlan, comparisonPair, loadConfig } from "../../packages/pairwise-eval/src/input.js";
 import { pairwisePack, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { annotateFindings } from "../../packages/pairwise-eval/src/annotations.js";
@@ -41,9 +41,43 @@ test("configuration resolves the shared gateway and uses the data directory", as
   assert.equal(config.judge.apiKeyEnv, "EVAL_API_KEY");
   assert.equal(config.outputDir, path.join(ROOT, "data/runs"));
   for (const version of config.inputs.versions)
-    assert.equal(version.path, path.join(ROOT, "data/inputs", version.id + ".jsonl"));
+    assert.equal(version.path, path.join(ROOT, "data/inputs"));
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid model baseUrl/);
+});
+
+test("directory input paths merge matching files from date folders", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const inputRoot = path.join(directory, "inputs");
+    for (const folder of ["0922", "0923"]) await mkdir(path.join(inputRoot, folder), { recursive: true });
+    for (const version of config.inputs.versions) {
+      version.path = inputRoot;
+      await writeJsonl(path.join(inputRoot, "0922", version.id + ".jsonl"), [raw("day-0922")]);
+      await writeJsonl(path.join(inputRoot, "0923", version.id + ".jsonl"), [raw("day-0923")]);
+    }
+    const plan = await buildPlan(config);
+    assert.deepEqual(plan.summary.issues, []);
+    assert.equal(plan.summary.valid_inputs, 8);
+    assert.equal(plan.summary.cases, 2);
+    assert.equal(plan.summary.pairwise_tasks, 4);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("explicit no-standard-answer flags skip correctness tasks", async () => {
+  const input = raw();
+  input.has_standard_answer = false;
+  const { directory, config } = await fixtureConfig([[input], [input], [input], [input]]);
+  try {
+    const plan = await buildPlan(config);
+    assert.equal(plan.summary.correctness_tasks, 0);
+    assert.equal(plan.summary.subjective_inputs_skipping_correctness, 4);
+    assert.equal(plan.summary.pairwise_tasks, 2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("all ordered pairs admit only same-tier cross-group comparisons", () => {
@@ -105,7 +139,7 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
     const original = plan.tasks.filter((t) => t.stage === "pairwise").map((t) => t.data);
     config.inputs.versions.reverse();
     assert.deepEqual(
-      (await buildPlan(config)).tasks.filter((t) => t.stage === "pairwise").map((t) => t.data),
+      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "pairwise").map((t) => t.data),
       original,
     );
     for (const task of plan.tasks.filter((t) => t.stage === "pairwise"))

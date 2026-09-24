@@ -10,7 +10,9 @@ import type {
   ToolDefinition,
   ToolResult,
 } from "../../contracts/src/index.js";
-import { ROOT, canonical, errorText, object } from "../../contracts/src/io.js";
+import { ROOT, canonical, errorText, object, schemaIssues, ValidationError } from "../../contracts/src/io.js";
+
+import { cite, evidenceId, evidenceSources, renderMessage } from "./evidence.js";
 
 const schema = (properties: JsonSchema, required = Object.keys(properties)): JsonSchema => ({
   type: "object",
@@ -24,13 +26,6 @@ export const textResult = (value: unknown): ToolResult => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
   details: value,
 });
-function leaves(value: unknown, prefix = ""): [string, string][] {
-  if (typeof value === "string") return [[prefix, value]];
-  if (!value || typeof value !== "object") return [];
-  return Object.entries(value).flatMap(([key, child]) =>
-    leaves(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
-  );
-}
 function record(ctx: ToolContext, candidate: string): { messages: unknown[] } {
   const value = ctx.inputs.get(candidate);
   if (!value || !Array.isArray(object(value).messages)) throw new Error("只能访问本任务材料");
@@ -40,17 +35,6 @@ function message(ctx: ToolContext, candidate: string, i: number): unknown {
   const value = record(ctx, candidate).messages[i];
   if (!value) throw new Error("消息索引不存在");
   return value;
-}
-function render(value: unknown): string {
-  return JSON.stringify(
-    value,
-    (key, child: unknown) =>
-      typeof child === "string" &&
-      (child.startsWith("data:image/") || (key === "data" && child.length > 20000))
-        ? "[图像数据，请使用 view_image]"
-        : child,
-    2,
-  );
 }
 function images(value: unknown): ToolContent[] {
   if (typeof value === "string") {
@@ -222,17 +206,22 @@ export const builtinTools: ToolDefinition[] = [
     async execute(ctx, value) {
       const args = value as { candidate: string; message_index: number; offset?: number; max_chars?: number };
       const source = message(ctx, args.candidate, args.message_index),
-        full = render(source),
+        full = renderMessage(source),
         offset = args.offset || 0,
         length = args.max_chars || 12000;
       const text = full.slice(offset, offset + length);
-      const citations = leaves(source)
-        .flatMap(([, text]) => text.split("\n"))
-        .filter((v) => v.trim().length >= 2 && !v.startsWith("data:image/"))
-        .map((quote) => quote.slice(0, 640))
-        .filter((quote) => text.includes(JSON.stringify(quote).slice(1, -1)))
-        .slice(0, 12)
-        .map((quote) => ({ message_index: args.message_index, quote }));
+      const inputId = ctx.inputIds?.get(args.candidate) || args.candidate;
+      const citations = evidenceSources(source).flatMap((source) => {
+        if (source.kind === "json") return text.includes("[图像数据") ? [] : [cite(inputId, args.message_index, source, offset, Math.min(offset + length, source.text.length))];
+        const matches = []; let start = 0;
+        for (const line of source.text.split("\n")) {
+          const end = start + Math.min(line.length, 640);
+          if (line.trim() && text.includes(JSON.stringify(source.text.slice(start, end)).slice(1, -1)))
+            matches.push(cite(inputId, args.message_index, source, start, end));
+          start += line.length + 1;
+        }
+        return matches;
+      }).filter((item) => item.quote).slice(0, 12);
       return textResult({
         text,
         evidence: citations,
@@ -254,12 +243,13 @@ export const builtinTools: ToolDefinition[] = [
       const args = value as { candidate: string; query: string; offset?: number };
       const matches: unknown[] = [];
       record(ctx, args.candidate).messages.forEach((m, i) => {
-        for (const [location, text] of leaves(m)) {
+        for (const source of evidenceSources(m)) {
+          const { path: location, text } = source;
           let start = 0,
             position: number;
           while ((position = text.indexOf(args.query, start)) >= 0) {
-            const quote = text.slice(Math.max(0, position - 100), position + args.query.length + 200);
-            matches.push({ path: location, evidence: { message_index: i, quote } });
+            const evidence = cite(ctx.inputIds?.get(args.candidate) || args.candidate, i, source, Math.max(0, position - 100), Math.min(text.length, position + args.query.length + 200));
+            if (!evidence.quote.includes("[图像数据")) matches.push({ path: location, evidence });
             start = position + args.query.length;
             if (matches.length >= 10000) break;
           }
@@ -284,7 +274,7 @@ export const builtinTools: ToolDefinition[] = [
       if (!content.length) throw new Error("该消息没有可读取的内嵌图片");
       const id = `${args.candidate}:${args.message_index}`;
       if (!ctx.audit.viewedImages.includes(id)) ctx.audit.viewedImages.push(id);
-      return { content: [{ type: "text", text: `原始消息 ${id}，${content.length} 张图片` }, ...content] };
+      return { content: [{ type: "text", text: JSON.stringify({ message: `原始消息 ${id}，${content.length} 张图片`, evidence_id: evidenceId(ctx.inputIds?.get(args.candidate) || args.candidate, args.message_index, "image") }) }, ...content] };
     },
   },
   {
@@ -372,7 +362,7 @@ export class ToolRegistry {
   register(tool: ToolDefinition): this {
     if (
       !/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/.test(tool.name) ||
-      tool.name === "submit_evaluation" ||
+      ["submit_evaluation", "submit_evaluation_file"].includes(tool.name) ||
       this.tools.has(tool.name)
     )
       throw new Error(`Invalid or duplicate tool ${tool.name}`);
@@ -406,16 +396,16 @@ export class ToolRuntime {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     this.validators = new Map(tools.map((t) => [t.name, ajv.compile(t.inputSchema)]));
   }
-  async execute(name: string, args: unknown, signal: AbortSignal): Promise<ToolResult> {
+  async execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
     try {
       signal.throwIfAborted();
       const tool = this.definitions.get(name),
         validate = this.validators.get(name);
       if (!tool || !validate) throw new Error("Unknown tool");
-      if (this.context.audit.calls >= this.context.policy.maxToolCalls)
+      if (this.context.audit.calls >= maxCalls)
         throw new Error("探索工具预算已耗尽，请根据已有证据提交");
       this.context.audit.calls++;
-      if (!validate(args)) throw new Error("工具参数不符合 schema：" + canonical(validate.errors));
+      if (!validate(args)) throw new ValidationError(schemaIssues(validate.errors, args));
       const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
         key = canonical([name, args]);
       const cached = this.reads.get(key);
@@ -440,9 +430,12 @@ export class ToolRuntime {
         result.details = { artifact, truncated: true };
       }
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));
+      result.details = { ...(result.details && typeof result.details === "object" ? result.details : {}), budget: { used: this.context.audit.calls, remaining: Math.max(0, maxCalls - this.context.audit.calls) } };
       return result;
     } catch (error) {
-      return { content: [{ type: "text", text: errorText(error) }], isError: true };
+      const errors = error instanceof ValidationError ? error.issues : [{ code: signal.aborted ? "tool_interrupted" : "tool_failed", path: "/",
+        category: signal.aborted ? "interruption" : "file", expected: null, actual: (error as NodeJS.ErrnoException).code || null, message: errorText(error) }];
+      return { ...textResult({ errors, message: errorText(error) }), isError: true };
     }
   }
 }

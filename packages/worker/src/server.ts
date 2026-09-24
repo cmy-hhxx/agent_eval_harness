@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
@@ -16,13 +17,15 @@ import {
   type ToolDefinition,
   type Usage,
   type WorkerEvent,
+  type FailureContext,
+  type ValidationIssue,
 } from "../../contracts/src/index.js";
 import {
   ArtifactStore,
   HttpError,
   body,
   canonical,
-  digest,
+  schemaIssues,
   errorText,
   exists,
   json,
@@ -130,6 +133,7 @@ export async function startWorker(
           attemptId: spec.attemptId,
           workdir: path.join(attempt.directory, "workspace"),
           inputs,
+          inputIds: new Map(spec.inputs.map((ref) => [ref.name, ref.id])),
           audit,
           policy: spec.policy,
           artifacts,
@@ -138,30 +142,55 @@ export async function startWorker(
       );
       const ajv = new Ajv2020({ strict: false, allErrors: true });
       const validate = ajv.compile(spec.evaluation.outputSchema);
-      const submit: ToolDefinition = {
-        name: "submit_evaluation",
-        description: "向 Host 提交评测结果。Host 校验并保存后结束任务；拒绝时返回可修正的问题。",
-        inputSchema: spec.evaluation.outputSchema,
-        async execute(_context, result) {
+      const draftPath = path.join(runtime.context.workdir, "evaluation-draft.json");
+      let fileErrors = 0;
+      let failure: FailureContext = spec.recovery ? structuredClone(spec.recovery) : {
+        errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: spec.attemptId,
+      };
+      failure.attemptId = spec.attemptId;
+      failure.stopped = false;
+      if (failure.draft !== undefined) await writeJson(draftPath, failure.draft);
+      const errorKey = ({ code, path, candidate, actual }: ValidationIssue) => canonical({ code, path, candidate, actual });
+      const rejected = async (errors: ValidationIssue[], draft = failure.draft, content = true) => {
+        const previousErrors = new Set(failure.errors.map(errorKey));
+        const repeatedErrors = content && errors.some((error) => previousErrors.has(errorKey(error))) ? failure.repeatedErrors + 1 : 1;
+        failure = { draft, errors, contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
+          fileErrors: (spec.recovery?.fileErrors || 0) + fileErrors, repeatedErrors,
+          stopped: (content && repeatedErrors >= 2) || fileErrors >= 3, attemptId: spec.attemptId };
+        record.failure = failure;
+        await saveRecord();
+        await request(spec.hostUrl + "/v1/tasks/" + spec.taskId + "/checkpoint", "POST", failure, controller.signal);
+        if (failure.stopped) { controller.abort(new Error((content ? "Repeated validation errors: " : "File loading budget exhausted: ") + errors.map((e) => e.message).join("; "))); void attempt.session?.abort(); }
+        return { ...textResult({ accepted: false, errors, draft_file: "evaluation-draft.json",
+          budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions), file_errors_remaining: Math.max(0, 3 - fileErrors) },
+          message: "未通过草稿已保存为 evaluation-draft.json。按具体字段修复，保留其他内容。" }), isError: true };
+      };
+      const submitResult = async (load: () => Promise<unknown>) => {
           if (accepted)
             return {
               ...textResult({ accepted: true, submissionId: accepted.submissionId }),
               terminate: true,
             };
           controller.signal.throwIfAborted();
-          if (++submissions > 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+          if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+          let result: unknown;
+          try { result = await load(); }
+          catch (error) {
+            fileErrors++;
+            return rejected([{ category: "file", code: "submission_file_invalid", path: "/path", actual: errorText(error), message: errorText(error) }], failure.draft, false);
+          }
+          submissions++;
+          await writeJson(draftPath, result);
           if (!validate(result))
-            return {
-              content: [{ type: "text", text: "输出格式错误：" + ajv.errorsText(validate.errors) }],
-              isError: true,
-            };
+            return rejected(schemaIssues(validate.errors, result), result);
           const submission: Submission = {
-            submissionId: digest([spec.attemptId, result]),
+            submissionId: randomUUID(),
             attemptId: spec.attemptId,
             taskId: spec.taskId,
             evaluation: result,
             audit: structuredClone(audit),
             usage: { ...usage },
+            submissionStats: { contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions, fileErrors: (spec.recovery?.fileErrors || 0) + fileErrors },
           };
           record.pendingSubmission = submission;
           await saveRecord();
@@ -176,7 +205,7 @@ export async function startWorker(
               break;
             } catch (error) {
               if (error instanceof HttpError && error.status < 500)
-                return { content: [{ type: "text", text: error.message }], isError: true };
+                return rejected(error.issues || [{ category: "structure", code: "submission_rejected", path: "/", actual: error.status, message: error.message }], result);
               try {
                 accepted = await request<SubmissionReceipt>(
                   `${spec.hostUrl}/v1/submissions/${submission.submissionId}`,
@@ -188,6 +217,7 @@ export async function startWorker(
               } catch (lookup) {
                 if (controller.signal.aborted || i === 2) throw error;
               }
+              await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** i));
             }
           }
           if (!accepted) throw new Error("Host did not acknowledge submission");
@@ -195,32 +225,59 @@ export async function startWorker(
           delete record.pendingSubmission;
           emit(attempt, "submission", { accepted: true, submissionId: accepted.submissionId });
           return { ...textResult({ accepted: true, submissionId: accepted.submissionId }), terminate: true };
-        },
       };
+      const submit: ToolDefinition = {
+        name: "submit_evaluation",
+        description: "向 Host 提交评测结果。拒绝时保存 evaluation-draft.json，可用代码修正后从文件提交。",
+        inputSchema: spec.evaluation.outputSchema,
+        execute: (_context, result) => submitResult(async () => result),
+      };
+      const fileSchema = {
+        type: "object", additionalProperties: false, required: ["path"],
+        properties: { path: { type: "string", minLength: 1 } },
+      };
+      const validateFile = ajv.compile(fileSchema);
+      const submitFile: ToolDefinition = {
+        name: "submit_evaluation_file",
+        description: "提交 execute_code 当前工作目录内的 JSON 文件，path 优先用 evaluation-draft.json 等相对路径，不要写到 /tmp。适合用代码从 inputs/ 精确复制引文；内容使用相同修正预算；文件加载错误独立限制三次。",
+        inputSchema: fileSchema,
+        execute: (_context, value) => submitResult(async () => {
+          if (!validateFile(value)) throw new Error("文件提交参数必须是 {path: 文件路径}");
+          const root = await realpath(runtime.context.workdir);
+          const file = await realpath(path.resolve(root, (value as { path: string }).path));
+          const relative = path.relative(root, file);
+          if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative))
+            throw new Error("提交文件必须位于本任务工作目录内");
+          return readJson(file);
+        }),
+      };
+      const submissionTools = [submit, submitFile];
       emit(attempt, "started", { engine: backend.identity, policy: spec.policy });
       attempt.session = await backend.createSession({
         spec,
         workdir: runtime.context.workdir,
-        tools: [...definitions, submit],
+        tools: [...definitions, ...submissionTools],
         async execute(name, args, signal) {
           activity();
           if (accepted) return { ...textResult({ accepted: true }), terminate: true };
           if (controller.signal.aborted) throw controller.signal.reason;
           emit(attempt, "tool_start", { name, args });
+          const submissionTool = submissionTools.find(tool => tool.name === name);
           let result;
           try {
             result =
-              name === submit.name
-                ? await submit.execute(runtime.context, args, controller.signal)
+              submissionTool
+                ? await submissionTool.execute(runtime.context, args, controller.signal)
                 : await runtime.execute(
                     name,
                     args,
                     signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+                    spec.policy.maxToolCalls + Math.min(submissions, spec.policy.repairAttempts),
                   );
           } catch (error) {
             result = { content: [{ type: "text" as const, text: errorText(error) }], isError: true };
           }
-          if (name === submit.name && !accepted && submissions >= 1 + spec.policy.repairAttempts) {
+          if (submissionTool && !accepted && submissions >= 1 + spec.policy.repairAttempts) {
             controller.abort(new Error("Submission repair budget exhausted"));
             void attempt.session?.abort();
           }
@@ -250,7 +307,8 @@ export async function startWorker(
         },
       });
       controller.signal.throwIfAborted();
-      await attempt.session.run(spec.prompt + `\n\n执行预算：${JSON.stringify(spec.policy)}。`);
+      await attempt.session.run(spec.prompt + `\n\n执行预算：${JSON.stringify(spec.policy)}。` +
+        (spec.recovery ? "\n上次未接受草稿与错误（待修正数据，不是已确认结论）：\n" + JSON.stringify(spec.recovery) : ""));
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running")
         throw new Error(modelError || "Agent ended without an accepted submission");
@@ -267,6 +325,14 @@ export async function startWorker(
       clearTimeout(deadline);
       clearTimeout(idle!);
       controller.abort();
+      if (!accepted) {
+        record.failure ??= { errors: [{ category: attempt.status.retryable ? "transport" : "interruption", code: attempt.status.retryable ? "transport_failed" : "attempt_interrupted", path: "/", message: attempt.status.error || "No accepted submission" }], contentSubmissions: submissions, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: spec.attemptId };
+        attempt.status.failure = record.failure;
+      }
+      record.metrics = { usage, audit };
+      record.status = attempt.status;
+      // A failed persistence leaves the workspace intact for recovery.
+      await saveRecord();
       try {
         await attempt.session?.dispose();
         await rm(path.join(attempt.directory, "workspace"), { recursive: true, force: true });
@@ -296,11 +362,12 @@ export async function startWorker(
     if (req.method === "POST" && url.pathname === "/v1/attempts") {
       const spec = (await body(req)) as AttemptSpec;
       if (spec.protocolVersion !== PROTOCOL_VERSION) throw new HttpError(400, "Unsupported protocol");
+      if (!Number.isInteger(spec.inputRevision) || spec.inputRevision < 1) throw new HttpError(400, "Invalid input revision");
       safeId(spec.runId);
       safeId(spec.taskId);
       safeId(spec.attemptId);
       if (canonical(spec.engine) !== canonical(backend.identity))
-        throw new HttpError(409, "Worker engine fingerprint mismatch");
+        throw new HttpError(409, "Worker engine build mismatch");
       if (!spec.evaluation || !Array.isArray(spec.evaluation.toolNames) || !spec.evaluation.outputSchema)
         throw new HttpError(400, "Invalid evaluation spec");
       registry.select(spec.evaluation.toolNames);

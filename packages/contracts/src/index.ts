@@ -1,7 +1,7 @@
 export type Engine = "pi" | "prime";
 export type JsonSchema = Record<string, unknown>;
 export type JsonObject = Record<string, unknown>;
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export interface Policy {
   timeoutSeconds: number;
@@ -33,7 +33,6 @@ export interface ModelConfig {
 export interface EvaluationSpec {
   id: string;
   version: string;
-  digest: string;
   systemPrompt: string;
   outputSchema: JsonSchema;
   toolNames: string[];
@@ -46,14 +45,14 @@ export interface EngineIdentity {
   engine: Engine;
   version: string;
   commit: string;
-  sourceDigest: string;
-  buildDigest: string;
+  buildId: string;
 }
 export interface AttemptSpec {
   protocolVersion: number;
   runId: string;
   taskId: string;
   attemptId: string;
+  inputRevision: number;
   engine: EngineIdentity;
   evaluation: EvaluationSpec;
   model: ModelConfig;
@@ -62,6 +61,7 @@ export interface AttemptSpec {
   inputs: InputRef[];
   hostUrl: string;
   deadline: number;
+  recovery?: FailureContext;
 }
 export type AttemptState = "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
 export interface WorkerEvent {
@@ -86,7 +86,6 @@ export interface ToolResult {
 export interface Artifact {
   id: string;
   name: string;
-  digest: string;
   bytes: number;
 }
 export interface ToolAudit {
@@ -102,6 +101,7 @@ export interface Submission {
   evaluation: unknown;
   audit: ToolAudit;
   usage: Usage;
+  submissionStats?: { contentSubmissions: number; fileErrors: number };
 }
 export interface Usage {
   input: number;
@@ -114,13 +114,14 @@ export const emptyUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cac
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
-  cached: boolean;
-  exported?: { comparisonId: string; digest: string; row: JsonObject; file?: string };
+  submitted?: unknown;
+  exported?: { comparisonId: string; row: JsonObject; file?: string };
 }
 export interface ToolContext {
   attemptId: string;
   workdir: string;
   inputs: Map<string, unknown>;
+  inputIds?: Map<string, string>;
   audit: ToolAudit;
   policy: Policy;
   artifacts: {
@@ -160,6 +161,7 @@ export interface AttemptStatus {
   lastSeq: number;
   error?: string;
   retryable?: boolean;
+  failure?: FailureContext;
 }
 export interface AttemptRecord {
   spec: AttemptSpec;
@@ -168,6 +170,7 @@ export interface AttemptRecord {
   pendingSubmission?: Submission;
   error?: string;
   artifactError?: string;
+  failure?: FailureContext;
 }
 export interface PlannedTask {
   id: string;
@@ -180,12 +183,15 @@ export interface TaskPlan {
   tasks: PlannedTask[];
   inputs: Record<string, unknown>;
   summary: JsonObject;
+  catalog?: unknown[];
 }
 export interface EvaluationPack {
   id: string;
   version: string;
   snapshots?(): Record<string, unknown>;
   plan(config: unknown): Promise<TaskPlan>;
+  reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
+  resolve?(task: PlannedTask, inputs: Record<string, unknown>, draft: unknown, audit: ToolAudit): unknown;
   prepare(
     task: PlannedTask,
     inputs: Record<string, unknown>,
@@ -202,34 +208,62 @@ export interface EvaluationPack {
     dependencies: Record<string, SubmissionReceipt | undefined>,
   ): void;
   report(run: string): Promise<JsonObject>;
+  createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
   readRun(run: string): Promise<RunState>;
-  writeRun(run: string, state: RunState): Promise<void>;
+  writeRun(run: string, state: RunState, inputs?: Record<string, unknown>): Promise<void>;
 }
 export interface TaskState {
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
   attemptId?: string;
   attempts: number;
   reason?: string;
-  cacheKey?: string;
+  failure?: FailureContext;
+  revision?: number;
+  durationMs?: number;
+  startedAt?: number;
+  lastProgressAt?: number;
+  artifactStatus?: { status: "available" | "missing" | "not_retained"; source: string; error?: string };
 }
 export interface RunManifest {
-  format: "dual-agent-eval/4";
+  format: "dual-agent-eval/5";
   debug: boolean;
   runId: string;
   status: "running" | "finished" | "interrupted";
-  fingerprint: string;
   engine: EngineIdentity;
   config: unknown;
   tasks: PlannedTask[];
   inputs: Record<string, InputRef>;
+  inputCatalog?: unknown[];
+  retiredTasks?: PlannedTask[];
   states: Record<string, TaskState>;
   preflight: JsonObject;
   startedAt: number;
   finishedAt?: number;
+  concurrency?: number;
 }
 export interface RunState {
   manifest: RunManifest;
   receipts: Record<string, SubmissionReceipt>;
   usage: Usage;
   recordedAttempts: number;
+}
+
+export type FailureCategory = "input" | "structure" | "evidence" | "decision" | "file" | "transport" | "interruption";
+export interface ValidationIssue {
+  code: string;
+  path: string;
+  candidate?: string;
+  expected?: unknown;
+  actual?: unknown;
+  message: string;
+  category: FailureCategory;
+}
+export interface FailureContext {
+  draft?: unknown;
+  errors: ValidationIssue[];
+  contentSubmissions: number;
+  fileErrors: number;
+  repeatedErrors: number;
+  stopped: boolean;
+  attemptId: string;
 }

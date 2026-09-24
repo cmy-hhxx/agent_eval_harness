@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "doctor": "node --env-file-if-exists=.env scripts/doctor.mjs",
     "eval": "node --env-file-if-exists=.env dist/apps/host/src/cli.js",
+    "benchmark": "node --env-file-if-exists=.env scripts/benchmark.mjs",
     "test": "npm run build:app && node --test dist/tests/host/*.test.js",
     "test:integration": "npm run build:app && node --test dist/tests/integration/*.test.js"
   },

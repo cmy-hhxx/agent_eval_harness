@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Artifact, JsonObject } from "./index.js";
+import type { Artifact, JsonObject, ValidationIssue } from "./index.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 export function internalPath(run: string, ...parts: string[]): string {
@@ -25,12 +25,6 @@ export function canonical(value: unknown): string {
       "}"
     );
   return JSON.stringify(value) ?? "null";
-}
-export function digest(value: unknown): string {
-  return sha256(canonical(value));
-}
-export function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 export function object(value: unknown): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected object");
@@ -89,9 +83,25 @@ async function* gzip(source: () => Readable): AsyncGenerator<Uint8Array> {
 }
 export async function writeJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
   const lines = Readable.from((function* () {
-    for (const row of rows) yield Buffer.from(canonical(row) + "\n");
+    for (const row of rows) yield Buffer.from((JSON.stringify(row) ?? "null") + "\n");
   })());
   await atomicWrite(file, file.endsWith(".gz") ? gzip(() => lines) : lines);
+}
+export async function appendJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  const handle = await open(file, "a");
+  try {
+    for (const row of rows) await handle.writeFile((JSON.stringify(row) ?? "null") + "\n");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const directory = await open(path.dirname(file), "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
 }
 export async function* readJsonl(file: string): AsyncGenerator<unknown> {
   const source = createReadStream(file);
@@ -143,10 +153,27 @@ export function redact(text: string, secrets: string[]): string {
 }
 export class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, readonly issues?: ValidationIssue[]) {
     super(message);
     this.status = status;
   }
+}
+export class ValidationError extends HttpError {
+  constructor(issues: ValidationIssue[]) {
+    super(422, issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"), issues);
+  }
+}
+export function schemaIssues(errors: { keyword: string; instancePath: string; message?: string; params: unknown }[] | null | undefined, value?: unknown): ValidationIssue[] {
+  return (errors || []).map((error) => {
+    const field = (error.params as { missingProperty?: string; additionalProperty?: string }).missingProperty ||
+      (error.params as { additionalProperty?: string }).additionalProperty;
+    const location = error.instancePath + (field ? "/" + field.replaceAll("~", "~0").replaceAll("/", "~1") : "");
+    const actual = location.split("/").slice(1).reduce<unknown>((node, key) =>
+      node && typeof node === "object" ? (node as Record<string, unknown>)[key.replaceAll("~1", "/").replaceAll("~0", "~")] : undefined, value);
+    return { category: "structure", code: "schema_" + error.keyword, path: location || "/",
+      candidate: /^\/evaluations\/([AB])(?:\/|$)/.exec(location)?.[1], expected: error.params, actual: actual ?? null,
+      message: "输出结构无效：" + (error.message || error.keyword) + (error.keyword === "required" ? "；依赖此字段的语义检查暂不可执行" : "") };
+  });
 }
 export async function body(req: IncomingMessage, maxBytes = 32 * 1024 * 1024): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -179,7 +206,7 @@ export async function request<T>(
     signal: signal ?? AbortSignal.timeout(30000),
   });
   const data = (await response.json()) as JsonObject;
-  if (!response.ok) throw new HttpError(response.status, String(data.error || response.statusText));
+  if (!response.ok) throw new HttpError(response.status, String(data.error || response.statusText), data.issues as ValidationIssue[] | undefined);
   return data as T;
 }
 export async function listen(
@@ -189,7 +216,7 @@ export async function listen(
   const server = createServer((req, res) => {
     void handler(req, res, new URL(req.url || "/", "http://127.0.0.1")).catch((error) => {
       if (res.headersSent) res.destroy();
-      else json(res, { error: errorText(error) }, error instanceof HttpError ? error.status : 500);
+      else json(res, { error: errorText(error), ...(error instanceof HttpError && error.issues ? { issues: error.issues } : {}) }, error instanceof HttpError ? error.status : 500);
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -215,11 +242,10 @@ export class ArtifactStore {
   }
   async put(name: string, data: string | Uint8Array): Promise<Artifact> {
     const bytes = typeof data === "string" ? Buffer.from(data) : data;
-    const hash = sha256(bytes);
-    const id = hash;
+    const id = randomUUID();
     await mkdir(this.directory, { recursive: true });
     await writeFile(path.join(this.directory, id), bytes);
-    return { id, name, digest: hash, bytes: bytes.length };
+    return { id, name, bytes: bytes.length };
   }
   async get(id: string): Promise<Uint8Array> {
     return readFile(path.join(this.directory, safeId(id)));

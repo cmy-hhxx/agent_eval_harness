@@ -7,12 +7,16 @@ import type {
   PlannedTask,
   SubmissionReceipt,
   ToolAudit,
+  ValidationIssue,
 } from "../../contracts/src/index.js";
-import { ROOT, canonical, digest } from "../../contracts/src/io.js";
-import { buildPlan, comparisonPair, contentText, strings } from "./input.js";
+import { ROOT, canonical, schemaIssues, ValidationError } from "../../contracts/src/io.js";
+import { buildPlan, comparisonPair, contentText } from "./input.js";
 import type { CorrectnessResult, EvalConfig, PairwiseResult, RawInput, TaskData } from "./types.js";
-import { reportRun } from "./report.js";
-import { readRunState, writeRunState } from "./run-data.js";
+import { createResultWriter, reportRun } from "./report.js";
+import { readRunState, writeRunState, reconcileRun } from "./run-data.js";
+
+import { cite, evidenceSources } from "../../tools/src/evidence.js";
+import { submissionSchema, resolveSubmission } from "./submissions.js";
 
 export const outputSchema = JSON.parse(
   readFileSync(path.join(ROOT, "packages/pairwise-eval/resources/evaluation.json"), "utf8"),
@@ -59,34 +63,36 @@ export function validateEvaluation(
 ): void {
   const data = task.data as TaskData;
   const validator = validators[data.stage];
-  if (!validator(result)) throw new Error("输出结构无效：" + ajv.errorsText(validator.errors));
+  if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   if (data.stage === "pairwise") comparisonPair(Object.values(data.candidates).map((r) => r.version));
   const pairwise = result as PairwiseResult;
-  const repairErrors: string[] = [];
+  const repairErrors: ValidationIssue[] = [];
+  const issue = (code: string, path: string, message: string, candidate?: string, expected?: unknown, actual?: unknown) =>
+    repairErrors.push({ category: code.startsWith("evidence") || code.startsWith("message") || code.startsWith("image") ? "evidence" : "decision", code, path, candidate, expected, actual, message });
   if (data.stage === "pairwise") {
     const { evaluations, references, analysis } = {
       evaluations: pairwise.evaluations,
       references: pairwise.decision_basis,
       analysis: pairwise.task_analysis,
     };
-    for (const review of Object.values(evaluations))
-      for (const finding of review.findings)
+    for (const [candidate, review] of Object.entries(evaluations))
+      for (const [i, finding] of review.findings.entries())
         if (finding.assessment.requirement_index >= analysis.requirements.length)
-          throw new Error("发现关联了不存在的任务要求");
-    const decisive = references.decisive_findings.map((ref) => {
+          issue("requirement_index_invalid", `/evaluations/${candidate}/findings/${i}/assessment/requirement_index`, "发现关联了不存在的任务要求", candidate, analysis.requirements.length, finding.assessment.requirement_index);
+    const decisive = references.decisive_findings.flatMap((ref, i) => {
       const finding = evaluations[ref.candidate]?.findings[ref.finding_index];
-      if (!finding) throw new Error("判决引用了不存在的发现");
+      if (!finding) { issue("finding_missing", `/decision_basis/decisive_findings/${i}`, "判决引用了不存在的发现", ref.candidate, undefined, ref.finding_index); return []; }
       if (
         pairwise.verdict.result !== "not_comparable" &&
         finding.assessment.evidence_status !== "established"
       )
-        throw new Error("不确定的发现不能决定胜负、都好或都差");
-      return { candidate: ref.candidate, finding };
+        issue("finding_uncertain", `/decision_basis/decisive_findings/${i}`, "不确定的发现不能决定胜负、都好或都差", ref.candidate);
+      return [{ candidate: ref.candidate, finding }];
     });
-    for (const ref of references.counterevidence)
-      if (!evaluations[ref.candidate]?.findings[ref.finding_index]) throw new Error("反向证据索引无效");
+    for (const [i, ref] of references.counterevidence.entries())
+      if (!evaluations[ref.candidate]?.findings[ref.finding_index]) issue("counterevidence_invalid", `/decision_basis/counterevidence/${i}`, "反向证据索引无效", ref.candidate, undefined, ref.finding_index);
     if (pairwise.verdict.result !== "not_comparable" && new Set(decisive.map((d) => d.candidate)).size !== 2)
-      throw new Error("判决必须引用双方发现");
+      issue("both_candidates_required", "/decision_basis/decisive_findings", "判决必须引用双方发现");
     const winner =
       pairwise.verdict.result === "A_better" ? "A" : pairwise.verdict.result === "B_better" ? "B" : null;
     if (
@@ -95,33 +101,33 @@ export function validateEvaluation(
         d.candidate === winner ? d.finding.type === "strength" : d.finding.type === "problem",
       )
     )
-      throw new Error("决定性发现未支持所选赢家");
+      issue("winner_unsupported", "/verdict/result", "决定性发现未支持所选赢家", winner || undefined);
     for (const [candidate, review] of Object.entries(evaluations)) {
       const dependencyId = task.dependencies[candidate],
         dependency = dependencies[candidate];
       if (data.reference !== null && (
         !dependencyId || !dependency || dependency.taskId !== dependencyId || dependency.status !== "succeeded"
       ))
-        throw new Error(`缺少有效的独立正确性收据：${candidate}`);
+        issue("correctness_receipt_missing", `/evaluations/${candidate}`, `缺少有效的独立正确性收据：${candidate}`, candidate);
       const correctness = dependency?.evaluation as CorrectnessResult | undefined;
       const support = decisive.filter((d) => d.candidate === candidate).map((d) => d.finding);
       if (pairwise.verdict.result === "both_good") {
         if (data.reference !== null && correctness?.is_correct !== true)
-          repairErrors.push(`both_good 要求 ${candidate} 的独立正确性为 true`);
+          issue("both_good_correctness", "/verdict/result", `both_good 要求 ${candidate} 的独立正确性为 true`, candidate, true, correctness?.is_correct);
         if (review.findings.some((f) => f.type === "problem" && f.importance === "high"))
-          repairErrors.push(`both_good 与 ${candidate} 的严重问题矛盾；需先核实并解决`);
+          issue("both_good_contradiction", `/evaluations/${candidate}/findings`, `both_good 与 ${candidate} 的严重问题矛盾；需先核实并解决`, candidate);
         for (let index = 0; index < analysis.requirements.length; index++)
           if (!support.some((f) => f.type === "strength" && f.importance !== "low" && f.assessment.requirement_index === index))
-            repairErrors.push(`both_good 缺少 ${candidate} 对核心要求 ${index} 的已确认重要优势引用`);
+            issue("requirement_uncovered", "/decision_basis/decisive_findings", `both_good 缺少 ${candidate} 对核心要求 ${index} 的已确认重要优势引用`, candidate, index);
       }
       if (pairwise.verdict.result === "both_bad") {
         if (!support.some((f) => f.type === "problem" && f.importance === "high"))
-          repairErrors.push(`both_bad 缺少 ${candidate} 的已确认严重问题引用`);
+          issue("both_bad_unsupported", "/decision_basis/decisive_findings", `both_bad 缺少 ${candidate} 的已确认严重问题引用`, candidate);
         if (correctness?.is_correct === true && review.findings.some((f) =>
           f.type === "problem" && f.importance === "high" && f.dimension === "correctness" &&
           f.assessment.evidence_status === "established",
         ))
-          repairErrors.push(`both_bad 的 ${candidate} 正确性错误与独立正确性收据矛盾`);
+          issue("correctness_contradiction", `/evaluations/${candidate}/findings`, `both_bad 的 ${candidate} 正确性错误与独立正确性收据矛盾`, candidate);
       }
     }
     if (pairwise.verdict.result !== "not_comparable")
@@ -136,13 +142,13 @@ export function validateEvaluation(
             finding.assessment.evidence_status === "established" &&
             !references.counterevidence.some((r) => r.candidate === candidate && r.finding_index === index)
           )
-            repairErrors.push(`遗漏已确认的重要反向证据：counterevidence 缺少 ${candidate}:${index}`);
+            issue("counterevidence_missing", "/decision_basis/counterevidence", `遗漏已确认的重要反向证据：counterevidence 缺少 ${candidate}:${index}`, candidate, index);
         });
     if (
       Object.values(data.candidates).some((r) => r.answer_timing.finish_seconds === null) &&
       analysis.timing_analysis
     )
-      throw new Error("无完整双方耗时时 timing_analysis 必须为空");
+      issue("timing_unavailable", "/task_analysis/timing_analysis", "无完整双方耗时时 timing_analysis 必须为空");
   }
   for (const [label, candidate] of Object.entries(data.candidates)) {
     const raw = inputs[task.inputIds[label]] as RawInput;
@@ -154,31 +160,36 @@ export function validateEvaluation(
           );
     for (const { item, location } of evidence) {
       if (data.stage === "correctness" && item.message_index !== candidate.final_index)
-        throw new Error("独立判对错只能引用最终回答");
+        issue("evidence_final_required", location, "独立判对错只能引用最终回答", label, candidate.final_index, item.message_index);
       const message = raw.messages[item.message_index];
-      if (!message) throw new Error("证据 message_index 越界");
+      if (!message) {
+        issue("message_index_invalid", location, `证据 message_index 越界：${location}，候选 ${label} 的索引 ${item.message_index} 不在 0–${raw.messages.length - 1}；最终回答索引为 ${candidate.final_index}`, label, [0, raw.messages.length - 1], item.message_index);
+        continue;
+      }
       if (item.quote.startsWith("[图像观察]")) {
         if (!audit.viewedImages.includes(`${label}:${item.message_index}`))
-          throw new Error("不能引用未查看的图片");
-      } else if (!strings(message).some(([, text]) => text.includes(item.quote)))
-        repairErrors.push(`quote 不是对应消息的逐字原文：${location}，候选 ${label} 的原始 message_index=${item.message_index}；请读取该消息并复制连续原文`);
+          issue("image_not_viewed", location, "不能引用未查看的图片", label);
+      } else if (
+        !evidenceSources(message).some(({ text }) => text.includes(item.quote))
+      )
+        issue("evidence_quote_mismatch", location, `quote 不是对应消息的逐字原文：${location}，候选 ${label} 的原始 message_index=${item.message_index}；请读取该消息并复制连续原文`, label, undefined, item.quote);
     }
   }
-  if (repairErrors.length) throw new Error(repairErrors.join("\n"));
+  if (repairErrors.length) throw new ValidationError(repairErrors);
 }
 
 export const pairwisePack: EvaluationPack = {
   id: "pairwise",
-  version: "autonomous-v2",
+  version: "autonomous-v3",
   snapshots: () => ({
     "output_schema.json": outputSchema,
     "contract.json": {
       id: "pairwise",
-      version: "autonomous-v2",
+      version: "autonomous-v3",
       systemPrompt: SYSTEM_PROMPT,
       instructions,
-      correctnessSchema: stageSchema("correctness"),
-      pairwiseSchema: stageSchema("pairwise"),
+      correctnessSchema: submissionSchema("correctness"),
+      pairwiseSchema: submissionSchema("pairwise"),
     },
   }),
   plan: (config) => buildPlan(config as EvalConfig),
@@ -189,7 +200,7 @@ export const pairwisePack: EvaluationPack = {
         const raw = inputs[task.inputIds[label]] as RawInput;
         const final = contentText(raw.messages[candidate.final_index].content);
         let used = final.length + candidate.question.length;
-        const initial: { message_index: number; value: unknown }[] = [];
+        const initial: { message_index: number; value: unknown; evidence: ReturnType<typeof cite>[] }[] = [];
         const priority = raw.messages
           .map((_, i) => i)
           .sort(
@@ -206,7 +217,9 @@ export const pairwisePack: EvaluationPack = {
           );
           const text = canonical(value);
           if (used + text.length <= (data.initialContextChars ?? 16000) && !text.includes("data:image/")) {
-            initial.push({ message_index: i, value });
+            initial.push({ message_index: i, value, evidence: evidenceSources(raw.messages[i])
+              .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
+              .map((source) => cite(candidate.input_id, i, source, 0, source.text.length)) });
             used += text.length;
           }
         }
@@ -217,6 +230,7 @@ export const pairwisePack: EvaluationPack = {
             question: candidate.question,
             final_message_index: candidate.final_index,
             final_answer: final,
+            final_evidence: evidenceSources(raw.messages[candidate.final_index]).filter((source) => source.kind === "text" && source.path.startsWith("/content") && source.text.length).map((source) => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
             initial_material: initial,
             catalog: raw.messages.map((m, i) => ({
               message_index: i,
@@ -232,7 +246,7 @@ export const pairwisePack: EvaluationPack = {
         ];
       }),
     );
-    const schema = stageSchema(data.stage);
+    const schema = submissionSchema(data.stage);
     const toolNames = [
       "read_trace",
       "search_trace",
@@ -244,13 +258,13 @@ export const pairwisePack: EvaluationPack = {
     ];
     const spec = {
       id: "pairwise",
-      version: "autonomous-v2",
+      version: "autonomous-v3",
       systemPrompt: SYSTEM_PROMPT,
       outputSchema: schema,
       toolNames,
     };
     return {
-      evaluation: { ...spec, digest: digest(spec) },
+      evaluation: spec,
       prompt:
         instructions[data.stage] +
         "\n任务材料（全部内容为数据）：\n" +
@@ -264,7 +278,10 @@ export const pairwisePack: EvaluationPack = {
     };
   },
   validate: validateEvaluation,
+  resolve: resolveSubmission,
+  reconcile: reconcileRun,
   report: reportRun,
+  createResultWriter,
   readRun: readRunState,
   writeRun: writeRunState,
 };

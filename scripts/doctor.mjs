@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { root, upstream, treeHash, buildHash, exists } from "./lib.mjs";
+import { root, upstream, exists } from "./lib.mjs";
 
 let failures = 0;
 for (const [command, args, expected] of [
@@ -21,10 +21,8 @@ for (const [engine, item] of Object.entries(upstream)) {
   try {
     const stamp = JSON.parse(await readFile(path.join(root, ".runtime", `${engine}.json`), "utf8"));
     const directory = path.join(root, item.directory);
-    if (stamp.sourceDigest !== (await treeHash(directory)))
-      throw new Error("source changed; rebuild this engine");
-    if (stamp.buildDigest !== (await buildHash(directory)))
-      throw new Error("built SDK changed; rebuild this engine");
+    if (!stamp.buildId || stamp.version !== item.version || stamp.commit !== item.commit)
+      throw new Error("build version changed; rebuild this engine");
     const sdk = await import(pathToFileURL(path.join(directory, "packages/coding-agent/dist/index.js")).href);
     if (typeof sdk.createAgentSession !== "function") throw new Error("SDK entrypoint unavailable");
     console.log(`${engine}: ${item.version} ${item.commit} SDK ready`);

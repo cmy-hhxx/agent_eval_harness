@@ -25,11 +25,9 @@ export interface EvalConfig {
     concurrency: number;
     retries: number;
     retryDelaySeconds: number;
-    seed: string;
     initialContextChars: number;
   };
   outputDir: string;
-  cacheDir: string;
 }
 export interface Message extends JsonObject {
   type?: string;
@@ -39,6 +37,8 @@ export interface Message extends JsonObject {
   model?: string;
 }
 export interface RawInput extends JsonObject {
+  request_time?: string | null;
+  has_standard_answer?: boolean;
   messages: Message[];
   meta?: JsonObject;
   batch_id?: string;
@@ -58,7 +58,7 @@ export interface Candidate {
   case_id: string;
   version: string;
   name: string;
-  input_hash: string;
+  input_id: string;
   trace_id: string | null;
   source: string;
   line: number;
@@ -68,12 +68,22 @@ export interface Candidate {
   reference: unknown;
   llm: string | null;
 }
+export interface BatchPreflight {
+  cases: number;
+  valid_inputs: number;
+  correctness_tasks: number;
+  pairwise_tasks: number;
+  skipped_pairs: number;
+  input_issues: number;
+}
 export interface TaskData {
   initialContextChars?: number;
   stage: "correctness" | "pairwise";
   candidates: Record<string, Candidate>;
   reference: unknown;
   pair?: string[];
+  comparisonId?: string;
+  revision?: number;
 }
 export interface Evidence {
   message_index: number;

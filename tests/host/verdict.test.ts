@@ -1,10 +1,12 @@
+import { draftFor } from "./fixtures.js";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { emptyUsage, type AgentBackend, type ModelConfig, type RunManifest, type SubmissionReceipt } from "../../packages/contracts/src/index.js";
-import { digest, readJsonl, writeInputs, writeJson } from "../../packages/contracts/src/io.js";
+import { readJsonl, writeInputs, writeJson } from "../../packages/contracts/src/io.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { outputSchema, pairwisePack, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { comparisonRow, reportRun } from "../../packages/pairwise-eval/src/report.js";
@@ -17,8 +19,8 @@ import { emptyAudit, fakeIdentity, fixtureConfig, pairResult, raw } from "./fixt
 
 function receipt(taskId: string, evaluation: unknown): SubmissionReceipt {
   return {
-    taskId, attemptId: "test", submissionId: digest(["test", evaluation]), evaluation,
-    audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", cached: false, acceptedAt: 0,
+    taskId, attemptId: "test", submissionId: randomUUID(), evaluation,
+    audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0,
   };
 }
 function badResult(): PairwiseResult {
@@ -32,6 +34,43 @@ function badResult(): PairwiseResult {
   }
   return result;
 }
+
+test("evidence can quote structured numeric tool output without accepting invented values", async () => {
+  const input = raw("q", null);
+  input.messages.splice(1, 0, { type: "function_call_output", output: { datas: [{ "数量[20240220]": 4444 }] } });
+  const { directory, config } = await fixtureConfig([[input], [], [input], []]);
+  try {
+    const plan = await buildPlan(config), result = pairResult();
+    for (const review of Object.values(result.evaluations)) review.findings[0].evidence[0].message_index = 2;
+    const evidence = { message_index: 1, quote: '"数量[20240220]": 4444' };
+    result.evaluations.A.findings[0].evidence.push(evidence);
+    const check = () => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {});
+    assert.doesNotThrow(check);
+    evidence.quote = "4444";
+    assert.doesNotThrow(check);
+    evidence.quote = '"数量[20240220]": 5555';
+    assert.throws(check, /quote 不是/);
+    evidence.message_index = 2;
+    evidence.quote = "4444";
+    assert.throws(check, /quote 不是/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("invalid evidence indices identify every candidate, field and valid message range", async () => {
+  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+  try {
+    const plan = await buildPlan(config), result = pairResult();
+    result.evaluations.A.findings[0].evidence[0].message_index = 10;
+    result.evaluations.B.findings[0].evidence[0].message_index = 20;
+    assert.throws(() => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {}), error => {
+      const message = (error as Error).message;
+      assert.match(message, /evaluations\.A\.findings\[0\]\.evidence\[0\]/);
+      assert.match(message, /evaluations\.B\.findings\[0\]\.evidence\[0\]/);
+      assert.match(message, /0–1/);
+      return true;
+    });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("both_good requires evidence for every core requirement and resolves serious contradictions", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
@@ -136,6 +175,7 @@ for (const reverse of [false, true])
   test(`all verdicts export and aggregate without ties across A/B swaps (${reverse})`, async () => {
     const cases = ["good", "bad", "a_win", "aa_win", "unknown", "failed"];
     const rows = cases.map((id) => raw(id, null, id === "bad" ? "2+2=5" : "2+2=4"));
+    rows[0].request_time = "2026-09-24 11:37:31";
     const { directory, config } = await fixtureConfig([rows, [], rows, []]);
     try {
       const plan = await buildPlan(config);
@@ -166,7 +206,7 @@ for (const reverse of [false, true])
         const row = comparisonRow(plan.inputs, task, result, new Map(), names);
         if (id !== "unknown") {
           assert(validateOutput(row), JSON.stringify(validateOutput.errors));
-          assert.equal(row.schema_version, "3.5");
+          assert.equal(row.schema_version, "3.6");
           if (id === "good" || id === "bad") {
             assert.deepEqual(row.verdict, {
               result: id === "good" ? "both_good" : "both_bad", winner_version: null, winner_name: null,
@@ -180,10 +220,10 @@ for (const reverse of [false, true])
         receipts[task.id] = receipt(task.id, result);
       }
       const manifest: RunManifest = {
-        format: "dual-agent-eval/4", debug: true, runId: "verdicts", status: "finished", fingerprint: "test",
+        format: "dual-agent-eval/5", debug: true, runId: "verdicts", status: "finished",
         engine: fakeIdentity, config, tasks: plan.tasks, inputs: {}, states, preflight: plan.summary, startedAt: 0, finishedAt: 1000,
       };
-      await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 });
+      await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 }, plan.inputs);
       await writeJson(path.join(directory, "_internal", "output_schema.json"), outputSchema);
       await writeInputs(directory, plan.inputs);
       const summary = await reportRun(directory, { details: true });
@@ -197,11 +237,24 @@ for (const reverse of [false, true])
       const summaries = [];
       for await (const row of readJsonl(path.join(directory, "_internal/exports/task_summaries.jsonl"))) summaries.push(row);
       assert.equal(summaries.length, 5);
+      const exports = new Map<string, string>();
+      for (const name of ["results/a_fast__vs__aa_fast.jsonl", "results/not_comparable.jsonl", "_internal/exports/task_summaries.jsonl"]) {
+        const text = await readFile(path.join(directory, name), "utf8");
+        exports.set(name, text);
+        for (const line of text.trim().split("\n")) {
+          const row = JSON.parse(line);
+          assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
+          assert.equal(row.request_time, row.case.case_id === "good" ? rows[0].request_time : null);
+          assert.equal(row.has_standard_answer, false);
+        }
+      }
       const markdown = await readFile(path.join(directory, "task_summaries.md"), "utf8");
       assert(markdown.includes("结论（都好）"));
       assert(markdown.includes("结论（都差）"));
       assert.equal((await validateRun(directory)).valid, true);
-      assert.deepEqual(await reportRun(directory), summary);
+      assert.deepEqual(await reportRun(directory, { details: true }), summary);
+      for (const [name, text] of exports)
+        assert.equal(await readFile(path.join(directory, name), "utf8"), text);
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
@@ -215,16 +268,16 @@ test("host rejects both_good against incorrect dependencies before committing a 
       return {
         async run() {
           if ("is_correct" in (options.spec.evaluation.outputSchema.properties as object)) {
-            await options.execute("submit_evaluation", {
+            await options.execute("submit_evaluation", draftFor(options.spec, {
               is_correct: false, correctness_reason: "2+2应为4，回答5错误。",
               evidence: [{ message_index: 1, quote: "2+2=5" }],
-            });
+            }));
           } else {
-            const invalid = await options.execute("submit_evaluation", pairResult({ A: "2+2=5", B: "2+2=5" }));
+            const invalid = await options.execute("submit_evaluation", draftFor(options.spec, pairResult({ A: "2+2=5", B: "2+2=5" })));
             assert.equal(invalid.isError, true);
             assert.match(JSON.stringify(invalid), /独立正确性为 true/);
             rejected++;
-            const accepted = await options.execute("submit_evaluation", badResult());
+            const accepted = await options.execute("submit_evaluation", draftFor(options.spec, badResult()));
             assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
             assert.equal(accepted.terminate, true);
           }
@@ -238,7 +291,7 @@ test("host rejects both_good against incorrect dependencies before committing a 
   try {
     const plan = await buildPlan(config), { correctness, pairwise, ...common } = config.judge;
     const summary = await runEvaluation({
-      runId: "repair", outputDir: config.outputDir, cacheDir: config.cacheDir,
+      runId: "repair", outputDir: config.outputDir,
       engine: "pi", identity: fakeIdentity, config, pack: pairwisePack, plan, policy: config.execution,
       modelForStage: (stage) => ({ ...common, ...(stage === "correctness" ? correctness : pairwise) }) as ModelConfig,
       concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url],

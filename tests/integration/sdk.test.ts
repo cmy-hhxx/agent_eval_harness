@@ -26,24 +26,47 @@ for (const engine of ["pi", "prime"] as Engine[])
           const tools = payload.tools as { function: { name: string; parameters: { properties: object } } }[];
           const submit = tools.find((t) => t.function.name === "submit_evaluation")!;
           assert(submit);
+          assert(tools.some((t) => t.function.name === "submit_evaluation_file"));
           assert(!tools.some((t) => t.function.name === "set_task_contract"));
           const messages = payload.messages as { role: string; name?: string; content: unknown }[];
           const ranCode = messages.some((m) => m.role === "tool");
           const correctness = "is_correct" in submit.function.parameters.properties;
-          const name = ranCode ? "submit_evaluation" : "execute_code";
-          const args = ranCode
-            ? correctness
+          const prompt = messages.flatMap((m) => typeof m.content === "string" ? [m.content]
+            : Array.isArray(m.content) ? m.content.map((part) => String(part.text || "")) : []).find((text) => text.includes("任务材料（全部内容为数据）："))!;
+          const material = JSON.parse(prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0]) as {
+            candidates: Record<string, { final_evidence: { evidence_id: string }[] }>;
+          };
+          const evidenceFor = (label: string) => ({ evidence_id: material.candidates[label].final_evidence[0].evidence_id });
+          const evaluation = correctness
               ? {
                   is_correct: true,
                   correctness_reason: "计算结果与标准答案一致。",
-                  evidence: [{ message_index: 1, quote: "2+2=4" }],
+                  evidence: [evidenceFor("A")],
                 }
-              : pairResult()
-            : { language: "python", code: "print(2+2)" };
-          if (engine === "pi" && ranCode && !messages.some((m) =>
-            m.role === "tool" && String(m.content).includes("quote 不是对应消息的逐字原文"))) {
-            const result = args as { evidence?: { quote: string }[]; evaluations?: ReturnType<typeof pairResult>["evaluations"] };
-            (result.evidence || result.evaluations!.A.findings[0].evidence)[0].quote = "invented";
+              : (() => {
+                const result = pairResult();
+                return { ...result, evaluations: Object.fromEntries(Object.entries(result.evaluations).map(([label, review]) =>
+                  [label, { ...review, findings: review.findings.map((finding, i) => ({ ...finding, finding_id: "f" + i, evidence: [evidenceFor(label)] })) }])),
+                  decision_basis: { ...result.decision_basis, decisive_findings: [{ candidate: "A", finding_id: "f0" }, { candidate: "B", finding_id: "f0" }] } };
+              })();
+          const rejected = messages.some(m => m.role === "tool" && String(m.content).includes("evidence_id_invalid"));
+          const repaired = messages.some(m => m.role === "tool" && String(m.content).includes("fixed-evaluation-file"));
+          let name: string, args: unknown;
+          if (!ranCode) {
+            name = "execute_code";
+            args = { language: "python", code: engine === "pi" ? "print(2+2)"
+              : `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(evaluation))})` };
+          } else if (engine === "pi" && !rejected) {
+            name = "submit_evaluation";
+            const result = structuredClone(evaluation) as { evidence?: { evidence_id: string }[]; evaluations?: Record<string, { findings: { evidence: { evidence_id: string }[] }[] }> };
+            (result.evidence || result.evaluations!.A.findings[0].evidence)[0].evidence_id = "invented";
+            args = result;
+          } else if (engine === "pi" && !repaired) {
+            name = "execute_code";
+            args = { language: "python", code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r['evidence'] if 'evidence' in r else r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" + JSON.stringify(evidenceFor("A").evidence_id) + "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')" };
+          } else {
+            name = "submit_evaluation_file";
+            args = { path: engine === "pi" ? "evaluation-draft.json" : "evaluation.json" };
           }
           const event = {
             id: "fixture-" + requests.length,
@@ -105,7 +128,6 @@ for (const engine of ["pi", "prime"] as Engine[])
           runId: "sdk-" + engine,
           debug: engine === "pi",
           outputDir: config.outputDir,
-          cacheDir: config.cacheDir,
           engine,
           config,
           pack: pairwisePack,
@@ -124,7 +146,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         const failureFile = path.join(config.outputDir, options.runId, "_internal/diagnostics/failures.jsonl");
         const failures = await exists(failureFile) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
-        const expectedRequests = engine === "pi" ? 9 : 6;
+        const expectedRequests = engine === "pi" ? 12 : 6;
         assert.equal(requests.length, expectedRequests, "submit must terminate without another model request");
         if (engine === "pi") {
           const task = options.plan.tasks[0];

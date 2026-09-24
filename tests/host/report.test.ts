@@ -24,7 +24,11 @@ for (const objective of [false, true])
         const inputs = Object.fromEntries(
           versions.map((version, i) => [
             i === 0 ? "A" : "B",
-            raw("q1", reference, version === "a_fast" ? "2+2=4（【候选A】、候选B、B的问题小于A为原文）" : "2+2=5"),
+            {
+              ...raw("q1", reference, version === "a_fast" ? "2+2=4（【候选A】、候选B、B的问题小于A为原文）" : "2+2=5"),
+              request_time: version === "a_fast" ? "2026-09-24 11:37:31" : "2026-09-24 11:37:29",
+              has_standard_answer: objective,
+            },
           ]),
         );
         const candidates = Object.fromEntries(
@@ -38,7 +42,7 @@ for (const objective of [false, true])
           id: "comparison",
           stage: "pairwise",
           dependencies: objective ? { A: "check-A", B: "check-B" } : {},
-          inputIds: Object.fromEntries(Object.entries(candidates).map(([label, c]) => [label, c.input_hash])),
+          inputIds: Object.fromEntries(Object.entries(candidates).map(([label, c]) => [label, c.input_id])),
           data,
         };
         const receipts = new Map<string, SubmissionReceipt>();
@@ -53,7 +57,7 @@ for (const objective of [false, true])
                 correctness_reason: candidate.version === "a_fast" ? "候选A结果是4。" : "【候选A】结果应为4。",
                 evidence: [{ message_index: 1, quote: String(inputs[label].messages[1].content) }],
               },
-              audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", cached: false, acceptedAt: 0,
+              audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0,
             });
         }
         const result = pairResult(Object.fromEntries(
@@ -69,11 +73,21 @@ for (const objective of [false, true])
         result.task_analysis.scoring_points = ["比较A与B的交付质量。"];
         result.task_analysis.timing_analysis = "A与B的耗时相同。";
         result.decision_basis.tradeoff = "B的优点不能抵消A的优势。";
-        const snapshots = Object.fromEntries(Object.entries(candidates).map(([label, c]) => [c.input_hash, inputs[label]]));
+        const snapshots = Object.fromEntries(Object.entries(candidates).map(([label, c]) => [c.input_id, inputs[label]]));
         const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]));
         validateEvaluation(task, snapshots, result, emptyAudit(), dependencies);
         const row = comparisonRow(snapshots, task, result, receipts, { a_fast: "A组Fast", aa_fast: "AA组Fast" });
         assert(validateOutput(row), JSON.stringify(validateOutput.errors));
+        assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
+        assert.equal(row.request_time, "2026-09-24 11:37:31");
+        assert.equal(row.has_standard_answer, objective);
+        for (const key of ["request_time", "has_standard_answer"]) {
+          const missing = { ...row };
+          delete missing[key];
+          assert.equal(validateOutput(missing), false);
+        }
+        assert.equal(validateOutput({ ...row, request_time: 0 }), false);
+        assert.equal(validateOutput({ ...row, has_standard_answer: "false" }), false);
         if (comparisonId !== undefined) assert.equal(row.comparison_id, comparisonId);
         comparisonId = row.comparison_id;
         assert.deepEqual(row.case, { batch_id: "b1", case_id: "q1" });
@@ -99,7 +113,7 @@ for (const objective of [false, true])
           counterevidence: [],
         });
         const changed = structuredClone(snapshots);
-        changed[candidates[winner].input_hash].messages[1].content = "被改写的回答";
+        changed[candidates[winner].input_id].messages[1].content = "被改写的回答";
         assert.throws(() => validateEvaluation(task, changed, result, emptyAudit(), dependencies), /原文/);
       }
     } finally {
@@ -124,7 +138,7 @@ test("report requires the run's own schema snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     await writeJson(path.join(directory, "state.json"), {
-      format: "dual-agent-eval/4", debug: true, config, tasks: {}, usage: {}, recordedAttempts: 0,
+      format: "dual-agent-eval/5", debug: true, config, plan: [], inputs: {}, preflight: {}, tasks: {}, usage: {}, recordedAttempts: 0,
     });
     await writeJson(path.join(directory, "_internal", "plan.json"), { tasks: [], summary: {} });
     await writeInputs(directory, {});
