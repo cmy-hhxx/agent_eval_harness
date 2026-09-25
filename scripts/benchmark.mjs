@@ -6,7 +6,7 @@ import { exists, readJson, readJsonl, writeJson, readInputSource } from "@eval/d
 import { canonical } from "@eval/contracts";
 import { readRunState, loadRunInputs } from "@eval/workflows/pairwise";
 import { services, agents } from "@eval/host-app/composition";
-import { loadConfig } from "@eval/host-app/config";
+import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { cite, evidenceSources } from "@eval/tools";
 import { runEvaluation } from "@eval/host";
 
@@ -19,7 +19,7 @@ const {
     run: { type: "string", multiple: true },
     fixtures: { type: "string" },
     output: { type: "string" },
-    config: { type: "string", default: "configs/host.json" },
+    config: { type: "string", multiple: true, default: ["configs/host.json"] },
     engine: { type: "string", default: "pi" },
     "run-id": { type: "string" },
     limit: { type: "string", default: "32" },
@@ -30,6 +30,32 @@ const {
 const limit = Number(values.limit);
 if (!Number.isInteger(limit) || limit < 1) throw new Error("--limit must be positive");
 
+// Locate a record by business identity, tolerant of appends and reordering in the fixture source.
+function matchesInput(raw, ref) {
+  const meta = raw && typeof raw === "object" ? raw.meta || {} : {};
+  const batch = raw?.batch_id ?? meta.batch_id;
+  const id = raw?.case_id ?? meta.case_id;
+  if (batch !== undefined && String(batch) !== ref.batch) return false;
+  if (id !== undefined && String(id) !== ref.case) return false;
+  return ref.version === null || raw?.version === ref.version;
+}
+function restoreInput(lines, ref, source) {
+  const parse = (line) => {
+    if (!line || !line.trim()) return undefined;
+    try {
+      return JSON.parse(line);
+    } catch {
+      return undefined;
+    }
+  };
+  const direct = parse(lines[ref.line - 1]);
+  if (direct && matchesInput(direct, ref)) return direct;
+  for (const line of lines) {
+    const raw = parse(line);
+    if (raw && matchesInput(raw, ref)) return raw;
+  }
+  throw new Error("Fixed fixture source record no longer matches: " + source + ":" + ref.line);
+}
 async function loadFixtures(file) {
   const saved = await readJson(file);
   if (saved.format !== "eval-offline-fixtures/2")
@@ -37,23 +63,14 @@ async function loadFixtures(file) {
   const sources = new Map(),
     inputs = {};
   for (const [id, ref] of Object.entries(saved.inputs)) {
-    if (!sources.has(ref.source)) {
-      const source = await readInputSource(ref.source);
-      sources.set(ref.source, {
-        revision: source.revision,
-        lines: source.text.replace(/^\uFEFF/, "").split(/\r?\n/),
-      });
-    }
-    const source = sources.get(ref.source);
-    if (source.revision !== ref.revision) throw new Error("Fixed fixture source changed: " + ref.source);
-    inputs[id] = JSON.parse(source.lines[ref.line - 1]);
+    if (typeof ref.source !== "string" || typeof ref.batch !== "string" || typeof ref.case !== "string")
+      throw new Error("Regenerate the fixture index with benchmark collect");
+    if (!sources.has(ref.source))
+      sources.set(ref.source, (await readInputSource(ref.source)).replace(/^\uFEFF/, "").split(/\r?\n/));
+    inputs[id] = restoreInput(sources.get(ref.source), ref, ref.source);
   }
-  for (const fixture of saved.fixtures) {
+  for (const fixture of saved.fixtures)
     fixture.inputs = Object.fromEntries(fixture.inputIds.map((id) => [id, inputs[id]]));
-    for (const task of [fixture.task, ...fixture.dependencyTasks])
-      for (const candidate of Object.values(task.data.candidates))
-        candidate.source_revision = saved.inputs[candidate.input_id].revision;
-  }
   return saved;
 }
 
@@ -181,7 +198,9 @@ if (command === "collect") {
         inputs[c.input_id] = {
           source: c.source,
           line: c.line,
-          revision: c.source_revision,
+          batch: c.batch_id,
+          case: c.case_id,
+          version: fixture.inputs[c.input_id]?.version ?? null,
         };
   await writeJson(values.output, {
     format: "eval-offline-fixtures/2",
@@ -270,11 +289,18 @@ if (command === "collect") {
     ),
   );
   if (values.execute) {
-    const config = await loadConfig(values.config);
-    config.outputDir = path.resolve(values.output || ".artifacts/model-benchmarks");
-    if (await exists(path.join(config.outputDir, values["run-id"])))
+    const host = await loadConfig(values.config);
+    const config = host.evaluation;
+    config.output = {
+      kind: "directory",
+      path: path.resolve(values.output || ".artifacts/model-benchmarks"),
+    };
+    if (await exists(path.join(config.output.path, values["run-id"])))
       throw new Error("Benchmark requires a new run ID");
-    if (!process.env[config.judge.apiKeyEnv]) throw new Error("Model credential missing");
+    const modelForStage = createModelResolver(host.models);
+    for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
+    for (const profile of boundProfiles(host.models))
+      if (!process.env[profile.apiKeyEnv]) throw new Error("Model credential missing");
     const plan = {
       tasks,
       inputs: Object.assign({}, ...selected.map((f) => f.inputs)),
@@ -294,12 +320,11 @@ if (command === "collect") {
       },
     };
     config.inputs.batches = [...new Set(plan.catalog.map((c) => c.batch_id))];
-    const { correctness, pairwise, ...common } = config.judge;
     console.log(
       JSON.stringify(
         await runEvaluation({
           runId: values["run-id"],
-          outputDir: config.outputDir,
+          output: config.output,
           engine: values.engine,
           config,
           ...services,
@@ -308,10 +333,7 @@ if (command === "collect") {
           concurrency: config.execution.concurrency,
           retries: config.execution.retries,
           retryDelaySeconds: config.execution.retryDelaySeconds,
-          modelForStage: (stage) => ({
-            ...common,
-            ...(stage === "correctness" ? correctness : pairwise),
-          }),
+          modelForStage,
           onProgress: console.log,
         }),
         null,

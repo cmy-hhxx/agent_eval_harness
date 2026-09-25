@@ -2,7 +2,7 @@ import { localFiles } from "@eval/data";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { JsonObject, PlannedTask, SubmissionReceipt, Usage } from "@eval/contracts";
-import { atomicWrite, exists, internalPath, readJson, writeJson, writeJsonl } from "@eval/data";
+import { atomicWrite, exists, internalPath, locateRun, readJson, writeJson, writeJsonl } from "@eval/data";
 import { canonical } from "@eval/contracts";
 import type { CorrectnessResult, EvalConfig, PairwiseResult, TaskData } from "./types.js";
 import { outputSchema } from "./schema.js";
@@ -95,6 +95,7 @@ function summarizeResults(
 }
 
 export async function reportRun(run: string, options: { details?: boolean } = {}): Promise<JsonObject> {
+  const layout = locateRun(run);
   const state = await readRunState(run),
     manifest = state.manifest;
   if (options.details && !manifest.debug) throw new Error("--details 需要启用 --debug 的运行");
@@ -116,7 +117,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   // Persist both stages before compacting the ledger, including checkpoint-only recovery.
   await createResultWriter(run, inputs)(state);
   const groups: Record<string, JsonObject[]> = {},
-    notComparable: JsonObject[] = [],
     outcomes: JsonObject[] = [],
     correctness: JsonObject[] = [],
     summaries: JsonObject[] = [];
@@ -141,23 +141,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
           assessment_status: "subjective_not_assessed",
         });
       }
-    let status: string = receipt ? "succeeded" : manifest.states[task.id]?.status || "pending";
-    if (
-      receipt &&
-      data.stage === "pairwise" &&
-      (receipt.evaluation as PairwiseResult).verdict.result === "not_comparable"
-    )
-      status = "not_comparable";
+    const status: string = receipt ? "succeeded" : manifest.states[task.id]?.status || "pending";
     outcomes.push({
       task_id: task.id,
       stage: task.stage,
       status,
       candidates: data.candidates,
-
-      reason:
-        status === "not_comparable"
-          ? (receipt!.evaluation as PairwiseResult).verdict.reason
-          : manifest.states[task.id]?.reason || null,
+      reason: manifest.states[task.id]?.reason || null,
     });
     if (!receipt) {
       markdown.push(
@@ -187,15 +177,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     }
     const result = receipt.evaluation as PairwiseResult,
       row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names);
-    if (status !== "not_comparable") {
-      if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
-      (groups[data.pair!.join("__vs__")] ??= []).push(row);
-    } else notComparable.push(row);
-    receipt.exported = {
-      id: String(row.comparison_id),
-      row,
-      ...(status === "not_comparable" ? { file: "not_comparable.jsonl" } : {}),
-    };
+    if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
+    (groups[data.pair!.join("__vs__")] ??= []).push(row);
+    receipt.exported = { id: String(row.comparison_id), row };
     const analysis = row.task_analysis as PairwiseResult["task_analysis"];
     const measurements = Object.fromEntries(
       Object.values(data.candidates).map((c) => [c.version, c.answer_timing]),
@@ -247,7 +231,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
           {
             both_good: "都好",
             both_bad: "都差",
-            not_comparable: "不可比较",
           } as Record<string, string>
         )[String(verdict.result)];
     markdown.push(
@@ -303,19 +286,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       "",
     );
   }
-  const results = path.join(run, "results");
+  const results = layout.results;
   await localFiles.mkdir(results, { recursive: true });
   for (const old of await localFiles.list(results))
-    if (
-      old.endsWith(".jsonl") &&
-      old !== "correctness.jsonl" &&
-      !groups[old.slice(0, -6)] &&
-      !(old === "not_comparable.jsonl" && notComparable.length)
-    )
+    if (old.endsWith(".jsonl") && old !== "correctness.jsonl" && !groups[old.slice(0, -6)])
       await localFiles.remove(path.join(results, old));
   for (const [pair, rows] of Object.entries(groups))
     await writeJsonl(path.join(results, `${pair}.jsonl`), rows);
-  if (notComparable.length) await writeJsonl(path.join(results, "not_comparable.jsonl"), notComparable);
   const exports = internalPath(run, "exports");
   if (manifest.debug && (options.details || (await exists(exports)))) {
     await writeJsonl(path.join(exports, "task_outcomes.jsonl"), outcomes);
@@ -353,14 +330,10 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       ),
       "",
     );
-  await atomicWrite(path.join(run, "task_summaries.md"), markdown.join("\n"));
+  await atomicWrite(layout.summaries, markdown.join("\n"));
   await writeDetail(
     "failures",
     outcomes.filter((v) => ["failed", "blocked", "cancelled", "timed_out"].includes(String(v.status))),
-  );
-  await writeDetail(
-    "not_comparable",
-    outcomes.filter((v) => v.status === "not_comparable"),
   );
   await writeDetail("skipped", (manifest.preflight.skipped as unknown[]) || []);
   const attemptUsage = state.usage;
@@ -432,6 +405,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     ...totals,
     quality,
     by_batch: byBatch,
+    artifacts: {
+      authoritative: "results/",
+      results: Object.keys(groups).map((pair) => `results/${pair}.jsonl`),
+      report: "report.md",
+      summaries: "task_summaries.md",
+      state: "state.json",
+    },
     tokens: attemptUsage,
     attempts_without_final_metrics: missingMetrics,
     cache: {
@@ -442,7 +422,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     wall_seconds: ((manifest.finishedAt || Date.now()) - manifest.startedAt) / 1000,
   };
   // Replace statistics so rebuilt exports cannot retain an old validation result.
-  await writeJson(path.join(run, "stats.json"), summary);
+  await writeJson(layout.stats, summary);
   await writeOverview(run, summary);
   await writeRunState(run, state);
   return summary;
@@ -481,15 +461,14 @@ export async function writeOverview(
   for (const [name, label] of [
     ["failures", "失败明细"],
     ["skipped", "跳过明细"],
-    ["not_comparable", "不可比较明细"],
     ["correctness", "独立正确性"],
   ])
     if (summary.debug && (await exists(internalPath(run, "diagnostics", name + ".jsonl"))))
       links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
   await atomicWrite(
-    path.join(run, "report.md"),
+    locateRun(run).report,
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；完成比较：${summary.completed_comparisons}。\n\n` +
-      `执行失败：${failures}；输入跳过配对：${skipped}；不可比较：${statuses.not_comparable || 0}。\n\n` +
+      `执行失败：${failures}；输入跳过配对：${skipped}。\n\n` +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation
         ? `[校验记录](stats.json)；附件：${validation.artifacts?.status === "missing" ? "缺失（不影响正式结果状态）" : validation.artifacts_checked ? "已检查" : "未保留"}。`
@@ -503,7 +482,7 @@ export async function writeOverview(
         )
         .join("\n") +
       "\n\n## 批次汇总\n\n" +
-      "| 批次 | 样本 | 计划任务 | 有效比较 | 失败 | 待完成 | 不可比较 | 跳过配对 | 输入异常 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n" +
+      "| 批次 | 样本 | 计划任务 | 有效比较 | 失败 | 待完成 | 跳过配对 | 输入异常 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n" +
       batches
         .map(([batch, stats]) => {
           const statuses = stats.task_statuses;
@@ -512,7 +491,7 @@ export async function writeOverview(
             0,
           );
           const pending = (statuses.pending || 0) + (statuses.running || 0);
-          return `| ${cell(batch)} | ${stats.planned.cases} | ${stats.planned.tasks} | ${stats.completed_comparisons} | ${failed} | ${pending} | ${statuses.not_comparable || 0} | ${stats.planned.skipped_pairs} | ${stats.planned.input_issues} |`;
+          return `| ${cell(batch)} | ${stats.planned.cases} | ${stats.planned.tasks} | ${stats.completed_comparisons} | ${failed} | ${pending} | ${stats.planned.skipped_pairs} | ${stats.planned.input_issues} |`;
         })
         .join("\n") +
       "\n\n| 批次 | 配对 | 有效比较 | 胜出数量 | 都好 | 都差 |\n|---|---|---:|---|---:|---:|\n" +

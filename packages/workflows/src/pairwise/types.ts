@@ -1,11 +1,11 @@
-import type { JsonObject, ModelConfig, Policy } from "@eval/contracts";
+import type { InputSource, JsonObject, OutputTarget, Policy } from "@eval/contracts";
 
 export interface VersionConfig {
   id: string;
   name: string;
   display_name?: string;
-  path: string;
-  adapter: "a" | "aa";
+  sources: InputSource[];
+  adapter: string;
   timing_unit?: "ms" | "s";
 }
 export interface EvalConfig {
@@ -17,17 +17,15 @@ export interface EvalConfig {
     timing_unit?: "ms" | "s";
     limit?: number;
   };
-  judge: Omit<ModelConfig, "model" | "thinking" | "contextWindow" | "maxOutputTokens"> & {
-    correctness: Pick<ModelConfig, "model" | "thinking" | "contextWindow" | "maxOutputTokens">;
-    pairwise: Pick<ModelConfig, "model" | "thinking" | "contextWindow" | "maxOutputTokens">;
-  };
   execution: Policy & {
     concurrency: number;
     retries: number;
     retryDelaySeconds: number;
     initialContextChars: number;
   };
-  outputDir: string;
+  output: OutputTarget;
+  /** Version ID pairs that the workflow compares; each pair has two distinct registered versions. */
+  pairs: string[][];
 }
 export interface Message extends JsonObject {
   type?: string;
@@ -62,7 +60,6 @@ export interface Candidate {
   trace_id: string | null;
   source: string;
   line: number;
-  source_revision?: string;
   question: string;
   answer_timing: Timing;
   final_index: number;

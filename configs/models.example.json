@@ -1,0 +1,7 @@
+{
+  "models": {
+    "judge": {
+      "model": "your-gateway-model-id"
+    }
+  }
+}

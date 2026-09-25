@@ -1,6 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
-  canonical,
   type JsonObject,
   type PlannedTask,
   type RunState,
@@ -9,7 +8,6 @@ import {
 import { correctnessProfile } from "@eval/agents/critique";
 import type { CorrectnessResult, EvalConfig, PairwiseResult, RawInput, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
-import { comparisonPair } from "./input.js";
 import { outputSchema } from "./schema.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
@@ -35,10 +33,9 @@ export function comparisonRow(
   names: Record<string, string>,
 ): JsonObject {
   const data = task.data as TaskData,
-    a = data.candidates.A;
-  if (
-    canonical(data.pair) !== canonical(comparisonPair(Object.values(data.candidates).map((r) => r.version)))
-  )
+    a = data.candidates.A,
+    versions = Object.values(data.candidates).map((r) => r.version);
+  if (versions.length !== 2 || new Set(versions).size !== 2 || !data.pair?.every((v) => versions.includes(v)))
     throw new Error("任务配对与候选不一致");
   const labels = Object.fromEntries(
     Object.entries(data.candidates).map(([label, c]) => [label, names[c.version] || c.name]),
@@ -138,12 +135,11 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   const row =
     receipt.exported?.row ||
     comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names);
-  const notComparable = result.verdict.result === "not_comparable";
-  if (!notComparable && !validateOutput(row))
+  if (!validateOutput(row))
     throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
   return {
     id: String(row.comparison_id),
-    file: notComparable ? "not_comparable.jsonl" : data.pair!.join("__vs__") + ".jsonl",
+    file: data.pair!.join("__vs__") + ".jsonl",
     row,
   };
 }

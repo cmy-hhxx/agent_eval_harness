@@ -5,7 +5,7 @@ import type { AttemptSpec, EngineIdentity, ToolAudit } from "@eval/contracts";
 import { evidenceId } from "@eval/tools";
 import { ROOT } from "./services.js";
 import { writeJsonl } from "@eval/data";
-import { loadConfig } from "@eval/host-app/config";
+import { loadConfig, createModelResolver } from "@eval/host-app/config";
 import type { PairwiseResult, RawInput } from "@eval/workflows/pairwise";
 
 export const fakeIdentity: EngineIdentity = {
@@ -82,21 +82,25 @@ export function pairResult(answers: Record<string, string> = { A: "2+2=4", B: "2
 }
 export async function fixtureConfig(rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), {
+  const host = await loadConfig(path.join(ROOT, "configs/host.json"), {
     EVAL_BASE_URL: "http://127.0.0.1:1/v1",
   });
-  config.outputDir = path.join(directory, "runs");
+  const config = host.evaluation;
+  config.output = { kind: "directory", path: path.join(directory, "runs") };
   config.execution.retries = 0;
   config.execution.retryDelaySeconds = 0;
   config.execution.timeoutSeconds = 30;
   config.execution.idleTimeoutSeconds = 10;
   config.execution.concurrency = 2;
   for (const [i, version] of config.inputs.versions.entries()) {
-    version.path = path.join(directory, version.id + ".jsonl");
+    const file = path.join(directory, version.id + ".jsonl");
+    version.sources = [{ kind: "file", path: file }];
     version.adapter = "a";
-    await writeJsonl(version.path, rows[i] || []);
+    await writeJsonl(file, rows[i] || []);
   }
-  return { directory, config };
+  host.models.models.judge!.model = "fixture";
+  host.models.models.judge!.thinking = "off";
+  return { directory, config, models: host.models, modelForStage: createModelResolver(host.models) };
 }
 
 export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: unknown): unknown {

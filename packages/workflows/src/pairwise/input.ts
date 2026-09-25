@@ -1,8 +1,9 @@
-import { readInputSource, sourceFiles } from "@eval/data";
+import { fileSourceReader } from "@eval/data";
 import { randomInt, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { type PlannedTask, type TaskPlan, type ValidationIssue } from "@eval/contracts";
 import { canonical, errorText, object, ValidationError } from "@eval/contracts";
+import { resolveAdapter } from "./adapters.js";
 import type {
   BatchPreflight,
   Candidate,
@@ -13,14 +14,10 @@ import type {
   VersionConfig,
 } from "./types.js";
 
-export const ALLOWED_PAIRS = [
-  ["a_fast", "aa_fast"],
-  ["a_expert", "aa_expert"],
-];
 export function comparisonPair(versions: string[]): string[] {
-  const pair = ALLOWED_PAIRS.find((p) => versions.length === 2 && p.every((v) => versions.includes(v)));
-  if (!pair) throw new Error("不允许的对比：" + versions.join(" / "));
-  return pair;
+  if (versions.length !== 2 || new Set(versions).size !== 2)
+    throw new Error("对比必须是两个不同版本：" + versions.join(" / "));
+  return versions;
 }
 export function contentText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -106,12 +103,8 @@ export function adapt(
     messages.some((m) => !m || typeof m !== "object" || Array.isArray(m))
   )
     throw new Error("缺少有效回答或采集失败");
-  const supported =
-    item.adapter === "a"
-      ? ["message", "reasoning", "function_call", "function_call_output"]
-      : ["user_question", "llm_turn", "tool_call", "tool_result", "final_answer"];
-  if (messages.some((m) => !supported.includes(m.type || "message")))
-    throw new Error("链路含未支持的消息类型");
+  const adapter = resolveAdapter(item.adapter);
+  if (messages.some((m) => !adapter.accepts(m))) throw new Error("链路含未支持的消息类型");
   const lastUser = messages.findLastIndex((m) => m.role === "user");
   if (lastUser < 0) throw new Error("无法定位用户问题");
   const final = messages.findLastIndex(
@@ -131,9 +124,7 @@ export function adapt(
           .map((k) => meta[k])
           .filter((v) => v !== null && v !== undefined && v !== "");
   if (new Set(references.map(canonical)).size > 1) throw new Error("ground_truth 与 std_answer 冲突");
-  let llm = meta.usage && typeof meta.usage === "object" ? object(meta.usage).type : null;
-  if (item.adapter === "aa")
-    llm = messages.slice(0, final).findLast((m) => m.type === "llm_turn" && m.model)?.model || llm;
+  const llm = adapter.answerModel(raw, messages, final);
   const fields = {
     first_token_seconds: "first_token_time_cost",
     first_answer_seconds: "first_answer_time_cost",
@@ -175,6 +166,34 @@ export function adapt(
 export function candidateKey(record: Candidate): string {
   return canonical([record.batch_id, record.case_id, record.version]);
 }
+/** Locate a registered record by business identity, tolerant of appends and reordering. */
+export function locateRecord(
+  text: string,
+  candidate: Candidate,
+  version: VersionConfig,
+  source: string,
+  defaultBatch?: string,
+): { raw: RawInput; line: number } {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const match = (value: string | undefined, line: number): { raw: RawInput; line: number } | undefined => {
+    if (!value || !value.trim()) return undefined;
+    try {
+      const raw = object(JSON.parse(value)) as RawInput;
+      return candidateKey(adapt(raw, version, source, line, defaultBatch)) === candidateKey(candidate)
+        ? { raw, line }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const direct = match(lines[candidate.line - 1], candidate.line);
+  if (direct) return direct;
+  for (let index = 0; index < lines.length; index++) {
+    const found = match(lines[index], index + 1);
+    if (found) return found;
+  }
+  throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
+}
 export function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData,
     a = data.candidates.A;
@@ -190,21 +209,23 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     ).map((record) => [candidateKey(record), record]),
   );
   const records = new Map<string, Candidate>(),
-    sourceTexts = new Map<string, { text: string; revision: string }>(),
+    sourceTexts = new Map<string, string>(),
     inputs: Record<string, unknown> = {},
     cases = new Map<string, [string, string]>(),
-    locations = new Map<string, { version: string; source: string; line: number }[]>();
+    locations = new Map<string, { version: string; source: string; line: number }[]>(),
+    resolvedSources: Record<string, string[]> = {};
   const issues: { batch_id?: string | null; [key: string]: unknown }[] = [],
     skipped: unknown[] = [],
     seen = new Set<string>(),
     invalid = new Set<string>();
   for (const version of config.inputs.versions) {
+    const label = version.sources.map((source) => source.path).join(", ");
     let files: string[];
     try {
-      files = await sourceFiles(version.path, `${version.id}.jsonl`);
+      files = await fileSourceReader.files(version.sources);
     } catch (error) {
       issues.push({
-        source: version.path,
+        source: label,
         reason:
           (error as NodeJS.ErrnoException).code === "ENOENT" ? "input_file_missing" : "input_file_unreadable",
         version: version.id,
@@ -212,7 +233,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
           {
             category: "file",
             code: "input_file_unavailable",
-            path: version.path,
+            path: label,
             expected: "可读取的输入文件或目录",
             actual: (error as NodeJS.ErrnoException).code || null,
             message: errorText(error),
@@ -223,15 +244,16 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     }
     if (!files.length) {
       issues.push({
-        source: version.path,
+        source: label,
         reason: "input_file_missing",
         version: version.id,
       });
       continue;
     }
+    resolvedSources[version.id] = files;
     for (const source of files) {
       try {
-        if (!sourceTexts.has(source)) sourceTexts.set(source, await readInputSource(source));
+        if (!sourceTexts.has(source)) sourceTexts.set(source, await fileSourceReader.read(source));
       } catch (error) {
         issues.push({
           source,
@@ -250,7 +272,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
         });
         continue;
       }
-      const { text, revision } = sourceTexts.get(source)!;
+      const text = sourceTexts.get(source)!;
       for (const [index, line] of text
         .replace(/^\uFEFF/, "")
         .split(/\r?\n/)
@@ -291,13 +313,12 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
             seen.add(key);
           }
           const record = adapt(raw, version, source, index + 1, config.inputs.default_batch_id);
-          record.source_revision = revision;
           const old = oldRecords.get(candidateKey(record));
           if (
             old &&
             (Object.hasOwn(previous!.inputs, old.input_id)
               ? isDeepStrictEqual(previous!.inputs[old.input_id], raw)
-              : old.source_revision === revision && old.line === record.line)
+              : old.source === record.source && old.line === record.line)
           )
             record.input_id = old.input_id;
           if (key && !invalid.has(key)) {
@@ -387,7 +408,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
         reason: "question_or_reference_conflict",
         sources: sources(available.map((record) => record.version)),
       });
-    for (const pair of ALLOWED_PAIRS) {
+    for (const pair of config.pairs) {
       if (!pair.every((v) => config.inputs.versions.some((item) => item.id === v))) continue;
       const values = pair.map((v) => records.get(canonical([batch, id, v])));
       if (conflict || values.some((v) => !v)) {
@@ -484,8 +505,9 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       correctness_tasks: checks.size,
       subjective_inputs_skipping_correctness: subjective.size,
       pairwise_tasks: tasks.length,
-      allowed_pairs: ALLOWED_PAIRS,
+      allowed_pairs: config.pairs,
       pair_counts: pairCounts,
+      sources: resolvedSources,
       by_batch: Object.fromEntries([...byBatch].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
       issues,
       skipped,

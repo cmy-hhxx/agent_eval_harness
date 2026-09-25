@@ -113,7 +113,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       const data = task.data as TaskData;
       assert.equal(data.candidates.A.batch_id, data.candidates.B.batch_id);
     }
-    for (const version of config.inputs.versions) await writeJsonl(version.path, [...rows].reverse());
+    for (const version of config.inputs.versions) await writeJsonl(version.sources[0].path, [...rows].reverse());
     const reordered = await buildPlan(config, plan);
     assert.deepEqual(
       reordered.tasks.map(({ id, dependencies, inputIds }) => ({
@@ -207,7 +207,7 @@ test("references, invalid answers and identity conflicts stay within their input
     [],
   ]);
   try {
-    await appendFile(config.inputs.versions[0].path, "not-json\n");
+    await appendFile(config.inputs.versions[0].sources[0].path, "not-json\n");
     const plan = await buildPlan(config);
     assert.equal(plan.tasks.length, 6);
     assert.equal(plan.summary.cases, 6);
@@ -230,8 +230,8 @@ test("references, invalid answers and identity conflicts stay within their input
     assert.equal(duplicate.batch_id, firstDay);
     assert.equal(duplicate.case_id, "duplicate");
     assert.deepEqual(duplicate.sources, [
-      { source: config.inputs.versions[0].path, version: "a_fast", line: 4 },
-      { source: config.inputs.versions[0].path, version: "a_fast", line: 5 },
+      { source: config.inputs.versions[0].sources[0].path, version: "a_fast", line: 4 },
+      { source: config.inputs.versions[0].sources[0].path, version: "a_fast", line: 5 },
     ]);
     const skipped = plan.summary.skipped as JsonObject[];
     const split = skipped.filter(
@@ -287,7 +287,6 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         continue;
       }
       const result = pairResult();
-      if (candidate.case_id === "unknown") result.verdict.result = "not_comparable";
       if (candidate.case_id === "bad") {
         result.verdict.result = "both_bad";
         for (const review of Object.values(result.evaluations)) {
@@ -308,11 +307,10 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
     const stats = await reportRun(run),
       daily = stats.by_batch as Record<string, BatchStats>;
     assert.equal((stats.planned as JsonObject).cases, 8);
-    assert.equal(stats.completed_comparisons, 4);
+    assert.equal(stats.completed_comparisons, 5);
     assert.deepEqual(daily[firstDay].task_statuses, { succeeded: 4 });
     assert.deepEqual(daily[secondDay].task_statuses, {
-      succeeded: 4,
-      not_comparable: 1,
+      succeeded: 5,
       failed: 1,
       pending: 1,
     });

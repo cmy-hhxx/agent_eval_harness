@@ -15,7 +15,7 @@ Python 仅承担公共代码工具与 Prime SDK runtime；[bootstrap](../scripts
 | 修改内容 | 入口 | 验证重点 |
 |---|---|---|
 | Agent 提示词、Schema、判决 | `packages/agents/src/<agent>` | 独立运行、契约、证据与判决 |
-| 输入、配对、盲测、报告 | `packages/workflows/src/pairwise` | A/AA、A/B 映射、结果编解码 |
+| 输入适配、配对、盲测、报告 | `packages/workflows/src/pairwise` | 适配器注册表、A/B 映射、结果编解码 |
 | 本地存储 | `packages/data` | 原子保存、追加失败、锁、崩溃恢复 |
 | 公共工具 | `packages/tools` | 工具预算、产物、取消和进程回收 |
 | 调度、收据、恢复 | `packages/host`、`packages/runtime` | 重复提交、丢失确认、恢复和失败状态 |

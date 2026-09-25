@@ -6,48 +6,62 @@
         "id": "a_fast",
         "name": "A Fast",
         "display_name": "A组Fast",
-        "path": "../data/sources/model-answers",
-        "adapter": "a"
+        "adapter": "a",
+        "sources": [
+          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["a_fast.jsonl"] }
+        ]
       },
       {
         "id": "a_expert",
         "name": "A Expert",
         "display_name": "A组Expert",
-        "path": "../data/sources/model-answers",
-        "adapter": "a"
+        "adapter": "a",
+        "sources": [
+          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["a_expert.jsonl"] }
+        ]
       },
       {
         "id": "aa_fast",
         "name": "AA Fast",
         "display_name": "AA组Fast",
-        "path": "../data/sources/model-answers",
-        "adapter": "aa"
+        "adapter": "aa",
+        "sources": [
+          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["aa_fast.jsonl"] }
+        ]
       },
       {
         "id": "aa_expert",
         "name": "AA Expert",
         "display_name": "AA组Expert",
-        "path": "../data/sources/model-answers",
-        "adapter": "aa"
+        "adapter": "aa",
+        "sources": [
+          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["aa_expert.jsonl"] }
+        ]
       }
     ]
   },
-  "judge": {
-    "provider": "evaluation-gateway",
-    "baseUrlEnv": "EVAL_BASE_URL",
-    "api": "openai-completions",
-    "apiKeyEnv": "EVAL_API_KEY",
-    "correctness": {
-      "model": "gpt-5.6-luna",
+  "pairs": [
+    ["a_fast", "aa_fast"],
+    ["a_expert", "aa_expert"]
+  ],
+  "models": {
+    "judge": {
+      "provider": "evaluation-gateway",
+      "baseUrlEnv": "EVAL_BASE_URL",
+      "api": "openai-completions",
+      "apiKeyEnv": "EVAL_API_KEY",
       "thinking": "low",
-      "contextWindow": 1050000,
+      "contextWindow": 524288,
+      "maxOutputTokens": 8192
+    }
+  },
+  "bindings": {
+    "correctness": {
+      "profile": "judge",
       "maxOutputTokens": 4096
     },
     "pairwise": {
-      "model": "gpt-5.6-luna",
-      "thinking": "low",
-      "contextWindow": 1050000,
-      "maxOutputTokens": 8192
+      "profile": "judge"
     }
   },
   "execution": {
@@ -62,5 +76,5 @@
     "maxOutputChars": 16000,
     "initialContextChars": 16000
   },
-  "outputDir": "../data/runs/pairwise"
+  "output": { "kind": "directory", "path": "../data/runs/pairwise" }
 }

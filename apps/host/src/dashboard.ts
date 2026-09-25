@@ -4,21 +4,14 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { HttpError, safeId, type RunState } from "@eval/contracts";
-import { exists, readJson } from "@eval/data";
+import { exists, locateRun, readJson } from "@eval/data";
+import { readConfigSources } from "./config.js";
 import { progressSnapshot } from "@eval/host";
 import { pairwiseRepository } from "@eval/workflows/pairwise";
 
 interface DashboardOptions {
-  configPath: string;
+  configPaths: string[];
   port: number;
-  outputDir?: string;
-}
-
-interface DashboardSource {
-  inputs?: unknown;
-  judge?: Record<string, unknown>;
-  execution?: unknown;
-  outputDir?: string;
 }
 
 interface RunLock {
@@ -52,6 +45,33 @@ const ASSET_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../da
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, message);
   return value as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function modelReadiness(source: Record<string, unknown>) {
+  const profiles = isRecord(source.models) ? source.models : {};
+  const bindings = Object.values(isRecord(source.bindings) ? source.bindings : {});
+  if (!bindings.length)
+    return { base_url_configured: false, api_key_configured: false, model_configured: false };
+  let baseUrl = true,
+    apiKey = true,
+    model = true;
+  for (const binding of bindings) {
+    if (!isRecord(binding) || typeof binding.profile !== "string") continue;
+    const profile = profiles[binding.profile];
+    if (!isRecord(profile)) {
+      baseUrl = apiKey = false;
+      continue;
+    }
+    if (!(typeof profile.baseUrlEnv === "string" && process.env[profile.baseUrlEnv])) baseUrl = false;
+    if (!(typeof profile.apiKeyEnv === "string" && process.env[profile.apiKeyEnv])) apiKey = false;
+    const id = binding.model ?? profile.model;
+    if (typeof id !== "string" || !id) model = false;
+  }
+  return { base_url_configured: baseUrl, api_key_configured: apiKey, model_configured: model };
 }
 
 function publicConfig(value: unknown, key = ""): unknown {
@@ -119,7 +139,7 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
 }
 
 function lockFile(run: string): string {
-  return path.join(run, ".run-lock");
+  return locateRun(run).lockFile;
 }
 
 async function readLock(run: string): Promise<RunLock | undefined> {
@@ -168,9 +188,9 @@ async function inspectRun(outputDir: string, runId: string, includeTasks = true)
     try {
       state = await pairwiseRepository.readRun(run);
     } catch {
-      checkpoint = await readJson<DashboardCheckpoint>(path.join(run, "state.json"));
+      checkpoint = await readJson<DashboardCheckpoint>(locateRun(run).stateFile);
     }
-  } else checkpoint = await readJson<DashboardCheckpoint>(path.join(run, "state.json"));
+  } else checkpoint = await readJson<DashboardCheckpoint>(locateRun(run).stateFile);
   if (!state && !checkpoint) return undefined;
   const progress = state ? progressSnapshot(state) : fallbackProgress(checkpoint!);
   const manifest = state?.manifest;
@@ -230,7 +250,9 @@ async function startRun(options: DashboardOptions, outputDir: string, value: Rec
   const engine = value.engine || "pi";
   if (engine !== "pi" && engine !== "prime") throw new HttpError(400, "engine must be pi or prime");
   if (await exists(lockFile(path.join(outputDir, runId)))) throw new HttpError(409, "Run is already running");
-  const args = [CLI_ENTRY, "run", "--config", options.configPath, "--engine", engine, "--run-id", runId];
+  const args = [CLI_ENTRY, "run"];
+  for (const config of options.configPaths) args.push("--config", config);
+  args.push("--engine", engine, "--run-id", runId);
   for (const name of ["batch", "case"] as const) {
     const values = value[name];
     if (values !== undefined) {
@@ -254,9 +276,11 @@ async function startRun(options: DashboardOptions, outputDir: string, value: Rec
 }
 
 export async function startDashboard(options: DashboardOptions) {
-  const source = await readJson<DashboardSource>(options.configPath);
-  if (typeof source.outputDir !== "string") throw new Error("Invalid outputDir in dashboard config");
-  const outputDir = options.outputDir || path.resolve(path.dirname(options.configPath), source.outputDir);
+  const source = await readConfigSources(options.configPaths);
+  const output = source.output;
+  if (!isRecord(output) || typeof output.path !== "string")
+    throw new Error("Invalid output target in dashboard config");
+  const outputDir = path.resolve(output.path);
   const [html, css, javascript] = await Promise.all([
     readFile(path.join(ASSET_DIR, "index.html"), "utf8"),
     readFile(path.join(ASSET_DIR, "dashboard.css"), "utf8"),
@@ -279,16 +303,10 @@ export async function startDashboard(options: DashboardOptions) {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
-      const judge = source.judge || {};
-      const baseUrlEnv = typeof judge.baseUrlEnv === "string" ? judge.baseUrlEnv : "";
-      const apiKeyEnv = typeof judge.apiKeyEnv === "string" ? judge.apiKeyEnv : "";
       return json(res, {
-        path: options.configPath,
+        path: options.configPaths.join(", "),
         config: publicConfig(source),
-        environment: {
-          base_url_configured: Boolean(baseUrlEnv && process.env[baseUrlEnv]),
-          api_key_configured: Boolean(apiKeyEnv && process.env[apiKeyEnv]),
-        },
+        environment: modelReadiness(source),
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")

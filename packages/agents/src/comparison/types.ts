@@ -37,7 +37,7 @@ export interface FindingRef {
 }
 export interface PairwiseResult {
   verdict: {
-    result: "A_better" | "B_better" | "both_good" | "both_bad" | "not_comparable";
+    result: "A_better" | "B_better" | "both_good" | "both_bad";
     reason: string;
   };
   evaluations: Record<string, Review>;

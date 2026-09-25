@@ -8,7 +8,6 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
   type AgentBackend,
-  type ModelConfig,
   type RunManifest,
   type SubmissionReceipt,
 } from "@eval/contracts";
@@ -184,15 +183,6 @@ test("both_bad requires confirmed serious failures on each side and accounts for
       });
       check(withStrength);
     }
-    const insufficient = badResult();
-    insufficient.verdict = {
-      result: "not_comparable",
-      reason: "缺少完成判断所需的材料。",
-    };
-    insufficient.decision_basis.decisive_findings = [];
-    for (const review of Object.values(insufficient.evaluations))
-      review.findings[0].assessment.evidence_status = "uncertain";
-    check(insufficient);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -243,7 +233,7 @@ test("absolute judgments cannot contradict or omit independent correctness recei
 
 for (const reverse of [false, true])
   test(`all verdicts export and aggregate without ties across A/B swaps (${reverse})`, async () => {
-    const cases = ["good", "bad", "a_win", "aa_win", "unknown", "failed"];
+    const cases = ["good", "bad", "a_win", "aa_win", "failed"];
     const rows = cases.map((id) => raw(id, null, id === "bad" ? "2+2=5" : "2+2=4"));
     rows[0].request_time = "2026-09-24 11:37:31";
     const { directory, config } = await fixtureConfig([rows, [], rows, []]);
@@ -273,38 +263,30 @@ for (const reverse of [false, true])
           result.decision_basis.counterevidence = [
             { candidate: winner === "A" ? "B" : "A", finding_index: 0 },
           ];
-        } else if (id === "unknown") {
-          result.verdict = {
-            result: "not_comparable",
-            reason: "关键材料不足。",
-          };
-          result.decision_basis.decisive_findings = [];
         }
         validateEvaluation(task, plan.inputs, result, emptyAudit(), {});
         const row = comparisonRow(plan.inputs, task, result, new Map(), names);
-        if (id !== "unknown") {
-          assert(validateOutput(row), JSON.stringify(validateOutput.errors));
-          if (id === "good" || id === "bad") {
-            assert.deepEqual(row.verdict, {
-              result: id === "good" ? "both_good" : "both_bad",
-              winner_version: null,
-              winner_name: null,
-              reason: result.verdict.reason,
-            });
-            const verdict = row.verdict as object;
-            assert(
-              !validateOutput({
-                ...row,
-                verdict: { ...verdict, winner_version: "a_fast" },
-              }),
-            );
-            assert(
-              !validateOutput({
-                ...row,
-                verdict: { ...verdict, result: "tie" },
-              }),
-            );
-          }
+        assert(validateOutput(row), JSON.stringify(validateOutput.errors));
+        if (id === "good" || id === "bad") {
+          assert.deepEqual(row.verdict, {
+            result: id === "good" ? "both_good" : "both_bad",
+            winner_version: null,
+            winner_name: null,
+            reason: result.verdict.reason,
+          });
+          const verdict = row.verdict as object;
+          assert(
+            !validateOutput({
+              ...row,
+              verdict: { ...verdict, winner_version: "a_fast" },
+            }),
+          );
+          assert(
+            !validateOutput({
+              ...row,
+              verdict: { ...verdict, result: "tie" },
+            }),
+          );
         }
         receipts[task.id] = receipt(task.id, result);
       }
@@ -338,19 +320,14 @@ for (const reverse of [false, true])
       assert(!Object.hasOwn(stats, "ties"));
       assert.deepEqual(summary.task_statuses, {
         succeeded: 4,
-        not_comparable: 1,
         failed: 1,
       });
       const summaries = [];
       for await (const row of readJsonl(path.join(directory, "_internal/exports/task_summaries.jsonl")))
         summaries.push(row);
-      assert.equal(summaries.length, 5);
+      assert.equal(summaries.length, 4);
       const exports = new Map<string, string>();
-      for (const name of [
-        "results/a_fast__vs__aa_fast.jsonl",
-        "results/not_comparable.jsonl",
-        "_internal/exports/task_summaries.jsonl",
-      ]) {
+      for (const name of ["results/a_fast__vs__aa_fast.jsonl", "_internal/exports/task_summaries.jsonl"]) {
         const text = await readFile(path.join(directory, name), "utf8");
         exports.set(name, text);
         for (const line of text.trim().split("\n")) {
@@ -374,7 +351,7 @@ for (const reverse of [false, true])
 
 test("host rejects both_good against incorrect dependencies before committing a repaired both_bad receipt", async () => {
   const input = raw("q", "4", "2+2=5");
-  const { directory, config } = await fixtureConfig([[input], [], [input], []]);
+  const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
   let rejected = 0;
   const backend: AgentBackend = {
     identity: fakeIdentity,
@@ -410,22 +387,17 @@ test("host rejects both_good against incorrect dependencies before committing a 
   };
   const worker = await startWorker(backend, path.join(directory, "worker"));
   try {
-    const plan = await buildPlan(config),
-      { correctness, pairwise, ...common } = config.judge;
+    const plan = await buildPlan(config);
     const summary = await runEvaluation({
       runId: "repair",
-      outputDir: config.outputDir,
+      output: config.output,
       engine: "pi",
       identity: fakeIdentity,
       config,
       ...services,
       plan,
       policy: config.execution,
-      modelForStage: (stage) =>
-        ({
-          ...common,
-          ...(stage === "correctness" ? correctness : pairwise),
-        }) as ModelConfig,
+      modelForStage,
       concurrency: 1,
       retries: 0,
       retryDelaySeconds: 0,
@@ -436,7 +408,7 @@ test("host rejects both_good against incorrect dependencies before committing a 
     const stats = (summary.pairs as Record<string, Record<string, unknown>>).a_fast__vs__aa_fast;
     assert.equal(stats.both_good, 0);
     assert.equal(stats.both_bad, 1);
-    assert.equal((await validateRun(path.join(config.outputDir, "repair"))).valid, true);
+    assert.equal((await validateRun(path.join(config.output.path, "repair"))).valid, true);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });

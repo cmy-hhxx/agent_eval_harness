@@ -105,7 +105,7 @@
       "required": ["result", "reason"],
       "properties": {
         "result": {
-          "enum": ["A_better", "B_better", "both_good", "both_bad", "not_comparable"]
+          "enum": ["A_better", "B_better", "both_good", "both_bad"]
         },
         "reason": {
           "type": "string",

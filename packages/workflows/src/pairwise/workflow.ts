@@ -5,9 +5,8 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { cite, evidenceSources } from "@eval/tools";
-import { inputRevision } from "@eval/data";
-import { buildPlan, comparisonPair, contentText, inputSources } from "./input.js";
-import type { TaskData, RawInput, EvalConfig, Candidate } from "./types.js";
+import { buildPlan, comparisonPair, contentText } from "./input.js";
+import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 export function bindTask(
   task: PlannedTask,
@@ -107,16 +106,4 @@ export const pairwiseWorkflow: WorkflowDefinition = {
   plan: (config) => buildPlan(config as EvalConfig),
   reconcile: reconcileRun,
   bind: bindTask,
-  async assertInputs(state) {
-    const unfinished = new Set(
-      state.manifest.tasks.filter((t) => !state.receipts[t.id]).flatMap((t) => Object.values(t.inputIds)),
-    );
-    for (const [source, candidates] of inputSources(
-      ((state.manifest.inputCatalog || []) as Candidate[]).filter((c) => unfinished.has(c.input_id)),
-    )) {
-      const revision = await inputRevision(source);
-      if (candidates.some((c) => c.source_revision !== revision))
-        throw new Error("规划后输入源文件已变化，请重新运行：" + source);
-    }
-  },
 };

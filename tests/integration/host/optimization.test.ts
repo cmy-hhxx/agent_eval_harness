@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
-import { emptyUsage, type AgentBackend, type RunState, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan } from "@eval/contracts";
 import { readJson, writeJsonl } from "@eval/data";
 import { ValidationError } from "@eval/contracts";
 import { buildPlan } from "@eval/workflows/pairwise";
@@ -59,13 +59,17 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
     recordedAttempts: plan.tasks.length,
   };
 }
-function optionsFor(config: EvalConfig, plan: TaskPlan, workerUrls: string[]) {
-  const { correctness, pairwise, ...common } = config.judge;
+function optionsFor(
+  config: EvalConfig,
+  modelForStage: (stage: string) => ModelConfig,
+  plan: TaskPlan,
+  workerUrls: string[],
+) {
   return {
     runId: "test",
     config,
     plan,
-    outputDir: config.outputDir,
+    output: config.output,
     ...services,
     engine: "pi" as const,
     identity: fakeIdentity,
@@ -74,10 +78,7 @@ function optionsFor(config: EvalConfig, plan: TaskPlan, workerUrls: string[]) {
     retries: 0,
     retryDelaySeconds: 0,
     workerUrls,
-    modelForStage: (stage: string) => ({
-      ...common,
-      ...(stage === "correctness" ? correctness : pairwise),
-    }),
+    modelForStage,
   };
 }
 async function until(check: () => boolean | Promise<boolean>) {
@@ -110,11 +111,11 @@ test("preflight keeps unknown-batch errors under a selection and aggregates inde
       ["request_time_invalid", "standard_answer_flag_invalid"],
     );
     for (const request_time of [undefined, null, " 2026-09-24  "]) {
-      await writeJsonl(config.inputs.versions[0].path, [{ ...raw("valid", null), request_time }]);
+      await writeJsonl(config.inputs.versions[0].sources[0].path, [{ ...raw("valid", null), request_time }]);
       assert.deepEqual((await buildPlan(config)).summary.issues, []);
     }
     for (const request_time of ["", "  ", 12, false, {}]) {
-      await writeJsonl(config.inputs.versions[0].path, [{ ...raw("valid", null), request_time }]);
+      await writeJsonl(config.inputs.versions[0].sources[0].path, [{ ...raw("valid", null), request_time }]);
       assert.equal(((await buildPlan(config)).summary.issues as unknown[]).length, 1);
     }
   } finally {
@@ -138,10 +139,10 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
       narrowed = structuredClone(config);
     narrowed.inputs.batches = ["b1"];
     for (const version of narrowed.inputs.versions) {
-      const content = await readFile(version.path, "utf8");
-      version.path += ".moved";
+      const content = await readFile(version.sources[0].path, "utf8");
+      version.sources[0].path += ".moved";
       await writeJsonl(
-        version.path,
+        version.sources[0].path,
         content.trim()
           ? content
               .trim()
@@ -157,8 +158,8 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
     );
     assert.equal(Object.keys(restored.receipts).length, 2);
     const changed = { ...rows[0], request_time: "2026-09-24" };
-    await writeJsonl(narrowed.inputs.versions[0].path, [changed, rows[1]]);
-    await writeJsonl(narrowed.inputs.versions[3].path, [raw("q", null)]);
+    await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [changed, rows[1]]);
+    await writeJsonl(narrowed.inputs.versions[3].sources[0].path, [raw("q", null)]);
     const replacement = await reconcileRun(run, restored, narrowed);
     assert.equal(replacement.tasks.length, 3);
     assert.equal(Object.keys(restored.receipts).length, 2);
@@ -175,7 +176,7 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
     await writeRunState(run, restored); // crash after state replacement, before result rebuilding
     const recovered = await readRunState(run);
     assert.equal(Object.keys(recovered.receipts).length, 2);
-    await writeJsonl(narrowed.inputs.versions[0].path, [{ ...changed, request_time: "" }, rows[1]]);
+    await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [{ ...changed, request_time: "" }, rows[1]]);
     const invalid = await reconcileRun(run, recovered, narrowed);
     assert.deepEqual(
       invalid.tasks.filter((t) => recovered.receipts[t.id]).map((t) => t.inputIds),
@@ -196,7 +197,7 @@ test("planning a shared reference change increments dependent task revisions whi
   ]);
   try {
     const first = await buildPlan(config);
-    await writeJsonl(config.inputs.versions[0].path, [raw("q1", "updated")]);
+    await writeJsonl(config.inputs.versions[0].sources[0].path, [raw("q1", "updated")]);
     const next = await buildPlan(config, first);
     assert.equal(next.tasks.length, 6);
     assert.deepEqual(
@@ -211,7 +212,7 @@ test("planning a shared reference change increments dependent task revisions whi
 
 test("resume skips accepted cases after edits and evaluates only unfinished and newly added cases", async () => {
   const rows = [raw("done", null), raw("todo", null)];
-  const { directory, config } = await fixtureConfig([rows, [], rows, []]);
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
   const calls: string[] = [];
   let resumed = false;
   const worker = await startWorker(
@@ -233,9 +234,9 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
     path.join(directory, "worker"),
   );
   try {
-    const options = optionsFor(config, await buildPlan(config), [worker.url]);
+    const options = optionsFor(config, modelForStage, await buildPlan(config), [worker.url]);
     assert.equal((await runEvaluation(options)).completed_comparisons, 1);
-    const run = path.join(config.outputDir, "test"),
+    const run = path.join(config.output.path, "test"),
       before = await readRunState(run);
     const accepted = before.manifest.tasks.find((t) => before.receipts[t.id])!;
     const original = before.receipts[accepted.id];
@@ -245,7 +246,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       raw("done", "4", "changed completed answer"),
     ];
     for (const version of config.inputs.versions.filter((v) => ["a_fast", "aa_fast"].includes(v.id)))
-      await writeJsonl(version.path, changed);
+      await writeJsonl(version.sources[0].path, changed);
     resumed = true;
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
     assert.deepEqual(calls.sort(), ["done", "new", "todo", "todo"]);
@@ -256,7 +257,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       accepted,
     );
     assert.equal((await validateRun(run)).results.valid, true);
-    for (const version of config.inputs.versions) await rm(version.path);
+    for (const version of config.inputs.versions) await rm(version.sources[0].path);
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
     assert.equal(calls.length, 4, "accepted work does not require a second model call or an input backup");
   } finally {
@@ -351,7 +352,7 @@ test("finding IDs survive reorder and report every missing reference and evidenc
 });
 
 test("normal runs persist drafts before cleanup, carry them to one repair attempt, then clear them", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+  const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   let calls = 0;
   const worker = await startWorker(
     {
@@ -364,7 +365,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
               const invalid = pairResult();
               invalid.evaluations.A.findings[0].evidence[0].quote = "wrong";
               await options.execute("submit_evaluation", draftFor(options.spec, invalid));
-              const state = await readRunState(path.join(config.outputDir, "test"));
+              const state = await readRunState(path.join(config.output.path, "test"));
               assert(state.manifest.states[options.spec.taskId].failure?.draft);
             } else {
               assert(options.spec.recovery?.draft);
@@ -383,10 +384,10 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
     path.join(directory, "worker"),
   );
   try {
-    const stats = await runEvaluation(optionsFor(config, await buildPlan(config), [worker.url]));
+    const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
     assert.equal(calls, 2);
     assert.equal(stats.completed_comparisons, 1);
-    const state = await readRunState(path.join(config.outputDir, "test"));
+    const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(Object.values(state.manifest.states)[0].failure?.draft, undefined);
     assert.equal(Object.values(state.receipts)[0].submissionStats?.contentSubmissions, 2);
   } finally {
@@ -397,7 +398,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
 
 test("live concurrency grows immediately and shrinking lets healthy attempts finish", async () => {
   const rows = [1, 2, 3, 4].map((id) => raw(String(id), null));
-  const { directory, config } = await fixtureConfig([rows, [], rows, []]);
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
   const started: string[] = [],
     releases = new Map<string, () => void>();
   let aborted = 0;
@@ -426,13 +427,14 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
     execution = runEvaluation(
       optionsFor(
         config,
+        modelForStage,
         await buildPlan(config),
         workers.map((w) => w.url),
       ),
     );
     await until(() => started.length === 1);
     const lock = await readJson<{ url: string; token: string }>(
-      path.join(config.outputDir, "test", ".run-lock"),
+      path.join(config.output.path, "test", ".run-lock"),
     );
     const adjust = async (concurrency: number) => {
       const response = await fetch(lock.url + "/api/control/concurrency", {
@@ -474,7 +476,7 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
 });
 
 test("enabling debug and missing optional artifacts never remove accepted receipts", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+  const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   let calls = 0;
   const worker = await startWorker(
     {
@@ -497,10 +499,10 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     path.join(directory, "worker"),
   );
   try {
-    const options = optionsFor(config, await buildPlan(config), [worker.url]);
+    const options = optionsFor(config, modelForStage, await buildPlan(config), [worker.url]);
     await runEvaluation(options);
     await runEvaluation({ ...options, debug: true });
-    const run = path.join(config.outputDir, "test"),
+    const run = path.join(config.output.path, "test"),
       validation = await validateRun(run);
     assert.equal(calls, 1);
     assert.equal(validation.valid, true);

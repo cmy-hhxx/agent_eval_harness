@@ -12,7 +12,7 @@ mise install
 cp .env.example .env
 ```
 
-在 `.env` 填写共用的 `EVAL_BASE_URL` 和 `EVAL_API_KEY`，两种底座使用同一组变量。随后安装和构建：
+在 `.env` 填写两种底座共用的 `EVAL_BASE_URL` 和 `EVAL_API_KEY`。随后安装和构建：
 
 ```bash
 npm run bootstrap
@@ -20,15 +20,17 @@ npm run build
 npm run doctor
 ```
 
-将输入按日期放到 `data/sources/model-answers/0922/`、`data/sources/model-answers/0923/` 等目录。每个目录的文件名为 `a_fast.jsonl`、`a_expert.jsonl`、`aa_fast.jsonl`、`aa_expert.jsonl`，不同日期沿用这组文件名；在 [configs/host.json](configs/host.json) 核对输入路径与裁判模型：
+输入路径与输出目录都由配置接口指定，不依赖目录命名。`inputs.versions[].sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述每个版本的来源，日期子目录仅作整理。评测模型同样通过配置注入，不入库：在 [configs/host.json](configs/host.json) 核对输入与输出，复制 [configs/models.example.json](configs/models.example.json) 为 `configs/local/models.json` 并填入网关模型 ID，然后组合两个配置运行：
 
 ```bash
 npm run eval -- preflight
-npm run eval -- run --engine pi --run-id pi-001
-npm run eval -- run --engine prime --run-id prime-001
+npm run eval -- run --engine pi --run-id pi-001 \
+  --config configs/host.json --config configs/local/models.json
 ```
 
-结果位于 `data/runs/pairwise/<run-id>/`。重复使用同一个 `--run-id` 自动续跑，已接受任务始终保留，只评原选择范围内未完成和新增任务。只比较 Fast ↔ Fast、Expert ↔ Expert，候选盲测后恢复稳定版本 ID。恢复规则、`--debug` 和结果文件说明见[使用指南](docs/usage.md#运行与恢复)。
+需要临时替换来源或输出时用 `--input <版本 ID>=<路径>`（目录或文件，可重复）和 `--output <目录>` 覆盖配置，不必改动入库文件。
+
+结果位于 `<output.path>/<run-id>/`（默认 `data/runs/pairwise/<run-id>/`）。重复使用同一个 `--run-id` 自动续跑，已接受任务始终保留，只评原选择范围内未完成和新增任务；源文件被追加或整理不会阻止续跑，未完成任务使用最新有效输入。参与对比的版本组合由配置的 `pairs` 声明，可任意扩展（如 DeepSeek、Kimi），候选盲测后恢复稳定版本 ID。恢复规则、`--debug` 和结果文件说明见[使用指南](docs/usage.md#运行与恢复)。
 
 错误日志写入 `log/runtime.log`，规整后的已接受评测结果逐行追加到 `log/evaluation.log`；目录不入库。日志去重、并行写入和查看方法见[日志说明](docs/usage.md#日志)。
 

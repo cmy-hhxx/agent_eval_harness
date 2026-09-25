@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { AgentBackend, AttemptRecord, ModelConfig } from "@eval/contracts";
+import type { AgentBackend, AttemptRecord } from "@eval/contracts";
 import { createFileLogger, exists, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/pairwise";
 import { startWorker } from "@eval/runtime/worker";
@@ -16,7 +16,7 @@ import { fakeIdentity, fixtureConfig, pairResult, raw } from "../../fixtures/pai
 import type { TaskData } from "@eval/workflows/pairwise";
 
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
-  const { directory, config } = await fixtureConfig([[raw()], [raw()], [raw()], [raw()]]);
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [raw()], [raw()], [raw()]]);
   const plan = await buildPlan(config);
   let calls = 0;
   const backend: AgentBackend = {
@@ -52,7 +52,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
           if (!correctness) {
             const task = plan.tasks.find((task) => task.id === options.spec.taskId)!;
             const pair = (task.data as TaskData).pair!.join("__vs__");
-            const file = path.join(config.outputDir, options.spec.runId, "results", pair + ".jsonl");
+            const file = path.join(config.output.path, options.spec.runId, "results", pair + ".jsonl");
             assert.equal(
               (await readFile(file, "utf8")).trim().split("\n").length,
               1,
@@ -70,11 +70,10 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     startWorker(backend, path.join(directory, "w2")),
   ]);
   try {
-    const { correctness, pairwise, ...common } = config.judge;
     const options = {
       runId: "first",
       debug: true,
-      outputDir: config.outputDir,
+      output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
       config,
@@ -85,11 +84,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       }),
       plan,
       policy: config.execution,
-      modelForStage: (stage: string) =>
-        ({
-          ...common,
-          ...(stage === "correctness" ? correctness : pairwise),
-        }) as ModelConfig,
+      modelForStage,
       concurrency: 2,
       retries: 0,
       retryDelaySeconds: 0,
@@ -117,7 +112,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.deepEqual(summary.cache, {
       model_input: { hit_rate: 0.6 },
     });
-    const run = path.join(config.outputDir, "first");
+    const run = path.join(config.output.path, "first");
     assert.deepEqual(await readJson(path.join(run, "stats.json")), summary);
     const checkpoint = await readJson(path.join(run, "state.json"));
     assert.equal(checkpoint.manifest, undefined);
@@ -175,7 +170,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       model_input: { hit_rate: 0.6 },
     });
     assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 330);
-    assert.equal((await validateRun(path.join(config.outputDir, "second"))).valid, true);
+    assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
   } finally {
     await Promise.all(workers.map((w) => w.close()));
     await rm(directory, { recursive: true, force: true });
@@ -184,7 +179,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
 test("different runs and batches evaluate independently", async () => {
   const days = ["2026-09-23", "2026-09-24"];
   const rows = days.map((batch_id) => ({ ...raw("q1", null), batch_id }));
-  const { directory, config } = await fixtureConfig([rows, [], rows, []]);
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
   let calls = 0;
   const worker = await startWorker(
     {
@@ -204,15 +199,14 @@ test("different runs and batches evaluate independently", async () => {
     path.join(directory, "worker"),
   );
   try {
-    const { correctness: _correctness, pairwise, ...common } = config.judge;
     const options = {
-      outputDir: config.outputDir,
+      output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
       config,
       ...services,
       policy: config.execution,
-      modelForStage: () => ({ ...common, ...pairwise }),
+      modelForStage,
       concurrency: 1,
       retries: 0,
       retryDelaySeconds: 0,
@@ -237,7 +231,7 @@ test("different runs and batches evaluate independently", async () => {
     assert.equal(calls, 4);
     assert.equal(combined.completed_comparisons, 2);
     assert.deepEqual(Object.keys(combined.by_batch as object), days);
-    assert.equal((await validateRun(path.join(config.outputDir, "combined"))).valid, true);
+    assert.equal((await validateRun(path.join(config.output.path, "combined"))).valid, true);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -246,7 +240,7 @@ test("different runs and batches evaluate independently", async () => {
 
 for (const missingArtifact of [false, true])
   test(`failed attempt archives diagnostics and releases only complete copies (missing artifact: ${missingArtifact})`, async () => {
-    const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
+    const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
     const backend: AgentBackend = {
       identity: fakeIdentity,
       async createSession(options) {
@@ -281,12 +275,11 @@ for (const missingArtifact of [false, true])
     };
     const worker = await startWorker(backend, path.join(directory, "worker"));
     try {
-      const plan = await buildPlan(config),
-        { correctness, pairwise, ...common } = config.judge;
+      const plan = await buildPlan(config);
       const summary = await runEvaluation({
         runId: "failure",
         debug: true,
-        outputDir: config.outputDir,
+        output: config.output,
         engine: "pi",
         identity: fakeIdentity,
         config,
@@ -297,7 +290,7 @@ for (const missingArtifact of [false, true])
         }),
         plan,
         policy: config.execution,
-        modelForStage: () => ({ ...common, ...pairwise }),
+        modelForStage,
         concurrency: 1,
         retries: 0,
         retryDelaySeconds: 0,
@@ -313,7 +306,7 @@ for (const missingArtifact of [false, true])
       assert.equal(runtimeLog.find((row) => row.event === "task_failed").task_id, plan.tasks[0].id);
       assert.equal(await readFile(path.join(directory, "log/evaluation.log"), "utf8"), "");
       assert.equal((summary.tokens as { totalTokens: number }).totalTokens, 38);
-      const run = path.join(config.outputDir, "failure");
+      const run = path.join(config.output.path, "failure");
       assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), false);
       assert.equal(await exists(internalPath(run, "diagnostics", "failures.jsonl")), true);
       const record = await readJson<AttemptRecord>(
@@ -341,7 +334,7 @@ for (const missingArtifact of [false, true])
     }
   });
 test("one host routes tasks to both engines without sharing sessions or workspaces", async () => {
-  const { directory, config } = await fixtureConfig();
+  const { directory, config, modelForStage } = await fixtureConfig();
   const calls = { pi: 0, prime: 0 },
     workdirs = new Set<string>();
   const primeIdentity = { ...fakeIdentity, engine: "prime" as const };
@@ -378,10 +371,9 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     startWorker(backend("prime"), path.join(directory, "prime")),
   ]);
   try {
-    const { correctness, pairwise, ...common } = config.judge;
     const summary = await runEvaluation({
       runId: "mixed",
-      outputDir: config.outputDir,
+      output: config.output,
       engine: "pi",
       identity: fakeIdentity,
       identities: { prime: primeIdentity },
@@ -393,10 +385,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       ...services,
       plan: await buildPlan(config),
       policy: config.execution,
-      modelForStage: (stage) => ({
-        ...common,
-        ...(stage === "correctness" ? correctness : pairwise),
-      }),
+      modelForStage,
       concurrency: 2,
       retries: 0,
       retryDelaySeconds: 0,
@@ -405,7 +394,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     assert.equal(summary.completed_comparisons, 2);
     assert.deepEqual(calls, { pi: 3, prime: 3 });
     assert.equal(workdirs.size, 6);
-    const run = path.join(config.outputDir, "mixed");
+    const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
       "report.md",
       "results",
@@ -429,7 +418,7 @@ for (const debug of [false, true])
       ...raw("q1", null),
       batch_id,
     }));
-    const { directory, config } = await fixtureConfig([rows, [], rows, []]);
+    const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
     const controller = new AbortController();
     let resume = false;
     const calls: Record<string, number> = {};
@@ -457,18 +446,17 @@ for (const debug of [false, true])
     };
     const worker = await startWorker(backend, path.join(directory, "worker"));
     try {
-      const { correctness, pairwise, ...common } = config.judge;
       const options = {
         runId: "resume",
         debug,
-        outputDir: config.outputDir,
+        output: config.output,
         engine: "pi" as const,
         identity: fakeIdentity,
         config,
         ...services,
         plan: await buildPlan(config),
         policy: config.execution,
-        modelForStage: () => ({ ...common, ...pairwise }),
+        modelForStage,
         concurrency: 1,
         retries: 0,
         retryDelaySeconds: 0,
@@ -481,12 +469,12 @@ for (const debug of [false, true])
       assert.equal(stopped.status, "interrupted");
       assert.equal(stopped.completed_comparisons, 1);
       const failureFile = internalPath(
-        path.join(config.outputDir, "resume"),
+        path.join(config.output.path, "resume"),
         "diagnostics",
         "failures.jsonl",
       );
       assert.equal(await exists(failureFile), debug);
-      const run = path.join(config.outputDir, "resume");
+      const run = path.join(config.output.path, "resume");
       assert.match(await readFile(path.join(run, "task_summaries.md"), "utf8"), /Interrupted/);
       const saved = await readRunState(run);
       await writeRunState(run, saved);
@@ -497,9 +485,8 @@ for (const debug of [false, true])
           ...config,
           inputs: { ...config.inputs, batches: ["2026-09-23"] },
         },
-        modelForStage: () => ({
-          ...common,
-          ...pairwise,
+        modelForStage: (stage) => ({
+          ...modelForStage(stage),
           model: "changed-model",
         }),
         policy: {
@@ -510,7 +497,7 @@ for (const debug of [false, true])
       assert.equal(complete.completed_comparisons, 2);
       assert.equal(await exists(failureFile), false, "resume must remove stale failure exports");
       assert.deepEqual(Object.values(calls).sort(), [1, 2]);
-      assert.equal((await validateRun(path.join(config.outputDir, "resume"))).valid, true);
+      assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);
       assert.deepEqual(
@@ -520,7 +507,7 @@ for (const debug of [false, true])
       );
       for (const version of config.inputs.versions)
         await writeJsonl(
-          version.path,
+          version.sources[0].path,
           ["a_fast", "aa_fast"].includes(version.id)
             ? [...rows, { ...raw("q1", null), batch_id: "2026-09-25" }]
             : [],
@@ -536,8 +523,8 @@ for (const debug of [false, true])
       assert.equal(validation.results.valid, true);
       assert.equal(
         validation.evidence.valid,
-        false,
-        "changed source is not presented as the accepted input revision",
+        true,
+        "appended unrelated records do not invalidate accepted evidence",
       );
     } finally {
       await worker.close();

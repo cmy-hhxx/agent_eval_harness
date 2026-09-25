@@ -1,10 +1,11 @@
 import { parseArgs } from "node:util";
+import { stat } from "node:fs/promises";
 import path from "node:path";
-import type { Engine, ModelConfig } from "@eval/contracts";
+import type { Engine } from "@eval/contracts";
 import { ROOT } from "./paths.js";
 import { errorText, redact } from "@eval/contracts";
-import { readJson, exists, runLock } from "@eval/data";
-import { loadConfig } from "@eval/host-app/config";
+import { readJson, exists, runLayout, runLock } from "@eval/data";
+import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
 import { pairwiseWorkflow } from "@eval/workflows/pairwise";
 import { reportRun } from "@eval/workflows/pairwise";
@@ -18,10 +19,12 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      config: { type: "string", default: path.join(ROOT, "configs/host.json") },
+      config: { type: "string", multiple: true, default: [path.join(ROOT, "configs/host.json")] },
       engine: { type: "string", default: "pi" },
       "run-id": { type: "string" },
       run: { type: "string" },
+      output: { type: "string" },
+      input: { type: "string", multiple: true },
       debug: { type: "boolean" },
       batch: { type: "string", multiple: true },
       case: { type: "string", multiple: true },
@@ -37,14 +40,14 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      "eval preflight|run|status|validate|report|concurrency|progress|dashboard --config configs/host.json\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\nstatus/validate/report: --run data/runs/pairwise/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
+      "eval preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nstatus/validate/report: --run data/runs/pairwise/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
     );
     return;
   }
   if (command === "dashboard") {
     const port = Number(values.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("--port must be 1-65535");
-    const dashboard = await startDashboard({ configPath: path.resolve(values.config), port });
+    const dashboard = await startDashboard({ configPaths: values.config, port });
     console.log(`Dashboard listening at ${dashboard.url}`);
     await new Promise<void>((resolve) => {
       const shutdown = async () => {
@@ -109,8 +112,22 @@ async function main(): Promise<void> {
     }
     return;
   }
-  const config = await loadConfig(values.config);
-  logger.addSecrets(process.env[config.judge.apiKeyEnv] || "");
+  const host = await loadConfig(values.config);
+  const config = host.evaluation;
+  if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
+  for (const item of values.input || []) {
+    const separator = item.indexOf("=");
+    if (separator < 1) throw new Error("--input 需要 ID=PATH");
+    const id = item.slice(0, separator),
+      target = path.resolve(item.slice(separator + 1));
+    const version = config.inputs.versions.find((entry) => entry.id === id);
+    if (!version) throw new Error(`未知的输入版本：${id}`);
+    const info = await stat(target).catch(() => undefined);
+    if (!info) throw new Error(`输入路径不存在：${target}`);
+    version.sources = [{ kind: info.isDirectory() ? "directory" : "file", path: target }];
+  }
+  for (const profile of boundProfiles(host.models))
+    logger.addSecrets(process.env[profile.apiKeyEnv] || "");
   if (values.batch) config.inputs.batches = values.batch;
   if (values.case) config.inputs.case_ids = values.case;
   if (values["limit-cases"]) {
@@ -121,7 +138,7 @@ async function main(): Promise<void> {
   const resuming =
     command === "run" &&
     values["run-id"] &&
-    (await exists(path.join(config.outputDir, values["run-id"], "state.json")));
+    (await exists(runLayout(config.output, values["run-id"]).stateFile));
   const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await pairwiseWorkflow.plan(config);
   if (command === "preflight") {
     console.log(JSON.stringify(plan.summary, null, 2));
@@ -140,33 +157,31 @@ async function main(): Promise<void> {
   if (command !== "run") throw new Error("Unknown command");
   if (
     !plan.tasks.length &&
-    !(values["run-id"] && (await exists(path.join(config.outputDir, values["run-id"], "state.json"))))
+    !(values["run-id"] && (await exists(runLayout(config.output, values["run-id"]).stateFile)))
   )
     throw new Error("没有可评配对，请先查看 preflight");
   const engine = values.engine as Engine;
   if (!["pi", "prime"].includes(engine)) throw new Error("--engine must be pi or prime");
-  if (!process.env[config.judge.apiKeyEnv])
-    throw new Error(`Missing ${config.judge.apiKeyEnv}; configure the shared model key in .env`);
+  const modelForStage = createModelResolver(host.models);
+  for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
+  for (const profile of boundProfiles(host.models))
+    if (!process.env[profile.apiKeyEnv])
+      throw new Error(`Missing ${profile.apiKeyEnv}; configure the model key in .env`);
   const controller = new AbortController(),
     interrupt = () => controller.abort(new Error("User interrupted"));
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
   try {
-    const { correctness, pairwise, ...shared } = config.judge;
     logRunId = values["run-id"] || `${engine}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`;
     const result = await runEvaluation({
       runId: logRunId,
-      outputDir: config.outputDir,
+      output: config.output,
       engine,
       config,
       ...services,
       plan,
       policy: config.execution,
-      modelForStage: (stage) =>
-        ({
-          ...shared,
-          ...(stage === "correctness" ? correctness : pairwise),
-        }) as ModelConfig,
+      modelForStage,
       concurrency: config.execution.concurrency,
       retries: config.execution.retries,
       retryDelaySeconds: config.execution.retryDelaySeconds,

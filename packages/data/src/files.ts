@@ -15,11 +15,7 @@ export const localFiles = {
   remove: rm,
 };
 
-export function internalPath(run: string, ...parts: string[]): string {
-  return path.join(run, "_internal", ...parts);
-}
-
-export async function exists(file: string): Promise<boolean> {
+export function exists(file: string): Promise<boolean> {
   return stat(file).then(
     () => true,
     () => false,

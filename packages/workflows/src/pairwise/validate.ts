@@ -2,7 +2,7 @@ import { localFiles } from "@eval/data";
 import path from "node:path";
 import type { SubmissionReceipt, ValidationIssue } from "@eval/contracts";
 import { canonical, errorText } from "@eval/contracts";
-import { exists, internalPath, readJson, writeJson } from "@eval/data";
+import { exists, internalPath, locateRun, readJson, writeJson } from "@eval/data";
 import { bindTask } from "./workflow.js";
 import type { AgentBinding, ToolAudit } from "@eval/contracts";
 import { writeOverview } from "./report.js";
@@ -126,11 +126,8 @@ export async function validateRun(
         }
         const value = receipt.evaluation as PairwiseResult;
         const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
-          name =
-            value.verdict.result === "not_comparable"
-              ? "not_comparable.jsonl"
-              : (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
-        if (value.verdict.result !== "not_comparable" && !outputValidator(row))
+          name = (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
+        if (!outputValidator(row))
           throw new Error("正式结果结构无效：" + JSON.stringify(outputValidator.errors));
         if (
           receipt.exported &&
@@ -144,7 +141,7 @@ export async function validateRun(
         errors.push(`${task.id}: ${errorText(error)}`);
       }
     }
-  const directory = path.join(run, "results");
+  const directory = locateRun(run).results;
   const actual = (await exists(directory)) ? await localFiles.list(directory) : [];
   for (const name of new Set([...actual.filter((v) => v.endsWith(".jsonl")), ...expected.keys()])) {
     try {
@@ -168,14 +165,13 @@ export async function validateRun(
       errors: artifactErrors,
     },
     completed_comparisons: [...expected].reduce(
-      (n, [name, rows]) =>
-        n + (["not_comparable.jsonl", "correctness.jsonl"].includes(name) ? 0 : rows.length),
+      (n, [name, rows]) => n + (name === "correctness.jsonl" ? 0 : rows.length),
       0,
     ),
     errors: [...errors, ...evidenceErrors],
     artifacts_checked: manifest.debug,
   };
-  const file = path.join(run, "stats.json");
+  const file = locateRun(run).stats;
   const summary = (await exists(file)) ? await readJson(file) : undefined;
   const { errors: _errors, results, evidence, artifacts, ...counts } = validation;
   await writeJson(file, {

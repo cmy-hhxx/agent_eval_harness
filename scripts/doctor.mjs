@@ -51,14 +51,20 @@ if (runtime.status !== 0) {
   console.error("Prime Python runtime missing; run npm run bootstrap.");
 } else console.log("Prime Python runtime: ready (independent .runtime/prime-python)");
 try {
-  const { loadConfig } = await import("@eval/host-app/config");
+  const { boundProfiles, loadConfig } = await import("@eval/host-app/config");
   const { createRegistry } = await import("@eval/tools");
-  const config = await loadConfig(process.argv[2] || path.join(root, "configs/host.json"));
-  console.log(
-    `Model configuration: ${config.judge.provider}, ${config.judge.api}; tools: ${createRegistry().names().join(", ")}`,
-  );
-  if (!process.env[config.judge.apiKeyEnv])
-    console.log(`Model credential ${config.judge.apiKeyEnv} is not loaded (only required for run).`);
+  const paths = process.argv.slice(2);
+  const host = await loadConfig(paths.length ? paths : [path.join(root, "configs/host.json")]);
+  const models = Object.entries(host.models.models)
+    .map(([name, profile]) => `${name}:${profile.model || "<unset>"}`)
+    .join(", ");
+  const bindings = Object.entries(host.models.bindings)
+    .map(([stage, binding]) => `${stage}->${binding.profile}`)
+    .join(", ");
+  console.log(`Models: ${models}; bindings: ${bindings}; tools: ${createRegistry().names().join(", ")}`);
+  for (const profile of boundProfiles(host.models))
+    if (!process.env[profile.apiKeyEnv])
+      console.log(`Model credential ${profile.apiKeyEnv} is not loaded (only required for run).`);
 } catch (error) {
   failures++;
   console.error(`Configuration: ${error.message}`);

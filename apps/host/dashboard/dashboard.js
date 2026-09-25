@@ -104,7 +104,8 @@ function renderConfig() {
   const env = state.config.environment || {};
   $("#env-status").innerHTML = `
     <span class="env-item ${env.base_url_configured ? "ready" : "missing"}">URL ${env.base_url_configured ? "已配置" : "缺失"}</span>
-    <span class="env-item ${env.api_key_configured ? "ready" : "missing"}">Key ${env.api_key_configured ? "已配置" : "缺失"}</span>`;
+    <span class="env-item ${env.api_key_configured ? "ready" : "missing"}">Key ${env.api_key_configured ? "已配置" : "缺失"}</span>
+    <span class="env-item ${env.model_configured ? "ready" : "missing"}">Model ${env.model_configured ? "已配置" : "缺失"}</span>`;
 }
 
 function renderDetails() {

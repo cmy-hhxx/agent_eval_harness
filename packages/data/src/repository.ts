@@ -10,6 +10,7 @@ import {
   type RunState,
 } from "@eval/contracts";
 import { appendJsonl, exists, readJson, writeJson, writeJsonl } from "./files.js";
+import { locateRun } from "./run-layout.js";
 
 /** Codecs are pure business conversions. Only this module accesses run files. */
 export interface RunCodec<Checkpoint> {
@@ -30,15 +31,16 @@ export function createRunRepository<Checkpoint>(
 ): RunRepository {
   return {
     async writeRun(run, state) {
-      await writeJson(path.join(run, "state.json"), codec.encode(state));
+      await writeJson(locateRun(run).stateFile, codec.encode(state));
     },
     async readRun(run) {
-      const checkpoint = await readJson<Checkpoint>(path.join(run, "state.json"));
+      const layout = locateRun(run);
+      const checkpoint = await readJson<Checkpoint>(layout.stateFile);
       const files = new Map<string, Map<string, JsonObject>>();
       for (const reference of codec.references(checkpoint)) {
         const name = safeId(reference.file!);
         if (files.has(name)) continue;
-        const file = path.join(run, "results", name);
+        const file = path.join(layout.results, name);
         const text = (await exists(file)) ? await readFile(file, "utf8") : "";
         const rows = new Map<string, JsonObject>();
         // An interrupted append can leave an incomplete last line. Durable receipts rebuild it.
@@ -61,7 +63,7 @@ export function createRunRepository<Checkpoint>(
     },
     createResultWriter(run, inputs) {
       const written = new Map<string, ResultReference & { row: JsonObject }>();
-      const directory = path.join(run, "results");
+      const directory = locateRun(run).results;
       let initialized = false;
       return async (state) => {
         const { manifest, receipts } = state;

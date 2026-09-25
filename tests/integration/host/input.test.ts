@@ -2,8 +2,8 @@ import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { loadConfig } from "@eval/host-app/config";
-import { buildPlan, comparisonPair } from "@eval/workflows/pairwise";
+import { loadConfig, createModelResolver } from "@eval/host-app/config";
+import { adapt, buildPlan, comparisonPair, inputAdapterIds, inputAdapters } from "@eval/workflows/pairwise";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/pairwise";
 import type { Finding } from "@eval/workflows/pairwise";
@@ -53,18 +53,27 @@ test("compressed JSONL preserves full records and rejects truncated storage", as
   }
 });
 
-test("configuration resolves the shared gateway and uses the data directory", async () => {
+test("configuration composes layered files and resolves bound models", async () => {
   const file = path.join(ROOT, "configs/host.json");
-  const config = await loadConfig(file, {
+  const host = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
+  assert.equal(host.models.models.judge?.baseUrl, "https://gateway.example/v1");
+  assert.equal(host.models.models.judge?.apiKeyEnv, "EVAL_API_KEY");
+  assert.equal(host.models.bindings.correctness?.profile, "judge");
+  assert.equal(host.models.bindings.pairwise?.profile, "judge");
+  assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/pairwise"));
+  for (const version of host.evaluation.inputs.versions)
+    assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers"));
+  assert.throws(() => createModelResolver(host.models)("correctness"), /Missing model id/);
+  const resolved = await loadConfig([file, path.join(ROOT, "configs/models.example.json")], {
     EVAL_BASE_URL: "https://gateway.example/v1",
   });
-  assert.equal(config.judge.baseUrl, "https://gateway.example/v1");
-  assert.equal(config.judge.apiKeyEnv, "EVAL_API_KEY");
-  assert.equal(config.outputDir, path.join(ROOT, "data/runs/pairwise"));
-  for (const version of config.inputs.versions)
-    assert.equal(version.path, path.join(ROOT, "data/sources/model-answers"));
+  const modelForStage = createModelResolver(resolved.models);
+  assert.equal(modelForStage("correctness").model, "your-gateway-model-id");
+  assert.equal(modelForStage("correctness").maxOutputTokens, 4096);
+  assert.equal(modelForStage("pairwise").maxOutputTokens, 8192);
+  assert.equal(modelForStage("pairwise").thinking, "low");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
-  await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid model baseUrl/);
+  await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
 });
 
 test("directory input paths merge matching files from date folders", async () => {
@@ -73,7 +82,7 @@ test("directory input paths merge matching files from date folders", async () =>
     const inputRoot = path.join(directory, "inputs");
     for (const folder of ["0922", "0923"]) await mkdir(path.join(inputRoot, folder), { recursive: true });
     for (const version of config.inputs.versions) {
-      version.path = inputRoot;
+      version.sources = [{ kind: "directory", path: inputRoot, include: [version.id + ".jsonl"] }];
       await writeJsonl(path.join(inputRoot, "0922", version.id + ".jsonl"), [raw("day-0922")]);
       await writeJsonl(path.join(inputRoot, "0923", version.id + ".jsonl"), [raw("day-0923")]);
     }
@@ -101,18 +110,55 @@ test("no-standard-answer flags on all versions skip correctness tasks", async ()
   }
 });
 
-test("all ordered pairs admit only same-tier cross-group comparisons", () => {
-  const ids = ["a_fast", "a_expert", "aa_fast", "aa_expert"];
-  for (const a of ids)
-    for (const b of ids) {
-      const allowed =
-        (a === "a_fast" && b === "aa_fast") ||
-        (b === "a_fast" && a === "aa_fast") ||
-        (a === "a_expert" && b === "aa_expert") ||
-        (b === "a_expert" && a === "aa_expert");
-      if (allowed) assert.equal(comparisonPair([a, b]).length, 2);
-      else assert.throws(() => comparisonPair([a, b]));
+test("comparison pairs are configured, not fixed to built-in versions", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const versions: typeof config.inputs.versions = [];
+    for (const [id, name] of [
+      ["deepseek", "DeepSeek"],
+      ["kimi", "Kimi"],
+    ] as const) {
+      const file = path.join(directory, `${id}.jsonl`);
+      await writeJsonl(file, [raw("q1")]);
+      versions.push({ id, name, adapter: "a", sources: [{ kind: "file", path: file }] });
     }
+    config.inputs.versions = versions;
+    config.pairs = [["deepseek", "kimi"]];
+    const plan = await buildPlan(config);
+    assert.deepEqual(plan.summary.allowed_pairs, [["deepseek", "kimi"]]);
+    assert.equal(plan.summary.pairwise_tasks, 1);
+    const pair = (plan.tasks.find((task) => task.stage === "pairwise")!.data as { pair: string[] }).pair!;
+    assert.equal(pair.join("__vs__"), "deepseek__vs__kimi");
+    for (const invalid of [["deepseek"], ["deepseek", "deepseek"]]) assert.throws(() => comparisonPair(invalid));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+test("input adapters are registered by declaration, not by branching", () => {
+  assert(inputAdapterIds.includes("a") && inputAdapterIds.includes("aa"));
+  const record = {
+    batch_id: "b1",
+    case_id: "q1",
+    messages: [
+      { type: "question", role: "user", content: "计算2+2" },
+      { type: "reply", role: "assistant", content: "2+2=4" },
+    ],
+    meta: { ok: true, ground_truth: "4", model_id: "custom-model" },
+  };
+  const version = { id: "custom", name: "Custom", adapter: "custom", sources: [] };
+  inputAdapters.custom = {
+    id: "custom",
+    accepts: (message) => ["question", "reply"].includes(String(message.type)),
+    answerModel: (raw) => (raw.meta?.model_id ? String(raw.meta.model_id) : null),
+  };
+  try {
+    const candidate = adapt(record, version, "custom.jsonl", 1);
+    assert.equal(candidate.version, "custom");
+    assert.equal(candidate.llm, "custom-model");
+    assert.throws(() => adapt(record, { ...version, adapter: "nope" }, "custom.jsonl", 1), /未注册的输入适配器/);
+  } finally {
+    delete inputAdapters.custom;
+  }
 });
 test("image observations require an actual image tool audit", async () => {
   const input = raw("image", null);
@@ -226,7 +272,6 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
         for (const rule of [
           "both_good",
           "both_bad",
-          "not_comparable",
           "decisive_findings",
           "counterevidence",
           "requirement_uncovered",

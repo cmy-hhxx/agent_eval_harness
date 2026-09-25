@@ -76,7 +76,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       );
       return [];
     }
-    if (pairwise.verdict.result !== "not_comparable" && finding.assessment.evidence_status !== "established")
+    if (finding.assessment.evidence_status !== "established")
       issue(
         "finding_uncertain",
         `/decision_basis/decisive_findings/${i}`,
@@ -95,7 +95,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         undefined,
         ref.finding_index,
       );
-  if (pairwise.verdict.result !== "not_comparable" && new Set(decisive.map((d) => d.candidate)).size !== 2)
+  if (new Set(decisive.map((d) => d.candidate)).size !== 2)
     issue("both_candidates_required", "/decision_basis/decisive_findings", "判决必须引用双方发现");
   const winner =
     pairwise.verdict.result === "A_better" ? "A" : pairwise.verdict.result === "B_better" ? "B" : null;
@@ -174,30 +174,29 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         );
     }
   }
-  if (pairwise.verdict.result !== "not_comparable")
-    for (const [candidate, review] of Object.entries(evaluations))
-      review.findings.forEach((finding, index) => {
-        const opposite = winner
-          ? candidate === winner
-            ? finding.type === "problem"
-            : finding.type === "strength"
-          : pairwise.verdict.result === "both_good"
-            ? finding.type === "problem"
-            : finding.type === "strength";
-        if (
-          opposite &&
-          finding.importance !== "low" &&
-          finding.assessment.evidence_status === "established" &&
-          !references.counterevidence.some((r) => r.candidate === candidate && r.finding_index === index)
-        )
-          issue(
-            "counterevidence_missing",
-            "/decision_basis/counterevidence",
-            `遗漏已确认的重要反向证据：counterevidence 缺少 ${candidate}:${index}`,
-            candidate,
-            index,
-          );
-      });
+  for (const [candidate, review] of Object.entries(evaluations))
+    review.findings.forEach((finding, index) => {
+      const opposite = winner
+        ? candidate === winner
+          ? finding.type === "problem"
+          : finding.type === "strength"
+        : pairwise.verdict.result === "both_good"
+          ? finding.type === "problem"
+          : finding.type === "strength";
+      if (
+        opposite &&
+        finding.importance !== "low" &&
+        finding.assessment.evidence_status === "established" &&
+        !references.counterevidence.some((r) => r.candidate === candidate && r.finding_index === index)
+      )
+        issue(
+          "counterevidence_missing",
+          "/decision_basis/counterevidence",
+          `遗漏已确认的重要反向证据：counterevidence 缺少 ${candidate}:${index}`,
+          candidate,
+          index,
+        );
+    });
   if (
     Object.values(input.candidates).some((r) => r.original_answer_timing.finish_seconds === null) &&
     analysis.timing_analysis

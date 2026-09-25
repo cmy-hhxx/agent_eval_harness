@@ -378,24 +378,6 @@ test("an export failure withholds acknowledgement but the saved receipt can reco
     await rm(directory, { recursive: true, force: true });
   }
 });
-test("not-comparable submissions stream only to their separate result file", async () => {
-  const { directory, store, spec, value } = await fixture();
-  try {
-    await store.activate(spec);
-    const evaluation = pairResult();
-    evaluation.verdict.result = "not_comparable";
-    await store.accept({
-      ...value,
-      evaluation: draftFor(spec, evaluation),
-      submissionId: randomUUID(),
-    });
-    const file = path.join(store.run, "results/not_comparable.jsonl");
-    assert.equal(JSON.parse(await readFile(file, "utf8")).verdict.result, "not_comparable");
-    assert.equal(await exists(path.join(store.run, "results/a_fast__vs__aa_fast.jsonl")), false);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 test("recovery removes duplicate and partial trailing rows without losing committed results", async () => {
   const { directory, store, spec, value } = await fixture();
   try {

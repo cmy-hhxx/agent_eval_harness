@@ -10,6 +10,7 @@ import {
   type Engine,
   type EngineIdentity,
   type ModelConfig,
+  type OutputTarget,
   type PlannedTask,
   type Policy,
   type RunState,
@@ -19,7 +20,7 @@ import {
 } from "@eval/contracts";
 import { HttpError, canonical, errorText, redact, safeId } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
-import { compressFile, exists, internalPath, runLock, readJson, writeJson } from "@eval/data";
+import { compressFile, exists, internalPath, runLayout, runLock, readJson, writeJson } from "@eval/data";
 import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
@@ -31,7 +32,7 @@ export interface RunOptions extends EvaluationServices {
   snapshots?: Record<string, unknown>;
   report?: (run: string) => Promise<Record<string, unknown>>;
   runId: string;
-  outputDir: string;
+  output: OutputTarget;
   engine: Engine;
   config: unknown;
   plan: TaskPlan;
@@ -50,7 +51,8 @@ export interface RunOptions extends EvaluationServices {
 }
 export async function runEvaluation(options: RunOptions) {
   safeId(options.runId);
-  const run = path.join(options.outputDir, options.runId),
+  const layout = runLayout(options.output, options.runId),
+    run = layout.directory,
     unlock = await runLock(run);
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
   const controller = new AbortController();
@@ -77,7 +79,7 @@ export async function runEvaluation(options: RunOptions) {
       identities[engine] ??= await loadIdentity(engine, options.runtime.root);
     let saved: RunState;
     let inputs = options.plan.inputs;
-    if (await exists(path.join(run, "state.json"))) {
+    if (await exists(layout.stateFile)) {
       saved = await options.repository.readRun(run);
       if (options.workflow.reconcile)
         inputs = (await options.workflow.reconcile(run, saved, options.config)).inputs;
@@ -111,7 +113,6 @@ export async function runEvaluation(options: RunOptions) {
     }
     const manifest = saved.manifest;
     manifest.concurrency = desiredConcurrency;
-    await options.workflow.assertInputs?.(saved);
     for (const engine of new Set(manifest.tasks.map(engineForTask)))
       identities[engine] ??= await loadIdentity(engine, options.runtime.root);
     workspace = await createRunWorkspace(run, manifest.debug);
@@ -123,7 +124,7 @@ export async function runEvaluation(options: RunOptions) {
     store = new RunStore(run, saved, inputs, options);
     manifest.status = "running";
     delete manifest.finishedAt;
-    await localFiles.remove(path.join(run, "stats.json"), { force: true });
+    await localFiles.remove(layout.stats, { force: true });
     for (const task of manifest.tasks) {
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
@@ -137,7 +138,7 @@ export async function runEvaluation(options: RunOptions) {
     }
     await store.save();
     const current = store;
-    const lock = await readJson<{ pid: number; token: string }>(path.join(run, ".run-lock"));
+    const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
       if (url.pathname === "/api/control/concurrency" && req.method === "POST") {
@@ -175,7 +176,7 @@ export async function runEvaluation(options: RunOptions) {
         return json(res, await current.findSubmission(safeId(parts[2])));
       throw new HttpError(404, "Not found");
     });
-    await writeJson(path.join(run, ".run-lock"), { ...lock, url: http.url });
+    await writeJson(layout.lockFile, { ...lock, url: http.url });
     progressTimer = setInterval(
       () => options.onProgress?.("progress " + JSON.stringify(progressSnapshot(saved))),
       10000,

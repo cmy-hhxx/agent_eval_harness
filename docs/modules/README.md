@@ -12,8 +12,8 @@
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |
 | Comparison | [默认 Profile](../../packages/agents/src/comparison/index.ts)、`profiles/default` 提示词和 Schema、resolve/validate | `@eval/agents/comparison` | Contracts、Tools | 同目录单元测试、组合判决 |
 | Critique | [correctness Profile](../../packages/agents/src/critique/index.ts)、`profiles/correctness`、resolve/validate | `@eval/agents/critique` | Contracts、Tools | 同目录单元测试、正确性收据 |
-| Pairwise Workflow | [输入配对](../../packages/workflows/src/pairwise/input.ts)、[材料映射](../../packages/workflows/src/pairwise/workflow.ts)、[纯编解码](../../packages/workflows/src/pairwise/codec.ts)、报告 | `@eval/workflows/pairwise` | Contracts、Data、Tools、Agent 公开类型/Schema | A/AA、盲测、批次、结果、续跑 |
-| Data | [文件与锁](../../packages/data/src/files.ts)、[源读取](../../packages/data/src/sources.ts)、[Repository](../../packages/data/src/repository.ts)、[日志](../../packages/data/src/logging.ts) | `@eval/data` | Contracts | 原子保存、追加中断、崩溃恢复、日志并行与去重 |
+| Pairwise Workflow | [输入适配器](../../packages/workflows/src/pairwise/adapters.ts)、[输入配对](../../packages/workflows/src/pairwise/input.ts)、[材料映射](../../packages/workflows/src/pairwise/workflow.ts)、[纯编解码](../../packages/workflows/src/pairwise/codec.ts)、报告 | `@eval/workflows/pairwise` | Contracts、Data、Tools、Agent 公开类型/Schema | 适配器注册表、盲测、批次、结果、续跑 |
+| Data | [文件与锁](../../packages/data/src/files.ts)、[运行目录布局](../../packages/data/src/run-layout.ts)、[源解析](../../packages/data/src/sources.ts)、[Repository](../../packages/data/src/repository.ts)、[日志](../../packages/data/src/logging.ts) | `@eval/data` | Contracts | 原子保存、追加中断、崩溃恢复、日志并行与去重 |
 | Runtime | [客户端](../../packages/runtime/src/client.ts)、[Worker](../../packages/runtime/src/server.ts)、HTTP/SSE、`adapters/pi.ts` / `prime.ts` | `@eval/runtime/client`、`http`、`worker`、`pi`、`prime` | Contracts、Data、Tools | Worker 回归、SDK 集成、干净安装 |
 | Tools | [注册与执行](../../packages/tools/src/index.ts)、证据、分页、图片、代码与产物 | `@eval/tools` | Contracts、Data | 工具与进程生命周期 |
 

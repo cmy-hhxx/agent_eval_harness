@@ -26,7 +26,7 @@ flowchart LR
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
 | `packages/agents/src/comparison` | 对比 Profile、提示词、Schema、业务校验 |
 | `packages/agents/src/critique` | 独立 correctness Profile、提示词、Schema、业务校验 |
-| `packages/workflows/src/pairwise` | A/AA、固定配对、盲测、依赖与材料映射、状态编解码、报告 |
+| `packages/workflows/src/pairwise` | 适配器注册表、配置化配对、盲测、依赖与材料映射、状态编解码、报告 |
 | `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
@@ -45,7 +45,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 内部路由使用 `/api` 命名空间，不设置协议版本号。Host 和 Worker 同步构建部署，启动时校验底座身份、构建 UUID 和工具能力。
 
-请求用任务、输入和产物 ID，不传 Host 本机路径。输入与任务按业务标识首次登记持久化 UUID，产物使用 UUID。文件修订取自文件系统元数据，不计算哈希。模型配置传递 `apiKeyEnv` 而非密钥值，实际密钥从环境注入。当前只支持可信单机调用，未配置远程认证，不应直接暴露公网。
+请求用任务、输入和产物 ID，不传 Host 本机路径。输入与任务按业务标识首次登记持久化 UUID，产物使用 UUID，不计算哈希。模型配置传递 `apiKeyEnv` 而非密钥值，实际密钥从环境注入。当前只支持可信单机调用，未配置远程认证，不应直接暴露公网。
 
 | 接口 | 行为 |
 |---|---|
@@ -72,12 +72,13 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 - `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、输入和输出 Schema、引用展开及业务校验。
 - `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`。
-- `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换。
+- `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
+- `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
 - `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
 
 [应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验输入 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后输出。当前通过 TypeScript 对象组合任务，不引入新编排语言。
 
-源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。本阶段不增加全局目录账本。
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置；本阶段不增加全局目录账本。
 
 后续归因位置为 `packages/agents/src/attribution`，聚类为 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
 

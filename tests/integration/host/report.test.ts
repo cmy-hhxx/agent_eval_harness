@@ -45,7 +45,7 @@ for (const objective of [false, true])
                 id: versions[i],
                 name: versions[i],
                 adapter: "a",
-                path: "fixture.jsonl",
+                sources: [{ kind: "file", path: "fixture.jsonl" }],
               },
               "fixture.jsonl",
               1,

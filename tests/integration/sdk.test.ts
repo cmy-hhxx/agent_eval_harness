@@ -3,11 +3,10 @@ import assert from "node:assert/strict";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Engine, WorkerEvent } from "@eval/contracts";
-import { ROOT } from "../fixtures/services.js";
 import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
 import { object } from "@eval/contracts";
-import { loadConfig } from "@eval/host-app/config";
+import { createModelResolver } from "@eval/host-app/config";
 import { buildPlan } from "@eval/workflows/pairwise";
 import { services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
@@ -19,7 +18,7 @@ for (const engine of ["pi", "prime"] as Engine[])
     `${engine}: real vendored SDK over HTTP worker, code tool, two stages and resume`,
     { timeout: 120000 },
     async () => {
-      const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
+      const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       const gateway = await listen(async (req, res) => {
@@ -179,31 +178,20 @@ for (const engine of ["pi", "prime"] as Engine[])
       const previous = process.env.EVAL_API_KEY;
       process.env.EVAL_API_KEY = "integration-fixture-secret";
       try {
-        config.judge = (
-          await loadConfig(path.join(ROOT, "configs/host.json"), {
-            EVAL_BASE_URL: gateway.url + "/v1",
-          })
-        ).judge;
-        config.judge.correctness.model = "fixture";
-        config.judge.pairwise.model = "fixture";
-        config.judge.correctness.thinking = "off";
-        config.judge.pairwise.thinking = "off";
+        models.models.judge!.baseUrl = gateway.url + "/v1";
+        const modelForStage = createModelResolver(models);
         config.execution.timeoutSeconds = 45;
         config.execution.idleTimeoutSeconds = 15;
-        const { correctness, pairwise, ...common } = config.judge;
         const options = {
           runId: "sdk-" + engine,
           debug: engine === "pi",
-          outputDir: config.outputDir,
+          output: config.output,
           engine,
           config,
           ...services,
           plan: await buildPlan(config),
           policy: config.execution,
-          modelForStage: (stage: string) => ({
-            ...common,
-            ...(stage === "correctness" ? correctness : pairwise),
-          }),
+          modelForStage,
           concurrency: 2,
           retries: 0,
           retryDelaySeconds: 0,
@@ -211,7 +199,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         const summary = await runEvaluation(options);
         assert.deepEqual(serverErrors, []);
         const failureFile = path.join(
-          config.outputDir,
+          config.output.path,
           options.runId,
           "_internal/diagnostics/failures.jsonl",
         );
@@ -228,7 +216,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           const events: WorkerEvent[] = [];
           for await (const event of readJsonl(
             path.join(
-              config.outputDir,
+              config.output.path,
               options.runId,
               "_internal",
               "tasks",
@@ -246,7 +234,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             ),
           );
         }
-        const validation = await validateRun(path.join(config.outputDir, options.runId));
+        const validation = await validateRun(path.join(config.output.path, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));
         await runEvaluation(options);
         assert.equal(requests.length, expectedRequests);

@@ -119,6 +119,15 @@ export interface ResultReference {
   file?: string;
   id: string;
 }
+/** Where a run writes its ledger, results and reports. */
+export interface OutputTarget {
+  kind: "directory";
+  path: string;
+}
+/** Where a version's records come from. Resolved by Data. */
+export type InputSource =
+  | { kind: "file"; path: string }
+  | { kind: "directory"; path: string; include?: string[] };
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
@@ -221,7 +230,6 @@ export interface WorkflowDefinition {
   id: string;
   plan(config: unknown): Promise<TaskPlan>;
   reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
-  assertInputs?(state: RunState): Promise<void>;
   bind(
     task: PlannedTask,
     inputs: Record<string, unknown>,
