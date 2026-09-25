@@ -21,7 +21,7 @@ import {
 import type { CorrectnessResult, EvalConfig, PairwiseResult, RawInput, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
 import { comparisonPair } from "./input.js";
-import { outputSchema } from "./index.js";
+import { outputSchema, stageSchema } from "./index.js";
 import { loadRunInputs, readRunState, writeRunState } from "./run-data.js";
 
 function display<T>(value: T, names: Record<string, string>, key = ""): T {
@@ -112,16 +112,30 @@ export function comparisonRow(
     },
   };
 }
+export function correctnessRow(task: PlannedTask, receipt: SubmissionReceipt): JsonObject {
+  const candidate = (task.data as TaskData).candidates.A;
+  return {
+    evaluation_type: "correctness",
+    task_id: task.id,
+    submission_id: receipt.submissionId,
+    input_id: task.inputIds.A,
+    case: { batch_id: candidate.batch_id, case_id: candidate.case_id },
+    version: candidate.version,
+    evaluation: receipt.evaluation,
+  };
+}
+
 export function createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void> {
   const written = new Map<string, NonNullable<SubmissionReceipt["exported"]>>();
   const directory = path.join(run, "results");
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   const validateOutput = ajv.compile(outputSchema);
+  const validateCorrectness = ajv.compile(stageSchema("correctness"));
   let initialized = false;
   return async ({ manifest, receipts: accepted }) => {
     try {
       for (const [id, exported] of written) if (accepted[id]) accepted[id].exported = exported;
-      const pending = manifest.tasks.filter((task) => task.stage === "pairwise" && accepted[task.id] && !written.has(task.id));
+      const pending = manifest.tasks.filter((task) => accepted[task.id] && !written.has(task.id));
       if (initialized && !pending.length) return;
       const config = manifest.config as EvalConfig;
       const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
@@ -130,6 +144,15 @@ export function createResultWriter(run: string, inputs: Record<string, unknown>)
       const exports = new Map<string, NonNullable<SubmissionReceipt["exported"]>>();
       for (const task of pending) {
         const receipt = accepted[task.id], data = task.data as TaskData;
+        if (task.stage === "correctness") {
+          const row = receipt.exported?.row || correctnessRow(task, receipt);
+          if (!validateCorrectness(row.evaluation))
+            throw new Error("正确性结果 schema 无效：" + ajv.errorsText(validateCorrectness.errors));
+          const file = "correctness.jsonl";
+          (groups[file] ??= []).push(row);
+          exports.set(task.id, { taskId: task.id, file, row });
+          continue;
+        }
         const result = receipt.evaluation as PairwiseResult;
         const row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names);
         const notComparable = result.verdict.result === "not_comparable";
@@ -258,6 +281,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       receipts.set(task.id, receipt);
     }
   }
+  // Persist both stages before compacting the ledger, including checkpoint-only recovery.
+  await createResultWriter(run, inputs)(state);
   const groups: Record<string, JsonObject[]> = {},
     notComparable: JsonObject[] = [],
     outcomes: JsonObject[] = [],
@@ -430,7 +455,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const results = path.join(run, "results");
   await mkdir(results, { recursive: true });
   for (const old of await readdir(results))
-    if (old.endsWith(".jsonl") && !groups[old.slice(0, -6)] && !(old === "not_comparable.jsonl" && notComparable.length))
+    if (old.endsWith(".jsonl") && old !== "correctness.jsonl" && !groups[old.slice(0, -6)] && !(old === "not_comparable.jsonl" && notComparable.length))
       await rm(path.join(results, old));
   for (const [pair, rows] of Object.entries(groups))
     await writeJsonl(path.join(results, `${pair}.jsonl`), rows);
@@ -446,7 +471,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (rows.length) await writeJsonl(file, rows);
     else await rm(file, { force: true });
   }
-  await writeDetail("correctness", correctness.filter((row) => row.assessment_status === "assessed"));
   const skipped = (manifest.preflight.skipped as JsonObject[] | undefined) || [];
   const issues = (manifest.preflight.issues as JsonObject[] | undefined) || [];
   if (skipped.length) markdown.push("# 跳过的输入", "", ...skipped.map((item) =>
@@ -482,8 +506,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     submission_metrics_tasks: measured.length,
     first_submission_pass_rate: measured.length ? measured.filter((r) => r.accepted && r.submissions === 1).length / measured.length : null,
     content_repairs: measured.reduce((sum, r) => sum + r.submissions - 1, 0),
-    repeated_error_tasks: Object.values(manifest.states).filter((s) => (s.failure?.repeatedErrors || 0) >= 2).length,
-    repeated_error_rate: measured.length ? Object.values(manifest.states).filter((s) => (s.failure?.repeatedErrors || 0) >= 2).length / measured.length : null,
+    repeated_error_tasks: Object.values(manifest.states).filter((s) => (s.repeatedErrors ?? s.failure?.repeatedErrors ?? 0) >= 2).length,
+    repeated_error_rate: measured.length ? Object.values(manifest.states).filter((s) => (s.repeatedErrors ?? s.failure?.repeatedErrors ?? 0) >= 2).length / measured.length : null,
     attempts_per_accepted_task: receipts.size ? Object.values(manifest.states).reduce((n, s) => n + s.attempts, 0) / receipts.size : null,
     tokens_per_accepted_task: receipts.size ? attemptUsage.totalTokens / receipts.size : null,
     p50_seconds: durations.length ? durations[Math.floor((durations.length - 1) * 0.5)] : null,

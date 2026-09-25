@@ -88,7 +88,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     const checkpoint = await readJson(path.join(run, "state.json"));
     assert.equal(checkpoint.manifest, undefined);
     assert.equal(checkpoint.receipts, undefined);
-    for (const task of plan.tasks.filter((task) => task.stage === "pairwise")) {
+    for (const task of plan.tasks) {
       const stored = (checkpoint.tasks as Record<string, { receipt: Record<string, unknown> }>)[task.id].receipt;
       assert(stored.exported);
       assert.equal(stored.evaluation, undefined, "formal verdicts are referenced, not copied into state");
@@ -98,7 +98,8 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.deepEqual((await readdir(run)).sort(), ["_internal", "report.md", "results", "state.json", "stats.json", "task_summaries.md"]);
     assert.equal(await exists(internalPath(run, "exports")), false);
     assert.equal(await exists(internalPath(run, "diagnostics", "failures.jsonl")), false);
-    assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), true);
+    assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), false);
+    assert.equal((await readFile(path.join(run, "results", "correctness.jsonl"), "utf8")).trim().split("\n").length, 4);
     assert.deepEqual(await loadRunInputs((await readRunState(run)).manifest), plan.inputs);
     assert.equal(await exists(path.join(run, "inputs")), false);
     assert.equal(await exists(path.join(run, "preflight.json")), false);

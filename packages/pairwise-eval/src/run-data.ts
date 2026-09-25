@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
-import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState, TaskPlan, ValidationIssue } from "../../contracts/src/index.js";
+import type { JsonObject, RunManifest, RunState, ResultReference, SubmissionReceipt, TaskState, TaskPlan, ValidationIssue } from "../../contracts/src/index.js";
 import { canonical, errorText, exists, readJson, safeId, ValidationError, writeJson } from "../../contracts/src/io.js";
 import { adapt, buildPlan, candidateKey, inputSources, readInputSource } from "./input.js";
 import type { BatchPreflight, Candidate, EvalConfig, PairwiseResult, RawInput, TaskData } from "./types.js";
@@ -11,7 +11,7 @@ type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "submitt
   evaluation?: unknown;
   evaluationPatch?: Patch;
   submittedPatch?: Patch;
-  exported?: { comparisonId: string; file?: string };
+  exported?: ResultReference;
 };
 type SavedTask = TaskState & { stage: string; inputIds: Record<string, string>; dependencies: Record<string, string>;
   data: Omit<TaskData, "candidates" | "stage" | "revision">; receipt?: SavedReceipt };
@@ -56,9 +56,10 @@ export async function writeRunState(run: string, state: RunState): Promise<void>
     const receipt = state.receipts[task.id];
     if (receipt) {
       const { exported, evaluation, submitted, ...rest } = receipt;
+      const reference = exported && (({ row: _row, ...ref }) => ref)(exported);
+      const evaluationPatch = exported ? difference(resultEvaluation(task.data as TaskData, exported.row), evaluation) : [];
       value.receipt = { ...rest,
-        ...(exported ? { exported: { comparisonId: exported.comparisonId, file: exported.file },
-          evaluationPatch: difference(evaluationFromRow(task.data as TaskData, exported.row), evaluation) } : { evaluation }),
+        ...(reference ? { exported: reference, ...(evaluationPatch.length ? { evaluationPatch } : {}) } : { evaluation }),
         ...(submitted !== undefined ? { submittedPatch: difference(evaluation, submitted) } : {}),
       };
     }
@@ -92,6 +93,10 @@ export function evaluationFromRow(data: TaskData, row: JsonObject): PairwiseResu
   };
 }
 
+function resultEvaluation(data: TaskData, row: JsonObject): unknown {
+  return data.stage === "correctness" ? row.evaluation : evaluationFromRow(data, row);
+}
+
 export async function readRunState(run: string): Promise<RunState> {
   const { tasks: savedTasks, inputs, usage, recordedAttempts, ...metadata } = await readJson<Checkpoint>(path.join(run, "state.json"));
   if (metadata.format !== "dual-agent-eval/6") throw new Error("不支持此运行格式；请先运行 upgrade-run 显式升级。");
@@ -118,22 +123,27 @@ export async function readRunState(run: string): Promise<RunState> {
       continue;
     }
     const data = task.data as TaskData;
-    const file = path.join(run, "results", safeId(receipt.exported.file || data.pair!.join("__vs__") + ".jsonl"));
+    const correctness = data.stage === "correctness";
+    if (correctness ? receipt.exported.taskId !== task.id : !receipt.exported.comparisonId)
+      throw new Error("结果引用类型或任务身份不一致：" + task.id);
+    const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
+    const file = path.join(run, "results", safeId(receipt.exported.file || (correctness ? "correctness.jsonl" : data.pair!.join("__vs__") + ".jsonl")));
     if (!files.has(file)) {
       const text = await exists(file) ? await readFile(file, "utf8") : "", rows = new Map<string, JsonObject>();
       for (const line of text.slice(0, text.lastIndexOf("\n") + 1).split("\n")) if (line.trim()) {
         const row = JSON.parse(line) as JsonObject;
-        const id = String(row.comparison_id), previous = rows.get(id);
-        if (previous && canonical(previous) !== canonical(row)) throw new Error("比较 ID 对应冲突结果：" + id);
+        const id = String(row.task_id ?? row.comparison_id), previous = rows.get(id);
+        if (previous && canonical(previous) !== canonical(row)) throw new Error("结果 ID 对应冲突结果：" + id);
         rows.set(id, row);
       }
       files.set(file, rows);
     }
-    const row = files.get(file)!.get(receipt.exported.comparisonId);
-    if (!row) throw new Error("结果文件缺失：" + receipt.exported.comparisonId);
-    if (canonical(row.case) !== canonical({ batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id }))
-      throw new Error("结果文件缺失或身份不一致：" + receipt.exported.comparisonId);
-    const evaluation = restore(evaluationFromRow(data, row), evaluationPatch || []);
+    const row = files.get(file)!.get(resultId);
+    if (!row) throw new Error("结果文件缺失：" + resultId);
+    if (canonical(row.case) !== canonical({ batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id }) ||
+        (correctness && (row.evaluation_type !== "correctness" || row.input_id !== task.inputIds.A || row.version !== data.candidates.A.version || row.submission_id !== receipt.submissionId)))
+      throw new Error("结果文件缺失或身份不一致：" + resultId);
+    const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
     state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
       exported: { ...receipt.exported, row } };
   }
