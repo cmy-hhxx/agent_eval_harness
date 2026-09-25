@@ -6,7 +6,7 @@ import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { emptyUsage, type AgentBackend, type ModelConfig, type RunManifest, type SubmissionReceipt } from "../../packages/contracts/src/index.js";
-import { readJsonl, writeInputs, writeJson } from "../../packages/contracts/src/io.js";
+import { readJsonl, writeJson } from "../../packages/contracts/src/io.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { outputSchema, pairwisePack, validateEvaluation } from "../../packages/pairwise-eval/src/index.js";
 import { comparisonRow, reportRun } from "../../packages/pairwise-eval/src/report.js";
@@ -225,7 +225,6 @@ for (const reverse of [false, true])
       };
       await writeRunState(directory, { manifest, receipts, usage: emptyUsage(), recordedAttempts: 0 });
       await writeJson(path.join(directory, "_internal", "output_schema.json"), outputSchema);
-      await writeInputs(directory, plan.inputs);
       const summary = await reportRun(directory, { details: true });
       assert.equal(summary.completed_comparisons, 4);
       const stats = (summary.pairs as Record<string, Record<string, unknown>>).a_fast__vs__aa_fast;

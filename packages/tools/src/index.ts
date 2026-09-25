@@ -193,7 +193,7 @@ export const builtinTools: ToolDefinition[] = [
   {
     name: "read_trace",
     description:
-      "按原始消息索引读取材料；offset 按 UTF-16 字符计，支持分页，返回的 evidence 可直接用于提交。",
+      "按原始消息索引读取材料；offset 按 UTF-16 字符计，支持分页，提交时使用返回证据中的 evidence_id。",
     inputSchema: schema(
       {
         candidate: str,
@@ -234,7 +234,7 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "search_trace",
-    description: "在候选全部原始消息中搜索逐字子串，返回消息索引和可提交证据。",
+    description: "在候选全部原始消息中搜索逐字子串，返回消息索引和证据；提交时使用其中的 evidence_id。",
     inputSchema: schema(
       { candidate: str, query: { type: "string", minLength: 1, maxLength: 500 }, offset: index },
       ["candidate", "query"],

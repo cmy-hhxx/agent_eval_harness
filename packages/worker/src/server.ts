@@ -239,7 +239,7 @@ export async function startWorker(
       const validateFile = ajv.compile(fileSchema);
       const submitFile: ToolDefinition = {
         name: "submit_evaluation_file",
-        description: "提交 execute_code 当前工作目录内的 JSON 文件，path 优先用 evaluation-draft.json 等相对路径，不要写到 /tmp。适合用代码从 inputs/ 精确复制引文；内容使用相同修正预算；文件加载错误独立限制三次。",
+        description: "提交 execute_code 当前工作目录内的 JSON 文件，path 优先用 evaluation-draft.json 等相对路径，不要写到 /tmp。文件内容遵循 submit_evaluation 的 schema；证据使用材料工具提供的 evidence_id，发现引用使用 finding_id。内容使用相同修正预算；文件加载错误独立限制三次。",
         inputSchema: fileSchema,
         execute: (_context, value) => submitResult(async () => {
           if (!validateFile(value)) throw new Error("文件提交参数必须是 {path: 文件路径}");

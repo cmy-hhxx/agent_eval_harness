@@ -24,33 +24,37 @@
 | “双方都不太行。” | “题目要求计算 2+2，双方均给出 5，核心交付都错误且无其他可用性差异，因此都差。” |
 | “A 的框架更完整，所以 A 更好。” | “用户要实际回测结果。双方均未运行回测，A 多写的方法说明仍未完成核心交付，因此都差。” |
 
-正式 findings 还要附当前输入中的消息序号和逐字引文。详细结论不应以内部工具调试过程代替用户关心的实际影响。
+裁判提交的 findings 使用材料工具提供的 `evidence_id`，Host 展开为正式结果中的消息序号和逐字引文；不要求裁判手写引文。详细结论不应以内部工具调试过程代替用户关心的实际影响。
 
 ## 真实模型复核
 
 自动测试检查结构、映射、引用和故障处理；模拟网关不证明模型事实判断正确。修改提示词、模型或关键预算时：
 
-1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入修订 ID、模型、底座、契约和预算。
+1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入 UUID、源文件修订、模型、底座、契约和预算。
 2. 两个底座使用相同题集。人工核查决定性发现、影响与反向证据，记录人工判断及分歧原因。
 3. 使用显式 A/B 位置交换，检查稳定版本映射与判决一致性。
-4. 改变一个关键事实，确认依赖任务失效并复核结论是否合理响应。
+4. 在独立输入目录构造只改变一个关键事实的变体，使用新 run ID 重新执行正确性和配对阶段，复核结论是否合理响应。不要修改固定回归集引用的源文件；同 run ID 会保留已接受结果，不能用来验证事实变更后的重评效果。
 5. 研究裁判稳定性时使用独立 run ID，至少重复三次，记录分歧、用量、耗时及未完成率。
 
 先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/`，不追加到本指南。
 
 ## 离线回归与小样本入口
 
-先构建应用，再从留存失败草稿建立固定 JSON 回归集。`collect` 保留原草稿，只将逐字可定位的证据转成 ID；不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
+先运行 `npm run build:app`。`collect` 从 debug 运行的事件日志中收集 `submit_evaluation` 直接提交被拒绝时的草稿；普通运行中仅保存在状态里的草稿、`submit_evaluation_file` 的失败不会被收集。下面的 `pi-debug` 应是已通过 `--debug` 留存这类事件的运行。
+
+回归集保留原草稿；校验时仅将逐字可定位的旧引文转成证据 ID，并为缺少 ID 的发现及其索引引用补齐对应 ID。不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
 
 ```bash
-npm run benchmark -- collect --run data/runs/pi-001 --output .artifacts/regression/fixtures.json --limit 32
+npm run benchmark -- collect --run data/runs/pi-debug --output .artifacts/regression/fixtures.json --limit 32
 npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
 npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
 ```
 
 回归集保存固定草稿、预期结果和原始输入引用，不嵌入输入副本。源文件修订变化时回放明确报错，避免把新材料用于旧草稿。
 
-`run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行输出到 `.artifacts/model-benchmarks/`，要求新 run ID。统计保存在 `stats.json`，包括首次通过率、重复错误、attempts/Token 和 P50/P95。只有保留了内容提交计数的任务参与首次通过率统计；留存 debug attempts 既不是全量尝试，也不是首次通过率的分母。
+`run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行默认输出到 `.artifacts/model-benchmarks/`，要求新 run ID。`--limit` 在 `collect` 中限制草稿条数，在 `run` 中限制配对数；独立正确性依赖另行执行。统计保存在 `stats.json`，口径见[运行产物](usage.md#运行产物)。回归集中的失败草稿不是全量提交样本，不能用来计算生产运行的首次通过率。
+
+完成原始位置和 `--swap` 的两次真实运行后，才可比较其结果目录：
 
 ```bash
 npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi --run .artifacts/model-benchmarks/sample-pi-swapped --output .artifacts/regression/stability.json

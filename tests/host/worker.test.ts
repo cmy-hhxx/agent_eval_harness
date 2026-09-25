@@ -227,7 +227,7 @@ test("exhausted exploration budget still permits submission and two repairs", as
     await fixture.close();
   }
 });
-test("file submission repairs a rejected quote from inputs after exploration is exhausted", async () => {
+test("file submission repairs a rejected evidence ID after exploration is exhausted", async () => {
   const fixture = await harness(async (options) => ({
     async run() {
       await options.execute("read_trace", { candidate: "A", message_index: 1 });
@@ -237,7 +237,7 @@ test("file submission repairs a rejected quote from inputs after exploration is 
       assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draftFor(options.spec, invalid));
       const fixed = await options.execute("execute_code", {
         language: "python",
-        code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\na=json.loads(Path('inputs/A.json').read_text())\nr['evaluations']['A']['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace("VALID_ID", JSON.stringify((draftFor(options.spec, pairResult()) as any).evaluations.A.findings[0].evidence[0].evidence_id)),
+        code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['evaluations']['A']['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace("VALID_ID", JSON.stringify((draftFor(options.spec, pairResult()) as any).evaluations.A.findings[0].evidence[0].evidence_id)),
       });
       assert.notEqual(fixed.isError, true);
       assert.equal((await options.execute("read_trace", { candidate: "B", message_index: 1 })).isError, true);

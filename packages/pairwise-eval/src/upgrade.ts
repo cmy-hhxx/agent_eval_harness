@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { EngineIdentity, JsonObject, PlannedTask, RunManifest, RunState, SubmissionReceipt, TaskState } from "../../contracts/src/index.js";
-import { exists, internalPath, readInputs, readJson, runLock } from "../../contracts/src/io.js";
+import { exists, internalPath, readJsonl, readJson, runLock, safeId } from "../../contracts/src/io.js";
 import { candidateKey, inputSources, readInputSource } from "./input.js";
 import { evaluationFromRow, loadRunInputs, readRunState, writeRunState } from "./run-data.js";
 import type { Candidate, EvalConfig, TaskData } from "./types.js";
@@ -26,7 +26,13 @@ async function convert(run: string): Promise<{ state: RunState; inputs: Record<s
   const planFile = internalPath(run, "plan.json");
   if (!await exists(planFile)) throw new Error("缺少保存的 plan.json；无法在不计算哈希的情况下推断旧任务 ID，请恢复原计划材料。");
   const plan = await readJson<{ tasks: PlannedTask[]; summary: JsonObject }>(planFile);
-  const inputs = await readInputs(run);
+  const inputs: Record<string, unknown> = {};
+  for await (const row of readJsonl(internalPath(run, "inputs.jsonl.gz"))) {
+    const { id, value } = row as { id: string; value: unknown };
+    safeId(id);
+    if (Object.hasOwn(inputs, id)) throw new Error(`Duplicate input snapshot: ${id}`);
+    inputs[id] = value;
+  }
   const tasks = plan.tasks.filter((task) => Object.hasOwn(old.tasks, task.id));
   if (tasks.length !== Object.keys(old.tasks).length) throw new Error("保存的计划未覆盖全部旧任务");
   const rows = new Map<string, JsonObject>();

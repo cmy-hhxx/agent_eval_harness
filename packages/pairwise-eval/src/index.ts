@@ -172,7 +172,7 @@ export function validateEvaluation(
       } else if (
         !evidenceSources(message).some(({ text }) => text.includes(item.quote))
       )
-        issue("evidence_quote_mismatch", location, `quote 不是对应消息的逐字原文：${location}，候选 ${label} 的原始 message_index=${item.message_index}；请读取该消息并复制连续原文`, label, undefined, item.quote);
+        issue("evidence_quote_mismatch", location, `quote 不是对应消息的逐字原文：${location}，候选 ${label} 的原始 message_index=${item.message_index}；请用 read_trace/search_trace 获取该消息的 evidence_id 后重新提交`, label, undefined, item.quote);
     }
   }
   if (repairErrors.length) throw new ValidationError(repairErrors);

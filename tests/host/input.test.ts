@@ -7,20 +7,26 @@ import { annotateFindings } from "../../packages/pairwise-eval/src/annotations.j
 import type { Finding } from "../../packages/pairwise-eval/src/types.js";
 import { emptyAudit, fixtureConfig, pairResult, raw } from "./fixtures.js";
 import path from "node:path";
-import { ArtifactStore, ROOT, compressFile, readInputs, writeInputs, writeJsonl } from "../../packages/contracts/src/io.js";
+import { ArtifactStore, ROOT, compressFile, readJsonl, writeJsonl } from "../../packages/contracts/src/io.js";
 import { createRegistry, ToolRuntime } from "../../packages/tools/src/index.js";
 
-test("compressed input archive preserves full records and rejects truncated storage", async () => {
+test("compressed JSONL preserves full records and rejects truncated storage", async () => {
   const { directory } = await fixtureConfig();
   try {
-    const inputs = {
-      first: { ...raw(), trace: "中文与 emoji 🦊\n".repeat(10000), image: "data:image/png;base64,aW1hZ2U=" },
-      second: raw("q2", null),
+    const rows = [
+      { ...raw(), trace: "中文与 emoji 🦊\n".repeat(10000), image: "data:image/png;base64,aW1hZ2U=" },
+      raw("q2", null),
+    ];
+    const file = path.join(directory, "records.jsonl.gz");
+    const readRows = async () => {
+      const values: unknown[] = [];
+      for await (const row of readJsonl(file)) values.push(row);
+      return values;
     };
-    await writeInputs(directory, inputs);
-    assert.deepEqual(await readInputs(directory), inputs);
-    const file = path.join(directory, "_internal/inputs.jsonl.gz"), bytes = await readFile(file);
-    assert(bytes.length < JSON.stringify(inputs).length / 10);
+    await writeJsonl(file, rows);
+    assert.deepEqual(await readRows(), rows);
+    const bytes = await readFile(file);
+    assert(bytes.length < JSON.stringify(rows).length / 10);
     await assert.rejects(writeJsonl(file, (function* () {
       yield { id: "replacement", value: {} };
       throw new Error("Input producer failed");
@@ -28,7 +34,7 @@ test("compressed input archive preserves full records and rejects truncated stor
     assert((await readFile(file)).equals(bytes), "failed archive writes must preserve the previous file");
     await assert.rejects(compressFile(path.join(directory, "missing.jsonl")), /ENOENT/);
     await writeFile(file, bytes.subarray(0, bytes.length - 10));
-    await assert.rejects(readInputs(directory), /unexpected end/);
+    await assert.rejects(readRows(), /unexpected end/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -66,7 +72,7 @@ test("directory input paths merge matching files from date folders", async () =>
   }
 });
 
-test("explicit no-standard-answer flags skip correctness tasks", async () => {
+test("no-standard-answer flags on all versions skip correctness tasks", async () => {
   const input = raw();
   input.has_standard_answer = false;
   const { directory, config } = await fixtureConfig([[input], [input], [input], [input]]);

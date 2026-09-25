@@ -96,7 +96,7 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("shared reference changes invalidate all dependent checks and pairs", async () => {
+test("planning a shared reference change increments dependent task revisions while preserving IDs", async () => {
   const { directory, config } = await fixtureConfig([[raw()], [raw("q1", null)], [raw("q1", null)], [raw("q1", null)]]);
   try {
     const first = await buildPlan(config);

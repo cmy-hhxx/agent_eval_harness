@@ -129,21 +129,6 @@ export async function compressFile(file: string): Promise<void> {
   await atomicWrite(file + ".gz", gzip(() => createReadStream(file)));
   await rm(file);
 }
-export async function readInputs(run: string): Promise<Record<string, unknown>> {
-  const inputs: Record<string, unknown> = {};
-  for await (const row of readJsonl(internalPath(run, "inputs.jsonl.gz"))) {
-    const { id, value } = row as { id: string; value: unknown };
-    safeId(id);
-    if (Object.hasOwn(inputs, id)) throw new Error(`Duplicate input snapshot: ${id}`);
-    inputs[id] = value;
-  }
-  return inputs;
-}
-export async function writeInputs(run: string, inputs: Record<string, unknown>): Promise<void> {
-  await writeJsonl(internalPath(run, "inputs.jsonl.gz"), (function* () {
-    for (const [id, value] of Object.entries(inputs)) yield { id, value };
-  })());
-}
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

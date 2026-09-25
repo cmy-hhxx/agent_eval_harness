@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, type RunState } from "../../packages/contracts/src/index.js";
-import { ROOT, exists, readJson, writeJson, writeInputs, runLock } from "../../packages/contracts/src/io.js";
+import { ROOT, exists, readJson, writeJson, writeJsonl, runLock } from "../../packages/contracts/src/io.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { reportRun } from "../../packages/pairwise-eval/src/report.js";
 import { writeRunState, readRunState } from "../../packages/pairwise-eval/src/run-data.js";
@@ -30,7 +30,7 @@ test("explicit upgrade preserves IDs, assignments, result bytes and usage withou
     }
     await writeJson(path.join(run, "state.json"), { ...legacy, format: "dual-agent-eval/4" });
     await writeJson(path.join(run, "_internal/plan.json"), { tasks: legacyPlan.tasks, summary: plan.summary });
-    await writeInputs(run, plan.inputs);
+    await writeJsonl(path.join(run, "_internal/inputs.jsonl.gz"), Object.entries(plan.inputs).map(([id, value]) => ({ id, value })));
     const formal = path.join(run, "results/a_fast__vs__aa_fast.jsonl"), before = await readFile(formal);
     const release = await runLock(run);
     await assert.rejects(upgradeRun(run, true), /owned/); await release();

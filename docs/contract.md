@@ -6,7 +6,7 @@
 
 - 输入与配对：[input.ts](../packages/pairwise-eval/src/input.ts)。
 - 提示词：[系统规则](../packages/pairwise-eval/resources/prompts/system.md)、[独立判对错](../packages/pairwise-eval/resources/prompts/correctness.md)、[配对比较](../packages/pairwise-eval/resources/prompts/pairwise.md)。
-- 提示词加载与提交校验：[index.ts](../packages/pairwise-eval/src/index.ts)。
+- 提示词加载与语义校验：[index.ts](../packages/pairwise-eval/src/index.ts)；提交 schema、证据 ID 和发现 ID 展开：[submissions.ts](../packages/pairwise-eval/src/submissions.ts)。
 - 结果结构：[evaluation.json](../packages/pairwise-eval/resources/evaluation.json)，当前 schema `3.6`。
 - 导出与工具回溯：[report.ts](../packages/pairwise-eval/src/report.ts)、[annotations.ts](../packages/pairwise-eval/src/annotations.ts)。
 
@@ -14,7 +14,7 @@
 
 ## 输入
 
-`data/inputs/` 按日期子目录保存四个版本的 JSONL，每行代表一份「批次 × case × 版本」回答。`host.json` 为每个版本配置输入目录，程序会递归读取目录下文件名与版本 ID 对应的 JSONL；文件映射只在 [host.json](../configs/host.json) 维护。
+`data/inputs/` 按日期子目录保存四个版本的 JSONL，每行代表一份「批次 × case × 版本」回答。[host.json](../configs/host.json) 为每个版本配置路径：目录会递归匹配 `<版本 ID>.jsonl`，单文件路径则直接读取该文件，不限制文件名。
 
 输入负责按天划分批次，每个版本文件可以包含多个批次。评测直接使用提供的 `batch_id` 原值，不要求日期格式，也不从 `request_time` 或 `ask_time` 重新分组。样本身份为 `batch_id + case_id`：同问句跨批次或在同批次对应不同 case 时分别保留，不按问句文本去重。
 
@@ -24,12 +24,12 @@
 | `case_id` | 优先顶层，其次 `meta.case_id`；两处都有时必须一致 |
 | `version` | 文件配置决定版本；记录若含该字段，必须与配置 `name` 一致 |
 | `request_time` | 缺失或 null 合法；非空字符串原样保留；空字符串和其他类型在预检拒绝 |
-| `has_standard_answer` | 可选布尔值，其他类型拒绝；显式为 `false` 时忽略 `meta.ground_truth` / `meta.std_answer` 并跳过独立判对 |
+| `has_standard_answer` | 可选布尔值，其他类型拒绝；显式为 `false` 时忽略本条记录的 `meta.ground_truth` / `meta.std_answer`；是否独立判对由样本共享标准答案决定 |
 | `messages` | 完整问题、回答、工具与图片；消息序号是证据定位依据 |
 | `meta` | 采集状态、标准答案、被评模型、原始回答耗时等 |
 | `trace_id` | 原始追踪标识 |
 
-`meta.ok=false`、无完整最终回答、无法解析或未知消息类型的记录不能参与比较。标准答案从 `meta.ground_truth` / `meta.std_answer` 获取，两者都存在时必须一致。
+`meta.ok=false`、无完整最终回答、无法解析或未知消息类型的记录不能参与比较。标准答案从 `meta.ground_truth` / `meta.std_answer` 获取；排除被显式忽略、缺失、null 和空字符串的值后，剩余值需要一致。同批次、同 case 的有效版本共享标准答案：只要其中一份提供了标准答案，所有参与配对的版本都会独立判对，包括本条 `has_standard_answer=false` 的版本；仅写 `true` 而不提供标准答案也不会生成独立判对任务。
 
 A / AA 是当前两种输入结构的适配器。保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的配对失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使该样本失效；不同批次分别检查，允许标准答案不同。
 
@@ -50,7 +50,7 @@ A / AA 是当前两种输入结构的适配器。保持原始消息和多模态�
 
 有标准答案时，对参与配对的每份回答独立判对错；每个配对只等待自身正确性依赖。无标准答案时跳过该阶段，输出 `is_correct=null`、`correctness_reason=""`。
 
-Agent 自主决定读取、检索、图片观察和计算步骤；没有强制的 `set_task_contract`、双方计算或工具顺序。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用相同内容校验和提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/candidate/expected/actual/message`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态，不能转换成都好、都差或不可比较。
+Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算双方，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用相同内容校验和提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态，不能转换成都好、都差或不可比较。
 
 对比判决只有以下五种，不接受普通平局：
 
@@ -65,9 +65,9 @@ Agent 自主决定读取、检索、图片观察和计算步骤；没有强制�
 
 有标准答案时，都好要求双方独立正确性收据均为 `true`；正确性为 `false` 或 `null` 时拒绝都好。独立判对不能直接推出都好，其他核心要求仍须满足；判对后可以因其他核心要求失败而都差，但不能再以已确认的严重正确性错误支持都差。Host 在接收提交、恢复和离线校验时使用对应依赖收据检查这些关系。
 
-提交包含双方评语与 findings、`task_analysis`、`decision_basis`。每个 finding 有候选内唯一且稳定的 `finding_id`，判决按 ID 引用；重排不改变指向，删除被引用发现会报错。正式结果导出时才转换为 `finding_index`。每条 finding 通过从 0 开始的 `requirement_index` 关联任务要求，区分观察、证据确定性和影响。除不可比较外，决定性发现必须引用双方已确认发现。`tradeoff` 解释关键差异和反向证据为何支持该判决；都好/都差还须解释为何没有实质胜者。
+提交包含双方评语与 findings、`task_analysis`、`decision_basis`。每个 finding 有候选内唯一且稳定的 `finding_id`，判决按 ID 引用；重排不改变指向，删除被引用发现会报错。Host 在接收提交时将 ID 展开为 `finding_index`，再执行语义校验；收据中的已解析判决和正式结果使用索引。每条 finding 通过从 0 开始的 `requirement_index` 关联任务要求，区分观察、证据确定性和影响。除不可比较外，决定性发现必须引用双方已确认发现。`tradeoff` 解释关键差异和反向证据为何支持该判决；都好/都差还须解释为何没有实质胜者。
 
-`counterevidence` 必须完整列出所有中高重要性、已确认的反向证据：有赢家时为赢家问题和输家优势，都好时为双方问题，都差时为双方优势。提交校验会一并反馈缺失索引、判决矛盾和非逐字引文的具体位置，供裁判在独立修正预算内重新提交。校验只能检查结构与证据关系，不能代替事实和影响判断。
+`counterevidence` 必须完整列出所有中高重要性、已确认的反向证据：有赢家时为赢家问题和输家优势，都好时为双方问题，都差时为双方优势。校验按结构、ID 展开、语义与证据关系依次进行，每阶段汇总可独立判断的错误；前一阶段失败时，依赖它的检查暂不执行。校验只能检查结构与证据关系，不能代替事实和影响判断。
 
 ## 证据与导出
 
@@ -75,9 +75,9 @@ Agent 自主决定读取、检索、图片观察和计算步骤；没有强制�
 
 内部提交使用工具或初始材料提供的 `evidence_id`，绑定输入修订、消息和原文位置；程序展开为正式结果的 `message_index + quote`。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 
-正式结果使用 `win` / `both_good` / `both_bad`；后两种的赢家字段均为 `null`。赢家、双方评语及判决引用均映射到稳定版本 ID。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数；不再输出 `ties`。`not_comparable` 单列保存，不进入正式配对结果或有效比较数，失败也不计入上述分类。评语中的 `【候选A】` / `【候选B】`、`候选A` / `候选B` 及独立 A / B 代号会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。
+正式结果使用 `win` / `both_good` / `both_bad`；后两种的赢家字段均为 `null`。赢家、双方评语及判决引用均映射到稳定版本 ID。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数。`not_comparable` 单列保存，不进入正式配对结果或有效比较数，失败也不计入上述分类。评语中的 `【候选A】` / `【候选B】`、`候选A` / `候选B` 及独立 A / B 代号会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。
 
-独立判对错任务只使用候选 A，其理由按该任务的实际版本还原；不能套用后续配对任务的 A/B 位置。
+独立判对错任务只使用候选 A，证据必须来自该候选 `final_message_index` 对应的最终回答，不能引用问题、标准答案、工具结果或中间推理。其理由按该任务的实际版本还原，不能套用后续配对任务的 A/B 位置。
 
 `stage` 表示发现属于上下文回溯、推理、执行或最终回答；`stage_trace` 由程序从原始消息生成，包含工具、位置、置信度与来源。只回溯当前 finding 引用的证据；无法唯一定位时保留候选工具，不猜测确定来源。
 
