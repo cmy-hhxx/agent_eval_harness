@@ -1,0 +1,159 @@
+{
+  "request": {
+    "input": {
+      "ground_truth": {
+        "available": false,
+        "value": null
+      },
+      "candidates": {
+        "A": {
+          "question": "计算2+2",
+          "final_message_index": 1,
+          "final_answer": "2+2=4",
+          "original_answer_timing": {
+            "finish_seconds": null
+          }
+        },
+        "B": {
+          "question": "计算2+2",
+          "final_message_index": 1,
+          "final_answer": "2+2=4",
+          "original_answer_timing": {
+            "finish_seconds": null
+          }
+        }
+      },
+      "correctness": {}
+    },
+    "sources": {
+      "A": {
+        "id": "input-A",
+        "value": {
+          "batch_id": "b1",
+          "case_id": "q",
+          "messages": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "计算2+2"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "2+2=4"
+            }
+          ],
+          "meta": {
+            "ok": true,
+            "ground_truth": null,
+            "finish_answer_time_cost": 1200
+          }
+        }
+      },
+      "B": {
+        "id": "input-B",
+        "value": {
+          "batch_id": "b1",
+          "case_id": "q",
+          "messages": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": "计算2+2"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "2+2=4"
+            }
+          ],
+          "meta": {
+            "ok": true,
+            "ground_truth": null,
+            "finish_answer_time_cost": 1200
+          }
+        }
+      }
+    }
+  },
+  "result": {
+    "verdict": {
+      "result": "both_good",
+      "reason": "两个都好。双方正确回答加法结果。"
+    },
+    "task_analysis": {
+      "task_type": "整数加法",
+      "goal": "计算2+2",
+      "requirements": ["给出正确的加法结果"],
+      "scoring_points": ["使用指定操作数"],
+      "red_flags": ["擅自替换操作数"],
+      "timing_analysis": ""
+    },
+    "decision_basis": {
+      "decisive_findings": [
+        {
+          "candidate": "A",
+          "finding_index": 0
+        },
+        {
+          "candidate": "B",
+          "finding_index": 0
+        }
+      ],
+      "counterevidence": [],
+      "tradeoff": "双方均满足同一要求，没有结果差异。"
+    },
+    "evaluations": {
+      "A": {
+        "summary": "正确给出了结果。",
+        "findings": [
+          {
+            "type": "strength",
+            "dimension": "correctness",
+            "stage": "final_answer",
+            "importance": "high",
+            "text": "加法结果正确",
+            "reason": "与题目要求一致。",
+            "assessment": {
+              "requirement_index": 0,
+              "observation": "2+2=4",
+              "evidence_status": "established",
+              "impact": "完成加法要求。"
+            },
+            "evidence": [
+              {
+                "message_index": 1,
+                "quote": "2+2=4"
+              }
+            ]
+          }
+        ]
+      },
+      "B": {
+        "summary": "正确给出了结果。",
+        "findings": [
+          {
+            "type": "strength",
+            "dimension": "correctness",
+            "stage": "final_answer",
+            "importance": "high",
+            "text": "加法结果正确",
+            "reason": "与题目要求一致。",
+            "assessment": {
+              "requirement_index": 0,
+              "observation": "2+2=4",
+              "evidence_status": "established",
+              "impact": "完成加法要求。"
+            },
+            "evidence": [
+              {
+                "message_index": 1,
+                "quote": "2+2=4"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

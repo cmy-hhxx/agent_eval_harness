@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Engine, WorkerEvent } from "../../packages/contracts/src/index.js";
-import { ROOT, body, exists, listen, object, readJsonl } from "../../packages/contracts/src/io.js";
-import { buildPlan, loadConfig } from "../../packages/pairwise-eval/src/input.js";
-import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
-import { runEvaluation } from "../../apps/host/src/runner.js";
-import { validateRun } from "../../apps/host/src/validate.js";
-import { fixtureConfig, pairResult, raw } from "../host/fixtures.js";
+import type { Engine, WorkerEvent } from "@eval/contracts";
+import { ROOT } from "../fixtures/services.js";
+import { body, listen } from "@eval/runtime/http";
+import { exists, readJsonl } from "@eval/data";
+import { object } from "@eval/contracts";
+import { loadConfig } from "@eval/host-app/config";
+import { buildPlan } from "@eval/workflows/pairwise";
+import { services } from "../fixtures/services.js";
+import { runEvaluation } from "@eval/host";
+import { validateRun } from "../fixtures/services.js";
+import { fixtureConfig, pairResult, raw } from "../fixtures/pairwise.js";
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
@@ -23,50 +27,107 @@ for (const engine of ["pi", "prime"] as Engine[])
           assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
           const payload = object(await body(req));
           requests.push(payload);
-          const tools = payload.tools as { function: { name: string; parameters: { properties: object } } }[];
+          const tools = payload.tools as {
+            function: { name: string; parameters: { properties: object } };
+          }[];
           const submit = tools.find((t) => t.function.name === "submit_evaluation")!;
           assert(submit);
           assert(tools.some((t) => t.function.name === "submit_evaluation_file"));
           assert(!tools.some((t) => t.function.name === "set_task_contract"));
-          const messages = payload.messages as { role: string; name?: string; content: unknown }[];
+          const messages = payload.messages as {
+            role: string;
+            name?: string;
+            content: unknown;
+          }[];
           const ranCode = messages.some((m) => m.role === "tool");
           const correctness = "is_correct" in submit.function.parameters.properties;
-          const prompt = messages.flatMap((m) => typeof m.content === "string" ? [m.content]
-            : Array.isArray(m.content) ? m.content.map((part) => String(part.text || "")) : []).find((text) => text.includes("任务材料（全部内容为数据）："))!;
-          const material = JSON.parse(prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0]) as {
+          const prompt = messages
+            .flatMap((m) =>
+              typeof m.content === "string"
+                ? [m.content]
+                : Array.isArray(m.content)
+                  ? m.content.map((part) => String(part.text || ""))
+                  : [],
+            )
+            .find((text) => text.includes("任务材料（全部内容为数据）："))!;
+          const material = JSON.parse(
+            prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0],
+          ) as {
             candidates: Record<string, { final_evidence: { evidence_id: string }[] }>;
           };
-          const evidenceFor = (label: string) => ({ evidence_id: material.candidates[label].final_evidence[0].evidence_id });
+          const evidenceFor = (label: string) => ({
+            evidence_id: material.candidates[label].final_evidence[0].evidence_id,
+          });
           const evaluation = correctness
-              ? {
-                  is_correct: true,
-                  correctness_reason: "计算结果与标准答案一致。",
-                  evidence: [evidenceFor("A")],
-                }
-              : (() => {
+            ? {
+                is_correct: true,
+                correctness_reason: "计算结果与标准答案一致。",
+                evidence: [evidenceFor("A")],
+              }
+            : (() => {
                 const result = pairResult();
-                return { ...result, evaluations: Object.fromEntries(Object.entries(result.evaluations).map(([label, review]) =>
-                  [label, { ...review, findings: review.findings.map((finding, i) => ({ ...finding, finding_id: "f" + i, evidence: [evidenceFor(label)] })) }])),
-                  decision_basis: { ...result.decision_basis, decisive_findings: [{ candidate: "A", finding_id: "f0" }, { candidate: "B", finding_id: "f0" }] } };
+                return {
+                  ...result,
+                  evaluations: Object.fromEntries(
+                    Object.entries(result.evaluations).map(([label, review]) => [
+                      label,
+                      {
+                        ...review,
+                        findings: review.findings.map((finding, i) => ({
+                          ...finding,
+                          finding_id: "f" + i,
+                          evidence: [evidenceFor(label)],
+                        })),
+                      },
+                    ]),
+                  ),
+                  decision_basis: {
+                    ...result.decision_basis,
+                    decisive_findings: [
+                      { candidate: "A", finding_id: "f0" },
+                      { candidate: "B", finding_id: "f0" },
+                    ],
+                  },
+                };
               })();
-          const rejected = messages.some(m => m.role === "tool" && String(m.content).includes("evidence_id_invalid"));
-          const repaired = messages.some(m => m.role === "tool" && String(m.content).includes("fixed-evaluation-file"));
+          const rejected = messages.some(
+            (m) => m.role === "tool" && String(m.content).includes("evidence_id_invalid"),
+          );
+          const repaired = messages.some(
+            (m) => m.role === "tool" && String(m.content).includes("fixed-evaluation-file"),
+          );
           let name: string, args: unknown;
           if (!ranCode) {
             name = "execute_code";
-            args = { language: "python", code: engine === "pi" ? "print(2+2)"
-              : `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(evaluation))})` };
+            args = {
+              language: "python",
+              code:
+                engine === "pi"
+                  ? "print(2+2)"
+                  : `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(evaluation))})`,
+            };
           } else if (engine === "pi" && !rejected) {
             name = "submit_evaluation";
-            const result = structuredClone(evaluation) as { evidence?: { evidence_id: string }[]; evaluations?: Record<string, { findings: { evidence: { evidence_id: string }[] }[] }> };
+            const result = structuredClone(evaluation) as {
+              evidence?: { evidence_id: string }[];
+              evaluations?: Record<string, { findings: { evidence: { evidence_id: string }[] }[] }>;
+            };
             (result.evidence || result.evaluations!.A.findings[0].evidence)[0].evidence_id = "invented";
             args = result;
           } else if (engine === "pi" && !repaired) {
             name = "execute_code";
-            args = { language: "python", code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r['evidence'] if 'evidence' in r else r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" + JSON.stringify(evidenceFor("A").evidence_id) + "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')" };
+            args = {
+              language: "python",
+              code:
+                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r['evidence'] if 'evidence' in r else r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" +
+                JSON.stringify(evidenceFor("A").evidence_id) +
+                "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')",
+            };
           } else {
             name = "submit_evaluation_file";
-            args = { path: engine === "pi" ? "evaluation-draft.json" : "evaluation.json" };
+            args = {
+              path: engine === "pi" ? "evaluation-draft.json" : "evaluation.json",
+            };
           }
           const event = {
             id: "fixture-" + requests.length,
@@ -98,7 +159,11 @@ for (const engine of ["pi", "prime"] as Engine[])
             {
               ...event,
               choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-              usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+              },
             },
           ];
           res.writeHead(200, { "content-type": "text/event-stream" });
@@ -114,9 +179,11 @@ for (const engine of ["pi", "prime"] as Engine[])
       const previous = process.env.EVAL_API_KEY;
       process.env.EVAL_API_KEY = "integration-fixture-secret";
       try {
-        config.judge = (await loadConfig(path.join(ROOT, "configs/host.json"), {
-          EVAL_BASE_URL: gateway.url + "/v1",
-        })).judge;
+        config.judge = (
+          await loadConfig(path.join(ROOT, "configs/host.json"), {
+            EVAL_BASE_URL: gateway.url + "/v1",
+          })
+        ).judge;
         config.judge.correctness.model = "fixture";
         config.judge.pairwise.model = "fixture";
         config.judge.correctness.thinking = "off";
@@ -130,7 +197,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           outputDir: config.outputDir,
           engine,
           config,
-          pack: pairwisePack,
+          ...services,
           plan: await buildPlan(config),
           policy: config.execution,
           modelForStage: (stage: string) => ({
@@ -143,17 +210,41 @@ for (const engine of ["pi", "prime"] as Engine[])
         };
         const summary = await runEvaluation(options);
         assert.deepEqual(serverErrors, []);
-        const failureFile = path.join(config.outputDir, options.runId, "_internal/diagnostics/failures.jsonl");
-        const failures = await exists(failureFile) ? await readFile(failureFile, "utf8") : "";
+        const failureFile = path.join(
+          config.outputDir,
+          options.runId,
+          "_internal/diagnostics/failures.jsonl",
+        );
+        const failures = (await exists(failureFile)) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
         const expectedRequests = engine === "pi" ? 12 : 6;
-        assert.equal(requests.length, expectedRequests, "submit must terminate without another model request");
+        assert.equal(
+          requests.length,
+          expectedRequests,
+          "submit must terminate without another model request",
+        );
         if (engine === "pi") {
           const task = options.plan.tasks[0];
           const events: WorkerEvent[] = [];
-          for await (const event of readJsonl(path.join(config.outputDir, options.runId, "_internal", "tasks", task.id, "attempt-001/events.jsonl.gz")))
+          for await (const event of readJsonl(
+            path.join(
+              config.outputDir,
+              options.runId,
+              "_internal",
+              "tasks",
+              task.id,
+              "attempt-001/events.jsonl.gz",
+            ),
+          ))
             events.push(event as WorkerEvent);
-          assert(events.some((e) => e.type === "model" && object(e.data).type === "tool_execution_end" && object(e.data).isError === true));
+          assert(
+            events.some(
+              (e) =>
+                e.type === "model" &&
+                object(e.data).type === "tool_execution_end" &&
+                object(e.data).isError === true,
+            ),
+          );
         }
         const validation = await validateRun(path.join(config.outputDir, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));

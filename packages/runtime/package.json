@@ -1,0 +1,27 @@
+{
+  "name": "@eval/runtime",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./client.d.ts",
+      "import": "./client.js"
+    },
+    "./http": {
+      "types": "./http.d.ts",
+      "import": "./http.js"
+    },
+    "./worker": {
+      "types": "./worker.d.ts",
+      "import": "./worker.js"
+    },
+    "./pi": {
+      "types": "./pi.d.ts",
+      "import": "./pi.js"
+    },
+    "./prime": {
+      "types": "./prime.d.ts",
+      "import": "./prime.js"
+    }
+  }
+}

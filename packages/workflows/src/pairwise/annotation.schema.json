@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tools", "locations", "confidence", "source"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "candidate_tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "confidence": {
+      "enum": ["high", "medium", "none"]
+    },
+    "source": {
+      "enum": ["evidence_message", "quote_reference", "same_turn_tool_chain", "none"]
+    },
+    "locations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message_index", "tool_name"],
+        "properties": {
+          "message_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tool_name": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

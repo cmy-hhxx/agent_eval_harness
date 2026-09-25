@@ -1,4 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["packages/agent-prime/src/**/*.ts", "packages/worker/src/**/*.ts", "packages/contracts/src/**/*.ts", "packages/tools/src/**/*.ts"]
+  "include": [
+    "packages/runtime/src/adapters/prime.ts",
+    "packages/runtime/src/server.ts",
+    "apps/worker/src/**/*.ts"
+  ]
 }

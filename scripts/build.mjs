@@ -1,4 +1,4 @@
-import { cp, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { root, upstream, run } from "./lib.mjs";
@@ -8,12 +8,6 @@ if (selected && !upstream[selected]) throw new Error("Expected pi or prime");
 for (const [engine, item] of Object.entries(upstream)) {
   if (selected && selected !== engine) continue;
   const directory = path.join(root, item.directory);
-  if (engine === "pi")
-    await cp(
-      path.join(root, "vendor/pi-model-data"),
-      path.join(directory, "packages/ai/src/providers/data"),
-      { recursive: true },
-    );
   await run("npm", ["run", engine === "pi" ? "build:offline" : "build"], directory);
   const buildId = randomUUID();
   await mkdir(path.join(root, ".runtime"), { recursive: true });

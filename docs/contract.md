@@ -4,17 +4,17 @@
 
 ## 唯一规则来源
 
-- 输入与配对：[input.ts](../packages/pairwise-eval/src/input.ts)。
-- 提示词：[系统规则](../packages/pairwise-eval/resources/prompts/system.md)、[独立判对错](../packages/pairwise-eval/resources/prompts/correctness.md)、[配对比较](../packages/pairwise-eval/resources/prompts/pairwise.md)。
-- 提示词加载与语义校验：[index.ts](../packages/pairwise-eval/src/index.ts)；提交 schema、证据 ID 和发现 ID 展开：[submissions.ts](../packages/pairwise-eval/src/submissions.ts)。
-- 结果结构：[evaluation.json](../packages/pairwise-eval/resources/evaluation.json)，当前 schema `3.6`。
-- 导出与工具回溯：[report.ts](../packages/pairwise-eval/src/report.ts)、[annotations.ts](../packages/pairwise-eval/src/annotations.ts)。
+- 输入与配对：[input.ts](../packages/workflows/src/pairwise/input.ts)。
+- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[独立判对错](../packages/agents/src/critique/profiles/correctness/instructions.md)、[配对比较](../packages/agents/src/comparison/profiles/default/instructions.md)。
+- Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)、[业务校验](../packages/agents/src/comparison/validate.ts)和[引用展开](../packages/agents/src/comparison/resolve.ts)。Critique 的[correctness Profile](../packages/agents/src/critique/index.ts)独立维护正确性契约。
+- 结果结构：[导出 Schema](../packages/workflows/src/pairwise/schema.ts)。
+- 导出与工具回溯：[report.ts](../packages/workflows/src/pairwise/report.ts)、[annotations.ts](../packages/workflows/src/pairwise/annotations.ts)。
 
-当前任务契约为 `pairwise/autonomous-v3`。版本标识用于识别运行内容，不构成历史兼容承诺。
+项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置版本号；当前源码定义唯一契约。
 
 ## 输入
 
-`data/inputs/` 按日期子目录保存四个版本的 JSONL，每行代表一份「批次 × case × 版本」回答。[host.json](../configs/host.json) 为每个版本配置路径：目录会递归匹配 `<版本 ID>.jsonl`，单文件路径则直接读取该文件，不限制文件名。
+`data/sources/model-answers/` 按日期子目录保存四个版本的 JSONL，每行代表一份「批次 × case × 版本」回答。[host.json](../configs/host.json) 为每个版本配置路径：目录会递归匹配 `<版本 ID>.jsonl`，单文件路径则直接读取该文件，不限制文件名。
 
 输入负责按天划分批次，每个版本文件可以包含多个批次。评测直接使用提供的 `batch_id` 原值，不要求日期格式，也不从 `request_time` 或 `ask_time` 重新分组。样本身份为 `batch_id + case_id`：同问句跨批次或在同批次对应不同 case 时分别保留，不按问句文本去重。
 

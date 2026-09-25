@@ -3,14 +3,9 @@ import { mkdir, open, readFile, realpath, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type {
-  JsonSchema,
-  ToolContent,
-  ToolContext,
-  ToolDefinition,
-  ToolResult,
-} from "../../contracts/src/index.js";
-import { ROOT, canonical, errorText, object, schemaIssues, ValidationError } from "../../contracts/src/io.js";
+import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult } from "@eval/contracts";
+import { fileURLToPath } from "node:url";
+import { canonical, errorText, object, schemaIssues, ValidationError } from "@eval/contracts";
 
 import { cite, evidenceId, evidenceSources, renderMessage } from "./evidence.js";
 
@@ -44,7 +39,13 @@ function images(value: unknown): ToolContent[] {
   if (!value || typeof value !== "object") return [];
   const node = value as Record<string, unknown>;
   if (node.type === "image" && typeof node.data === "string" && (node.mimeType || node.mime_type))
-    return [{ type: "image", data: node.data, mimeType: String(node.mimeType || node.mime_type) }];
+    return [
+      {
+        type: "image",
+        data: node.data,
+        mimeType: String(node.mimeType || node.mime_type),
+      },
+    ];
   return Object.values(node).flatMap(images);
 }
 export function calculate(operation: string, operands: string[]): unknown {
@@ -92,13 +93,13 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
   const stdout = await open(outPath, "w"),
     stderr = await open(errPath, "w");
   const command =
-    args.language === "python" ? process.env.EVAL_PYTHON || path.join(ROOT, ".venv/bin/python") : "/bin/bash";
+    args.language === "python" ? ctx.execution?.python || process.env.EVAL_PYTHON || "python3" : "/bin/bash";
   const started = Date.now();
   let timedOut = false;
   const proc = spawn(
     process.execPath,
     [
-      path.join(ROOT, "dist/packages/tools/src/code-process.js"),
+      fileURLToPath(new URL("./code-process.js", import.meta.url)),
       command,
       ...(args.language === "python" ? [script] : ["--noprofile", "--norc", script]),
     ],
@@ -204,24 +205,44 @@ export const builtinTools: ToolDefinition[] = [
       ["candidate", "message_index"],
     ),
     async execute(ctx, value) {
-      const args = value as { candidate: string; message_index: number; offset?: number; max_chars?: number };
+      const args = value as {
+        candidate: string;
+        message_index: number;
+        offset?: number;
+        max_chars?: number;
+      };
       const source = message(ctx, args.candidate, args.message_index),
         full = renderMessage(source),
         offset = args.offset || 0,
         length = args.max_chars || 12000;
       const text = full.slice(offset, offset + length);
       const inputId = ctx.inputIds?.get(args.candidate) || args.candidate;
-      const citations = evidenceSources(source).flatMap((source) => {
-        if (source.kind === "json") return text.includes("[图像数据") ? [] : [cite(inputId, args.message_index, source, offset, Math.min(offset + length, source.text.length))];
-        const matches = []; let start = 0;
-        for (const line of source.text.split("\n")) {
-          const end = start + Math.min(line.length, 640);
-          if (line.trim() && text.includes(JSON.stringify(source.text.slice(start, end)).slice(1, -1)))
-            matches.push(cite(inputId, args.message_index, source, start, end));
-          start += line.length + 1;
-        }
-        return matches;
-      }).filter((item) => item.quote).slice(0, 12);
+      const citations = evidenceSources(source)
+        .flatMap((source) => {
+          if (source.kind === "json")
+            return text.includes("[图像数据")
+              ? []
+              : [
+                  cite(
+                    inputId,
+                    args.message_index,
+                    source,
+                    offset,
+                    Math.min(offset + length, source.text.length),
+                  ),
+                ];
+          const matches = [];
+          let start = 0;
+          for (const line of source.text.split("\n")) {
+            const end = start + Math.min(line.length, 640);
+            if (line.trim() && text.includes(JSON.stringify(source.text.slice(start, end)).slice(1, -1)))
+              matches.push(cite(inputId, args.message_index, source, start, end));
+            start += line.length + 1;
+          }
+          return matches;
+        })
+        .filter((item) => item.quote)
+        .slice(0, 12);
       return textResult({
         text,
         evidence: citations,
@@ -236,11 +257,19 @@ export const builtinTools: ToolDefinition[] = [
     name: "search_trace",
     description: "在候选全部原始消息中搜索逐字子串，返回消息索引和证据；提交时使用其中的 evidence_id。",
     inputSchema: schema(
-      { candidate: str, query: { type: "string", minLength: 1, maxLength: 500 }, offset: index },
+      {
+        candidate: str,
+        query: { type: "string", minLength: 1, maxLength: 500 },
+        offset: index,
+      },
       ["candidate", "query"],
     ),
     async execute(ctx, value) {
-      const args = value as { candidate: string; query: string; offset?: number };
+      const args = value as {
+        candidate: string;
+        query: string;
+        offset?: number;
+      };
       const matches: unknown[] = [];
       record(ctx, args.candidate).messages.forEach((m, i) => {
         for (const source of evidenceSources(m)) {
@@ -248,7 +277,13 @@ export const builtinTools: ToolDefinition[] = [
           let start = 0,
             position: number;
           while ((position = text.indexOf(args.query, start)) >= 0) {
-            const evidence = cite(ctx.inputIds?.get(args.candidate) || args.candidate, i, source, Math.max(0, position - 100), Math.min(text.length, position + args.query.length + 200));
+            const evidence = cite(
+              ctx.inputIds?.get(args.candidate) || args.candidate,
+              i,
+              source,
+              Math.max(0, position - 100),
+              Math.min(text.length, position + args.query.length + 200),
+            );
             if (!evidence.quote.includes("[图像数据")) matches.push({ path: location, evidence });
             start = position + args.query.length;
             if (matches.length >= 10000) break;
@@ -274,7 +309,22 @@ export const builtinTools: ToolDefinition[] = [
       if (!content.length) throw new Error("该消息没有可读取的内嵌图片");
       const id = `${args.candidate}:${args.message_index}`;
       if (!ctx.audit.viewedImages.includes(id)) ctx.audit.viewedImages.push(id);
-      return { content: [{ type: "text", text: JSON.stringify({ message: `原始消息 ${id}，${content.length} 张图片`, evidence_id: evidenceId(ctx.inputIds?.get(args.candidate) || args.candidate, args.message_index, "image") }) }, ...content] };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              message: `原始消息 ${id}，${content.length} 张图片`,
+              evidence_id: evidenceId(
+                ctx.inputIds?.get(args.candidate) || args.candidate,
+                args.message_index,
+                "image",
+              ),
+            }),
+          },
+          ...content,
+        ],
+      };
     },
   },
   {
@@ -282,12 +332,22 @@ export const builtinTools: ToolDefinition[] = [
     description: "本地执行数值运算；调用是可选的，不限制其他分析方法。",
     inputSchema: {
       ...calculationSchema,
-      properties: { ...(calculationSchema.properties as JsonSchema), candidate: str },
+      properties: {
+        ...(calculationSchema.properties as JsonSchema),
+        candidate: str,
+      },
       required: ["operation", "operands"],
     },
     async execute(ctx, value) {
-      const args = value as { candidate?: string; operation: string; operands: string[] };
-      const result = { candidate: args.candidate, ...object(calculate(args.operation, args.operands)) };
+      const args = value as {
+        candidate?: string;
+        operation: string;
+        operands: string[];
+      };
+      const result = {
+        candidate: args.candidate,
+        ...object(calculate(args.operation, args.operands)),
+      };
       ctx.audit.calculations.push(result);
       return textResult(result);
     },
@@ -325,7 +385,11 @@ export const builtinTools: ToolDefinition[] = [
     name: "read_artifact",
     description: "分页读取之前工具保存的文本产物；图片产物返回图片内容。",
     inputSchema: schema(
-      { id: str, offset: index, max_chars: { type: "integer", minimum: 1, maximum: 16000 } },
+      {
+        id: str,
+        offset: index,
+        max_chars: { type: "integer", minimum: 1, maximum: 16000 },
+      },
       ["id"],
     ),
     async execute(ctx, value) {
@@ -396,14 +460,18 @@ export class ToolRuntime {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     this.validators = new Map(tools.map((t) => [t.name, ajv.compile(t.inputSchema)]));
   }
-  async execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
+  async execute(
+    name: string,
+    args: unknown,
+    signal: AbortSignal,
+    maxCalls = this.context.policy.maxToolCalls,
+  ): Promise<ToolResult> {
     try {
       signal.throwIfAborted();
       const tool = this.definitions.get(name),
         validate = this.validators.get(name);
       if (!tool || !validate) throw new Error("Unknown tool");
-      if (this.context.audit.calls >= maxCalls)
-        throw new Error("探索工具预算已耗尽，请根据已有证据提交");
+      if (this.context.audit.calls >= maxCalls) throw new Error("探索工具预算已耗尽，请根据已有证据提交");
       this.context.audit.calls++;
       if (!validate(args)) throw new ValidationError(schemaIssues(validate.errors, args));
       const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
@@ -430,12 +498,35 @@ export class ToolRuntime {
         result.details = { artifact, truncated: true };
       }
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));
-      result.details = { ...(result.details && typeof result.details === "object" ? result.details : {}), budget: { used: this.context.audit.calls, remaining: Math.max(0, maxCalls - this.context.audit.calls) } };
+      result.details = {
+        ...(result.details && typeof result.details === "object" ? result.details : {}),
+        budget: {
+          used: this.context.audit.calls,
+          remaining: Math.max(0, maxCalls - this.context.audit.calls),
+        },
+      };
       return result;
     } catch (error) {
-      const errors = error instanceof ValidationError ? error.issues : [{ code: signal.aborted ? "tool_interrupted" : "tool_failed", path: "/",
-        category: signal.aborted ? "interruption" : "file", expected: null, actual: (error as NodeJS.ErrnoException).code || null, message: errorText(error) }];
-      return { ...textResult({ errors, message: errorText(error) }), isError: true };
+      const errors =
+        error instanceof ValidationError
+          ? error.issues
+          : [
+              {
+                code: signal.aborted ? "tool_interrupted" : "tool_failed",
+                path: "/",
+                category: signal.aborted ? "interruption" : "file",
+                expected: null,
+                actual: (error as NodeJS.ErrnoException).code || null,
+                message: errorText(error),
+              },
+            ];
+      return {
+        ...textResult({ errors, message: errorText(error) }),
+        isError: true,
+      };
     }
   }
 }
+
+export * from "./evidence.js";
+export * from "./validation.js";

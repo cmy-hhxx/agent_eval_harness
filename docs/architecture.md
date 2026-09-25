@@ -7,7 +7,9 @@
 ```mermaid
 flowchart LR
   CLI --> Host
-  Pack[公共任务包] --> Host
+  CLI --> Agents[Comparison / Critique Profiles]
+  CLI --> Workflow[Pairwise Workflow]
+  Workflow --> Data[Data Repository]
   Host <-->|HTTP / JSON + SSE| Pi[Pi Worker]
   Host <-->|HTTP / JSON + SSE| Prime[Prime Worker]
   Pi --> PiSDK[vendored Pi SDK]
@@ -18,13 +20,18 @@ flowchart LR
 
 | 位置 | 职责 |
 |---|---|
-| `apps/host` | CLI、依赖、调度、收据、增量更新、恢复 |
-| `packages/contracts` | 跨进程任务、工具、事件与收据类型 |
-| `packages/worker` | HTTP/SSE、预算、会话生命周期与提交 |
-| `packages/agent-pi`、`packages/agent-prime` | 各自 SDK Adapter |
-| `packages/pairwise-eval` | 唯一评测规则、输入适配、schema、证据校验、报告 |
+| `apps/host`、`apps/worker` | CLI、配置、具体 Agent / Workflow / 底座组装 |
+| `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
+| `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
+| `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
+| `packages/agents/src/comparison` | 对比 Profile、提示词、Schema、业务校验 |
+| `packages/agents/src/critique` | 独立 correctness Profile、提示词、Schema、业务校验 |
+| `packages/workflows/src/pairwise` | A/AA、固定配对、盲测、依赖与材料映射、状态编解码、报告 |
+| `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
+
+公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包只使用 `@eval/*` 公开导出。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
 ## 生命周期
 
@@ -34,34 +41,47 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；会话与临时工作目录清理完成后才对外报告最终状态。默认 Host 只保留 `state.json` 中的收据、状态和用量，托管 Worker 使用系统临时目录并在结束时清除。开启 debug 后，参数、状态、用量、失败原因及未接受提交合并到 `_internal/` 的 `attempt.json`，事件单独压缩；记录与工具产物收齐后才释放 Worker 副本。失联先查收据，无收据才可重试。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
 
-## HTTP V1
+## HTTP 协议
 
-路由使用 `/v1` 命名空间；Host 和 Worker 通过 `PROTOCOL_VERSION` 核对运行时协议，当前值为 3。
+内部路由使用 `/api` 命名空间，不设置协议版本号。Host 和 Worker 同步构建部署，启动时校验底座身份、构建 UUID 和工具能力。
 
 请求用任务、输入和产物 ID，不传 Host 本机路径。输入与任务按业务标识首次登记持久化 UUID，产物使用 UUID。文件修订取自文件系统元数据，不计算哈希。模型配置传递 `apiKeyEnv` 而非密钥值，实际密钥从环境注入。当前只支持可信单机调用，未配置远程认证，不应直接暴露公网。
 
 | 接口 | 行为 |
 |---|---|
-| Worker `GET /v1/health` | 协议、引擎版本与构建 UUID、工具、活动 attempt |
-| Worker `POST /v1/attempts` | 校验能力并创建会话 |
-| Worker `GET /v1/attempts/:id` | 查询状态 |
-| Worker `POST /v1/attempts/:id/cancel` | 中断所属会话与进程 |
-| Worker `GET /v1/attempts/:id/events?after=N` | SSE 续读，也支持 Last-Event-ID |
-| Worker `GET /v1/attempts/:id/artifacts/:id` | 产物字节 |
-| Worker `GET /v1/attempts/:id/record` | 已结束尝试的完整记录，包括最终用量、工具审计及未接受提交 |
-| Worker `DELETE /v1/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
-| Host `GET /v1/inputs/:id` | 本次读取的原始输入 |
-| Host `POST /v1/submissions` | 校验、原子提交 |
-| Host `GET /v1/submissions/:id` | 确认已保存收据 |
-| Host `POST /v1/tasks/:id/checkpoint` | 持久化最后草稿、结构化错误和修复计数 |
-| Host `POST /v1/control/concurrency` | 使用本机运行锁 token 调整目标并发并唤醒调度器 |
-| Host `GET /v1/progress` | 当前进度、失败分类、吞吐和 ETA 区间 |
+| Worker `GET /api/health` | 引擎身份与构建 UUID、工具、活动 attempt |
+| Worker `POST /api/attempts` | 校验能力并创建会话 |
+| Worker `GET /api/attempts/:id` | 查询状态 |
+| Worker `POST /api/attempts/:id/cancel` | 中断所属会话与进程 |
+| Worker `GET /api/attempts/:id/events?after=N` | SSE 续读，也支持 Last-Event-ID |
+| Worker `GET /api/attempts/:id/artifacts/:id` | 产物字节 |
+| Worker `GET /api/attempts/:id/record` | 已结束尝试的完整记录，包括最终用量、工具审计及未接受提交 |
+| Worker `DELETE /api/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
+| Host `GET /api/inputs/:id` | 本次读取的原始输入 |
+| Host `POST /api/submissions` | 校验、原子提交 |
+| Host `GET /api/submissions/:id` | 确认已保存收据 |
+| Host `POST /api/tasks/:id/checkpoint` | 持久化最后草稿、结构化错误和修复计数 |
+| Host `POST /api/control/concurrency` | 使用本机运行锁 token 调整目标并发并唤醒调度器 |
+| Host `GET /api/progress` | 当前进度、失败分类、吞吐和 ETA 区间 |
 
 事件包含 `seq/attemptId/time/type/data`，在单个 attempt 内连续编号。Host 检测缺口、去重并续读；模型结束事件不代表提交成功。流式更新仅记录增量，完整消息保存在 `message_end`；开始、回合结束和会话结束事件不重复保存消息正文。
 
-## 任务包和底座路由
+## 接口和底座路由
 
-实现 `EvaluationPack`：`plan` 生成任务与依赖；`reconcile` 保留已接受任务，为未完成和新增任务更新原批次输入；`prepare` 返回契约和 prompt；`resolve` 展开证据和发现 ID；`validate` 执行业务校验；`readRun` / `writeRun` 负责状态与结果引用的读写；`createResultWriter` 创建每个 run 的结果写入器，在 Host 的串行保存队列中、状态落盘后恢复或追加结果；`report` 重建最终结果与展示；可用 `snapshots` 保存契约快照。Host 使用内存中的完整运行状态，任务包决定精简的磁盘结构。传给 `runEvaluation`，不修改 Adapter。
+[通用契约](../packages/contracts/src/index.ts)区分以下接口：
+
+- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、输入和输出 Schema、引用展开及业务校验。
+- `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`。
+- `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换。
+- `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
+
+[应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验输入 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后输出。当前通过 TypeScript 对象组合任务，不引入新编排语言。
+
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。本阶段不增加全局目录账本。
+
+后续归因位置为 `packages/agents/src/attribution`，聚类为 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
+
+一个 Host 管理一个 run，多个 Worker 并行执行；多个 Host 使用不同 run 目录。每个 attempt 独立会话、工具上下文与工作区，取消只作用于所属任务；默认端口由系统分配。应用传入 Worker 入口、仓库路径和 Python 配置，没有全局共享会话。
 
 `AttemptSpec` 包含任务标识、引擎版本与构建 UUID、模型、输入引用、预算、截止时间和评测契约。Host 不依赖上游 SDK 类型；底座公共接口只覆盖创建、运行、事件、取消和释放。
 
@@ -91,7 +111,7 @@ const extraTool: ToolDefinition = {
 await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 ```
 
-将工具名加入任务包的 `toolNames`。两种 Adapter 自动转换为原生 SDK 工具，无须修改调度代码。当前通过 `createRegistry` 按代码注册工具。
+将工具名加入 Profile 的 `toolNames`。两种 Adapter 自动转换为原生 SDK 工具，无须修改调度代码。当前通过 `createRegistry` 按代码注册工具。
 
 探索调用统一计数，参数错误也占预算；提交有独立修正预算。材料工具提供分页、定位和用于提交的 `evidence_id`。`read_trace`、`search_trace`、`read_artifact` 在单个 attempt 内复用相同参数的读取结果，重复调用仍计入预算。代码返回摘要，完整 stdout/stderr、脚本和 `outputs` 声明的文件存为可分页读取的产物；代码执行不缓存。
 
@@ -101,6 +121,6 @@ await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 
 直接修改对应 vendor，在 `upstream.json` 的 `local_changes` 记录说明后重建。两套上游 npm 包同名，必须保持独立依赖树。根 workspace 不包含 vendor。
 
-Pi Git 归档缺少发布生成的模型目录数据，因此单独保存同版本 `vendor/pi-model-data` 及发布包 integrity；构建先恢复数据，再执行上游 `build:offline`，运行禁用自动网络刷新。
+Pi 的本地 vendor 修改关闭内置模型与图片 Provider 登记。构建不生成或加载第三方模型数据；Worker 只注册应用从 `.env` 网关和运行配置解析出的模型，并关闭自动网络刷新。具体修改记录在 `vendor/upstream.json`。
 
 构建记录位于 `.runtime/pi.json`、`.runtime/prime.json`，记录显式版本、上游提交和随机构建 UUID；启动及 doctor 检查版本、入口与运行能力，不扫描源码树或计算摘要。修改源码必须重建。更新上游属于显式升级，需要更新提交、锁文件、来源清单并重新验证，不在运行时自动升级。

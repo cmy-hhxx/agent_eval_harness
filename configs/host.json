@@ -6,28 +6,28 @@
         "id": "a_fast",
         "name": "A Fast",
         "display_name": "A组Fast",
-        "path": "../data/inputs",
+        "path": "../data/sources/model-answers",
         "adapter": "a"
       },
       {
         "id": "a_expert",
         "name": "A Expert",
         "display_name": "A组Expert",
-        "path": "../data/inputs",
+        "path": "../data/sources/model-answers",
         "adapter": "a"
       },
       {
         "id": "aa_fast",
         "name": "AA Fast",
         "display_name": "AA组Fast",
-        "path": "../data/inputs",
+        "path": "../data/sources/model-answers",
         "adapter": "aa"
       },
       {
         "id": "aa_expert",
         "name": "AA Expert",
         "display_name": "AA组Expert",
-        "path": "../data/inputs",
+        "path": "../data/sources/model-answers",
         "adapter": "aa"
       }
     ]
@@ -62,5 +62,5 @@
     "maxOutputChars": 16000,
     "initialContextChars": 16000
   },
-  "outputDir": "../data/runs"
+  "outputDir": "../data/runs/pairwise"
 }

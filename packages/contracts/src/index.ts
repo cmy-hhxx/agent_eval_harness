@@ -1,7 +1,6 @@
 export type Engine = "pi" | "prime";
 export type JsonSchema = Record<string, unknown>;
 export type JsonObject = Record<string, unknown>;
-export const PROTOCOL_VERSION = 3;
 
 export interface Policy {
   timeoutSeconds: number;
@@ -32,7 +31,7 @@ export interface ModelConfig {
 }
 export interface EvaluationSpec {
   id: string;
-  version: string;
+  profile: string;
   systemPrompt: string;
   outputSchema: JsonSchema;
   toolNames: string[];
@@ -48,7 +47,6 @@ export interface EngineIdentity {
   buildId: string;
 }
 export interface AttemptSpec {
-  protocolVersion: number;
   runId: string;
   taskId: string;
   attemptId: string;
@@ -110,11 +108,17 @@ export interface Usage {
   cacheWrite: number;
   totalTokens: number;
 }
-export const emptyUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 });
-export type ResultReference = { file?: string } & (
-  | { comparisonId: string; taskId?: never }
-  | { taskId: string; comparisonId?: never }
-);
+export const emptyUsage = (): Usage => ({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+});
+export interface ResultReference {
+  file?: string;
+  id: string;
+}
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
@@ -122,6 +126,7 @@ export interface SubmissionReceipt extends Submission {
   exported?: ResultReference & { row: JsonObject };
 }
 export interface ToolContext {
+  execution?: { python: string };
   attemptId: string;
   workdir: string;
   inputs: Map<string, unknown>;
@@ -155,7 +160,6 @@ export interface AgentBackend {
   }): Promise<AgentSession>;
 }
 export interface WorkerStatus {
-  protocolVersion: number;
   identity: EngineIdentity;
   tools: string[];
   activeAttempt: string | null;
@@ -189,32 +193,67 @@ export interface TaskPlan {
   summary: JsonObject;
   catalog?: unknown[];
 }
-export interface EvaluationPack {
+export interface AgentRequest {
+  input: JsonObject;
+  sources: Record<string, { id: string; value: unknown }>;
+}
+export interface AgentProfile {
   id: string;
-  version: string;
-  snapshots?(): Record<string, unknown>;
+  inputSchema: JsonSchema;
+  outputSchema: JsonSchema;
+  resolvedSchema?: JsonSchema;
+  systemPrompt: string;
+  instructions: string;
+  toolNames: string[];
+  resolve?(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown;
+  validate?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
+}
+export interface AgentDefinition {
+  id: string;
+  profiles: Record<string, AgentProfile>;
+}
+export interface AgentBinding {
+  agent: string;
+  profile: string;
+  request: AgentRequest;
+}
+export interface WorkflowDefinition {
+  id: string;
   plan(config: unknown): Promise<TaskPlan>;
   reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
-  resolve?(task: PlannedTask, inputs: Record<string, unknown>, draft: unknown, audit: ToolAudit): unknown;
-  prepare(
+  assertInputs?(state: RunState): Promise<void>;
+  bind(
     task: PlannedTask,
     inputs: Record<string, unknown>,
-    dependencies: Record<string, SubmissionReceipt>,
-  ): {
-    evaluation: EvaluationSpec;
-    prompt: string;
-  };
-  validate(
-    task: PlannedTask,
-    inputs: Record<string, unknown>,
-    evaluation: unknown,
-    audit: ToolAudit,
     dependencies: Record<string, SubmissionReceipt | undefined>,
-  ): void;
-  report(run: string): Promise<JsonObject>;
-  createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
+  ): AgentBinding;
+}
+export interface RunRepository {
   readRun(run: string): Promise<RunState>;
   writeRun(run: string, state: RunState): Promise<void>;
+  createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
+}
+export interface LogContext {
+  component: string;
+  event: string;
+  run_id?: string;
+  task_id?: string;
+  attempt_id?: string;
+}
+export interface EvaluationLog {
+  time: string;
+  workflow: string;
+  run_id: string;
+  task_id: string;
+  attempt_id: string;
+  submission_id: string;
+  stage: string;
+  result: JsonObject;
+}
+/** Logging is best effort: failures are reported separately and never revoke a receipt. */
+export interface LogSink {
+  error(error: unknown, context: LogContext): Promise<void>;
+  evaluation(record: EvaluationLog): Promise<boolean>;
 }
 export interface TaskState {
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
@@ -227,10 +266,14 @@ export interface TaskState {
   durationMs?: number;
   startedAt?: number;
   lastProgressAt?: number;
-  artifactStatus?: { status: "available" | "missing" | "not_retained"; source: string; error?: string };
+  artifactStatus?: {
+    status: "available" | "missing" | "not_retained";
+    source: string;
+    error?: string;
+  };
 }
 export interface RunManifest {
-  format: "dual-agent-eval/6";
+  format: "evaluation-run";
   debug: boolean;
   runId: string;
   status: "running" | "finished" | "interrupted";
@@ -252,7 +295,14 @@ export interface RunState {
   recordedAttempts: number;
 }
 
-export type FailureCategory = "input" | "structure" | "evidence" | "decision" | "file" | "transport" | "interruption";
+export type FailureCategory =
+  | "input"
+  | "structure"
+  | "evidence"
+  | "decision"
+  | "file"
+  | "transport"
+  | "interruption";
 export interface ValidationIssue {
   code: string;
   path: string;
@@ -271,3 +321,5 @@ export interface FailureContext {
   stopped: boolean;
   attemptId: string;
 }
+
+export * from "./validation.js";

@@ -1,0 +1,5 @@
+{
+  "name": "@eval/worker-app",
+  "private": true,
+  "type": "module"
+}

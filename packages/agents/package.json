@@ -1,0 +1,15 @@
+{
+  "name": "@eval/agents",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./comparison": {
+      "types": "./comparison.d.ts",
+      "import": "./comparison.js"
+    },
+    "./critique": {
+      "types": "./critique.d.ts",
+      "import": "./critique.js"
+    }
+  }
+}

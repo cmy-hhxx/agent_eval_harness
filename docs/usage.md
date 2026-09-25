@@ -13,7 +13,7 @@ EVAL_BASE_URL=https://api.openai.com/v1
 EVAL_API_KEY=your-key
 ```
 
-将 URL 换成实际网关地址，保留网关要求的 `/v1` 路径。`npm run eval`、`npm run doctor` 和两个 Worker 的 workspace start 命令自动读取根 `.env`；已有环境变量优先。切换 `--engine pi|prime` 不需要更换变量名或复制密钥。`.env` 不入库，示例见 [.env.example](../.env.example)。
+将 URL 换成实际网关地址，保留网关要求的 `/v1` 路径。`npm run eval`、`npm run doctor` 和 `npm run worker` 自动读取根 `.env`；已有环境变量优先。切换 `--engine pi|prime` 不需要更换变量名或复制密钥。`.env` 不入库，示例见 [.env.example](../.env.example)。
 
 [configs/host.json](../configs/host.json) 配置输入、模型和执行预算：
 
@@ -27,19 +27,67 @@ EVAL_API_KEY=your-key
 | `execution` | 并发、超时、工具预算、修正和重试 |
 | `outputDir` | 运行产物 |
 
-配置中的相对路径相对于配置文件目录解析。文件中的 `judge.baseUrlEnv` 在加载时解析为运行配置的 `judge.baseUrl`。运行配置类型见 [EvalConfig](../packages/pairwise-eval/src/types.ts)，通用预算默认值见 [DEFAULT_POLICY](../packages/contracts/src/index.ts)，并发、重试和初始材料预算的默认值见 [loadConfig](../packages/pairwise-eval/src/input.ts)。
+配置中的相对路径相对于配置文件目录解析。文件中的 `judge.baseUrlEnv` 在加载时解析为运行配置的 `judge.baseUrl`。运行配置类型见 [EvalConfig](../packages/workflows/src/pairwise/types.ts)，通用预算默认值见 [DEFAULT_POLICY](../packages/contracts/src/index.ts)，并发、重试和初始材料预算的默认值见 [loadConfig](../apps/host/src/config.ts)。
 
 ## 目录约定
 
 | 位置 | 内容 | 是否入库 |
 |---|---|---|
-| `data/inputs/` | 按日期子目录保存四个版本的原始 JSONL | 否 |
-| `data/runs/<run-id>/` | 当前 Host 的全部运行产物 | 否 |
+| `configs/host.json` | 共享运行配置，路径相对于配置文件目录 | 是 |
+| `configs/local/` | 本机实验配置，不包含输入或结果；路径同样相对于配置文件目录 | 否 |
+| `data/sources/<dataset>/<batch>/` | 原始输入；当前回答数据集为 `model-answers`，每批保存四份候选 JSONL | 否 |
+| `data/runs/<workflow>/<run-id>/` | 一次运行的状态、结果和报告；当前工作流为 `pairwise` | 否 |
+| `log/runtime.log`、`log/evaluation.log` | 全项目共用的错误日志和业务日志 | 否 |
 | `.cache/npm/`、`.cache/uv/` | 下载缓存 | 否 |
 | `.runtime/`、`.venv/`、`dist/` | 可重建的执行环境和构建产物 | 否 |
 | `.artifacts/` | 开发验证日志、临时计划和检查结果 | 否 |
 
-新数据和结果都放进 `data/`，不要新增根目录输入、输出文件夹。
+目录按对象分区，数据集可供不同工作流和 run 引用。当前默认布局：
+
+```text
+configs/
+  host.json
+  local/                         # 本机实验配置
+data/
+  sources/model-answers/
+    0922/                        # a_fast.jsonl、a_expert.jsonl、aa_fast.jsonl、aa_expert.jsonl
+    0923/
+    0924/
+  runs/pairwise/
+    <run-id>/
+      state.json                 # 输入引用、任务进度、收据索引和草稿
+      results/                   # 正式评测 JSONL
+      report.md
+      task_summaries.md
+      stats.json
+      _internal/                 # 仅 debug
+```
+
+新增批次放入对应数据集目录；批次身份取 JSON 中的 `batch_id`，目录名只用于整理。默认配置递归扫描 `model-answers`；用 `--batch` 选择批次，或在配置中将输入路径指向具体批次。`outputDir` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
+
+源文件登记后保持位置和内容稳定。整理已有数据时必须一起更新 `state.json` 的源路径和预检引用、保存配置的输入路径及输出目录，再检查源文件修订与正式结果引用；只移动文件夹会使证据不可读。运行 ID、任务 ID、输入 ID 和盲测映射不随目录改名。
+
+## 日志
+
+应用启动时创建项目根目录的 `log/`，其中只有两个文件，均为 UTF-8 单行 JSON，追加写入，不按日期或 run 分文件：
+
+| 文件 | 写入内容 |
+|---|---|
+| `runtime.log` | 命令异常、预检或校验失败、任务最终失败，以及附件收集和 Worker 清理失败。包含时间、组件、事件、错误及可用的 run/task/attempt 标识；异常带截断后的堆栈。 |
+| `evaluation.log` | 已通过校验并写入正式结果文件的评测输出。每行对应一份已接受收据，附运行、任务、阶段和提交标识，`result` 为 Workflow 规整后的结果。涵盖对比、独立判对和不可比较结果。 |
+
+运行日志对同组件、事件、run 和错误消息在 60 秒内只保留首条，保留该条的任务定位信息。进度、心跳、模型流、工具调用和修复成功的中间错误不写入运行日志。已配置的模型密钥会脱敏。
+
+业务日志按 Workflow、run、任务和提交 ID 去重，重复提交与续跑不会重复追加；续跑会补齐该 run 已接受但尚未记入日志的结果，不触发重评。`report` 和 `validate` 不重复记录业务结果。正式结果和恢复状态仍存放在 run 目录，日志不是续跑数据源。日志写入失败只向 stderr 提示，不撤销已经接受的判决。
+
+多个 Host 与独立 Worker 共用同一套日志。写入锁放在 `.runtime/log-writer/`，日志目录不生成索引或轮转文件。追加前读取其他进程新增的完整行，崩溃留下的未完成末行在下次写入时清除；已完成行损坏则报告错误，保留原文件。日志持续追加，如需手动清理，应先停止写入进程。
+
+```bash
+tail -f log/runtime.log
+tail -f log/evaluation.log
+```
+
+日志类型见 [LogSink / EvaluationLog](../packages/contracts/src/index.ts)，文件写入与去重实现在 [logging.ts](../packages/data/src/logging.ts)。
 
 ## 运行与恢复
 
@@ -48,10 +96,10 @@ npm run eval -- preflight
 npm run eval -- run --engine pi --run-id pi-001
 npm run eval -- run --engine prime --run-id prime-001
 npm run eval -- run --engine pi --run-id pi-debug --debug
-npm run eval -- status --run data/runs/pi-001
-npm run eval -- report --run data/runs/pi-001
-npm run eval -- validate --run data/runs/pi-001
-npm run eval -- report --run data/runs/pi-debug --details
+npm run eval -- status --run data/runs/pairwise/pi-001
+npm run eval -- report --run data/runs/pairwise/pi-001
+npm run eval -- validate --run data/runs/pairwise/pi-001
+npm run eval -- report --run data/runs/pairwise/pi-debug --details
 ```
 
 `preflight` 加载配置并检查输入，需要配置模型 URL，但无需密钥，也不请求模型；有输入问题返回退出码 2。没有有效配对时拒绝新建运行。`--config` 可指定配置；`--batch ID`、`--case ID` 可重复；`--limit-cases N` 按批次与 case 排序截取，不保证首题有有效配对。
@@ -63,7 +111,7 @@ npm run eval -- preflight --batch 2026-09-23
 npm run eval -- run --engine pi --run-id daily-0923-0924 --batch 2026-09-23 --batch 2026-09-24
 ```
 
-再次执行相同 `--run-id` 自动续跑。Host 从 v6 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型和预算变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。模型服务端缓存行为保持不变。
+再次执行相同 `--run-id` 自动续跑。Host 从 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型和预算变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。模型服务端缓存行为保持不变。
 
 续跑沿用原运行的批次、case 和数量筛选条件，按 `batch_id + case_id + 阶段 + 版本组合` 识别任务；本次传入的 `--batch`、`--case`、`--limit-cases` 不替换原范围。已经接受的正确性和配对结果不再评测，即使原输入、标准答案或模型参数发生变化。未完成任务使用最新有效输入，并加入原选择范围内的新增配对；无效或冲突记录不能覆盖未完成任务，缺少所需材料时明确报错。需要新增日期批次或重新评测已完成样本时使用新 run ID。若某份正确性收据已接受，而配对尚未完成，配对仍使用这份收据；想让两阶段都基于修改后的材料评测，同样需要新 run ID。累计 attempts 和已记录的 Token 保留历次执行成本。运行退出码：0 成功、2 有失败、130 被中断。
 
@@ -72,24 +120,15 @@ npm run eval -- run --engine pi --run-id daily-0923-0924 --batch 2026-09-23 --ba
 运行中可调整并发并查看进度：
 
 ```bash
-npm run eval -- concurrency --run data/runs/pi-001 --value 8
-npm run eval -- progress --run data/runs/pi-001
+npm run eval -- concurrency --run data/runs/pairwise/pi-001 --value 8
+npm run eval -- progress --run data/runs/pairwise/pi-001
 ```
 
 提高并发立即唤醒调度器并按需启动托管 Worker；降低并发停止补位，让健康任务自然完成。外部 Worker 只调整使用数量。默认并发保持配置值。进度包含排队、运行、接受、修复、失败分类、近期吞吐和最长无进展任务；至少五个耗时样本后才提供 ETA 区间。
 
-v4 / v5 状态必须显式升级：
-
-```bash
-npm run eval -- upgrade-run --run data/runs/pi-001
-npm run eval -- upgrade-run --run data/runs/pi-001 --apply
-```
-
-这是独立的离线转换命令，常规运行仅读取 v6。无 `--apply` 只预览；应用时使用运行锁，逐条确认旧快照与源文件一致后，原子替换状态，再删除 `run/inputs/*.json` 中已确认重复的文件；不创建整份运行备份。v4 的 `_internal/plan.json` 和 `_internal/inputs.jsonl.gz` 是转换所需材料，命令不会删除它们。中断后重跑可完成 `run/inputs/` 的剩余去重；源文件缺失或内容不同则保留材料并报错。保留已有 run/task/comparison/submission ID、A/B 分配、判决和累计用量，不调用模型，不改写正式 JSONL。
-
 ## 运行产物
 
-所有交付文件位于 `data/runs/<run-id>/`，不生成 ZIP、tar 等压缩交付包。默认包含 `report.md`、`task_summaries.md`、`results/`、`state.json` 和 `stats.json`；运行中的 `.run-lock` 在退出时释放。
+所有交付文件位于 `data/runs/pairwise/<run-id>/`，不生成 ZIP、tar 等压缩交付包。默认包含 `report.md`、`task_summaries.md`、`results/`、`state.json` 和 `stats.json`；运行中的 `.run-lock` 在退出时释放。
 
 | 文件 | 用途 |
 |---|---|
@@ -130,8 +169,8 @@ npm run eval -- upgrade-run --run data/runs/pi-001 --apply
 默认由 Host 管理 Worker 进程。需要单独启动时：
 
 ```bash
-npm run start --workspace @eval/agent-pi -- --port 4101
-npm run start --workspace @eval/agent-prime -- --port 4102
+npm run worker -- --engine pi --directory .runtime/workers/pi-1 --port 4101
+npm run worker -- --engine prime --directory .runtime/workers/prime-1 --port 4102
 npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external-001
 ```
 

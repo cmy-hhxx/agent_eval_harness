@@ -1,9 +1,18 @@
 {
-  "name": "@eval/host",
-  "version": "0.1.0",
+  "name": "@eval/host-app",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node ../../dist/apps/host/src/cli.js"
+  },
+  "exports": {
+    "./config": {
+      "types": "./config.d.ts",
+      "import": "./config.js"
+    },
+    "./composition": {
+      "types": "./composition.d.ts",
+      "import": "./composition.js"
+    }
   }
 }

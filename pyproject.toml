@@ -1,9 +1,0 @@
-[project]
-name = "eval-code-runtime"
-version = "0.1.0"
-description = "Python environment for the evaluation code tools"
-requires-python = ">=3.12"
-dependencies = []
-
-[tool.uv]
-package = false

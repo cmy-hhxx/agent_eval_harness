@@ -1,0 +1,11 @@
+{
+  "name": "@eval/workflows",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./pairwise": {
+      "types": "./pairwise.d.ts",
+      "import": "./pairwise.js"
+    }
+  }
+}

@@ -51,12 +51,8 @@ if (runtime.status !== 0) {
   console.error("Prime Python runtime missing; run npm run bootstrap.");
 } else console.log("Prime Python runtime: ready (independent .runtime/prime-python)");
 try {
-  const { loadConfig } = await import(
-    pathToFileURL(path.join(root, "dist/packages/pairwise-eval/src/input.js")).href
-  );
-  const { createRegistry } = await import(
-    pathToFileURL(path.join(root, "dist/packages/tools/src/index.js")).href
-  );
+  const { loadConfig } = await import("@eval/host-app/config");
+  const { createRegistry } = await import("@eval/tools");
   const config = await loadConfig(process.argv[2] || path.join(root, "configs/host.json"));
   console.log(
     `Model configuration: ${config.judge.provider}, ${config.judge.api}; tools: ${createRegistry().names().join(", ")}`,

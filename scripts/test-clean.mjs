@@ -59,8 +59,8 @@ try {
   console.log("Clean checkout with only Node/npm/uv/Python on PATH; no global pi or prime-agent.");
   await run("npm", ["run", "bootstrap"]);
   // Build each adapter independently before the full host is built.
-  await run("npm", ["run", "build", "--workspace", "@eval/agent-pi"]);
-  await run("npm", ["run", "build", "--workspace", "@eval/agent-prime"]);
+  await run("npm", ["run", "build:pi"]);
+  await run("npm", ["run", "build:prime"]);
   await run("npm", ["run", "build:app"]);
   await run("npm", ["run", "doctor"]);
   await run("npm", ["test"]);

@@ -40,7 +40,7 @@
 4. 在独立输入目录构造只改变一个关键事实的变体，使用新 run ID 重新执行正确性和配对阶段，复核结论是否合理响应。不要修改固定回归集引用的源文件；同 run ID 会保留已接受结果，不能用来验证事实变更后的重评效果。
 5. 研究裁判稳定性时使用独立 run ID，至少重复三次，记录分歧、用量、耗时及未完成率。
 
-先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/`，不追加到本指南。
+先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/pairwise/`，不追加到本指南。
 
 ## 离线回归与小样本入口
 
@@ -49,7 +49,7 @@
 回归集保留原草稿；校验时仅将逐字可定位的旧引文转成证据 ID，并为缺少 ID 的发现及其索引引用补齐对应 ID。不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
 
 ```bash
-npm run benchmark -- collect --run data/runs/pi-debug --output .artifacts/regression/fixtures.json --limit 32
+npm run benchmark -- collect --run data/runs/pairwise/pi-debug --output .artifacts/regression/fixtures.json --limit 32
 npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
 npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
 ```

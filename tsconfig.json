@@ -1,21 +1,78 @@
 {
   "compilerOptions": {
-    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "strict": true, "noUncheckedIndexedAccess": false, "esModuleInterop": true,
-    "noUnusedLocals": true, "noUnusedParameters": true,
-    "skipLibCheck": true, "rootDir": ".", "outDir": "dist", "declaration": true,
-    "sourceMap": true, "resolveJsonModule": true,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "esModuleInterop": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true,
+    "sourceMap": true,
+    "resolveJsonModule": true,
     "paths": {
-      "#pi-sdk": ["./vendor/pi/packages/coding-agent/dist/index.d.ts"],
-      "#prime-sdk": ["./vendor/prime-agent/packages/coding-agent/dist/index.d.ts"],
-      "@eval/agent-pi": ["./packages/agent-pi/src/index.ts"],
-      "@eval/agent-prime": ["./packages/agent-prime/src/index.ts"],
-      "@eval/contracts": ["./packages/contracts/src/index.ts"],
-      "@eval/tools": ["./packages/tools/src/index.ts"],
-      "@eval/worker": ["./packages/worker/src/server.ts"],
-      "@eval/pairwise-eval": ["./packages/pairwise-eval/src/index.ts"]
+      "#pi-sdk": [
+        "./vendor/pi/packages/coding-agent/dist/index.d.ts"
+      ],
+      "#prime-sdk": [
+        "./vendor/prime-agent/packages/coding-agent/dist/index.d.ts"
+      ],
+      "@eval/contracts": [
+        "./packages/contracts/src/index.ts"
+      ],
+      "@eval/data": [
+        "./packages/data/src/index.ts"
+      ],
+      "@eval/host": [
+        "./packages/host/src/index.ts"
+      ],
+      "@eval/tools": [
+        "./packages/tools/src/index.ts"
+      ],
+      "@eval/agents/comparison": [
+        "./packages/agents/src/comparison/index.ts"
+      ],
+      "@eval/agents/critique": [
+        "./packages/agents/src/critique/index.ts"
+      ],
+      "@eval/workflows/pairwise": [
+        "./packages/workflows/src/pairwise/index.ts"
+      ],
+      "@eval/runtime/client": [
+        "./packages/runtime/src/client-entry.ts"
+      ],
+      "@eval/runtime/http": [
+        "./packages/runtime/src/http.ts"
+      ],
+      "@eval/runtime/worker": [
+        "./packages/runtime/src/server.ts"
+      ],
+      "@eval/runtime/pi": [
+        "./packages/runtime/src/adapters/pi.ts"
+      ],
+      "@eval/runtime/prime": [
+        "./packages/runtime/src/adapters/prime.ts"
+      ],
+      "@eval/host-app/config": [
+        "./apps/host/src/config.ts"
+      ],
+      "@eval/host-app/composition": [
+        "./apps/host/src/composition.ts"
+      ]
     }
   },
-  "include": ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts", "tests/host/**/*.ts", "tests/integration/**/*.ts"],
-  "exclude": ["vendor", "node_modules", "dist"]
+  "include": [
+    "apps/*/src/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "vendor",
+    "node_modules",
+    "dist"
+  ]
 }
