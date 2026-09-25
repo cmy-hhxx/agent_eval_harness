@@ -8,6 +8,9 @@ await Promise.all(
   ),
 );
 await run("node", ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
+await cp(path.join(root, "apps/host/dashboard"), path.join(root, "dist/apps/host/dashboard"), {
+  recursive: true,
+});
 
 async function resources(directory) {
   for (const entry of await readdir(path.join(root, directory), {

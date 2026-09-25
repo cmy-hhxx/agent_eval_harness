@@ -151,6 +151,12 @@ export async function runEvaluation(options: RunOptions) {
         wake();
         return json(res, progressSnapshot(saved));
       }
+      if (url.pathname === "/api/control/stop" && req.method === "POST") {
+        if (req.headers["x-run-token"] !== lock.token) throw new HttpError(403, "Invalid run control token");
+        controller.abort(new Error("Stopped from dashboard"));
+        wake();
+        return json(res, { stopping: true });
+      }
       if (url.pathname === "/api/progress" && req.method === "GET") return json(res, progressSnapshot(saved));
       if (req.method === "GET" && parts[0] === "api" && parts[1] === "inputs" && parts[2]) {
         const value = inputs[safeId(parts[2])];

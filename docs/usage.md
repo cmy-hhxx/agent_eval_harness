@@ -126,6 +126,16 @@ npm run eval -- progress --run data/runs/pairwise/pi-001
 
 提高并发立即唤醒调度器并按需启动托管 Worker；降低并发停止补位，让健康任务自然完成。外部 Worker 只调整使用数量。默认并发保持配置值。进度包含排队、运行、接受、修复、失败分类、近期吞吐和最长无进展任务；至少五个耗时样本后才提供 ETA 区间。
 
+### 本机运行看板
+
+启动一个只监听 `127.0.0.1` 的简易看板：
+
+```bash
+npm run eval -- dashboard --port 4173
+```
+
+打开终端输出的地址即可查看 `data/runs/pairwise` 中的运行、任务状态和只读 Host 配置。看板可以启动 Pi / Prime 运行、停止当前运行，并用相同 run ID 继续未完成任务；停止不会删除已接受结果。停止操作通过当前 run 的锁令牌转发给 Host，页面不保存输入正文或模型密钥。看板不提供远程认证，不应绑定到公网地址。
+
 ## 运行产物
 
 所有交付文件位于 `data/runs/pairwise/<run-id>/`，不生成 ZIP、tar 等压缩交付包。默认包含 `report.md`、`task_summaries.md`、`results/`、`state.json` 和 `stats.json`；运行中的 `.run-lock` 在退出时释放。

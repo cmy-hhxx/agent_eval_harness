@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Eval Control</title>
+    <link rel="stylesheet" href="/dashboard.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">E</span>
+          <strong>EVAL CONTROL</strong>
+        </div>
+        <nav class="nav-list" aria-label="主导航">
+          <a class="nav-link active" href="#runs">运行</a>
+          <a class="nav-link" href="#config">配置</a>
+        </nav>
+      </aside>
+
+      <main class="main-content">
+        <header class="page-header">
+          <div>
+            <h1>运行看板</h1>
+            <span class="refresh-time" id="refresh-time">—</span>
+          </div>
+          <div class="service-badge">
+            <span class="live-dot"></span>
+            <span>在线</span>
+          </div>
+        </header>
+
+        <section class="metric-strip" aria-label="运行摘要">
+          <div class="metric">
+            <span class="metric-label">活动运行</span>
+            <strong id="metric-runs">—</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">执行中</span>
+            <strong id="metric-running">—</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">已接受</span>
+            <strong id="metric-accepted">—</strong>
+          </div>
+          <div class="metric metric-accent">
+            <span class="metric-label">默认并发</span>
+            <strong id="metric-concurrency">—</strong>
+          </div>
+        </section>
+
+        <section class="workspace" id="runs">
+          <div class="panel runs-panel">
+            <div class="panel-heading">
+              <h2>运行</h2>
+              <button class="button button-quiet" id="refresh-button" type="button">刷新</button>
+            </div>
+            <div class="run-list" id="run-list" aria-live="polite">
+              <div class="empty-state">读取中…</div>
+            </div>
+            <div class="start-zone">
+              <h3>新建运行</h3>
+              <form id="start-form" class="start-form">
+                <label>
+                  <span>Run ID</span>
+                  <input id="run-id" name="runId" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" />
+                </label>
+                <label>
+                  <span>底座</span>
+                  <select id="engine" name="engine">
+                    <option value="pi">Pi</option>
+                    <option value="prime">Prime</option>
+                  </select>
+                </label>
+                <label>
+                  <span>批次</span>
+                  <input id="batch" name="batch" placeholder="可选" />
+                </label>
+                <label>
+                  <span>最多 Case</span>
+                  <input id="limit-cases" name="limitCases" type="number" min="1" placeholder="不限" />
+                </label>
+                <label class="check-label">
+                  <input id="debug" name="debug" type="checkbox" />
+                  <span>Debug</span>
+                </label>
+                <button class="button button-primary" type="submit">启动 / 续跑</button>
+              </form>
+            </div>
+          </div>
+
+          <aside class="panel config-panel" id="config">
+            <div class="panel-heading">
+              <h2>Host 配置</h2>
+              <span class="read-only">只读</span>
+            </div>
+            <p class="config-path" id="config-path">—</p>
+            <div class="env-status" id="env-status"></div>
+            <pre class="config-json" id="config-json">{}</pre>
+          </aside>
+        </section>
+
+        <section class="panel activity-panel" aria-labelledby="activity-title">
+          <div class="panel-heading">
+            <h2 id="activity-title">任务</h2>
+            <div class="selected-run" id="selected-run">—</div>
+          </div>
+          <div class="activity-summary" id="activity-summary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>任务</th>
+                  <th>阶段</th>
+                  <th>批次 / Case</th>
+                  <th>状态</th>
+                  <th>尝试</th>
+                  <th>原因</th>
+                </tr>
+              </thead>
+              <tbody id="task-list">
+                <tr><td class="table-empty" colspan="6">选择运行</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </main>
+    </div>
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

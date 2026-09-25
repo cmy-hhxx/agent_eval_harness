@@ -10,6 +10,7 @@ import { pairwiseWorkflow } from "@eval/workflows/pairwise";
 import { reportRun } from "@eval/workflows/pairwise";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/pairwise";
+import { startDashboard } from "./dashboard.js";
 
 let logRunId: string | undefined;
 async function main(): Promise<void> {
@@ -29,14 +30,30 @@ async function main(): Promise<void> {
       help: { type: "boolean" },
       details: { type: "boolean" },
       value: { type: "string" },
+      port: { type: "string", default: "4173" },
     },
   });
   const command = positionals[0];
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      "eval preflight|run|status|validate|report|concurrency|progress --config configs/host.json\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\nstatus/validate/report: --run data/runs/pairwise/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH",
+      "eval preflight|run|status|validate|report|concurrency|progress|dashboard --config configs/host.json\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\nstatus/validate/report: --run data/runs/pairwise/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
     );
+    return;
+  }
+  if (command === "dashboard") {
+    const port = Number(values.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("--port must be 1-65535");
+    const dashboard = await startDashboard({ configPath: path.resolve(values.config), port });
+    console.log(`Dashboard listening at ${dashboard.url}`);
+    await new Promise<void>((resolve) => {
+      const shutdown = async () => {
+        await dashboard.close();
+        resolve();
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
     return;
   }
   if (values.details && command !== "report") throw new Error("--details 仅用于 report");
