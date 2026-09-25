@@ -39,7 +39,7 @@ export class RunStore {
   save(): Promise<void> {
     const snapshot = structuredClone(this.state);
     const next = this.writes.then(async () => {
-      const pending = snapshot.manifest.tasks.some((task) => task.stage === "pairwise" && snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported);
+      const pending = snapshot.manifest.tasks.some((task) => snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported);
       await this.pack.writeRun(this.run, snapshot);
       await this.writeResults(snapshot);
       // Drop recovery payloads only after their formal result rows are durable.
@@ -187,15 +187,19 @@ export class RunStore {
       status: "succeeded",
       acceptedAt: Date.now(),
     };
+    const failure = state.failure, repeatedErrors = state.repeatedErrors;
     this.state.receipts[task.id] = receipt;
     state.status = "succeeded";
     state.reason = undefined;
-    if (state.failure) state.failure = { ...state.failure, draft: undefined, errors: [], stopped: false };
+    state.repeatedErrors = failure?.repeatedErrors || undefined;
+    state.failure = undefined;
     try {
       await this.save();
     } catch (error) {
       delete this.state.receipts[task.id];
       state.status = "running";
+      state.failure = failure;
+      state.repeatedErrors = repeatedErrors;
       throw error;
     }
     return receipt;

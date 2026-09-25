@@ -182,6 +182,17 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       assert.equal(prepared.evaluation.systemPrompt, system);
       assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
       assert(prepared.prompt.includes("计算2+2"));
+      const rules = prepared.evaluation.systemPrompt + "\n" + instruction;
+      assert(rules.includes("evidence_id"));
+      assert(rules.includes("submit_evaluation"));
+      if (stage === "correctness") {
+        assert(!rules.includes("both_good"));
+        assert(!rules.includes("decisive_findings"));
+        assert(rules.includes("final_message_index"));
+      } else {
+        for (const rule of ["both_good", "both_bad", "not_comparable", "decisive_findings", "counterevidence", "requirement_uncovered"])
+          assert(rules.includes(rule), rule);
+      }
     }
     const snapshot = pairwisePack.snapshots!()["contract.json"] as Record<string, unknown>;
     assert.equal(snapshot.systemPrompt, system);

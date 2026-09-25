@@ -11,12 +11,13 @@ import {
   type RunManifest,
   type Submission,
 } from "../../packages/contracts/src/index.js";
-import { exists, runLock } from "../../packages/contracts/src/io.js";
-import { readRunState } from "../../packages/pairwise-eval/src/run-data.js";
+import { exists, readJson, runLock, writeJsonl } from "../../packages/contracts/src/io.js";
+import { readRunState, type Checkpoint } from "../../packages/pairwise-eval/src/run-data.js";
 import { pairwisePack } from "../../packages/pairwise-eval/src/index.js";
 import { reportRun } from "../../packages/pairwise-eval/src/report.js";
 import { buildPlan } from "../../packages/pairwise-eval/src/input.js";
 import { RunStore } from "../../apps/host/src/store.js";
+import { validateRun } from "../../apps/host/src/validate.js";
 import { draftFor, emptyAudit, fakeIdentity, fixtureConfig, pairResult, raw } from "./fixtures.js";
 
 async function fixture(rows = [raw("q", null)]) {
@@ -63,7 +64,9 @@ async function fixture(rows = [raw("q", null)]) {
     hostUrl: "http://127.0.0.1",
     deadline: Date.now() + 60000,
   };
-  const evaluation = draftFor(spec, pairResult());
+  const evaluation = draftFor(spec, task.stage === "correctness"
+    ? { is_correct: true, correctness_reason: "【候选A】的结果与标准答案一致。", evidence: [{ message_index: 1, quote: "2+2=4" }] }
+    : pairResult());
   const value: Submission = {
     taskId: task.id,
     attemptId: spec.attemptId,
@@ -100,6 +103,86 @@ test("duplicate submissions commit once and return the same receipt", async () =
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("correctness receipts are durable references and preserve exact duplicate checks after recovery", async () => {
+  const { directory, store, spec, value } = await fixture([raw("q", "4")]);
+  try {
+    await store.activate(spec);
+    await store.checkpoint(spec.taskId, { draft: value.evaluation, errors: [], contentSubmissions: 3,
+      fileErrors: 1, repeatedErrors: 2, stopped: false, attemptId: spec.attemptId });
+    value.submissionStats = { contentSubmissions: 3, fileErrors: 1 };
+    const accepted = await store.accept(value);
+    const file = path.join(store.run, "results/correctness.jsonl"), text = await readFile(file, "utf8");
+    const row = JSON.parse(text);
+    assert.equal(row.task_id, spec.taskId);
+    assert.equal(row.submission_id, value.submissionId);
+    assert.deepEqual(row.evaluation, accepted.evaluation);
+    const checkpoint = await readJson<Checkpoint>(path.join(store.run, "state.json"));
+    const saved = checkpoint.tasks[spec.taskId];
+    assert(saved.receipt);
+    assert.equal(saved.receipt.evaluation, undefined);
+    assert.equal(saved.receipt.evaluationPatch, undefined);
+    assert.deepEqual(saved.receipt.exported, { taskId: spec.taskId, file: "correctness.jsonl" });
+    assert.equal(saved.failure, undefined);
+    assert.equal(saved.repeatedErrors, 2);
+    const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.pack);
+    assert.deepEqual(await restored.accept(value), accepted);
+    const dependent = { ...store.manifest.tasks.find((t) => t.stage === "pairwise")!, dependencies: { A: spec.taskId } };
+    assert.deepEqual((await restored.dependencies(dependent)).A.evaluation, accepted.evaluation);
+    for (const change of [
+      { evaluation: { ...value.evaluation as object, correctness_reason: "different" } },
+      { usage: { ...value.usage, totalTokens: 1 } },
+      { audit: { ...value.audit, calls: 1 } },
+      { submissionStats: { contentSubmissions: 4, fileErrors: 1 } },
+    ]) await assert.rejects(restored.accept({ ...value, ...change }), /committed receipt/);
+    await appendFile(file, text + '{"task_id":"unfinished');
+    const recovered = new RunStore(store.run, await readRunState(store.run), store.inputs, store.pack);
+    await recovered.save();
+    assert.equal(await readFile(file, "utf8"), text);
+    const summary = await reportRun(store.run);
+    assert.equal((summary.quality as { repeated_error_tasks: number }).repeated_error_tasks, 1);
+    assert.equal(await readFile(file, "utf8"), text, "report rebuild retains formal correctness evidence");
+    const validation = await validateRun(store.run);
+    assert.equal(validation.valid, true);
+    assert.equal(validation.completed_comparisons, 0, "correctness rows are not comparisons");
+    await appendFile(file, JSON.stringify({ ...row, evaluation: { ...row.evaluation, is_correct: false } }) + "\n");
+    await assert.rejects(readRunState(store.run), /冲突结果/);
+    await writeJsonl(file, [{ ...row, input_id: "wrong-input" }]);
+    await assert.rejects(readRunState(store.run), /身份不一致/);
+    await rm(file);
+    await assert.rejects(readRunState(store.run), /结果文件缺失/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+for (const window of ["append", "compaction"] as const) test(`correctness recovers a failure during ${window}`, async () => {
+  const { directory, store, spec, value } = await fixture([raw("q", "4")]);
+  try {
+    await store.activate(spec);
+    const file = path.join(store.run, "results/correctness.jsonl");
+    if (window === "append") {
+      await mkdir(file);
+      await assert.rejects(store.accept(value));
+      await assert.rejects(store.findSubmission(value.submissionId), /not accepted/);
+      await rm(file, { recursive: true });
+    } else {
+      const pack = { ...store.pack, async writeRun(run: string, state: Parameters<typeof store.pack.writeRun>[1]) {
+        if (state.receipts[spec.taskId]?.exported) throw new Error("compaction interrupted");
+        await store.pack.writeRun(run, state);
+      } };
+      const failing = new RunStore(store.run, store.state, store.inputs, pack);
+      await failing.activate(spec);
+      assert.equal((await failing.accept(value)).submissionId, value.submissionId);
+    }
+    const saved = await readRunState(store.run);
+    assert.equal(saved.receipts[spec.taskId].exported, undefined, "full checkpoint remains until compaction succeeds");
+    assert.deepEqual(saved.receipts[spec.taskId].submitted, value.evaluation);
+    const recovered = new RunStore(store.run, saved, store.inputs, store.pack);
+    await recovered.save();
+    assert.equal((await recovered.accept(value)).submissionId, value.submissionId);
+    assert.equal((await readFile(file, "utf8")).trim().split("\n").length, 1);
+    assert.equal((await readRunState(store.run)).receipts[spec.taskId].exported?.taskId, spec.taskId);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("successful submissions append immediately without replacing earlier lines", async () => {
   const { directory, store, spec, value } = await fixture([raw("q1", null), raw("q2", null), raw("q3", null)]);
   try {

@@ -96,6 +96,7 @@ npm run eval -- upgrade-run --run data/runs/pi-001 --apply
 |---|---|
 | `report.md` | 总览、分批样本与配对汇总、异常数量、用量缺失和校验状态 |
 | `results/<pair>.jsonl` | 正式配对结果，每接受一条成功提交就追加一行并刷盘，运行中即可读取 |
+| `results/correctness.jsonl` | 独立正确性判决与证据，按任务 ID 引用，成功提交后追加并刷盘；无独立判对任务时不生成 |
 | `results/not_comparable.jsonl` | 不可比较结果，同样逐条追加，有记录时才生成，不计入正式比较数量 |
 | `task_summaries.md` | 以 `batch_id / case_id` 标识逐题结论、双方优缺点、耗时，以及失败、不可比较、输入跳过原因和输入异常 |
 | `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、结果引用、待修草稿与错误、累计用量；候选信息仅登记一次 |
@@ -113,10 +114,10 @@ npm run eval -- upgrade-run --run data/runs/pi-001 --apply
 | `_internal/tasks/<id>/attempt-NNN/attempt.json` | 尝试的参数 `spec`、终态 `status`、最终用量与审计 `metrics`、失败原因及未接受的最后一次提交；未收齐的字段缺省 |
 | `_internal/tasks/<id>/attempt-NNN/events.jsonl.gz` | 尝试的压缩执行日志 |
 | `_internal/tasks/<id>/artifacts/` | 成功及失败尝试的脚本、stdout/stderr 和生成文件 |
-| `_internal/diagnostics/` | 有记录才生成的 `failures.jsonl`、`skipped.jsonl`、`not_comparable.jsonl`；`correctness.jsonl` 只包含实际独立评测，不生成占位行 |
+| `_internal/diagnostics/` | 有记录才生成的 `failures.jsonl`、`skipped.jsonl`、`not_comparable.jsonl` |
 | `_internal/exports/` | `report --details` 按需生成的 `task_summaries.jsonl`、`task_outcomes.jsonl`；后续重建报告时一并刷新 |
 
-接受提交时先原子保存待落盘收据，再向结果 JSONL 追加并刷盘，随后将状态中的判决正文替换为结果引用。两次写入之间崩溃可从待落盘收据恢复；完成后正式 JSONL 是判决的唯一持久存储，不能删除它来清理空间。状态保留恢复原始提交所需的少量字段差异，以便同一提交 UUID 重发时确认内容一致。续跑清除重复行和中断尾行；已压缩为引用的正式结果若丢失则明确报错，不自动重评。
+正确性与配对阶段均在接受提交时先原子保存待落盘收据，再向结果 JSONL 追加并刷盘，随后将状态中的判决正文替换为结果引用。成功任务清除失败草稿和错误上下文，保留提交统计及重复错误计数。两次写入之间崩溃可从待落盘收据恢复；完成后正式 JSONL 是判决的唯一持久存储，不能删除它来清理空间。状态保留恢复原始提交所需的少量字段差异，以便同一提交 UUID 重发时确认内容一致。续跑清除重复行和中断尾行；已压缩为引用的正式结果若丢失则明确报错，不自动重评。
 
 `report` 重建展示并使旧校验结果失效；`validate` 分别报告正式结果、证据关系和可选附件。附件未保存或缺失不撤销成功收据，也不产生结果缺失错误。普通模式切 debug 不补造历史附件或重评成功任务。`report` 可从已接受的正式结果生成展示；`validate` 从原始输入校验证据。原文件修改或删除后，旧结果保留，证据校验会明确报告材料不可用，不触发重评。两条命令不调用模型；`report --details` 仅用于 debug 运行。
 

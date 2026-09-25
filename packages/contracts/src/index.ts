@@ -111,11 +111,15 @@ export interface Usage {
   totalTokens: number;
 }
 export const emptyUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 });
+export type ResultReference = { file?: string } & (
+  | { comparisonId: string; taskId?: never }
+  | { taskId: string; comparisonId?: never }
+);
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
   submitted?: unknown;
-  exported?: { comparisonId: string; row: JsonObject; file?: string };
+  exported?: ResultReference & { row: JsonObject };
 }
 export interface ToolContext {
   attemptId: string;
@@ -218,6 +222,7 @@ export interface TaskState {
   attempts: number;
   reason?: string;
   failure?: FailureContext;
+  repeatedErrors?: number;
   revision?: number;
   durationMs?: number;
   startedAt?: number;

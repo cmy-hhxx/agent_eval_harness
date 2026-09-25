@@ -10,15 +10,16 @@ import {
   writeJson,
 } from "../../../packages/contracts/src/io.js";
 import { pairwisePack } from "../../../packages/pairwise-eval/src/index.js";
-import { comparisonRow, writeOverview } from "../../../packages/pairwise-eval/src/report.js";
+import { comparisonRow, correctnessRow, writeOverview } from "../../../packages/pairwise-eval/src/report.js";
 import { loadRunInputs, readRunState } from "../../../packages/pairwise-eval/src/run-data.js";
 import type { Candidate, EvalConfig, PairwiseResult, RawInput, TaskData } from "../../../packages/pairwise-eval/src/types.js";
 import { adapt, candidateKey } from "../../../packages/pairwise-eval/src/input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { outputSchema } from "../../../packages/pairwise-eval/src/index.js";
+import { outputSchema, stageSchema } from "../../../packages/pairwise-eval/src/index.js";
 
 export async function validateRun(run: string) {
-  const outputValidator = new Ajv2020({ allErrors: true, strict: false }).compile(outputSchema);
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const outputValidator = ajv.compile(outputSchema), correctnessValidator = ajv.compile(stageSchema("correctness"));
   const state = await readRunState(run), manifest = state.manifest;
   const errors: string[] = [], evidenceErrors: string[] = [], artifactErrors: string[] = [],
     receipts = new Map<string, SubmissionReceipt>();
@@ -76,9 +77,18 @@ export async function validateRun(run: string) {
     ),
     expected = new Map<string, string[]>();
   for (const task of manifest.tasks)
-    if (task.stage === "pairwise" && receipts.has(task.id)) {
+    if (receipts.has(task.id)) {
       try {
         const receipt = receipts.get(task.id)!;
+        if (task.stage === "correctness") {
+          const row = receipt.exported?.row || correctnessRow(task, receipt);
+          if (!correctnessValidator(row.evaluation) || canonical(row) !== canonical(correctnessRow(task, receipt)))
+            throw new Error("正确性结果结构或收据不一致");
+          const name = "correctness.jsonl";
+          if (!expected.has(name)) expected.set(name, []);
+          expected.get(name)!.push(canonical(row));
+          continue;
+        }
         const value = receipt.evaluation as PairwiseResult;
         const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
           name = value.verdict.result === "not_comparable" ? "not_comparable.jsonl" : (task.data as TaskData).pair!.join("__vs__") + ".jsonl";
@@ -111,7 +121,7 @@ export async function validateRun(run: string) {
     results: { valid: errors.length === 0, errors: [...errors] },
     evidence: { valid: evidenceErrors.length === 0, errors: evidenceErrors },
     artifacts: { status: !manifest.debug ? "not_retained" : artifactErrors.length ? "missing" : "available", errors: artifactErrors },
-    completed_comparisons: [...expected].reduce((n, [name, rows]) => n + (name === "not_comparable.jsonl" ? 0 : rows.length), 0),
+    completed_comparisons: [...expected].reduce((n, [name, rows]) => n + (["not_comparable.jsonl", "correctness.jsonl"].includes(name) ? 0 : rows.length), 0),
     errors: [...errors, ...evidenceErrors],
     artifacts_checked: manifest.debug,
   };
