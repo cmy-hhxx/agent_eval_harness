@@ -12,25 +12,25 @@
       <aside class="sidebar" aria-label="运行导航">
         <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL CONTROL</strong></div>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
-        <div id="run-list" class="run-list" aria-live="polite"><p class="empty-state">正在读取运行…</p></div>
+        <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
         <a class="button button-primary new-run" href="#config">设置并启动运行</a>
       </aside>
 
       <main class="main-content">
         <header class="page-header">
-          <div><h1>评测工作台</h1><p id="refresh-time">按样本核对输入、判决与运行状态</p></div>
+          <div><h1>评测工作台</h1><p id="refresh-time"></p></div>
           <span class="service-badge">本机看板</span>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
-        <section class="run-overview" aria-labelledby="run-title">
+        <section class="run-overview" id="run-overview" aria-labelledby="run-title" hidden>
           <div class="overview-head">
-            <div><h2 id="run-title">选择一个运行</h2><p id="run-description">运行概览与样本会在这里显示。</p></div>
+            <div><h2 id="run-title"></h2><p id="run-description"></p></div>
             <div class="overview-actions" id="run-actions"></div>
           </div>
-          <div id="stage-summary" class="stage-summary"><p class="empty-state">暂无运行状态</p></div>
+          <div id="stage-summary" class="stage-summary"></div>
         </section>
 
-        <section class="explorer" aria-label="样本与评测结果">
+        <section class="explorer" id="explorer" aria-label="样本与评测结果" hidden>
           <div class="panel cases-panel">
             <div class="panel-heading"><h2>样本</h2><span id="case-count" class="muted">—</span></div>
             <form id="case-filters" class="case-filters" role="search">
@@ -40,16 +40,16 @@
               <label><span>状态</span><select name="status" id="filter-status"><option value="">全部状态</option><option value="pending">排队</option><option value="running">运行中</option><option value="succeeded">已接受</option><option value="failed">失败</option><option value="timed_out">超时</option><option value="blocked">阻塞</option><option value="cancelled">取消</option></select></label>
               <button class="button" type="submit">筛选</button>
             </form>
-            <div id="case-list" class="case-list" aria-live="polite"><p class="empty-state">选择运行后查看样本。</p></div>
+            <div id="case-list" class="case-list" aria-live="polite"></div>
             <div class="pager"><button id="prev-page" class="button" type="button" disabled>上一页</button><span id="page-label">—</span><button id="next-page" class="button" type="button" disabled>下一页</button></div>
           </div>
           <div class="panel detail-panel">
-            <div id="case-detail" class="case-detail" aria-live="polite"><p class="empty-state">选择左侧样本，核对原始输入和正式评测结果。</p></div>
+            <div id="case-detail" class="case-detail" aria-live="polite"></div>
           </div>
         </section>
 
         <section class="panel launch-panel" id="config" aria-labelledby="config-title">
-          <div class="panel-heading"><div><h2 id="config-title">设置并启动运行</h2><p class="muted">仅对这次启动或续跑生效，不修改共享配置。</p></div></div>
+          <div class="panel-heading"><div><h2 id="config-title">设置并启动运行</h2></div></div>
           <form id="start-form" class="start-form">
             <div class="form-grid">
               <label><span>Run ID</span><input id="run-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" /></label>
@@ -58,8 +58,7 @@
               <label><span>Case（逗号分隔）</span><input id="case" placeholder="全部 Case" /></label>
               <label><span>最多 Case</span><input id="limit-cases" type="number" min="1" placeholder="不限" /></label>
             </div>
-            <p id="resume-note" class="help-text">同一 Run ID 续跑时沿用原筛选范围，已接受结果不会重评。下方显示当前基础配置，不代表上次运行所用模型；本次设置只作用于未完成任务。</p>
-            <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid">正在读取配置…</div></div>
+            <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
             <div class="settings-section"><h3>执行预算</h3><div class="form-grid">
               <label><span>并发数</span><input id="setting-concurrency" type="number" min="1" required /></label>
               <label><span>任务超时（秒）</span><input id="setting-timeout" type="number" min="1" required /></label>
@@ -74,7 +73,7 @@
             <div id="env-status" class="env-status" aria-label="网关配置状态"></div>
             <p id="config-path" class="config-path"></p>
             <div class="launch-actions"><button id="preview-button" class="button" type="button">预检输入与配置</button><button id="launch-button" class="button button-primary" type="submit" disabled>确认启动 / 续跑</button></div>
-            <div id="preview-result" class="preview-result" role="status" aria-live="polite">预检后才能启动。</div>
+            <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
           </form>
         </section>
         <div id="toast" class="toast" role="status" aria-live="polite"></div>

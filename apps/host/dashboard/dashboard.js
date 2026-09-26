@@ -17,6 +17,7 @@ const label = (status) => statusLabels[status] || status;
 const stageLabel = (stage) => stageLabels[stage] || stage;
 const dateText = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
 const urlFor = (id) => `/api/dashboard/runs/${encodeURIComponent(id)}`;
+const loading = (label) => `<span class="loading" role="status" aria-label="${escapeHtml(label)}"><span class="spinner" aria-hidden="true"></span></span>`;
 
 async function api(url, options) {
   const response = await fetch(url, { headers: { "content-type": "application/json" }, ...options });
@@ -46,7 +47,7 @@ function statusText(run) {
 function renderRuns() {
   const list = $("#run-list");
   if (!state.runs.length) {
-    list.innerHTML = '<p class="empty-state">还没有运行。请先设置并预检。</p>';
+    list.innerHTML = "";
     return;
   }
   list.innerHTML = state.runs.map((run) => `
@@ -59,13 +60,9 @@ function renderRuns() {
 }
 function renderOverview() {
   const run = state.run;
-  if (!run) {
-    $("#run-title").textContent = "选择一个运行";
-    $("#run-description").textContent = "运行概览与样本会在这里显示。";
-    $("#run-actions").innerHTML = "";
-    $("#stage-summary").innerHTML = '<p class="empty-state">暂无运行状态</p>';
-    return;
-  }
+  $("#run-overview").hidden = !run;
+  $("#explorer").hidden = !run;
+  if (!run) return;
   $("#run-title").textContent = run.run_id;
   const progress = run.progress || {};
   $("#run-description").textContent = `${statusText(run)} · ${run.engine} · ${dateText(run.started_at)} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0}`;
@@ -75,7 +72,7 @@ function renderOverview() {
   $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span>${total ? `${counts.succeeded || 0}/${total} 已接受` : "未启用"}</span><span>${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常</span></div>`;
+    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? `${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常` : "未启用"}</span></div>`;
   }).join("");
 }
 function filterQuery() {
@@ -85,7 +82,7 @@ function renderCases() {
   const page = state.cases;
   if (!page) {
     $("#case-count").textContent = "—";
-    $("#case-list").innerHTML = `<p class="empty-state">${state.selectedRun ? "正在读取样本…" : "选择运行后查看样本。"}</p>`;
+    $("#case-list").innerHTML = state.selectedRun ? loading("正在读取样本") : "";
     $("#page-label").textContent = "—";
     $("#prev-page").disabled = $("#next-page").disabled = true;
     return;
@@ -102,32 +99,32 @@ function renderCases() {
     return `<button class="case-row ${selected ? "selected" : ""}" type="button"
       data-batch="${escapeHtml(item.batch_id)}" data-case="${escapeHtml(item.case_id)}" aria-current="${selected}">
       <span class="case-identity">${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</span>
-      <span class="case-question">${escapeHtml(item.question || "问题不可用")}</span>
+      <span class="case-question">${escapeHtml(item.question || "—")}</span>
       <span class="case-progress ${bad ? "has-failure" : ""}">${accepted}/${item.task_count} 已接受${bad ? " · 有异常" : ""}</span>
     </button>`;
-  }).join("") : '<p class="empty-state">当前筛选下没有样本。请清除筛选条件。</p>';
+  }).join("") : '<p class="empty-state">无匹配样本</p>';
 }
 function compactJson(value) {
   const text = JSON.stringify(value, (_key, content) =>
-    typeof content === "string" && content.length > 40000 ? `${content.slice(0, 40000)}… [内容过长，请查看源文件]` : content, 2);
+    typeof content === "string" && content.length > 40000 ? `${content.slice(0, 40000)}…` : content, 2);
   return escapeHtml(text ?? "—");
 }
 function renderInput() {
   const input = state.rawInput;
-  if (!state.selectedInput) return '<p class="empty-state">选择版本查看原始回答和消息链路。</p>';
-  if (!input) return '<p class="empty-state">正在读取原始输入…</p>';
-  if (input.error) return `<p class="inline-error">${escapeHtml(input.error)}<br />正式结果仍可独立查看。</p>`;
+  if (!state.selectedInput) return "";
+  if (!input) return loading("正在读取原始输入");
+  if (input.error) return `<p class="inline-error">${escapeHtml(input.error)}</p>`;
   const raw = input.raw || {};
   const messages = Array.isArray(raw.messages) ? raw.messages : [];
   const lastAnswer = messages.findLast((message) => message.role === "assistant" && message.content);
-  const standard = raw.has_standard_answer === false ? "本记录明确忽略标准答案" :
-    (raw.meta?.ground_truth ?? raw.meta?.std_answer ?? "本记录未提供标准答案");
-  return `<p class="source-note">当前源记录 · 第 ${input.line} 行${input.recorded_line !== input.line ? `（登记时第 ${input.recorded_line} 行）` : ""}。源数据可能在评测后变化，已接受结果不会重评。</p>
+  const standard = raw.has_standard_answer === false ? "已忽略" :
+    (raw.meta?.ground_truth ?? raw.meta?.std_answer ?? "无");
+  return `<p class="source-note">源记录 · 第 ${input.line} 行${input.recorded_line !== input.line ? `（登记时第 ${input.recorded_line} 行）` : ""}</p>
     <div class="input-highlights"><div><strong>最终回答</strong><pre>${compactJson(lastAnswer?.content ?? "无")}</pre></div><div><strong>本记录标准答案</strong><pre>${compactJson(standard)}</pre></div></div>
-    <details class="trace-details"><summary>原始消息 · ${messages.length} 条（展开核对证据）</summary><div class="trace-list">${messages.map((message, index) => `<article class="trace-message" id="message-${escapeHtml(input.input_id)}-${index}">
+    <details class="trace-details"><summary>原始消息 · ${messages.length} 条</summary><div class="trace-list">${messages.map((message, index) => `<article class="trace-message" id="message-${escapeHtml(input.input_id)}-${index}">
       <div class="trace-heading"><strong>#${index} · ${escapeHtml(message.type || message.role || "消息")}</strong><span>${escapeHtml(message.role || "")}</span></div>
       <pre>${compactJson(message.content ?? message)}</pre>
-    </article>`).join("") || '<p class="empty-state">这条记录没有消息。</p>'}</div></details>
+    </article>`).join("") || '<p class="empty-state">无消息</p>'}</div></details>
     <details class="raw-details"><summary>查看源记录字段</summary><pre>${compactJson(raw)}</pre></details>`;
 }
 function evidence(items, version) {
@@ -138,7 +135,7 @@ function evidence(items, version) {
 }
 function renderResult(task, detail) {
   const row = task.result;
-  if (!row) return `<p class="muted">${task.status === "succeeded" ? "收据正在写入正式结果，请稍后刷新。" : "尚无已接受的正式结果。"}</p>`;
+  if (!row) return task.status === "succeeded" ? '<p class="muted">写入中</p>' : "";
   if (task.stage === "attribution") {
     const value = row.evaluation || {};
     return `<div class="result-body"><p><strong>结论</strong> ${escapeHtml(value.summary || "—")}</p>
@@ -161,7 +158,7 @@ function renderResult(task, detail) {
   }
   const source = detail.tasks.find((item) => item.id === task.rewrite_of?.taskId);
   const original = source?.result?.evaluation || source?.result;
-  return `<div class="result-body"><p class="muted">源任务 ${escapeHtml(row.source_task_id || "—")} · 正式判决不会被改写覆盖</p>
+  return `<div class="result-body"><p class="muted">源任务 ${escapeHtml(row.source_task_id || "—")}</p>
     ${(row.rewrites || []).map((item) => {
       let before = item.id === "summary" ? original?.summary
         : item.id === "correctness_reason" ? original?.correctness_reason
@@ -184,12 +181,12 @@ function renderResult(task, detail) {
 function renderDetail() {
   const detail = state.caseDetail;
   if (!detail) {
-    $("#case-detail").innerHTML = `<p class="empty-state">${state.selectedCase ? "正在读取样本详情…" : "选择左侧样本，核对原始输入和正式评测结果。"}</p>`;
+    $("#case-detail").innerHTML = state.selectedCase ? loading("正在读取样本详情") : "";
     return;
   }
   const candidates = detail.candidates || [];
   const inputs = candidates.map((candidate) => `<button type="button" class="candidate-tab ${state.selectedInput === candidate.input_id ? "selected" : ""}" data-input="${escapeHtml(candidate.input_id)}">${escapeHtml(candidate.name || candidate.version)}</button>`).join("");
-  $("#case-detail").innerHTML = `<div class="detail-heading"><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span><h2>${escapeHtml(detail.question || "问题不可用")}</h2></div>
+  $("#case-detail").innerHTML = `<div class="detail-heading"><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span><h2>${escapeHtml(detail.question || "—")}</h2></div>
     <div class="detail-section"><h3>评测输入</h3><div class="candidate-tabs" role="group" aria-label="选择版本">${inputs}</div><div class="input-view">${renderInput()}</div></div>
     <div class="detail-section"><h3>Agent 与正式输出</h3>${detail.tasks.map((task) => `<details class="task-detail" ${["failed", "running"].includes(task.status) || (task.stage === "comparison" && task.result) ? "open" : ""}>
       <summary><span><strong>${escapeHtml(stageLabel(task.stage))}</strong>${task.versions.length ? ` · ${task.versions.map(escapeHtml).join(" / ")}` : ` · ${escapeHtml(task.rewrite_of?.stage || "")}`}</span>
@@ -197,7 +194,7 @@ function renderDetail() {
       <div class="task-content"><p class="muted">任务 ${escapeHtml(task.id)} · 最近进展 ${escapeHtml(dateText(task.last_progress_at))}${task.duration_ms != null ? ` · 累计 ${Math.round(task.duration_ms / 1000)} 秒` : ""}</p>
       ${task.reason ? `<p class="inline-error">${escapeHtml(task.reason)}</p>` : ""}${renderResult(task, detail)}
       ${task.result ? `<details class="raw-details"><summary>查看正式结果 JSON</summary><pre>${compactJson(task.result)}</pre></details>` : ""}</div>
-    </details>`).join("") || '<p class="empty-state">此样本没有登记任务。</p>'}</div>`;
+    </details>`).join("") || ""}</div>`;
 }
 async function loadInput(inputId) {
   state.selectedInput = inputId;
@@ -234,7 +231,7 @@ async function loadCase(batch, caseId) {
   } catch (error) {
     if (request !== state.caseRequest || runId !== state.selectedRun) return;
     state.caseDetail = null;
-    $("#case-detail").innerHTML = `<p class="inline-error">无法读取此样本：${escapeHtml(error.message)}。请检查结果文件或稍后重试。</p>`;
+    $("#case-detail").innerHTML = `<p class="inline-error">无法读取样本：${escapeHtml(error.message)}</p>`;
   }
 }
 async function loadCases() {
@@ -272,11 +269,11 @@ async function refresh() {
       if (request !== state.runRequest) return;
     } else { state.run = null; state.cases = null; state.caseDetail = null; renderDetail(); }
     renderOverview();
-    showError(errors?.length ? `${errors.length} 个运行状态无法读取：${errors.map((item) => item.run_id).join("、")}。请检查对应 state.json。` : "");
+    showError(errors?.length ? `${errors.length} 个运行状态无法读取：${errors.map((item) => item.run_id).join("、")}` : "");
     await loadCases();
     $("#refresh-time").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   } catch (error) {
-    if (request === state.runRequest) showError(`运行状态读取失败：${error.message}。请刷新重试。`);
+    if (request === state.runRequest) showError(`运行状态读取失败：${error.message}`);
   }
 }
 async function selectRun(runId) {
@@ -298,7 +295,7 @@ function renderConfig() {
     ["URL", env.base_url_configured], ["Key", env.api_key_configured], ["基础模型", env.model_configured],
   ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
   $("#model-fields").innerHTML = Object.entries(settings.bindings || {}).map(([stage, binding]) => `
-    <label><span>${escapeHtml(stageLabel(stage))}模型 ID</span><input data-model-stage="${escapeHtml(stage)}" value="${escapeHtml(binding.model)}" placeholder="填写网关模型 ID" /></label>
+    <label><span>${escapeHtml(stageLabel(stage))}模型 ID</span><input data-model-stage="${escapeHtml(stage)}" value="${escapeHtml(binding.model)}" /></label>
     <label><span>${escapeHtml(stageLabel(stage))}推理等级</span><select data-thinking-stage="${escapeHtml(stage)}">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></label>`).join("");
   $("#setting-concurrency").value = settings.execution.concurrency;
   $("#setting-timeout").value = settings.execution.timeoutSeconds;
@@ -337,22 +334,27 @@ function launchPayload() {
 function invalidatePreview() {
   state.preview = null;
   $("#launch-button").disabled = true;
-  $("#preview-result").textContent = "设置已更改，请重新预检。";
+  $("#preview-result").textContent = "需重新预检";
 }
 async function preview() {
   if (!$("#start-form").reportValidity()) return;
   $("#preview-button").disabled = true;
-  $("#preview-result").textContent = "正在检查输入与运行设置…";
+  $("#preview-result").innerHTML = loading("正在预检");
   try {
     const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
     state.preview = value;
     $("#launch-button").disabled = !value.resuming && !value.tasks;
     const summary = value.summary || {};
     const issues = summary.issues || [];
-    $("#preview-result").innerHTML = `<strong>${value.resuming ? `续跑预检完成：${value.remaining || 0} 个未完成任务` : `预检完成：${summary.cases || 0} 个 Case · ${value.tasks || 0} 个任务`}</strong>
-      <p>${escapeHtml(value.selection_note || `有效输入 ${summary.valid_inputs || 0} · 输入异常 ${summary.issues_count || 0} · 跳过组 ${summary.skipped_count || 0}`)}</p>
-      ${value.resuming ? `<p>当前来源异常 ${summary.issues_count || 0} · 跳过组 ${summary.skipped_count || 0}。已接受结果保持不变。</p>` : ""}
-      ${issues.length ? `<details><summary>查看前 ${issues.length} 条输入异常</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
+    const stats = [
+      value.resuming ? `未完成 ${value.remaining || 0}` : `任务 ${value.tasks || 0}`,
+      `样本 ${summary.cases || 0}`,
+      `有效输入 ${summary.valid_inputs || 0}`,
+      `输入异常 ${summary.issues_count || 0}`,
+      `跳过组 ${summary.skipped_count || 0}`,
+    ];
+    $("#preview-result").innerHTML = `<div class="preview-stats">${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+      ${issues.length ? `<details><summary>输入异常 ${issues.length}</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
   } catch (error) {
     state.preview = null;
     $("#launch-button").disabled = true;
@@ -364,9 +366,9 @@ async function startRun() {
   $("#launch-button").disabled = true;
   try {
     const value = await api("/api/dashboard/runs", { method: "POST", body: JSON.stringify(launchPayload()) });
-    toast(`已提交运行 ${value.run_id}，等待 Host 启动`);
+    toast(`已提交运行 ${value.run_id}`);
     state.preview = null;
-    $("#preview-result").textContent = "已提交。若运行未出现，请检查根目录 log/runtime.log。";
+    $("#preview-result").textContent = "已提交";
     await new Promise((resolve) => setTimeout(resolve, 700));
     await refresh();
   } catch (error) {
