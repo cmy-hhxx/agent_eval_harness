@@ -10,9 +10,10 @@ import { loadRunInputs, readRunState } from "./run-data.js";
 import type { Candidate, EvalConfig, ComparisonResult, RawInput, TaskData } from "./types.js";
 import { adapt, candidateKey } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { commentarySchema, outputSchema } from "./schema.js";
+import { clusteringSchema, commentarySchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
-import { comparisonRow, attributionRow, commentaryRow } from "./results.js";
+import { comparisonRow, attributionRow, commentaryRow, clusteringRow } from "./results.js";
+import { taskObservations } from "./observations.js";
 
 export async function validateRun(
   run: string,
@@ -21,7 +22,8 @@ export async function validateRun(
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const outputValidator = ajv.compile(outputSchema),
     attributionValidator = ajv.compile(attributionProfile.resultSchema!),
-    commentaryValidator = ajv.compile(commentarySchema);
+    commentaryValidator = ajv.compile(commentarySchema),
+    clusteringValidator = ajv.compile(clusteringSchema);
   const state = await readRunState(run),
     manifest = state.manifest;
   const errors: string[] = [],
@@ -130,6 +132,19 @@ export async function validateRun(
             name = "commentary.jsonl";
           if (!commentaryValidator(row) || canonical(row) !== canonical(commentaryRow(task, receipt)))
             throw new Error("改写结果结构或收据不一致");
+          if (!expected.has(name)) expected.set(name, []);
+          expected.get(name)!.push(canonical(row));
+          continue;
+        }
+        if (task.stage === "clustering") {
+          const row = receipt.exported?.row || clusteringRow(task, receipt, taskObservations(task, (id) => receipts.get(id))),
+            name = "clustering.jsonl";
+          if (
+            !clusteringValidator(row) ||
+            canonical(row) !==
+              canonical(clusteringRow(task, receipt, taskObservations(task, (id) => receipts.get(id))))
+          )
+            throw new Error("聚类结果结构或收据不一致");
           if (!expected.has(name)) expected.set(name, []);
           expected.get(name)!.push(canonical(row));
           continue;

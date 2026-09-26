@@ -12,7 +12,6 @@ import schema from "../../../../schemas/attribution/result.schema.json" with { t
 
 interface Input {
   ground_truth: { available: boolean; value: unknown };
-  library: { components: { problems: { id: string }[] }[] };
   candidates: Record<
     string,
     {
@@ -56,7 +55,6 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("correctness_evidence_forbidden", "/correctness_evidence", "无标准答案时不得给出对错证据");
   }
 
-  const known = new Set(input.library.components.flatMap((component) => component.problems.map((p) => p.id)));
   const normalize = (value: string): string => value.trim().replace(/\s+/gu, " ").toLowerCase();
   const tools = new Set(
     (input.candidates.A?.catalog ?? []).flatMap((message) => (message?.name ? [normalize(message.name)] : [])),
@@ -84,11 +82,15 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue(
         "strength_problem_forbidden",
         `/findings/${index}/problem`,
-        "优势不挂归因节点，problem 必须为 null",
+        "优势的 problem 必须为 null",
         finding.problem,
       );
     if (finding.type === "problem" && finding.problem === null)
-      issue("problem_required", `/findings/${index}/problem`, "问题型发现必须挂到归因节点");
+      issue("problem_required", `/findings/${index}/problem`, "问题型发现必须描述问题");
+    if (finding.problem && !finding.problem.label.trim())
+      issue("problem_label_empty", `/findings/${index}/problem/label`, "问题名称不能为空");
+    if (finding.problem && !finding.problem.definition.trim())
+      issue("problem_definition_empty", `/findings/${index}/problem/definition`, "问题定义不能为空");
     if (
       finding.type === "problem" &&
       finding.problem &&
@@ -101,13 +103,6 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         "problem.component 必须是该回答调用链中的工具名，或「模型自身推理」；不要用阶段/能力名",
         finding.problem.component,
         toolNames.join(", ") || "模型自身推理",
-      );
-    if (finding.problem?.node_id != null && !known.has(finding.problem.node_id))
-      issue(
-        "problem_node_unknown",
-        `/findings/${index}/problem/node_id`,
-        "problem.node_id 不在该模型的归因树中；命中已有节点才可复用，否则应填 null 新建",
-        finding.problem.node_id,
       );
   });
 

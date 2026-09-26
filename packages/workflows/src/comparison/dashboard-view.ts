@@ -1,8 +1,8 @@
 import path from "node:path";
-import { readJson, locateRun, fileSourceReader } from "@eval/data";
+import { readJson, locateRun, fileSourceReader, problemLibraryFile, readProblemLibrary } from "@eval/data";
 import type { TaskState } from "@eval/contracts";
 import { readRunState } from "./run-data.js";
-import { buildPlan, locateRecord, taskCase } from "./input.js";
+import { buildPlan, locateRecord, taskIdentity } from "./input.js";
 import type { Candidate, EvalConfig, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 
@@ -87,11 +87,14 @@ export async function listRunCases(run: string, filter: CaseFilter) {
     task_count: number;
     matches: boolean;
   }>();
-  for (const [id, task] of Object.entries(saved.tasks)) {
+  for (const task of Object.values(saved.tasks)) {
     const data = task.data as TaskData;
+    // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
+    if (task.stage === "clustering") continue;
+    // Checkpoints strip `candidates`; the registered input restores the sample identity.
     const candidate = Object.values(task.inputIds).map((inputId) => saved.inputs[inputId]).find(Boolean);
     const identity = data.case || candidate;
-    if (!identity) throw new Error(`任务 ${id} 缺少样本身份`);
+    if (!identity) throw new Error("任务缺少样本身份");
     const key = JSON.stringify([identity.batch_id, identity.case_id]);
     let item = cases.get(key);
     if (!item) {
@@ -135,8 +138,8 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
   // Repository decoding checks the accepted references against authoritative JSONL rows.
   const state = await readRunState(run);
   const tasks = state.manifest.tasks.filter((task) => {
-    const identity = taskCase(task.data as TaskData);
-    return identity.batch_id === batch && identity.case_id === caseId;
+    const identity = taskIdentity(task.data as TaskData);
+    return identity.case_id === caseId && identity.batch_id === batch;
   });
   if (!tasks.length) return undefined;
   const candidates = new Map<string, Candidate>();
@@ -186,5 +189,144 @@ export async function readRegisteredInput(run: string, inputId: string) {
     line,
     recorded_line: candidate.line,
     raw,
+  };
+}
+
+export interface ProblemClassView {
+  id: string;
+  label: string;
+  definition: string;
+  aliases: string[];
+  occurrences: number;
+  first_seen: { batch_id: string; case_id: string; at: string } | null;
+}
+export interface ProblemLibraryView {
+  model: string;
+  components: {
+    id: string;
+    label: string;
+    definition: string;
+    aliases: string[];
+    classes: ProblemClassView[];
+  }[];
+  merged: { id: string; label: string; into: string; into_label: string | null; reason: string | null }[];
+  totals: { components: number; classes: number; occurrences: number };
+}
+
+function clusteringModels(saved: Checkpoint): string[] {
+  return [...new Set(
+    Object.values(saved.tasks).flatMap((task) =>
+      task.stage === "clustering" && (task.data as TaskData).scope?.version
+        ? [(task.data as TaskData).scope!.version] : [],
+    ),
+  )];
+}
+
+/** Problem-library snapshot for the models that ran clustering in this run; read-only. */
+export async function listProblemLibrary(run: string): Promise<ProblemLibraryView[]> {
+  const saved = await checkpoint(run);
+  const config = saved.config as EvalConfig;
+  const models = clusteringModels(saved);
+  const views: ProblemLibraryView[] = [];
+  for (const model of models) {
+    const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model));
+    if (!library) continue;
+    const counts = new Map<string, number>();
+    for (const occurrence of library.occurrences)
+      counts.set(occurrence.class_id, (counts.get(occurrence.class_id) ?? 0) + 1);
+    const active = Object.values(library.classes).filter((problem) => problem.status === "active");
+    views.push({
+      model,
+      components: Object.values(library.components).map((component) => ({
+        id: component.id,
+        label: component.label,
+        definition: component.definition,
+        aliases: component.aliases,
+        classes: active
+          .filter((problem) => problem.component_id === component.id)
+          .map((problem) => ({
+            id: problem.id,
+            label: problem.label,
+            definition: problem.definition,
+            aliases: problem.aliases,
+            occurrences: counts.get(problem.id) ?? 0,
+            first_seen: problem.first_seen
+              ? {
+                  batch_id: problem.first_seen.batch_id,
+                  case_id: problem.first_seen.case_id,
+                  at: problem.first_seen.at,
+                }
+              : null,
+          }))
+          .sort((a, b) => b.occurrences - a.occurrences || a.label.localeCompare(b.label)),
+      })),
+      merged: Object.values(library.classes)
+        .filter((problem) => problem.status === "merged")
+        .map((problem) => {
+          const event = library.events.find(
+            (entry) => entry.type === "class_merged" && entry.detail.from === problem.id,
+          );
+          return {
+            id: problem.id,
+            label: problem.label,
+            into: problem.merged_into || "",
+            into_label: problem.merged_into
+              ? (library.classes[problem.merged_into]?.label ?? null)
+              : null,
+            reason: event ? String(event.detail.reason ?? "") || null : null,
+          };
+        }),
+      totals: {
+        components: Object.keys(library.components).length,
+        classes: active.length,
+        occurrences: library.occurrences.length,
+      },
+    });
+  }
+  return views.sort((a, b) => a.model.localeCompare(b.model));
+}
+
+/** Occurrences of one problem class, newest first; merged classes resolve to their target. */
+export async function readProblemClass(run: string, model: string, classId: string, page: number) {
+  const pageSize = 50;
+  const saved = await checkpoint(run);
+  const config = saved.config as EvalConfig;
+  if (!clusteringModels(saved).includes(model)) return undefined;
+  const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model));
+  const problem = library?.classes[classId];
+  if (!library || !problem) return undefined;
+  const component = library.components[problem.component_id];
+  const occurrences = library.occurrences
+    .filter((occurrence) => occurrence.class_id === classId)
+    .sort((a, b) => (a.at === b.at ? b.id.localeCompare(a.id) : a.at < b.at ? 1 : -1));
+  return {
+    model,
+    class: {
+      id: problem.id,
+      label: problem.label,
+      definition: problem.definition,
+      aliases: problem.aliases,
+      status: problem.status,
+      merged_into: problem.merged_into,
+      first_seen: problem.first_seen,
+    },
+    component: component
+      ? { id: component.id, label: component.label, definition: component.definition }
+      : null,
+    total: occurrences.length,
+    page,
+    page_size: pageSize,
+    occurrences: occurrences.slice((page - 1) * pageSize, page * pageSize).map((occurrence) => ({
+      batch_id: occurrence.batch_id,
+      case_id: occurrence.case_id,
+      version: occurrence.version,
+      finding_id: occurrence.finding_id,
+      message_index: occurrence.message_index,
+      quote: occurrence.quote,
+      source: occurrence.source,
+      classification: occurrence.classification,
+      previous_class_id: occurrence.previous_class_id,
+      at: occurrence.at,
+    })),
   };
 }

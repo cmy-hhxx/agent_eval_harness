@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["ground_truth", "library", "candidates"],
+  "required": ["ground_truth", "candidates"],
   "properties": {
     "ground_truth": {
       "type": "object",
@@ -9,37 +9,6 @@
       "properties": {
         "available": { "type": "boolean" },
         "value": {}
-      }
-    },
-    "library": {
-      "type": "object",
-      "required": ["components"],
-      "properties": {
-        "components": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["id", "label", "definition", "problems"],
-            "properties": {
-              "id": { "type": "string" },
-              "label": { "type": "string" },
-              "definition": { "type": "string" },
-              "problems": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": ["id", "label", "definition", "occurrences"],
-                  "properties": {
-                    "id": { "type": "string" },
-                    "label": { "type": "string" },
-                    "definition": { "type": "string" },
-                    "occurrences": { "type": "integer", "minimum": 0 }
-                  }
-                }
-              }
-            }
-          }
-        }
       }
     },
     "candidates": {

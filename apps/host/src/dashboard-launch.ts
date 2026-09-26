@@ -106,6 +106,7 @@ function summarize(summary: JsonObject) {
     attribution_tasks: summary.attribution_tasks,
     comparison_tasks: summary.comparison_tasks,
     rewrite_tasks: summary.rewrite_tasks,
+    clustering_tasks: summary.clustering_tasks,
     issues_count: (summary.issues as unknown[]).length,
     issues: (summary.issues as unknown[]).slice(0, 20),
     skipped_count: (summary.skipped as unknown[]).length,

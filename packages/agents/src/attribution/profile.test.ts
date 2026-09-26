@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionAgent, attributionProfile } from "./index.js";
+import type { AttributionResult } from "./types.js";
 import example from "./profiles/default/example.json" with { type: "json" };
 import { evidenceId } from "@eval/tools";
 
@@ -39,20 +40,20 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
   wrongScope.correctness_evidence = [{ message_index: 0, quote: "计算2+2" }];
   assert.throws(() => attributionProfile.validate!(example.request, wrongScope, audit), /只能引用最终回答/);
 
-  const forgedNode = {
-    ...example.result,
-    findings: [
-      {
-        ...example.result.findings[0],
-        type: "problem",
-        problem: { node_id: "missing", component: "色值工具", label: "色值错误", definition: "d" },
-      },
-    ],
+  const incomplete = structuredClone(example.result) as unknown as {
+    findings: { type: string; problem: Record<string, unknown> | null }[];
   };
+  incomplete.findings[0]!.type = "problem";
+  incomplete.findings[0]!.problem = { component: "模型自身推理", label: "问题" };
   assert.throws(
-    () => attributionProfile.validate!(example.request, forgedNode as unknown, audit),
-    /不在该模型的归因树/,
+    () => attributionProfile.validate!(example.request, incomplete, audit),
+    /required|输出结构无效/,
   );
+
+  const blankLabel = structuredClone(example.result) as unknown as AttributionResult;
+  blankLabel.findings[0]!.type = "problem";
+  blankLabel.findings[0]!.problem = { component: "模型自身推理", label: "  ", definition: "说明" };
+  assert.throws(() => attributionProfile.validate!(example.request, blankLabel, audit), /问题名称不能为空/);
 });
 
 test("problem components must name a tool from the answer call chain", () => {
@@ -67,7 +68,7 @@ test("problem components must name a tool from the answer call chain", () => {
       {
         ...example.result.findings[0],
         type: "problem",
-        problem: { node_id: null, component, label: "取数失败", definition: "多次查询失败" },
+        problem: { component, label: "取数失败", definition: "多次查询失败" },
       },
     ],
   });

@@ -129,34 +129,40 @@ export interface OutputTarget {
 export type InputSource =
   | { kind: "file"; path: string }
   | { kind: "directory"; path: string; include?: string[] };
-/** Where per-model attribution trees are persisted. */
-export interface AttributionTarget {
+/** Where per-model problem libraries are persisted. */
+export interface ProblemLibraryTarget {
   kind: "directory";
   path: string;
 }
-/** A component/tool class is a top-level attribution node; problems hang under it. */
-export type AttributionNodeKind = "component" | "problem";
-export interface AttributionOrigin {
+export interface ProblemOrigin {
   run_id: string;
   batch_id: string;
   case_id: string;
   input_id: string;
   at: string;
 }
-export interface AttributionNode {
+/** Where problems happen: a tool or a top-level class such as model reasoning. */
+export interface ProblemComponent {
   id: string;
-  kind: AttributionNodeKind;
-  parent: string | null;
   label: string;
   definition: string;
-  status: "active" | "merged" | "deprecated";
-  merged_into: string | null;
   aliases: string[];
-  first_seen: AttributionOrigin | null;
+  first_seen: ProblemOrigin | null;
 }
-export interface AttributionOccurrence {
+/** A stable problem class shared across runs; clustering is its only writer. */
+export interface ProblemClass {
   id: string;
-  node_id: string;
+  component_id: string;
+  label: string;
+  definition: string;
+  aliases: string[];
+  status: "active" | "merged";
+  merged_into: string | null;
+  first_seen: ProblemOrigin | null;
+}
+export interface ProblemOccurrence {
+  id: string;
+  class_id: string;
   version: string;
   batch_id: string;
   case_id: string;
@@ -168,26 +174,41 @@ export interface AttributionOccurrence {
   message_index: number;
   quote: string;
   source: { file: string; line: number };
-  classification: "recalled" | "created";
-  previous_node_id: string | null;
+  classification: "assigned" | "created";
+  previous_class_id: string | null;
   at: string;
 }
-export type AttributionEventType = "node_created" | "node_merged" | "occurrence_moved";
-export interface AttributionEvent {
+export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved";
+export interface ProblemEvent {
   id: string;
-  type: AttributionEventType;
+  type: ProblemEventType;
   at: string;
   detail: JsonObject;
 }
-/** Append-only knowledge index for one model; `tree_version` reserves versioned trees. */
-export interface AttributionLibrary {
+/** Append-only per-model problem library maintained by the clustering stage. */
+export interface ProblemLibrary {
   model: string;
-  tree_version: number;
-  previous_tree: string | null;
   updated_at: string;
-  nodes: Record<string, AttributionNode>;
-  occurrences: AttributionOccurrence[];
-  events: AttributionEvent[];
+  components: Record<string, ProblemComponent>;
+  classes: Record<string, ProblemClass>;
+  occurrences: ProblemOccurrence[];
+  events: ProblemEvent[];
+}
+/** Recall projection handed to the clustering stage; one entry per active component. */
+export interface ProblemProjection {
+  components: {
+    id: string;
+    label: string;
+    definition: string;
+    aliases: string[];
+    classes: {
+      id: string;
+      label: string;
+      definition: string;
+      aliases: string[];
+      occurrences: number;
+    }[];
+  }[];
 }
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;

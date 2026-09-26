@@ -1,0 +1,89 @@
+{
+  "request": {
+    "input": {
+      "model": "a_fast",
+      "batch_id": "0923",
+      "budget": {
+        "active_classes": 1,
+        "max_classes": 80,
+        "max_new_classes": 4,
+        "active_components": 1,
+        "max_components": 12,
+        "max_new_components": 1,
+        "consolidate": false,
+        "min_support": 1
+      },
+      "library": {
+        "components": [
+          {
+            "id": "component-reasoning",
+            "label": "模型自身推理",
+            "definition": "模型没有调用外部工具时的推理过程。",
+            "aliases": [],
+            "classes": [
+              {
+                "id": "class-arithmetic",
+                "label": "算术错误",
+                "definition": "数值计算与事实不符。",
+                "aliases": ["计算错误"],
+                "occurrences": 17
+              }
+            ]
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "o1",
+          "component": "模型自身推理",
+          "label": "加法结果错误",
+          "definition": "计算与事实不符。",
+          "count": 3,
+          "examples": [
+            {
+              "finding": "加法结果错误",
+              "reason": "与题目要求一致。",
+              "dimension": "correctness",
+              "importance": "high",
+              "stage": "final_answer"
+            }
+          ]
+        },
+        {
+          "id": "o2",
+          "component": "模型自身推理",
+          "label": "单位换算遗漏",
+          "definition": "最后一步没有把结果换算成题目要求的单位。",
+          "count": 2,
+          "examples": [
+            {
+              "finding": "没有把公里换算成米",
+              "reason": "最终回答缺少单位换算。",
+              "dimension": "completeness",
+              "importance": "medium",
+              "stage": "final_answer"
+            }
+          ]
+        }
+      ]
+    },
+    "sources": {}
+  },
+  "result": {
+    "assignments": [
+      { "item_id": "o1", "class_id": "class-arithmetic" },
+      { "item_id": "o2", "new_class_key": "n1" }
+    ],
+    "new_classes": [
+      {
+        "key": "n1",
+        "component": "模型自身推理",
+        "label": "单位换算遗漏",
+        "definition": "最终结果没有换算成题目要求的单位。",
+        "closest_existing": "class-arithmetic",
+        "novelty": "算术错误描述数值错误，本条是单位换算缺失，与数值正确性无关。"
+      }
+    ],
+    "merges": []
+  }
+}

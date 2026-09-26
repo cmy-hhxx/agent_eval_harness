@@ -47,6 +47,16 @@
     "comparison": true,
     "attribution": true
   },
+  "clustering": {
+    "enabled": true,
+    "maxClassesPerModel": 80,
+    "maxNewClassesPerTask": 8,
+    "maxComponentsPerModel": 12,
+    "maxNewComponentsPerTask": 1,
+    "consolidateAt": 60,
+    "minSupport": 1,
+    "maxCasesPerTask": 100
+  },
   "models": {
     "judge": {
       "provider": "evaluation-gateway",
@@ -68,6 +78,9 @@
     },
     "rewrite": {
       "profile": "judge"
+    },
+    "clustering": {
+      "profile": "judge"
     }
   },
   "execution": {
@@ -83,5 +96,5 @@
     "initialContextChars": 16000
   },
   "output": { "kind": "directory", "path": "../data/runs/comparison" },
-  "attribution": { "kind": "directory", "path": "../data/attribution" }
+  "problemLibrary": { "kind": "directory", "path": "../data/problems" }
 }

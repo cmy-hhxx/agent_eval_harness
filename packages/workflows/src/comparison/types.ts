@@ -1,5 +1,12 @@
-import type { AttributionTarget, InputSource, JsonObject, OutputTarget, Policy } from "@eval/contracts";
-import type { LibraryProjection } from "@eval/agents/attribution";
+import type {
+  InputSource,
+  JsonObject,
+  OutputTarget,
+  Policy,
+  ProblemLibraryTarget,
+  ProblemProjection,
+} from "@eval/contracts";
+import type { ClusteringBudget } from "@eval/agents/clustering";
 
 export interface VersionConfig {
   id: string;
@@ -25,13 +32,25 @@ export interface EvalConfig {
     initialContextChars: number;
   };
   output: OutputTarget;
-  attribution: AttributionTarget;
+  problemLibrary: ProblemLibraryTarget;
   /** Comparison groups; every version inside a group is compared in one task. */
   comparisons: string[][];
   /** Language polish targets. Every accepted source result gets one rewrite task. */
   rewrite: {
     comparison: boolean;
     attribution: boolean;
+  };
+  /** Problem-library maintenance and its hard cardinality limits. */
+  clustering: {
+    enabled: boolean;
+    maxClassesPerModel: number;
+    maxNewClassesPerTask: number;
+    maxComponentsPerModel: number;
+    maxNewComponentsPerTask: number;
+    /** Active class count at which the agent must look for near-duplicates to merge. */
+    consolidateAt: number;
+    minSupport: number;
+    maxCasesPerTask: number;
   };
 }
 export interface Message extends JsonObject {
@@ -81,7 +100,7 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
-export type Stage = "attribution" | "comparison" | "rewrite";
+export type Stage = "attribution" | "comparison" | "rewrite" | "clustering";
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
   stage: "attribution" | "comparison";
@@ -95,13 +114,25 @@ export interface TaskCase {
   case_id: string;
   question: string;
 }
+/** One attribution answer covered by a clustering task. */
+export interface ClusteringCase {
+  case_id: string;
+  source: { file: string; line: number };
+}
+/** Clustering tasks read attribution receipts through these input ids and budgets. */
+export interface ClusteringScope {
+  version: string;
+  batch_id: string;
+  shard: number;
+  /** input_id -> answer identity; dependency labels are input ids. */
+  cases: Record<string, ClusteringCase>;
+  budget: ClusteringBudget;
+}
 export interface TaskData {
   initialContextChars?: number;
   stage: Stage;
   candidates: Record<string, Candidate>;
   reference: unknown;
-  /** Recalled attribution tree for the single attribution candidate. */
-  library?: LibraryProjection;
   /** Compared group version IDs, in declaration order. */
   group?: string[];
   comparisonId?: string;
@@ -109,7 +140,11 @@ export interface TaskData {
   rewriteOf?: RewriteSource;
   /** Present on rewrite tasks, which carry no candidates. */
   case?: TaskCase;
+  /** Present on clustering tasks: the recalled problem-library projection. */
+  projection?: ProblemProjection;
+  /** Present on clustering tasks, which aggregate attribution receipts per model and batch. */
+  scope?: ClusteringScope;
   revision?: number;
 }
 export type { Finding, TaskAnalysis, ComparisonResult } from "@eval/agents/comparison";
-export type { AttributionResult, LibraryProjection } from "@eval/agents/attribution";
+export type { AttributionFinding, AttributionResult } from "@eval/agents/attribution";

@@ -6,7 +6,6 @@ import resultSchema from "../../../../schemas/attribution/result.schema.json" wi
 import { validateEvaluation } from "./validate.js";
 import { resolveSubmission } from "./resolve.js";
 export * from "./types.js";
-export * from "./library.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 export const attributionProfile: AgentProfile = {
   id: "default",

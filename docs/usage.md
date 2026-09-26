@@ -43,7 +43,8 @@ EVAL_API_KEY=your-key
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试 |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
-| `attribution` | 归因树目标：`{ kind: "directory", path }`；每个模型一棵 `<version>.json`，跨 run 累积 |
+| `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
+| `clustering` | 问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`maxNewComponentsPerTask`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；启用时必须有 `bindings.clustering` |
 
 入库的 [configs/host.json](../configs/host.json) 只定义共享的输入、执行预算和模型档案骨架，不含具体模型 ID。具体模型放在不入库的本地配置：
 
@@ -84,20 +85,20 @@ data/
     aa_fast/2026-09-22.jsonl
     aa_expert/2026-09-22.jsonl
     _daily/2026-09-22.json       # 每日清单：批次与各模型行数/case 数
-  attribution/
-    a_fast.json                  # 每个模型一棵归因树：组件/问题节点 + 出现样本 + 血缘事件
+  problems/
+    a_fast.json                  # 每个模型一份问题库：组件 + 问题类 + 出现样本 + 血缘事件
     aa_fast.json
   runs/comparison/
     <run-id>/
       state.json                 # 输入引用、任务进度、收据索引和草稿
-      results/                   # 正式评测 JSONL 与 commentary.jsonl
+      results/                   # 正式评测 JSONL、commentary.jsonl 与 clustering.jsonl
       report.md
       task_summaries.md
       stats.json
       _internal/                 # 仅 debug
 ```
 
-归因树是每个模型的跨 run 问题库，归因 Agent 优先召回已有节点、只在没有对应问题时新建；对比 Agent 只确认、不新建节点。每次 `report`/run 结束会把已接受的归因收据合并进树，按 `(节点, 输入, finding)` 幂等。节点 ID 用持久化 UUID，合并/重分类保留 `previous_node_id` 与 `events`，每个出现样本保留 `batch/case/version/input_id` 与源文件行号，可从问题反查到样本、再回到原始数据。当前一个模型一棵树，`tree_version`/`previous_tree` 预留后续分版本。
+每个模型维护一份跨 run 问题库，只有聚类阶段能写入：归因 Agent 只输出问题描述，聚类 Agent 先把问题归入已有类、确实没有才在预算内新建，必要时合并近义类。每次 `report`/run 结束会把已接受的聚类收据应用进库，即使续跑时关闭聚类也会保留并应用已接受收据；按 `(class_id, input_id, finding_id)` 幂等，重复报告不刷新未变化库的时间戳。`stats.json` 的 `problem_library` 与 `report.md` 记录当前类数、出现样本数以及本 run 的归类数、提议新类数和合并决定数（提议数不等于实际新增数）。类 ID 用持久化 UUID，合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label/aliases 追加到目标类；每个出现样本保留 `batch/case/version/input_id` 与源文件行号，可从问题类反查到样本、再回到原始数据。数量由程序硬控：每模型活跃类上限（默认 80）+ 每次任务新增预算（默认 8）+ 达到 60 类时提示合并整理。跨 run 更新按模型上锁；所有模型的上限校验完成前不写库。
 
 新增评测日只需在对应模型目录放入 `YYYY-MM-DD.jsonl`（文件名用评测运行开始日），`sources` 直接指向模型目录，无需修改配置；跨天任务归开始日。批次身份取 JSON 中的 `batch_id`，目录和文件名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。每天一份 `_daily/<日期>.json` 清单记录该日的批次与各模型行数/case 数，只用于核对，不参与评测。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
 
@@ -153,7 +154,7 @@ npm run eval -- run --engine pi --run-id daily-a --batch <batch_id_a> --batch <b
 
 再次执行相同 `--run-id` 自动续跑。Host 从 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型和预算变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。模型服务端缓存行为保持不变。
 
-改写开关可以随续跑变化：开启后为已接受的归因/对比结果补齐改写任务，关闭后不再计划未完成的改写任务；已接受的改写收据和正式评测收据都保留。
+改写与聚类开关可以随续跑变化：开启后为已接受的归因/对比结果补齐改写任务、为该模型批次补齐聚类任务；关闭后不再计划未完成的对应任务；已接受的收据和正式评测结果都保留。
 
 续跑沿用原运行的批次、case 和数量筛选条件，按 `batch_id + case_id + 阶段 + 版本组合` 识别归因与对比任务，改写任务按 `批次 + case + 源任务 ID` 识别；本次传入的 `--batch`、`--case`、`--limit-cases` 不替换原范围。已经接受的归因、对比和改写结果不再评测，即使原输入、标准答案或模型参数发生变化。未完成任务使用最新有效输入，并加入原选择范围内的新增对比组；无效或冲突记录不能覆盖未完成任务，未完成任务的来源缺失或无效时使该任务跳过并记入预检诊断，不中断其他任务。需要新增日期批次或重新评测已完成样本时使用新 run ID。若某份归因收据已接受，而对比尚未完成，对比仍使用这份收据；想让两阶段都基于修改后的材料评测，同样需要新 run ID。累计 attempts 和已记录的 Token 保留历次执行成本。运行退出码：0 成功、2 有失败、130 被中断。
 
@@ -178,9 +179,9 @@ bash run.sh
 
 `run.sh` 每次重建 Host 和看板，默认使用 `configs/host.json`；若存在 `configs/local/models.json`，还会加载本地模型配置。默认监听 `127.0.0.1:4173`，按 `Ctrl+C` 停止。需要自定义端口或配置文件时，仍可直接使用 `npm run eval -- dashboard --port <端口> --config <配置文件>`。
 
-打开终端输出的地址即可点击左侧运行，按批次和 case 查看原始评测输入、各版本回答，以及归因、对比和改写 Agent 的任务状态与正式输出；样本列表可分页并可按 case / 问题搜索。原始输入按 run 登记的 `input_id` 从数据源现读，来源变化时显示当前源记录或材料不可用；已接受结论始终来自正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，仅在可信本机打开看板。
+打开终端输出的地址即可点击左侧运行，按批次和 case 查看原始评测输入、各版本回答，以及归因、对比和改写 Agent 的任务状态与正式输出；运行总览显示各阶段进度（含聚类）和该 run 结束时的 `stats.json` 问题库规模，聚类按模型×批次统计、不挂在单个 case 上。运行总览下方是只读的「问题库」面板：按本 run 计划聚类的模型展示当前共享库中的组件与活跃类；点击类可查看定义、别名、首次出现和逐条出现样本（批次/case/证据引文/源文件位置），合并记录在模型列表中。样本列表可分页并可按 case / 问题搜索。原始输入按 run 登记的 `input_id` 从数据源现读，来源变化时显示当前源记录或材料不可用；已接受结论始终来自正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，仅在可信本机打开看板。
 
-「开始评测」选择本次运行的日期（数据源目录，默认全选；胶囊显示当前模型下可评测 case 数/总数）、模型（默认全选，至少两个同组模型）和抽样数量（留空即全部）；运行 ID 由看板自动生成，不需要填写。日期选择会转换为已登记的 `batch_id` + case 过滤写入运行配置，评测契约仍以 `batch_id` 为准。预检不调用模型、不创建 run，确认后才启动；阶段模型 ID / 推理等级、并发、超时、工具调用、传输重试预算、改写开关和 Debug 收在「高级设置」。设置不改写 `configs/host.json` 或本地模型文件；网关地址、密钥、输入和输出路径不在页面编辑，密钥值不会发送给浏览器。预检所用来源可能在启动前变化，启动时会重新读取。看板可以启动 Pi / Prime 运行、停止当前运行、动态调整并发，并从运行详情按钮续跑未完成任务；停止不会删除已接受结果。续跑沿用原批次、模型和抽样范围；已接受任务不重评，本次设置仅作用于未完成任务。停止和并发控制仍由 Host 持有运行锁令牌，看板只转发操作，不在页面暴露令牌。看板不提供远程认证，只监听本机回环地址，不应绑定到公网地址。
+「开始评测」选择本次运行的日期（数据源目录，默认全选；胶囊显示当前模型下可评测 case 数/总数）、模型（默认全选，至少两个同组模型）和抽样数量（留空即全部）；运行 ID 由看板自动生成，不需要填写。日期选择会转换为已登记的 `batch_id` + case 过滤写入运行配置，评测契约仍以 `batch_id` 为准。预检不调用模型、不创建 run，确认后才启动；阶段模型 ID / 推理等级、并发、超时、工具调用、传输重试预算、改写开关、聚类开关和 Debug 收在「高级设置」。设置不改写 `configs/host.json` 或本地模型文件；网关地址、密钥、输入和输出路径不在页面编辑，密钥值不会发送给浏览器。预检所用来源可能在启动前变化，启动时会重新读取。看板可以启动 Pi / Prime 运行、停止当前运行、动态调整并发，并从运行详情按钮续跑未完成任务；停止不会删除已接受结果。续跑沿用原批次、模型和抽样范围；已接受任务不重评，本次设置仅作用于未完成任务。停止和并发控制仍由 Host 持有运行锁令牌，看板只转发操作，不在页面暴露令牌。看板不提供远程认证，只监听本机回环地址，不应绑定到公网地址。
 
 ## 运行产物
 
@@ -192,15 +193,16 @@ bash run.sh
 | `results/comparison.jsonl` | 每组的正式对比结果（排名、核心判定与派生两两判决），接受后追加并刷盘，运行中即可读取 |
 | `results/commentary.jsonl` | 已接受结论的润色文案，按 `source_task_id` / `source_result_id` 关联正式结果；正式 JSONL 保留裁判原文 |
 | `results/attribution.jsonl` | 每条回答的归因判决与证据，按任务 ID 引用，成功提交后追加并刷盘；每条回答都会归因 |
+| `results/clustering.jsonl` | 每个模型×批次分片的归类决定（观察、归类、新类与合并），run 结束应用进问题库 |
 | `task_summaries.md` | 以 `batch_id / case_id` 标识逐题结论、双方优缺点、耗时，以及失败、输入跳过原因和输入异常；开启改写时优先展示润色文案 |
 | `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、结果引用、待修草稿与错误、累计用量；候选信息仅登记一次 |
 | `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `artifacts` 产物清单；不包含逐题 ID 或异常明细 |
 
-`stats.json` 保存 `standings`（每个版本参赛数、完成核心要求、首位、平均层、胜/都好/都差）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。失败和待完成按任务计数，计划任务包含归因、对比，以及开启时的改写阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
+`stats.json` 保存 `standings`（每个版本参赛数、完成核心要求、首位、平均层、胜/都好/都差）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。失败和待完成按任务计数，计划任务包含归因、对比，以及开启时的改写与聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
 
 `stats.json` 的 `tokens` 汇总所有已记录尝试，包含失败和重试；未取得最终用量的尝试计入 `attempts_without_final_metrics`，不能视作用量为零。`input` 为未命中缓存的输入，`cacheRead` / `cacheWrite` 为缓存读取/写入 Token，`output` 为输出，`totalTokens` 为总量。`cache.model_input.hit_rate` 是缓存读取 Token 占全部输入 Token（未缓存 + 读取 + 写入）的比例，无输入时为 `null`。不存在跨 run 结果缓存。
 
-`quality` 的首次通过率和修复次数按有内容提交计数的任务统计，包含归因、对比和改写阶段；无计数的任务不推算。`attempts_per_accepted_task` / `tokens_per_accepted_task` 是累计尝试数 / Token 除以已接受任务数。P50/P95 使用各任务已记录的累计 attempt 耗时，包含失败与重试，不是单次模型响应时间；`wall_seconds` 从首次启动计时，包含中途停机到续跑之间的间隔。
+`quality` 的首次通过率和修复次数按有内容提交计数的任务统计，包含归因、对比、改写和聚类阶段；无计数的任务不推算。`attempts_per_accepted_task` / `tokens_per_accepted_task` 是累计尝试数 / Token 除以已接受任务数。P50/P95 使用各任务已记录的累计 attempt 耗时，包含失败与重试，不是单次模型响应时间；`wall_seconds` 从首次启动计时，包含中途停机到续跑之间的间隔。
 
 加 `--debug` 才会额外保留 `_internal/`。该设置写入 `state.json`，后续同 ID 继续运行时沿用；可以给已有普通运行加 `--debug`，此前未保存的日志不会补回。
 

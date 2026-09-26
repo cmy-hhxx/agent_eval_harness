@@ -1,15 +1,14 @@
-import { attributionLibraryFile, fileSourceReader, readAttributionLibrary } from "@eval/data";
+import { fileSourceReader, problemLibraryFile, readProblemLibrary } from "@eval/data";
 import { randomInt, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { type PlannedTask, type TaskPlan, type ValidationIssue } from "@eval/contracts";
+import { type PlannedTask, type ProblemLibrary, type TaskPlan, type ValidationIssue } from "@eval/contracts";
 import { canonical, errorText, object, ValidationError } from "@eval/contracts";
-import { projectLibrary } from "@eval/agents/attribution";
+import { emptyLibrary, projectLibrary } from "@eval/agents/clustering";
 import { resolveAdapter } from "./adapters.js";
 import type {
   BatchPreflight,
   Candidate,
   EvalConfig,
-  LibraryProjection,
   RawInput,
   TaskCase,
   TaskData,
@@ -198,13 +197,21 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
   return data.case ?? { batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id };
 }
 export function taskKey(task: PlannedTask): string {
-  const data = task.data as TaskData,
-    c = taskCase(data);
+  const data = task.data as TaskData;
+  if (data.stage === "clustering")
+    return canonical([data.scope!.batch_id, "clustering", data.scope!.version, data.scope!.shard]);
+  const c = taskCase(data);
   const selector =
     data.stage === "rewrite"
       ? ["rewrite", data.rewriteOf!.taskId]
       : data.group || [data.candidates.A.version];
   return canonical([c.batch_id, c.case_id, task.stage, selector]);
+}
+/** Batch identity for every stage, including clustering tasks that span cases. */
+export function taskIdentity(data: TaskData): { batch_id: string; case_id: string | null } {
+  if (data.scope) return { batch_id: data.scope.batch_id, case_id: null };
+  const c = taskCase(data);
+  return { batch_id: c.batch_id, case_id: c.case_id };
 }
 export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promise<TaskPlan> {
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
@@ -375,14 +382,13 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
   const selected = [...cases.values()]
     .sort((a, b) => (canonical(a) < canonical(b) ? -1 : 1))
     .slice(0, config.inputs.limit);
-  // Recall each model's attribution tree once; it is injected into every attribution attempt.
-  const libraries = new Map<string, LibraryProjection>();
-  for (const version of config.inputs.versions) {
-    const library = config.attribution
-      ? await readAttributionLibrary(attributionLibraryFile(config.attribution, version.id))
-      : undefined;
-    libraries.set(version.id, library ? projectLibrary(library) : { components: [] });
-  }
+  // Read each model's problem library once; clustering tasks get its projection and budget headroom.
+  const libraries = new Map<string, ProblemLibrary>();
+  if (config.clustering.enabled)
+    for (const version of config.inputs.versions) {
+      const file = problemLibraryFile(config.problemLibrary, version.id);
+      libraries.set(version.id, (await readProblemLibrary(file)) ?? emptyLibrary(version.id));
+    }
   const tasks: PlannedTask[] = [],
     checks = new Map<string, PlannedTask>(),
     rewrites = new Map<string, PlannedTask>(),
@@ -491,7 +497,6 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
           stage: "attribution",
           candidates: { A: record },
           reference,
-          library: libraries.get(record.version) ?? { components: [] },
           initialContextChars: config.execution.initialContextChars,
         };
         const old = oldTasks.get(canonical([batch, id, "attribution", [record.version]]));
@@ -558,6 +563,118 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       stats.comparison_tasks++;
     }
   }
+  // Clustering groups the batch's attribution receipts per model; shards bound prompt and output size.
+  const clusteringTasks: PlannedTask[] = [];
+  if (config.clustering.enabled) {
+    interface CasePlan {
+      input_id: string;
+      case_id: string;
+      source: string;
+      line: number;
+      task_id: string;
+      revision: number;
+    }
+    interface Shard {
+      version: string;
+      batch_id: string;
+      shard: number;
+      cases: CasePlan[];
+    }
+    const grouped = new Map<string, { version: string; batch_id: string; cases: CasePlan[] }>();
+    for (const task of checks.values()) {
+      const data = task.data as TaskData,
+        candidate = data.candidates.A;
+      const key = canonical([candidate.version, candidate.batch_id]);
+      const entry = grouped.get(key) ?? {
+        version: candidate.version,
+        batch_id: candidate.batch_id,
+        cases: [],
+      };
+      entry.cases.push({
+        input_id: candidate.input_id,
+        case_id: candidate.case_id,
+        source: candidate.source,
+        line: candidate.line,
+        task_id: task.id,
+        revision: data.revision || 1,
+      });
+      grouped.set(key, entry);
+    }
+    const shards: Shard[] = [];
+    for (const entry of [...grouped.values()].sort((a, b) =>
+      canonical([a.version, a.batch_id]) < canonical([b.version, b.batch_id]) ? -1 : 1,
+    )) {
+      entry.cases.sort((a, b) =>
+        canonical([a.case_id, a.input_id]) < canonical([b.case_id, b.input_id]) ? -1 : 1,
+      );
+      const size = config.clustering.maxCasesPerTask;
+      for (let index = 0; index * size < entry.cases.length; index++)
+        shards.push({
+          version: entry.version,
+          batch_id: entry.batch_id,
+          shard: index,
+          cases: entry.cases.slice(index * size, (index + 1) * size),
+        });
+    }
+    const shardCount = new Map<string, number>(),
+      shardIndex = new Map<string, number>();
+    for (const shard of shards)
+      shardCount.set(shard.version, (shardCount.get(shard.version) ?? 0) + 1);
+    for (const shard of shards) {
+      const library = libraries.get(shard.version)!;
+      const activeClasses = Object.values(library.classes).filter(
+        (problem) => problem.status === "active",
+      ).length;
+      const activeComponents = Object.keys(library.components).length;
+      const count = shardCount.get(shard.version)!,
+        index = shardIndex.get(shard.version) ?? 0;
+      shardIndex.set(shard.version, index + 1);
+      // Reserve the run's whole headroom across shards so concurrent tasks cannot exceed the cap.
+      const share = (total: number) =>
+        Math.floor(total / count) + (index < total % count ? 1 : 0);
+      const old = oldTasks.get(canonical([shard.batch_id, "clustering", shard.version, shard.shard]));
+      clusteringTasks.push({
+        id: old?.id || randomUUID(),
+        stage: "clustering",
+        dependencies: Object.fromEntries(shard.cases.map((entry) => [entry.input_id, entry.task_id])),
+        inputIds: {},
+        data: {
+          stage: "clustering",
+          candidates: {},
+          reference: null,
+          projection: projectLibrary(library),
+          scope: {
+            version: shard.version,
+            batch_id: shard.batch_id,
+            shard: shard.shard,
+            cases: Object.fromEntries(
+              shard.cases.map((entry) => [
+                entry.input_id,
+                { case_id: entry.case_id, source: { file: entry.source, line: entry.line } },
+              ]),
+            ),
+            budget: {
+              active_classes: activeClasses,
+              max_classes: config.clustering.maxClassesPerModel,
+              max_new_classes: Math.min(
+                config.clustering.maxNewClassesPerTask,
+                share(Math.max(0, config.clustering.maxClassesPerModel - activeClasses)),
+              ),
+              active_components: activeComponents,
+              max_components: config.clustering.maxComponentsPerModel,
+              max_new_components: Math.min(
+                config.clustering.maxNewComponentsPerTask,
+                share(Math.max(0, config.clustering.maxComponentsPerModel - activeComponents)),
+              ),
+              consolidate: activeClasses >= config.clustering.consolidateAt,
+              min_support: config.clustering.minSupport,
+            },
+          },
+          revision: Math.max(...shard.cases.map((entry) => entry.revision), 1),
+        },
+      });
+    }
+  }
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
   const selectedKeys = new Set(selected.map((entry) => canonical(entry)));
   const catalog = [...records.values()].filter((record) =>
@@ -565,7 +682,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
   );
   const used = new Set(catalog.map((record) => record.input_id));
   return {
-    tasks: [...checks.values(), ...tasks, ...rewrites.values()],
+    tasks: [...checks.values(), ...tasks, ...rewrites.values(), ...clusteringTasks],
     inputs: Object.fromEntries(Object.entries(inputs).filter(([id]) => used.has(id))),
     catalog,
     summary: {
@@ -574,6 +691,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       attribution_tasks: checks.size,
       comparison_tasks: tasks.length,
       rewrite_tasks: rewrites.size,
+      clustering_tasks: clusteringTasks.length,
       comparisons: config.comparisons,
       group_counts: groupCounts,
       sources: resolvedSources,

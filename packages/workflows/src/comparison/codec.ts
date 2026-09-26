@@ -149,6 +149,7 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 function resultEvaluation(data: TaskData, row: JsonObject): unknown {
   if (data.stage === "attribution") return row.evaluation;
   if (data.stage === "rewrite") return { rewrites: row.rewrites };
+  if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
 }
 
@@ -211,6 +212,32 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       continue;
     }
     const data = task.data as TaskData;
+    if (data.stage === "clustering") {
+      const scope = data.scope!;
+      if (receipt.exported.taskId !== task.id)
+        throw new Error("聚类结果引用与任务不一致：" + task.id);
+      const file = receipt.exported.file || resultFile("clustering");
+      const row = getRow({ id: receipt.exported.taskId, file });
+      if (
+        row.clustering_type !== "problem_library" ||
+        row.task_id !== task.id ||
+        row.model !== scope.version ||
+        row.batch_id !== scope.batch_id
+      )
+        throw new Error("聚类结果身份不一致：" + task.id);
+      const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
+      state.receipts[task.id] = {
+        ...value,
+        evaluation,
+        ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
+        exported: {
+          id: task.id,
+          ...(receipt.exported.file ? { file: receipt.exported.file } : {}),
+          row,
+        },
+      };
+      continue;
+    }
     if (data.stage === "rewrite") {
       const source = data.rewriteOf!;
       if (receipt.exported.taskId !== source.taskId)

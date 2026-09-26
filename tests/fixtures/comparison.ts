@@ -53,6 +53,7 @@ export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResul
 export async function fixtureConfig(
   rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]],
   rewrite = false,
+  clustering = false,
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
   const host = await loadConfig(path.join(ROOT, "configs/host.json"), {
@@ -61,7 +62,9 @@ export async function fixtureConfig(
   const config = host.evaluation;
   config.comparisons = [["a_fast", "aa_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite };
+  config.clustering = { ...config.clustering, enabled: clustering };
   config.output = { kind: "directory", path: path.join(directory, "runs") };
+  config.problemLibrary = { kind: "directory", path: path.join(directory, "problems") };
   config.execution.retries = 0;
   config.execution.retryDelaySeconds = 0;
   config.execution.timeoutSeconds = 30;
@@ -110,7 +113,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { node_id: null, component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。" },
+          : { component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };
@@ -123,6 +126,35 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
   if ("rewrites" in properties) {
     const request = parsedMaterial(spec) as { items: { id: string; text: string }[] };
     return { rewrites: request.items.map((item) => ({ id: item.id, text: "精简：" + item.text })) };
+  }
+  if ("assignments" in properties) {
+    const request = parsedMaterial(spec) as {
+      library: { components: { classes: { id: string }[] }[] };
+      items: { id: string; component: string; label: string }[];
+    };
+    const existing = request.library.components.flatMap((component) => component.classes)[0];
+    if (!request.items.length) return { assignments: [], new_classes: [], merges: [] };
+    if (existing)
+      return {
+        assignments: request.items.map((item) => ({ item_id: item.id, class_id: existing.id })),
+        new_classes: [],
+        merges: [],
+      };
+    const first = request.items[0]!;
+    return {
+      assignments: request.items.map((item) => ({ item_id: item.id, new_class_key: "n1" })),
+      new_classes: [
+        {
+          key: "n1",
+          component: first.component,
+          label: first.label,
+          definition: `${first.label}。`,
+          closest_existing: null,
+          novelty: "库为空，首次建立该类。",
+        },
+      ],
+      merges: [],
+    };
   }
   if (!("has_standard_answer" in properties)) {
     const labels = Object.keys(materialOf(spec).candidates);

@@ -5,6 +5,7 @@ import { AgentRegistry } from "@eval/host";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { attributionAgent } from "@eval/agents/attribution";
 import { rewriteAgent } from "@eval/agents/rewrite";
+import { clusteringAgent } from "@eval/agents/clustering";
 import {
   comparisonWorkflow,
   comparisonRepository,
@@ -13,7 +14,7 @@ import {
 } from "@eval/workflows/comparison";
 import type { PlannedTask, SubmissionReceipt, ToolAudit } from "@eval/contracts";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-export const agents = new AgentRegistry([comparisonAgent, attributionAgent, rewriteAgent]);
+export const agents = new AgentRegistry([comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 export const services = {
   snapshots: appServices.snapshots,
   agents,

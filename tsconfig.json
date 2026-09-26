@@ -42,6 +42,9 @@
       "@eval/agents/rewrite": [
         "./packages/agents/src/rewrite/index.ts"
       ],
+      "@eval/agents/clustering": [
+        "./packages/agents/src/clustering/index.ts"
+      ],
       "@eval/workflows/comparison": [
         "./packages/workflows/src/comparison/index.ts"
       ],

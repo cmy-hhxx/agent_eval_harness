@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULT_POLICY, type AttributionTarget, type OutputTarget } from "@eval/contracts";
+import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import type { EvalConfig } from "@eval/workflows/comparison";
 import { inputAdapterIds } from "@eval/workflows/comparison";
@@ -19,6 +19,16 @@ const EXECUTION_DEFAULTS = {
   retries: 1,
   retryDelaySeconds: 10,
   initialContextChars: 16000,
+};
+const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
+  enabled: false,
+  maxClassesPerModel: 80,
+  maxNewClassesPerTask: 8,
+  maxComponentsPerModel: 12,
+  maxNewComponentsPerTask: 1,
+  consolidateAt: 60,
+  minSupport: 1,
+  maxCasesPerTask: 100,
 };
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 type ConfigObject = Record<string, unknown>;
@@ -60,14 +70,22 @@ function optionalPositiveInteger(value: unknown, label: string): number | undefi
   if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`Invalid ${label}`);
   return value as number;
 }
+function optionalNonNegativeInteger(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${label}`);
+  return value as number;
+}
 
 async function readLocated(file: string): Promise<ConfigObject> {
   const source = await readJson<ConfigObject>(file);
   const directory = path.dirname(file);
   if (isObject(source.output) && typeof source.output.path === "string")
     source.output = { ...source.output, path: path.resolve(directory, source.output.path) };
-  if (isObject(source.attribution) && typeof source.attribution.path === "string")
-    source.attribution = { ...source.attribution, path: path.resolve(directory, source.attribution.path) };
+  if (isObject(source.problemLibrary) && typeof source.problemLibrary.path === "string")
+    source.problemLibrary = {
+      ...source.problemLibrary,
+      path: path.resolve(directory, source.problemLibrary.path),
+    };
   if (isObject(source.inputs) && Array.isArray(source.inputs.versions))
     source.inputs.versions = source.inputs.versions.map((item) =>
       isObject(item) && Array.isArray(item.sources)
@@ -97,10 +115,47 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     inputs: source.inputs as EvalConfig["inputs"],
     execution: { ...EXECUTION_DEFAULTS, ...(source.execution as Partial<EvalConfig["execution"]>) },
     output: source.output as OutputTarget,
-    attribution: source.attribution as AttributionTarget,
+    problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
     rewrite: { comparison: false, attribution: false },
+    clustering: { ...CLUSTERING_DEFAULTS },
   };
+  if (source.clustering !== undefined) {
+    if (!isObject(source.clustering)) throw new Error("Invalid clustering");
+    const clustering = source.clustering;
+    if (clustering.enabled !== undefined && typeof clustering.enabled !== "boolean")
+      throw new Error("Invalid clustering.enabled");
+    config.clustering = {
+      enabled: clustering.enabled === true,
+      maxClassesPerModel:
+        optionalPositiveInteger(clustering.maxClassesPerModel, "clustering.maxClassesPerModel") ??
+        CLUSTERING_DEFAULTS.maxClassesPerModel,
+      maxNewClassesPerTask:
+        optionalNonNegativeInteger(
+          clustering.maxNewClassesPerTask,
+          "clustering.maxNewClassesPerTask",
+        ) ?? CLUSTERING_DEFAULTS.maxNewClassesPerTask,
+      maxComponentsPerModel:
+        optionalPositiveInteger(
+          clustering.maxComponentsPerModel,
+          "clustering.maxComponentsPerModel",
+        ) ?? CLUSTERING_DEFAULTS.maxComponentsPerModel,
+      maxNewComponentsPerTask:
+        optionalNonNegativeInteger(
+          clustering.maxNewComponentsPerTask,
+          "clustering.maxNewComponentsPerTask",
+        ) ?? CLUSTERING_DEFAULTS.maxNewComponentsPerTask,
+      consolidateAt:
+        optionalNonNegativeInteger(clustering.consolidateAt, "clustering.consolidateAt") ??
+        CLUSTERING_DEFAULTS.consolidateAt,
+      minSupport:
+        optionalPositiveInteger(clustering.minSupport, "clustering.minSupport") ??
+        CLUSTERING_DEFAULTS.minSupport,
+      maxCasesPerTask:
+        optionalPositiveInteger(clustering.maxCasesPerTask, "clustering.maxCasesPerTask") ??
+        CLUSTERING_DEFAULTS.maxCasesPerTask,
+    };
+  }
   if (source.rewrite !== undefined) {
     if (!isObject(source.rewrite)) throw new Error("Invalid rewrite");
     for (const key of ["comparison", "attribution"] as const)
@@ -165,14 +220,14 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   const output = config.output;
   if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
     throw new Error("Missing output target");
-  const attribution = config.attribution;
+  const problemLibrary = config.problemLibrary;
   if (
-    !isObject(attribution) ||
-    attribution.kind !== "directory" ||
-    typeof attribution.path !== "string" ||
-    !attribution.path
+    !isObject(problemLibrary) ||
+    problemLibrary.kind !== "directory" ||
+    typeof problemLibrary.path !== "string" ||
+    !problemLibrary.path
   )
-    throw new Error("Missing attribution target");
+    throw new Error("Missing problemLibrary target");
   return config;
 }
 
@@ -222,13 +277,14 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
   return { models, bindings };
 }
 
-const DASHBOARD_STAGES = ["attribution", "comparison", "rewrite"] as const;
+const DASHBOARD_STAGES = ["attribution", "comparison", "rewrite", "clustering"] as const;
 const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
 const DASHBOARD_BINDING = ["model", "thinking"] as const;
 
 export function editableDashboardSettings(source: Record<string, unknown>) {
   const execution = isObject(source.execution) ? source.execution : {};
   const rewrite = isObject(source.rewrite) ? source.rewrite : {};
+  const clustering = isObject(source.clustering) ? source.clustering : {};
   const models = isObject(source.models) ? source.models : {};
   const bindings = isObject(source.bindings) ? source.bindings : {};
   const inputs = isObject(source.inputs) ? source.inputs : {};
@@ -240,6 +296,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
     },
     rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true },
+    clustering: { enabled: clustering.enabled === true },
     models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
       isObject(version) && typeof version.id === "string"
         ? [{ id: version.id, name: String(version.display_name || version.name || version.id) }]
@@ -263,7 +320,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
 /** Only these non-secret, run-scoped settings may cross the dashboard launch seam. */
 export function dashboardSettings(value: unknown): ConfigObject {
   if (!isObject(value)) throw new Error("运行设置必须是对象");
-  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite", "versions"].includes(key)))
+  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite", "clustering", "versions"].includes(key)))
     throw new Error("运行设置包含不允许修改的字段");
   const patch: ConfigObject = {};
   if (value.versions !== undefined) {
@@ -292,6 +349,13 @@ export function dashboardSettings(value: unknown): ConfigObject {
         Object.keys(value.rewrite).some((key) => !["comparison", "attribution"].includes(key)))
       throw new Error("改写设置包含不允许修改的字段");
     patch.rewrite = value.rewrite;
+  }
+  if (value.clustering !== undefined) {
+    if (!isObject(value.clustering) ||
+        Object.keys(value.clustering).some((key) => key !== "enabled") ||
+        typeof value.clustering.enabled !== "boolean")
+      throw new Error("聚类设置包含不允许修改的字段");
+    patch.clustering = value.clustering;
   }
   return patch;
 }
@@ -337,5 +401,7 @@ export async function loadConfig(
   const evaluation = versions ? selectVersions(base, versions) : base;
   if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
+  if (evaluation.clustering.enabled && !models.bindings.clustering)
+    throw new Error("clustering 已启用但缺少 bindings.clustering");
   return { evaluation, models };
 }

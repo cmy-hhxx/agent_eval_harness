@@ -115,7 +115,7 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .status-chip.running { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
 .status-chip.finished { color: var(--success); }
 .status-chip.has-failure { color: var(--danger); border-color: #e6b3ad; }
-.stage-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 10px; border-top: 1px solid var(--line); }
+.stage-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 10px; border-top: 1px solid var(--line); }
 .stage-row { display: flex; align-items: baseline; gap: 8px; padding-top: 8px; }
 .stage-row + .stage-row { padding-left: 12px; border-left: 1px solid var(--line); }
 .stage-row strong { color: var(--muted); font-size: 12px; font-weight: 500; }
@@ -188,3 +188,21 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
   .stage-summary { display: block; }
   .stage-row + .stage-row { padding-left: 0; border-top: 1px solid var(--line); border-left: 0; }
 }
+
+.problem-library { margin-top: 12px; }
+.problem-library h3 { margin-bottom: 6px; }
+.library-model { margin-bottom: 4px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.library-model > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; cursor: pointer; }
+.library-component { margin: 8px 0 0; }
+.library-component-label { color: var(--muted); font-size: 11px; letter-spacing: .03em; }
+.library-class { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 3px; padding: 4px 7px; text-align: left; color: inherit; background: var(--soft); border: 1px solid transparent; border-radius: var(--radius); }
+.library-class:hover { border-color: var(--accent-line); }
+.library-class.selected { background: var(--accent-soft); border-color: var(--accent-line); }
+.library-class-label { font-weight: 600; }
+.library-class-count { color: var(--muted); font-size: 11px; }
+.library-merged { margin-top: 8px; color: var(--muted); font-size: 11px; }
+.library-merged ul { margin: 4px 0 0; padding-left: 16px; }
+.library-detail-card { margin-top: 10px; padding: 9px 10px; background: var(--surface); border: 1px solid var(--accent-line); border-radius: var(--radius); }
+.library-occurrence { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.library-occurrence blockquote { margin: 4px 0; padding: 4px 8px; color: var(--muted); background: var(--soft); border-left: 2px solid var(--accent-line); border-radius: 0 var(--radius) var(--radius) 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.library-pager { display: flex; align-items: center; gap: 8px; margin-top: 8px; }

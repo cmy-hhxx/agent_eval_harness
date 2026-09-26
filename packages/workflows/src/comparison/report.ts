@@ -9,9 +9,9 @@ import { toRewrites, type RewriteResult, type Rewrites } from "@eval/agents/rewr
 import { outputSchema } from "./schema.js";
 import { display, comparisonRow } from "./results.js";
 import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
-import { syncAttributionLibraries } from "./attribution-library.js";
+import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
-import { taskCase } from "./input.js";
+import { taskCase, taskIdentity } from "./input.js";
 
 interface HeadToHeadStats {
   evaluated: number;
@@ -38,10 +38,12 @@ function summarizeResults(
   issues: JsonObject[],
 ) {
   const cases = new Set([
-    ...tasks.map((task) => {
-      const c = taskCase(task.data as TaskData);
-      return canonical([c.batch_id, c.case_id]);
-    }),
+    ...tasks
+      .filter((task) => task.stage !== "clustering")
+      .map((task) => {
+        const c = taskCase(task.data as TaskData);
+        return canonical([c.batch_id, c.case_id]);
+      }),
     ...skipped.map((item) => canonical([item.batch_id, item.case_id])),
   ]);
   const statuses: Record<string, number> = {};
@@ -180,7 +182,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const commentary: CommentaryLookup = { of: (sourceTaskId) => commentaryBySource.get(sourceTaskId || "") };
   // Persist both stages before compacting the ledger, including checkpoint-only recovery.
   await createResultWriter(run, inputs)(state);
-  await syncAttributionLibraries(state);
+  const problemLibrary = await syncProblemLibrary(state);
   const comparisons: JsonObject[] = [],
     outcomes: JsonObject[] = [],
     attribution: JsonObject[] = [],
@@ -197,12 +199,12 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       task_id: task.id,
       stage: task.stage,
       status,
-      case: taskCase(data),
+      case: taskIdentity(data),
       candidates: data.candidates,
       reason: manifest.states[task.id]?.reason || null,
     });
-    // Rewrite receipts feed the report view, not the per-case result sections.
-    if (task.stage === "rewrite") continue;
+    // Rewrite and clustering receipts feed the report view, not the per-case result sections.
+    if (task.stage === "rewrite" || task.stage === "clustering") continue;
     if (!receipt) {
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
@@ -340,7 +342,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   for (const old of await localFiles.list(results))
     if (
       old.endsWith(".jsonl") &&
-      !["attribution.jsonl", "comparison.jsonl", "commentary.jsonl"].includes(old)
+      !["attribution.jsonl", "comparison.jsonl", "commentary.jsonl", "clustering.jsonl"].includes(
+        old,
+      )
     )
       await localFiles.remove(path.join(results, old));
   if (comparisons.length) await writeJsonl(path.join(results, "comparison.jsonl"), comparisons);
@@ -426,7 +430,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     p95_seconds: durations.length ? durations[Math.floor((durations.length - 1) * 0.95)] : null,
   };
   const batches = new Set([
-    ...manifest.tasks.map((task) => taskCase(task.data as TaskData).batch_id),
+    ...manifest.tasks.map((task) => taskIdentity(task.data as TaskData).batch_id),
     ...skipped.map((item) => String(item.batch_id)),
     ...issues.flatMap((item) => (item.batch_id ? [String(item.batch_id)] : [])),
   ]);
@@ -434,7 +438,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     [...batches].sort().map((batch) => {
       // Per-batch standings duplicate the run-level table; keep only counts here.
       const { standings: _standings, ...stats } = summarizeResults(
-        manifest.tasks.filter((task) => taskCase(task.data as TaskData).batch_id === batch),
+        manifest.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch),
         outcomes.filter((outcome) => (outcome.case as { batch_id: string }).batch_id === batch),
         attribution.filter((row) => row.batch_id === batch),
         comparisons.filter((row) => (row.case as JsonObject).batch_id === batch),
@@ -447,6 +451,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const resultArtifacts = ["results/attribution.jsonl"];
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
   if (commentaryBySource.size) resultArtifacts.push("results/commentary.jsonl");
+  if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
+    resultArtifacts.push("results/clustering.jsonl");
   const summary = {
     debug: manifest.debug,
     run_id: manifest.runId,
@@ -454,6 +460,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     ...totals,
     quality,
     by_batch: byBatch,
+    ...(Object.keys(problemLibrary).length ? { problem_library: problemLibrary } : {}),
     artifacts: {
       authoritative: "results/",
       results: resultArtifacts,
@@ -495,6 +502,7 @@ export async function writeOverview(
   const skipped = (summary.planned as JsonObject).skipped_groups;
   const headToHead = summary.head_to_head as Record<string, HeadToHeadStats>;
   const standings = summary.standings as Record<string, Standing & { meets_core_rate: number | null; average_tier: number | null }>;
+  const problemLibrary = (summary.problem_library || {}) as Record<string, ProblemLibraryStats>;
   const batches = Object.entries(
     (summary.by_batch || {}) as Record<
       string,
@@ -526,6 +534,16 @@ export async function writeOverview(
             `| ${cell(version)} | ${s.entered} | ${s.meets_core} | ${s.first_tier} | ${s.average_tier ?? "-"} | ${s.wins} | ${s.both_good} | ${s.both_bad} |`,
         )
         .join("\n") +
+      (Object.keys(problemLibrary).length
+        ? "\n\n## 问题库\n\n" +
+          "| 模型 | 组件 | 活跃问题类 | 出现样本 | 本次归类 | 提议新类 | 合并决定 |\n|---|---:|---:|---:|---:|---:|---:|\n" +
+          Object.entries(problemLibrary)
+            .map(
+              ([model, s]) =>
+                `| ${cell(model)} | ${s.components} | ${s.classes} | ${s.occurrences} | ${s.assigned} | ${s.proposed_new_classes} | ${s.merged_classes} |`,
+            )
+            .join("\n")
+        : "") +
       "\n\n## 对局矩阵\n\n" +
       "| 对局 | 有效比较 | 胜出数量 | 都好 | 都差 |\n|---|---:|---|---:|---:|\n" +
       Object.entries(headToHead)

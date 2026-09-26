@@ -9,12 +9,31 @@ import { buildPlan, contentText } from "./input.js";
 import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 import { sourceSlots } from "./commentary.js";
+import { observationsFor, requestItems } from "./observations.js";
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
   dependencies: Record<string, SubmissionReceipt | undefined>,
 ) {
   const data = task.data as TaskData;
+  if (data.stage === "clustering") {
+    const scope = data.scope;
+    if (!scope) throw new Error("clustering task is missing its scope");
+    return {
+      agent: "clustering",
+      profile: "default",
+      request: {
+        input: {
+          model: scope.version,
+          batch_id: scope.batch_id,
+          budget: scope.budget,
+          library: data.projection ?? { components: [] },
+          items: requestItems(observationsFor(scope, (inputId) => dependencies[inputId])),
+        },
+        sources: {},
+      },
+    };
+  }
   if (data.stage === "rewrite") {
     const source = dependencies.source;
     if (!source || !data.rewriteOf)
@@ -106,7 +125,6 @@ export function bindTask(
       input: attribution
         ? {
             ground_truth: { available: data.reference !== null, value: data.reference },
-            library: data.library ?? { components: [] },
             candidates: materials,
           }
         : {

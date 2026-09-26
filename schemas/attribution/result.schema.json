@@ -222,18 +222,11 @@
             ],
             "additionalProperties": false,
             "required": [
-              "node_id",
               "component",
               "label",
               "definition"
             ],
             "properties": {
-              "node_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "component": {
                 "type": "string",
                 "minLength": 1

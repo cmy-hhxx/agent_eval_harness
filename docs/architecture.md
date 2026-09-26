@@ -9,7 +9,7 @@
 ```mermaid
 flowchart LR
   CLI --> Host
-  CLI --> Agents[Comparison / Attribution / Rewrite Profiles]
+  CLI --> Agents[Comparison / Attribution / Rewrite / Clustering Profiles]
   CLI --> Workflow[Comparison Workflow]
   Workflow --> Data[Data Repository]
   Host <-->|HTTP / JSON + SSE| Pi[Pi Worker]
@@ -28,11 +28,12 @@ flowchart LR
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
 | `packages/agents/src/comparison` | 对比 Profile、提示词、业务校验；使用根目录 `schemas/comparison` |
 | `packages/agents/src/rewrite` | 改写 Profile、提示词、槽位校验；只润色文本，不接触证据；使用根目录 `schemas/rewrite` |
-| `packages/agents/src/attribution` | 归因 Profile、问题库/归因树、提示词、业务校验；使用根目录 `schemas/attribution` |
+| `packages/agents/src/attribution` | 归因 Profile、提示词、业务校验；只描述问题，不维护问题库；使用根目录 `schemas/attribution` |
+| `packages/agents/src/clustering` | 聚类 Profile、纯问题库归类/合并与数量上限校验；文件读写和锁属于 Data；使用根目录 `schemas/clustering` |
 | `packages/workflows/src/comparison` | 适配器注册表、配置化分组对比、盲测、依赖与材料映射、改写组合、状态编解码、报告 |
 | `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
-| `schemas` | 集中维护 Attribution、Comparison、Rewrite 与 Workflow 的 JSON Schema |
+| `schemas` | 集中维护 Attribution、Comparison、Rewrite、Clustering 与 Workflow 的 JSON Schema |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
@@ -85,9 +86,9 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 [应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、请求/提交/接受结果 Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验请求 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后的结果。Schema 文件集中在根目录的 [`schemas/`](../schemas/README.md) 模块；当前通过 TypeScript 对象组合任务，不引入新编排语言。
 
-源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。归因树是每个模型一份的跨 run 问题库：按组件/问题归类、出现样本可双向追溯、合并保留血缘，只追加不覆盖（参见[使用指南](usage.md#目录约定)）。
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
 
-归因已实现于 `packages/agents/src/attribution`：每个模型一棵归因树（问题库），按具体工具（或「模型自身推理」）归类问题并保留样本血缘；后续聚类预留 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
+归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
 
 改写已实现于 `packages/agents/src/rewrite`：它只接收 Workflow 选定的文本槽位，输出同 id 的润色文本；正式结果 JSONL 保留裁判原文，改写写入 `results/commentary.jsonl`，报告与逐题总结优先展示改写文案。
 

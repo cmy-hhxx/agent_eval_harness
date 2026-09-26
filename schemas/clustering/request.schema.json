@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "model",
+    "batch_id",
+    "budget",
+    "library",
+    "items"
+  ],
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "batch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_classes",
+        "max_classes",
+        "max_new_classes",
+        "active_components",
+        "max_components",
+        "max_new_components",
+        "consolidate",
+        "min_support"
+      ],
+      "properties": {
+        "active_classes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_classes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_new_classes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_components": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_components": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_new_components": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consolidate": {
+          "type": "boolean"
+        },
+        "min_support": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "library": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "components"
+      ],
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "definition",
+              "aliases",
+              "classes"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "definition": {
+                "type": "string"
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "classes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "label",
+                    "definition",
+                    "aliases",
+                    "occurrences"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "definition": {
+                      "type": "string"
+                    },
+                    "aliases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "occurrences": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "component",
+          "label",
+          "definition",
+          "count",
+          "examples"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "definition": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "examples": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "finding",
+                "reason",
+                "dimension",
+                "importance",
+                "stage"
+              ],
+              "properties": {
+                "finding": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "dimension": {
+                  "type": "string"
+                },
+                "importance": {
+                  "type": "string"
+                },
+                "stage": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

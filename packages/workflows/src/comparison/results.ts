@@ -7,10 +7,12 @@ import {
 } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
 import type { RewriteResult } from "@eval/agents/rewrite";
+import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
 import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, Stage, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
-import { commentarySchema, outputSchema } from "./schema.js";
+import { clusteringSchema, commentarySchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
+import { taskObservations } from "./observations.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
     return (
@@ -142,11 +144,10 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
 }
 /** Result file per stage; the single place that maps stages to JSONL artifacts. */
 export function resultFile(stage: Stage): string {
-  return stage === "attribution"
-    ? "attribution.jsonl"
-    : stage === "comparison"
-      ? "comparison.jsonl"
-      : "commentary.jsonl";
+  if (stage === "attribution") return "attribution.jsonl";
+  if (stage === "comparison") return "comparison.jsonl";
+  if (stage === "rewrite") return "commentary.jsonl";
+  return "clustering.jsonl";
 }
 /** Accepted polish of one source result; only text slots, joined by business ids. */
 export function commentaryRow(task: PlannedTask, receipt: SubmissionReceipt): JsonObject {
@@ -160,11 +161,28 @@ export function commentaryRow(task: PlannedTask, receipt: SubmissionReceipt): Js
     rewrites: (receipt.evaluation as RewriteResult).rewrites,
   };
 }
+/** Accepted classification decision for one model and batch, joined by task id. */
+export function clusteringRow(
+  task: PlannedTask,
+  receipt: SubmissionReceipt,
+  observations: ClusteringObservation[],
+): JsonObject {
+  const scope = (task.data as TaskData).scope!;
+  return {
+    clustering_type: "problem_library",
+    task_id: task.id,
+    model: scope.version,
+    batch_id: scope.batch_id,
+    items: observations.map(({ id, component, label, count }) => ({ id, component, label, count })),
+    result: receipt.evaluation as ClusteringResult,
+  };
+}
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
   validateAttribution = ajv.compile(attributionProfile.resultSchema!),
-  validateCommentary = ajv.compile(commentarySchema);
+  validateCommentary = ajv.compile(commentarySchema),
+  validateClustering = ajv.compile(clusteringSchema);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>) {
   const receipt = state.receipts[task.id];
   if (task.stage === "attribution") {
@@ -178,6 +196,14 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     if (!validateCommentary(row))
       throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateCommentary.errors));
     return { id: String(row.source_task_id), file: "commentary.jsonl", row };
+  }
+  if (task.stage === "clustering") {
+    const row =
+      receipt.exported?.row ||
+      clusteringRow(task, receipt, taskObservations(task, (id) => state.receipts[id]));
+    if (!validateClustering(row))
+      throw new Error("聚类结果 schema 无效：" + ajv.errorsText(validateClustering.errors));
+    return { id: task.id, file: "clustering.jsonl", row };
   }
   const config = state.manifest.config as EvalConfig;
   const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));

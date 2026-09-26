@@ -1,0 +1,206 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
+import {
+  schemaIssues,
+  ValidationError,
+  type AgentRequest,
+  type ToolAudit,
+  type ValidationIssue,
+} from "@eval/contracts";
+import type { ClusteringRequest, ClusteringResult } from "./types.js";
+import { normalizeLabel } from "./library.js";
+import schema from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
+
+const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
+/**
+ * Clustering is capped by the request budget: every observation is assigned once, assignments
+ * only target active classes, and new classes must respect per-task and per-model limits.
+ */
+export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
+  void audit;
+  if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
+  const input = request.input as unknown as ClusteringRequest;
+  const value = result as ClusteringResult;
+  const errors: ValidationIssue[] = [];
+  const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
+    errors.push({ category: "decision", code, path, message, actual, expected });
+
+  const items = new Map(input.items.map((item) => [item.id, item]));
+  const classes = input.library.components.flatMap((component) => component.classes);
+  const classIds = new Set(classes.map((problem) => problem.id));
+  const componentIds = new Map(
+    input.library.components.flatMap((component) =>
+      [component.label, ...component.aliases].map((label) => [normalizeLabel(label), component.id] as const),
+    ),
+  );
+  const componentKey = (label: string) => componentIds.get(normalizeLabel(label)) ?? normalizeLabel(label);
+  const classComponents = new Map(
+    input.library.components.flatMap((component) =>
+      component.classes.map((problem) => [problem.id, component.id] as const),
+    ),
+  );
+
+  const intoIds = new Set(value.merges.map((merge) => merge.into));
+  const fromIds = new Set<string>();
+  for (const [index, merge] of value.merges.entries()) {
+    if (!classIds.has(merge.into))
+      issue("clustering_merge_unknown", `/merges/${index}/into`, "into 必须是库中活跃问题类", merge.into);
+    for (const from of merge.from) {
+      if (!classIds.has(from))
+        issue("clustering_merge_unknown", `/merges/${index}/from`, "from 必须是库中活跃问题类", from);
+      if (classComponents.has(from) && classComponents.has(merge.into) && classComponents.get(from) !== classComponents.get(merge.into))
+        issue("clustering_merge_component", `/merges/${index}/from`, "合并的类必须属于同一组件", from);
+      if (from === merge.into)
+        issue("clustering_merge_target", `/merges/${index}/from`, "不能把类合并到自己", from);
+      if (fromIds.has(from))
+        issue("clustering_merge_overlap", `/merges/${index}/from`, "一个类只能作为一次合并的源", from);
+      fromIds.add(from);
+    }
+  }
+  for (const id of intoIds)
+    if (fromIds.has(id))
+      issue("clustering_merge_target", "/merges", "into 不能同时是其他合并的源", id);
+
+  const assigned = new Set<string>();
+  for (const [index, assignment] of value.assignments.entries()) {
+    if (!items.has(assignment.item_id))
+      issue("clustering_item_unknown", `/assignments/${index}/item_id`, "归类必须对应请求中的观察", assignment.item_id);
+    else if (assigned.has(assignment.item_id))
+      issue("clustering_item_duplicate", `/assignments/${index}/item_id`, "同一观察只能归类一次", assignment.item_id);
+    assigned.add(assignment.item_id);
+    if (assignment.class_id && !classIds.has(assignment.class_id))
+      issue("clustering_class_unknown", `/assignments/${index}/class_id`, "class_id 必须是库中活跃问题类", assignment.class_id);
+    if (assignment.class_id && fromIds.has(assignment.class_id))
+      issue(
+        "clustering_class_merged",
+        `/assignments/${index}/class_id`,
+        "已合并的类不能作为归类目标，请使用 into 的目标类",
+        assignment.class_id,
+      );
+    const item = items.get(assignment.item_id);
+    const assignedComponent = assignment.class_id
+      ? classComponents.get(assignment.class_id)
+      : value.new_classes.find((entry) => entry.key === assignment.new_class_key)?.component;
+    if (item && assignedComponent && componentKey(item.component) !==
+      (assignment.class_id ? assignedComponent : componentKey(assignedComponent)))
+      issue("clustering_component_mismatch", `/assignments/${index}`, "观察与目标问题类的组件不一致", item.component);
+    if (assignment.new_class_key && !value.new_classes.some((entry) => entry.key === assignment.new_class_key))
+      issue(
+        "clustering_new_key_unknown",
+        `/assignments/${index}/new_class_key`,
+        "new_class_key 必须已在 new_classes 中声明",
+        assignment.new_class_key,
+      );
+  }
+  for (const item of input.items)
+    if (!assigned.has(item.id))
+      issue("clustering_item_missing", "/assignments", "每个观察都必须归类", item.id);
+
+  const usedKeys = new Set(
+    value.assignments.flatMap((assignment) => (assignment.new_class_key ? [assignment.new_class_key] : [])),
+  );
+  const keys = new Set<string>();
+  const labels = new Set<string>();
+  for (const [index, entry] of value.new_classes.entries()) {
+    if (keys.has(entry.key))
+      issue("clustering_new_class_duplicate", `/new_classes/${index}/key`, "新类 key 必须唯一", entry.key);
+    keys.add(entry.key);
+    if (!usedKeys.has(entry.key))
+      issue("clustering_new_class_unused", `/new_classes/${index}`, "每个新类至少覆盖一个观察", entry.key);
+    const label = normalizeLabel(entry.label);
+    if (!label)
+      issue("clustering_new_label_empty", `/new_classes/${index}/label`, "问题名称不能为空");
+    if (!normalizeLabel(entry.component))
+      issue("clustering_new_component_empty", `/new_classes/${index}/component`, "问题组件不能为空");
+    if (!entry.definition.trim())
+      issue("clustering_new_definition_empty", `/new_classes/${index}/definition`, "问题定义不能为空");
+    const key = `${componentKey(entry.component)}\u0000${label}`;
+    if (labels.has(key))
+      issue("clustering_new_class_duplicate", `/new_classes/${index}/label`, "同一组件内的新类 label 不能重复", entry.label);
+    labels.add(key);
+    const existing = classes.find(
+      (problem) =>
+        classComponents.get(problem.id) === componentKey(entry.component) &&
+        (normalizeLabel(problem.label) === label ||
+          problem.aliases.some((alias) => normalizeLabel(alias) === label)),
+    );
+    if (existing)
+      issue(
+        "clustering_new_class_existing",
+        `/new_classes/${index}/label`,
+        "库中已有同义类，必须把观察归入该 class_id",
+        entry.label,
+        existing.id,
+      );
+    if (input.budget.active_classes > 0 && !entry.closest_existing)
+      issue(
+        "clustering_new_class_uncompared",
+        `/new_classes/${index}/closest_existing`,
+        "库非空时必须给出最接近的已有问题类",
+        entry.label,
+      );
+    if (entry.closest_existing && !classIds.has(entry.closest_existing))
+      issue(
+        "clustering_new_class_comparison",
+        `/new_classes/${index}/closest_existing`,
+        "closest_existing 必须是库中活跃问题类",
+        entry.closest_existing,
+      );
+  }
+  if (value.new_classes.length > input.budget.max_new_classes)
+    issue(
+      "clustering_new_class_budget",
+      "/new_classes",
+      "新增类超过本次预算；合并不会提高本次预算，请复用已有类或在下次运行再新增",
+      value.new_classes.length,
+      input.budget.max_new_classes,
+    );
+  const expectedClasses = input.budget.active_classes - fromIds.size + value.new_classes.length;
+  if (expectedClasses > input.budget.max_classes)
+    issue(
+      "clustering_class_cap",
+      "/new_classes",
+      "归类后活跃问题类超过每模型上限",
+      expectedClasses,
+      input.budget.max_classes,
+    );
+  const newComponents = new Set(
+    value.new_classes
+      .map((entry) => normalizeLabel(entry.component))
+      .filter((label) => !componentIds.has(label)),
+  );
+  if (newComponents.size > input.budget.max_new_components)
+    issue(
+      "clustering_component_budget",
+      "/new_classes",
+      "新增组件超过本次预算",
+      newComponents.size,
+      input.budget.max_new_components,
+    );
+  if (input.budget.active_components + newComponents.size > input.budget.max_components)
+    issue(
+      "clustering_component_cap",
+      "/new_classes",
+      "组件总数超过每模型上限",
+      input.budget.active_components + newComponents.size,
+      input.budget.max_components,
+    );
+
+  const support = new Map<string, number>();
+  for (const assignment of value.assignments)
+    if (assignment.new_class_key)
+      support.set(
+        assignment.new_class_key,
+        (support.get(assignment.new_class_key) ?? 0) + (items.get(assignment.item_id)?.count ?? 0),
+      );
+  for (const entry of value.new_classes)
+    if ((support.get(entry.key) ?? 0) < input.budget.min_support)
+      issue(
+        "clustering_new_support",
+        "/new_classes",
+        "新类覆盖的出现样本不足",
+        { key: entry.key, support: support.get(entry.key) ?? 0 },
+        input.budget.min_support,
+      );
+
+  if (errors.length) throw new ValidationError(errors);
+}

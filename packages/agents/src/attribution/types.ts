@@ -1,5 +1,3 @@
-import type { AttributionLibrary } from "@eval/contracts";
-
 export interface Evidence {
   message_index: number;
   quote: string;
@@ -34,20 +32,21 @@ export interface TaskAnalysis {
   scoring_points: string[];
   red_flags: string[];
 }
-/** Where a finding belongs in the model's attribution tree. */
-export interface ProblemRef {
-  /** Existing problem node ID when recalled; null means "propose a new node". */
-  node_id: string | null;
-  /** Concrete tool name from the evaluated answer's call chain, or 模型自身推理. Top-level category of the tree. */
+/**
+ * Raw problem description proposed by attribution. The clustering stage owns library classes
+ * and decides which class receives this problem; attribution never creates classes.
+ */
+export interface ProblemProposal {
+  /** Concrete tool name from the evaluated answer's call chain, or 模型自身推理. */
   component: string;
   label: string;
   definition: string;
 }
 export interface AttributionFinding extends Finding {
-  /** Stable within this answer; used to preserve attribution-tree occurrence lineage. */
+  /** Stable within this answer; used to preserve problem-library occurrence lineage. */
   finding_id: string;
-  /** Null for strengths; problem findings must map into the tree. */
-  problem: ProblemRef | null;
+  /** Null for strengths; problem findings must describe where the problem happened. */
+  problem: ProblemProposal | null;
 }
 export interface AttributionResult {
   /** Whether the case carries a usable standard answer; mirrors the request input. */
@@ -60,14 +59,3 @@ export interface AttributionResult {
   summary: string;
   findings: AttributionFinding[];
 }
-
-/** Node directory recalled into an attribution attempt; occurrence counts make samples traceable. */
-export interface LibraryProjection {
-  components: {
-    id: string;
-    label: string;
-    definition: string;
-    problems: { id: string; label: string; definition: string; occurrences: number }[];
-  }[];
-}
-export type { AttributionLibrary };

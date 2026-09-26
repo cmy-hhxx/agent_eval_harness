@@ -6,7 +6,7 @@ import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, locateRun, readJson } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
-import { listInputInventory, listRunCases, readCaseDetail, readRegisteredInput } from "@eval/workflows/comparison";
+import { listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -93,8 +93,14 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
 
 async function inspectRun(outputDir: string, runId: string) {
   const run = path.join(outputDir, runId);
-  const [lock, checkpoint] = await Promise.all([
-    readLock(run), readJson<DashboardCheckpoint>(locateRun(run).stateFile),
+  const statsFile = locateRun(run).stats;
+  const [lock, checkpoint, stats] = await Promise.all([
+    readLock(run),
+    readJson<DashboardCheckpoint>(locateRun(run).stateFile),
+    readJson<Record<string, unknown>>(statsFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    }),
   ]);
   if (checkpoint.format !== "evaluation-run" || checkpoint.runId !== runId || !checkpoint.tasks)
     throw new Error("运行状态身份或任务索引无效");
@@ -130,6 +136,7 @@ async function inspectRun(outputDir: string, runId: string) {
     progress,
     live,
     stages,
+    ...(stats?.problem_library ? { problem_library: stats.problem_library } : {}),
     ...(lock ? { process_id: lock.pid } : {}),
   };
 }
@@ -248,6 +255,15 @@ export async function startDashboard(options: DashboardOptions) {
         stage: url.searchParams.get("stage") || undefined,
         status: url.searchParams.get("status") || undefined,
       }));
+    }
+    if (req.method === "GET" && parts[4] === "library" && parts.length === 5)
+      return json(res, await listProblemLibrary(directory));
+    if (req.method === "GET" && parts[4] === "library" && parts.length === 8 && parts[5] && parts[6] === "classes" && parts[7]) {
+      const page = Number(url.searchParams.get("page") || "1");
+      if (!Number.isSafeInteger(page) || page < 1) throw new HttpError(400, "Invalid page");
+      const detail = await readProblemClass(directory, safeId(parts[5]), safeId(parts[7]), page);
+      if (!detail) throw new HttpError(404, "Problem class not found");
+      return json(res, detail);
     }
     if (req.method === "GET" && parts[4] === "inputs" && parts[5] && parts.length === 6) {
       try {

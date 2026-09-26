@@ -4,8 +4,17 @@ import { object, type JsonSchema } from "@eval/contracts";
 import template from "../../../../schemas/workflow/export.schema.json" with { type: "json" };
 import annotation from "../../../../schemas/workflow/annotation.schema.json" with { type: "json" };
 import commentary from "../../../../schemas/workflow/commentary.schema.json" with { type: "json" };
+import clusteringResult from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
+import clusteringTemplate from "../../../../schemas/workflow/clustering.schema.json" with { type: "json" };
 // Only export-specific identity, display and trace annotations belong to Workflow.
 export const commentarySchema: JsonSchema = commentary;
+export const clusteringSchema: JsonSchema = {
+  ...clusteringTemplate,
+  properties: {
+    ...(clusteringTemplate.properties as Record<string, unknown>),
+    result: clusteringResult,
+  },
+};
 const comparison = object(structuredClone(comparisonProfile.resultSchema!).properties);
 const attribution = object(structuredClone(attributionProfile.resultSchema!).properties);
 const findings = object(attribution.findings);

@@ -5,9 +5,9 @@
 ## 唯一规则来源
 
 - 输入与分组：[input.ts](../packages/workflows/src/comparison/input.ts)。
-- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)、[改写规则](../packages/agents/src/rewrite/profiles/default/instructions.md)。
-- Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile 与问题库](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约。Rewrite 的[公开入口](../packages/agents/src/rewrite/index.ts)只交换文本槽位，不接触证据。
-- 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)、[Rewrite schemas](../schemas/rewrite/)和[Workflow schemas](../schemas/workflow/)。
+- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)、[改写规则](../packages/agents/src/rewrite/profiles/default/instructions.md)、[聚类规则](../packages/agents/src/clustering/profiles/default/instructions.md)。
+- Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约，只输出问题描述。Clustering 的[公开入口](../packages/agents/src/clustering/index.ts)与[问题库](../packages/agents/src/clustering/library.ts)拥有归类、新建与合并。Rewrite 的[公开入口](../packages/agents/src/rewrite/index.ts)只交换文本槽位，不接触证据。
+- 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)、[Rewrite schemas](../schemas/rewrite/)、[Clustering schemas](../schemas/clustering/)和[Workflow schemas](../schemas/workflow/)。
 - 正式导出组装：[schema.ts](../packages/workflows/src/comparison/schema.ts)。
 - 导出与工具回溯：[report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts)。
 
@@ -32,15 +32,16 @@
 阶段输出则分为两种：
 
 - `submission.schema.json`：模型通过提交工具返回的 JSON。证据使用 attempt 内的 `evidence_id`；Attribution 还必须为每个 finding 提供本条回答内唯一的 `finding_id`。
-- `result.schema.json`：Host 展开证据并接受后的阶段结果。证据变为 `message_index + quote`，finding_id 保留以维护归因树的样本血缘。
+- `result.schema.json`：Host 展开证据并接受后的阶段结果。证据变为 `message_index + quote`，finding_id 保留以维护问题库的样本血缘。
 
 各阶段的 Agent 输出契约如下：
 
 | 阶段 | 一次处理 | 输出内容 | 下游用途 |
 |---|---|---|---|
-| Attribution | 一条候选回答 | `has_standard_answer`、条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、`findings`（含 finding、证据、要求关联和 problem 节点） | 写入 `attribution.jsonl`，并追加到该模型的归因树；Comparison 只读取它 |
+| Attribution | 一条候选回答 | `has_standard_answer`、条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、`findings`（含 finding、证据、要求关联和 `problem.component/label/definition`） | 写入 `attribution.jsonl`；Comparison 只读取它，Clustering 读它的问题描述 |
 | Comparison | 一个对比组 | `task_analysis`、分层 `ranking`、每个候选的 `assessments.meets_core/summary`、`decision_basis.tradeoff/decisive_findings` | Workflow 恢复盲测标签、生成 `comparison.jsonl` 和派生 `verdicts` |
 | Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
+| Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
 
 Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison 与 Rewrite 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema，不再维护第二份副本。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写产物另由 `schemas/workflow/commentary.schema.json` 描述。
 
@@ -75,11 +76,9 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 ## 归因与判决
 
-每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 必须挂到归因树节点：优先召回已有节点（`problem.node_id`），没有对应节点时填 `null` 并给出 `component`/`label`/`definition`；组件必须是该回答调用链中的具体工具名（与材料 `catalog` 的 `name` 一致），与工具无关的问题用「模型自身推理」，不得使用能力/阶段名。
+每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 只描述问题：`problem.component` 是该回答调用链中的具体工具名（与材料 `catalog` 的 `name` 一致），与工具无关的问题用「模型自身推理」，不得使用能力/阶段名；`problem.label` 与 `problem.definition` 说明问题是什么。归因不读问题库、不指定分类、不建类。
 
-对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建归因节点，也不新增 finding。
-
-归因树是每个模型的跨 run 问题库：组件为顶层节点，问题挂在组件下，出现样本挂在问题上。合并按 `(节点, input_id, finding)` 幂等，节点 ID 用持久化 UUID；问题 finding 命中已有节点时复用，未命中时新建。每个出现样本保留 `batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题反查到样本、再回到原始数据；合并或重分类保留 `previous_node_id` 与 `events` 血缘。树文件按模型一份，`tree_version`/`previous_tree` 预留分版本。
+对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建 finding。
 
 Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用同一套内容校验，并共享提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态。
 
@@ -97,6 +96,21 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 有标准答案时，归因 `is_correct=false` 的候选不得判为 `meets_core=true`。Host 在接收提交、恢复和离线校验时检查排名是候选的划分、`assessments` 覆盖全部候选、决定性发现引用既有归因 finding；这些检查只保证结构与引用关系，不能代替事实和影响判断。
 
 提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 解释相邻层的差异与同层并列的理由。对比阶段不提交 evidence、不新增 finding。
+
+## 问题库与聚类
+
+问题库是每个模型一份的跨 run 知识库（`data/problems/<version>.json`），只有聚类阶段能写入。每条已接受聚类决定记录：`assignments` 把每个观察（按 `component + label` 归一化聚合的同一问题）归入已有类或新类，`new_classes` 声明新类的 `component/label/definition` 以及最接近的已有类和 novelty 理由，`merges` 把同一组件下的近义旧类合并到保留类。相同问题名可分别属于不同工具组件；观察只可归入同一组件内的类（已有组件的别名等同于该组件）。写库顺序是先合并、再建类、最后落出现样本；每个出现样本保留 `class_id`、`batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题类反查到样本、再回到原始数据；合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label 与 aliases 追加到目标类。入库按 `(class_id, input_id, finding_id)` 幂等，重复 report 或续跑不会重复计样本。
+
+数量由程序硬控，提示词只做引导：
+
+- 计划期把该模型本 run 的 `maxClassesPerModel − 活跃类数` 均摊到全部分片，得到每个任务的 `max_new_classes`；
+- 提交必须覆盖全部观察且只归一次，`class_id` 必须是库中活跃类，新类必须被至少一个观察使用且覆盖样本数达到 `minSupport`；
+- 同一组件内，`新类 label` 归一化后命中活跃类 label 或 alias 时直接拒绝，要求复用该 `class_id`；
+- `活跃类 − merges + new ≤ maxClassesPerModel`，新组件受 `maxComponentsPerModel`/`maxNewComponentsPerTask` 限制；
+- 活跃类达到 `consolidateAt` 时提示 Agent 检查同组件近义类并输出 `merges`；合并不增加当前任务的 `max_new_classes`，腾出的预算在后续 run 规划时重算。
+- 写库按模型锁住读、合并、校验和保存；不同 run 共享同一模型时不会互相覆盖。所有模型的上限校验通过后才写文件；若有模型超出 `maxClassesPerModel` 或 `maxComponentsPerModel`（例如并发 run 或手工下调上限），本次报告不写入任何模型的库，并提示调高上限。
+
+聚类任务失败时库保持不变，当天问题仍保留在 `attribution.jsonl`。
 
 ## 改写
 

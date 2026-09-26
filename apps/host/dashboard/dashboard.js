@@ -5,9 +5,11 @@ const state = {
   inputs: null, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
   sampledCases: null, sampleInfo: null, rangeLocked: false, searchTimer: 0,
+  library: null, libraryDetail: null, libraryRequest: 0, libraryDetailRequest: 0,
+  libraryRun: null, libraryStatus: null, libraryOpen: new Set(),
 };
 const $ = (selector) => document.querySelector(selector);
-const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写" };
+const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类" };
 const statusLabels = {
   running: "运行中", finished: "已结束", interrupted: "已中断", pending: "排队",
   succeeded: "已接受", failed: "失败", timed_out: "超时", blocked: "阻塞", cancelled: "取消",
@@ -81,15 +83,91 @@ function renderOverview() {
   status.textContent = statusText(run);
   status.className = `status-chip ${run.status}${Object.values(run.progress?.failures || {}).some(Boolean) ? " has-failure" : ""}`;
   const progress = run.progress || {};
-  $("#run-description").textContent = `${run.engine} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}`;
+  const library = Object.entries(run.problem_library || {})
+    .map(([model, counts]) => `${model} ${counts.classes} 类`)
+    .join(" / ");
+  $("#run-description").textContent = `${run.engine} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}` + (library ? ` · 问题库：${library}` : "");
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button>`;
-  $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite"].map((stage) => {
+  $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite", "clustering"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? `${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常` : "未启用"}</span></div>`;
   }).join("");
+  // The library only changes when clustering/report runs; refetch on run change or finish.
+  if (state.libraryRun !== run.run_id || (state.libraryStatus === "running" && run.status !== "running")) {
+    state.libraryRun = run.run_id;
+    state.libraryStatus = run.status;
+    state.library = state.libraryDetail = null;
+    ++state.libraryDetailRequest;
+    state.libraryOpen = new Set();
+    void loadLibrary(run.run_id);
+  } else {
+    state.libraryStatus = run.status;
+  }
+}
+function libraryDetailHtml() {
+  const detail = state.libraryDetail;
+  if (!detail) return "";
+  const pages = Math.max(1, Math.ceil(detail.total / detail.page_size));
+  return `<div class="library-detail-card" id="library-detail">
+    <h4>${escapeHtml(detail.class.label)} <span class="muted">${escapeHtml(detail.class.aliases.length ? `别名：${detail.class.aliases.join("、")}` : detail.class.id)}</span></h4>
+    <p>${escapeHtml(detail.class.definition || "—")}</p>
+    <p class="muted">${escapeHtml(detail.component?.label || "—")} · 出现 ${detail.total} 次${detail.class.status === "merged" ? " · 已合并" : ""}</p>
+    ${detail.class.first_seen ? `<p class="muted">首次 ${escapeHtml(detail.class.first_seen.batch_id)} / ${escapeHtml(detail.class.first_seen.case_id)} · ${dateText(detail.class.first_seen.at)}</p>` : ""}
+    ${detail.occurrences.length ? detail.occurrences.map((item) => `<div class="library-occurrence">
+      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · ${item.classification === "created" ? "新建" : "归入"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
+      ${item.quote ? `<blockquote>${escapeHtml(item.quote)}</blockquote>` : ""}
+      <p class="muted">finding ${escapeHtml(item.finding_id)} · 消息 #${item.message_index} · ${escapeHtml(item.source.file)}:${item.source.line} · ${dateText(item.at)}</p>
+    </div>`).join("") : '<p class="empty-state">暂无出现样本</p>'}
+    ${pages > 1 ? `<div class="library-pager"><button type="button" class="button" data-library-page="${detail.page - 1}" ${detail.page <= 1 ? "disabled" : ""}>上一页</button><span class="muted">${detail.page} / ${pages}</span><button type="button" class="button" data-library-page="${detail.page + 1}" ${detail.page >= pages ? "disabled" : ""}>下一页</button></div>` : ""}
+  </div>`;
+}
+function renderLibrary() {
+  const models = state.library || [];
+  if (!models.length) {
+    $("#problem-library").innerHTML = '<h3>问题库</h3><p class="empty-state">暂无问题类</p>';
+    return;
+  }
+  $("#problem-library").innerHTML = `<h3>问题库</h3>` + models.map((model) => `
+    <details class="library-model" data-library-model="${escapeHtml(model.model)}" ${state.libraryOpen.has(model.model) ? "open" : ""}>
+      <summary><strong>${escapeHtml(model.model)}</strong><span class="muted">活跃类 ${model.totals.classes} · 组件 ${model.totals.components} · 出现样本 ${model.totals.occurrences}</span></summary>
+      ${model.components.filter((component) => component.classes.length).map((component) => `
+        <div class="library-component">
+          <p class="library-component-label">${escapeHtml(component.label)}</p>
+          ${component.classes.map((item) => `<button type="button" class="library-class ${state.libraryDetail?.class.id === item.id ? "selected" : ""}" data-library-model="${escapeHtml(model.model)}" data-library-class="${escapeHtml(item.id)}">
+            <span class="library-class-label">${escapeHtml(item.label)}</span>
+            <span class="library-class-count">${item.occurrences} 次${item.aliases.length ? ` · 别名 ${escapeHtml(item.aliases.join("、"))}` : ""}</span>
+          </button>`).join("")}
+        </div>`).join("") || '<p class="empty-state">暂无活跃类</p>'}
+      ${model.merged.length ? `<details class="library-merged"><summary>已合并 ${model.merged.length} 个类</summary><ul>${model.merged.map((item) => `<li>${escapeHtml(item.label)} → ${escapeHtml(item.into_label || item.into)}${item.reason ? `（${escapeHtml(item.reason)}）` : ""}</li>`).join("")}</ul></details>` : ""}
+    </details>`).join("") + libraryDetailHtml();
+}
+async function loadLibrary(runId) {
+  const request = ++state.libraryRequest;
+  $("#problem-library").innerHTML = loading("正在读取问题库");
+  try {
+    const models = await api(`${urlFor(runId)}/library`);
+    if (request !== state.libraryRequest) return;
+    state.library = models;
+    if (models.length === 1) state.libraryOpen.add(models[0].model);
+    renderLibrary();
+  } catch (error) {
+    if (request === state.libraryRequest)
+      $("#problem-library").innerHTML = `<p class="empty-state">问题库读取失败：${escapeHtml(error.message)}</p>`;
+  }
+}
+async function loadLibraryClass(model, classId, page) {
+  const request = ++state.libraryDetailRequest;
+  const runId = state.selectedRun;
+  try {
+    const detail = await api(`${urlFor(runId)}/library/${encodeURIComponent(model)}/classes/${encodeURIComponent(classId)}?page=${page}`);
+    if (request !== state.libraryDetailRequest || runId !== state.selectedRun) return;
+    state.libraryDetail = detail;
+    renderLibrary();
+    $("#library-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (error) { toast(`问题库读取失败：${error.message}`, true); }
 }
 function caseQuery() {
   return new URLSearchParams({ page: String(state.page), ...(state.query ? { query: state.query } : {}) }).toString();
@@ -408,6 +486,7 @@ function renderConfig() {
   $("#setting-retries").value = settings.execution.retries;
   $("#rewrite-attribution").checked = settings.rewrite.attribution;
   $("#rewrite-comparison").checked = settings.rewrite.comparison;
+  $("#clustering-enabled").checked = settings.clustering?.enabled === true;
 }
 function launchPayload() {
   const scope = selectionScope();
@@ -434,6 +513,7 @@ function launchPayload() {
         retries: Number($("#setting-retries").value),
       },
       rewrite: { attribution: $("#rewrite-attribution").checked, comparison: $("#rewrite-comparison").checked },
+      clustering: { enabled: $("#clustering-enabled").checked },
     },
   };
 }
@@ -549,6 +629,32 @@ $("#case-list").addEventListener("click", (event) => {
   renderDetail();
   void loadCase(node.dataset.batch, node.dataset.case);
 });
+$("#problem-library").addEventListener("click", (event) => {
+  const classNode = event.target.closest("[data-library-class]");
+  if (classNode) {
+    state.libraryOpen.add(classNode.dataset.libraryModel);
+    void loadLibraryClass(classNode.dataset.libraryModel, classNode.dataset.libraryClass, 1);
+    return;
+  }
+  const pageNode = event.target.closest("[data-library-page]");
+  if (pageNode && !pageNode.disabled && state.libraryDetail)
+    void loadLibraryClass(
+      state.libraryDetail.model,
+      state.libraryDetail.class.id,
+      Number(pageNode.dataset.libraryPage),
+    );
+});
+// `toggle` does not bubble; capture it so re-renders keep user-opened models.
+$("#problem-library").addEventListener(
+  "toggle",
+  (event) => {
+    const node = event.target.closest?.(".library-model");
+    if (!node) return;
+    if (node.open) state.libraryOpen.add(node.dataset.libraryModel);
+    else state.libraryOpen.delete(node.dataset.libraryModel);
+  },
+  true,
+);
 $("#case-detail").addEventListener("click", async (event) => {
   const input = event.target.closest("[data-input]");
   if (input) { await loadInput(input.dataset.input); return; }

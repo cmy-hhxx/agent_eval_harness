@@ -108,12 +108,7 @@ test("no-standard-answer samples still run attribution and only skip the correct
     const plan = await buildPlan(config);
     assert.equal(plan.summary.attribution_tasks, 2);
     assert.equal(plan.summary.comparison_tasks, 1);
-    assert.equal(
-      plan.tasks.filter((task) => task.stage === "attribution").every((task) =>
-        (task.data as TaskData).library !== undefined,
-      ),
-      true,
-    );
+    assert.equal(plan.summary.clustering_tasks, 0, "clustering is opt-in per fixture config");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -270,7 +265,7 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
         assert(!rules.includes("decisive_findings"));
         assert(instruction.includes("final_message_index"));
         assert(rules.includes("strength 的 problem 必须为 null"));
-        assert(rules.includes("只有 problem 型 finding 才挂到归因树"));
+        assert(rules.includes("问题库由聚类阶段统一维护"));
       } else {
         for (const rule of [
           "ranking",
@@ -312,9 +307,12 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { node_id: "missing", component: "组件", label: "问题", definition: "描述" },
+      problem: { component: "组件", label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
-    assert.throws(() => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}), /不在该模型的归因树/);
+    assert.throws(
+      () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
+      /调用链|具体工具|组件/,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

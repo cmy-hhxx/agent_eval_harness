@@ -5,7 +5,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { exists, writeJson, writeJsonl } from "@eval/data";
+import { exists, readJson, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
   attributionRow, buildPlan, listInputInventory, listRunCases, readCaseDetail, readRegisteredInput, writeRunState,
@@ -14,10 +14,10 @@ import { attributionResult, emptyAudit, fakeIdentity, fixtureConfig, raw } from 
 
 const gateway = "https://private-gateway.example/v1";
 
-async function setup(rewrite = false) {
+async function setup(rewrite = false, clustering = false) {
   const { directory, config } = await fixtureConfig([
     [raw("q1"), raw("q2")], [], [raw("q1"), raw("q2")], [],
-  ], rewrite);
+  ], rewrite, clustering);
   const configFile = path.join(directory, "dashboard-config.json");
   await writeJson(configFile, {
     inputs: config.inputs,
@@ -25,7 +25,8 @@ async function setup(rewrite = false) {
     rewrite: config.rewrite,
     execution: config.execution,
     output: config.output,
-    attribution: config.attribution,
+    problemLibrary: config.problemLibrary,
+    clustering: config.clustering,
     models: {
       judge: {
         provider: "test-gateway", baseUrlEnv: "EVAL_BASE_URL", apiKeyEnv: "EVAL_API_KEY",
@@ -33,7 +34,12 @@ async function setup(rewrite = false) {
         contextWindow: 8192, maxOutputTokens: 2048,
       },
     },
-    bindings: { attribution: { profile: "judge" }, comparison: { profile: "judge" }, rewrite: { profile: "judge" } },
+    bindings: {
+      attribution: { profile: "judge" },
+      comparison: { profile: "judge" },
+      rewrite: { profile: "judge" },
+      clustering: { profile: "judge" },
+    },
   });
   const plan = await buildPlan(config);
   const run = path.join(config.output.path, "run-one");
@@ -59,6 +65,107 @@ async function setup(rewrite = false) {
     receipts: { [task.id]: receipt }, usage: emptyUsage(), recordedAttempts: 1,
   };
   await writeJsonl(path.join(run, "results", "attribution.jsonl"), [row]);
+  if (clustering) {
+    await writeJson(path.join(run, "stats.json"), {
+      problem_library: {
+        a_fast: {
+          components: 1,
+          classes: 1,
+          occurrences: 2,
+          assigned: 2,
+          proposed_new_classes: 1,
+          merged_classes: 1,
+        },
+      },
+    });
+    await writeJson(path.join(config.problemLibrary.path, "a_fast.json"), {
+      model: "a_fast",
+      updated_at: "2026-01-02T00:00:00.000Z",
+      components: {
+        c1: {
+          id: "c1",
+          label: "模型自身推理",
+          definition: "",
+          aliases: [],
+          first_seen: null,
+        },
+      },
+      classes: {
+        k1: {
+          id: "k1",
+          component_id: "c1",
+          label: "算术错误",
+          definition: "数值计算与事实不符。",
+          aliases: ["计算错误"],
+          status: "active",
+          merged_into: null,
+          first_seen: {
+            run_id: "run-one",
+            batch_id: "b1",
+            case_id: "q1",
+            input_id: "in-1",
+            at: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        k2: {
+          id: "k2",
+          component_id: "c1",
+          label: "计算笔误",
+          definition: "笔误。",
+          aliases: [],
+          status: "merged",
+          merged_into: "k1",
+          first_seen: null,
+        },
+      },
+      occurrences: [
+        {
+          id: "o1",
+          class_id: "k1",
+          version: "a_fast",
+          batch_id: "b1",
+          case_id: "q1",
+          input_id: "in-1",
+          run_id: "run-one",
+          task_id: "t1",
+          submission_id: "s1",
+          finding_id: "f1",
+          message_index: 1,
+          quote: "2+2=5",
+          source: { file: "f.jsonl", line: 1 },
+          classification: "created",
+          previous_class_id: null,
+          at: "2026-01-02T00:00:00.000Z",
+        },
+        {
+          id: "o2",
+          class_id: "k1",
+          version: "a_fast",
+          batch_id: "b1",
+          case_id: "q2",
+          input_id: "in-2",
+          run_id: "run-one",
+          task_id: "t2",
+          submission_id: "s2",
+          finding_id: "f1",
+          message_index: 1,
+          quote: "3+3=7",
+          source: { file: "f.jsonl", line: 2 },
+          classification: "assigned",
+          previous_class_id: "k2",
+          at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      events: [
+        {
+          id: "e1",
+          type: "class_merged",
+          at: "2026-01-02T00:00:00.000Z",
+          detail: { from: "k2", into: "k1", reason: "同一现象。" },
+        },
+      ],
+    });
+  }
   await writeRunState(run, state);
   return { directory, config, configFile, task, run, row };
 }
@@ -133,6 +240,55 @@ test("dashboard view projects rewrite tasks onto their source sample", async () 
     assert(rewrites.some((task) => task.rewrite_of!.stage === "comparison" && task.rewrite_of!.taskId === comparison.id));
     assert(attributionIds.has(fixture.task.id));
   } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard keeps clustering tasks run-level and never mixes them into cases", async () => {
+  const fixture = await setup(true, true);
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    const page = await (await fetch(`${server.url}/api/dashboard/runs/run-one/cases`)).json();
+    assert.equal(page.total, 2, "clustering tasks must not break the case projection");
+    const q1 = page.cases.find((item: { case_id: string }) => item.case_id === "q1");
+    assert(!("clustering" in q1.stages), "clustering is not a per-case stage");
+    const detail = await (
+      await fetch(`${server.url}/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1`)
+    ).json();
+    assert.equal(detail.tasks.filter((task: { stage: string }) => task.stage === "clustering").length, 0);
+    const listing = await (await fetch(`${server.url}/api/dashboard/runs`)).json();
+    assert.equal(listing.runs[0].stages.clustering.pending, 2, "one clustering task per model");
+    assert.equal(listing.runs[0].problem_library.a_fast.classes, 1, "library growth rides the run overview");
+    const library = await (await fetch(`${server.url}/api/dashboard/runs/run-one/library`)).json();
+    assert.equal(library.length, 1);
+    assert.equal(library[0].model, "a_fast");
+    assert.equal(library[0].totals.classes, 1);
+    assert.equal(library[0].totals.occurrences, 2);
+    assert.equal(library[0].components[0].classes[0].label, "算术错误");
+    assert.deepEqual(library[0].merged, [
+      { id: "k2", label: "计算笔误", into: "k1", into_label: "算术错误", reason: "同一现象。" },
+    ]);
+    const classDetail = await (
+      await fetch(`${server.url}/api/dashboard/runs/run-one/library/a_fast/classes/k1`)
+    ).json();
+    assert.equal(classDetail.total, 2);
+    assert.equal(classDetail.occurrences[0].case_id, "q1", "newest occurrence first");
+    assert.equal(classDetail.occurrences[0].quote, "2+2=5");
+    assert.equal(classDetail.occurrences[1].previous_class_id, "k2");
+    assert.equal(classDetail.class.aliases[0], "计算错误");
+    // A model file may exist in the shared library without belonging to this run.
+    await writeJson(path.join(fixture.config.problemLibrary.path, "unrelated.json"), {
+      ...(await readJson(path.join(fixture.config.problemLibrary.path, "a_fast.json"))), model: "unrelated",
+    });
+    assert.equal((await fetch(`${server.url}/api/dashboard/runs/run-one/library/unrelated/classes/k1`)).status, 404);
+    assert.equal((await fetch(`${server.url}/api/dashboard/runs/run-one/library/nope/classes/k1`)).status, 404);
+    assert.equal((await fetch(`${server.url}/api/dashboard/runs/run-one/library/a_fast/classes/k1/extra`)).status, 404);
+    assert.equal((await fetch(`${server.url}/api/dashboard/runs/run-one/library/a_fast/classes/nope`)).status, 404);
+    const settings = await (await fetch(`${server.url}/api/dashboard/config`)).json();
+    assert.equal(settings.settings.clustering.enabled, true);
+    assert(settings.settings.bindings.clustering, "clustering binding stays editable");
+  } finally {
+    await server.close();
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
@@ -245,6 +401,14 @@ test("run-scoped settings are validated with the same model and execution config
     assert.equal(host.evaluation.rewrite.attribution, true);
     const original = await loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway });
     assert.equal(original.evaluation.execution.concurrency, 2);
+    const withClustering = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
+      clustering: { enabled: false },
+    });
+    assert.equal(withClustering.evaluation.clustering.enabled, false);
+    await assert.rejects(
+      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { clustering: { enabled: "yes" } }),
+      /聚类设置/,
+    );
     await assert.rejects(loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway }, { execution: { concurrency: 0 } }), /execution.concurrency/);
     await assert.rejects(loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway }, { bindings: { unknown: { model: "x" } } }), /未知阶段/);
     const settings = editableDashboardSettings({

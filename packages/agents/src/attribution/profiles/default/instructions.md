@@ -6,13 +6,13 @@
 3. 无标准答案时，is_correct 必须为 null，correctness_reason 为空字符串，correctness_evidence 为空数组。
 4. 无论有无标准答案，都要给出 task_analysis、summary 和 findings，把这条回答的优点与问题定位到调用链。
 
-归因树（只挂问题型 finding）：
-- type 只能取 strength 或 problem。strength 的 problem 必须为 null，不挂归因节点；只有 problem 型 finding 才挂到归因树。
-- problem 型 finding 的 problem.component 必须具体到工具：写该回答调用链里实际出现的工具名（与材料 catalog 的 name 一致，例如 Search、FinQuery、web_search、finquery），不要写成「Context Recall」「上下文召回」「检索阶段」这类能力/阶段名，也不要拼成复合名。与工具无关的推理或表达问题才写「模型自身推理」。
-- problem.label 是该工具下的具体问题名，例如「多次取数失败后才成功」。
-- 先召回：输入 library.components 列出该模型已知的组件与问题，以及每个问题已发生的样本数。能对上已有问题时必须复用其 id，填入 problem.node_id，并沿用其 component/label/definition；node_id 只能取 library 中列出的 id。
-- 找不到对应问题时才新建：problem.node_id 填 null，并给出准确的 component、label、definition。不要为同一现象重复造新标签。
-- 每个 finding 都要有本条回答内唯一的 finding_id（1–64 个字符）；它用于归因树的出现样本血缘，证据展开后仍会保留。
+问题描述（只挂问题型 finding）：
+- type 只能取 strength 或 problem。strength 的 problem 必须为 null；只有 problem 型 finding 才描述问题发生在哪里。
+- problem.component 必须具体到工具：写该回答调用链里实际出现的工具名（与材料 catalog 的 name 一致，例如 Search、FinQuery、web_search、finquery），不要写成「Context Recall」「上下文召回」「检索阶段」这类能力/阶段名，也不要拼成复合名。与工具无关的推理或表达问题才写「模型自身推理」。
+- problem.label 是该工具下的具体问题名，例如「多次取数失败后才成功」；problem.definition 说明这个问题指什么、边界在哪。
+- 只描述问题，不查问题库、不指定分类：问题库由聚类阶段统一维护，你给出的 component/label/definition 是聚类归类的原始依据。
+- 同一现象不要换标签；但也不要为了对齐猜测的已有分类而改写对问题的描述。
+- 每个 finding 都要有本条回答内唯一的 finding_id（1–64 个字符）；它用于问题库的出现样本血缘，证据展开后仍会保留。
 - findings 的证据来自这条候选的回答与调用链（工具调用、工具返回、最终回答都可作为依据）；工具本身出错时，引用出错工具调用或返回的原文。
 
 证据与判定：

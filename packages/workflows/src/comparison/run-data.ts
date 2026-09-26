@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { createRunRepository, fileSourceReader } from "@eval/data";
-import { buildPlan, candidateKey, inputSources, locateRecord, taskCase } from "./input.js";
+import { buildPlan, candidateKey, inputSources, locateRecord, taskCase, taskIdentity } from "./input.js";
 import type { BatchPreflight, Candidate, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
 import { encodeResult } from "./results.js";
@@ -64,8 +64,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const selected: EvalConfig = {
     ...config,
     execution: supplied.execution,
-    // Presentation stages may be enabled or disabled on resume without touching accepted evaluations.
+    // Presentation and library stages may be enabled or disabled on resume without touching evaluations.
     rewrite: supplied.rewrite,
+    clustering: supplied.clustering,
     inputs: {
       ...config.inputs,
       versions: config.inputs.versions.map((v) => ({
@@ -88,6 +89,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       const target = (task.data as TaskData).rewriteOf!.stage;
       if (!selected.rewrite[target]) continue;
     }
+    if (task.stage === "clustering" && !state.receipts[task.id] && !selected.clustering.enabled) continue;
     if (state.receipts[task.id] || !tasks.has(task.id)) tasks.set(task.id, task);
   }
   const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));
@@ -98,7 +100,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const issues = [...((plan.summary.issues as unknown[]) || [])];
   for (const [id, task] of tasks) {
     if (state.receipts[id]) continue;
-    if (task.stage === "rewrite") continue;
+    if (task.stage === "rewrite" || task.stage === "clustering") continue;
     const missing = Object.values(task.inputIds).find((inputId) => !Object.hasOwn(plan.inputs, inputId));
     if (!missing) continue;
     tasks.delete(id);
@@ -115,13 +117,19 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     if (task.stage !== "rewrite" || state.receipts[id]) continue;
     if (!tasks.has((task.data as TaskData).rewriteOf!.taskId)) tasks.delete(id);
   }
+  // A clustering task with missing attribution dependencies has nothing to classify.
+  for (const [id, task] of tasks) {
+    if (task.stage !== "clustering" || state.receipts[id]) continue;
+    if (Object.values(task.dependencies).some((taskId) => !tasks.has(taskId))) tasks.delete(id);
+  }
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
   plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison").length;
   plan.summary.rewrite_tasks = plan.tasks.filter((task) => task.stage === "rewrite").length;
+  plan.summary.clustering_tasks = plan.tasks.filter((task) => task.stage === "clustering").length;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
-    const selected = plan.tasks.filter((task) => taskCase(task.data as TaskData).batch_id === batch);
+    const selected = plan.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch);
     counts.attribution_tasks = selected.filter((task) => task.stage === "attribution").length;
     counts.comparison_tasks = selected.filter((task) => task.stage === "comparison").length;
   }
