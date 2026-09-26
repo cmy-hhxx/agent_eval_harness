@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import type { ComparisonResult, Finding } from "./types.js";
-import schema from "./profiles/default/resolved.schema.json" with { type: "json" };
+import schema from "../../../../schemas/comparison/result.schema.json" with { type: "json" };
 
 interface Input {
   ground_truth: { available: boolean; value: unknown };

@@ -8,7 +8,7 @@ import {
 } from "@eval/contracts";
 import { validateTraceEvidence } from "@eval/tools";
 import type { AttributionResult } from "./types.js";
-import schema from "./profiles/attribution/resolved.schema.json" with { type: "json" };
+import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 
 interface Input {
   ground_truth: { available: boolean; value: unknown };
@@ -56,7 +56,16 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
 
   const known = new Set(input.library.components.flatMap((component) => component.problems.map((p) => p.id)));
+  const findingIds = new Set<string>();
   value.findings.forEach((finding, index) => {
+    if (findingIds.has(finding.finding_id))
+      issue(
+        "finding_id_duplicate",
+        `/findings/${index}/finding_id`,
+        "每个 finding_id 必须在本条回答内唯一",
+        finding.finding_id,
+      );
+    findingIds.add(finding.finding_id);
     if (finding.assessment.requirement_index >= value.task_analysis.requirements.length)
       issue(
         "requirement_index_invalid",

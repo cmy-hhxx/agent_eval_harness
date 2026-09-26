@@ -39,7 +39,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
 | 想了解什么 | 入口 |
 |---|---|
 | 配置、命令、目录、恢复与 Worker | [使用指南](docs/usage.md) |
-| 输入、对比、结果与证据规则 | [数据契约](docs/contract.md) |
+| 输入、对比、结果与证据规则 | [数据契约](docs/contract.md)；[Schema 模块](schemas/README.md) |
 | Host / Worker、模块边界与扩展 | [架构](docs/architecture.md)、[模块地图](docs/modules/README.md) |
 | 开发、测试、依赖与文档维护 | [开发指南](docs/development.md) |
 | 评语写法与真实模型人工复核 | [评测质量](docs/quality.md) |

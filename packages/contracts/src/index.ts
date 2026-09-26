@@ -33,6 +33,7 @@ export interface EvaluationSpec {
   id: string;
   profile: string;
   systemPrompt: string;
+  /** Worker-facing copy of AgentProfile.submissionSchema. */
   outputSchema: JsonSchema;
   toolNames: string[];
 }
@@ -268,9 +269,12 @@ export interface AgentRequest {
 }
 export interface AgentProfile {
   id: string;
-  inputSchema: JsonSchema;
-  outputSchema: JsonSchema;
-  resolvedSchema?: JsonSchema;
+  /** Schema for the Host-built request material, not the raw source record. */
+  requestSchema: JsonSchema;
+  /** Schema for the JSON submitted by the model. */
+  submissionSchema: JsonSchema;
+  /** Schema for the accepted result after optional submission resolution. */
+  resultSchema?: JsonSchema;
   systemPrompt: string;
   instructions: string;
   toolNames: string[];

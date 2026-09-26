@@ -160,7 +160,7 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
-  validateAttribution = ajv.compile(attributionProfile.resolvedSchema!);
+  validateAttribution = ajv.compile(attributionProfile.resultSchema!);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>) {
   const receipt = state.receipts[task.id];
   if (task.stage === "attribution") {

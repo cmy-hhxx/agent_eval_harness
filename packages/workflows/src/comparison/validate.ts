@@ -20,7 +20,7 @@ export async function validateRun(
 ) {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const outputValidator = ajv.compile(outputSchema),
-    attributionValidator = ajv.compile(attributionProfile.resolvedSchema!);
+    attributionValidator = ajv.compile(attributionProfile.resultSchema!);
   const state = await readRunState(run),
     manifest = state.manifest;
   const errors: string[] = [],

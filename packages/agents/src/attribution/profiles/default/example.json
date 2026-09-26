@@ -42,6 +42,7 @@
     "summary": "直接给出正确结果。",
     "findings": [
       {
+        "finding_id": "f1",
         "type": "strength",
         "dimension": "correctness",
         "stage": "final_answer",

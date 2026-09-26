@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionAgent, attributionProfile } from "./index.js";
-import example from "./profiles/attribution/example.json" with { type: "json" };
+import example from "./profiles/default/example.json" with { type: "json" };
 import { evidenceId } from "@eval/tools";
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
@@ -18,6 +18,10 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
     })),
   };
   assert.deepEqual(attributionProfile.resolve!(example.request, draft, audit), example.result);
+
+  const duplicateFindingId = structuredClone(example.result);
+  duplicateFindingId.findings = [duplicateFindingId.findings[0]!, duplicateFindingId.findings[0]!];
+  assert.throws(() => attributionProfile.validate!(example.request, duplicateFindingId, audit), /finding_id.*唯一/);
 
   const subjective = structuredClone(example.request);
   subjective.input.ground_truth.available = false;

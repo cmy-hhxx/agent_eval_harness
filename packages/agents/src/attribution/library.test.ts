@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { applyAttribution, emptyLibrary, projectLibrary } from "./library.js";
 import type { AttributionFinding } from "./types.js";
 
-type Draft = AttributionFinding & { finding_id: string };
+type Draft = AttributionFinding;
 const finding = (label: string, component: string, node_id: string | null = null): Draft => ({
   finding_id: label,
   type: "problem",

@@ -5,12 +5,34 @@
 ## 唯一规则来源
 
 - 输入与分组：[input.ts](../packages/workflows/src/comparison/input.ts)。
-- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/attribution/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)。
+- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)。
 - Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile 与问题库](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约。
-- 结果结构：[导出 Schema](../packages/workflows/src/comparison/schema.ts)。
+- 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)和[Workflow schemas](../schemas/workflow/)。
+- 正式导出组装：[schema.ts](../packages/workflows/src/comparison/schema.ts)。
 - 导出与工具回溯：[report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts)。
 
 项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置版本号；当前源码定义唯一契约。
+
+## 输入与输出的分层
+
+这里的“输入”有两层，不能与 Agent 的输出混为一个 Schema：
+
+1. **原始评测输入**：来源文件中的 JSONL。它允许由 `a` / `aa` 适配器接入不同结构，不维护一个覆盖所有来源的总 JSON Schema；[input.ts](../packages/workflows/src/comparison/input.ts) 和适配器负责预检、归一化与业务校验。
+2. **Agent 请求材料**：Host 为某个阶段拼出的 `ground_truth`、`library`、`candidates` 和依赖结果。根目录 `schemas/<stage>/request.schema.json` 只是 Host 到 Agent 的内部装配护栏，不是数据源契约；如果请求字段变化，同步修改 `workflow.ts` 和对应 Profile。
+
+阶段输出则分为两种：
+
+- `submission.schema.json`：模型通过提交工具返回的 JSON。证据使用 attempt 内的 `evidence_id`；Attribution 还必须为每个 finding 提供本条回答内唯一的 `finding_id`。
+- `result.schema.json`：Host 展开证据并接受后的阶段结果。证据变为 `message_index + quote`，finding_id 保留以维护归因树的样本血缘。
+
+两个阶段的 Agent 输出契约如下：
+
+| 阶段 | 一次处理 | 输出内容 | 下游用途 |
+|---|---|---|---|
+| Attribution | 一条候选回答 | `has_standard_answer`、条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、`findings`（含 finding、证据、要求关联和 problem 节点） | 写入 `attribution.jsonl`，并追加到该模型的归因树；Comparison 只读取它 |
+| Comparison | 一个对比组 | `task_analysis`、分层 `ranking`、每个候选的 `assessments.meets_core/summary`、`decision_basis.tradeoff/decisive_findings` | Workflow 恢复盲测标签、生成 `comparison.jsonl` 和派生 `verdicts` |
+
+Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison 不改写提交内容，`schemas/comparison/result.schema.json` 同时作为模型提交和接受结果 Schema，不再维护第二份副本。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行。
 
 ## 输入
 

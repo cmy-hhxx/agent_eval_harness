@@ -28,8 +28,9 @@ export const services = {
         comparison: comparisonProfile.instructions,
         attribution: attributionProfile.instructions,
       },
-      attributionSchema: attributionProfile.outputSchema,
-      comparisonSchema: comparisonProfile.outputSchema,
+      attributionSubmissionSchema: attributionProfile.submissionSchema,
+      attributionResultSchema: attributionProfile.resultSchema,
+      comparisonResultSchema: comparisonProfile.resultSchema,
     },
   },
 };

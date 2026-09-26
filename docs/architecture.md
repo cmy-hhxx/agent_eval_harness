@@ -24,14 +24,15 @@ flowchart LR
 | `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
-| `packages/agents/src/comparison` | 对比 Profile、提示词、Schema、业务校验 |
-| `packages/agents/src/attribution` | 归因 Profile、问题库/归因树、提示词、Schema、业务校验 |
+| `packages/agents/src/comparison` | 对比 Profile、提示词、业务校验；使用根目录 `schemas/comparison` |
+| `packages/agents/src/attribution` | 归因 Profile、问题库/归因树、提示词、业务校验；使用根目录 `schemas/attribution` |
 | `packages/workflows/src/comparison` | 适配器注册表、配置化分组对比、盲测、依赖与材料映射、状态编解码、报告 |
 | `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
+| `schemas` | 集中维护 Attribution、Comparison 与 Workflow 的 JSON Schema |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
 
-公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包只使用 `@eval/*` 公开导出。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
+公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
 ## 生命周期
 
@@ -71,13 +72,13 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 [通用契约](../packages/contracts/src/index.ts)区分以下接口：
 
-- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、输入和输出 Schema、引用展开及业务校验。
+- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、模型提交 Schema、接受结果 Schema、引用展开及业务校验。Worker 收到的 `EvaluationSpec.outputSchema` 是提交 Schema 的运行时副本。
 - `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`。
 - `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
 - `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
 
-[应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验输入 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后输出。当前通过 TypeScript 对象组合任务，不引入新编排语言。
+[应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、请求/提交/接受结果 Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验请求 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后的结果。Schema 文件集中在根目录的 [`schemas/`](../schemas/README.md) 模块；当前通过 TypeScript 对象组合任务，不引入新编排语言。
 
 源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。归因树是每个模型一份的跨 run 问题库：按组件/问题归类、出现样本可双向追溯、合并保留血缘，只追加不覆盖（参见[使用指南](usage.md#目录约定)）。
 

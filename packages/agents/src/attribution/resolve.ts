@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { resolveEvidence } from "@eval/tools";
-import schema from "./profiles/attribution/output.schema.json" with { type: "json" };
+import schema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
 
 type EvidenceRef = { evidence_id: string; observation?: string };
 type DraftFinding = {
@@ -35,10 +35,10 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
     correctness_evidence: EvidenceRef[];
     findings: DraftFinding[];
   };
-  const findings = value.findings.map(({ finding_id, evidence, ...finding }, index) => {
-    void finding_id;
-    return { ...finding, evidence: resolveRefs(evidence, `/findings/${index}/evidence`) };
-  });
+  const findings = value.findings.map((finding, index) => ({
+    ...finding,
+    evidence: resolveRefs(finding.evidence, `/findings/${index}/evidence`),
+  }));
   const resolved = {
     ...value,
     findings,

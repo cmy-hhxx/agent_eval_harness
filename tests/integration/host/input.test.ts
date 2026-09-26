@@ -250,7 +250,7 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
     const instructions: Record<string, string> = {};
     for (const stage of ["attribution", "comparison"]) {
       const profile =
-        stage === "comparison" ? "comparison/profiles/default" : "attribution/profiles/attribution";
+        stage === "comparison" ? "comparison/profiles/default" : "attribution/profiles/default";
       const system = (await readFile(path.join(prompts, profile, "system.md"), "utf8")).trim();
       const instruction = (await readFile(path.join(prompts, profile, "instructions.md"), "utf8")).trim();
       systems[stage] = system;

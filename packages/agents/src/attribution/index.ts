@@ -1,24 +1,25 @@
 import { readFileSync } from "node:fs";
 import type { AgentDefinition, AgentProfile } from "@eval/contracts";
-import inputSchema from "./profiles/attribution/input.schema.json" with { type: "json" };
-import outputSchema from "./profiles/attribution/output.schema.json" with { type: "json" };
-import resolvedSchema from "./profiles/attribution/resolved.schema.json" with { type: "json" };
+import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
+import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
+import resultSchema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
 import { resolveSubmission } from "./resolve.js";
 export * from "./types.js";
 export * from "./library.js";
+// Attribution resolves evidence IDs into source locations before the result is accepted.
 export const attributionProfile: AgentProfile = {
   id: "default",
 
-  inputSchema,
-  outputSchema,
-  resolvedSchema,
+  requestSchema,
+  submissionSchema,
+  resultSchema,
   systemPrompt: readFileSync(
-    new URL("./profiles/attribution/system.md", import.meta.url),
+    new URL("./profiles/default/system.md", import.meta.url),
     "utf8",
   ).trim(),
   instructions: readFileSync(
-    new URL("./profiles/attribution/instructions.md", import.meta.url),
+    new URL("./profiles/default/instructions.md", import.meta.url),
     "utf8",
   ).trim(),
   toolNames: [

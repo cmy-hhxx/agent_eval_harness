@@ -58,7 +58,9 @@ test("public package boundaries, independent Agents and acyclic implementation i
       let target: string | undefined;
       if (specifier.startsWith(".")) {
         target = path.normalize(path.join(path.dirname(file), specifier)).replace(/\.js$/, ".ts");
-        assert.equal(owner(target), from, `${file}: cross-package relative import ${specifier}`);
+        if (specifier.endsWith(".json"))
+          assert(target.startsWith("schemas/"), `${file}: relative JSON imports must come from root schemas/`);
+        else assert.equal(owner(target), from, `${file}: cross-package relative import ${specifier}`);
       } else if (specifier.startsWith("@eval/")) {
         assert(aliases[specifier], `${file}: undeclared public entry ${specifier}`);
         target = aliases[specifier][0].replace(/^\.\//, "");

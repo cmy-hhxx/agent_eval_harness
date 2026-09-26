@@ -55,7 +55,7 @@ export interface ApplyInput {
   case_id: string;
   input_id: string;
   source: { file: string; line: number };
-  findings: (AttributionFinding & { finding_id?: string })[];
+  findings: AttributionFinding[];
   at?: string;
 }
 
@@ -159,9 +159,9 @@ export function applyAttribution(library: AttributionLibrary, input: ApplyInput)
   const seen = new Set(
     next.occurrences.map((occurrence) => `${occurrence.node_id}\u0000${occurrence.input_id}\u0000${occurrence.finding_id}`),
   );
-  input.findings.forEach((finding, index) => {
+  input.findings.forEach((finding) => {
     if (!finding.problem) return;
-    const findingId = finding.finding_id ?? String(index);
+    const findingId = finding.finding_id;
     const component = resolveComponent(next, finding.problem.component, origin, at);
     const problem = resolveProblem(next, component.node, finding.problem, origin, at);
     const key = `${problem.node.id}\u0000${input.input_id}\u0000${findingId}`;

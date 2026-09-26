@@ -94,6 +94,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
     summary: correct ? "正确给出结果。" : "结果错误。",
     findings: [
       {
+        finding_id: "f0",
         type: correct ? "strength" : "problem",
         dimension: "correctness",
         stage: "final_answer",

@@ -14,7 +14,7 @@ Python 仅承担公共代码工具与 Prime SDK runtime；[bootstrap](../scripts
 
 | 修改内容 | 入口 | 验证重点 |
 |---|---|---|
-| Agent 提示词、Schema、判决 | `packages/agents/src/<agent>` | 独立运行、契约、证据与判决 |
+| Agent 提示词、Schema、判决 | `packages/agents/src/<agent>`、根目录 `schemas/<stage>/` | 独立运行、契约、证据与判决 |
 | 输入适配、分组对比、盲测、报告 | `packages/workflows/src/comparison` | 适配器注册表、A/B 映射、结果编解码 |
 | 本地存储 | `packages/data` | 原子保存、追加失败、锁、崩溃恢复 |
 | 公共工具 | `packages/tools` | 工具预算、产物、取消和进程回收 |
@@ -32,7 +32,7 @@ node scripts/test-clean.mjs
 
 行为修改必须通过 `typecheck` 和 `npm test`；涉及 Worker / SDK 时加跑 `test:integration`，涉及安装、构建或依赖时加跑 `test-clean`。`typecheck` 包含未使用局部变量和参数检查，但不能发现所有未被调用的导出；删除导出前还要检查跨模块引用、动态加载与 SDK 回调。`npm test` 重建后运行模块内单元测试、架构测试和跨模块回归；`test:integration` 运行双 SDK 网关集成与通用 JSON 并行隔离。`build:app` 先删除自己拥有的编译输出，避免已删除源码留下可执行文件。不要手改 `dist/`。
 
-提示词、输入/提交/解析后 Schema、业务校验、样例和单元测试按 Agent 集中维护，见[模块地图](modules/README.md)。提示词构建时复制到编译目录，运行时按模块位置读取。不计算提示词或源码摘要；debug 模式额外保存本次启动的契约快照及各 attempt 的实际提示词。效果验证见[评测质量](quality.md#真实模型复核)。
+提示词、业务校验、样例和单元测试按 Agent 集中维护；请求/提交/结果 Schema 统一放在根目录的 [schemas 模块](../schemas/README.md)，见[模块地图](modules/README.md)和[数据契约的分层说明](contract.md#输入与输出的分层)。提示词与 Schema 构建时复制到编译目录，运行时按模块位置读取。不计算提示词或源码摘要；debug 模式额外保存本次启动的契约快照及各 attempt 的实际提示词。效果验证见[评测质量](quality.md#真实模型复核)。
 
 SDK 集成测试使用真实 vendored SDK、独立 Worker、本地模拟网关和 Python 代码工具，不调用付费模型。测试直接验证当前行为，不从历史实现生成预期结果。真实裁判质量另按[质量指南](quality.md)人工复核。
 

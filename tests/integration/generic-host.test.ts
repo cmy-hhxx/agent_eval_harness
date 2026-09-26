@@ -36,12 +36,12 @@ const profile: AgentProfile = {
   systemPrompt: "Evaluate JSON.",
   instructions: "Return the value as score.",
   toolNames: [],
-  inputSchema: {
+  requestSchema: {
     type: "object",
     required: ["value"],
     properties: { value: { type: "number" } },
   },
-  outputSchema: {
+  submissionSchema: {
     type: "object",
     required: ["score"],
     additionalProperties: false,
@@ -100,7 +100,7 @@ test("Host accepts generic JSON and profiles replace prompt and schema together"
         default: {
           ...profile,
           instructions: "Write a summary.",
-          outputSchema: {
+          submissionSchema: {
             type: "object",
             required: ["summary"],
             additionalProperties: false,

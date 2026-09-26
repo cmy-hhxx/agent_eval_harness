@@ -44,6 +44,8 @@ export interface ProblemRef {
   definition: string;
 }
 export interface AttributionFinding extends Finding {
+  /** Stable within this answer; used to preserve attribution-tree occurrence lineage. */
+  finding_id: string;
   /** Null for strengths; problem findings must map into the tree. */
   problem: ProblemRef | null;
 }
