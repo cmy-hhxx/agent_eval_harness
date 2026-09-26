@@ -13,6 +13,15 @@
 
 项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置版本号；当前源码定义唯一契约。
 
+## Agent 先记
+
+- 原始 JSONL 没有统一总 Schema；适配器和预检负责来源解析与业务校验。
+- `request` 是 Host 组装的内部材料，`submission` 是模型提交，`result` 是 Host 接受后的结果。
+- 契约变更直接更新当前调用方，不保留旧入口、别名、迁移层或静默降级。
+- 不新增没有必要的哈希、摘要或跨 run 结果缓存；使用业务 ID、UUID 以及结构和引用校验。
+
+细节按“输入 → 阶段输出 → 对比判决 → 证据导出”顺序阅读。
+
 ## 输入与输出的分层
 
 这里的“输入”有两层，不能与 Agent 的输出混为一个 Schema：
@@ -71,7 +80,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 归因树是每个模型的跨 run 问题库：组件为顶层节点，问题挂在组件下，出现样本挂在问题上。合并按 `(节点, input_id, finding)` 幂等，节点 ID 用持久化 UUID；问题 finding 命中已有节点时复用，未命中时新建。每个出现样本保留 `batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题反查到样本、再回到原始数据；合并或重分类保留 `previous_node_id` 与 `events` 血缘。树文件按模型一份，`tree_version`/`previous_tree` 预留分版本。
 
-Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用相同内容校验和提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态。
+Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用同一套内容校验，并共享提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态。
 
 两两判决由排名与核心判定派生，不单独判定：
 

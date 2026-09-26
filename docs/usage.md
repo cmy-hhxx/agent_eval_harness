@@ -2,6 +2,22 @@
 
 [返回首页](../README.md) · 输入和结果语义见[数据契约](contract.md)。
 
+## 最短路径
+
+1. 创建 `.env`，填写 `EVAL_BASE_URL` 和 `EVAL_API_KEY`。
+2. 复制 `configs/models.example.json` 为 `configs/local/models.json`，填写模型 ID。
+3. 先预检，再运行；同一个 `run-id` 会续跑未完成任务。
+
+```bash
+npm run eval -- preflight
+npm run eval -- run --engine pi --run-id pi-001 \
+  --config configs/host.json --config configs/local/models.json
+npm run eval -- status --run data/runs/comparison/pi-001
+npm run eval -- report --run data/runs/comparison/pi-001
+```
+
+配置字段见下文；恢复、产物和 Worker 细节分别见[运行与恢复](#运行与恢复)、[运行产物](#运行产物)和[独立运行 Worker](#独立运行-worker)。
+
 ## 环境与配置
 
 工具版本由 [mise.toml](../mise.toml) 固定。安装步骤见首页。根 `.venv` 供公共 Python 代码工具使用；Prime 自身的 runtime 位于 `.runtime/prime-python`，两者独立。
@@ -192,7 +208,7 @@ npm run eval -- dashboard --port 4173
 
 `report` 按已接受收据重建结果 JSONL、Markdown 和统计，并使旧校验结果失效；已有结果引用可用于重建，无需重新读取输入。`validate` 分别报告正式结果、证据关系和可选附件。附件未保存或缺失不撤销成功收据，也不产生结果缺失错误。普通模式切 debug 不补造历史附件或重评成功任务。原文件修改或删除后，旧结果保留，证据按业务标识定位：记录仍可找到则视为有效，找不到时才报告材料不可用，不触发重评。两条命令不调用模型；`report --details` 仅用于 debug 运行。
 
-输入只长期保留在原始数据源。`state.json` 保存源文件路径与行号供恢复和证据核对，不保存消息正文，也不计算哈希。Worker 工作区中的 `inputs/` 是执行期间的临时材料，完成后清除，不归档到 run。普通模式的 Worker 工作区临时存在，清理前保存最后草稿、错误与用量；debug 模式额外收集事件和产物，收集不完整时保留 Worker 副本。debug 事件运行中追加 `events.jsonl`，收集结束后压缩，崩溃时可能保留未压缩日志。
+输入只长期保留在原始数据源。`state.json` 保存源文件路径与行号供恢复和证据核对，不保存消息正文，也不计算内容哈希；项目校验限制见[开发指南](development.md#禁止项目哈希与兼容层)。Worker 工作区中的 `inputs/` 是执行期间的临时材料，完成后清除，不归档到 run。普通模式的 Worker 工作区临时存在，清理前保存最后草稿、错误与用量；debug 模式额外收集事件和产物，收集不完整时保留 Worker 副本。debug 事件运行中追加 `events.jsonl`，收集结束后压缩，崩溃时可能保留未压缩日志。
 
 ## 独立运行 Worker
 

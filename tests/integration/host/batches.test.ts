@@ -10,7 +10,7 @@ import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
 import type { BatchPreflight, EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { emptyAudit, fakeIdentity, fixtureConfig, attributionResult, pairResult, raw } from "../../fixtures/comparison.js";
+import { comparisonResult, emptyAudit, fakeIdentity, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 
 const firstDay = "2026-09-23",
   secondDay = "2026-09-24";
@@ -136,7 +136,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       accept(
         state,
         task.id,
-        task.stage === "attribution" ? attributionResult(true, "2+2=4", false) : pairResult(),
+        task.stage === "attribution" ? attributionResult(true, "2+2=4", false) : comparisonResult(),
       );
     await writeRunState(run, state);
     const stats = await reportRun(run);
@@ -297,7 +297,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
       }
       const labels = Object.keys(data.candidates),
         labelOf = new Map(labels.map((label) => [data.candidates[label]!.version, label])),
-        result = pairResult();
+        result = comparisonResult();
       if (candidate.case_id === "bad") {
         for (const label of labels)
           result.assessments[label] = { meets_core: false, summary: "核心结果错误。" };

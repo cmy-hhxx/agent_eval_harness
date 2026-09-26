@@ -1,6 +1,6 @@
 # 评测 Schema
 
-这里是仓库中评测 Schema 的唯一集中目录。原始评测输入是由 `a` / `aa` 适配器接入的 JSONL，不维护一个覆盖所有来源格式的总 Schema。
+这里是仓库中评测 Schema 的唯一集中目录。Agent 只需先看本页，再按阶段打开对应文件；原始评测输入由 `a` / `aa` 适配器接入，不维护覆盖所有来源格式的总 Schema。
 
 | 目录 | 内容 |
 |---|---|
@@ -15,4 +15,4 @@
 - `result.schema.json`：Host 解析并接受后的阶段结果；有证据的阶段使用 `message_index` 和 `quote`。
 - `workflow/export.schema.json`：加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行。
 
-提示词、业务校验、类型和测试仍按 Agent 保存在 `packages/agents/src/<agent>`；修改 Schema 时同步检查对应 Profile 的 `index.ts`、`validate.ts`、（如有）`resolve.ts`、提示词和样例。
+修改顺序：Schema → 对应 Profile 的 `index.ts` → `validate.ts` /（如有）`resolve.ts` → 提示词、样例和测试。不要为旧 Schema 保留别名或兼容入口；项目哈希、摘要和跨 run 结果缓存规则见[开发指南](../docs/development.md#禁止项目哈希与兼容层)。

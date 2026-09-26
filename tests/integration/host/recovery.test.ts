@@ -22,8 +22,8 @@ import {
   draftFor,
   emptyAudit,
   fakeIdentity,
+  comparisonResult,
   fixtureConfig,
-  pairResult,
   raw,
   taskResult,
 } from "../../fixtures/comparison.js";
@@ -78,7 +78,7 @@ async function fixture(rows = [raw("q", null)]) {
   };
   const evaluation = draftFor(
     spec,
-    task.stage === "attribution" ? attributionResult(true, "2+2=4") : pairResult(),
+    task.stage === "attribution" ? attributionResult(true, "2+2=4") : comparisonResult(),
   );
   const value: Submission = {
     taskId: task.id,

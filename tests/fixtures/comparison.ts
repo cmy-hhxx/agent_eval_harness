@@ -50,10 +50,6 @@ export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResul
     },
   };
 }
-export function pairResult(answers: Record<string, string> = { A: "2+2=4", B: "2+2=4" }): ComparisonResult {
-  void answers;
-  return comparisonResult(Object.keys(answers));
-}
 export async function fixtureConfig(rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
   const host = await loadConfig(path.join(ROOT, "configs/host.json"), {

@@ -1,26 +1,41 @@
 # 开发指南
 
-[返回首页](../README.md) · 模块和协议见[架构](architecture.md)。
+[返回首页](../README.md) · 模块边界见[架构](architecture.md)和[模块地图](modules/README.md)。
 
-## 不维护历史兼容
+## Agent 最短路径
 
-稳定前允许直接修改接口、配置、schema 和目录约定。修改时同步更新所有当前调用方、测试和文档，删除被替代实现。不要保留旧命令、旧配置别名、双写或静默降级。
+1. 先读根目录 `AGENTS.md`，确认任务属于哪个模块。
+2. 从下表进入唯一规则来源和源码入口；不要全量阅读无关文档。
+3. 修改实现、当前调用方、测试和文档；删除被替代入口。
+4. 跑对应验证，最后检查 `git diff`、失效链接和测试 fixture。
 
-两个输入适配器、两个 SDK adapter 和同 run ID 自动续跑都是当前功能。只维护当前状态结构，不保留旧格式转换入口。状态格式与操作见[运行与恢复](usage.md#运行与恢复)。
+## 当前契约
 
-Python 仅承担公共代码工具与 Prime SDK runtime；[bootstrap](../scripts/bootstrap.mjs) 创建不含第三方依赖的代码工具虚拟环境，Prime 使用其独立的项目与锁文件。上游源码、版本和来源由 [vendor/upstream.json](../vendor/upstream.json) 管理。
+项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置未确定的版本号，也不维护旧代码兼容。契约变更直接更新当前实现：不保留旧命令、字段、配置别名、迁移层、双写、静默降级或旧格式测试。两个输入适配器、两个 SDK adapter 和同 run ID 续跑是当前功能，不属于历史兼容。
 
-## 修改与验证
+### 禁止项目哈希与兼容层
+
+项目执行代码禁止新增没有必要的哈希、摘要、校验和、源码树指纹或跨 run 结果缓存；不要换用另一种摘要算法。用业务标识、持久化 UUID 以及必要的结构、引用、重复行、缺行和文件读写竞态检查完成校验。`evidence_id` 是可解析的证据坐标，不是哈希。第三方依赖内部机制和锁文件 `integrity` 字段不在此限制内。
+
+不计算提示词或源码摘要；debug 只保存本次启动的契约快照和 attempt 记录。输入只在源文件保留，状态只引用源文件和正式 JSONL；已经接受的任务不因输入变化重评。详见[数据契约](contract.md)和[运行与恢复](usage.md#运行与恢复)。
+
+## 修改范围
 
 | 修改内容 | 入口 | 验证重点 |
 |---|---|---|
-| Agent 提示词、Schema、判决 | `packages/agents/src/<agent>`、根目录 `schemas/<stage>/` | 独立运行、契约、证据与判决 |
-| 输入适配、分组对比、盲测、报告 | `packages/workflows/src/comparison` | 适配器注册表、A/B 映射、结果编解码 |
-| 本地存储 | `packages/data` | 原子保存、追加失败、锁、崩溃恢复 |
-| 公共工具 | `packages/tools` | 工具预算、产物、取消和进程回收 |
-| 调度、收据、恢复 | `packages/host`、`packages/runtime` | 重复提交、丢失确认、恢复和失败状态 |
-| SDK 调用 | `packages/runtime/src/adapters` | 真实 SDK 的本地模拟网关集成测试 |
-| 安装、构建、依赖 | `scripts`、锁文件 | 独立构建、doctor、clean test |
+| Agent 提示词、业务校验、样例 | `packages/agents/src/<agent>` | Agent 契约、证据、判决 |
+| 请求 / 提交 / 结果 Schema | 根目录 `schemas/<stage>/` | 对应 Profile、解析、校验和快照 |
+| 输入适配、分组、盲测、报告 | `packages/workflows/src/comparison` | 注册表、映射、编解码、结果 |
+| 本地存储、锁、日志 | `packages/data` | 原子保存、追加、恢复、并行写入 |
+| 调度、收据、恢复 | `packages/host`、`packages/runtime` | 重复提交、断连、失败状态 |
+| 工具与 SDK | `packages/tools`、`packages/runtime/src/adapters` | 预算、回收、真实 SDK 集成 |
+| 安装、构建、依赖 | `scripts`、锁文件 | 独立构建、doctor、干净安装 |
+
+Agent 测试跟随 Agent 放置；跨模块和运行测试放在 `tests/`，共享 fixture 只保留仍被多个测试使用的最小集合。Schema 修改时同步检查 Profile `index.ts`、`validate.ts`、（如有）`resolve.ts`、提示词和样例。
+
+## 验证
+
+常用验证：
 
 ```bash
 npm run typecheck
@@ -30,15 +45,16 @@ npm run doctor
 node scripts/test-clean.mjs
 ```
 
-行为修改必须通过 `typecheck` 和 `npm test`；涉及 Worker / SDK 时加跑 `test:integration`，涉及安装、构建或依赖时加跑 `test-clean`。`typecheck` 包含未使用局部变量和参数检查，但不能发现所有未被调用的导出；删除导出前还要检查跨模块引用、动态加载与 SDK 回调。`npm test` 重建后运行模块内单元测试、架构测试和跨模块回归；`test:integration` 运行双 SDK 网关集成与通用 JSON 并行隔离。`build:app` 先删除自己拥有的编译输出，避免已删除源码留下可执行文件。不要手改 `dist/`。
+行为修改至少运行 `typecheck` 和 `npm test`；涉及 Worker / SDK 加跑 `test:integration`；涉及安装、构建或依赖加跑 `test-clean`。`typecheck` 会检查未使用的局部变量和参数，但不能发现所有未调用的导出；删除导出前搜索跨模块引用、动态加载和 SDK 回调。`npm test` 会重建应用并运行单元、架构和回归测试。
 
-提示词、业务校验、样例和单元测试按 Agent 集中维护；请求/提交/结果 Schema 统一放在根目录的 [schemas 模块](../schemas/README.md)，见[模块地图](modules/README.md)和[数据契约的分层说明](contract.md#输入与输出的分层)。提示词与 Schema 构建时复制到编译目录，运行时按模块位置读取。不计算提示词或源码摘要；debug 模式额外保存本次启动的契约快照及各 attempt 的实际提示词。效果验证见[评测质量](quality.md#真实模型复核)。
+### 测试代码生命周期
 
-SDK 集成测试使用真实 vendored SDK、独立 Worker、本地模拟网关和 Python 代码工具，不调用付费模型。测试直接验证当前行为，不从历史实现生成预期结果。真实裁判质量另按[质量指南](quality.md)人工复核。
+每次契约或目录变更、每轮迭代收尾和提交前：
 
-`test-clean` 复制可入库文件到临时目录，仅共享下载缓存，在没有全局 Agent CLI、已安装依赖或原虚拟环境的环境中安装、分别构建两个 adapter、运行 doctor 和测试。npm 通过原安装路径调用，避免 mise 启动器在临时目录错误解析相对路径。它使用本地占位 URL 并清空模型密钥；集成测试自行设置模拟凭证，不读取个人 `.env` 或真实输入。
-
-项目自有执行代码禁止哈希计算，不使用其他摘要算法替代。输入按业务标识登记 UUID，持久状态只引用源文件；已经接受的任务保持原结果；结构、引用、重复行和缺行检查仍须保留。第三方依赖内部机制和锁文件 integrity 不在此限制范围。
+- 删除失效用例、旧字段断言、重复 fixture/helper 和旧兼容路径；
+- 测试名称、样例和错误断言使用当前字段与语义；
+- 只为当前行为保留测试，不为“以后兼容”预留用例；
+- `test-clean` 只清理临时构建目录，不删除真实输入、结果、缓存或运行数据。
 
 ## 构建与依赖
 
@@ -49,17 +65,15 @@ npm run build:pi
 npm run build:prime
 ```
 
-工具版本以 [mise.toml](../mise.toml) 为准。根 npm workspace、两个 vendor npm workspace 和 Prime Python runtime 分别使用锁文件；vendor 保持独立依赖树。公共代码工具只使用 Python 标准库，不声明虚构的项目版本。更新上游时显式更新源码、锁文件、来源清单与构建 UUID，不在运行时自动升级。
+工具版本以 [mise.toml](../mise.toml) 为准。根 workspace、两个 vendor npm workspace 和 Prime Python runtime 使用各自锁文件；vendor 保持独立依赖树。修改 vendor 必须同步 `vendor/upstream.json` 的 `local_changes` 并重建，不在运行时自动升级。不要手改 `dist/`。
 
-修改 vendor 必须记录 `local_changes` 并重建。Pi 的网关模型注册及两种 SDK 构建记录说明见[底座源码开发](architecture.md#底座源码开发)。
+Python 只承担公共代码工具和 Prime SDK runtime；[bootstrap](../scripts/bootstrap.mjs) 创建不含第三方依赖的代码工具环境，Prime 使用独立项目和锁文件。
 
 ## 文档维护
 
-README 是唯一入口，正文统一放在 `docs/`，使用、契约、架构、开发、质量各一页；具体模块说明集中在 `docs/modules/README.md`。仅仓库执行规则保留在根 `AGENTS.md`。
+README 是唯一入口；正文按使用、契约、架构、开发、质量和模块地图分工。新增页面前先检查能否放入现有页面，正文必须能从 README 到达。
 
-- 一件事实只解释一次，其他页面链接它；schema、配置与类型直接链接源码。
-- 行为变更与对应文档一起改，不留下失效命令或“以后兼容”的说明。
-- 校对范围包含提示词、工具描述、错误修复提示和测试名称；这些内容也必须使用当前契约的字段与语义。
-- 批次统计通过 preflight 获取，运行记录进入 `data/runs/comparison/`；临时计划和验证日志进入 `.artifacts/`。
-- 完成的计划不作为长期手册保存，历史通过 Git 查阅，不新建 archive 文档树。
-- 新增页面前先检查是否能放入已有五页；所有正文必须能从 README 到达。
+- 一件事实只解释一次，其他页面链接唯一来源；Schema、配置和类型直接链接源码。
+- 先给结论和最短操作，再按需要展开细节；不要把实现历史、完成计划或重复字段表写进长期文档。
+- 行为变更与文档同步；校对提示词、工具描述、错误修复提示、测试名称和 Schema 字段。
+- 临时计划和验证日志放 `.artifacts/`；历史通过 Git 查阅，不建立 archive 文档树。

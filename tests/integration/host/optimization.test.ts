@@ -18,8 +18,8 @@ import {
   draftFor,
   emptyAudit,
   fakeIdentity,
+  comparisonResult,
   fixtureConfig,
-  pairResult,
   raw,
   taskResult,
 } from "../../fixtures/comparison.js";
@@ -49,7 +49,7 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
           submissionId: task.id,
           status: "succeeded",
           acceptedAt: 2,
-          evaluation: task.stage === "attribution" ? attributionResult() : pairResult(),
+          evaluation: task.stage === "attribution" ? attributionResult() : comparisonResult(),
           audit: emptyAudit(),
           usage: emptyUsage(),
         },

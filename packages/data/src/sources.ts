@@ -8,16 +8,16 @@ export interface SourceReader {
   read(file: string): Promise<string>;
 }
 
-async function fingerprint(source: string): Promise<string> {
+async function fileRevision(source: string): Promise<string> {
   const info = await stat(source, { bigint: true });
   return [info.dev, info.ino, info.size, info.mtimeNs].join(":");
 }
 
 /** Read a file once, rejecting a read that raced a concurrent write. */
 export async function readInputSource(source: string): Promise<string> {
-  const revision = await fingerprint(source),
+  const revision = await fileRevision(source),
     text = await readFile(source, "utf8");
-  if ((await fingerprint(source)) !== revision)
+  if ((await fileRevision(source)) !== revision)
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
   return text;
 }
