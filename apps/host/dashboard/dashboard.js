@@ -313,8 +313,8 @@ function viableCount(date) {
 function renderDateOptions() {
   const dates = state.inputs?.dates || [];
   $("#date-options").innerHTML = dates.length ? dates.map((date) => {
-    const on = state.selectedDates.has(date.folder);
-    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.folder)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.folder)}<span class="chip-count">${viableCount(date)}/${date.cases.length}</span></button>`;
+    const on = state.selectedDates.has(date.date);
+    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.date)}<span class="chip-count">${viableCount(date)}/${date.cases.length}</span></button>`;
   }).join("") : '<p class="empty-state">无可用日期</p>';
 }
 function renderModelOptions() {
@@ -332,7 +332,7 @@ function viableCases() {
   const selected = [...state.selectedModels];
   const cases = new Set();
   for (const date of state.inputs?.dates || []) {
-    if (!state.selectedDates.has(date.folder)) continue;
+    if (!state.selectedDates.has(date.date)) continue;
     for (const item of date.cases)
       if (selected.length && selected.every((version) => item.versions.includes(version)))
         cases.add(item.id);
@@ -342,7 +342,7 @@ function viableCases() {
 /** Selected dates map to the registered batch and case filters the run actually records. */
 function selectionScope() {
   const dates = state.inputs?.dates || [],
-    selected = dates.filter((date) => state.selectedDates.has(date.folder));
+    selected = dates.filter((date) => state.selectedDates.has(date.date));
   const batches = new Set(),
     cases = new Set();
   for (const date of selected) {
@@ -366,7 +366,7 @@ async function loadInputs() {
   try {
     const inventory = await api("/api/dashboard/inputs");
     state.inputs = inventory;
-    const known = new Set(inventory.dates.map((date) => date.folder));
+    const known = new Set(inventory.dates.map((date) => date.date));
     if (!state.datesReady) {
       state.selectedDates = new Set(known);
       state.datesReady = true;
@@ -594,7 +594,7 @@ $("#model-options").addEventListener("click", (event) => {
 });
 $("#date-all").addEventListener("click", () => {
   if (state.rangeLocked) return;
-  for (const date of state.inputs?.dates || []) state.selectedDates.add(date.folder);
+  for (const date of state.inputs?.dates || []) state.selectedDates.add(date.date);
   renderDateOptions();
   invalidatePreview();
 });

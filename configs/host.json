@@ -8,7 +8,7 @@
         "display_name": "A组Fast",
         "adapter": "a",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["a_fast.jsonl"] }
+          { "kind": "directory", "path": "../data/sources/model-answers/a_fast" }
         ]
       },
       {
@@ -17,7 +17,7 @@
         "display_name": "A组Expert",
         "adapter": "a",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["a_expert.jsonl"] }
+          { "kind": "directory", "path": "../data/sources/model-answers/a_expert" }
         ]
       },
       {
@@ -26,7 +26,7 @@
         "display_name": "AA组Fast",
         "adapter": "aa",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["aa_fast.jsonl"] }
+          { "kind": "directory", "path": "../data/sources/model-answers/aa_fast" }
         ]
       },
       {
@@ -35,7 +35,7 @@
         "display_name": "AA组Expert",
         "adapter": "aa",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers", "include": ["aa_expert.jsonl"] }
+          { "kind": "directory", "path": "../data/sources/model-answers/aa_expert" }
         ]
       }
     ]

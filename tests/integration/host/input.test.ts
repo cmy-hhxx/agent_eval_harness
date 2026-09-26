@@ -65,7 +65,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
-    assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers"));
+    assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
   assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);
   const resolved = await loadConfig([file, path.join(ROOT, "configs/models.example.json")], {
     EVAL_BASE_URL: "https://gateway.example/v1",

@@ -46,7 +46,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 ## 输入
 
-`data/sources/model-answers/` 按日期子目录保存四个版本的 JSONL，每行代表一份「批次 × case × 版本」回答。[host.json](../configs/host.json) 为每个版本配置 `sources`：`file` 直接读取一个文件，`directory` 递归读取并可按 `include` 的 basename 匹配（缺省全部 `*.jsonl`）。目录名仅作整理，不参与批次或版本识别，也不要求文件名等于版本 ID。
+`data/sources/model-answers/<模型>/<运行开始日>.jsonl` 每个模型一个目录、每个评测运行日一份文件，每行代表一份「批次 × case × 版本」回答；跨天任务的文件名取运行开始日，另有 `_daily/<日期>.json` 清单记录批次与各模型行数/case 数。[host.json](../configs/host.json) 为每个版本配置 `sources`：`file` 直接读取一个文件，`directory` 递归读取（缺省全部 `*.jsonl`）。目录和文件名只用于整理，不参与批次或版本识别，也不要求文件名等于版本 ID。
 
 输入负责按天划分批次，每个版本文件可以包含多个批次。评测直接使用提供的 `batch_id` 原值，不要求日期格式，也不从 `request_time` 或 `ask_time` 重新分组。样本身份为 `batch_id + case_id`：同问句跨批次或在同批次对应不同 case 时分别保留，不按问句文本去重。
 

@@ -99,7 +99,7 @@ test("input inventory lists dates and cases from the configured sources", async 
     const inventory = await listInputInventory(config);
     assert.equal(inventory.dates.length, 1);
     const day = inventory.dates[0]!;
-    assert.equal(day.folder, path.basename(directory));
+    assert.equal(day.date, path.basename(directory));
     assert.deepEqual(day.batches, ["b1", "b2"]);
     assert.deepEqual(day.versions, ["a_fast", "aa_fast"]);
     assert.deepEqual(day.cases.map((item) => item.id), ["q1", "q2"]);

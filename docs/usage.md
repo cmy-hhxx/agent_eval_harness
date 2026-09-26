@@ -63,7 +63,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
 | `configs/host.json` | 共享评测配置与模型档案骨架，路径相对于配置文件目录 | 是 |
 | `configs/models.example.json` | 本地模型配置模板，复制为 `configs/local/models.json` 后填写模型 ID | 是 |
 | `configs/local/` | 本机配置（如 `models.json`），可覆盖或补充共享配置；路径同样相对于配置文件目录 | 否 |
-| `data/sources/<dataset>/<batch>/` | 原始输入；当前回答数据集为 `model-answers`，每批保存四份候选 JSONL | 否 |
+| `data/sources/<dataset>/<model>/<date>.jsonl` | 原始输入；当前回答数据集为 `model-answers`，每个模型一个目录、每个评测运行日一份文件 | 否 |
 | `data/runs/<workflow>/<run-id>/` | 一次运行的状态、结果和报告；当前工作流为 `comparison` | 否 |
 | `log/runtime.log`、`log/evaluation.log` | 全项目共用的错误日志和业务日志 | 否 |
 | `.cache/npm/`、`.cache/uv/` | 下载缓存 | 否 |
@@ -79,9 +79,11 @@ configs/
   local/                         # 本机配置（models.json 等）
 data/
   sources/model-answers/
-    0922/                        # a_fast.jsonl、a_expert.jsonl、aa_fast.jsonl、aa_expert.jsonl
-    0923/
-    0924/
+    a_fast/2026-09-22.jsonl      # 模型目录；文件名是该次评测的运行开始日
+    a_expert/2026-09-22.jsonl
+    aa_fast/2026-09-22.jsonl
+    aa_expert/2026-09-22.jsonl
+    _daily/2026-09-22.json       # 每日清单：批次与各模型行数/case 数
   attribution/
     a_fast.json                  # 每个模型一棵归因树：组件/问题节点 + 出现样本 + 血缘事件
     aa_fast.json
@@ -97,7 +99,7 @@ data/
 
 归因树是每个模型的跨 run 问题库，归因 Agent 优先召回已有节点、只在没有对应问题时新建；对比 Agent 只确认、不新建节点。每次 `report`/run 结束会把已接受的归因收据合并进树，按 `(节点, 输入, finding)` 幂等。节点 ID 用持久化 UUID，合并/重分类保留 `previous_node_id` 与 `events`，每个出现样本保留 `batch/case/version/input_id` 与源文件行号，可从问题反查到样本、再回到原始数据。当前一个模型一棵树，`tree_version`/`previous_tree` 预留后续分版本。
 
-新增批次放入数据集目录即可；`sources` 按 `include` 的 basename 递归匹配，新增日期目录无需改配置。批次身份取 JSON 中的 `batch_id`，目录名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
+新增评测日只需在对应模型目录放入 `YYYY-MM-DD.jsonl`（文件名用评测运行开始日），`sources` 直接指向模型目录，无需修改配置；跨天任务归开始日。批次身份取 JSON 中的 `batch_id`，目录和文件名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。每天一份 `_daily/<日期>.json` 清单记录该日的批次与各模型行数/case 数，只用于核对，不参与评测。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
 
 输入只做记录有效性校验，不因文件元数据变化阻止续跑。`state.json` 登记每个版本的来源路径与行号供恢复与证据核对；证据按业务标识（`batch_id + case_id + version`）定位，文件的追加或整理不影响已接受结果。未完成任务的来源缺失或无效时，该任务会被跳过并在预检诊断中报告，不中断整个 run。运行 ID、任务 ID、输入 ID 和盲测映射与目录无关。
 

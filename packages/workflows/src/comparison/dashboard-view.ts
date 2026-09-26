@@ -14,12 +14,17 @@ async function checkpoint(run: string): Promise<Checkpoint> {
 }
 
 export interface InputDate {
-  /** Source folder name; the operator-facing scope. */
-  folder: string;
-  /** Registered batch ids recorded in this folder; identity stays `batch_id`. */
+  /** Run date: the source file name when it is a date, else the source folder. */
+  date: string;
+  /** Registered batch ids recorded on this date; identity stays `batch_id`. */
   batches: string[];
   versions: string[];
   cases: { id: string; versions: string[]; batches: string[] }[];
+}
+/** Model-first sources name each file by run date; single-file sources fall back to their folder. */
+function sourceDate(source: string): string {
+  const name = path.basename(source, path.extname(source));
+  return /^\d{4}-\d{2}-\d{2}$/.test(name) ? name : path.basename(path.dirname(source));
 }
 /** Scans configured sources with the plan parser, so offered dates match what a run accepts. */
 export async function listInputInventory(config: EvalConfig): Promise<{ dates: InputDate[]; issues: number }> {
@@ -34,20 +39,20 @@ export async function listInputInventory(config: EvalConfig): Promise<{ dates: I
   >();
   const versionOrder = config.inputs.versions.map((version) => version.id);
   for (const record of (plan.catalog as Candidate[]) || []) {
-    const folder = path.basename(path.dirname(record.source));
-    const item = dates.get(folder) ?? { batches: new Set(), versions: new Set(), cases: new Map() };
+    const date = sourceDate(record.source);
+    const item = dates.get(date) ?? { batches: new Set(), versions: new Set(), cases: new Map() };
     item.batches.add(record.batch_id);
     item.versions.add(record.version);
     let covered = item.cases.get(record.case_id);
     if (!covered) item.cases.set(record.case_id, (covered = { versions: new Set(), batches: new Set() }));
     covered.versions.add(record.version);
     covered.batches.add(record.batch_id);
-    dates.set(folder, item);
+    dates.set(date, item);
   }
   return {
     dates: [...dates]
-      .map(([folder, item]) => ({
-        folder,
+      .map(([date, item]) => ({
+        date,
         batches: [...item.batches].sort(),
         versions: versionOrder.filter((id) => item.versions.has(id)),
         cases: [...item.cases]
@@ -58,7 +63,7 @@ export async function listInputInventory(config: EvalConfig): Promise<{ dates: I
             batches: [...covered.batches].sort(),
           })),
       }))
-      .sort((a, b) => a.folder.localeCompare(b.folder)),
+      .sort((a, b) => a.date.localeCompare(b.date)),
     issues: ((plan.summary.issues as unknown[]) || []).length,
   };
 }
