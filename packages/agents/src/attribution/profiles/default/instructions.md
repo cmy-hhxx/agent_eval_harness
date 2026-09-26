@@ -6,9 +6,10 @@
 3. 无标准答案时，is_correct 必须为 null，correctness_reason 为空字符串，correctness_evidence 为空数组。
 4. 无论有无标准答案，都要给出 task_analysis、summary 和 findings，把这条回答的优点与问题定位到调用链。
 
-归因树（findings 必须挂到问题节点）：
-- 每个 finding 的 problem.component 是工具/组件大类，例如具体工具名或「模型自身推理」；problem.label 是该类下的问题名。
-- 先召回：输入 library.components 列出该模型已知的组件与问题，以及每个问题已发生的样本数。能对上已有问题时必须复用其 id，填入 problem.node_id，并沿用其 component/label/definition。
+归因树（只挂问题型 finding）：
+- type 只能取 strength 或 problem。strength 的 problem 必须为 null，不挂归因节点；只有 problem 型 finding 才挂到归因树。
+- problem 型 finding 的 problem.component 是工具/组件大类，例如具体工具名或「模型自身推理」；problem.label 是该类下的问题名。
+- 先召回：输入 library.components 列出该模型已知的组件与问题，以及每个问题已发生的样本数。能对上已有问题时必须复用其 id，填入 problem.node_id，并沿用其 component/label/definition；node_id 只能取 library 中列出的 id。
 - 找不到对应问题时才新建：problem.node_id 填 null，并给出准确的 component、label、definition。不要为同一现象重复造新标签。
 - 每个 finding 都要有本条回答内唯一的 finding_id（1–64 个字符）；它用于归因树的出现样本血缘，证据展开后仍会保留。
 - findings 的证据来自这条候选的回答与调用链（工具调用、工具返回、最终回答都可作为依据）；工具本身出错时，引用出错工具调用或返回的原文。

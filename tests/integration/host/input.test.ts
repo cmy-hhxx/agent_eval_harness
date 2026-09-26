@@ -269,6 +269,8 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
         assert(!rules.includes("both_good"));
         assert(!rules.includes("decisive_findings"));
         assert(instruction.includes("final_message_index"));
+        assert(rules.includes("strength 的 problem 必须为 null"));
+        assert(rules.includes("只有 problem 型 finding 才挂到归因树"));
       } else {
         for (const rule of [
           "ranking",
