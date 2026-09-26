@@ -43,6 +43,7 @@ async function harness(
     runId: "test",
     status: "running",
     engine: fakeIdentity,
+    evaluatorVersion: "fixture",
     config,
     tasks: plan.tasks,
     inputs: {},

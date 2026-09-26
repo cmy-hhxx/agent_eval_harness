@@ -70,6 +70,7 @@ export function comparisonRow(
   result: ComparisonResult,
   receipts: Map<string, SubmissionReceipt>,
   names: Record<string, string>,
+  evaluatorVersion: string,
 ): JsonObject {
   const data = task.data as TaskData,
     group = data.group!;
@@ -100,6 +101,7 @@ export function comparisonRow(
   return {
     request_time: raw.request_time ?? null,
     has_standard_answer: data.reference !== null,
+    evaluator_version: evaluatorVersion,
 
     evaluation_type: "group_model_comparison",
     comparison_id: data.comparisonId || "cmp_" + task.id,
@@ -134,6 +136,7 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
   const candidate = (task.data as TaskData).candidates.A;
   return {
     evaluation_type: "attribution",
+    evaluator_version: receipt.evaluatorVersion,
     task_id: task.id,
     submission_id: receipt.submissionId,
     input_id: task.inputIds.A,
@@ -155,6 +158,7 @@ export function commentaryRow(task: PlannedTask, receipt: SubmissionReceipt): Js
     source = data.rewriteOf!;
   return {
     commentary_type: source.stage,
+    evaluator_version: receipt.evaluatorVersion,
     source_task_id: source.taskId,
     source_result_id: source.resultId,
     case: { batch_id: data.case!.batch_id, case_id: data.case!.case_id },
@@ -170,6 +174,7 @@ export function clusteringRow(
   const scope = (task.data as TaskData).scope!;
   return {
     clustering_type: "problem_library",
+    evaluator_version: receipt.evaluatorVersion,
     task_id: task.id,
     model: scope.version,
     batch_id: scope.batch_id,
@@ -210,7 +215,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   const result = receipt.evaluation as ComparisonResult;
   const row =
     receipt.exported?.row ||
-    comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names);
+    comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names, receipt.evaluatorVersion);
   if (!validateOutput(row))
     throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
   return { id: String(row.comparison_id), file: "comparison.jsonl", row };

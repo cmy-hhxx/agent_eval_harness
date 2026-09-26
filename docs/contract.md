@@ -11,7 +11,14 @@
 - 正式导出组装：[schema.ts](../packages/workflows/src/comparison/schema.ts)。
 - 导出与工具回溯：[report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts)。
 
-项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置版本号；当前源码定义唯一契约。
+项目处于快速迭代阶段，状态、结果 Schema、Profile 和内部协议不设置版本号；当前源码定义唯一契约。唯一例外是 `evaluatorVersion`：顶层配置显式声明、人工维护的评测器标识，用于区分不同版本评测器产出的判词，不是 Schema 或协议版本。影响判词的变更（提示词、业务校验、材料组装、证据解析、判决与导出逻辑、聚类硬约束）必须同步更新它；引擎构建身份由 `state.json` 的 `engine` 单独记录。
+
+### 评测器版本标识
+
+- `configs/host.json` 顶层 `evaluatorVersion` 必填非空字符串，`loadConfig` 校验；续跑时以本次配置为准，不因版本变化拒绝续跑。
+- `state.json` 的 manifest 保存当前 `evaluatorVersion`；每个已接受收据保留产出时的版本和解析后的判官模型 ID `judge`（不保存模型连接配置）。同 run 可以混合版本：已接受收据和已落盘行不变，未完成任务使用当前版本。读取正式结果时须核对行内版本与收据版本一致。
+- 四种正式结果行顶层都带 `evaluator_version`，取自该任务收据；`report` / `validate` 按收据重建，不重新解释版本。显式导出的逐题总结 JSONL 沿用对应对比行的版本。
+- `stats.json` 的 `evaluator_versions` 汇总本 run 已接受版本，`judge_models` 按阶段列出实际使用的模型 ID。
 
 ## Agent 先记
 
@@ -99,7 +106,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 ## 问题库与聚类
 
-问题库是每个模型一份的跨 run 知识库（`data/problems/<version>.json`），只有聚类阶段能写入。每条已接受聚类决定记录：`assignments` 把每个观察（按 `component + label` 归一化聚合的同一问题）归入已有类或新类，`new_classes` 声明新类的 `component/label/definition` 以及最接近的已有类和 novelty 理由，`merges` 把同一组件下的近义旧类合并到保留类。相同问题名可分别属于不同工具组件；观察只可归入同一组件内的类（已有组件的别名等同于该组件）。写库顺序是先合并、再建类、最后落出现样本；每个出现样本保留 `class_id`、`batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题类反查到样本、再回到原始数据；合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label 与 aliases 追加到目标类。入库按 `(class_id, input_id, finding_id)` 幂等，重复 report 或续跑不会重复计样本。
+问题库是每个模型一份的跨 run 知识库（`data/problems/<version>.json`），只有聚类阶段能写入。每条已接受聚类决定记录：`assignments` 把每个观察（按 `component + label` 归一化聚合的同一问题）归入已有类或新类，`new_classes` 声明新类的 `component/label/definition` 以及最接近的已有类和 novelty 理由，`merges` 把同一组件下的近义旧类合并到保留类。相同问题名可分别属于不同工具组件；观察只可归入同一组件内的类（已有组件的别名等同于该组件）。写库顺序是先合并、再建类、最后落出现样本；每个出现样本保留 `class_id`、`evaluator_version`（归类收据的版本；原归因版本见归因结果行）、`batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题类反查到样本、再回到原始数据；合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label 与 aliases 追加到目标类。入库按 `(class_id, input_id, finding_id)` 幂等，重复 report 或续跑不会重复计样本。
 
 数量由程序硬控，提示词只做引导：
 
@@ -124,7 +131,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 ## 证据与导出
 
-对比结果 JSONL 和逐题总结 JSONL 的每行都以 `request_time`、`has_standard_answer` 两个顶层字段开头。`request_time` 取该组第一个版本（按 `comparisons` 声明顺序）的输入原值，缺失时为 `null`，不受盲测标签影响；`has_standard_answer` 为布尔值，表示本题是否有有效标准答案、是否进入归因的对错判定，与 `ground_truth.available` 一致。
+对比结果 JSONL 和逐题总结 JSONL 的每行都以 `request_time`、`has_standard_answer` 两个顶层字段开头，其后是产出该行的 `evaluator_version`。`request_time` 取该组第一个版本（按 `comparisons` 声明顺序）的输入原值，缺失时为 `null`，不受盲测标签影响；`has_standard_answer` 为布尔值，表示本题是否有有效标准答案、是否进入归因的对错判定，与 `ground_truth.available` 一致。
 
 内部提交使用工具或初始材料提供的 `evidence_id`，绑定输入、消息和原文位置；程序展开为正式结果的 `message_index + quote`。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 

@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentBackend, JsonObject } from "@eval/contracts";
-import { readJsonl } from "@eval/data";
+import { readJsonl, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
 import { buildPlan, reportRun, readRunState } from "@eval/workflows/comparison";
 import type { TaskData } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { draftFor, fakeIdentity, fixtureConfig, taskResult } from "../../fixtures/comparison.js";
+import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -54,6 +54,7 @@ test("rewrite polishes conclusions into commentary without touching formal resul
       output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       ...services,
       plan,
@@ -121,6 +122,12 @@ test("rewrite polishes conclusions into commentary without touching formal resul
       assert.equal((task.data as TaskData).rewriteOf!.taskId, task.dependencies.source);
     }
     assert.equal((await validateRun(run)).valid, true);
+    const commentaryFile = path.join(run, "results", "commentary.jsonl");
+    await writeJsonl(commentaryFile, [
+      { ...commentary[0], evaluator_version: "wrong" }, ...commentary.slice(1),
+    ]);
+    await assert.rejects(readRunState(run), /结果评测器版本与收据不一致/);
+    await writeJsonl(commentaryFile, commentary);
 
     // Resume keeps accepted polish and does not call the model again.
     await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });

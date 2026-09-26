@@ -21,6 +21,7 @@ import {
   attributionResult,
   draftFor,
   emptyAudit,
+  fakeEvaluatorVersion,
   fakeIdentity,
   comparisonResult,
   fixtureConfig,
@@ -39,6 +40,7 @@ async function fixture(rows = [raw("q", null)]) {
     runId: "test",
     status: "running",
     engine: fakeIdentity,
+    evaluatorVersion: fakeEvaluatorVersion,
     config,
     tasks: plan.tasks,
     inputs: {},
@@ -102,7 +104,7 @@ test("duplicate submissions commit once and return the same receipt", async () =
     const file = path.join(store.run, "results/attribution.jsonl");
     const text = await readFile(file, "utf8");
     assert.equal(text.trim().split("\n").length, 1);
-    assert.deepEqual(Object.keys(JSON.parse(text)).slice(0, 2), ["evaluation_type", "task_id"]);
+    assert.deepEqual(Object.keys(JSON.parse(text)).slice(0, 2), ["evaluation_type", "evaluator_version"]);
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.services);
     await restored.save();
     assert.equal(await readFile(file, "utf8"), text, "compact checkpoints preserve durable exports");
@@ -208,6 +210,9 @@ test("correctness receipts are durable references and preserve exact duplicate c
       taskId: spec.taskId,
       file: "attribution.jsonl",
     });
+    assert.equal(saved.receipt.evaluatorVersion, fakeEvaluatorVersion);
+    assert.equal(saved.receipt.judge, "mock");
+    assert(!JSON.stringify(saved.receipt).includes(spec.model.baseUrl), "endpoint configuration stays out of state");
     assert.equal(saved.failure, undefined);
     assert.equal(saved.repeatedErrors, 2);
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.services);
@@ -239,6 +244,9 @@ test("correctness receipts are durable references and preserve exact duplicate c
     const validation = await validateRun(store.run);
     assert.equal(validation.valid, true);
     assert.equal(validation.completed_comparisons, 0, "correctness rows are not comparisons");
+    await writeJsonl(file, [{ ...row, evaluator_version: "wrong" }]);
+    await assert.rejects(readRunState(store.run), /结果评测器版本与收据不一致/);
+    await writeJsonl(file, [row]);
     await appendFile(
       file,
       JSON.stringify({

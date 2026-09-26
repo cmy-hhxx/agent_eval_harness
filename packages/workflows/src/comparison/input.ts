@@ -223,7 +223,8 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     ).map((record) => [candidateKey(record), record]),
   );
   const records = new Map<string, Candidate>(),
-    sourceTexts = new Map<string, string>(),
+    freshRecords = new Set<Candidate>(),
+    sourceRevisions = new Map<string, string>(),
     inputs: Record<string, unknown> = {},
     cases = new Map<string, [string, string]>(),
     locations = new Map<string, { version: string; source: string; line: number }[]>(),
@@ -266,108 +267,106 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     }
     resolvedSources[version.id] = files;
     for (const source of files) {
+      let scanned = false;
       try {
-        if (!sourceTexts.has(source)) sourceTexts.set(source, await fileSourceReader.read(source));
+        const revision = sourceRevisions.get(source) ?? await fileSourceReader.revision(source);
+        sourceRevisions.set(source, revision);
+        for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+          scanned = true;
+          if (!line.trim()) continue;
+          let key: string | undefined,
+            batchId: string | null = null,
+            caseId: string | null = null;
+          try {
+            const raw = object(JSON.parse(line)) as RawInput,
+              meta = raw.meta || {};
+            const batch = raw.batch_id || meta.batch_id || config.inputs.default_batch_id,
+              id = raw.case_id || meta.case_id;
+            if (
+              (batch && config.inputs.batches?.length && !config.inputs.batches.includes(String(batch))) ||
+              (id && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(String(id)))
+            )
+              continue;
+            batchId = batch ? String(batch) : null;
+            caseId = id ? String(id) : null;
+            if (batch && id) {
+              key = canonical([String(batch), String(id), version.id]);
+              cases.set(canonical([String(batch), String(id)]), [String(batch), String(id)]);
+              const sources = locations.get(key) || [];
+              sources.push({ version: version.id, source, line: index });
+              locations.set(key, sources);
+              if (seen.has(key))
+                throw new ValidationError([
+                  {
+                    category: "input",
+                    code: "duplicate_input",
+                    path: "/",
+                    actual: [batch, id, version.id],
+                    expected: "每个业务标识仅一条记录",
+                    message: "duplicate_input: 同一批次、case、版本出现多条记录",
+                  },
+                ]);
+              seen.add(key);
+            }
+            const record = adapt(raw, version, source, index, config.inputs.default_batch_id);
+            const old = oldRecords.get(candidateKey(record));
+            if (
+              old &&
+              (Object.hasOwn(previous!.inputs, old.input_id)
+                ? isDeepStrictEqual(previous!.inputs[old.input_id], raw)
+                : old.source === record.source && old.line === record.line)
+            )
+              record.input_id = old.input_id;
+            if (key && !invalid.has(key)) {
+              records.set(key, record);
+              freshRecords.add(record);
+            }
+          } catch (error) {
+            if (key) {
+              invalid.add(key);
+              records.delete(key);
+            }
+            issues.push({
+              source,
+              line: index,
+              batch_id: batchId,
+              case_id: caseId,
+              version: version.id,
+              identity: key ? JSON.parse(key) : null,
+              ...(key ? { sources: locations.get(key) } : {}),
+              reason: errorText(error),
+              errors:
+                error instanceof ValidationError
+                  ? error.issues
+                  : [
+                      {
+                        category: "input",
+                        code: error instanceof SyntaxError ? "input_json_invalid" : "input_invalid",
+                        path: "/",
+                        actual: null,
+                        expected: "有效输入记录",
+                        message: errorText(error),
+                      },
+                    ],
+            });
+          }
+        }
       } catch (error) {
+        // A mid-read failure cannot leave partly registered candidates in the plan.
+        if (scanned || !(error as NodeJS.ErrnoException).code) throw error;
         issues.push({
           source,
           reason: "input_file_unreadable",
           version: version.id,
-          errors: [
-            {
-              category: "file",
-              code: "input_file_unavailable",
-              path: source,
-              expected: "可读取的输入文件",
-              actual: (error as NodeJS.ErrnoException).code || null,
-              message: errorText(error),
-            },
-          ],
+          errors: [{
+            category: "file",
+            code: "input_file_unavailable",
+            path: source,
+            expected: "可读取的输入文件",
+            actual: (error as NodeJS.ErrnoException).code || null,
+            message: errorText(error),
+          }],
         });
-        continue;
-      }
-      const text = sourceTexts.get(source)!;
-      for (const [index, line] of text
-        .replace(/^\uFEFF/, "")
-        .split(/\r?\n/)
-        .entries()) {
-        if (!line.trim()) continue;
-        let key: string | undefined,
-          batchId: string | null = null,
-          caseId: string | null = null;
-        try {
-          const raw = object(JSON.parse(line)) as RawInput,
-            meta = raw.meta || {};
-          const batch = raw.batch_id || meta.batch_id || config.inputs.default_batch_id,
-            id = raw.case_id || meta.case_id;
-          if (
-            (batch && config.inputs.batches?.length && !config.inputs.batches.includes(String(batch))) ||
-            (id && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(String(id)))
-          )
-            continue;
-          batchId = batch ? String(batch) : null;
-          caseId = id ? String(id) : null;
-          if (batch && id) {
-            key = canonical([String(batch), String(id), version.id]);
-            cases.set(canonical([String(batch), String(id)]), [String(batch), String(id)]);
-            const sources = locations.get(key) || [];
-            sources.push({ version: version.id, source, line: index + 1 });
-            locations.set(key, sources);
-            if (seen.has(key))
-              throw new ValidationError([
-                {
-                  category: "input",
-                  code: "duplicate_input",
-                  path: "/",
-                  actual: [batch, id, version.id],
-                  expected: "每个业务标识仅一条记录",
-                  message: "duplicate_input: 同一批次、case、版本出现多条记录",
-                },
-              ]);
-            seen.add(key);
-          }
-          const record = adapt(raw, version, source, index + 1, config.inputs.default_batch_id);
-          const old = oldRecords.get(candidateKey(record));
-          if (
-            old &&
-            (Object.hasOwn(previous!.inputs, old.input_id)
-              ? isDeepStrictEqual(previous!.inputs[old.input_id], raw)
-              : old.source === record.source && old.line === record.line)
-          )
-            record.input_id = old.input_id;
-          if (key && !invalid.has(key)) {
-            records.set(key, record);
-            inputs[record.input_id] = raw;
-          }
-        } catch (error) {
-          if (key) {
-            invalid.add(key);
-            records.delete(key);
-          }
-          issues.push({
-            source,
-            line: index + 1,
-            batch_id: batchId,
-            case_id: caseId,
-            version: version.id,
-            identity: key ? JSON.parse(key) : null,
-            ...(key ? { sources: locations.get(key) } : {}),
-            reason: errorText(error),
-            errors:
-              error instanceof ValidationError
-                ? error.issues
-                : [
-                    {
-                      category: "input",
-                      code: error instanceof SyntaxError ? "input_json_invalid" : "input_invalid",
-                      path: "/",
-                      actual: null,
-                      expected: "有效输入记录",
-                      message: errorText(error),
-                    },
-                  ],
-          });
-        }
       }
     }
   }
@@ -681,6 +680,37 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
     selectedKeys.has(canonical([record.batch_id, record.case_id])),
   );
   const used = new Set(catalog.map((record) => record.input_id));
+  // The inventory has no comparisons and needs only the compact catalog. For real plans,
+  // load the selected raw records in a second bounded scan, never all source text at once.
+  if (config.comparisons.length) {
+    const bySource = new Map<string, Map<number, Candidate[]>>();
+    for (const record of catalog) {
+      if (!freshRecords.has(record)) continue;
+      const lines = bySource.get(record.source) ?? new Map<number, Candidate[]>();
+      lines.set(record.line, [...(lines.get(record.line) ?? []), record]);
+      bySource.set(record.source, lines);
+    }
+    for (const [source, lines] of bySource) {
+      const found = new Set<number>();
+      for await (const { line, index } of fileSourceReader.lines(source, sourceRevisions.get(source)!)) {
+        const candidates = lines.get(index);
+        if (!candidates) continue;
+        const raw = object(JSON.parse(line)) as RawInput;
+        for (const candidate of candidates) {
+          const version = config.inputs.versions.find((item) => item.id === candidate.version)!;
+          const current = adapt(raw, version, source, index, config.inputs.default_batch_id);
+          if (
+            candidateKey(current) !== candidateKey(candidate) ||
+            current.question !== candidate.question ||
+            current.final_index !== candidate.final_index
+          ) throw new Error("读取期间输入源记录发生变化，请重试：" + source);
+          inputs[candidate.input_id] = raw;
+        }
+        found.add(index);
+      }
+      if (found.size !== lines.size) throw new Error("读取期间输入源记录缺失，请重试：" + source);
+    }
+  }
   return {
     tasks: [...checks.values(), ...tasks, ...rewrites.values(), ...clusteringTasks],
     inputs: Object.fromEntries(Object.entries(inputs).filter(([id]) => used.has(id))),

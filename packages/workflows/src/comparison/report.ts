@@ -231,7 +231,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       continue;
     }
     const result = receipt.evaluation as ComparisonResult,
-      row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names);
+      row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names, receipt.evaluatorVersion);
     if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
     comparisons.push(row);
     receipt.exported = { id: String(row.comparison_id), row };
@@ -258,6 +258,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     summaries.push({
       request_time: view.request_time,
       has_standard_answer: view.has_standard_answer,
+      evaluator_version: view.evaluator_version,
 
       comparison_id: view.comparison_id,
       case: view.case,
@@ -453,10 +454,21 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   if (commentaryBySource.size) resultArtifacts.push("results/commentary.jsonl");
   if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
     resultArtifacts.push("results/clustering.jsonl");
+  const evaluatorVersions = [...new Set([...receipts.values()].map((receipt) => receipt.evaluatorVersion))].sort();
+  const judgeModels: Record<string, string[]> = {};
+  for (const task of manifest.tasks) {
+    const receipt = receipts.get(task.id);
+    if (!receipt) continue;
+    const models = (judgeModels[task.stage] ??= []);
+    if (!models.includes(receipt.judge)) models.push(receipt.judge);
+  }
+  for (const models of Object.values(judgeModels)) models.sort();
   const summary = {
     debug: manifest.debug,
     run_id: manifest.runId,
     status: manifest.status,
+    evaluator_versions: evaluatorVersions,
+    judge_models: judgeModels,
     ...totals,
     quality,
     by_batch: byBatch,
@@ -517,9 +529,10 @@ export async function writeOverview(
   ])
     if (summary.debug && (await exists(internalPath(run, "diagnostics", name + ".jsonl"))))
       links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
+  const summaryVersions = (summary.evaluator_versions as string[]).join("、") || "无已接受结果";
   await atomicWrite(
     locateRun(run).report,
-    `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；完成比较：${summary.completed_comparisons}。\n\n` +
+    `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
       `执行失败：${failures}；输入跳过对比组：${skipped}。\n\n` +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation

@@ -1,4 +1,5 @@
 import { stat, readFile, readdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import type { InputSource } from "@eval/contracts";
 
@@ -6,6 +7,8 @@ import type { InputSource } from "@eval/contracts";
 export interface SourceReader {
   files(sources: InputSource[]): Promise<string[]>;
   read(file: string): Promise<string>;
+  revision(file: string): Promise<string>;
+  lines(file: string, revision?: string): AsyncIterable<{ line: string; index: number }>;
 }
 
 async function fileRevision(source: string): Promise<string> {
@@ -20,6 +23,44 @@ export async function readInputSource(source: string): Promise<string> {
   if ((await fileRevision(source)) !== revision)
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
   return text;
+}
+
+/** Stream large JSONL inputs without retaining whole files; reject concurrent source edits. */
+export async function* readInputSourceLines(source: string, expected?: string): AsyncIterable<{ line: string; index: number }> {
+  const revision = await fileRevision(source);
+  if (expected !== undefined && revision !== expected)
+    throw new Error("读取期间输入文件发生变化，请重试：" + source);
+  const stream = createReadStream(source);
+  try {
+    let index = 0;
+    let fragments: Buffer[] = [];
+    const decode = (parts: Buffer[]): string => {
+      const bytes = parts.length === 1 ? parts[0]! : Buffer.concat(parts);
+      const text = (bytes.at(-1) === 13 ? bytes.subarray(0, -1) : bytes).toString("utf8");
+      return index === 1 ? text.replace(/^\uFEFF/, "") : text;
+    };
+    for await (const chunk of stream) {
+      let start = 0, end: number;
+      while ((end = chunk.indexOf(10, start)) !== -1) {
+        index++;
+        const line = decode([...fragments, chunk.subarray(start, end)]);
+        fragments = [];
+        yield { line, index };
+        start = end + 1;
+      }
+      if (start < chunk.length) fragments.push(chunk.subarray(start));
+    }
+    if (fragments.length) {
+      index++;
+      // A final line without a newline is valid; unlike CRLF, a bare trailing CR is not stripped.
+      const text = (fragments.length === 1 ? fragments[0]! : Buffer.concat(fragments)).toString("utf8");
+      yield { line: index === 1 ? text.replace(/^\uFEFF/, "") : text, index };
+    }
+    if ((await fileRevision(source)) !== revision)
+      throw new Error("读取期间输入文件发生变化，请重试：" + source);
+  } finally {
+    stream.destroy();
+  }
 }
 
 async function walk(directory: string): Promise<string[]> {
@@ -51,4 +92,6 @@ export async function sourceFiles(sources: InputSource[]): Promise<string[]> {
   return [...new Set(files)].sort();
 }
 
-export const fileSourceReader: SourceReader = { files: sourceFiles, read: readInputSource };
+export const fileSourceReader: SourceReader = {
+  files: sourceFiles, read: readInputSource, revision: fileRevision, lines: readInputSourceLines,
+};

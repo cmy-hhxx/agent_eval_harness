@@ -2,7 +2,7 @@
 
 TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
 
-**当前契约优先：**项目快速迭代，不设置未确定的版本号，不兼容旧代码。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
+**当前契约优先：**项目快速迭代，不设置未确定的版本号；结果只记录显式声明的 `evaluatorVersion`，用于区分不同评测器产出的判词，不是 Schema 版本。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
 
 ## Agent 开发导航
 

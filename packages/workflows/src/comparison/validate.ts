@@ -72,6 +72,10 @@ export async function validateRun(
     try {
       if (receipt.taskId !== task.id || receipt.status !== "succeeded")
         throw new Error("Receipt identity mismatch");
+      if (typeof receipt.evaluatorVersion !== "string" || !receipt.evaluatorVersion)
+        throw new Error("Receipt is missing its evaluator version");
+      if (typeof receipt.judge !== "string" || !receipt.judge.trim())
+        throw new Error("Receipt is missing its judge model");
       receipts.set(task.id, receipt);
     } catch (error) {
       errors.push(`${task.id}: ${errorText(error)}`);
@@ -150,14 +154,14 @@ export async function validateRun(
           continue;
         }
         const value = receipt.evaluation as ComparisonResult;
-        const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
+        const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names, receipt.evaluatorVersion),
           name = "comparison.jsonl";
         if (!outputValidator(row))
           throw new Error("正式结果结构无效：" + JSON.stringify(outputValidator.errors));
         if (
           receipt.exported &&
           Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id)) &&
-          canonical(row) !== canonical(comparisonRow(inputs, task, value, receipts, names))
+          canonical(row) !== canonical(comparisonRow(inputs, task, value, receipts, names, receipt.evaluatorVersion))
         )
           throw new Error("正式结果与已接受收据不一致");
         if (!expected.has(name)) expected.set(name, []);

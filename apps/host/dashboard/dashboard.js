@@ -69,7 +69,7 @@ function renderRuns() {
     const selected = state.selectedRun === run.run_id;
     return `<button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
       <span class="run-line"><span class="status-dot ${escapeHtml(run.status)}${failures ? " has-failure" : ""}"></span><span class="run-label">${escapeHtml(runLabel(run))}</span></span>
-      <span class="run-meta">${escapeHtml(run.engine)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 异常` : ""}</span>
+      <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 异常` : ""}</span>
     </button>`;
   }).join("");
 }
@@ -86,7 +86,7 @@ function renderOverview() {
   const library = Object.entries(run.problem_library || {})
     .map(([model, counts]) => `${model} ${counts.classes} 类`)
     .join(" / ");
-  $("#run-description").textContent = `${run.engine} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}` + (library ? ` · 问题库：${library}` : "");
+  $("#run-description").textContent = `${run.engine} · 评测器 ${run.evaluator_version} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}` + (library ? ` · 问题库：${library}` : "");
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button>`;
@@ -115,9 +115,9 @@ function libraryDetailHtml() {
     <h4>${escapeHtml(detail.class.label)} <span class="muted">${escapeHtml(detail.class.aliases.length ? `别名：${detail.class.aliases.join("、")}` : detail.class.id)}</span></h4>
     <p>${escapeHtml(detail.class.definition || "—")}</p>
     <p class="muted">${escapeHtml(detail.component?.label || "—")} · 出现 ${detail.total} 次${detail.class.status === "merged" ? " · 已合并" : ""}</p>
-    ${detail.class.first_seen ? `<p class="muted">首次 ${escapeHtml(detail.class.first_seen.batch_id)} / ${escapeHtml(detail.class.first_seen.case_id)} · ${dateText(detail.class.first_seen.at)}</p>` : ""}
+    ${detail.class.first_seen ? `<p class="muted">首次 ${escapeHtml(detail.class.first_seen.batch_id)} / ${escapeHtml(detail.class.first_seen.case_id)} · 评测器 ${escapeHtml(detail.class.first_seen.evaluator_version)} · ${dateText(detail.class.first_seen.at)}</p>` : ""}
     ${detail.occurrences.length ? detail.occurrences.map((item) => `<div class="library-occurrence">
-      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · ${item.classification === "created" ? "新建" : "归入"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
+      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · 评测器 ${escapeHtml(item.evaluator_version)} · ${item.classification === "created" ? "新建" : "归入"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
       ${item.quote ? `<blockquote>${escapeHtml(item.quote)}</blockquote>` : ""}
       <p class="muted">finding ${escapeHtml(item.finding_id)} · 消息 #${item.message_index} · ${escapeHtml(item.source.file)}:${item.source.line} · ${dateText(item.at)}</p>
     </div>`).join("") : '<p class="empty-state">暂无出现样本</p>'}

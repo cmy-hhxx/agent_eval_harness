@@ -136,6 +136,7 @@ export interface ProblemLibraryTarget {
 }
 export interface ProblemOrigin {
   run_id: string;
+  evaluator_version: string;
   batch_id: string;
   case_id: string;
   input_id: string;
@@ -164,6 +165,7 @@ export interface ProblemOccurrence {
   id: string;
   class_id: string;
   version: string;
+  evaluator_version: string;
   batch_id: string;
   case_id: string;
   input_id: string;
@@ -213,6 +215,10 @@ export interface ProblemProjection {
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";
+  /** Evaluation logic that produced this receipt; fixed at acceptance time. */
+  evaluatorVersion: string;
+  /** Resolved judge model ID used by the accepted attempt (no endpoint configuration). */
+  judge: string;
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject };
 }
@@ -371,6 +377,8 @@ export interface RunManifest {
   runId: string;
   status: "running" | "finished" | "interrupted";
   engine: EngineIdentity;
+  /** Current evaluator version; new receipts are stamped with it, accepted ones keep theirs. */
+  evaluatorVersion: string;
   config: unknown;
   tasks: PlannedTask[];
   inputs: Record<string, InputRef>;

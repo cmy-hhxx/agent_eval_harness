@@ -11,7 +11,7 @@ import { validateEvaluation } from "../../fixtures/services.js";
 import { comparisonRow, reportRun } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 for (const objective of [false, true])
   test(`report preserves identities, evidence and correctness across blind swaps (${objective ? "objective" : "subjective"})`, async () => {
@@ -75,6 +75,8 @@ for (const objective of [false, true])
                   : "【候选A】结果应为4。"
                 : "",
             },
+            evaluatorVersion: fakeEvaluatorVersion,
+            judge: fakeJudge,
             audit: emptyAudit(),
             usage: emptyUsage(),
             status: "succeeded",
@@ -118,7 +120,7 @@ for (const objective of [false, true])
         const row = comparisonRow(snapshots, task, result, receipts, {
           a_fast: "A组Fast",
           aa_fast: "AA组Fast",
-        });
+        }, fakeEvaluatorVersion);
         assert(validateOutput(row), JSON.stringify(validateOutput.errors));
         assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
         assert.equal(row.request_time, "2026-09-24 11:37:31");
@@ -165,6 +167,7 @@ test("report requires the run's own schema snapshot", async () => {
     await writeJson(path.join(directory, "state.json"), {
       format: "evaluation-run",
       debug: true,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       inputs: {},
       preflight: {},

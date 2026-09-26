@@ -34,6 +34,8 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 type ConfigObject = Record<string, unknown>;
 
 export interface HostConfig {
+  /** Declared identity of the judging logic; stamped onto every accepted result. */
+  evaluatorVersion: string;
   /** Workflow-facing evaluation inputs and budgets. Contains no model configuration. */
   evaluation: EvalConfig;
   /** Model profiles and per-stage bindings, resolved against the environment. */
@@ -74,6 +76,12 @@ function optionalNonNegativeInteger(value: unknown, label: string): number | und
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || (value as number) < 0) throw new Error(`Invalid ${label}`);
   return value as number;
+}
+/** The evaluator identity is declared, never derived; any judging change must bump it. */
+function readEvaluatorVersion(source: ConfigObject): string {
+  const value = source.evaluatorVersion;
+  if (typeof value !== "string" || !value.trim()) throw new Error("Missing evaluatorVersion");
+  return value;
 }
 
 async function readLocated(file: string): Promise<ConfigObject> {
@@ -387,6 +395,7 @@ function selectVersions(evaluation: EvalConfig, ids: string[]): EvalConfig {
 /** Evaluation-only load, without model endpoints; the dashboard uses it for input discovery. */
 export async function loadEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
   const { source, versions } = await mergedSource(sources, settings);
+  readEvaluatorVersion(source);
   const evaluation = buildEvaluation(source);
   return versions ? selectVersions(evaluation, versions) : evaluation;
 }
@@ -397,11 +406,12 @@ export async function loadConfig(
   settings?: unknown,
 ): Promise<HostConfig> {
   const { source, versions } = await mergedSource(sources, settings);
+  const evaluatorVersion = readEvaluatorVersion(source);
   const base = buildEvaluation(source), models = buildModels(source, env);
   const evaluation = versions ? selectVersions(base, versions) : base;
   if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");
-  return { evaluation, models };
+  return { evaluatorVersion, evaluation, models };
 }

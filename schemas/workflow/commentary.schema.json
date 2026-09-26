@@ -4,6 +4,7 @@
   "additionalProperties": false,
   "required": [
     "commentary_type",
+    "evaluator_version",
     "source_task_id",
     "source_result_id",
     "case",
@@ -15,6 +16,10 @@
         "attribution",
         "comparison"
       ]
+    },
+    "evaluator_version": {
+      "type": "string",
+      "minLength": 1
     },
     "source_task_id": {
       "type": "string",

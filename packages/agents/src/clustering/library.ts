@@ -91,6 +91,7 @@ export interface ClusteringObservation {
 }
 export interface ApplyClusteringInput {
   run_id: string;
+  evaluator_version: string;
   task_id: string;
   submission_id: string;
   version: string;
@@ -103,6 +104,7 @@ export interface ApplyClusteringInput {
 function originFor(input: ApplyClusteringInput, ref: ClusteringObservationRef | undefined, at: string): ProblemOrigin {
   return {
     run_id: input.run_id,
+    evaluator_version: input.evaluator_version,
     batch_id: input.batch_id,
     case_id: ref?.case_id ?? "",
     input_id: ref?.input_id ?? "",
@@ -231,6 +233,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         id: randomUUID(),
         class_id: problem.id,
         version: input.version,
+        evaluator_version: input.evaluator_version,
         batch_id: input.batch_id,
         case_id: ref.case_id,
         input_id: ref.input_id,

@@ -24,6 +24,7 @@ interface DashboardCheckpoint {
   runId?: string;
   status?: string;
   engine?: { engine?: string };
+  evaluatorVersion?: string;
   startedAt?: number;
   finishedAt?: number;
   concurrency?: number;
@@ -102,8 +103,9 @@ async function inspectRun(outputDir: string, runId: string) {
       throw error;
     }),
   ]);
-  if (checkpoint.format !== "evaluation-run" || checkpoint.runId !== runId || !checkpoint.tasks)
-    throw new Error("运行状态身份或任务索引无效");
+  if (checkpoint.format !== "evaluation-run" || checkpoint.runId !== runId || !checkpoint.tasks ||
+      typeof checkpoint.evaluatorVersion !== "string" || !checkpoint.evaluatorVersion.trim())
+    throw new Error("运行状态身份、任务索引或评测器版本无效");
   let progress = fallbackProgress(checkpoint);
   let live = false;
   if (lock?.url) {
@@ -130,6 +132,7 @@ async function inspectRun(outputDir: string, runId: string) {
     run_id: runId,
     status: lock ? "running" : savedStatus === "running" ? "interrupted" : savedStatus,
     engine: checkpoint.engine?.engine || "unknown",
+    evaluator_version: checkpoint.evaluatorVersion,
     started_at: checkpoint.startedAt || 0,
     finished_at: checkpoint.finishedAt,
     concurrency: progress.concurrency,

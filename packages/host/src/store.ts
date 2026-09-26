@@ -213,6 +213,8 @@ export class RunStore {
       ...value,
       evaluation,
       submitted: structuredClone(value.evaluation),
+      evaluatorVersion: this.manifest.evaluatorVersion,
+      judge: spec.model.model,
       status: "succeeded",
       acceptedAt: Date.now(),
     };

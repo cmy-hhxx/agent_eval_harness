@@ -42,6 +42,7 @@ const receipt = (
   result: ClusteringResult,
 ): ApplyClusteringInput => ({
   run_id: "run",
+  evaluator_version: "r1",
   task_id: "task",
   submission_id: "submission",
   version: "a_fast",
@@ -76,9 +77,12 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   assert.equal(component.label, "色值工具");
   assert.equal(problem.component_id, component.id);
   assert.equal(component.first_seen?.case_id, "case-in-1");
+  assert.equal(component.first_seen?.evaluator_version, "r1");
+  assert.equal(problem.first_seen?.evaluator_version, "r1");
   assert.equal(library.occurrences.length, 1);
   assert.equal(library.occurrences[0]!.class_id, problem.id);
   assert.equal(library.occurrences[0]!.input_id, "in-1");
+  assert.equal(library.occurrences[0]!.evaluator_version, "r1");
   assert.equal(library.occurrences[0]!.source.line, 7);
   assert.equal(library.occurrences[0]!.classification, "created");
 

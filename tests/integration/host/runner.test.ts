@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import type { AgentBackend, AttemptRecord } from "@eval/contracts";
+import type { AgentBackend, AttemptRecord, JsonObject } from "@eval/contracts";
 import { createFileLogger, exists, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/comparison";
 import { startWorker } from "@eval/runtime/worker";
@@ -12,7 +12,7 @@ import { validateRun } from "../../fixtures/services.js";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
-import { fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
 
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
@@ -80,6 +80,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       ...services,
       logger: createFileLogger({
@@ -94,6 +95,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       retryDelaySeconds: 0,
       workerUrls: workers.map((w) => w.url),
     };
+    await assert.rejects(runEvaluation({ ...options, evaluatorVersion: " " }), /evaluatorVersion/);
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
     assert.equal(calls, 6);
@@ -116,6 +118,8 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.deepEqual(summary.cache, {
       model_input: { hit_rate: 0.6 },
     });
+    assert.deepEqual(summary.evaluator_versions, [fakeEvaluatorVersion]);
+    assert.deepEqual(summary.judge_models, { attribution: ["fixture"], comparison: ["fixture"] });
     const run = path.join(config.output.path, "first");
     assert.deepEqual(await readJson(path.join(run, "stats.json")), summary);
     const checkpoint = await readJson(path.join(run, "state.json"));
@@ -126,6 +130,8 @@ test("two workers execute dependency graph, archive receipts and reuse only same
         .receipt;
       assert(stored.exported);
       assert.equal(stored.evaluation, undefined, "formal verdicts are referenced, not copied into state");
+      assert.equal(stored.judge, "fixture");
+      assert.equal(stored.evaluatorVersion, fakeEvaluatorVersion);
     }
     assert(!JSON.stringify(summary).includes("case_ids"));
     assert(Buffer.byteLength(JSON.stringify(summary, null, 2)) < 5000);
@@ -161,7 +167,19 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：通过/);
     await reportRun(run, { details: true });
     assert.equal(await exists(internalPath(run, "exports", "task_summaries.jsonl")), true);
+    const summaries: JsonObject[] = [];
+    for await (const row of readJsonl(internalPath(run, "exports", "task_summaries.jsonl"))) summaries.push(row as JsonObject);
+    assert.equal(summaries.length, 2);
+    assert(summaries.every((row) => row.evaluator_version === fakeEvaluatorVersion));
     assert.equal(await exists(internalPath(run, "exports", "task_outcomes.jsonl")), true);
+    const comparisonFile = path.join(run, "results", "comparison.jsonl");
+    const comparisonRows: JsonObject[] = [];
+    for await (const row of readJsonl(comparisonFile)) comparisonRows.push(row as JsonObject);
+    await writeJsonl(comparisonFile, [
+      { ...comparisonRows[0], evaluator_version: "wrong" }, ...comparisonRows.slice(1),
+    ]);
+    await assert.rejects(readRunState(run), /结果评测器版本与收据不一致/);
+    await writeJsonl(comparisonFile, comparisonRows);
     assert.equal((await readJson(path.join(run, "stats.json"))).validation, undefined);
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：尚未校验/);
     await runEvaluation(options);
@@ -207,6 +225,7 @@ test("different runs and batches evaluate independently", async () => {
       output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       ...services,
       policy: config.execution,
@@ -286,6 +305,7 @@ for (const missingArtifact of [false, true])
         output: config.output,
         engine: "pi",
         identity: fakeIdentity,
+        evaluatorVersion: fakeEvaluatorVersion,
         config,
         ...services,
         logger: createFileLogger({
@@ -375,6 +395,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       output: config.output,
       engine: "pi",
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       identities: { prime: primeIdentity },
       engineForTask: (task) =>
         Object.values((task.data as TaskData).candidates).some((c) => c.version.includes("expert"))
@@ -451,6 +472,7 @@ for (const debug of [false, true])
         output: config.output,
         engine: "pi" as const,
         identity: fakeIdentity,
+        evaluatorVersion: fakeEvaluatorVersion,
         config,
         ...services,
         plan: await buildPlan(config),
@@ -476,10 +498,16 @@ for (const debug of [false, true])
       const run = path.join(config.output.path, "resume");
       assert.match(await readFile(path.join(run, "task_summaries.md"), "utf8"), /Interrupted/);
       const saved = await readRunState(run);
+      assert.ok(Object.values(saved.receipts).length > 0, "the interrupted run keeps accepted work");
+      assert.deepEqual(
+        [...new Set(Object.values(saved.receipts).map((receipt) => receipt.evaluatorVersion))],
+        [fakeEvaluatorVersion],
+      );
       await writeRunState(run, saved);
       resume = true;
       const complete = await runEvaluation({
         ...options,
+        evaluatorVersion: "fixture-2",
         config: {
           ...config,
           inputs: { ...config.inputs, batches: ["2026-09-23"] },
@@ -494,11 +522,27 @@ for (const debug of [false, true])
         },
       });
       assert.equal(complete.completed_comparisons, 2);
+      assert.deepEqual(complete.evaluator_versions, [fakeEvaluatorVersion, "fixture-2"].sort());
+      assert.deepEqual(complete.judge_models, {
+        attribution: ["changed-model", "fixture"], comparison: ["changed-model"],
+      });
       assert.equal(await exists(failureFile), false, "resume must remove stale failure exports");
       assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);
+      assert.equal(completedState.manifest.evaluatorVersion, "fixture-2");
+      assert.equal(
+        [...new Set(Object.values(completedState.receipts).map((receipt) => receipt.evaluatorVersion))]
+          .sort()
+          .join("\u0000"),
+        [fakeEvaluatorVersion, "fixture-2"].sort().join("\u0000"),
+        "accepted receipts keep the version they were produced with",
+      );
+      for (const receipt of Object.values(completedState.receipts)) {
+        assert.equal(receipt.exported?.row.evaluator_version, receipt.evaluatorVersion);
+        assert.equal(receipt.judge, receipt.evaluatorVersion === fakeEvaluatorVersion ? "fixture" : "changed-model");
+      }
       assert.deepEqual(
         completedState.manifest.tasks,
         saved.manifest.tasks,

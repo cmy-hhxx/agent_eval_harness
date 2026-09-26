@@ -11,7 +11,7 @@ import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
-import { fixtureConfig, raw } from "../fixtures/comparison.js";
+import { fakeEvaluatorVersion, fixtureConfig, raw } from "../fixtures/comparison.js";
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
@@ -217,6 +217,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           debug: engine === "pi",
           output: config.output,
           engine,
+          evaluatorVersion: fakeEvaluatorVersion,
           config,
           ...services,
           plan: await buildPlan(config),

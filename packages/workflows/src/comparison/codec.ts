@@ -156,6 +156,14 @@ function resultEvaluation(data: TaskData, row: JsonObject): unknown {
 function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => JsonObject): RunState {
   const { tasks: savedTasks, inputs, usage, recordedAttempts, ...metadata } = checkpoint;
   if (metadata.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
+  if (typeof metadata.evaluatorVersion !== "string" || !metadata.evaluatorVersion.trim())
+    throw new Error("运行状态缺少评测器版本");
+  const resultRow = (receipt: SavedReceipt, ref: ResultReference) => {
+    const row = getRow(ref);
+    if (row.evaluator_version !== receipt.evaluatorVersion)
+      throw new Error("结果评测器版本与收据不一致：" + ref.id);
+    return row;
+  };
   const catalog = Object.entries(inputs).map(([input_id, c]) => ({
     ...c,
     input_id,
@@ -217,7 +225,7 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       if (receipt.exported.taskId !== task.id)
         throw new Error("聚类结果引用与任务不一致：" + task.id);
       const file = receipt.exported.file || resultFile("clustering");
-      const row = getRow({ id: receipt.exported.taskId, file });
+      const row = resultRow(receipt, { id: receipt.exported.taskId, file });
       if (
         row.clustering_type !== "problem_library" ||
         row.task_id !== task.id ||
@@ -243,7 +251,7 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       if (receipt.exported.taskId !== source.taskId)
         throw new Error("改写结果引用与源任务不一致：" + task.id);
       const file = receipt.exported.file || resultFile("rewrite");
-      const row = getRow({ id: receipt.exported.taskId, file });
+      const row = resultRow(receipt, { id: receipt.exported.taskId, file });
       if (
         row.commentary_type !== source.stage ||
         row.source_task_id !== source.taskId ||
@@ -270,7 +278,7 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       throw new Error("结果引用类型或任务身份不一致：" + task.id);
     const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
     const file = receipt.exported.file || resultFile(correctness ? "attribution" : "comparison");
-    const row = getRow({ file, id: resultId });
+    const row = resultRow(receipt, { file, id: resultId });
     if (
       canonical(row.case) !==
         canonical({

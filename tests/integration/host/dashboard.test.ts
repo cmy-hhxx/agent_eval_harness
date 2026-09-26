@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { mkdir, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
@@ -10,7 +12,8 @@ import { json, listen } from "@eval/runtime/http";
 import {
   attributionRow, buildPlan, listInputInventory, listRunCases, readCaseDetail, readRegisteredInput, writeRunState,
 } from "@eval/workflows/comparison";
-import { attributionResult, emptyAudit, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { ROOT } from "../../fixtures/services.js";
 
 const gateway = "https://private-gateway.example/v1";
 
@@ -20,6 +23,7 @@ async function setup(rewrite = false, clustering = false) {
   ], rewrite, clustering);
   const configFile = path.join(directory, "dashboard-config.json");
   await writeJson(configFile, {
+    evaluatorVersion: fakeEvaluatorVersion,
     inputs: config.inputs,
     comparisons: config.comparisons,
     rewrite: config.rewrite,
@@ -48,6 +52,8 @@ async function setup(rewrite = false, clustering = false) {
   const receipt: SubmissionReceipt = {
     taskId: task.id, attemptId: "attempt-1", submissionId: "submission-1",
     evaluation: attributionResult(), audit: emptyAudit(), usage: emptyUsage(),
+    evaluatorVersion: fakeEvaluatorVersion,
+    judge: "fixture-model",
     acceptedAt: Date.now(), status: "succeeded",
   };
   const row = attributionRow(task, receipt);
@@ -55,6 +61,7 @@ async function setup(rewrite = false, clustering = false) {
   const state: RunState = {
     manifest: {
       format: "evaluation-run", runId: "run-one", status: "interrupted", engine: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config, debug: false, tasks: plan.tasks, inputCatalog: plan.catalog,
       inputs: Object.fromEntries(Object.keys(plan.inputs).map((id) => [id, { id, name: id }])),
       states: Object.fromEntries(plan.tasks.map((item) => [item.id, {
@@ -101,6 +108,7 @@ async function setup(rewrite = false, clustering = false) {
           merged_into: null,
           first_seen: {
             run_id: "run-one",
+            evaluator_version: fakeEvaluatorVersion,
             batch_id: "b1",
             case_id: "q1",
             input_id: "in-1",
@@ -123,6 +131,7 @@ async function setup(rewrite = false, clustering = false) {
           id: "o1",
           class_id: "k1",
           version: "a_fast",
+          evaluator_version: fakeEvaluatorVersion,
           batch_id: "b1",
           case_id: "q1",
           input_id: "in-1",
@@ -141,6 +150,7 @@ async function setup(rewrite = false, clustering = false) {
           id: "o2",
           class_id: "k1",
           version: "a_fast",
+          evaluator_version: fakeEvaluatorVersion,
           batch_id: "b1",
           case_id: "q2",
           input_id: "in-2",
@@ -219,6 +229,28 @@ test("input inventory lists dates and cases from the configured sources", async 
   }
 });
 
+test("dashboard input inventory scans large source files under a bounded heap", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const largeAnswer = "x".repeat(14 * 1024 * 1024);
+    for (const version of config.inputs.versions)
+      await writeJsonl(version.sources[0]!.path, [raw("q1", null, largeAnswer)]);
+    const file = path.join(directory, "inventory-config.json");
+    await writeJson(file, config);
+    const script = `import { readFile } from "node:fs/promises";
+      import { listInputInventory } from "@eval/workflows/comparison";
+      const config = JSON.parse(await readFile(process.argv[1], "utf8"));
+      const inventory = await listInputInventory(config);
+      console.log(JSON.stringify({ cases: inventory.dates[0]?.cases.length, versions: inventory.dates[0]?.versions.length, issues: inventory.issues }));`;
+    const { stdout } = await promisify(execFile)(process.execPath,
+      ["--max-old-space-size=80", "--input-type=module", "-e", script, file],
+      { cwd: ROOT, timeout: 20000 });
+    assert.deepEqual(JSON.parse(stdout), { cases: 1, versions: 4, issues: 0 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("dashboard view projects rewrite tasks onto their source sample", async () => {
   const fixture = await setup(true);
   try {
@@ -258,6 +290,7 @@ test("dashboard keeps clustering tasks run-level and never mixes them into cases
     assert.equal(detail.tasks.filter((task: { stage: string }) => task.stage === "clustering").length, 0);
     const listing = await (await fetch(`${server.url}/api/dashboard/runs`)).json();
     assert.equal(listing.runs[0].stages.clustering.pending, 2, "one clustering task per model");
+    assert.equal(listing.runs[0].evaluator_version, fakeEvaluatorVersion);
     assert.equal(listing.runs[0].problem_library.a_fast.classes, 1, "library growth rides the run overview");
     const library = await (await fetch(`${server.url}/api/dashboard/runs/run-one/library`)).json();
     assert.equal(library.length, 1);
@@ -265,6 +298,7 @@ test("dashboard keeps clustering tasks run-level and never mixes them into cases
     assert.equal(library[0].totals.classes, 1);
     assert.equal(library[0].totals.occurrences, 2);
     assert.equal(library[0].components[0].classes[0].label, "算术错误");
+    assert.equal(library[0].components[0].classes[0].first_seen.evaluator_version, fakeEvaluatorVersion);
     assert.deepEqual(library[0].merged, [
       { id: "k2", label: "计算笔误", into: "k1", into_label: "算术错误", reason: "同一现象。" },
     ]);
@@ -273,6 +307,7 @@ test("dashboard keeps clustering tasks run-level and never mixes them into cases
     ).json();
     assert.equal(classDetail.total, 2);
     assert.equal(classDetail.occurrences[0].case_id, "q1", "newest occurrence first");
+    assert.equal(classDetail.occurrences[0].evaluator_version, fakeEvaluatorVersion);
     assert.equal(classDetail.occurrences[0].quote, "2+2=5");
     assert.equal(classDetail.occurrences[1].previous_class_id, "k2");
     assert.equal(classDetail.class.aliases[0], "计算错误");

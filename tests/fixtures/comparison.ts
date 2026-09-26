@@ -14,6 +14,10 @@ export const fakeIdentity: EngineIdentity = {
   commit: "fixture",
   buildId: "fixture",
 };
+/** Evaluation identity for hand-built manifests and receipts. */
+export const fakeEvaluatorVersion = "fixture";
+/** Resolved model ID for hand-built receipts. */
+export const fakeJudge = "fixture";
 export const emptyAudit = (): ToolAudit => ({
   calls: 0,
   viewedImages: [],
@@ -78,7 +82,12 @@ export async function fixtureConfig(
   }
   host.models.models.judge!.model = "fixture";
   host.models.models.judge!.thinking = "off";
-  return { directory, config, models: host.models, modelForStage: createModelResolver(host.models) };
+  return {
+    directory,
+    config,
+    models: host.models,
+    modelForStage: createModelResolver(host.models),
+  };
 }
 
 export function attributionResult(correct = true, answer = "2+2=4", available = true): AttributionResult {

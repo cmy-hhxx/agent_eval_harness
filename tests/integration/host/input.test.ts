@@ -8,7 +8,7 @@ import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData } from "@eval/workflows/comparison";
-import { emptyAudit, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
+import { emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
 import { emptyUsage } from "@eval/contracts";
 import { ArtifactStore, compressFile, readJsonl, writeJsonl } from "@eval/data";
@@ -364,6 +364,8 @@ test("submission feedback locates invalid comparison references", async () => {
           attemptId: `a-${label}`,
           submissionId: id,
           evaluation: attributionResult(true, "2+2=4", false),
+          evaluatorVersion: fakeEvaluatorVersion,
+          judge: fakeJudge,
           audit: emptyAudit(),
           usage: emptyUsage(),
           status: "succeeded" as const,
@@ -395,6 +397,22 @@ test("submission feedback locates invalid comparison references", async () => {
       finding_index: 0,
     }));
     validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("config requires an explicit evaluator version", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
+    delete source.evaluatorVersion;
+    const file = path.join(directory, "missing-version.json");
+    await writeFile(file, JSON.stringify(source));
+    await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "http://127.0.0.1:1/v1" }), /evaluatorVersion/);
+    source.evaluatorVersion = "  ";
+    await writeFile(file, JSON.stringify(source));
+    await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "http://127.0.0.1:1/v1" }), /evaluatorVersion/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

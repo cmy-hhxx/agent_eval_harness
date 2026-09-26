@@ -4,6 +4,7 @@
   "additionalProperties": false,
   "required": [
     "clustering_type",
+    "evaluator_version",
     "task_id",
     "model",
     "batch_id",
@@ -15,6 +16,10 @@
       "enum": [
         "problem_library"
       ]
+    },
+    "evaluator_version": {
+      "type": "string",
+      "minLength": 1
     },
     "task_id": {
       "type": "string",

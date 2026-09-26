@@ -198,7 +198,7 @@ export interface ProblemClassView {
   definition: string;
   aliases: string[];
   occurrences: number;
-  first_seen: { batch_id: string; case_id: string; at: string } | null;
+  first_seen: { batch_id: string; case_id: string; evaluator_version: string; at: string } | null;
 }
 export interface ProblemLibraryView {
   model: string;
@@ -254,6 +254,7 @@ export async function listProblemLibrary(run: string): Promise<ProblemLibraryVie
               ? {
                   batch_id: problem.first_seen.batch_id,
                   case_id: problem.first_seen.case_id,
+                  evaluator_version: problem.first_seen.evaluator_version,
                   at: problem.first_seen.at,
                 }
               : null,
@@ -320,6 +321,7 @@ export async function readProblemClass(run: string, model: string, classId: stri
       batch_id: occurrence.batch_id,
       case_id: occurrence.case_id,
       version: occurrence.version,
+      evaluator_version: occurrence.evaluator_version,
       finding_id: occurrence.finding_id,
       message_index: occurrence.message_index,
       quote: occurrence.quote,

@@ -13,7 +13,7 @@ import {
 } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateEvaluation } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 function comparisonTask(plan: TaskPlan): PlannedTask {
   return plan.tasks.find((task) => task.stage === "comparison")!;
@@ -26,6 +26,8 @@ function attributionReceipts(task: PlannedTask, correct = true): Map<string, Sub
       attemptId: `a-${label}`,
       submissionId: randomUUID(),
       evaluation: attributionResult(correct, "2+2=4", false),
+      evaluatorVersion: fakeEvaluatorVersion,
+      judge: fakeJudge,
       audit: emptyAudit(),
       usage: emptyUsage(),
       status: "succeeded",
@@ -99,7 +101,7 @@ test("two-way verdicts are derived from ranking and core classification", async 
       pairKey = "a_fast__vs__aa_fast";
 
     const oneSided = group(labels, { [labels[0]!]: true, [labels[1]!]: false });
-    const win = comparisonRow(plan.inputs, task, oneSided, receipts, names);
+    const win = comparisonRow(plan.inputs, task, oneSided, receipts, names, fakeEvaluatorVersion);
     const winVerdict = (win.verdicts as Record<string, { result: string; winner_version: string }>)[
       pairKey
     ]!;
@@ -108,7 +110,7 @@ test("two-way verdicts are derived from ranking and core classification", async 
 
     const nearMiss = group(labels);
     nearMiss.ranking = [[labels[0]!], [labels[1]!]];
-    const tiered = comparisonRow(plan.inputs, task, nearMiss, receipts, names);
+    const tiered = comparisonRow(plan.inputs, task, nearMiss, receipts, names, fakeEvaluatorVersion);
     assert.equal(
       (tiered.verdicts as Record<string, { result: string; winner_version: string }>)[pairKey]!.result,
       "win",
@@ -120,10 +122,11 @@ test("two-way verdicts are derived from ranking and core classification", async 
       group(labels, Object.fromEntries(labels.map((label) => [label, false]))),
       receipts,
       names,
+      fakeEvaluatorVersion,
     );
     assert.equal((allBad.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_bad");
 
-    const even = comparisonRow(plan.inputs, task, group(labels), receipts, names);
+    const even = comparisonRow(plan.inputs, task, group(labels), receipts, names, fakeEvaluatorVersion);
     assert.equal((even.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_good");
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -145,6 +148,7 @@ test("report aggregates rankings and derived verdicts", async () => {
         runId: "verdicts",
         status: "finished" as const,
         engine: fakeIdentity,
+        evaluatorVersion: fakeEvaluatorVersion,
         config,
         tasks: plan.tasks,
         inputs: {},
@@ -164,6 +168,8 @@ test("report aggregates rankings and derived verdicts", async () => {
       attemptId: "cmp",
       submissionId: randomUUID(),
       evaluation: group(labels),
+      evaluatorVersion: fakeEvaluatorVersion,
+      judge: fakeJudge,
       audit: emptyAudit(),
       usage: emptyUsage(),
       status: "succeeded",

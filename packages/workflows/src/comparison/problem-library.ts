@@ -56,6 +56,7 @@ export async function syncProblemLibrary(
         const before = library;
         library = applyClustering(library, {
           run_id: state.manifest.runId,
+          evaluator_version: receipt.evaluatorVersion,
           task_id: task.id,
           submission_id: receipt.submissionId,
           version: model,

@@ -34,6 +34,7 @@ export interface RunOptions extends EvaluationServices {
   runId: string;
   output: OutputTarget;
   engine: Engine;
+  evaluatorVersion: string;
   config: unknown;
   plan: TaskPlan;
   policy: Policy;
@@ -51,6 +52,8 @@ export interface RunOptions extends EvaluationServices {
 }
 export async function runEvaluation(options: RunOptions) {
   safeId(options.runId);
+  if (typeof options.evaluatorVersion !== "string" || !options.evaluatorVersion.trim())
+    throw new Error("evaluatorVersion must be a non-empty string");
   const layout = runLayout(options.output, options.runId),
     run = layout.directory,
     unlock = await runLock(run);
@@ -85,6 +88,7 @@ export async function runEvaluation(options: RunOptions) {
         inputs = (await options.workflow.reconcile(run, saved, options.config)).inputs;
       else inputs = options.plan.inputs;
       saved.manifest.engine = identity;
+      saved.manifest.evaluatorVersion = options.evaluatorVersion;
       if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
       if ((await localFiles.list(run)).some((name) => name !== ".run-lock"))
@@ -99,6 +103,7 @@ export async function runEvaluation(options: RunOptions) {
           runId: options.runId,
           status: "running",
           engine: identity,
+          evaluatorVersion: options.evaluatorVersion,
           config: options.config,
           tasks: options.plan.tasks,
           inputCatalog: options.plan.catalog,

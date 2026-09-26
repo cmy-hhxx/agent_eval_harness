@@ -179,6 +179,7 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
       runId: "dependent",
       config: {},
       engine: "pi" as const,
+      evaluatorVersion: "fixture",
       identity,
       output: { kind: "directory" as const, path: directory },
       plan: dependentPlan,
@@ -292,6 +293,7 @@ test("parallel runs isolate sessions, workspaces, results and cancellation; comp
   const options = {
     config: {},
     engine: "pi" as const,
+    evaluatorVersion: "fixture",
     identity,
     output: { kind: "directory" as const, path: directory },
     plan,

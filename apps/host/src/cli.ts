@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     (await exists(runLayout(config.output, values["run-id"]).stateFile));
   const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await comparisonWorkflow.plan(config);
   if (command === "preflight") {
-    console.log(JSON.stringify(plan.summary, null, 2));
+    console.log(JSON.stringify({ evaluator_version: host.evaluatorVersion, ...plan.summary }, null, 2));
     if ((plan.summary.issues as unknown[]).length) {
       await logger.error(
         `Input preflight found ${(plan.summary.issues as unknown[]).length} issues; inspect the command output`,
@@ -183,6 +183,7 @@ async function main(): Promise<void> {
       runId: logRunId,
       output: config.output,
       engine,
+      evaluatorVersion: host.evaluatorVersion,
       config,
       ...services,
       plan,

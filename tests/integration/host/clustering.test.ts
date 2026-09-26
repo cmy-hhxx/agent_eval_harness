@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentBackend, JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
-import { exists, readJson, readJsonl, writeJson } from "@eval/data";
+import { exists, readJson, readJsonl, writeJson, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { emptyLibrary, type ClusteringResult } from "@eval/agents/clustering";
 import { runEvaluation } from "@eval/host";
 import { buildPlan, reportRun, readRunState, syncProblemLibrary } from "@eval/workflows/comparison";
 import type { AttributionResult } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { attributionResult, draftFor, fakeIdentity, fixtureConfig, raw, taskResult } from "../../fixtures/comparison.js";
+import { attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -82,6 +82,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       ...services,
       plan,
@@ -126,6 +127,12 @@ test("clustering builds a bounded per-model library and recalls classes across r
     assert.equal(stats.a_fast!.occurrences, 2);
     assert.equal(stats.a_fast!.proposed_new_classes, 1);
     assert.equal((await validateRun(run)).valid, true);
+    const clusteringFile = path.join(run, "results", "clustering.jsonl");
+    await writeJsonl(clusteringFile, [
+      { ...clustering[0], evaluator_version: "wrong" }, ...clustering.slice(1),
+    ]);
+    await assert.rejects(readRunState(run), /结果评测器版本与收据不一致/);
+    await writeJsonl(clusteringFile, clustering);
 
     // Rebuilding a report re-applies receipts idempotently: no duplicate classes or occurrences.
     await reportRun(run);
@@ -207,6 +214,7 @@ test("two runs writing the same model cannot lose each other's occurrences", asy
     const dependencyId = task.dependencies[inputId]!;
     const receipt = (run: string): SubmissionReceipt => ({
       submissionId: run,
+      evaluatorVersion: fakeEvaluatorVersion,
       evaluation: proposedClass(),
     }) as SubmissionReceipt;
     const state = (run: string): RunState => ({
@@ -255,6 +263,7 @@ test("a model over the library cap cannot partially commit another model", async
         receipts[dependency] = { evaluation: attributionResult(false) };
       receipts[task.id] = {
         submissionId: `s-${task.id}`,
+        evaluatorVersion: fakeEvaluatorVersion,
         evaluation: proposedClass(),
       };
     }
@@ -278,6 +287,7 @@ test("a clustering task over budget fails without growing the library", async ()
       output: config.output,
       engine: "pi" as const,
       identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       ...services,
       plan: await buildPlan(config),

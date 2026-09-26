@@ -35,6 +35,7 @@ EVAL_API_KEY=your-key
 
 | 配置 | 含义 |
 |---|---|
+| `evaluatorVersion` | 评测器标识，必填非空字符串；写入每条正式结果的 `evaluator_version`，影响判词的变更必须更新它，详见[契约](contract.md#评测器版本标识) |
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内所有版本在同一次判断中排名，不限定数量 |
@@ -152,7 +153,7 @@ npm run eval -- run --engine pi --run-id daily-a --batch <batch_id_a> --batch <b
   --config configs/host.json --config configs/local/models.json
 ```
 
-再次执行相同 `--run-id` 自动续跑。Host 从 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型和预算变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。模型服务端缓存行为保持不变。
+再次执行相同 `--run-id` 自动续跑。Host 从 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型、预算和评测器版本变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。同一 run 可以混合多个 `evaluatorVersion`：已接受行保留各自版本，未完成任务使用当前配置的版本，行内 `evaluator_version` 与 `stats.json` 的 `evaluator_versions` 可区分。模型服务端缓存行为保持不变。
 
 改写与聚类开关可以随续跑变化：开启后为已接受的归因/对比结果补齐改写任务、为该模型批次补齐聚类任务；关闭后不再计划未完成的对应任务；已接受的收据和正式评测结果都保留。
 
@@ -179,7 +180,7 @@ bash run.sh
 
 `run.sh` 每次重建 Host 和看板，默认使用 `configs/host.json`；若存在 `configs/local/models.json`，还会加载本地模型配置。默认监听 `127.0.0.1:4173`，按 `Ctrl+C` 停止。需要自定义端口或配置文件时，仍可直接使用 `npm run eval -- dashboard --port <端口> --config <配置文件>`。
 
-打开终端输出的地址即可点击左侧运行，按批次和 case 查看原始评测输入、各版本回答，以及归因、对比和改写 Agent 的任务状态与正式输出；运行总览显示各阶段进度（含聚类）和该 run 结束时的 `stats.json` 问题库规模，聚类按模型×批次统计、不挂在单个 case 上。运行总览下方是只读的「问题库」面板：按本 run 计划聚类的模型展示当前共享库中的组件与活跃类；点击类可查看定义、别名、首次出现和逐条出现样本（批次/case/证据引文/源文件位置），合并记录在模型列表中。样本列表可分页并可按 case / 问题搜索。原始输入按 run 登记的 `input_id` 从数据源现读，来源变化时显示当前源记录或材料不可用；已接受结论始终来自正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，仅在可信本机打开看板。
+打开终端输出的地址即可点击左侧运行，按批次和 case 查看原始评测输入、各版本回答，以及归因、对比和改写 Agent 的任务状态与正式输出；输入盘点逐行读取大 JSONL，仅保留样本索引，不把全部回答常驻内存；运行总览显示各阶段进度（含聚类）和该 run 结束时的 `stats.json` 问题库规模，聚类按模型×批次统计、不挂在单个 case 上。运行总览下方是只读的「问题库」面板：按本 run 计划聚类的模型展示当前共享库中的组件与活跃类；点击类可查看定义、别名、首次出现和逐条出现样本（批次/case/证据引文/源文件位置），合并记录在模型列表中。样本列表可分页并可按 case / 问题搜索。原始输入按 run 登记的 `input_id` 从数据源现读，来源变化时显示当前源记录或材料不可用；已接受结论始终来自正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，仅在可信本机打开看板。
 
 「开始评测」选择本次运行的日期（数据源目录，默认全选；胶囊显示当前模型下可评测 case 数/总数）、模型（默认全选，至少两个同组模型）和抽样数量（留空即全部）；运行 ID 由看板自动生成，不需要填写。日期选择会转换为已登记的 `batch_id` + case 过滤写入运行配置，评测契约仍以 `batch_id` 为准。预检不调用模型、不创建 run，确认后才启动；阶段模型 ID / 推理等级、并发、超时、工具调用、传输重试预算、改写开关、聚类开关和 Debug 收在「高级设置」。设置不改写 `configs/host.json` 或本地模型文件；网关地址、密钥、输入和输出路径不在页面编辑，密钥值不会发送给浏览器。预检所用来源可能在启动前变化，启动时会重新读取。看板可以启动 Pi / Prime 运行、停止当前运行、动态调整并发，并从运行详情按钮续跑未完成任务；停止不会删除已接受结果。续跑沿用原批次、模型和抽样范围；已接受任务不重评，本次设置仅作用于未完成任务。停止和并发控制仍由 Host 持有运行锁令牌，看板只转发操作，不在页面暴露令牌。看板不提供远程认证，只监听本机回环地址，不应绑定到公网地址。
 
@@ -190,13 +191,13 @@ bash run.sh
 | 文件 | 用途 |
 |---|---|
 | `report.md` | 总览、分批样本、排名与对局矩阵、异常数量、用量缺失和校验状态；开启改写时优先展示润色文案 |
-| `results/comparison.jsonl` | 每组的正式对比结果（排名、核心判定与派生两两判决），接受后追加并刷盘，运行中即可读取 |
-| `results/commentary.jsonl` | 已接受结论的润色文案，按 `source_task_id` / `source_result_id` 关联正式结果；正式 JSONL 保留裁判原文 |
-| `results/attribution.jsonl` | 每条回答的归因判决与证据，按任务 ID 引用，成功提交后追加并刷盘；每条回答都会归因 |
-| `results/clustering.jsonl` | 每个模型×批次分片的归类决定（观察、归类、新类与合并），run 结束应用进问题库 |
+| `results/comparison.jsonl` | 每组的正式对比结果（排名、核心判定与派生两两判决），行内 `evaluator_version` 标识产出评测器；接受后追加并刷盘，运行中即可读取 |
+| `results/commentary.jsonl` | 已接受结论的润色文案，行内 `evaluator_version` 标识产出评测器；按 `source_task_id` / `source_result_id` 关联正式结果，正式 JSONL 保留裁判原文 |
+| `results/attribution.jsonl` | 每条回答的归因判决与证据，行内 `evaluator_version` 标识产出评测器；按任务 ID 引用，成功提交后追加并刷盘；每条回答都会归因 |
+| `results/clustering.jsonl` | 每个模型×批次分片的归类决定（观察、归类、新类与合并），行内 `evaluator_version` 标识产出评测器；run 结束应用进问题库 |
 | `task_summaries.md` | 以 `batch_id / case_id` 标识逐题结论、双方优缺点、耗时，以及失败、输入跳过原因和输入异常；开启改写时优先展示润色文案 |
-| `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、结果引用、待修草稿与错误、累计用量；候选信息仅登记一次 |
-| `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `artifacts` 产物清单；不包含逐题 ID 或异常明细 |
+| `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、当前 `evaluatorVersion` 与引擎身份、结果引用、待修草稿与错误、累计用量；已接受收据保留产出时的评测器版本与判官模型 ID（不保存连接配置）；候选信息仅登记一次 |
+| `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `evaluator_versions`、`judge_models`（按阶段列出去重的模型 ID）和 `artifacts` 产物清单；不包含逐题 ID 或异常明细 |
 
 `stats.json` 保存 `standings`（每个版本参赛数、完成核心要求、首位、平均层、胜/都好/都差）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。失败和待完成按任务计数，计划任务包含归因、对比，以及开启时的改写与聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
 
@@ -214,7 +215,7 @@ bash run.sh
 | `_internal/tasks/<id>/artifacts/` | 成功及失败尝试的脚本、stdout/stderr 和生成文件 |
 | `_internal/diagnostics/` | 有记录才生成的 `failures.jsonl`、`skipped.jsonl` |
 | `_internal/diagnostics/validation.json` | `validate` 发现正式结果错误时写出的校验详情；完整当次诊断也会输出到终端 |
-| `_internal/exports/` | `report --details` 按需生成的 `task_summaries.jsonl`、`task_outcomes.jsonl`；后续重建报告时一并刷新 |
+| `_internal/exports/` | `report --details` 按需生成的 `task_summaries.jsonl`（含对应对比行的 `evaluator_version`）、`task_outcomes.jsonl`；后续重建报告时一并刷新 |
 
 归因、对比与改写阶段均在接受提交时先原子保存待落盘收据，再向结果 JSONL 追加并刷盘，随后将状态中的判决正文替换为结果引用。成功任务清除失败草稿和错误上下文，保留提交统计及重复错误计数。两次写入之间崩溃可从待落盘收据恢复；完成后正式 JSONL 是判决的唯一持久存储，不能删除它来清理空间。状态保留恢复原始提交所需的少量字段差异，以便同一提交 UUID 重发时确认内容一致。续跑可清除相同的重复行和中断尾行，冲突结果会报错；已压缩为引用的正式结果若丢失则明确报错，不自动重评。
 

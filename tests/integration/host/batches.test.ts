@@ -10,7 +10,7 @@ import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
 import type { BatchPreflight, EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { comparisonResult, emptyAudit, fakeIdentity, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
+import { comparisonResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 
 const firstDay = "2026-09-23",
   secondDay = "2026-09-24";
@@ -25,6 +25,7 @@ function runState(config: EvalConfig, plan: TaskPlan): RunState {
       runId: "batches",
       status: "finished",
       engine: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion,
       config,
       tasks: plan.tasks,
       inputs: {},
@@ -46,6 +47,8 @@ function accept(state: RunState, id: string, evaluation: unknown) {
     attemptId: id,
     submissionId: randomUUID(),
     evaluation,
+    evaluatorVersion: fakeEvaluatorVersion,
+    judge: fakeJudge,
     audit: emptyAudit(),
     usage: emptyUsage(),
     acceptedAt: 1,
