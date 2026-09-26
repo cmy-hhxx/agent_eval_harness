@@ -8,7 +8,8 @@
 
 归因树（只挂问题型 finding）：
 - type 只能取 strength 或 problem。strength 的 problem 必须为 null，不挂归因节点；只有 problem 型 finding 才挂到归因树。
-- problem 型 finding 的 problem.component 是工具/组件大类，例如具体工具名或「模型自身推理」；problem.label 是该类下的问题名。
+- problem 型 finding 的 problem.component 必须具体到工具：写该回答调用链里实际出现的工具名（与材料 catalog 的 name 一致，例如 Search、FinQuery、web_search、finquery），不要写成「Context Recall」「上下文召回」「检索阶段」这类能力/阶段名，也不要拼成复合名。与工具无关的推理或表达问题才写「模型自身推理」。
+- problem.label 是该工具下的具体问题名，例如「多次取数失败后才成功」。
 - 先召回：输入 library.components 列出该模型已知的组件与问题，以及每个问题已发生的样本数。能对上已有问题时必须复用其 id，填入 problem.node_id，并沿用其 component/label/definition；node_id 只能取 library 中列出的 id。
 - 找不到对应问题时才新建：problem.node_id 填 null，并给出准确的 component、label、definition。不要为同一现象重复造新标签。
 - 每个 finding 都要有本条回答内唯一的 finding_id（1–64 个字符）；它用于归因树的出现样本血缘，证据展开后仍会保留。

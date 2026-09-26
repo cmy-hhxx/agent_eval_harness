@@ -87,7 +87,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。归因树是每个模型一份的跨 run 问题库：按组件/问题归类、出现样本可双向追溯、合并保留血缘，只追加不覆盖（参见[使用指南](usage.md#目录约定)）。
 
-归因已实现于 `packages/agents/src/attribution`：每个模型一棵归因树（问题库），按组件/工具大类归类问题并保留样本血缘；后续聚类预留 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
+归因已实现于 `packages/agents/src/attribution`：每个模型一棵归因树（问题库），按具体工具（或「模型自身推理」）归类问题并保留样本血缘；后续聚类预留 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
 
 改写已实现于 `packages/agents/src/rewrite`：它只接收 Workflow 选定的文本槽位，输出同 id 的润色文本；正式结果 JSONL 保留裁判原文，改写写入 `results/commentary.jsonl`，报告与逐题总结优先展示改写文案。
 

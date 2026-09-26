@@ -54,3 +54,30 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
     /不在该模型的归因树/,
   );
 });
+
+test("problem components must name a tool from the answer call chain", () => {
+  const request = structuredClone(example.request);
+  (request.input.candidates.A as { catalog?: { name?: string }[] }).catalog = [
+    { name: "Search" },
+    { name: "FinQuery" },
+  ];
+  const finding = (component: string) => ({
+    ...example.result,
+    findings: [
+      {
+        ...example.result.findings[0],
+        type: "problem",
+        problem: { node_id: null, component, label: "取数失败", definition: "多次查询失败" },
+      },
+    ],
+  });
+  attributionProfile.validate!(request, finding("Search"), audit);
+  attributionProfile.validate!(request, finding("search"), audit);
+  attributionProfile.validate!(request, finding("模型自身推理"), audit);
+  for (const component of ["Context Recall", "上下文召回", "检索阶段", "WebSearch"])
+    assert.throws(
+      () => attributionProfile.validate!(request, finding(component), audit),
+      /调用链中的工具名/,
+      component,
+    );
+});

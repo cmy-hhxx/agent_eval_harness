@@ -75,7 +75,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 ## 归因与判决
 
-每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 必须挂到归因树节点：优先召回已有节点（`problem.node_id`），没有对应节点时填 `null` 并给出 `component`/`label`/`definition`，组件是工具/大类。
+每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 必须挂到归因树节点：优先召回已有节点（`problem.node_id`），没有对应节点时填 `null` 并给出 `component`/`label`/`definition`；组件必须是该回答调用链中的具体工具名（与材料 `catalog` 的 `name` 一致），与工具无关的问题用「模型自身推理」，不得使用能力/阶段名。
 
 对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建归因节点，也不新增 finding。
 

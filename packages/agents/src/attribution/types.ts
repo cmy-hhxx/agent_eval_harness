@@ -38,7 +38,7 @@ export interface TaskAnalysis {
 export interface ProblemRef {
   /** Existing problem node ID when recalled; null means "propose a new node". */
   node_id: string | null;
-  /** Tool/component class, e.g. a specific tool name. Top-level category of the tree. */
+  /** Concrete tool name from the evaluated answer's call chain, or 模型自身推理. Top-level category of the tree. */
   component: string;
   label: string;
   definition: string;

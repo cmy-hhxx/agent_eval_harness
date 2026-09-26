@@ -18,6 +18,7 @@ interface Input {
     {
       final_message_index: number;
       original_answer_timing: { finish_seconds: number | null };
+      catalog?: { name?: string | null }[];
     }
   >;
 }
@@ -56,6 +57,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
 
   const known = new Set(input.library.components.flatMap((component) => component.problems.map((p) => p.id)));
+  const normalize = (value: string): string => value.trim().replace(/\s+/gu, " ").toLowerCase();
+  const tools = new Set(
+    (input.candidates.A?.catalog ?? []).flatMap((message) => (message?.name ? [normalize(message.name)] : [])),
+  );
+  const toolNames = [...new Set((input.candidates.A?.catalog ?? []).map((message) => message.name).filter(Boolean))];
   const findingIds = new Set<string>();
   value.findings.forEach((finding, index) => {
     if (findingIds.has(finding.finding_id))
@@ -83,6 +89,19 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       );
     if (finding.type === "problem" && finding.problem === null)
       issue("problem_required", `/findings/${index}/problem`, "问题型发现必须挂到归因节点");
+    if (
+      finding.type === "problem" &&
+      finding.problem &&
+      normalize(finding.problem.component) !== normalize("模型自身推理") &&
+      !tools.has(normalize(finding.problem.component))
+    )
+      issue(
+        "problem_component_not_tool",
+        `/findings/${index}/problem/component`,
+        "problem.component 必须是该回答调用链中的工具名，或「模型自身推理」；不要用阶段/能力名",
+        finding.problem.component,
+        toolNames.join(", ") || "模型自身推理",
+      );
     if (finding.problem?.node_id != null && !known.has(finding.problem.node_id))
       issue(
         "problem_node_unknown",
