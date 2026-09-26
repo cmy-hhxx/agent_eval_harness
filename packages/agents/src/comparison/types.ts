@@ -1,12 +1,21 @@
 import type { JsonObject } from "@eval/contracts";
+
 export interface Evidence {
   message_index: number;
   quote: string;
 }
 export interface Finding {
   type: "strength" | "problem";
-  dimension: string;
-  stage: string;
+  dimension:
+    | "correctness"
+    | "completeness"
+    | "instruction_following"
+    | "evidence_quality"
+    | "reasoning"
+    | "format"
+    | "relevance"
+    | "efficiency";
+  stage: "context_recall" | "reasoning" | "execution" | "final_answer";
   importance: "high" | "medium" | "low";
   text: string;
   reason: string;
@@ -19,32 +28,34 @@ export interface Finding {
   };
   stage_trace?: JsonObject;
 }
-export interface Review {
-  summary: string;
-  findings: Finding[];
-}
 export interface TaskAnalysis {
   task_type: string;
   goal: string;
   requirements: string[];
   scoring_points: string[];
   red_flags: string[];
-  timing_analysis: string;
 }
+/** Reference to a finding owned by the attribution stage. */
 export interface FindingRef {
   candidate: string;
   finding_index: number;
 }
-export interface PairwiseResult {
-  verdict: {
-    result: "A_better" | "B_better" | "both_good" | "both_bad";
-    reason: string;
-  };
-  evaluations: Record<string, Review>;
+export interface ComparisonAssessment {
+  /** Whether the answer delivers every core requirement. */
+  meets_core: boolean;
+  summary: string;
+}
+/**
+ * One comparison over a whole group: a tiered ranking plus per-candidate core
+ * classification. Two-way verdicts are derived from these two, never judged in isolation.
+ */
+export interface ComparisonResult {
   task_analysis: TaskAnalysis;
+  /** Blind labels grouped by tier, best first; every candidate appears exactly once. */
+  ranking: string[][];
+  assessments: Record<string, ComparisonAssessment>;
   decision_basis: {
-    decisive_findings: FindingRef[];
-    counterevidence: FindingRef[];
     tradeoff: string;
+    decisive_findings: FindingRef[];
   };
 }

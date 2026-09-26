@@ -78,7 +78,7 @@ const workflow: WorkflowDefinition = {
     };
   },
 };
-// The generic test codec needs no pairwise fields or input copies.
+// The generic test codec needs no comparison-only fields or input copies.
 const codec: RunCodec<RunState> = {
   encode: (state) => structuredClone(state),
   references: () => [],

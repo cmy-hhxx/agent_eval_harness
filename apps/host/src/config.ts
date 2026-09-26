@@ -1,8 +1,8 @@
 import path from "node:path";
-import { DEFAULT_POLICY, type OutputTarget } from "@eval/contracts";
+import { DEFAULT_POLICY, type AttributionTarget, type OutputTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
-import type { EvalConfig } from "@eval/workflows/pairwise";
-import { inputAdapterIds } from "@eval/workflows/pairwise";
+import type { EvalConfig } from "@eval/workflows/comparison";
+import { inputAdapterIds } from "@eval/workflows/comparison";
 import {
   THINKING_LEVELS,
   type ModelCatalog,
@@ -59,6 +59,8 @@ async function readLocated(file: string): Promise<ConfigObject> {
   const directory = path.dirname(file);
   if (isObject(source.output) && typeof source.output.path === "string")
     source.output = { ...source.output, path: path.resolve(directory, source.output.path) };
+  if (isObject(source.attribution) && typeof source.attribution.path === "string")
+    source.attribution = { ...source.attribution, path: path.resolve(directory, source.attribution.path) };
   if (isObject(source.inputs) && Array.isArray(source.inputs.versions))
     source.inputs.versions = source.inputs.versions.map((item) =>
       isObject(item) && Array.isArray(item.sources)
@@ -95,7 +97,8 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       ...(source.execution as Partial<EvalConfig["execution"]>),
     },
     output: source.output as OutputTarget,
-    pairs: [],
+    attribution: source.attribution as AttributionTarget,
+    comparisons: [],
   };
   const versions = config.inputs?.versions;
   if (!Array.isArray(versions) || versions.length < 2) throw new Error("至少配置两个输入版本");
@@ -111,23 +114,23 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     if (values.some((v) => !v) || new Set(values).size !== values.length)
       throw new Error(`Duplicate or empty ${key}`);
   }
-  const rawPairs = source.pairs;
-  if (!Array.isArray(rawPairs) || !rawPairs.length) throw new Error("Missing pairs");
-  const seenPairs = new Set<string>();
-  for (const pair of rawPairs) {
+  const rawGroups = source.comparisons;
+  if (!Array.isArray(rawGroups) || !rawGroups.length) throw new Error("Missing comparisons");
+  const seenGroups = new Set<string>();
+  for (const group of rawGroups) {
     if (
-      !Array.isArray(pair) ||
-      pair.length !== 2 ||
-      pair.some((id) => typeof id !== "string") ||
-      pair[0] === pair[1] ||
-      pair.some((id) => !versions.some((version) => version.id === id))
+      !Array.isArray(group) ||
+      group.length < 2 ||
+      group.some((id) => typeof id !== "string") ||
+      new Set(group).size !== group.length ||
+      group.some((id) => !versions.some((version) => version.id === id))
     )
-      throw new Error("Invalid pairs; each entry must be two distinct registered version IDs");
-    const key = [...pair].sort().join("\u0000");
-    if (seenPairs.has(key)) throw new Error("Duplicate pair: " + pair.join(" / "));
-    seenPairs.add(key);
+      throw new Error("Invalid comparisons; each group needs >=2 distinct registered version IDs");
+    const key = [...group].sort().join("\u0000");
+    if (seenGroups.has(key)) throw new Error("Duplicate comparison group: " + group.join(" / "));
+    seenGroups.add(key);
   }
-  config.pairs = rawPairs as string[][];
+  config.comparisons = rawGroups as string[][];
   for (const key of [
     "concurrency",
     "timeoutSeconds",
@@ -151,6 +154,14 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   const output = config.output;
   if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
     throw new Error("Missing output target");
+  const attribution = config.attribution;
+  if (
+    !isObject(attribution) ||
+    attribution.kind !== "directory" ||
+    typeof attribution.path !== "string" ||
+    !attribution.path
+  )
+    throw new Error("Missing attribution target");
   return config;
 }
 

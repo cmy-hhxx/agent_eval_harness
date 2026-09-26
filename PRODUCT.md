@@ -24,7 +24,7 @@ delegated: plain HTML/CSS/JavaScript served by the existing TypeScript Host; kee
 
 ## Operating Context
 
-服务运行在本机回环地址，操作者通过浏览器查看 `data/runs/pairwise` 中的运行。启动、停止和同 run ID 续跑沿用现有 CLI、run lock 与恢复规则。
+服务运行在本机回环地址，操作者通过浏览器查看 `data/runs/comparison` 中的运行。启动、停止和同 run ID 续跑沿用现有 CLI、run lock 与恢复规则。
 
 ## Capabilities and Constraints
 

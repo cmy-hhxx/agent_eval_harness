@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "required": ["ground_truth", "library", "candidates"],
+  "properties": {
+    "ground_truth": {
+      "type": "object",
+      "required": ["available", "value"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "value": {}
+      }
+    },
+    "library": {
+      "type": "object",
+      "required": ["components"],
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "definition", "problems"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "definition": { "type": "string" },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "label", "definition", "occurrences"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "label": { "type": "string" },
+                    "definition": { "type": "string" },
+                    "occurrences": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "candidates": {
+      "type": "object",
+      "required": ["A"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["final_message_index", "original_answer_timing"],
+        "properties": {
+          "final_message_index": { "type": "integer", "minimum": 0 },
+          "original_answer_timing": {
+            "type": "object",
+            "required": ["finish_seconds"],
+            "properties": {
+              "finish_seconds": { "type": ["number", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

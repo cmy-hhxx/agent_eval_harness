@@ -40,9 +40,8 @@
       }
     ]
   },
-  "pairs": [
-    ["a_fast", "aa_fast"],
-    ["a_expert", "aa_expert"]
+  "comparisons": [
+    ["a_fast", "a_expert", "aa_fast", "aa_expert"]
   ],
   "models": {
     "judge": {
@@ -56,11 +55,11 @@
     }
   },
   "bindings": {
-    "correctness": {
+    "attribution": {
       "profile": "judge",
       "maxOutputTokens": 4096
     },
-    "pairwise": {
+    "comparison": {
       "profile": "judge"
     }
   },
@@ -76,5 +75,6 @@
     "maxOutputChars": 16000,
     "initialContextChars": 16000
   },
-  "output": { "kind": "directory", "path": "../data/runs/pairwise" }
+  "output": { "kind": "directory", "path": "../data/runs/comparison" },
+  "attribution": { "kind": "directory", "path": "../data/attribution" }
 }

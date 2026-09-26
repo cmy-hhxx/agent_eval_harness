@@ -8,7 +8,7 @@ import { DEFAULT_POLICY, type ToolContext } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
 import { ROOT } from "../../../tests/fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
-import { emptyAudit, raw } from "../../../tests/fixtures/pairwise.js";
+import { emptyAudit, raw } from "../../../tests/fixtures/comparison.js";
 
 async function context() {
   const workdir = await mkdtemp(path.join(os.tmpdir(), "eval-tools-"));

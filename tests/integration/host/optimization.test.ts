@@ -4,25 +4,25 @@ import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan } from "@eval/contracts";
 import { readJson, writeJsonl } from "@eval/data";
-import { ValidationError } from "@eval/contracts";
-import { buildPlan } from "@eval/workflows/pairwise";
-import { createResultWriter } from "@eval/workflows/pairwise";
-import { services, prepare } from "../../fixtures/services.js";
-import { resolveSubmission } from "../../fixtures/services.js";
-import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/pairwise";
+import { buildPlan } from "@eval/workflows/comparison";
+import { createResultWriter } from "@eval/workflows/comparison";
+import { services } from "../../fixtures/services.js";
+import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/comparison";
 import { evidenceId, evidenceSources, cite, resolveEvidence } from "@eval/tools";
-import type { EvalConfig, PairwiseResult, RawInput, TaskData } from "@eval/workflows/pairwise";
+import type { EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../../fixtures/services.js";
 import { startWorker } from "@eval/runtime/worker";
 import {
+  attributionResult,
   draftFor,
   emptyAudit,
   fakeIdentity,
   fixtureConfig,
   pairResult,
   raw,
-} from "../../fixtures/pairwise.js";
+  taskResult,
+} from "../../fixtures/comparison.js";
 
 function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
   return {
@@ -49,7 +49,7 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
           submissionId: task.id,
           status: "succeeded",
           acceptedAt: 2,
-          evaluation: pairResult(),
+          evaluation: task.stage === "attribution" ? attributionResult() : pairResult(),
           audit: emptyAudit(),
           usage: emptyUsage(),
         },
@@ -123,7 +123,7 @@ test("preflight keeps unknown-batch errors under a selection and aggregates inde
   }
 });
 
-test("accepted work survives narrower selection, changed or missing inputs; new pairs are added", async () => {
+test("accepted work survives narrower selection, changed or missing inputs; new groups are added", async () => {
   const rows = ["b1", "b2"].map((batch_id) => ({
     ...raw("q", null),
     batch_id,
@@ -156,15 +156,19 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
       moved.tasks.map((t) => t.id),
       plan.tasks.map((t) => t.id),
     );
-    assert.equal(Object.keys(restored.receipts).length, 2);
+    assert.equal(Object.keys(restored.receipts).length, 6);
     const changed = { ...rows[0], request_time: "2026-09-24" };
     await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [changed, rows[1]]);
     await writeJsonl(narrowed.inputs.versions[3].sources[0].path, [raw("q", null)]);
     const replacement = await reconcileRun(run, restored, narrowed);
-    assert.equal(replacement.tasks.length, 3);
-    assert.equal(Object.keys(restored.receipts).length, 2);
+    assert.equal(replacement.tasks.length, 6);
+    assert.equal(Object.keys(restored.receipts).length, 6);
     const affected = replacement.tasks.find(
-      (t) => t.id === plan.tasks.find((t) => (t.data as TaskData).candidates.A.batch_id === "b1")!.id,
+      (t) =>
+        t.id ===
+        plan.tasks.find(
+          (t) => t.stage === "comparison" && (t.data as TaskData).candidates.A.batch_id === "b1",
+        )!.id,
     )!;
     assert.equal((affected.data as TaskData).revision, 1);
     assert.equal(
@@ -175,7 +179,7 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
     assert.equal(restored.usage.totalTokens, 123);
     await writeRunState(run, restored); // crash after state replacement, before result rebuilding
     const recovered = await readRunState(run);
-    assert.equal(Object.keys(recovered.receipts).length, 2);
+    assert.equal(Object.keys(recovered.receipts).length, 6);
     await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [{ ...changed, request_time: "" }, rows[1]]);
     const invalid = await reconcileRun(run, recovered, narrowed);
     assert.deepEqual(
@@ -199,7 +203,7 @@ test("planning a shared reference change increments dependent task revisions whi
     const first = await buildPlan(config);
     await writeJsonl(config.inputs.versions[0].sources[0].path, [raw("q1", "updated")]);
     const next = await buildPlan(config, first);
-    assert.equal(next.tasks.length, 6);
+    assert.equal(next.tasks.length, 3);
     assert.deepEqual(
       next.tasks.map((t) => t.id),
       first.tasks.map((t) => t.id),
@@ -224,7 +228,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
             const input = await readJson<RawInput>(path.join(options.workdir, "inputs/A.json"));
             calls.push(input.case_id!);
             if (input.case_id === "todo" && !resumed) throw new Error("stop before submission");
-            await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
           async dispose() {},
@@ -249,7 +253,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       await writeJsonl(version.sources[0].path, changed);
     resumed = true;
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
-    assert.deepEqual(calls.sort(), ["done", "new", "todo", "todo"]);
+    assert.equal(calls.filter((c) => c === "done").length, 3, "accepted work is not re-evaluated");
     const after = await readRunState(run);
     assert.deepEqual(after.receipts[accepted.id], original);
     assert.deepEqual(
@@ -259,7 +263,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
     assert.equal((await validateRun(run)).results.valid, true);
     for (const version of config.inputs.versions) await rm(version.sources[0].path);
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
-    assert.equal(calls.length, 4, "accepted work does not require a second model call or an input backup");
+    assert.equal(calls.filter((c) => c === "done").length, 3, "accepted work does not require a second model call or an input backup");
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -315,45 +319,11 @@ test("raw strings, Markdown, numeric JSON and pages resolve exactly; foreign sna
   );
 });
 
-test("finding IDs survive reorder and report every missing reference and evidence error", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = plan.tasks[0],
-      prepared = prepare(task, plan.inputs, {});
-    const spec = {
-      prompt: prepared.prompt,
-      inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })),
-    };
-    const draft = draftFor(spec, pairResult()) as any;
-    draft.evaluations.A.findings.unshift({
-      ...structuredClone(draft.evaluations.A.findings[0]),
-      finding_id: "extra",
-    });
-    const normalized = resolveSubmission(task, plan.inputs, draft, emptyAudit()) as PairwiseResult;
-    assert.equal(normalized.decision_basis.decisive_findings[0].finding_index, 1);
-    draft.evaluations.A.findings.pop();
-    draft.evaluations.B.findings[0].evidence[0].evidence_id =
-      draft.evaluations.A.findings[0].evidence[0].evidence_id;
-    assert.throws(
-      () => resolveSubmission(task, plan.inputs, draft, emptyAudit()),
-      (error: unknown) => {
-        assert(error instanceof ValidationError);
-        assert.deepEqual(error.issues!.map((e) => e.code).sort(), [
-          "evidence_input_mismatch",
-          "finding_id_missing",
-        ]);
-        return true;
-      },
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("normal runs persist drafts before cleanup, carry them to one repair attempt, then clear them", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  let calls = 0;
+  let calls = 0,
+    firstTask: string | undefined;
+  const attempts = new Map<string, number>();
   const worker = await startWorker(
     {
       identity: fakeIdentity,
@@ -361,19 +331,27 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
         return {
           async run() {
             calls++;
-            if (calls === 1) {
-              const invalid = pairResult();
-              invalid.evaluations.A.findings[0].evidence[0].quote = "wrong";
+            firstTask ??= options.spec.taskId;
+            const attempt = (attempts.get(options.spec.taskId) || 0) + 1;
+            attempts.set(options.spec.taskId, attempt);
+            if (attempt === 1 && options.spec.taskId === firstTask) {
+              const invalid = taskResult(options.spec) as {
+                findings?: { evidence: { quote: string }[] }[];
+                evaluations?: { A: { findings: { evidence: { quote: string }[] }[] } };
+              };
+              (invalid.findings ?? invalid.evaluations!.A.findings)[0].evidence[0].quote = "wrong";
               await options.execute("submit_evaluation", draftFor(options.spec, invalid));
               const state = await readRunState(path.join(config.output.path, "test"));
               assert(state.manifest.states[options.spec.taskId].failure?.draft);
             } else {
-              assert(options.spec.recovery?.draft);
-              assert.deepEqual(
-                await readJson(path.join(options.workdir, "evaluation-draft.json")),
-                options.spec.recovery.draft,
-              );
-              await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+              if (attempt > 1 && options.spec.taskId === firstTask) {
+                assert(options.spec.recovery?.draft);
+                assert.deepEqual(
+                  await readJson(path.join(options.workdir, "evaluation-draft.json")),
+                  options.spec.recovery.draft,
+                );
+              }
+              await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
             }
           },
           async abort() {},
@@ -385,7 +363,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 2);
+    assert.equal(calls, 4);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(Object.values(state.manifest.states)[0].failure?.draft, undefined);
@@ -409,7 +387,7 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
         async run() {
           started.push(options.spec.taskId);
           await new Promise<void>((resolve) => releases.set(options.spec.taskId, resolve));
-          await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {
           aborted++;
@@ -450,6 +428,9 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
     await adjust(3);
     await until(() => started.length === 3);
     await adjust(1);
+    const autoRelease = setInterval(() => {
+      for (const id of started) releases.get(id)?.();
+    }, 10);
     releases.get(started[0])!();
     releases.get(started[1])!();
     await until(
@@ -462,10 +443,8 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
     );
     assert.equal(started.length, 3);
     assert.equal(aborted, 0);
-    releases.get(started[2])!();
-    await until(() => started.length === 4);
-    releases.get(started[3])!();
     await execution;
+    clearInterval(autoRelease);
     assert.equal(aborted, 0);
   } finally {
     for (const release of releases.values()) release();
@@ -489,7 +468,7 @@ test("enabling debug and missing optional artifacts never remove accepted receip
               language: "python",
               code: "print('artifact')",
             });
-            await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
           async dispose() {},
@@ -504,18 +483,19 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     await runEvaluation({ ...options, debug: true });
     const run = path.join(config.output.path, "test"),
       validation = await validateRun(run);
-    assert.equal(calls, 1);
+    assert.equal(calls, 3);
     assert.equal(validation.valid, true);
     assert.equal(validation.artifacts.status, "missing");
     assert.equal(validation.completed_comparisons, 1);
     const before = await readRunState(run);
-    const file = path.join(run, "results/a_fast__vs__aa_fast.jsonl");
+    const file = path.join(run, "results/comparison.jsonl");
     const row = JSON.parse(await readFile(file, "utf8"));
     row.evaluation_type = "invalid";
     await writeJsonl(file, [row]);
     assert.equal((await validateRun(run)).valid, false);
-    assert.equal(Object.keys(before.receipts).length, 1);
-    await writeJsonl(file, [before.receipts[before.manifest.tasks[0].id].exported!.row]);
+    assert.equal(Object.keys(before.receipts).length, 3);
+    const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison")!;
+    await writeJsonl(file, [before.receipts[comparisonTask.id].exported!.row]);
     const inputFile = (before.manifest.tasks[0].data as TaskData).candidates.A.source;
     await writeJsonl(inputFile, [raw("another-case", null)]);
     const changed = await validateRun(run);

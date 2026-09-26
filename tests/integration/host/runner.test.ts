@@ -1,22 +1,26 @@
-import { draftFor } from "../../fixtures/pairwise.js";
+import { draftFor, invalidResult, taskResult } from "../../fixtures/comparison.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentBackend, AttemptRecord } from "@eval/contracts";
 import { createFileLogger, exists, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
-import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/pairwise";
+import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/comparison";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../../fixtures/services.js";
-import { buildPlan } from "@eval/workflows/pairwise";
+import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
-import { reportRun } from "@eval/workflows/pairwise";
-import { fakeIdentity, fixtureConfig, pairResult, raw } from "../../fixtures/pairwise.js";
-import type { TaskData } from "@eval/workflows/pairwise";
+import { reportRun } from "@eval/workflows/comparison";
+import { fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import type { TaskData } from "@eval/workflows/comparison";
 
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw()], [raw()], [raw()], [raw()]]);
+  config.comparisons = [
+    ["a_fast", "aa_fast"],
+    ["a_expert", "aa_expert"],
+  ];
   const plan = await buildPlan(config);
   let calls = 0;
   const backend: AgentBackend = {
@@ -38,21 +42,21 @@ test("two workers execute dependency graph, archive receipts and reuse only same
               },
             },
           });
-          const correctness = "is_correct" in (options.spec.evaluation.outputSchema.properties as object);
-          const result = correctness
-            ? {
-                is_correct: true,
-                correctness_reason: "结果与标准答案一致。",
-                evidence: [{ message_index: 1, quote: "2+2=4" }],
-              }
-            : pairResult();
-          const submitted = await options.execute("submit_evaluation", draftFor(options.spec, result));
+          const attribution =
+            "has_standard_answer" in (options.spec.evaluation.outputSchema.properties as object);
+          const submitted = await options.execute(
+            "submit_evaluation",
+            draftFor(options.spec, taskResult(options.spec)),
+          );
           assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
           assert.equal(submitted.terminate, true);
-          if (!correctness) {
-            const task = plan.tasks.find((task) => task.id === options.spec.taskId)!;
-            const pair = (task.data as TaskData).pair!.join("__vs__");
-            const file = path.join(config.output.path, options.spec.runId, "results", pair + ".jsonl");
+          if (!attribution) {
+            const file = path.join(
+              config.output.path,
+              options.spec.runId,
+              "results",
+              "comparison.jsonl",
+            );
             assert.equal(
               (await readFile(file, "utf8")).trim().split("\n").length,
               1,
@@ -99,8 +103,8 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       .split("\n")
       .map((line) => JSON.parse(line));
     assert.equal(logged.length, 6);
-    assert.equal(logged.filter((row) => row.stage === "correctness").length, 4);
-    assert.equal(logged.filter((row) => row.stage === "pairwise").length, 2);
+    assert.equal(logged.filter((row) => row.stage === "attribution").length, 4);
+    assert.equal(logged.filter((row) => row.stage === "comparison").length, 2);
     assert.equal(await readFile(path.join(directory, "log/runtime.log"), "utf8"), "");
     assert.deepEqual(summary.tokens, {
       input: 60,
@@ -135,9 +139,9 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     ]);
     assert.equal(await exists(internalPath(run, "exports")), false);
     assert.equal(await exists(internalPath(run, "diagnostics", "failures.jsonl")), false);
-    assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), false);
+    assert.equal(await exists(internalPath(run, "diagnostics", "attribution.jsonl")), false);
     assert.equal(
-      (await readFile(path.join(run, "results", "correctness.jsonl"), "utf8")).trim().split("\n").length,
+      (await readFile(path.join(run, "results", "attribution.jsonl"), "utf8")).trim().split("\n").length,
       4,
     );
     assert.deepEqual(await loadRunInputs((await readRunState(run)).manifest), plan.inputs);
@@ -188,7 +192,7 @@ test("different runs and batches evaluate independently", async () => {
         return {
           async run() {
             calls++;
-            const result = await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+            const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
             assert.equal(result.isError, undefined);
           },
           async abort() {},
@@ -220,7 +224,7 @@ test("different runs and batches evaluate independently", async () => {
         plan: await buildPlan(config),
       });
       assert.equal(stats.completed_comparisons, 1);
-      assert.equal(calls, index + 1, "another batch must invoke the evaluator even for the same question");
+      assert.equal(calls, (index + 1) * 3, "another batch must invoke the evaluator even for the same question");
     }
     config.inputs.batches = days;
     const combined = await runEvaluation({
@@ -228,7 +232,7 @@ test("different runs and batches evaluate independently", async () => {
       runId: "combined",
       plan: await buildPlan(config),
     });
-    assert.equal(calls, 4);
+    assert.equal(calls, 12);
     assert.equal(combined.completed_comparisons, 2);
     assert.deepEqual(Object.keys(combined.by_batch as object), days);
     assert.equal((await validateRun(path.join(config.output.path, "combined"))).valid, true);
@@ -261,8 +265,8 @@ for (const missingArtifact of [false, true])
               const artifacts = path.join(directory, "worker", options.spec.attemptId, "artifacts");
               await rm(path.join(artifacts, (await readdir(artifacts))[0]));
             }
-            const invalid = pairResult();
-            invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+            const invalid = invalidResult(options.spec) as any;
+            invalid.findings[0].evidence[0].quote = "invented";
             assert.equal(
               (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
               true,
@@ -297,7 +301,7 @@ for (const missingArtifact of [false, true])
         workerUrls: [worker.url],
       });
       assert.equal(summary.completed_comparisons, 0);
-      assert.deepEqual(summary.task_statuses, { failed: 1 });
+      assert.deepEqual(summary.task_statuses, { failed: 2, blocked: 1 });
       const runtimeLog = (await readFile(path.join(directory, "log/runtime.log"), "utf8"))
         .trim()
         .split("\n")
@@ -305,9 +309,9 @@ for (const missingArtifact of [false, true])
       assert.equal(runtimeLog.filter((row) => row.event === "task_failed").length, 1);
       assert.equal(runtimeLog.find((row) => row.event === "task_failed").task_id, plan.tasks[0].id);
       assert.equal(await readFile(path.join(directory, "log/evaluation.log"), "utf8"), "");
-      assert.equal((summary.tokens as { totalTokens: number }).totalTokens, 38);
+      assert.equal((summary.tokens as { totalTokens: number }).totalTokens, 76);
       const run = path.join(config.output.path, "failure");
-      assert.equal(await exists(internalPath(run, "diagnostics", "correctness.jsonl")), false);
+      assert.equal(await exists(internalPath(run, "diagnostics", "attribution.jsonl")), false);
       assert.equal(await exists(internalPath(run, "diagnostics", "failures.jsonl")), true);
       const record = await readJson<AttemptRecord>(
         internalPath(run, "tasks", plan.tasks[0].id, "attempt-001/attempt.json"),
@@ -318,7 +322,7 @@ for (const missingArtifact of [false, true])
       assert(record.metrics!.audit.artifacts.length > 0);
       if (missingArtifact) {
         assert.match(record.artifactError!, /Artifact unavailable/);
-        assert.equal((await readdir(path.join(directory, "worker"))).length, 2);
+        assert.equal((await readdir(path.join(directory, "worker"))).length, 4);
       } else {
         for (const artifact of record.metrics!.audit.artifacts)
           assert.equal(
@@ -335,6 +339,10 @@ for (const missingArtifact of [false, true])
   });
 test("one host routes tasks to both engines without sharing sessions or workspaces", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
+  config.comparisons = [
+    ["a_fast", "aa_fast"],
+    ["a_expert", "aa_expert"],
+  ];
   const calls = { pi: 0, prime: 0 },
     workdirs = new Set<string>();
   const primeIdentity = { ...fakeIdentity, engine: "prime" as const };
@@ -349,16 +357,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
           calls[engine]++;
           await options.execute(
             "submit_evaluation",
-            draftFor(
-              options.spec,
-              "is_correct" in (options.spec.evaluation.outputSchema.properties as object)
-                ? {
-                    is_correct: true,
-                    correctness_reason: "匹配。",
-                    evidence: [{ message_index: 1, quote: "2+2=4" }],
-                  }
-                : pairResult(),
-            ),
+            draftFor(options.spec, taskResult(options.spec)),
           );
         },
         async abort() {},
@@ -435,7 +434,7 @@ for (const debug of [false, true])
               await new Promise<void>((r) => {
                 release = r;
               });
-            } else await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+            } else await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {
             release();
@@ -467,7 +466,7 @@ for (const debug of [false, true])
         signal: controller.signal,
       });
       assert.equal(stopped.status, "interrupted");
-      assert.equal(stopped.completed_comparisons, 1);
+      assert.equal(stopped.completed_comparisons, 0);
       const failureFile = internalPath(
         path.join(config.output.path, "resume"),
         "diagnostics",
@@ -496,7 +495,7 @@ for (const debug of [false, true])
       });
       assert.equal(complete.completed_comparisons, 2);
       assert.equal(await exists(failureFile), false, "resume must remove stale failure exports");
-      assert.deepEqual(Object.values(calls).sort(), [1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);
@@ -513,12 +512,12 @@ for (const debug of [false, true])
             : [],
         );
       const appendedPlan = await buildPlan(config);
-      assert.equal(appendedPlan.tasks.length, 3);
+      assert.equal(appendedPlan.tasks.length, 9);
       const unchanged = await runEvaluation({ ...options, plan: appendedPlan });
       assert.equal(unchanged.completed_comparisons, 2);
       assert.equal((unchanged.planned as { cases: number }).cases, 2);
       assert.deepEqual(Object.keys(unchanged.by_batch as object), ["2026-09-23", "2026-09-24"]);
-      assert.deepEqual(Object.values(calls).sort(), [1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 2]);
       const validation = await validateRun(run);
       assert.equal(validation.results.valid, true);
       assert.equal(

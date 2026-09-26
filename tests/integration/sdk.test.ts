@@ -7,11 +7,11 @@ import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
 import { object } from "@eval/contracts";
 import { createModelResolver } from "@eval/host-app/config";
-import { buildPlan } from "@eval/workflows/pairwise";
+import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
-import { fixtureConfig, pairResult, raw } from "../fixtures/pairwise.js";
+import { fixtureConfig, raw } from "../fixtures/comparison.js";
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
@@ -39,7 +39,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             content: unknown;
           }[];
           const ranCode = messages.some((m) => m.role === "tool");
-          const correctness = "is_correct" in submit.function.parameters.properties;
+          const attribution = "has_standard_answer" in submit.function.parameters.properties;
           const prompt = messages
             .flatMap((m) =>
               typeof m.content === "string"
@@ -57,35 +57,57 @@ for (const engine of ["pi", "prime"] as Engine[])
           const evidenceFor = (label: string) => ({
             evidence_id: material.candidates[label].final_evidence[0].evidence_id,
           });
-          const evaluation = correctness
+          const evaluation = attribution
             ? {
+                has_standard_answer: true,
                 is_correct: true,
                 correctness_reason: "计算结果与标准答案一致。",
-                evidence: [evidenceFor("A")],
+                correctness_evidence: [evidenceFor("A")],
+                task_analysis: {
+                  task_type: "整数加法",
+                  goal: "计算2+2",
+                  requirements: ["给出正确的加法结果"],
+                  scoring_points: ["使用指定操作数"],
+                  red_flags: ["擅自替换操作数"],
+                },
+                summary: "正确给出结果。",
+                findings: [
+                  {
+                    type: "strength",
+                    dimension: "correctness",
+                    stage: "final_answer",
+                    importance: "high",
+                    text: "加法结果正确",
+                    reason: "与题目要求一致。",
+                    evidence: [evidenceFor("A")],
+                    assessment: {
+                      requirement_index: 0,
+                      observation: "2+2=4",
+                      evidence_status: "established",
+                      impact: "完成核心要求。",
+                    },
+                    finding_id: "f0",
+                    problem: null,
+                  },
+                ],
               }
             : (() => {
-                const result = pairResult();
+                const labels = Object.keys(material.candidates);
                 return {
-                  ...result,
-                  evaluations: Object.fromEntries(
-                    Object.entries(result.evaluations).map(([label, review]) => [
-                      label,
-                      {
-                        ...review,
-                        findings: review.findings.map((finding, i) => ({
-                          ...finding,
-                          finding_id: "f" + i,
-                          evidence: [evidenceFor(label)],
-                        })),
-                      },
-                    ]),
+                  task_analysis: {
+                    task_type: "整数加法",
+                    goal: "计算2+2",
+                    requirements: ["给出正确的加法结果"],
+                    scoring_points: ["使用指定操作数"],
+                    red_flags: ["擅自替换操作数"],
+                  },
+                  ranking: [labels],
+                  assessments: Object.fromEntries(
+                    labels.map((label) => [label, { meets_core: true, summary: "正确给出结果。" }]),
                   ),
                   decision_basis: {
-                    ...result.decision_basis,
-                    decisive_findings: [
-                      { candidate: "A", finding_id: "f0" },
-                      { candidate: "B", finding_id: "f0" },
-                    ],
+                    tradeoff: "并列。",
+                    decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
                   },
                 };
               })();
@@ -105,28 +127,36 @@ for (const engine of ["pi", "prime"] as Engine[])
                   ? "print(2+2)"
                   : `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(evaluation))})`,
             };
-          } else if (engine === "pi" && !rejected) {
+          } else if (attribution && engine === "pi" && !rejected) {
             name = "submit_evaluation";
             const result = structuredClone(evaluation) as {
               evidence?: { evidence_id: string }[];
+              correctness_evidence?: { evidence_id: string }[];
               evaluations?: Record<string, { findings: { evidence: { evidence_id: string }[] }[] }>;
             };
-            (result.evidence || result.evaluations!.A.findings[0].evidence)[0].evidence_id = "invented";
+            (
+              result.correctness_evidence ??
+              result.evidence ??
+              result.evaluations!.A.findings[0].evidence
+            )[0].evidence_id = "invented";
             args = result;
-          } else if (engine === "pi" && !repaired) {
+          } else if (attribution && engine === "pi" && !repaired) {
             name = "execute_code";
             args = {
               language: "python",
               code:
-                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r['evidence'] if 'evidence' in r else r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" +
+                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r.get('correctness_evidence') or r.get('evidence') or r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" +
                 JSON.stringify(evidenceFor("A").evidence_id) +
                 "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')",
             };
-          } else {
+          } else if (attribution) {
             name = "submit_evaluation_file";
             args = {
               path: engine === "pi" ? "evaluation-draft.json" : "evaluation.json",
             };
+          } else {
+            name = "submit_evaluation";
+            args = evaluation;
           }
           const event = {
             id: "fixture-" + requests.length,
@@ -205,7 +235,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         );
         const failures = (await exists(failureFile)) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
-        const expectedRequests = engine === "pi" ? 12 : 6;
+        const expectedRequests = engine === "pi" ? 10 : 6;
         assert.equal(
           requests.length,
           expectedRequests,

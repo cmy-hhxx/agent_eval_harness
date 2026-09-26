@@ -1,4 +1,4 @@
-import { draftFor } from "../../../tests/fixtures/pairwise.js";
+import { draftFor } from "../../../tests/fixtures/comparison.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm, symlink, writeFile } from "node:fs/promises";
@@ -18,10 +18,16 @@ import { body, json, listen, request } from "@eval/runtime/http";
 import { exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
 import { services, prepare } from "../../../tests/fixtures/services.js";
-import { buildPlan } from "@eval/workflows/pairwise";
+import { buildPlan } from "@eval/workflows/comparison";
 import { RunStore } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
-import { fakeIdentity, fixtureConfig, pairResult, raw } from "../../../tests/fixtures/pairwise.js";
+import {
+  fakeIdentity,
+  fixtureConfig,
+  invalidResult,
+  raw,
+  taskResult,
+} from "../../../tests/fixtures/comparison.js";
 
 async function harness(
   create: AgentBackend["createSession"],
@@ -126,7 +132,7 @@ test("lost submission acknowledgement is recovered by ID; SSE replay is contiguo
   const fixture = await harness(
     async (options) => ({
       async run() {
-        const accepted = await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+        const accepted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
         assert.equal(accepted.terminate, true);
       },
       async abort() {},
@@ -194,7 +200,7 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
           messages: [partial, finalMessage],
           willRetry: false,
         });
-        await options.execute("submit_evaluation", draftFor(options.spec, pairResult()));
+        await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
       },
       async abort() {},
       async dispose() {},
@@ -253,15 +259,15 @@ test("exhausted exploration budget still permits submission and two repairs", as
           ).isError,
           true,
         );
-        const invalid = pairResult();
-        invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+        const invalid = invalidResult(options.spec) as any;
+        invalid.findings[0].evidence[0].quote = "invented";
         assert.equal(
           (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
           true,
         );
         assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, {}))).isError, true);
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate,
+          (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
           true,
         );
       },
@@ -286,8 +292,8 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
           candidate: "A",
           message_index: 1,
         });
-        const invalid = pairResult();
-        invalid.evaluations.A.findings[0].evidence[0].quote = "2 + 2 = 4";
+        const invalid = invalidResult(options.spec) as any;
+        invalid.findings[0].evidence[0].quote = "2 + 2 = 4";
         assert.equal(
           (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
           true,
@@ -298,10 +304,10 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
         );
         const fixed = await options.execute("execute_code", {
           language: "python",
-          code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['evaluations']['A']['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
+          code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
             "VALID_ID",
             JSON.stringify(
-              (draftFor(options.spec, pairResult()) as any).evaluations.A.findings[0].evidence[0].evidence_id,
+              (draftFor(options.spec, taskResult(options.spec)) as any).findings[0].evidence[0].evidence_id,
             ),
           ),
         });
@@ -334,7 +340,7 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
     const status = await fixture.done();
     assert.equal(status.state, "succeeded", status.error);
     const receipt = await fixture.store.receipt(fixture.spec.taskId);
-    assert.deepEqual(receipt?.evaluation, pairResult());
+    assert.deepEqual(receipt?.evaluation, taskResult(fixture.spec));
     assert.equal(receipt?.audit.calls, 2);
   } finally {
     await fixture.close();
@@ -345,7 +351,7 @@ test("file loading errors do not consume content repairs", async () => {
     async (options) => ({
       async run() {
         const outside = path.join(options.workdir, "../outside.json");
-        await writeFile(outside, JSON.stringify(pairResult()));
+        await writeFile(outside, JSON.stringify(taskResult(options.spec)));
         await symlink(outside, path.join(options.workdir, "outside-link.json"));
         assert.equal(
           (
@@ -355,8 +361,8 @@ test("file loading errors do not consume content repairs", async () => {
           ).isError,
           true,
         );
-        const invalid = pairResult();
-        invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+        const invalid = invalidResult(options.spec) as any;
+        invalid.findings[0].evidence[0].quote = "invented";
         await writeFile(
           path.join(options.workdir, "invalid.json"),
           JSON.stringify(draftFor(options.spec, invalid)),
@@ -370,7 +376,7 @@ test("file loading errors do not consume content repairs", async () => {
           true,
         );
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate,
+          (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
           true,
         );
       },
@@ -426,17 +432,17 @@ test("different invalid field values do not count as repeated identical errors",
   const fixture = await harness(async (options) => ({
     async run() {
       for (const invalid of ["first", "second"]) {
-        const draft = pairResult() as unknown as {
-          verdict: { result: string };
+        const draft = taskResult(options.spec) as unknown as {
+          findings: { importance: string }[];
         };
-        draft.verdict.result = invalid;
+        draft.findings[0].importance = invalid;
         assert.equal(
           (await options.execute("submit_evaluation", draftFor(options.spec, draft))).isError,
           true,
         );
       }
       assert.equal(
-        (await options.execute("submit_evaluation", draftFor(options.spec, pairResult()))).terminate,
+        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
         true,
       );
     },
@@ -453,11 +459,15 @@ test("different invalid field values do not count as repeated identical errors",
 test("an unchanged error stops repair even when another field was fixed", async () => {
   const fixture = await harness(async (options) => ({
     async run() {
-      const invalid = pairResult();
-      invalid.evaluations.A.findings[0].evidence[0].quote = "wrong-a";
-      invalid.evaluations.B.findings[0].evidence[0].quote = "wrong-b";
+      const invalid = invalidResult(options.spec) as any;
+      invalid.findings[0].evidence[0].quote = "wrong-a";
+      invalid.findings.push({
+        ...structuredClone(invalid.findings[0]),
+        finding_id: "extra",
+        evidence: [{ quote: "wrong-b" }],
+      });
       await options.execute("submit_evaluation", draftFor(options.spec, invalid));
-      invalid.evaluations.B.findings[0].evidence[0].quote = "2+2=4";
+      invalid.findings[1].evidence[0].quote = "2+2=4";
       await options.execute("submit_evaluation", draftFor(options.spec, invalid));
     },
     async abort() {},

@@ -7,8 +7,8 @@
 ```mermaid
 flowchart LR
   CLI --> Host
-  CLI --> Agents[Comparison / Critique Profiles]
-  CLI --> Workflow[Pairwise Workflow]
+  CLI --> Agents[Comparison / Attribution Profiles]
+  CLI --> Workflow[Comparison Workflow]
   Workflow --> Data[Data Repository]
   Host <-->|HTTP / JSON + SSE| Pi[Pi Worker]
   Host <-->|HTTP / JSON + SSE| Prime[Prime Worker]
@@ -25,8 +25,8 @@ flowchart LR
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
 | `packages/agents/src/comparison` | 对比 Profile、提示词、Schema、业务校验 |
-| `packages/agents/src/critique` | 独立 correctness Profile、提示词、Schema、业务校验 |
-| `packages/workflows/src/pairwise` | 适配器注册表、配置化配对、盲测、依赖与材料映射、状态编解码、报告 |
+| `packages/agents/src/attribution` | 归因 Profile、问题库/归因树、提示词、Schema、业务校验 |
+| `packages/workflows/src/comparison` | 适配器注册表、配置化分组对比、盲测、依赖与材料映射、状态编解码、报告 |
 | `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
@@ -35,7 +35,7 @@ flowchart LR
 
 ## 生命周期
 
-Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 为 UUID，同次提交重发沿用原 ID；相同 ID 内容冲突时拒绝。提交、取消和替换 attempt 串行化，过期 attempt 不能覆盖当前任务。收据和配对结果按[持久化顺序](usage.md#运行产物)落盘后才确认；保留结构与引用校验，不计算内容摘要。
+Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 为 UUID，同次提交重发沿用原 ID；相同 ID 内容冲突时拒绝。提交、取消和替换 attempt 串行化，过期 attempt 不能覆盖当前任务。收据和对比结果按[持久化顺序](usage.md#运行产物)落盘后才确认；保留结构与引用校验，不计算内容摘要。
 
 `.run-lock` 排除第二个 Host。进程不存在时回收陈旧锁；锁文件初始化不完整，或回收时遇到遗留 `.run-lock.reclaim`，则拒绝继续，确认原进程停止后再清理。锁不提供跨机高可用。
 
@@ -62,6 +62,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 | Host `GET /api/submissions/:id` | 确认已保存收据 |
 | Host `POST /api/tasks/:id/checkpoint` | 持久化最后草稿、结构化错误和修复计数 |
 | Host `POST /api/control/concurrency` | 使用本机运行锁 token 调整目标并发并唤醒调度器 |
+| Host `POST /api/control/stop` | 使用本机运行锁 token 请求停止当前运行 |
 | Host `GET /api/progress` | 当前进度、失败分类、吞吐和 ETA 区间 |
 
 事件包含 `seq/attemptId/time/type/data`，在单个 attempt 内连续编号。Host 检测缺口、去重并续读；模型结束事件不代表提交成功。流式更新仅记录增量，完整消息保存在 `message_end`；开始、回合结束和会话结束事件不重复保存消息正文。
@@ -78,9 +79,9 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 [应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验输入 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后输出。当前通过 TypeScript 对象组合任务，不引入新编排语言。
 
-源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置；本阶段不增加全局目录账本。
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。归因树是每个模型一份的跨 run 问题库：按组件/问题归类、出现样本可双向追溯、合并保留血缘，只追加不覆盖（参见[使用指南](usage.md#目录约定)）。
 
-后续归因位置为 `packages/agents/src/attribution`，聚类为 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
+归因已实现于 `packages/agents/src/attribution`：每个模型一棵归因树（问题库），按组件/工具大类归类问题并保留样本血缘；后续聚类预留 `packages/agents/src/clustering`，当前没有空实现。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
 
 一个 Host 管理一个 run，多个 Worker 并行执行；多个 Host 使用不同 run 目录。每个 attempt 独立会话、工具上下文与工作区，取消只作用于所属任务；默认端口由系统分配。应用传入 Worker 入口、仓库路径和 Python 配置，没有全局共享会话。
 
@@ -90,7 +91,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 await runEvaluation({
   ...options,
   engine: 'pi',
-  engineForTask: task => task.stage === 'correctness' ? 'pi' : 'prime',
+  engineForTask: task => task.stage === 'attribution' ? 'pi' : 'prime',
   workerUrls: ['http://127.0.0.1:4101', 'http://127.0.0.1:4102'],
 });
 ```

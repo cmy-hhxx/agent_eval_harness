@@ -4,11 +4,11 @@
 
 ## 评语标准
 
-公共提示词只维护材料安全边界、证据与提交修复规则；独立判对和配对判决规则分别放在各阶段提示词。独立判对不携带配对发现与判决的校验要求。纯结构修复不重复核验已确认事实；改变事实判断时重新核验相关材料。
+公共提示词只维护材料安全边界、证据与提交修复规则；归因和对比判决规则分别放在各阶段提示词。归因不携带对比发现与判决的校验要求，对比默认归因结论正确、只做确认与核验。纯结构修复不重复核验已确认事实；改变事实判断时重新核验相关材料。
 
 `summary` 说明候选完成情况和主要缺口，`verdict.reason` 说明决定判决的关键事实，`tradeoff` 解释反向证据如何影响结论，不重复复制同一段论证。
 
-结论先回答谁更好、为何都好或为何都差，再解释足以改变结论的事实。按[判决契约](contract.md#阶段与判决)先判断核心任务完成情况，再判断差异的实际影响。双方达标且可用性相当时判都好；双方核心任务失败且局部优点不足以区分胜负时判都差。判赢家时，说明用户采用该回答会在哪项核心结果上获益。
+结论先回答谁更好、为何都好或为何都差，再解释足以改变结论的事实。按[判决契约](contract.md#归因与判决)先判断核心任务完成情况，再判断差异的实际影响。双方达标且可用性相当时判都好；双方核心任务失败且局部优点不足以区分胜负时判都差。判赢家时，说明用户采用该回答会在哪项核心结果上获益。
 
 每条评价都应串起「具体观察 → 可核对证据 → 判断依据 → 对用户的影响」。写“更准确”“更完整”时必须跟可验证的事实；拿不出事实就删去评价。不要凑固定数量的优缺点，不把篇幅、工具次数、引用数当作质量。
 
@@ -37,26 +37,26 @@
 1. 固定小题集，覆盖有/无标准答案、多轮上下文、数值差异、工具引用与图片，以及双方达标、双方核心失败、双方有错但一方仍明显更优、材料不足；记录输入 UUID、业务标识、模型、底座、契约和预算。
 2. 两个底座使用相同题集。人工核查决定性发现、影响与反向证据，记录人工判断及分歧原因。
 3. 使用显式 A/B 位置交换，检查稳定版本映射与判决一致性。
-4. 在独立输入目录构造只改变一个关键事实的变体，使用新 run ID 重新执行正确性和配对阶段，复核结论是否合理响应。不要修改固定回归集引用的源文件；同 run ID 会保留已接受结果，不能用来验证事实变更后的重评效果。
+4. 在独立输入目录构造只改变一个关键事实的变体，使用新 run ID 重新执行归因和对比阶段，复核结论是否合理响应。不要修改固定回归集引用的源文件；同 run ID 会保留已接受结果，不能用来验证事实变更后的重评效果。
 5. 研究裁判稳定性时使用独立 run ID，至少重复三次，记录分歧、用量、耗时及未完成率。
 
-先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/pairwise/`，不追加到本指南。
+先处理 preflight 输入问题。缺少最终回答的记录应跳过，不能算作都差。人工复核记录随该次实验保存在 `data/runs/comparison/`，不追加到本指南。
 
 ## 离线回归与小样本入口
 
 先运行 `npm run build:app`。`collect` 从 debug 运行的事件日志中收集 `submit_evaluation` 直接提交被拒绝时的草稿；普通运行中仅保存在状态里的草稿、`submit_evaluation_file` 的失败不会被收集。下面的 `pi-debug` 应是已通过 `--debug` 留存这类事件的运行。
 
-回归集保留原草稿；校验时仅将逐字可定位的旧引文转成证据 ID，并为缺少 ID 的发现及其索引引用补齐对应 ID。不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
+回归集保留原草稿；校验时仅将逐字可定位的旧引文转成证据 ID，并为缺少 ID 的发现补齐对应 ID。不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
 
 ```bash
-npm run benchmark -- collect --run data/runs/pairwise/pi-debug --output .artifacts/regression/fixtures.json --limit 32
+npm run benchmark -- collect --run data/runs/comparison/pi-debug --output .artifacts/regression/fixtures.json --limit 32
 npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
 npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
 ```
 
 回归集保存固定草稿、预期结果和原始输入引用，不嵌入输入副本。源文件记录与业务标识不一致时回放明确报错，避免把新材料用于旧草稿。
 
-`run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行默认输出到 `.artifacts/model-benchmarks/`，要求新 run ID。`--limit` 在 `collect` 中限制草稿条数，在 `run` 中限制配对数；独立正确性依赖另行执行。统计保存在 `stats.json`，口径见[运行产物](usage.md#运行产物)。回归集中的失败草稿不是全量提交样本，不能用来计算生产运行的首次通过率。
+`run` 默认仅预览；只有显式增加 `--execute` 才调用真实模型。可选 `--engine prime`，`--swap` 交换相同小样本的 A/B 分配；真实运行默认输出到 `.artifacts/model-benchmarks/`，要求新 run ID。`--limit` 在 `collect` 中限制草稿条数，在 `run` 中限制对比组数；归因依赖另行执行。统计保存在 `stats.json`，口径见[运行产物](usage.md#运行产物)。回归集中的失败草稿不是全量提交样本，不能用来计算生产运行的首次通过率。
 
 完成原始位置和 `--swap` 的两次真实运行后，才可比较其结果目录：
 
@@ -64,4 +64,4 @@ npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id
 npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi --run .artifacts/model-benchmarks/sample-pi-swapped --output .artifacts/regression/stability.json
 ```
 
-`compare` 按业务标识和版本配对比较判决，输出理由和决定性引用供人工抽查。离线通过只说明机械契约与证据定位行为一致，不能代替真实模型质量及交换稳定性复核。
+`compare` 按业务标识和版本派生判决，输出理由和决定性引用供人工抽查。离线通过只说明机械契约与证据定位行为一致，不能代替真实模型质量及交换稳定性复核。

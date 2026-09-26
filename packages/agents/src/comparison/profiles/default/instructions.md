@@ -1,26 +1,26 @@
-先判断双方是否完成共同核心要求，再判断差异对用户的实际影响，最后选择判决并提交支持它的发现、证据与权衡。
+输入是本题全部候选的归因结果（每条回答的 summary、findings、是否满足核心要求，以及有标准答案时的 is_correct）和原始 trace/回复。你的任务是跨候选比较，输出分层排名与每个候选是否完成核心要求；两两结论由排名与核心判定派生，不单独判定。
 
-一、明确核心要求
-在 task_analysis.requirements 中只列用户要求的核心验收项：缺少该项会使任务或对应独立子任务失败。相关额外价值放 scoring_points，可能导致任务失败的错误放 red_flags。不要把加分项、个人偏好或无关细节变成核心要求。
+一、核验归因（默认正确）
+- 默认归因结论正确，只做确认与核验。对影响排名的 finding，回到原始 trace 复核；发现与原始材料冲突时以原始材料为准，并在 tradeoff 说明。
+- 不新增归因 finding，不新建问题节点；本阶段只挑选与排序。
+- 有标准答案时以归因的 is_correct 为准：is_correct=false 的候选不得判为 meets_core=true。
 
-二、分别核验双方
-逐项核验双方完成情况，记录核心要求及关键差异的 findings。每条串起具体观察、可核对证据、判断依据和用户影响；条数由覆盖需要决定，不凑固定数量的优缺点。已完成的核心要求可以记为 strength。
-importance：high 决定核心任务成败，medium 影响质量但不单独阻断任务，low 表示轻微差异。evidence_status：已核实事实为 established，待核实为 uncertain。决定性判断只使用 established，不因材料缺口直接断定候选错误。
-有标准答案时，以已提供的独立 correctness 结论为准，不重复判对错；都好要求双方均为 true 且其他核心要求达标。已判正确的回答如因其他核心要求失败而判都差，引用对应缺陷。
-材料由 Host 固定提供：完整问题、最终回答和可选历史消息都已展示，其余内容可用工具继续读取。缺少判断依据时用工具读到可核实，再判 established；无法确认的差异不计为已确认，不得以「材料不足」作为判决。
+二、明确核心要求
+- task_analysis.requirements 只列决定任务成败的核心验收项；额外价值放 scoring_points，致命错误放 red_flags。不要罗列加分项或偏好。
 
-三、根据实际影响选择判决
-实质差异必须有已确认事实支持，并改变关键结论、核心交付可靠性或实际可用性。判赢家时说明用户采用它会在哪项核心结果上获益。
-- both_good：双方完成全部核心要求，实际可用性相当。允许表达、解法、补充内容和轻微瑕疵不同。双方算对且提供所需依据，一方多解释一种算法，仍可判都好。
-- both_bad：双方均有已确认严重缺陷，核心交付均不可用，局部优点不能提供可独立使用的核心成果。双方都未交付要求的回测结果，一方多写方法框架，仍判都差。
-- A_better / B_better：一方完成核心任务而另一方失败；一方完成更多可独立使用的核心子任务；或已确认差异使其核心结果明显更可靠或可用。两道独立计算中一方答对一题、另一方全错，答对一题的一方胜出。
+三、判定每个候选
+- assessments[label].meets_core：是否交付全部核心要求。核心要求缺失、失效或不可用为 false；有局部亮点的回答仍可为 false。
+- assessments[label].summary：该候选在横向比较下的定论，写完成情况与主要缺口。
 
-四、检查支持与反向证据
-decisive_findings 引用双方发现。判赢家时包含赢家优势或输家问题；判都差时分别引用双方至少一条 high、established 的 problem。
-判都好时，对每方、每项 requirements 索引，decisive_findings 都必须引用对应的 medium/high、established 的 strength，并先核清所有 high problem。文字讨论多个要求不等于已关联多个索引，必要时按不同要求拆分有原文支持的发现。
-counterevidence 列全 medium/high、established 的反向发现 ID：有赢家时列赢家问题和输家优势，都好时列双方问题，都差时列双方优势。tradeoff 解释这些事实为什么改变或没有改变判决，差异是否达到实质标准。
+四、分层排名
+- ranking 是盲测标签按层排列的二维数组，最优层在前，同层并列；每个候选恰好出现一次。
+- 先按 meets_core 分层：meets_core=false 的候选排在全部 true 之后；若都 false，它们同层。同层（尤其 meets_core=true）内再按已确认的实际可用性细分，仅为区分而编造的差异不算。
+- 允许并列：确实相当就放同一层，不要强排名次。
 
-五、组织提交
-每条 finding 给一个候选内唯一且稳定的 finding_id，编辑或重排时保持 ID，删除后同步移除引用。decisive_findings/counterevidence 使用 candidate + finding_id；assessment.requirement_index 从 0 开始，指向核心要求数组。
-summary 写该候选的完成情况与主要缺口，verdict.reason 写决定判决的关键事实，tradeoff 写反向证据的权衡；不在这些字段复制同一段论证。双方原始回答耗时齐全时填写 timing_analysis，否则填 ""。
-收到 requirement_uncovered 时，expected 是缺失的要求索引。先核实要求是否完成，再补齐对应 finding 和 decisive_findings 引用；不能只改理由、删除核心要求或凭空补充优势。
+五、支持与权衡
+- decisive_findings 用 candidate + finding_index 引用归因 findings，只引用真正影响排名的发现，每条必须存在于对应候选的归因结果。
+- tradeoff 解释相邻层的关键差异、对结论的反向证据，以及同层并列的理由。文字讨论多个候选不等于已引用，必要时分别引用。
+
+六、提交
+调用 submit_evaluation 提交；需要从文件提交时用工作目录内的 evaluation-draft.json 与 submit_evaluation_file。证据由归因阶段提供，本阶段只引用 finding_index，不重复提交 evidence_id。
+收到校验错误后先修结构，再处理依赖它的检查；只改相关字段与引用，不为通过校验改变排名或核心判定。相同错误反复出现或收到停止提示时不再原样提交。

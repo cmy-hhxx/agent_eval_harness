@@ -15,7 +15,7 @@ Python 仅承担公共代码工具与 Prime SDK runtime；[bootstrap](../scripts
 | 修改内容 | 入口 | 验证重点 |
 |---|---|---|
 | Agent 提示词、Schema、判决 | `packages/agents/src/<agent>` | 独立运行、契约、证据与判决 |
-| 输入适配、配对、盲测、报告 | `packages/workflows/src/pairwise` | 适配器注册表、A/B 映射、结果编解码 |
+| 输入适配、分组对比、盲测、报告 | `packages/workflows/src/comparison` | 适配器注册表、A/B 映射、结果编解码 |
 | 本地存储 | `packages/data` | 原子保存、追加失败、锁、崩溃恢复 |
 | 公共工具 | `packages/tools` | 工具预算、产物、取消和进程回收 |
 | 调度、收据、恢复 | `packages/host`、`packages/runtime` | 重复提交、丢失确认、恢复和失败状态 |
@@ -60,6 +60,6 @@ README 是唯一入口，正文统一放在 `docs/`，使用、契约、架构�
 - 一件事实只解释一次，其他页面链接它；schema、配置与类型直接链接源码。
 - 行为变更与对应文档一起改，不留下失效命令或“以后兼容”的说明。
 - 校对范围包含提示词、工具描述、错误修复提示和测试名称；这些内容也必须使用当前契约的字段与语义。
-- 批次统计通过 preflight 获取，运行记录进入 `data/runs/pairwise/`；临时计划和验证日志进入 `.artifacts/`。
+- 批次统计通过 preflight 获取，运行记录进入 `data/runs/comparison/`；临时计划和验证日志进入 `.artifacts/`。
 - 完成的计划不作为长期手册保存，历史通过 Git 查阅，不新建 archive 文档树。
 - 新增页面前先检查是否能放入已有五页；所有正文必须能从 README 到达。

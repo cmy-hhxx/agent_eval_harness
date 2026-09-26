@@ -3,12 +3,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
-import { adapt, buildPlan, comparisonPair, inputAdapterIds, inputAdapters } from "@eval/workflows/pairwise";
+import { adapt, buildPlan, inputAdapterIds, inputAdapters } from "@eval/workflows/comparison";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
-import { annotateFindings } from "@eval/workflows/pairwise";
-import type { Finding } from "@eval/workflows/pairwise";
-import { emptyAudit, fixtureConfig, pairResult, raw } from "../../fixtures/pairwise.js";
+import { annotateFindings } from "@eval/workflows/comparison";
+import type { Finding } from "@eval/workflows/comparison";
+import type { TaskData } from "@eval/workflows/comparison";
+import { emptyAudit, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
+import { emptyUsage } from "@eval/contracts";
 import { ArtifactStore, compressFile, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -58,20 +60,20 @@ test("configuration composes layered files and resolves bound models", async () 
   const host = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
   assert.equal(host.models.models.judge?.baseUrl, "https://gateway.example/v1");
   assert.equal(host.models.models.judge?.apiKeyEnv, "EVAL_API_KEY");
-  assert.equal(host.models.bindings.correctness?.profile, "judge");
-  assert.equal(host.models.bindings.pairwise?.profile, "judge");
-  assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/pairwise"));
+  assert.equal(host.models.bindings.attribution?.profile, "judge");
+  assert.equal(host.models.bindings.comparison?.profile, "judge");
+  assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers"));
-  assert.throws(() => createModelResolver(host.models)("correctness"), /Missing model id/);
+  assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);
   const resolved = await loadConfig([file, path.join(ROOT, "configs/models.example.json")], {
     EVAL_BASE_URL: "https://gateway.example/v1",
   });
   const modelForStage = createModelResolver(resolved.models);
-  assert.equal(modelForStage("correctness").model, "your-gateway-model-id");
-  assert.equal(modelForStage("correctness").maxOutputTokens, 4096);
-  assert.equal(modelForStage("pairwise").maxOutputTokens, 8192);
-  assert.equal(modelForStage("pairwise").thinking, "low");
+  assert.equal(modelForStage("attribution").model, "your-gateway-model-id");
+  assert.equal(modelForStage("attribution").maxOutputTokens, 4096);
+  assert.equal(modelForStage("comparison").maxOutputTokens, 8192);
+  assert.equal(modelForStage("comparison").thinking, "low");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
 });
@@ -90,27 +92,32 @@ test("directory input paths merge matching files from date folders", async () =>
     assert.deepEqual(plan.summary.issues, []);
     assert.equal(plan.summary.valid_inputs, 8);
     assert.equal(plan.summary.cases, 2);
-    assert.equal(plan.summary.pairwise_tasks, 4);
+    assert.equal(plan.summary.comparison_tasks, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("no-standard-answer flags on all versions skip correctness tasks", async () => {
+test("no-standard-answer samples still run attribution and only skip the correctness verdict", async () => {
   const input = raw();
   input.has_standard_answer = false;
   const { directory, config } = await fixtureConfig([[input], [input], [input], [input]]);
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.summary.correctness_tasks, 0);
-    assert.equal(plan.summary.subjective_inputs_skipping_correctness, 4);
-    assert.equal(plan.summary.pairwise_tasks, 2);
+    assert.equal(plan.summary.attribution_tasks, 2);
+    assert.equal(plan.summary.comparison_tasks, 1);
+    assert.equal(
+      plan.tasks.filter((task) => task.stage === "attribution").every((task) =>
+        (task.data as TaskData).library !== undefined,
+      ),
+      true,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("comparison pairs are configured, not fixed to built-in versions", async () => {
+test("comparison groups are configured, not fixed to built-in versions", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const versions: typeof config.inputs.versions = [];
@@ -123,13 +130,13 @@ test("comparison pairs are configured, not fixed to built-in versions", async ()
       versions.push({ id, name, adapter: "a", sources: [{ kind: "file", path: file }] });
     }
     config.inputs.versions = versions;
-    config.pairs = [["deepseek", "kimi"]];
+    config.comparisons = [["deepseek", "kimi"]];
     const plan = await buildPlan(config);
-    assert.deepEqual(plan.summary.allowed_pairs, [["deepseek", "kimi"]]);
-    assert.equal(plan.summary.pairwise_tasks, 1);
-    const pair = (plan.tasks.find((task) => task.stage === "pairwise")!.data as { pair: string[] }).pair!;
-    assert.equal(pair.join("__vs__"), "deepseek__vs__kimi");
-    for (const invalid of [["deepseek"], ["deepseek", "deepseek"]]) assert.throws(() => comparisonPair(invalid));
+    assert.deepEqual(plan.summary.comparisons, [["deepseek", "kimi"]]);
+    assert.equal(plan.summary.comparison_tasks, 1);
+    const group = (plan.tasks.find((task) => task.stage === "comparison")!.data as { group: string[] })
+      .group!;
+    assert.equal(group.join("__vs__"), "deepseek__vs__kimi");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -169,10 +176,10 @@ test("image observations require an actual image tool audit", async () => {
   const { directory, config } = await fixtureConfig([[input], [], [input], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks[0],
-      result = pairResult(),
+      task = plan.tasks.find((item) => item.stage === "attribution")!,
+      result = attributionResult(false, "2+2=4", false),
       audit = emptyAudit();
-    result.evaluations.A.findings[0].evidence[0].quote = "[图像观察]图片呈现结果";
+    result.findings[0].evidence[0].quote = "[图像观察]图片呈现结果";
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
@@ -200,28 +207,28 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 6);
-    assert.equal(plan.summary.correctness_tasks, 4);
-    assert.equal(plan.summary.pairwise_tasks, 2);
-    const original = plan.tasks.filter((t) => t.stage === "pairwise").map((t) => t.data);
+    assert.equal(plan.tasks.length, 3);
+    assert.equal(plan.summary.attribution_tasks, 2);
+    assert.equal(plan.summary.comparison_tasks, 1);
+    const original = plan.tasks.filter((t) => t.stage === "comparison").map((t) => t.data);
     config.inputs.versions.reverse();
     assert.deepEqual(
-      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "pairwise").map((t) => t.data),
+      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "comparison").map((t) => t.data),
       original,
     );
-    for (const task of plan.tasks.filter((t) => t.stage === "pairwise"))
+    for (const task of plan.tasks.filter((t) => t.stage === "comparison"))
       assert.equal(Object.keys(task.dependencies).length, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
-test("duplicate input invalidates only affected pair; conflicting question invalidates case", async () => {
-  const { directory, config } = await fixtureConfig([[raw(), raw()], [raw()], [raw()], [raw()]]);
+test("duplicate input invalidates only affected group; conflicting question invalidates case", async () => {
+  const { directory, config } = await fixtureConfig([[raw()], [raw(), raw()], [raw()], [raw()]]);
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.summary.pairwise_tasks, 1);
+    assert.equal(plan.summary.comparison_tasks, 1);
     assert.match(JSON.stringify(plan.summary.issues), /duplicate_input/);
-    assert.equal(plan.summary.correctness_tasks, 2);
+    assert.equal(plan.summary.attribution_tasks, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -239,73 +246,71 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
   try {
     const plan = await buildPlan(config);
     const prompts = path.join(ROOT, "packages/agents/src");
-    const system = (
-      await readFile(path.join(prompts, "comparison/profiles/default/system.md"), "utf8")
-    ).trim();
+    const systems: Record<string, string> = {};
     const instructions: Record<string, string> = {};
-    for (const stage of ["correctness", "pairwise"]) {
-      const instruction = (
-        await readFile(
-          path.join(
-            prompts,
-            stage === "pairwise"
-              ? "comparison/profiles/default/instructions.md"
-              : "critique/profiles/correctness/instructions.md",
-          ),
-          "utf8",
-        )
-      ).trim();
+    for (const stage of ["attribution", "comparison"]) {
+      const profile =
+        stage === "comparison" ? "comparison/profiles/default" : "attribution/profiles/attribution";
+      const system = (await readFile(path.join(prompts, profile, "system.md"), "utf8")).trim();
+      const instruction = (await readFile(path.join(prompts, profile, "instructions.md"), "utf8")).trim();
+      systems[stage] = system;
       instructions[stage] = instruction;
       const task = plan.tasks.find((item) => item.stage === stage)!;
       const prepared = prepare(task, plan.inputs, {});
       assert.equal(prepared.evaluation.systemPrompt, system);
       assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
       assert(prepared.prompt.includes("计算2+2"));
-      const rules = prepared.evaluation.systemPrompt + "\n" + instruction;
+      const rules = system + "\n" + instruction;
       assert(rules.includes("evidence_id"));
       assert(rules.includes("submit_evaluation"));
-      if (stage === "correctness") {
+      if (stage === "attribution") {
         assert(!rules.includes("both_good"));
         assert(!rules.includes("decisive_findings"));
-        assert(rules.includes("final_message_index"));
+        assert(instruction.includes("final_message_index"));
       } else {
         for (const rule of [
-          "both_good",
-          "both_bad",
+          "ranking",
+          "assessments",
+          "meets_core",
           "decisive_findings",
-          "counterevidence",
-          "requirement_uncovered",
+          "finding_index",
         ])
           assert(rules.includes(rule), rule);
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as Record<string, unknown>;
-    assert.equal(snapshot.systemPrompt, system);
+    assert.equal(snapshot.systemPrompt, systems.comparison);
     assert.deepEqual(snapshot.instructions, instructions);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("subjective inputs skip correctness, and direct evidence needs no forced tool calls", async () => {
+test("subjective inputs still run attribution and direct evidence needs no forced tool calls", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks[0];
-    assert.equal(plan.tasks.length, 1);
+      task = plan.tasks.find((item) => item.stage === "attribution")!;
+    assert.equal(plan.tasks.length, 3);
     assert.deepEqual(task.dependencies, {});
     const prepared = prepare(task, plan.inputs, {});
     assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
-    validateEvaluation(task, plan.inputs, pairResult(), emptyAudit(), {});
-    const bad = pairResult();
-    bad.evaluations.A.findings[0].evidence[0].quote = "fabricated";
-    assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文/);
-    const uncertain = pairResult();
-    uncertain.evaluations.A.findings[0].assessment.evidence_status = "uncertain";
-    assert.throws(() => validateEvaluation(task, plan.inputs, uncertain, emptyAudit(), {}), /不确定/);
-    const wrong = pairResult();
-    wrong.decision_basis.decisive_findings[0].finding_index = 7;
-    assert.throws(() => validateEvaluation(task, plan.inputs, wrong, emptyAudit(), {}), /不存在/);
+    validateEvaluation(task, plan.inputs, attributionResult(true, "2+2=4", false), emptyAudit(), {});
+    const bad = attributionResult(true, "2+2=4", false);
+    bad.findings[0].evidence[0].quote = "fabricated";
+    assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文|证据/);
+    const subjective = attributionResult(true, "2+2=4");
+    assert.throws(
+      () => validateEvaluation(task, plan.inputs, subjective, emptyAudit(), {}),
+      /has_standard_answer/,
+    );
+    const forged = attributionResult(true, "2+2=4", false);
+    forged.findings[0] = {
+      ...forged.findings[0],
+      type: "problem",
+      problem: { node_id: "missing", component: "组件", label: "问题", definition: "描述" },
+    } as (typeof forged.findings)[number];
+    assert.throws(() => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}), /不在该模型的归因树/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -343,38 +348,51 @@ test("provenance resolves only references in the finding quote", () => {
   assert.deepEqual(trace.candidate_tools, ["FinQuery", "Search"]);
 });
 
-test("submission feedback locates every invalid quote and missing counterevidence", async () => {
+test("submission feedback locates invalid comparison references", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   try {
     const plan = await buildPlan(config),
-      result = pairResult();
-    result.verdict.result = "A_better";
-    const problem = structuredClone(result.evaluations.A.findings[0]);
-    problem.type = "problem";
-    result.evaluations.A.findings.push(problem);
-    result.evaluations.A.findings[0].evidence[0].quote = "invented A";
-    result.evaluations.B.findings[0].evidence[0].quote = "invented B";
-    assert.throws(
-      () => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {}),
-      (error: unknown) => {
-        assert(error instanceof Error);
-        for (const location of [
-          "counterevidence 缺少 A:1",
-          "counterevidence 缺少 B:0",
-          "evaluations.A.findings[0].evidence[0]",
-          "evaluations.B.findings[0].evidence[0]",
-        ])
-          assert(error.message.includes(location), error.message);
-        return true;
-      },
+      task = plan.tasks.find((item) => item.stage === "comparison")!,
+      labels = Object.keys((task.data as TaskData).candidates);
+    const attributions = Object.fromEntries(
+      Object.entries(task.dependencies).map(([label, id]) => [
+        label,
+        {
+          taskId: id,
+          attemptId: `a-${label}`,
+          submissionId: id,
+          evaluation: attributionResult(true, "2+2=4", false),
+          audit: emptyAudit(),
+          usage: emptyUsage(),
+          status: "succeeded" as const,
+          acceptedAt: 0,
+        },
+      ]),
     );
-    result.decision_basis.counterevidence = [
-      { candidate: "A", finding_index: 1 },
-      { candidate: "B", finding_index: 0 },
-    ];
-    result.evaluations.A.findings[0].evidence[0].quote = "2+2=4";
-    result.evaluations.B.findings[0].evidence[0].quote = "2+2=4";
-    validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {});
+    const result = {
+      task_analysis: {
+        task_type: "整数加法",
+        goal: "计算2+2",
+        requirements: ["给出正确的加法结果"],
+        scoring_points: ["使用指定操作数"],
+        red_flags: ["擅自替换操作数"],
+      },
+      ranking: [labels],
+      assessments: Object.fromEntries(labels.map((label) => [label, { meets_core: true, summary: "结论。" }])),
+      decision_basis: {
+        tradeoff: "并列。",
+        decisive_findings: [{ candidate: labels[0]!, finding_index: 9 }],
+      },
+    };
+    assert.throws(
+      () => validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions),
+      /既有 finding/,
+    );
+    result.decision_basis.decisive_findings = labels.map((label) => ({
+      candidate: label,
+      finding_index: 0,
+    }));
+    validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

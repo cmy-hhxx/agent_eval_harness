@@ -4,7 +4,6 @@ import inputSchema from "./profiles/default/input.schema.json" with { type: "jso
 import outputSchema from "./profiles/default/output.schema.json" with { type: "json" };
 import resolvedSchema from "./profiles/default/resolved.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
-import { resolveSubmission } from "./resolve.js";
 export * from "./types.js";
 export const comparisonProfile: AgentProfile = {
   id: "default",
@@ -24,7 +23,6 @@ export const comparisonProfile: AgentProfile = {
     "read_artifact",
   ],
   validate: validateEvaluation,
-  resolve: resolveSubmission,
 };
 export const comparisonAgent: AgentDefinition = {
   id: "comparison",

@@ -133,7 +133,7 @@ test("documentation links resolve and no replaced package paths remain", async (
   for (const file of paths) {
     const text = await readFile(path.join(root, file), "utf8");
     assert(
-      !/packages\/(?:pairwise-eval|agent-pi|agent-prime|worker)(?:\/|\b)|contracts\/src\/io\.[jt]s|EvaluationPack/.test(
+      !/packages\/(?:agent-pi|agent-prime|worker)(?:\/|\b)|contracts\/src\/io\.[jt]s|EvaluationPack/.test(
         text,
       ),
       `Replaced entry in ${file}`,

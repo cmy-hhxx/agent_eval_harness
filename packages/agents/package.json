@@ -7,9 +7,9 @@
       "types": "./comparison.d.ts",
       "import": "./comparison.js"
     },
-    "./critique": {
-      "types": "./critique.d.ts",
-      "import": "./critique.js"
+    "./attribution": {
+      "types": "./attribution.d.ts",
+      "import": "./attribution.js"
     }
   }
 }

@@ -4,7 +4,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { exists, readJson, readJsonl, writeJson, readInputSource } from "@eval/data";
 import { canonical } from "@eval/contracts";
-import { readRunState, loadRunInputs } from "@eval/workflows/pairwise";
+import { readRunState, loadRunInputs } from "@eval/workflows/comparison";
 import { services, agents } from "@eval/host-app/composition";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { cite, evidenceSources } from "@eval/tools";
@@ -75,13 +75,15 @@ async function loadFixtures(file) {
 }
 
 // Convert only exact matches. Unresolvable evidence remains invalid; never repair judgments.
+// Comparison drafts carry no evidence (they reference findings by index); only attribution drafts are wired.
 function wireDraft(fixture) {
   const draft = structuredClone(fixture.draft);
-  const evidence = (refs, label) =>
+  if (!draft || typeof draft !== "object" || fixture.task.stage !== "attribution") return draft;
+  const evidence = (refs) =>
     Array.isArray(refs)
       ? refs.map((ref) => {
           if (ref.evidence_id) return ref;
-          const id = fixture.task.inputIds[label],
+          const id = fixture.task.inputIds.A,
             message = fixture.inputs[id]?.messages[ref.message_index];
           if (typeof ref.quote !== "string" || !message) return { evidence_id: "unresolved" };
           if (ref.quote.startsWith("[图像观察]")) return ref; // requires explicit viewing, never infer it
@@ -97,20 +99,11 @@ function wireDraft(fixture) {
           };
         })
       : refs;
-  if (draft?.evidence) draft.evidence = evidence(draft.evidence, "A");
-  for (const [label, review] of Object.entries(draft?.evaluations || {}))
-    review.findings?.forEach((finding, i) => {
-      finding.finding_id ??= "finding-" + i;
-      finding.evidence = evidence(finding.evidence, label);
-    });
-  for (const kind of ["decisive_findings", "counterevidence"])
-    if (Array.isArray(draft?.decision_basis?.[kind]))
-      draft.decision_basis[kind] = draft.decision_basis[kind].map(
-        ({ candidate, finding_index, finding_id }) => ({
-          candidate,
-          finding_id: finding_id || "finding-" + finding_index,
-        }),
-      );
+  draft.correctness_evidence = evidence(draft.correctness_evidence);
+  for (const [index, finding] of (draft.findings || []).entries()) {
+    finding.finding_id ??= "finding-" + index;
+    finding.evidence = evidence(finding.evidence);
+  }
   return draft;
 }
 function evaluate(fixture) {
@@ -253,9 +246,9 @@ if (command === "collect") {
   if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
   const { fixtures } = await loadFixtures(values.fixtures);
   const selected = [
-    ...new Map(fixtures.filter((f) => f.task.stage === "pairwise").map((f) => [f.task.id, f])).values(),
+    ...new Map(fixtures.filter((f) => f.task.stage === "comparison").map((f) => [f.task.id, f])).values(),
   ].slice(0, limit);
-  if (!selected.length) throw new Error("No pairwise fixtures");
+  if (!selected.length) throw new Error("No comparison fixtures");
   const originals = [
     ...new Map(selected.flatMap((f) => [...f.dependencyTasks, f.task]).map((t) => [t.id, t])).values(),
   ];
@@ -267,7 +260,7 @@ if (command === "collect") {
     task.dependencies = Object.fromEntries(
       Object.entries(task.dependencies).map(([label, id]) => [label, ids.get(id)]),
     );
-    if (task.stage === "pairwise") {
+    if (task.stage === "comparison") {
       task.data.comparisonId = "cmp_" + randomUUID();
       if (values.swap)
         for (const object of [task.data.candidates, task.inputIds, task.dependencies])
@@ -315,7 +308,7 @@ if (command === "collect") {
         issues: [],
         skipped: [],
         cases: selected.length,
-        pairwise_tasks: selected.length,
+        comparison_tasks: selected.length,
         by_batch: {},
       },
     };

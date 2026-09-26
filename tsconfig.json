@@ -36,11 +36,11 @@
       "@eval/agents/comparison": [
         "./packages/agents/src/comparison/index.ts"
       ],
-      "@eval/agents/critique": [
-        "./packages/agents/src/critique/index.ts"
+      "@eval/agents/attribution": [
+        "./packages/agents/src/attribution/index.ts"
       ],
-      "@eval/workflows/pairwise": [
-        "./packages/workflows/src/pairwise/index.ts"
+      "@eval/workflows/comparison": [
+        "./packages/workflows/src/comparison/index.ts"
       ],
       "@eval/runtime/client": [
         "./packages/runtime/src/client-entry.ts"

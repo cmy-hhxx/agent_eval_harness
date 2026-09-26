@@ -1,0 +1,52 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { attributionAgent, attributionProfile } from "./index.js";
+import example from "./profiles/attribution/example.json" with { type: "json" };
+import { evidenceId } from "@eval/tools";
+
+const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
+test("Attribution judges one answer, conditionally on the standard answer", () => {
+  assert.deepEqual(Object.keys(attributionAgent.profiles), ["default"]);
+  attributionProfile.validate!(example.request, example.result, audit);
+  const draft = {
+    ...example.result,
+    correctness_evidence: [{ evidence_id: evidenceId("input-A", 1, "text", "/content", 0, 5) }],
+    findings: example.result.findings.map((finding) => ({
+      ...finding,
+      finding_id: "f1",
+      evidence: [{ evidence_id: evidenceId("input-A", 1, "text", "/content", 0, 5) }],
+    })),
+  };
+  assert.deepEqual(attributionProfile.resolve!(example.request, draft, audit), example.result);
+
+  const subjective = structuredClone(example.request);
+  subjective.input.ground_truth.available = false;
+  const nulled = {
+    ...example.result,
+    has_standard_answer: false,
+    is_correct: null,
+    correctness_reason: "",
+    correctness_evidence: [],
+  };
+  attributionProfile.validate!(subjective, nulled, audit);
+  assert.throws(() => attributionProfile.validate!(subjective, example.result, audit), /无标准答案/);
+
+  const wrongScope = structuredClone(example.result);
+  wrongScope.correctness_evidence = [{ message_index: 0, quote: "计算2+2" }];
+  assert.throws(() => attributionProfile.validate!(example.request, wrongScope, audit), /只能引用最终回答/);
+
+  const forgedNode = {
+    ...example.result,
+    findings: [
+      {
+        ...example.result.findings[0],
+        type: "problem",
+        problem: { node_id: "missing", component: "色值工具", label: "色值错误", definition: "d" },
+      },
+    ],
+  };
+  assert.throws(
+    () => attributionProfile.validate!(example.request, forgedNode as unknown, audit),
+    /不在该模型的归因树/,
+  );
+});

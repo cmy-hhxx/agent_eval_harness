@@ -1,63 +1,24 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["verdict", "evaluations", "task_analysis", "decision_basis"],
+  "required": [
+    "task_analysis",
+    "ranking",
+    "assessments",
+    "decision_basis"
+  ],
   "properties": {
-    "decision_basis": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["decisive_findings", "counterevidence", "tradeoff"],
-      "properties": {
-        "decisive_findings": {
-          "type": "array",
-          "maxItems": 12,
-          "uniqueItems": true,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["candidate", "finding_index"],
-            "properties": {
-              "candidate": {
-                "type": "string",
-                "minLength": 1
-              },
-              "finding_index": {
-                "type": "integer",
-                "minimum": 0
-              }
-            }
-          }
-        },
-        "counterevidence": {
-          "type": "array",
-          "maxItems": 12,
-          "uniqueItems": true,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["candidate", "finding_index"],
-            "properties": {
-              "candidate": {
-                "type": "string",
-                "minLength": 1
-              },
-              "finding_index": {
-                "type": "integer",
-                "minimum": 0
-              }
-            }
-          }
-        },
-        "tradeoff": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "task_analysis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["task_type", "goal", "requirements", "scoring_points", "red_flags", "timing_analysis"],
+      "required": [
+        "task_type",
+        "goal",
+        "requirements",
+        "scoring_points",
+        "red_flags"
+      ],
       "properties": {
         "task_type": {
           "type": "string",
@@ -93,231 +54,72 @@
             "type": "string",
             "minLength": 1
           }
-        },
-        "timing_analysis": {
-          "type": "string"
         }
       }
     },
-    "verdict": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["result", "reason"],
-      "properties": {
-        "result": {
-          "enum": ["A_better", "B_better", "both_good", "both_bad"]
-        },
-        "reason": {
+    "ranking": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
           "type": "string",
           "minLength": 1
         }
       }
     },
-    "evaluations": {
+    "assessments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "meets_core",
+          "summary"
+        ],
+        "properties": {
+          "meets_core": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "decision_basis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["A", "B"],
+      "required": [
+        "tradeoff",
+        "decisive_findings"
+      ],
       "properties": {
-        "A": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["summary", "findings"],
-          "properties": {
-            "summary": {
-              "type": "string",
-              "minLength": 1
-            },
-            "findings": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 6,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "type",
-                  "dimension",
-                  "stage",
-                  "importance",
-                  "text",
-                  "reason",
-                  "evidence",
-                  "assessment"
-                ],
-                "properties": {
-                  "type": {
-                    "enum": ["strength", "problem"]
-                  },
-                  "dimension": {
-                    "enum": [
-                      "correctness",
-                      "completeness",
-                      "instruction_following",
-                      "evidence_quality",
-                      "reasoning",
-                      "format",
-                      "relevance",
-                      "efficiency"
-                    ]
-                  },
-                  "stage": {
-                    "enum": ["context_recall", "reasoning", "execution", "final_answer"]
-                  },
-                  "importance": {
-                    "enum": ["high", "medium", "low"]
-                  },
-                  "text": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "evidence": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": ["message_index", "quote"],
-                      "properties": {
-                        "message_index": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "quote": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      }
-                    }
-                  },
-                  "assessment": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["requirement_index", "observation", "evidence_status", "impact"],
-                    "properties": {
-                      "requirement_index": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "observation": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "evidence_status": {
-                        "enum": ["established", "uncertain"]
-                      },
-                      "impact": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
+        "tradeoff": {
+          "type": "string",
+          "minLength": 1
         },
-        "B": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["summary", "findings"],
-          "properties": {
-            "summary": {
-              "type": "string",
-              "minLength": 1
-            },
-            "findings": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 6,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "type",
-                  "dimension",
-                  "stage",
-                  "importance",
-                  "text",
-                  "reason",
-                  "evidence",
-                  "assessment"
-                ],
-                "properties": {
-                  "type": {
-                    "enum": ["strength", "problem"]
-                  },
-                  "dimension": {
-                    "enum": [
-                      "correctness",
-                      "completeness",
-                      "instruction_following",
-                      "evidence_quality",
-                      "reasoning",
-                      "format",
-                      "relevance",
-                      "efficiency"
-                    ]
-                  },
-                  "stage": {
-                    "enum": ["context_recall", "reasoning", "execution", "final_answer"]
-                  },
-                  "importance": {
-                    "enum": ["high", "medium", "low"]
-                  },
-                  "text": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "evidence": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": ["message_index", "quote"],
-                      "properties": {
-                        "message_index": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "quote": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      }
-                    }
-                  },
-                  "assessment": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["requirement_index", "observation", "evidence_status", "impact"],
-                    "properties": {
-                      "requirement_index": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "observation": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "evidence_status": {
-                        "enum": ["established", "uncertain"]
-                      },
-                      "impact": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  }
-                }
+        "decisive_findings": {
+          "type": "array",
+          "maxItems": 24,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "candidate",
+              "finding_index"
+            ],
+            "properties": {
+              "candidate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "finding_index": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }

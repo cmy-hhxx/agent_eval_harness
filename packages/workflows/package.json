@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./pairwise": {
-      "types": "./pairwise.d.ts",
-      "import": "./pairwise.js"
+    "./comparison": {
+      "types": "./comparison.d.ts",
+      "import": "./comparison.js"
     }
   }
 }

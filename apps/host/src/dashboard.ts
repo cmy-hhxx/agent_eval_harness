@@ -7,7 +7,7 @@ import { HttpError, safeId, type RunState } from "@eval/contracts";
 import { exists, locateRun, readJson } from "@eval/data";
 import { readConfigSources } from "./config.js";
 import { progressSnapshot } from "@eval/host";
-import { pairwiseRepository } from "@eval/workflows/pairwise";
+import { comparisonRepository } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -186,7 +186,7 @@ async function inspectRun(outputDir: string, runId: string, includeTasks = true)
   let checkpoint: DashboardCheckpoint | undefined;
   if (includeTasks) {
     try {
-      state = await pairwiseRepository.readRun(run);
+      state = await comparisonRepository.readRun(run);
     } catch {
       checkpoint = await readJson<DashboardCheckpoint>(locateRun(run).stateFile);
     }

@@ -1,0 +1,62 @@
+{
+  "request": {
+    "input": {
+      "ground_truth": { "available": true, "value": "4" },
+      "library": { "components": [] },
+      "candidates": {
+        "A": {
+          "question": "计算2+2",
+          "final_message_index": 1,
+          "final_answer": "2+2=4",
+          "original_answer_timing": { "finish_seconds": null }
+        }
+      }
+    },
+    "sources": {
+      "A": {
+        "id": "input-A",
+        "value": {
+          "batch_id": "b1",
+          "case_id": "q",
+          "messages": [
+            { "type": "message", "role": "user", "content": "计算2+2" },
+            { "type": "message", "role": "assistant", "content": "2+2=4" }
+          ],
+          "meta": { "ok": true, "ground_truth": "4", "finish_answer_time_cost": 1200 }
+        }
+      }
+    }
+  },
+  "result": {
+    "has_standard_answer": true,
+    "is_correct": true,
+    "correctness_reason": "结果为4，与标准答案一致。",
+    "correctness_evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+    "task_analysis": {
+      "task_type": "整数加法",
+      "goal": "计算2+2",
+      "requirements": ["给出正确的加法结果"],
+      "scoring_points": ["使用指定操作数"],
+      "red_flags": ["擅自替换操作数"]
+    },
+    "summary": "直接给出正确结果。",
+    "findings": [
+      {
+        "type": "strength",
+        "dimension": "correctness",
+        "stage": "final_answer",
+        "importance": "high",
+        "text": "加法结果正确",
+        "reason": "与题目要求一致。",
+        "evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+        "assessment": {
+          "requirement_index": 0,
+          "observation": "2+2=4",
+          "evidence_status": "established",
+          "impact": "完成加法要求。"
+        },
+        "problem": null
+      }
+    ]
+  }
+}

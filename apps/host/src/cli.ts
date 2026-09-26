@@ -7,10 +7,10 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { pairwiseWorkflow } from "@eval/workflows/pairwise";
-import { reportRun } from "@eval/workflows/pairwise";
+import { comparisonWorkflow } from "@eval/workflows/comparison";
+import { reportRun } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
-import { validateRun } from "@eval/workflows/pairwise";
+import { validateRun } from "@eval/workflows/comparison";
 import { startDashboard } from "./dashboard.js";
 
 let logRunId: string | undefined;
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      "eval preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nstatus/validate/report: --run data/runs/pairwise/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
+      "eval preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nstatus/validate/report: --run data/runs/comparison/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
     );
     return;
   }
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
     command === "run" &&
     values["run-id"] &&
     (await exists(runLayout(config.output, values["run-id"]).stateFile));
-  const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await pairwiseWorkflow.plan(config);
+  const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await comparisonWorkflow.plan(config);
   if (command === "preflight") {
     console.log(JSON.stringify(plan.summary, null, 2));
     if ((plan.summary.issues as unknown[]).length) {
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
     !plan.tasks.length &&
     !(values["run-id"] && (await exists(runLayout(config.output, values["run-id"]).stateFile)))
   )
-    throw new Error("没有可评配对，请先查看 preflight");
+    throw new Error("没有可评对比组，请先查看 preflight");
   const engine = values.engine as Engine;
   if (!["pi", "prime"].includes(engine)) throw new Error("--engine must be pi or prime");
   const modelForStage = createModelResolver(host.models);

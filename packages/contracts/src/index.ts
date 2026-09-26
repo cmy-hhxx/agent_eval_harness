@@ -128,6 +128,66 @@ export interface OutputTarget {
 export type InputSource =
   | { kind: "file"; path: string }
   | { kind: "directory"; path: string; include?: string[] };
+/** Where per-model attribution trees are persisted. */
+export interface AttributionTarget {
+  kind: "directory";
+  path: string;
+}
+/** A component/tool class is a top-level attribution node; problems hang under it. */
+export type AttributionNodeKind = "component" | "problem";
+export interface AttributionOrigin {
+  run_id: string;
+  batch_id: string;
+  case_id: string;
+  input_id: string;
+  at: string;
+}
+export interface AttributionNode {
+  id: string;
+  kind: AttributionNodeKind;
+  parent: string | null;
+  label: string;
+  definition: string;
+  status: "active" | "merged" | "deprecated";
+  merged_into: string | null;
+  aliases: string[];
+  first_seen: AttributionOrigin | null;
+}
+export interface AttributionOccurrence {
+  id: string;
+  node_id: string;
+  version: string;
+  batch_id: string;
+  case_id: string;
+  input_id: string;
+  run_id: string;
+  task_id: string;
+  submission_id: string;
+  finding_id: string;
+  message_index: number;
+  quote: string;
+  source: { file: string; line: number };
+  classification: "recalled" | "created";
+  previous_node_id: string | null;
+  at: string;
+}
+export type AttributionEventType = "node_created" | "node_merged" | "occurrence_moved";
+export interface AttributionEvent {
+  id: string;
+  type: AttributionEventType;
+  at: string;
+  detail: JsonObject;
+}
+/** Append-only knowledge index for one model; `tree_version` reserves versioned trees. */
+export interface AttributionLibrary {
+  model: string;
+  tree_version: number;
+  previous_tree: string | null;
+  updated_at: string;
+  nodes: Record<string, AttributionNode>;
+  occurrences: AttributionOccurrence[];
+  events: AttributionEvent[];
+}
 export interface SubmissionReceipt extends Submission {
   acceptedAt: number;
   status: "succeeded";

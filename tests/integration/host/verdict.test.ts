@@ -1,416 +1,183 @@
-import { draftFor } from "../../fixtures/pairwise.js";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
 import {
-  emptyUsage,
-  type AgentBackend,
-  type RunManifest,
-  type SubmissionReceipt,
-} from "@eval/contracts";
-import { readJsonl, writeJson } from "@eval/data";
-import { buildPlan } from "@eval/workflows/pairwise";
-import { outputSchema } from "@eval/workflows/pairwise";
-import { services, validateEvaluation } from "../../fixtures/services.js";
-import { comparisonRow, reportRun } from "@eval/workflows/pairwise";
-import { writeRunState } from "@eval/workflows/pairwise";
-import type { PairwiseResult, TaskData } from "@eval/workflows/pairwise";
-import { validateRun } from "../../fixtures/services.js";
-import { runEvaluation } from "@eval/host";
-import { startWorker } from "@eval/runtime/worker";
-import { emptyAudit, fakeIdentity, fixtureConfig, pairResult, raw } from "../../fixtures/pairwise.js";
+  buildPlan,
+  comparisonRow,
+  createResultWriter,
+  reportRun,
+  writeRunState,
+} from "@eval/workflows/comparison";
+import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
+import { validateEvaluation } from "../../fixtures/services.js";
+import { attributionResult, emptyAudit, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
-function receipt(taskId: string, evaluation: unknown): SubmissionReceipt {
+function comparisonTask(plan: TaskPlan): PlannedTask {
+  return plan.tasks.find((task) => task.stage === "comparison")!;
+}
+function attributionReceipts(task: PlannedTask, correct = true): Map<string, SubmissionReceipt> {
+  const receipts = new Map<string, SubmissionReceipt>();
+  for (const [label, id] of Object.entries(task.dependencies))
+    receipts.set(id, {
+      taskId: id,
+      attemptId: `a-${label}`,
+      submissionId: randomUUID(),
+      evaluation: attributionResult(correct, "2+2=4", false),
+      audit: emptyAudit(),
+      usage: emptyUsage(),
+      status: "succeeded",
+      acceptedAt: 0,
+    });
+  return receipts;
+}
+function group(labels: string[], meets: Record<string, boolean> = {}): ComparisonResult {
   return {
-    taskId,
-    attemptId: "test",
-    submissionId: randomUUID(),
-    evaluation,
-    audit: emptyAudit(),
-    usage: emptyUsage(),
-    status: "succeeded",
-    acceptedAt: 0,
+    task_analysis: {
+      task_type: "整数加法",
+      goal: "计算2+2",
+      requirements: ["给出正确的加法结果"],
+      scoring_points: ["使用指定操作数"],
+      red_flags: ["擅自替换操作数"],
+    },
+    ranking: [labels],
+    assessments: Object.fromEntries(
+      labels.map((label) => [label, { meets_core: meets[label] ?? true, summary: "结论。" }]),
+    ),
+    decision_basis: {
+      tradeoff: "并列。",
+      decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
+    },
   };
 }
-function badResult(): PairwiseResult {
-  const result = pairResult({ A: "2+2=5", B: "2+2=5" });
-  result.verdict = {
-    result: "both_bad",
-    reason: "双方都把2+2算成5，核心结果错误，未发现可用性差异。",
-  };
-  result.decision_basis.tradeoff = "双方均未交付正确结果，也无足以区分胜负的其他差异。";
-  for (const review of Object.values(result.evaluations)) {
-    review.summary = "核心加法结果错误。";
-    Object.assign(review.findings[0], {
-      type: "problem",
-      text: "结果错误",
-      reason: "2+2应为4。",
-    });
-    review.findings[0].assessment.impact = "未完成核心计算要求。";
-  }
-  return result;
-}
 
-test("evidence can quote structured numeric tool output without accepting invented values", async () => {
-  const input = raw("q", null);
-  input.messages.splice(1, 0, {
-    type: "function_call_output",
-    output: { datas: [{ "数量[20240220]": 4444 }] },
-  });
-  const { directory, config } = await fixtureConfig([[input], [], [input], []]);
-  try {
-    const plan = await buildPlan(config),
-      result = pairResult();
-    for (const review of Object.values(result.evaluations)) review.findings[0].evidence[0].message_index = 2;
-    const evidence = { message_index: 1, quote: '"数量[20240220]": 4444' };
-    result.evaluations.A.findings[0].evidence.push(evidence);
-    const check = () => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {});
-    assert.doesNotThrow(check);
-    evidence.quote = "4444";
-    assert.doesNotThrow(check);
-    evidence.quote = '"数量[20240220]": 5555';
-    assert.throws(check, /quote 不是/);
-    evidence.message_index = 2;
-    evidence.quote = "4444";
-    assert.throws(check, /quote 不是/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("invalid evidence indices identify every candidate, field and valid message range", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  try {
-    const plan = await buildPlan(config),
-      result = pairResult();
-    result.evaluations.A.findings[0].evidence[0].message_index = 10;
-    result.evaluations.B.findings[0].evidence[0].message_index = 20;
-    assert.throws(
-      () => validateEvaluation(plan.tasks[0], plan.inputs, result, emptyAudit(), {}),
-      (error) => {
-        const message = (error as Error).message;
-        assert.match(message, /evaluations\.A\.findings\[0\]\.evidence\[0\]/);
-        assert.match(message, /evaluations\.B\.findings\[0\]\.evidence\[0\]/);
-        assert.match(message, /0–1/);
-        return true;
-      },
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("both_good requires evidence for every core requirement and resolves serious contradictions", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = plan.tasks[0];
-    const check = (result: unknown) => validateEvaluation(task, plan.inputs, result, emptyAudit(), {});
-    check(pairResult());
-    assert.throws(
-      () =>
-        check({
-          ...pairResult(),
-          verdict: { result: "tie", reason: "差不多" },
-        }),
-      /输出结构无效/,
-    );
-    const uncovered = pairResult();
-    uncovered.task_analysis.requirements.push("解释计算过程");
-    assert.throws(() => check(uncovered), /核心要求 1/);
-    const trivial = pairResult();
-    trivial.evaluations.B.findings[0].importance = "low";
-    assert.throws(() => check(trivial), /B 对核心要求/);
-    const oneSided = pairResult();
-    oneSided.decision_basis.decisive_findings.pop();
-    assert.throws(() => check(oneSided), /双方发现/);
-    for (const evidence_status of ["established", "uncertain"] as const) {
-      const contradicted = pairResult();
-      const problem = structuredClone(contradicted.evaluations.B.findings[0]);
-      problem.type = "problem";
-      problem.assessment.evidence_status = evidence_status;
-      contradicted.evaluations.B.findings.push(problem);
-      assert.throws(() => check(contradicted), /严重问题矛盾/);
-    }
-    const withFlaw = pairResult();
-    const problem = structuredClone(withFlaw.evaluations.B.findings[0]);
-    problem.type = "problem";
-    problem.importance = "medium";
-    withFlaw.evaluations.B.findings.push(problem);
-    assert.throws(() => check(withFlaw), /counterevidence 缺少 B:1/);
-    withFlaw.decision_basis.counterevidence.push({
-      candidate: "B",
-      finding_index: 1,
-    });
-    withFlaw.decision_basis.tradeoff = "该问题不阻断核心交付，双方可用性相同。";
-    check(withFlaw);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("both_bad requires confirmed serious failures on each side and accounts for strengths", async () => {
-  const input = raw("q", null, "2+2=5");
-  const { directory, config } = await fixtureConfig([[input], [], [input], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = plan.tasks[0];
-    const check = (result: PairwiseResult) => validateEvaluation(task, plan.inputs, result, emptyAudit(), {});
-    check(badResult());
-    for (const candidate of ["A", "B"]) {
-      for (const importance of ["low", "medium"] as const) {
-        const minor = badResult();
-        minor.evaluations[candidate].findings[0].importance = importance;
-        assert.throws(() => check(minor), /严重问题引用/);
-      }
-      const uncertain = badResult();
-      uncertain.evaluations[candidate].findings[0].assessment.evidence_status = "uncertain";
-      assert.throws(() => check(uncertain), /不确定/);
-      const missing = badResult();
-      missing.evaluations[candidate].findings[0].type = "strength";
-      assert.throws(() => check(missing), /严重问题引用/);
-      const withStrength = badResult();
-      const strength = structuredClone(withStrength.evaluations[candidate].findings[0]);
-      strength.type = "strength";
-      withStrength.evaluations[candidate].findings.push(strength);
-      assert.throws(() => check(withStrength), /counterevidence 缺少/);
-      withStrength.decision_basis.counterevidence.push({
-        candidate,
-        finding_index: 1,
-      });
-      check(withStrength);
-    }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("absolute judgments cannot contradict or omit independent correctness receipts", async () => {
+test("group comparison validation enforces a partition over the candidates", async () => {
   const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks.find((t) => t.stage === "pairwise")!;
+      task = comparisonTask(plan),
+      labels = Object.keys((task.data as TaskData).candidates);
+    assert.equal(labels.length, 2);
+    const receipts = attributionReceipts(task);
     const dependencies = Object.fromEntries(
-      Object.entries(task.dependencies).map(([label, id]) => [
-        label,
-        receipt(id, {
-          is_correct: true,
-          correctness_reason: "2+2=4。",
-          evidence: [{ message_index: 1, quote: "2+2=4" }],
-        }),
-      ]),
+      Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
     );
-    const check = (result: PairwiseResult) =>
+    const check = (result: ComparisonResult) =>
       validateEvaluation(task, plan.inputs, result, emptyAudit(), dependencies);
-    check(pairResult());
-    for (const is_correct of [false, null]) {
-      dependencies.B.evaluation = {
-        is_correct,
-        correctness_reason: "未确认正确。",
-        evidence: [],
-      };
-      assert.throws(() => check(pairResult()), /独立正确性为 true/);
-    }
-    delete dependencies.B;
-    assert.throws(() => check(pairResult()), /缺少有效的独立正确性收据/);
-    dependencies.B = receipt(task.dependencies.A, { is_correct: true });
-    assert.throws(() => check(pairResult()), /缺少有效的独立正确性收据/);
-    dependencies.B = receipt(task.dependencies.B, { is_correct: true });
-    const bad = pairResult();
-    bad.verdict.result = "both_bad";
-    for (const review of Object.values(bad.evaluations)) review.findings[0].type = "problem";
-    assert.throws(() => check(bad), /与独立正确性收据矛盾/);
-    for (const review of Object.values(bad.evaluations))
-      review.findings[0].dimension = "instruction_following";
-    check(bad); // A correct answer can still fail another core requirement.
+    check(group(labels));
+
+    const duplicate = group(labels);
+    duplicate.ranking = [[labels[0]!, labels[0]!]];
+    assert.throws(() => check(duplicate), /重复/);
+
+    const incomplete = group(labels);
+    incomplete.ranking = [[labels[0]!]];
+    assert.throws(() => check(incomplete), /恰好包含本组全部候选/);
+
+    const missingAssessment = group(labels);
+    delete missingAssessment.assessments[labels[1]!];
+    assert.throws(() => check(missingAssessment), /每个候选/);
+
+    const forged = group(labels);
+    forged.decision_basis.decisive_findings = [{ candidate: labels[0]!, finding_index: 9 }];
+    assert.throws(() => check(forged), /既有 finding/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-for (const reverse of [false, true])
-  test(`all verdicts export and aggregate without ties across A/B swaps (${reverse})`, async () => {
-    const cases = ["good", "bad", "a_win", "aa_win", "failed"];
-    const rows = cases.map((id) => raw(id, null, id === "bad" ? "2+2=5" : "2+2=4"));
-    rows[0].request_time = "2026-09-24 11:37:31";
-    const { directory, config } = await fixtureConfig([rows, [], rows, []]);
-    try {
-      const plan = await buildPlan(config);
-      const names = { a_fast: "A组Fast", aa_fast: "AA组Fast" };
-      const validateOutput = new Ajv2020({ strict: false }).compile(outputSchema);
-      const states: RunManifest["states"] = {};
-      const receipts: Record<string, SubmissionReceipt> = {};
-      for (const task of plan.tasks) {
-        const data = task.data as TaskData;
-        if (reverse) {
-          [data.candidates.A, data.candidates.B] = [data.candidates.B, data.candidates.A];
-          [task.inputIds.A, task.inputIds.B] = [task.inputIds.B, task.inputIds.A];
-        }
-        const id = data.candidates.A.case_id;
-        states[task.id] = {
-          status: id === "failed" ? "failed" : "succeeded",
-          attempts: 0,
-        };
-        if (id === "failed") continue;
-        const result = id === "bad" ? badResult() : pairResult();
-        if (id.endsWith("_win")) {
-          const version = id === "a_win" ? "a_fast" : "aa_fast";
-          const winner = data.candidates.A.version === version ? "A" : "B";
-          result.verdict.result = winner === "A" ? "A_better" : "B_better";
-          result.decision_basis.counterevidence = [
-            { candidate: winner === "A" ? "B" : "A", finding_index: 0 },
-          ];
-        }
-        validateEvaluation(task, plan.inputs, result, emptyAudit(), {});
-        const row = comparisonRow(plan.inputs, task, result, new Map(), names);
-        assert(validateOutput(row), JSON.stringify(validateOutput.errors));
-        if (id === "good" || id === "bad") {
-          assert.deepEqual(row.verdict, {
-            result: id === "good" ? "both_good" : "both_bad",
-            winner_version: null,
-            winner_name: null,
-            reason: result.verdict.reason,
-          });
-          const verdict = row.verdict as object;
-          assert(
-            !validateOutput({
-              ...row,
-              verdict: { ...verdict, winner_version: "a_fast" },
-            }),
-          );
-          assert(
-            !validateOutput({
-              ...row,
-              verdict: { ...verdict, result: "tie" },
-            }),
-          );
-        }
-        receipts[task.id] = receipt(task.id, result);
-      }
-      const manifest: RunManifest = {
-        format: "evaluation-run",
-        debug: true,
+test("two-way verdicts are derived from ranking and core classification", async () => {
+  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
+  try {
+    const plan = await buildPlan(config),
+      task = comparisonTask(plan),
+      labels = Object.keys((task.data as TaskData).candidates),
+      receipts = attributionReceipts(task),
+      names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name])),
+      pairKey = "a_fast__vs__aa_fast";
+
+    const oneSided = group(labels, { [labels[0]!]: true, [labels[1]!]: false });
+    const win = comparisonRow(plan.inputs, task, oneSided, receipts, names);
+    const winVerdict = (win.verdicts as Record<string, { result: string; winner_version: string }>)[
+      pairKey
+    ]!;
+    assert.equal(winVerdict.result, "win");
+    assert.equal(winVerdict.winner_version, "a_fast");
+
+    const nearMiss = group(labels);
+    nearMiss.ranking = [[labels[0]!], [labels[1]!]];
+    const tiered = comparisonRow(plan.inputs, task, nearMiss, receipts, names);
+    assert.equal(
+      (tiered.verdicts as Record<string, { result: string; winner_version: string }>)[pairKey]!.result,
+      "win",
+    );
+
+    const allBad = comparisonRow(
+      plan.inputs,
+      task,
+      group(labels, Object.fromEntries(labels.map((label) => [label, false]))),
+      receipts,
+      names,
+    );
+    assert.equal((allBad.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_bad");
+
+    const even = comparisonRow(plan.inputs, task, group(labels), receipts, names);
+    assert.equal((even.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_good");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("report aggregates rankings and derived verdicts", async () => {
+  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
+  try {
+    const plan = await buildPlan(config),
+      task = comparisonTask(plan),
+      receipts = attributionReceipts(task),
+      run = path.join(directory, "run"),
+      labels = Object.keys((task.data as TaskData).candidates);
+    const state = {
+      manifest: {
+        format: "evaluation-run" as const,
+        debug: false,
         runId: "verdicts",
-        status: "finished",
+        status: "finished" as const,
         engine: fakeIdentity,
         config,
         tasks: plan.tasks,
         inputs: {},
-        states,
+        states: Object.fromEntries(
+          plan.tasks.map((t) => [t.id, { status: "succeeded" as const, attempts: 0 }]),
+        ),
         preflight: plan.summary,
         startedAt: 0,
         finishedAt: 1000,
-      };
-      await writeRunState(directory, {
-        manifest,
-        receipts,
-        usage: emptyUsage(),
-        recordedAttempts: 0,
-      });
-      await writeJson(path.join(directory, "_internal", "output_schema.json"), outputSchema);
-      const summary = await reportRun(directory, { details: true });
-      assert.equal(summary.completed_comparisons, 4);
-      const stats = (summary.pairs as Record<string, Record<string, unknown>>).a_fast__vs__aa_fast;
-      assert.deepEqual(stats.wins, { a_fast: 1, aa_fast: 1 });
-      assert.equal(stats.both_good, 1);
-      assert.equal(stats.both_bad, 1);
-      assert(!Object.hasOwn(stats, "ties"));
-      assert.deepEqual(summary.task_statuses, {
-        succeeded: 4,
-        failed: 1,
-      });
-      const summaries = [];
-      for await (const row of readJsonl(path.join(directory, "_internal/exports/task_summaries.jsonl")))
-        summaries.push(row);
-      assert.equal(summaries.length, 4);
-      const exports = new Map<string, string>();
-      for (const name of ["results/a_fast__vs__aa_fast.jsonl", "_internal/exports/task_summaries.jsonl"]) {
-        const text = await readFile(path.join(directory, name), "utf8");
-        exports.set(name, text);
-        for (const line of text.trim().split("\n")) {
-          const row = JSON.parse(line);
-          assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
-          assert.equal(row.request_time, row.case.case_id === "good" ? rows[0].request_time : null);
-          assert.equal(row.has_standard_answer, false);
-        }
-      }
-      const markdown = await readFile(path.join(directory, "task_summaries.md"), "utf8");
-      assert(markdown.includes("结论（都好）"));
-      assert(markdown.includes("结论（都差）"));
-      assert.equal((await validateRun(directory)).valid, true);
-      assert.deepEqual(await reportRun(directory, { details: true }), summary);
-      for (const [name, text] of exports)
-        assert.equal(await readFile(path.join(directory, name), "utf8"), text);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-test("host rejects both_good against incorrect dependencies before committing a repaired both_bad receipt", async () => {
-  const input = raw("q", "4", "2+2=5");
-  const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
-  let rejected = 0;
-  const backend: AgentBackend = {
-    identity: fakeIdentity,
-    async createSession(options) {
-      return {
-        async run() {
-          if ("is_correct" in (options.spec.evaluation.outputSchema.properties as object)) {
-            await options.execute(
-              "submit_evaluation",
-              draftFor(options.spec, {
-                is_correct: false,
-                correctness_reason: "2+2应为4，回答5错误。",
-                evidence: [{ message_index: 1, quote: "2+2=5" }],
-              }),
-            );
-          } else {
-            const invalid = await options.execute(
-              "submit_evaluation",
-              draftFor(options.spec, pairResult({ A: "2+2=5", B: "2+2=5" })),
-            );
-            assert.equal(invalid.isError, true);
-            assert.match(JSON.stringify(invalid), /独立正确性为 true/);
-            rejected++;
-            const accepted = await options.execute("submit_evaluation", draftFor(options.spec, badResult()));
-            assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
-            assert.equal(accepted.terminate, true);
-          }
-        },
-        async abort() {},
-        async dispose() {},
-      };
-    },
-  };
-  const worker = await startWorker(backend, path.join(directory, "worker"));
-  try {
-    const plan = await buildPlan(config);
-    const summary = await runEvaluation({
-      runId: "repair",
-      output: config.output,
-      engine: "pi",
-      identity: fakeIdentity,
-      config,
-      ...services,
-      plan,
-      policy: config.execution,
-      modelForStage,
-      concurrency: 1,
-      retries: 0,
-      retryDelaySeconds: 0,
-      workerUrls: [worker.url],
-    });
-    assert.equal(rejected, 1);
+      },
+      receipts: Object.fromEntries(receipts) as Record<string, SubmissionReceipt>,
+      usage: emptyUsage(),
+      recordedAttempts: plan.tasks.length,
+    };
+    state.receipts[task.id] = {
+      taskId: task.id,
+      attemptId: "cmp",
+      submissionId: randomUUID(),
+      evaluation: group(labels),
+      audit: emptyAudit(),
+      usage: emptyUsage(),
+      status: "succeeded",
+      acceptedAt: 0,
+    };
+    await createResultWriter(run, plan.inputs)(state);
+    await writeRunState(run, state);
+    const summary = await reportRun(run);
     assert.equal(summary.completed_comparisons, 1);
-    const stats = (summary.pairs as Record<string, Record<string, unknown>>).a_fast__vs__aa_fast;
-    assert.equal(stats.both_good, 0);
-    assert.equal(stats.both_bad, 1);
-    assert.equal((await validateRun(path.join(config.output.path, "repair"))).valid, true);
+    const standings = summary.standings as Record<string, { entered: number; first_tier: number }>;
+    assert.equal(standings.a_fast!.entered, 1);
+    assert.equal(standings.aa_fast!.entered, 1);
+    assert.equal(standings.a_fast!.first_tier, 1);
   } finally {
-    await worker.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

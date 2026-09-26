@@ -11,20 +11,22 @@ import {
   type Submission,
 } from "@eval/contracts";
 import { createFileLogger, exists, readJson, runLock, writeJsonl } from "@eval/data";
-import { readRunState, type Checkpoint } from "@eval/workflows/pairwise";
+import { readRunState, type Checkpoint } from "@eval/workflows/comparison";
 import { services, prepare } from "../../fixtures/services.js";
-import { reportRun } from "@eval/workflows/pairwise";
-import { buildPlan } from "@eval/workflows/pairwise";
+import { reportRun } from "@eval/workflows/comparison";
+import { buildPlan } from "@eval/workflows/comparison";
 import { RunStore } from "@eval/host";
 import { validateRun } from "../../fixtures/services.js";
 import {
+  attributionResult,
   draftFor,
   emptyAudit,
   fakeIdentity,
   fixtureConfig,
   pairResult,
   raw,
-} from "../../fixtures/pairwise.js";
+  taskResult,
+} from "../../fixtures/comparison.js";
 
 async function fixture(rows = [raw("q", null)]) {
   const { directory, config } = await fixtureConfig([rows, [], rows, []]);
@@ -76,13 +78,7 @@ async function fixture(rows = [raw("q", null)]) {
   };
   const evaluation = draftFor(
     spec,
-    task.stage === "correctness"
-      ? {
-          is_correct: true,
-          correctness_reason: "【候选A】的结果与标准答案一致。",
-          evidence: [{ message_index: 1, quote: "2+2=4" }],
-        }
-      : pairResult(),
+    task.stage === "attribution" ? attributionResult(true, "2+2=4") : pairResult(),
   );
   const value: Submission = {
     taskId: task.id,
@@ -103,10 +99,10 @@ test("duplicate submissions commit once and return the same receipt", async () =
     assert.deepEqual(results[0], results[2]);
     assert.deepEqual(await store.findSubmission(value.submissionId), results[0]);
     assert.deepEqual(await readdir(store.run), ["results", "state.json"]);
-    const file = path.join(store.run, "results/a_fast__vs__aa_fast.jsonl");
+    const file = path.join(store.run, "results/attribution.jsonl");
     const text = await readFile(file, "utf8");
     assert.equal(text.trim().split("\n").length, 1);
-    assert.deepEqual(Object.keys(JSON.parse(text)).slice(0, 2), ["request_time", "has_standard_answer"]);
+    assert.deepEqual(Object.keys(JSON.parse(text)).slice(0, 2), ["evaluation_type", "task_id"]);
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.services);
     await restored.save();
     assert.equal(await readFile(file, "utf8"), text, "compact checkpoints preserve durable exports");
@@ -119,7 +115,7 @@ test("duplicate submissions commit once and return the same receipt", async () =
     await assert.rejects(readRunState(store.run), /结果文件缺失/);
     const changed = {
       ...value,
-      evaluation: { ...pairResult(), unexpected: true },
+      evaluation: { ...attributionResult(), unexpected: true },
     };
     await assert.rejects(store.accept(changed), /committed receipt/);
     await assert.rejects(
@@ -156,11 +152,11 @@ test("business logs contain durable accepted rows once, recover omissions and ig
       .map((line) => JSON.parse(line));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].run_id, "test");
-    assert.equal(rows[0].stage, "pairwise");
+    assert.equal(rows[0].stage, "attribution");
     assert.equal(rows[0].submission_id, value.submissionId);
     assert.deepEqual(
       rows[0].result,
-      JSON.parse(await readFile(path.join(store.run, "results/a_fast__vs__aa_fast.jsonl"), "utf8")),
+      JSON.parse(await readFile(path.join(store.run, "results/attribution.jsonl"), "utf8")),
     );
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, {
       ...services,
@@ -197,7 +193,7 @@ test("correctness receipts are durable references and preserve exact duplicate c
     });
     value.submissionStats = { contentSubmissions: 3, fileErrors: 1 };
     const accepted = await store.accept(value);
-    const file = path.join(store.run, "results/correctness.jsonl"),
+    const file = path.join(store.run, "results/attribution.jsonl"),
       text = await readFile(file, "utf8");
     const row = JSON.parse(text);
     assert.equal(row.task_id, spec.taskId);
@@ -210,14 +206,14 @@ test("correctness receipts are durable references and preserve exact duplicate c
     assert.equal(saved.receipt.evaluationPatch, undefined);
     assert.deepEqual(saved.receipt.exported, {
       taskId: spec.taskId,
-      file: "correctness.jsonl",
+      file: "attribution.jsonl",
     });
     assert.equal(saved.failure, undefined);
     assert.equal(saved.repeatedErrors, 2);
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.services);
     assert.deepEqual(await restored.accept(value), accepted);
     const dependent = {
-      ...store.manifest.tasks.find((t) => t.stage === "pairwise")!,
+      ...store.manifest.tasks.find((t) => t.stage === "comparison")!,
       dependencies: { A: spec.taskId },
     };
     assert.deepEqual((await restored.dependencies(dependent)).A.evaluation, accepted.evaluation);
@@ -265,7 +261,7 @@ for (const window of ["append", "compaction"] as const)
     const { directory, store, spec, value } = await fixture([raw("q", "4")]);
     try {
       await store.activate(spec);
-      const file = path.join(store.run, "results/correctness.jsonl");
+      const file = path.join(store.run, "results/attribution.jsonl");
       if (window === "append") {
         await mkdir(file);
         await assert.rejects(store.accept(value));
@@ -310,7 +306,9 @@ test("successful submissions append immediately without replacing earlier lines"
     raw("q3", null),
   ]);
   try {
-    const submissions = store.manifest.tasks.map((task, i) => {
+    const submissions = store.manifest.tasks
+      .filter((task) => task.stage === "attribution")
+      .map((task, i) => {
       const attemptId = `attempt-${i}`;
       const prepared = prepare(task, store.inputs, {});
       const taskSpec = {
@@ -323,7 +321,7 @@ test("successful submissions append immediately without replacing earlier lines"
       };
       return {
         ...value,
-        evaluation: draftFor(taskSpec, pairResult()),
+        evaluation: draftFor(taskSpec, taskResult(taskSpec)),
         taskId: task.id,
         attemptId,
         submissionId: randomUUID(),
@@ -335,7 +333,7 @@ test("successful submissions append immediately without replacing earlier lines"
         taskId: submission.taskId,
         attemptId: submission.attemptId,
       });
-    const file = path.join(store.run, "results/a_fast__vs__aa_fast.jsonl");
+    const file = path.join(store.run, "results/attribution.jsonl");
     assert.equal(await exists(file), false);
     await store.accept(submissions[0]);
     const first = await readFile(file, "utf8"),
@@ -354,7 +352,7 @@ test("successful submissions append immediately without replacing earlier lines"
     assert.equal((await stat(file)).ino, inode, "live output must append to the same file");
     assert(text.startsWith(first));
     assert.equal(rows.length, 3);
-    assert.equal(new Set(rows.map((row) => row.comparison_id)).size, 3);
+    assert.equal(new Set(rows.map((row) => row.task_id)).size, 3);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -363,7 +361,7 @@ test("an export failure withholds acknowledgement but the saved receipt can reco
   const { directory, store, spec, value } = await fixture();
   try {
     await store.activate(spec);
-    const file = path.join(store.run, "results/a_fast__vs__aa_fast.jsonl");
+    const file = path.join(store.run, "results/attribution.jsonl");
     await mkdir(file);
     await assert.rejects(store.accept(value));
     await assert.rejects(store.findSubmission(value.submissionId), /not accepted/);
@@ -384,7 +382,7 @@ test("recovery removes duplicate and partial trailing rows without losing commit
     await store.activate(spec);
     await store.accept(value);
     await reportRun(store.run);
-    const file = path.join(store.run, "results/a_fast__vs__aa_fast.jsonl");
+    const file = path.join(store.run, "results/attribution.jsonl");
     const text = await readFile(file, "utf8");
     await appendFile(file, text + '{"request_time":"unfinished');
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, store.services);
@@ -450,8 +448,12 @@ test("invalid evidence is rejected without producing a formal receipt", async ()
   const { directory, store, spec, value } = await fixture();
   try {
     await store.activate(spec);
-    const invalid = pairResult();
-    invalid.evaluations.A.findings[0].evidence[0].quote = "invented";
+    const invalid = taskResult(spec) as {
+      findings?: { evidence: { quote: string }[] }[];
+      evaluations?: { A: { findings: { evidence: { quote: string }[] }[] } };
+    };
+    const findings = invalid.findings ?? invalid.evaluations!.A.findings;
+    findings[0].evidence[0].quote = "invented";
     await assert.rejects(
       store.accept({
         ...value,
