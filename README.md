@@ -35,7 +35,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 
-默认结果写入 `data/runs/comparison/<run-id>/`，日志写入 `log/runtime.log` 和 `log/evaluation.log`。同一个 `run-id` 会续跑未完成和新增任务，并保留已接受任务；输入、选择、模型和恢复细节见[使用指南](docs/usage.md#运行与恢复)。
+默认结果写入 `data/runs/comparison/<run-id>/`，日志写入 `log/runtime.log` 和 `log/evaluation.log`。同一个 `run-id` 会续跑未完成和新增任务，并保留已接受任务；输入、选择、模型和恢复细节见[使用指南](docs/usage.md#运行与恢复)。需要按样本查看输入、正式输出和 Agent 状态，或在页面预检并启动运行，在项目根目录执行 `bash run.sh`；详情见[本机看板](docs/usage.md#本机运行看板)。
 
 输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；对比组由 `comparisons` 配置，不依赖目录命名。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。不要修改入库的原始输入、评测结果或 `dist/`。
 

@@ -13,6 +13,13 @@ import {
 export * from "./models.js";
 
 const API_KINDS: ModelProfile["api"][] = ["openai-completions", "openai-responses"];
+const EXECUTION_DEFAULTS = {
+  ...DEFAULT_POLICY,
+  concurrency: 4,
+  retries: 1,
+  retryDelaySeconds: 10,
+  initialContextChars: 16000,
+};
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 type ConfigObject = Record<string, unknown>;
 
@@ -88,14 +95,7 @@ export async function readConfigSources(sources: string | string[]): Promise<Con
 function buildEvaluation(source: ConfigObject): EvalConfig {
   const config: EvalConfig = {
     inputs: source.inputs as EvalConfig["inputs"],
-    execution: {
-      ...DEFAULT_POLICY,
-      concurrency: 4,
-      retries: 1,
-      retryDelaySeconds: 10,
-      initialContextChars: 16000,
-      ...(source.execution as Partial<EvalConfig["execution"]>),
-    },
+    execution: { ...EXECUTION_DEFAULTS, ...(source.execution as Partial<EvalConfig["execution"]>) },
     output: source.output as OutputTarget,
     attribution: source.attribution as AttributionTarget,
     comparisons: [],
@@ -222,8 +222,76 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
   return { models, bindings };
 }
 
-export async function loadConfig(sources: string | string[], env = process.env): Promise<HostConfig> {
-  const source = await readConfigSources(sources);
+const DASHBOARD_STAGES = ["attribution", "comparison", "rewrite"] as const;
+const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
+const DASHBOARD_BINDING = ["model", "thinking"] as const;
+
+export function editableDashboardSettings(source: Record<string, unknown>) {
+  const execution = isObject(source.execution) ? source.execution : {};
+  const rewrite = isObject(source.rewrite) ? source.rewrite : {};
+  const models = isObject(source.models) ? source.models : {};
+  const bindings = isObject(source.bindings) ? source.bindings : {};
+  return {
+    execution: {
+      concurrency: execution.concurrency ?? EXECUTION_DEFAULTS.concurrency,
+      timeoutSeconds: execution.timeoutSeconds ?? EXECUTION_DEFAULTS.timeoutSeconds,
+      maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
+      retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
+    },
+    rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true },
+    // Only stages the launch seam accepts are editable; other bindings stay config-owned.
+    bindings: Object.fromEntries(Object.entries(bindings)
+      .filter(([stage]) => DASHBOARD_STAGES.includes(stage as typeof DASHBOARD_STAGES[number]))
+      .map(([stage, raw]) => {
+        const binding = isObject(raw) ? raw : {};
+        const profile = models[String(binding.profile)];
+        const defaults = isObject(profile) ? profile : {};
+        return [stage, {
+          model: binding.model ?? defaults.model ?? "",
+          thinking: binding.thinking ?? defaults.thinking ?? "off",
+        }];
+      })),
+  };
+}
+
+/** Only these non-secret, run-scoped settings may cross the dashboard launch seam. */
+export function dashboardSettings(value: unknown): ConfigObject {
+  if (!isObject(value)) throw new Error("运行设置必须是对象");
+  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite"].includes(key)))
+    throw new Error("运行设置包含不允许修改的字段");
+  const patch: ConfigObject = {};
+  if (value.execution !== undefined) {
+    if (!isObject(value.execution) ||
+        Object.keys(value.execution).some((key) => !DASHBOARD_EXECUTION.includes(key as typeof DASHBOARD_EXECUTION[number])))
+      throw new Error("运行预算包含不允许修改的字段");
+    patch.execution = value.execution;
+  }
+  if (value.bindings !== undefined) {
+    if (!isObject(value.bindings) ||
+        Object.keys(value.bindings).some((stage) => !DASHBOARD_STAGES.includes(stage as typeof DASHBOARD_STAGES[number])))
+      throw new Error("模型绑定包含未知阶段");
+    for (const binding of Object.values(value.bindings))
+      if (!isObject(binding) ||
+          Object.keys(binding).some((key) => !DASHBOARD_BINDING.includes(key as typeof DASHBOARD_BINDING[number])))
+        throw new Error("模型绑定包含不允许修改的字段");
+    patch.bindings = value.bindings;
+  }
+  if (value.rewrite !== undefined) {
+    if (!isObject(value.rewrite) ||
+        Object.keys(value.rewrite).some((key) => !["comparison", "attribution"].includes(key)))
+      throw new Error("改写设置包含不允许修改的字段");
+    patch.rewrite = value.rewrite;
+  }
+  return patch;
+}
+
+export async function loadConfig(
+  sources: string | string[],
+  env = process.env,
+  settings?: unknown,
+): Promise<HostConfig> {
+  const original = await readConfigSources(sources);
+  const source = settings === undefined ? original : mergeConfig(original, dashboardSettings(settings));
   const evaluation = buildEvaluation(source),
     models = buildModels(source, env);
   if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)

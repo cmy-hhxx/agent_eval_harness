@@ -22,7 +22,7 @@ flowchart LR
 
 | 位置 | 职责 |
 |---|---|
-| `apps/host`、`apps/worker` | CLI、配置、具体 Agent / Workflow / 底座组装 |
+| `apps/host`、`apps/worker` | CLI、本机看板、配置、具体 Agent / Workflow / 底座组装 |
 | `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
@@ -70,6 +70,8 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 | Host `GET /api/progress` | 当前进度、失败分类、吞吐和 ETA 区间 |
 
 事件包含 `seq/attemptId/time/type/data`，在单个 attempt 内连续编号。Host 检测缺口、去重并续读；模型结束事件不代表提交成功。流式更新仅记录增量，完整消息保存在 `message_end`；开始、回合结束和会话结束事件不重复保存消息正文。
+
+应用 Host 的本机看板使用独立的 `/api/dashboard` 路由：应用层校验本次运行的可编辑字段并复用 CLI 配置解析与 Workflow 预检；Workflow 的只读投影负责按业务标识列样本、重定位原始记录，并通过 Repository 关联正式 JSONL。看板不承担任务调度或结果写入，控制命令仍转发到拥有运行锁的 Host；使用方式见[本机运行看板](usage.md#本机运行看板)。
 
 ## 接口和底座路由
 

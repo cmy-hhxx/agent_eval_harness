@@ -6,14 +6,14 @@
 
 | 模块 | 职责与修改位置 | 公开入口 | 项目依赖 | 验证入口 |
 |---|---|---|---|---|
-| 应用 Host | [CLI](../../apps/host/src/cli.ts)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、跨模块回归、doctor |
+| 应用 Host | [CLI](../../apps/host/src/cli.ts)、[看板](../../apps/host/src/dashboard.ts)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、看板、跨模块回归、doctor |
 | 应用 Worker | [底座与进程入口](../../apps/worker/src/cli.ts) | 根 `worker` | Runtime、Contracts | 双 SDK 集成、独立构建 |
 | Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |
 | Comparison | [默认 Profile](../../packages/agents/src/comparison/index.ts)、提示词与[根目录 schemas/comparison](../../schemas/comparison/)、validate | `@eval/agents/comparison` | Contracts、Tools | 同目录单元测试、组合判决 |
 | Attribution | [归因 Profile 与问题库](../../packages/agents/src/attribution/index.ts)、提示词与[根目录 schemas/attribution](../../schemas/attribution/)、resolve/validate、库合并/血缘 | `@eval/agents/attribution` | Contracts、Tools | 同目录单元测试、归因树 |
 | Rewrite | [改写 Profile](../../packages/agents/src/rewrite/index.ts)、提示词与[根目录 schemas/rewrite](../../schemas/rewrite/)、槽位校验 | `@eval/agents/rewrite` | Contracts | 同目录单元测试、评语改写 |
-| Comparison Workflow | [输入适配器](../../packages/workflows/src/comparison/adapters.ts)、[输入分组](../../packages/workflows/src/comparison/input.ts)、[材料映射](../../packages/workflows/src/comparison/workflow.ts)、[纯编解码](../../packages/workflows/src/comparison/codec.ts)、报告 | `@eval/workflows/comparison` | Contracts、Data、Tools、Agent 公开类型、根目录 schemas/workflow | 适配器注册表、盲测、批次、结果、续跑 |
+| Comparison Workflow | [输入适配器](../../packages/workflows/src/comparison/adapters.ts)、[输入分组](../../packages/workflows/src/comparison/input.ts)、[看板只读投影](../../packages/workflows/src/comparison/dashboard-view.ts)、[材料映射](../../packages/workflows/src/comparison/workflow.ts)、[纯编解码](../../packages/workflows/src/comparison/codec.ts)、报告 | `@eval/workflows/comparison` | Contracts、Data、Tools、Agent 公开类型、根目录 schemas/workflow | 适配器注册表、盲测、批次、结果、续跑 |
 | Data | [文件与锁](../../packages/data/src/files.ts)、[运行目录布局](../../packages/data/src/run-layout.ts)、[源解析](../../packages/data/src/sources.ts)、[归因树存储](../../packages/data/src/attribution-store.ts)、[Repository](../../packages/data/src/repository.ts)、[日志](../../packages/data/src/logging.ts) | `@eval/data` | Contracts | 原子保存、追加中断、崩溃恢复、日志并行与去重 |
 | Runtime | [客户端](../../packages/runtime/src/client.ts)、[Worker](../../packages/runtime/src/server.ts)、HTTP/SSE、`adapters/pi.ts` / `prime.ts` | `@eval/runtime/client`、`http`、`worker`、`pi`、`prime` | Contracts、Data、Tools | Worker 回归、SDK 集成、干净安装 |
 | Tools | [注册与执行](../../packages/tools/src/index.ts)、证据、分页、图片、代码与产物 | `@eval/tools` | Contracts、Data | 工具与进程生命周期 |

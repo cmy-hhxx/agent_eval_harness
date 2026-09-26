@@ -34,6 +34,7 @@ async function main(): Promise<void> {
       details: { type: "boolean" },
       value: { type: "string" },
       port: { type: "string", default: "4173" },
+      "dashboard-settings": { type: "string" },
     },
   });
   const command = positionals[0];
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   }
   if (values.details && command !== "report") throw new Error("--details 仅用于 report");
   if (values.debug && command !== "run") throw new Error("--debug 仅用于 run");
+  if (values["dashboard-settings"] && command !== "run") throw new Error("--dashboard-settings 仅用于 run");
   if (command === "concurrency" || command === "progress") {
     if (!values.run) throw new Error("--run required");
     const lock = await readJson<{ url: string; token: string }>(
@@ -112,7 +114,11 @@ async function main(): Promise<void> {
     }
     return;
   }
-  const host = await loadConfig(values.config);
+  const host = await loadConfig(
+    values.config,
+    process.env,
+    values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
+  );
   const config = host.evaluation;
   if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
   for (const item of values.input || []) {

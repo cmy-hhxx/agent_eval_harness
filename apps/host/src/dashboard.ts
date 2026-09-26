@@ -1,31 +1,22 @@
-import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
-import { HttpError, safeId, type RunState } from "@eval/contracts";
+import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, locateRun, readJson } from "@eval/data";
-import { readConfigSources } from "./config.js";
-import { progressSnapshot } from "@eval/host";
-import { comparisonRepository } from "@eval/workflows/comparison";
+import { editableDashboardSettings, readConfigSources } from "./config.js";
+import { readLock, previewRun, startRun } from "./dashboard-launch.js";
+import { listRunCases, readCaseDetail, readRegisteredInput } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
   port: number;
 }
 
-interface RunLock {
-  pid?: number;
-  token?: string;
-  url?: string;
-}
-
 interface CheckpointTask {
   stage?: string;
   status?: string;
-  attempts?: number;
-  reason?: string;
-  inputIds?: Record<string, string>;
+  failure?: { draft?: unknown; errors?: { category?: string }[] };
 }
 
 interface DashboardCheckpoint {
@@ -39,7 +30,6 @@ interface DashboardCheckpoint {
   tasks?: Record<string, CheckpointTask>;
 }
 
-const CLI_ENTRY = path.join(path.dirname(fileURLToPath(import.meta.url)), "cli.js");
 const ASSET_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 
 function record(value: unknown, message: string): Record<string, unknown> {
@@ -60,10 +50,13 @@ function modelReadiness(source: Record<string, unknown>) {
     apiKey = true,
     model = true;
   for (const binding of bindings) {
-    if (!isRecord(binding) || typeof binding.profile !== "string") continue;
+    if (!isRecord(binding) || typeof binding.profile !== "string") {
+      baseUrl = apiKey = model = false;
+      continue;
+    }
     const profile = profiles[binding.profile];
     if (!isRecord(profile)) {
-      baseUrl = apiKey = false;
+      baseUrl = apiKey = model = false;
       continue;
     }
     if (!(typeof profile.baseUrlEnv === "string" && process.env[profile.baseUrlEnv])) baseUrl = false;
@@ -74,62 +67,22 @@ function modelReadiness(source: Record<string, unknown>) {
   return { base_url_configured: baseUrl, api_key_configured: apiKey, model_configured: model };
 }
 
-function publicConfig(value: unknown, key = ""): unknown {
-  if (Array.isArray(value)) return value.map((item) => publicConfig(item));
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value).map(([name, item]) => [name, publicConfig(item, name)]),
-    );
-  if (/(?:api[_-]?key|secret|password|token|baseurl)/i.test(key) && !/env$/i.test(key)) return "[hidden]";
-  return value;
-}
-
-function taskState(value: {
-  status: string;
-  attempts: number;
-  reason?: string;
-  durationMs?: number;
-  startedAt?: number;
-  lastProgressAt?: number;
-  failure?: { errors?: { category?: string; code?: string; message?: string }[]; stopped?: boolean };
-}) {
-  return {
-    status: value.status,
-    attempts: value.attempts,
-    ...(value.reason ? { reason: value.reason } : {}),
-    ...(value.durationMs !== undefined ? { duration_ms: value.durationMs } : {}),
-    ...(value.startedAt !== undefined ? { started_at: value.startedAt } : {}),
-    ...(value.lastProgressAt !== undefined ? { last_progress_at: value.lastProgressAt } : {}),
-    ...(value.failure
-      ? {
-          failure: {
-            stopped: value.failure.stopped,
-            errors: (value.failure.errors || []).map(({ category, code, message }) => ({
-              category,
-              code,
-              message,
-            })),
-          },
-        }
-      : {}),
-  };
-}
-
 function fallbackProgress(checkpoint: DashboardCheckpoint) {
   const tasks = Object.values(checkpoint.tasks || {});
   const accepted = tasks.filter((task) => task.status === "succeeded").length;
-  const running = tasks.filter((task) => task.status === "running").length;
+  const running = tasks.filter((task) => task.status === "running");
+  const failures: Record<string, number> = {};
+  for (const task of tasks)
+    if (["failed", "timed_out", "cancelled", "blocked"].includes(task.status || "")) {
+      const category = task.failure?.errors?.[0]?.category || "interruption";
+      failures[category] = (failures[category] || 0) + 1;
+    }
   return {
     queued: tasks.filter((task) => task.status === "pending").length,
-    running,
+    running: running.length,
     accepted,
-    repairing: 0,
-    failures: Object.fromEntries(
-      ["failed", "timed_out", "cancelled", "blocked"].flatMap((status) => {
-        const count = tasks.filter((task) => task.status === status).length;
-        return count ? [[status, count]] : [];
-      }),
-    ),
+    repairing: running.filter((task) => task.failure?.draft !== undefined).length,
+    failures,
     concurrency: checkpoint.concurrency || 1,
     recent_completed_per_minute: 0,
     longest_without_progress: null,
@@ -138,95 +91,66 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
   };
 }
 
-function lockFile(run: string): string {
-  return locateRun(run).lockFile;
-}
-
-async function readLock(run: string): Promise<RunLock | undefined> {
-  if (!(await exists(lockFile(run)))) return undefined;
-  return readJson<RunLock>(lockFile(run));
-}
-
-function taskRows(state: RunState) {
-  return state.manifest.tasks.map((task) => {
-    const data = task.data as {
-      candidates?: Record<string, { batch_id?: string; case_id?: string; version?: string }>;
-      case?: { batch_id?: string; case_id?: string };
-    };
-    const candidate = data.candidates?.A || data.candidates?.a || {};
-    // Rewrite tasks own no candidates and carry their location on `case` instead.
-    const identity = data.case || candidate;
-    return {
-      id: task.id,
-      stage: task.stage,
-      batch_id: identity.batch_id || "",
-      case_id: identity.case_id || "",
-      version: candidate.version || "",
-      state: taskState(state.manifest.states[task.id]),
-    };
-  });
-}
-
-function checkpointRows(checkpoint: DashboardCheckpoint) {
-  return Object.entries(checkpoint.tasks || {}).map(([id, task]) => ({
-    id,
-    stage: task.stage || "unknown",
-    batch_id: "",
-    case_id: "",
-    version: "",
-    state: {
-      status: task.status || "unknown",
-      attempts: task.attempts || 0,
-      ...(task.reason ? { reason: task.reason } : {}),
-    },
-  }));
-}
-
-async function inspectRun(outputDir: string, runId: string, includeTasks = true) {
+async function inspectRun(outputDir: string, runId: string) {
   const run = path.join(outputDir, runId);
-  const lock = await readLock(run);
-  let state: RunState | undefined;
-  let checkpoint: DashboardCheckpoint | undefined;
-  if (includeTasks) {
+  const [lock, checkpoint] = await Promise.all([
+    readLock(run), readJson<DashboardCheckpoint>(locateRun(run).stateFile),
+  ]);
+  if (checkpoint.format !== "evaluation-run" || checkpoint.runId !== runId || !checkpoint.tasks)
+    throw new Error("运行状态身份或任务索引无效");
+  let progress = fallbackProgress(checkpoint);
+  let live = false;
+  if (lock?.url) {
     try {
-      state = await comparisonRepository.readRun(run);
-    } catch {
-      checkpoint = await readJson<DashboardCheckpoint>(locateRun(run).stateFile);
-    }
-  } else checkpoint = await readJson<DashboardCheckpoint>(locateRun(run).stateFile);
-  if (!state && !checkpoint) return undefined;
-  const progress = state ? progressSnapshot(state) : fallbackProgress(checkpoint!);
-  const manifest = state?.manifest;
-  const status = lock ? "running" : manifest?.status || checkpoint?.status || "unknown";
+      const response = await fetch(`${lock.url}/api/progress`, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) {
+        const current = await response.json() as typeof progress;
+        if (Number.isInteger(current.running) && Number.isInteger(current.accepted) &&
+            Number.isInteger(current.concurrency) && current.concurrency > 0) {
+          progress = current;
+          live = true;
+        }
+      }
+    } catch { /* A saved snapshot remains useful while the Host is starting or disconnected. */ }
+  }
+  const savedStatus = checkpoint.status || "unknown";
+  const stages: Record<string, Record<string, number>> = {};
+  for (const task of Object.values(checkpoint.tasks || {})) {
+    const counts = (stages[task.stage || "unknown"] ??= {});
+    const status = task.status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+  }
   return {
     run_id: runId,
-    status,
-    engine: manifest?.engine.engine || checkpoint?.engine?.engine || "unknown",
-    started_at: manifest?.startedAt || checkpoint?.startedAt || 0,
-    finished_at: manifest?.finishedAt || checkpoint?.finishedAt,
+    status: lock ? "running" : savedStatus === "running" ? "interrupted" : savedStatus,
+    engine: checkpoint.engine?.engine || "unknown",
+    started_at: checkpoint.startedAt || 0,
+    finished_at: checkpoint.finishedAt,
     concurrency: progress.concurrency,
     progress,
+    live,
+    stages,
     ...(lock ? { process_id: lock.pid } : {}),
-    ...(includeTasks ? { tasks: state ? taskRows(state) : checkpointRows(checkpoint!) } : {}),
   };
 }
 
 async function allRuns(outputDir: string) {
   let entries;
   try {
-    entries = await (await import("node:fs/promises")).readdir(outputDir, { withFileTypes: true });
+    entries = await readdir(outputDir, { withFileTypes: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { runs: [], errors: [] };
     throw error;
   }
-  const runs = (
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => inspectRun(outputDir, entry.name, false).catch(() => undefined)),
-    )
-  ).filter((run): run is NonNullable<typeof run> => Boolean(run));
-  return runs.sort((a, b) => b.started_at - a.started_at);
+  const inspected = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    try { return { run: await inspectRun(outputDir, entry.name) }; }
+    catch (error) { return { error: { run_id: entry.name, message: errorText(error) } }; }
+  }));
+  const runs = inspected.flatMap((entry) => entry.run ? [entry.run] : []);
+  return {
+    runs: runs.sort((a, b) => b.started_at - a.started_at),
+    errors: inspected.flatMap((entry) => entry.error ? [entry.error] : []),
+  };
 }
 
 async function controlRun(outputDir: string, runId: string, action: "stop" | "concurrency", value?: number) {
@@ -246,38 +170,6 @@ async function controlRun(outputDir: string, runId: string, action: "stop" | "co
   return result;
 }
 
-async function startRun(options: DashboardOptions, outputDir: string, value: Record<string, unknown>) {
-  const rawId = value.runId;
-  if (typeof rawId !== "string") throw new HttpError(400, "runId is required");
-  const runId = safeId(rawId);
-  const engine = value.engine || "pi";
-  if (engine !== "pi" && engine !== "prime") throw new HttpError(400, "engine must be pi or prime");
-  if (await exists(lockFile(path.join(outputDir, runId)))) throw new HttpError(409, "Run is already running");
-  const args = [CLI_ENTRY, "run"];
-  for (const config of options.configPaths) args.push("--config", config);
-  args.push("--engine", engine, "--run-id", runId);
-  for (const name of ["batch", "case"] as const) {
-    const values = value[name];
-    if (values !== undefined) {
-      if (!Array.isArray(values) || values.some((item) => typeof item !== "string"))
-        throw new HttpError(400, `${name} must be an array of strings`);
-      for (const item of values) args.push(`--${name}`, item);
-    }
-  }
-  if (value.limitCases !== undefined) {
-    if (!Number.isInteger(value.limitCases) || Number(value.limitCases) < 1)
-      throw new HttpError(400, "limitCases must be positive");
-    args.push("--limit-cases", String(value.limitCases));
-  }
-  if (value.debug === true) args.push("--debug");
-  const child = spawn(process.execPath, args, {
-    env: process.env,
-    stdio: "ignore",
-  });
-  child.unref();
-  return { run_id: runId, pid: child.pid, output_dir: outputDir };
-}
-
 export async function startDashboard(options: DashboardOptions) {
   const source = await readConfigSources(options.configPaths);
   const output = source.output;
@@ -290,6 +182,15 @@ export async function startDashboard(options: DashboardOptions) {
     readFile(path.join(ASSET_DIR, "dashboard.js"), "utf8"),
   ]);
   const server = await listen(async (req, res, url) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'");
+    const host = req.headers.host || "";
+    if (!/^127\.0\.0\.1:\d+$/.test(host)) throw new HttpError(403, "Only loopback requests are allowed");
+    if (req.method === "POST" && req.headers.origin !== `http://${host}`)
+      throw new HttpError(403, "Request origin does not match the dashboard");
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(html);
@@ -306,29 +207,62 @@ export async function startDashboard(options: DashboardOptions) {
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
+      const current = await readConfigSources(options.configPaths);
       return json(res, {
-        path: options.configPaths.join(", "),
-        config: publicConfig(source),
-        environment: modelReadiness(source),
+        paths: options.configPaths,
+        settings: editableDashboardSettings(current),
+        environment: modelReadiness(current),
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
-      return json(res, { runs: await allRuns(outputDir) });
+      return json(res, await allRuns(outputDir));
+    if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
+      return json(res, await previewRun({ configPaths: options.configPaths, outputDir }, record(await body(req, 64 * 1024), "Expected JSON object")));
     if (req.method === "POST" && url.pathname === "/api/dashboard/runs")
-      return json(res, await startRun(options, outputDir, record(await body(req), "Expected JSON object")), 202);
+      return json(res, await startRun({ configPaths: options.configPaths, outputDir }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");
     const runId = safeId(parts[3]);
-    if (req.method === "GET" && parts.length === 4) {
-      const run = await inspectRun(outputDir, runId);
-      if (!run) throw new HttpError(404, "Run not found");
-      return json(res, run);
+    const directory = path.join(outputDir, runId);
+    if (!(await exists(locateRun(directory).stateFile))) throw new HttpError(404, "Run not found");
+    if (req.method === "GET" && parts[4] === "cases" && parts[5] === "detail" && parts.length === 6) {
+      const batch = url.searchParams.get("batch") || "";
+      const caseId = url.searchParams.get("case") || "";
+      if (!batch || !caseId) throw new HttpError(400, "batch and case are required");
+      const detail = await readCaseDetail(directory, batch, caseId);
+      if (!detail) throw new HttpError(404, "Case not found");
+      return json(res, detail);
     }
+    if (req.method === "GET" && parts[4] === "cases" && parts.length === 5) {
+      const page = Number(url.searchParams.get("page") || "1");
+      if (!Number.isSafeInteger(page) || page < 1) throw new HttpError(400, "Invalid page");
+      const query = url.searchParams.get("query") || "";
+      if (query.length > 200) throw new HttpError(400, "Search is too long");
+      return json(res, await listRunCases(directory, {
+        page, pageSize: 40,
+        batch: url.searchParams.get("batch") || undefined,
+        query,
+        stage: url.searchParams.get("stage") || undefined,
+        status: url.searchParams.get("status") || undefined,
+      }));
+    }
+    if (req.method === "GET" && parts[4] === "inputs" && parts[5] && parts.length === 6) {
+      try {
+        const input = await readRegisteredInput(directory, safeId(parts[5]));
+        if (!input) throw new HttpError(404, "Input not registered in this run");
+        return json(res, input);
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(409, `当前原始材料不可用：${errorText(error)}`);
+      }
+    }
+    if (req.method === "GET" && parts.length === 4)
+      return json(res, await inspectRun(outputDir, runId));
     if (req.method === "POST" && parts[4] === "stop")
       return json(res, await controlRun(outputDir, runId, "stop"));
     if (req.method === "POST" && parts[4] === "concurrency") {
-      const value = record(await body(req), "Expected JSON object").value;
+      const value = record(await body(req, 64 * 1024), "Expected JSON object").value;
       if (!Number.isInteger(value) || Number(value) < 1) throw new HttpError(400, "value must be positive");
       return json(res, await controlRun(outputDir, runId, "concurrency", Number(value)));
     }
