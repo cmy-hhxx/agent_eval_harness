@@ -91,20 +91,21 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
   }
 });
 
-test("input inventory lists batches and cases from the configured sources", async () => {
+test("input inventory lists dates and cases from the configured sources", async () => {
   const { directory, config } = await fixtureConfig([
     [{ ...raw("q1"), batch_id: "b1" }, { ...raw("q2"), batch_id: "b2" }], [], [raw("q1")], [],
   ]);
   try {
     const inventory = await listInputInventory(config);
-    assert.deepEqual(inventory.batches.map((batch) => batch.batch_id), ["b1", "b2"]);
-    const first = inventory.batches.find((batch) => batch.batch_id === "b1")!;
-    assert.deepEqual(first.cases, [{ id: "q1", versions: ["a_fast", "aa_fast"] }]);
-    assert.deepEqual(first.versions, ["a_fast", "aa_fast"]);
-    assert.deepEqual(first.folders, [path.basename(directory)]);
-    const second = inventory.batches.find((batch) => batch.batch_id === "b2")!;
-    assert.deepEqual(second.cases, [{ id: "q2", versions: ["a_fast"] }]);
-    assert.deepEqual(second.versions, ["a_fast"]);
+    assert.equal(inventory.dates.length, 1);
+    const day = inventory.dates[0]!;
+    assert.equal(day.folder, path.basename(directory));
+    assert.deepEqual(day.batches, ["b1", "b2"]);
+    assert.deepEqual(day.versions, ["a_fast", "aa_fast"]);
+    assert.deepEqual(day.cases.map((item) => item.id), ["q1", "q2"]);
+    assert.deepEqual(day.cases.find((item) => item.id === "q1")!.versions, ["a_fast", "aa_fast"]);
+    assert.deepEqual(day.cases.find((item) => item.id === "q1")!.batches, ["b1"]);
+    assert.deepEqual(day.cases.find((item) => item.id === "q2")!.batches, ["b2"]);
     assert.equal(inventory.issues, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -156,8 +157,8 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert(!text.includes(gateway));
     assert.equal(JSON.parse(text).settings.bindings.attribution.model, "fixture-model");
     const inventory = await (await get("/api/dashboard/inputs")).json();
-    assert.deepEqual(inventory.batches.map((batch: { batch_id: string }) => batch.batch_id), ["b1"]);
-    assert.deepEqual(inventory.batches[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
+    assert.equal(inventory.dates.length, 1);
+    assert.deepEqual(inventory.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
     const list = await (await get("/api/dashboard/runs/run-one/cases?status=succeeded")).json();
     assert.equal(list.total, 1);
     const detail = await (await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).json();

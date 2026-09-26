@@ -13,50 +13,52 @@ async function checkpoint(run: string): Promise<Checkpoint> {
   return value;
 }
 
-export interface InputBatch {
-  batch_id: string;
-  /** Source folder names, for operator-facing labels only; identity stays `batch_id`. */
-  folders: string[];
+export interface InputDate {
+  /** Source folder name; the operator-facing scope. */
+  folder: string;
+  /** Registered batch ids recorded in this folder; identity stays `batch_id`. */
+  batches: string[];
   versions: string[];
-  cases: { id: string; versions: string[] }[];
+  cases: { id: string; versions: string[]; batches: string[] }[];
 }
-/** Scans configured sources with the plan parser, so offered batches match what a run accepts. */
-export async function listInputInventory(config: EvalConfig): Promise<{ batches: InputBatch[]; issues: number }> {
+/** Scans configured sources with the plan parser, so offered dates match what a run accepts. */
+export async function listInputInventory(config: EvalConfig): Promise<{ dates: InputDate[]; issues: number }> {
   const plan = await buildPlan({
     ...config,
     comparisons: [],
     inputs: { ...config.inputs, batches: undefined, case_ids: undefined, limit: undefined },
   });
-  const batches = new Map<
+  const dates = new Map<
     string,
-    { folders: Set<string>; versions: Set<string>; cases: Map<string, Set<string>> }
+    { batches: Set<string>; versions: Set<string>; cases: Map<string, { versions: Set<string>; batches: Set<string> }> }
   >();
+  const versionOrder = config.inputs.versions.map((version) => version.id);
   for (const record of (plan.catalog as Candidate[]) || []) {
-    const item =
-      batches.get(record.batch_id) ?? { folders: new Set(), versions: new Set(), cases: new Map() };
-    item.folders.add(path.basename(path.dirname(record.source)));
+    const folder = path.basename(path.dirname(record.source));
+    const item = dates.get(folder) ?? { batches: new Set(), versions: new Set(), cases: new Map() };
+    item.batches.add(record.batch_id);
     item.versions.add(record.version);
     let covered = item.cases.get(record.case_id);
-    if (!covered) item.cases.set(record.case_id, (covered = new Set()));
-    covered.add(record.version);
-    batches.set(record.batch_id, item);
+    if (!covered) item.cases.set(record.case_id, (covered = { versions: new Set(), batches: new Set() }));
+    covered.versions.add(record.version);
+    covered.batches.add(record.batch_id);
+    dates.set(folder, item);
   }
-  const versionOrder = config.inputs.versions.map((version) => version.id);
   return {
-    batches: [...batches]
-      .map(([batch_id, item]) => ({
-        batch_id,
-        folders: [...item.folders].sort(),
+    dates: [...dates]
+      .map(([folder, item]) => ({
+        folder,
+        batches: [...item.batches].sort(),
         versions: versionOrder.filter((id) => item.versions.has(id)),
         cases: [...item.cases]
           .sort(([a], [b]) => a.localeCompare(b))
-          .map(([id, covered]) => ({ id, versions: versionOrder.filter((version) => covered.has(version)) })),
+          .map(([id, covered]) => ({
+            id,
+            versions: versionOrder.filter((version) => covered.versions.has(version)),
+            batches: [...covered.batches].sort(),
+          })),
       }))
-      .sort(
-        (a, b) =>
-          (a.folders[0] || a.batch_id).localeCompare(b.folders[0] || b.batch_id) ||
-          a.batch_id.localeCompare(b.batch_id),
-      ),
+      .sort((a, b) => a.folder.localeCompare(b.folder)),
     issues: ((plan.summary.issues as unknown[]) || []).length,
   };
 }

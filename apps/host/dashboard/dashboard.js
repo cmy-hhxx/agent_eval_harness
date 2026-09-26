@@ -2,7 +2,7 @@ const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
   caseDetail: null, selectedInput: null, rawInput: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, query: "", runId: "",
-  inputs: null, selectedBatches: new Set(), batchesReady: false,
+  inputs: null, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
   sampledCases: null, sampleInfo: null, rangeLocked: false, searchTimer: 0,
 };
@@ -305,13 +305,17 @@ async function selectRun(runId) {
   renderRuns(); renderCases(); renderDetail();
   await refresh();
 }
-function renderBatchOptions() {
-  const batches = state.inputs?.batches || [];
-  $("#batch-options").innerHTML = batches.length ? batches.map((batch) => {
-    const on = state.selectedBatches.has(batch.batch_id);
-    const label = batch.folders.join(" + ") || batch.batch_id;
-    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-batch-option="${escapeHtml(batch.batch_id)}" title="${escapeHtml(batch.batch_id)}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(label)}<span class="chip-count">${batch.cases.length}</span></button>`;
-  }).join("") : '<p class="empty-state">无可用批次</p>';
+function viableCount(date) {
+  const selected = [...state.selectedModels];
+  if (!selected.length) return date.cases.length;
+  return date.cases.filter((item) => selected.every((version) => item.versions.includes(version))).length;
+}
+function renderDateOptions() {
+  const dates = state.inputs?.dates || [];
+  $("#date-options").innerHTML = dates.length ? dates.map((date) => {
+    const on = state.selectedDates.has(date.folder);
+    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.folder)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.folder)}<span class="chip-count">${viableCount(date)}/${date.cases.length}</span></button>`;
+  }).join("") : '<p class="empty-state">无可用日期</p>';
 }
 function renderModelOptions() {
   const models = state.config?.settings?.models || [];
@@ -327,13 +331,25 @@ function sampleSize() {
 function viableCases() {
   const selected = [...state.selectedModels];
   const cases = new Set();
-  for (const batch of state.inputs?.batches || []) {
-    if (!state.selectedBatches.has(batch.batch_id)) continue;
-    for (const item of batch.cases)
+  for (const date of state.inputs?.dates || []) {
+    if (!state.selectedDates.has(date.folder)) continue;
+    for (const item of date.cases)
       if (selected.length && selected.every((version) => item.versions.includes(version)))
         cases.add(item.id);
   }
   return [...cases];
+}
+/** Selected dates map to the registered batch and case filters the run actually records. */
+function selectionScope() {
+  const dates = state.inputs?.dates || [],
+    selected = dates.filter((date) => state.selectedDates.has(date.folder));
+  const batches = new Set(),
+    cases = new Set();
+  for (const date of selected) {
+    for (const batch of date.batches) batches.add(batch);
+    for (const item of date.cases) cases.add(item.id);
+  }
+  return { full: selected.length === dates.length, batches: [...batches], cases: [...cases] };
 }
 function pickSample() {
   const size = sampleSize(),
@@ -346,19 +362,19 @@ function pickSample() {
   return { cases: viable.slice(0, size), size, available: viable.length };
 }
 async function loadInputs() {
-  $("#batch-options").innerHTML = loading("正在读取批次");
+  $("#date-options").innerHTML = loading("正在读取日期");
   try {
     const inventory = await api("/api/dashboard/inputs");
     state.inputs = inventory;
-    const known = new Set(inventory.batches.map((batch) => batch.batch_id));
-    if (!state.batchesReady) {
-      state.selectedBatches = new Set(known);
-      state.batchesReady = true;
-    } else for (const id of [...state.selectedBatches]) if (!known.has(id)) state.selectedBatches.delete(id);
-    renderBatchOptions();
+    const known = new Set(inventory.dates.map((date) => date.folder));
+    if (!state.datesReady) {
+      state.selectedDates = new Set(known);
+      state.datesReady = true;
+    } else for (const id of [...state.selectedDates]) if (!known.has(id)) state.selectedDates.delete(id);
+    renderDateOptions();
   } catch (error) {
     state.inputs = null;
-    $("#batch-options").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
+    $("#date-options").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
   }
 }
 async function loadConfig() {
@@ -371,6 +387,7 @@ async function loadConfig() {
     } else for (const id of [...state.selectedModels]) if (!known.has(id)) state.selectedModels.delete(id);
     renderConfig();
     renderModelOptions();
+    renderDateOptions();
   } catch (error) { showError(`配置读取失败：${error.message}`); }
 }
 function renderConfig() {
@@ -393,8 +410,10 @@ function renderConfig() {
   $("#rewrite-comparison").checked = settings.rewrite.comparison;
 }
 function launchPayload() {
-  const batch = [...state.selectedBatches];
-  const cases = state.sampledCases || [];
+  const scope = selectionScope();
+  const sample = state.sampledCases || [];
+  const batches = scope.full && !sample.length ? [] : scope.batches;
+  const cases = sample.length ? sample : scope.full ? [] : scope.cases;
   const bindings = {};
   document.querySelectorAll("[data-model-stage]").forEach((input) => {
     const stage = input.dataset.modelStage;
@@ -403,7 +422,7 @@ function launchPayload() {
   });
   return {
     runId: state.runId, engine: $("#engine").value,
-    ...(batch.length ? { batch } : {}), ...(cases.length ? { case: cases } : {}),
+    ...(batches.length ? { batch: batches } : {}), ...(cases.length ? { case: cases } : {}),
     debug: $("#debug").checked,
     settings: {
       versions: [...state.selectedModels],
@@ -426,14 +445,14 @@ function invalidatePreview() {
   $("#preview-result").textContent = "需重新预检";
   if (state.rangeLocked) {
     state.rangeLocked = false;
-    renderBatchOptions();
+    renderDateOptions();
     renderModelOptions();
   }
 }
 async function preview() {
   if (!$("#start-form").reportValidity()) return;
-  if (!state.selectedBatches.size) {
-    $("#preview-result").textContent = "至少选择一个批次";
+  if (!state.selectedDates.size) {
+    $("#preview-result").textContent = "至少选择一个日期";
     return;
   }
   if (state.selectedModels.size < 2) {
@@ -454,7 +473,7 @@ async function preview() {
     const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
     state.preview = value;
     state.rangeLocked = Boolean(value.resuming);
-    renderBatchOptions();
+    renderDateOptions();
     renderModelOptions();
     $("#launch-button").disabled = !value.resuming && !value.tasks;
     const summary = value.summary || {};
@@ -472,7 +491,7 @@ async function preview() {
   } catch (error) {
     state.preview = null;
     state.rangeLocked = false;
-    renderBatchOptions();
+    renderDateOptions();
     renderModelOptions();
     $("#launch-button").disabled = true;
     $("#preview-result").textContent = `预检失败：${error.message}`;
@@ -554,13 +573,13 @@ $("#case-search").addEventListener("input", () => {
 });
 $("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
 $("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
-$("#batch-options").addEventListener("click", (event) => {
-  const chip = event.target.closest("[data-batch-option]");
+$("#date-options").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-date-option]");
   if (!chip || chip.disabled) return;
-  const id = chip.dataset.batchOption;
-  if (state.selectedBatches.has(id)) state.selectedBatches.delete(id);
-  else state.selectedBatches.add(id);
-  renderBatchOptions();
+  const id = chip.dataset.dateOption;
+  if (state.selectedDates.has(id)) state.selectedDates.delete(id);
+  else state.selectedDates.add(id);
+  renderDateOptions();
   invalidatePreview();
 });
 $("#model-options").addEventListener("click", (event) => {
@@ -570,30 +589,33 @@ $("#model-options").addEventListener("click", (event) => {
   if (state.selectedModels.has(id)) state.selectedModels.delete(id);
   else state.selectedModels.add(id);
   renderModelOptions();
+  renderDateOptions();
   invalidatePreview();
 });
-$("#batch-all").addEventListener("click", () => {
+$("#date-all").addEventListener("click", () => {
   if (state.rangeLocked) return;
-  for (const batch of state.inputs?.batches || []) state.selectedBatches.add(batch.batch_id);
-  renderBatchOptions();
+  for (const date of state.inputs?.dates || []) state.selectedDates.add(date.folder);
+  renderDateOptions();
   invalidatePreview();
 });
-$("#batch-none").addEventListener("click", () => {
+$("#date-none").addEventListener("click", () => {
   if (state.rangeLocked) return;
-  state.selectedBatches.clear();
-  renderBatchOptions();
+  state.selectedDates.clear();
+  renderDateOptions();
   invalidatePreview();
 });
 $("#model-all").addEventListener("click", () => {
   if (state.rangeLocked) return;
   for (const model of state.config?.settings?.models || []) state.selectedModels.add(model.id);
   renderModelOptions();
+  renderDateOptions();
   invalidatePreview();
 });
 $("#model-none").addEventListener("click", () => {
   if (state.rangeLocked) return;
   state.selectedModels.clear();
   renderModelOptions();
+  renderDateOptions();
   invalidatePreview();
 });
 $("#refresh-button").addEventListener("click", async () => {
