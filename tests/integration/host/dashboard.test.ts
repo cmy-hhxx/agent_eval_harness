@@ -192,11 +192,18 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
     assert.match(JSON.stringify(detail.tasks.find((item) => item.id === fixture.task.id)?.result), /正确给出结果/);
     const inputId = fixture.task.inputIds.A;
     const source = fixture.config.inputs.versions.find((version) => version.id === fixture.row.version)!.sources[0].path;
+    const registered = (await readRegisteredInput(fixture.run, inputId))!;
+    assert.equal(registered.line, 1);
+    assert.equal(registered.recorded_line, 1);
+    assert.equal(registered.question, "计算2+2");
+    assert.equal(registered.answer, "2+2=4");
     await writeJsonl(source, [raw("new-case"), raw("q1"), raw("q2")]);
-    const input = (await readRegisteredInput(fixture.run, inputId))!;
-    assert.equal(input.line, 2);
-    assert.equal(input.recorded_line, 1);
-    assert.deepEqual(input.raw.messages, raw("q1").messages);
+    const shifted = (await readRegisteredInput(fixture.run, inputId))!;
+    assert.equal(shifted.line, 2);
+    assert.equal(shifted.recorded_line, 1);
+    assert.equal(shifted.question, "计算2+2");
+    assert.equal(shifted.answer, "2+2=4");
+    assert.equal(Object.hasOwn(shifted, "raw"), false);
     assert.equal(await readRegisteredInput(fixture.run, "not-registered"), undefined);
     await rm(path.join(fixture.run, "results", "attribution.jsonl"));
     await assert.rejects(readCaseDetail(fixture.run, "b1", "q1"), /结果文件缺失/);
@@ -248,6 +255,25 @@ test("dashboard input inventory scans large source files under a bounded heap", 
     assert.deepEqual(JSON.parse(stdout), { cases: 1, versions: 4, issues: 0 });
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard reads one input record without retaining its source file", async () => {
+  const fixture = await setup();
+  try {
+    const inputId = fixture.task.inputIds.A;
+    const source = fixture.config.inputs.versions.find((version) => version.id === fixture.row.version)!.sources[0]!;
+    const answer = "x".repeat(14 * 1024 * 1024);
+    await writeJsonl(source.path, [raw("q1", null, answer)]);
+    const script = `import { readRegisteredInput } from "@eval/workflows/comparison";
+      const input = await readRegisteredInput(process.argv[1], process.argv[2]);
+      console.log(JSON.stringify({ question: input?.question, answer_length: input?.answer.length }));`;
+    const { stdout } = await promisify(execFile)(process.execPath,
+      ["--max-old-space-size=80", "--input-type=module", "-e", script, fixture.run, inputId],
+      { cwd: ROOT, timeout: 20000 });
+    assert.deepEqual(JSON.parse(stdout), { question: "计算2+2", answer_length: answer.length });
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
   }
 });
 
@@ -354,8 +380,10 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal(list.total, 1);
     const detail = await (await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).json();
     assert.equal(detail.tasks.find((item: { id: string }) => item.id === fixture.task.id).status, "succeeded");
-    const input = await get(`/api/dashboard/runs/run-one/inputs/${fixture.task.inputIds.A}`);
-    assert.equal((await input.json()).raw.messages[1].content, "2+2=4");
+    const input = await (await get(`/api/dashboard/runs/run-one/inputs/${fixture.task.inputIds.A}`)).json();
+    assert.equal(input.question, "计算2+2");
+    assert.equal(input.answer, "2+2=4");
+    assert.equal(Object.hasOwn(input, "raw"), false);
     assert.equal((await get("/api/dashboard/runs/run-one/inputs/unknown")).status, 404);
     assert.equal((await post("/api/dashboard/preview", { runId: "new-run" }, "http://untrusted.example")).status, 403);
     const preview = await post("/api/dashboard/preview", {

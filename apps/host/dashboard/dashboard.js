@@ -1,6 +1,6 @@
 const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
-  caseDetail: null, selectedInput: null, rawInput: null, config: null, page: 1,
+  caseDetail: null, selectedInput: null, inputView: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, query: "", runId: "",
   inputs: null, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
@@ -198,34 +198,22 @@ function renderCases() {
     </button>`;
   }).join("") : '<p class="empty-state">无匹配样本</p>';
 }
-function compactJson(value) {
-  const text = JSON.stringify(value, (_key, content) =>
-    typeof content === "string" && content.length > 40000 ? `${content.slice(0, 40000)}…` : content, 2);
-  return escapeHtml(text ?? "—");
-}
+const textBlock = (value) => {
+  const text = String(value ?? "");
+  return escapeHtml(text.length > 40000 ? `${text.slice(0, 40000)}…` : text);
+};
+const compactJson = (value) => escapeHtml(JSON.stringify(value, null, 2) ?? "—");
 function renderInput() {
-  const input = state.rawInput;
+  const input = state.inputView;
   if (!state.selectedInput) return "";
-  if (!input) return loading("正在读取原始输入");
+  if (!input) return loading("正在读取问题与回答");
   if (input.error) return `<p class="inline-error">${escapeHtml(input.error)}</p>`;
-  const raw = input.raw || {};
-  const messages = Array.isArray(raw.messages) ? raw.messages : [];
-  const lastAnswer = messages.findLast((message) => message.role === "assistant" && message.content);
-  const standard = raw.has_standard_answer === false ? "已忽略" :
-    (raw.meta?.ground_truth ?? raw.meta?.std_answer ?? "无");
   return `<p class="source-note">源记录 · 第 ${input.line} 行${input.recorded_line !== input.line ? `（登记时第 ${input.recorded_line} 行）` : ""}</p>
-    <div class="input-highlights"><div><strong>最终回答</strong><pre>${compactJson(lastAnswer?.content ?? "无")}</pre></div><div><strong>本记录标准答案</strong><pre>${compactJson(standard)}</pre></div></div>
-    <details class="trace-details"><summary>原始消息 · ${messages.length} 条</summary><div class="trace-list">${messages.map((message, index) => `<article class="trace-message" id="message-${escapeHtml(input.input_id)}-${index}">
-      <div class="trace-heading"><strong>#${index} · ${escapeHtml(message.type || message.role || "消息")}</strong><span>${escapeHtml(message.role || "")}</span></div>
-      <pre>${compactJson(message.content ?? message)}</pre>
-    </article>`).join("") || '<p class="empty-state">无消息</p>'}</div></details>
-    <details class="raw-details"><summary>查看源记录字段</summary><pre>${compactJson(raw)}</pre></details>`;
+    <div class="input-highlights"><div><strong>问题</strong><pre>${textBlock(input.question)}</pre></div><div><strong>最终回答</strong><pre>${textBlock(input.answer)}</pre></div></div>`;
 }
-function evidence(items, version) {
+function evidence(items) {
   if (!Array.isArray(items) || !items.length) return "";
-  return `<ul class="evidence-list">${items.map((item) => `<li>
-    <button type="button" class="evidence-link" data-evidence-version="${escapeHtml(version)}" data-evidence-index="${Number(item.message_index)}">消息 #${escapeHtml(item.message_index)}</button>
-    <span>${escapeHtml(item.quote || item.observation || "")}</span></li>`).join("")}</ul>`;
+  return `<ul class="evidence-list">${items.map((item) => `<li>${escapeHtml(item.quote || item.observation || "")}</li>`).join("")}</ul>`;
 }
 function renderResult(task, detail) {
   const row = task.result;
@@ -234,9 +222,9 @@ function renderResult(task, detail) {
     const value = row.evaluation || {};
     return `<div class="result-body"><p><strong>结论</strong> ${escapeHtml(value.summary || "—")}</p>
       <p><strong>标准答案判定</strong> ${value.is_correct === null ? "无标准答案" : value.is_correct ? "正确" : "错误"} ${escapeHtml(value.correctness_reason || "")}</p>
-      ${evidence(value.correctness_evidence, row.version)}
+      ${evidence(value.correctness_evidence)}
       <h4>发现 · ${(value.findings || []).length}</h4>
-      ${(value.findings || []).map((finding) => `<div class="finding"><strong>${escapeHtml(finding.type)} · ${escapeHtml(finding.stage)}</strong><p>${escapeHtml(finding.text)}</p><p class="muted">${escapeHtml(finding.reason)}</p>${evidence(finding.evidence, row.version)}</div>`).join("")}
+      ${(value.findings || []).map((finding) => `<div class="finding"><strong>${escapeHtml(finding.type)} · ${escapeHtml(finding.stage)}</strong><p>${escapeHtml(finding.text)}</p><p class="muted">${escapeHtml(finding.reason)}</p>${evidence(finding.evidence)}</div>`).join("")}
     </div>`;
   }
   if (task.stage === "comparison") {
@@ -289,22 +277,21 @@ function renderDetail() {
         task.last_progress_at ? `最近进展 ${dateText(task.last_progress_at)}` : "",
         task.duration_ms != null ? `累计 ${Math.round(task.duration_ms / 1000)} 秒` : "",
       ].filter(Boolean).map((item) => `<span class="task-meta">${escapeHtml(item)}</span>`).join("")}
-      ${task.reason ? `<p class="inline-error">${escapeHtml(task.reason)}</p>` : ""}${renderResult(task, detail)}
-      ${task.result ? `<details class="raw-details"><summary>查看正式结果 JSON</summary><pre>${compactJson(task.result)}</pre></details>` : ""}</div>
+      ${task.reason ? `<p class="inline-error">${escapeHtml(task.reason)}</p>` : ""}${renderResult(task, detail)}</div>
     </details>`).join("") || ""}</div>`;
 }
 async function loadInput(inputId) {
   state.selectedInput = inputId;
-  state.rawInput = null;
+  state.inputView = null;
   renderDetail();
   const runId = state.selectedRun;
   try {
     const input = await api(`${urlFor(runId)}/inputs/${encodeURIComponent(inputId)}`);
     if (state.selectedRun !== runId || state.selectedInput !== inputId) return;
-    state.rawInput = input;
+    state.inputView = input;
   } catch (error) {
     if (state.selectedRun !== runId || state.selectedInput !== inputId) return;
-    state.rawInput = { error: error.message };
+    state.inputView = { error: error.message };
   }
   renderDetail();
 }
@@ -322,7 +309,7 @@ async function loadCase(batch, caseId) {
     state.caseDetail = detail;
     if (previous?.batch_id === batch && previous?.case_id === caseId && signature(previous) === signature(detail)) return;
     const available = detail.candidates.some((item) => item.input_id === state.selectedInput);
-    if (!available) { state.selectedInput = null; state.rawInput = null; }
+    if (!available) { state.selectedInput = null; state.inputView = null; }
     renderDetail();
     if (!state.selectedInput && detail.candidates.length) await loadInput(detail.candidates[0].input_id);
   } catch (error) {
@@ -356,7 +343,7 @@ async function refresh() {
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
     if (previousRun !== state.selectedRun) {
       ++state.caseRequest;
-      state.selectedCase = state.caseDetail = state.selectedInput = state.rawInput = null;
+      state.selectedCase = state.caseDetail = state.selectedInput = state.inputView = null;
       renderDetail();
     }
     renderRuns();
@@ -376,7 +363,7 @@ async function selectRun(runId) {
   if (runId === state.selectedRun) return;
   ++state.caseRequest;
   state.selectedRun = runId;
-  state.selectedCase = state.caseDetail = state.selectedInput = state.rawInput = state.cases = null;
+  state.selectedCase = state.caseDetail = state.selectedInput = state.inputView = state.cases = null;
   state.query = "";
   $("#case-search").value = "";
   state.page = 1;
@@ -625,7 +612,7 @@ $("#run-actions").addEventListener("submit", async (event) => {
 $("#case-list").addEventListener("click", (event) => {
   const node = event.target.closest("[data-batch][data-case]");
   if (!node) return;
-  state.caseDetail = state.rawInput = state.selectedInput = null;
+  state.caseDetail = state.inputView = state.selectedInput = null;
   renderDetail();
   void loadCase(node.dataset.batch, node.dataset.case);
 });
@@ -657,15 +644,7 @@ $("#problem-library").addEventListener(
 );
 $("#case-detail").addEventListener("click", async (event) => {
   const input = event.target.closest("[data-input]");
-  if (input) { await loadInput(input.dataset.input); return; }
-  const evidence = event.target.closest("[data-evidence-version]");
-  if (!evidence) return;
-  const candidate = state.caseDetail?.candidates.find((item) => item.version === evidence.dataset.evidenceVersion);
-  if (!candidate) return;
-  if (state.selectedInput !== candidate.input_id) await loadInput(candidate.input_id);
-  const trace = document.querySelector(".trace-details");
-  if (trace) trace.open = true;
-  document.getElementById(`message-${candidate.input_id}-${evidence.dataset.evidenceIndex}`)?.scrollIntoView({ block: "center" });
+  if (input) await loadInput(input.dataset.input);
 });
 $("#case-search").addEventListener("input", () => {
   clearTimeout(state.searchTimer);

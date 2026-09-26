@@ -144,11 +144,6 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .source-note { padding: 6px 0; color: var(--muted); font-size: 11px; }
 .input-highlights { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .input-highlights strong { color: var(--muted); font-size: 12px; }
-.trace-details, .raw-details { margin-top: 10px; }
-.trace-details > summary, .raw-details > summary { color: var(--muted); cursor: pointer; font-size: 12px; }
-.trace-list { display: grid; gap: 6px; margin-top: 8px; }
-.trace-message { padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); }
-.trace-heading { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
 .task-detail { margin-top: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); }
 .task-detail > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; background: var(--soft); cursor: pointer; font-size: 12px; }
 .task-detail[open] > summary { border-bottom: 1px solid var(--line); }
@@ -164,7 +159,6 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .ranking { margin: 4px 0 0; padding-left: 20px; }
 .evidence-list { margin: 6px 0; padding-left: 18px; font-size: 12px; }
 .evidence-list li { margin-top: 3px; overflow-wrap: anywhere; }
-.evidence-link { padding: 0; color: var(--accent); background: none; border: 0; text-decoration: underline; font-size: 11px; }
 .empty-state { padding: 14px; color: var(--muted); font-size: 12px; }
 .inline-error { padding: 8px 10px; color: var(--danger); background: #fff3f2; border-radius: var(--radius); font-size: 12px; }
 .loading { display: flex; align-items: center; justify-content: center; min-height: 40px; }

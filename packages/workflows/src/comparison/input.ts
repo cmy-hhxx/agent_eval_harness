@@ -163,6 +163,23 @@ export function adapt(
 export function candidateKey(record: Candidate): string {
   return canonical([record.batch_id, record.case_id, record.version]);
 }
+function recordMatch(
+  value: string | undefined,
+  line: number,
+  candidate: Candidate,
+  version: VersionConfig,
+  source: string,
+  defaultBatch?: string,
+): { raw: RawInput; line: number; record: Candidate } | undefined {
+  if (!value || !value.trim()) return undefined;
+  try {
+    const raw = object(JSON.parse(value)) as RawInput;
+    const record = adapt(raw, version, source, line, defaultBatch);
+    return candidateKey(record) === candidateKey(candidate) ? { raw, line, record } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 /** Locate a registered record by business identity, tolerant of appends and reordering. */
 export function locateRecord(
   text: string,
@@ -170,25 +187,35 @@ export function locateRecord(
   version: VersionConfig,
   source: string,
   defaultBatch?: string,
-): { raw: RawInput; line: number } {
+): { raw: RawInput; line: number; record: Candidate } {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const match = (value: string | undefined, line: number): { raw: RawInput; line: number } | undefined => {
-    if (!value || !value.trim()) return undefined;
-    try {
-      const raw = object(JSON.parse(value)) as RawInput;
-      return candidateKey(adapt(raw, version, source, line, defaultBatch)) === candidateKey(candidate)
-        ? { raw, line }
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  const direct = match(lines[candidate.line - 1], candidate.line);
+  const direct = recordMatch(lines[candidate.line - 1], candidate.line, candidate, version, source, defaultBatch);
   if (direct) return direct;
   for (let index = 0; index < lines.length; index++) {
-    const found = match(lines[index], index + 1);
+    const found = recordMatch(lines[index], index + 1, candidate, version, source, defaultBatch);
     if (found) return found;
   }
+  throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
+}
+/** Stream one registered record: the recorded line is re-read first, then the whole source. */
+export async function locateRecordStream(
+  source: string,
+  candidate: Candidate,
+  version: VersionConfig,
+  defaultBatch?: string,
+): Promise<{ raw: RawInput; line: number; record: Candidate }> {
+  const scan = async (expectedLine?: number) => {
+    for await (const { line, index } of fileSourceReader.lines(source)) {
+      if (expectedLine !== undefined && index !== expectedLine) continue;
+      const found = recordMatch(line, index, candidate, version, source, defaultBatch);
+      if (found || expectedLine !== undefined) return found;
+    }
+    return undefined;
+  };
+  const direct = await scan(candidate.line);
+  if (direct) return direct;
+  const found = await scan();
+  if (found) return found;
   throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
 }
 export const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");

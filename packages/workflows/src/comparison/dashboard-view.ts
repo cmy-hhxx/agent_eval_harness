@@ -1,8 +1,8 @@
 import path from "node:path";
-import { readJson, locateRun, fileSourceReader, problemLibraryFile, readProblemLibrary } from "@eval/data";
+import { readJson, locateRun, problemLibraryFile, readProblemLibrary } from "@eval/data";
 import type { TaskState } from "@eval/contracts";
 import { readRunState } from "./run-data.js";
-import { buildPlan, locateRecord, taskIdentity } from "./input.js";
+import { buildPlan, contentText, locateRecordStream, taskIdentity } from "./input.js";
 import type { Candidate, EvalConfig, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 
@@ -173,22 +173,37 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
   };
 }
 
-export async function readRegisteredInput(run: string, inputId: string) {
+export interface RegisteredInputView {
+  input_id: string;
+  batch_id: string;
+  case_id: string;
+  line: number;
+  recorded_line: number;
+  question: string;
+  answer: string;
+}
+/** Question and final answer of one registered record; the message trace stays in the source. */
+export async function readRegisteredInput(run: string, inputId: string): Promise<RegisteredInputView | undefined> {
   const saved = await checkpoint(run);
   const candidate = saved.inputs[inputId] as Candidate | undefined;
   if (!candidate) return undefined;
   const config = saved.config as EvalConfig;
   const version = config.inputs.versions.find((entry) => entry.id === candidate.version);
   if (!version) throw new Error("输入版本未登记：" + candidate.version);
-  const text = await fileSourceReader.read(candidate.source);
-  const { raw, line } = locateRecord(text, { ...candidate, input_id: inputId }, version, candidate.source, config.inputs.default_batch_id);
+  const { raw, line, record } = await locateRecordStream(
+    candidate.source,
+    candidate,
+    version,
+    config.inputs.default_batch_id,
+  );
   return {
     input_id: inputId,
-    batch_id: candidate.batch_id,
-    case_id: candidate.case_id,
+    batch_id: record.batch_id,
+    case_id: record.case_id,
     line,
     recorded_line: candidate.line,
-    raw,
+    question: record.question,
+    answer: contentText(raw.messages[record.final_index]?.content),
   };
 }
 
