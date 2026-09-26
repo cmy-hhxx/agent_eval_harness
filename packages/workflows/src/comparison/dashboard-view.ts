@@ -1,7 +1,8 @@
+import path from "node:path";
 import { readJson, locateRun, fileSourceReader } from "@eval/data";
 import type { TaskState } from "@eval/contracts";
 import { readRunState } from "./run-data.js";
-import { locateRecord, taskCase } from "./input.js";
+import { buildPlan, locateRecord, taskCase } from "./input.js";
 import type { Candidate, EvalConfig, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 
@@ -10,6 +11,47 @@ async function checkpoint(run: string): Promise<Checkpoint> {
   const value = await readJson<Checkpoint>(locateRun(run).stateFile);
   if (value.format !== "evaluation-run") throw new Error("无效的运行状态");
   return value;
+}
+
+export interface InputBatch {
+  batch_id: string;
+  /** Source folder names, for operator-facing labels only; identity stays `batch_id`. */
+  folders: string[];
+  versions: string[];
+  cases: string[];
+}
+/** Scans configured sources with the plan parser, so offered batches match what a run accepts. */
+export async function listInputInventory(config: EvalConfig): Promise<{ batches: InputBatch[]; issues: number }> {
+  const plan = await buildPlan({
+    ...config,
+    comparisons: [],
+    inputs: { ...config.inputs, batches: undefined, case_ids: undefined, limit: undefined },
+  });
+  const batches = new Map<string, { folders: Set<string>; versions: Set<string>; cases: Set<string> }>();
+  for (const record of (plan.catalog as Candidate[]) || []) {
+    const item = batches.get(record.batch_id) ?? { folders: new Set(), versions: new Set(), cases: new Set() };
+    item.folders.add(path.basename(path.dirname(record.source)));
+    item.versions.add(record.version);
+    item.cases.add(record.case_id);
+    batches.set(record.batch_id, item);
+  }
+  return {
+    batches: [...batches]
+      .map(([batch_id, item]) => ({
+        batch_id,
+        folders: [...item.folders].sort(),
+        versions: config.inputs.versions
+          .filter((version) => item.versions.has(version.id))
+          .map((version) => version.id),
+        cases: [...item.cases].sort(),
+      }))
+      .sort(
+        (a, b) =>
+          (a.folders[0] || a.batch_id).localeCompare(b.folders[0] || b.batch_id) ||
+          a.batch_id.localeCompare(b.batch_id),
+      ),
+    issues: ((plan.summary.issues as unknown[]) || []).length,
+  };
 }
 
 export interface CaseFilter {

@@ -2,6 +2,8 @@ const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
   caseDetail: null, selectedInput: null, rawInput: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, filters: {},
+  inputs: null, selectedBatches: new Set(), selectedCases: new Set(), batchesReady: false,
+  caseFilter: "", rangeLocked: false,
 };
 const $ = (selector) => document.querySelector(selector);
 const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写" };
@@ -285,6 +287,70 @@ async function selectRun(runId) {
   renderRuns(); renderCases(); renderDetail();
   await refresh();
 }
+function currentCases() {
+  const cases = new Map();
+  for (const batch of state.inputs?.batches || []) {
+    if (!state.selectedBatches.has(batch.batch_id)) continue;
+    const label = batch.folders.join(" / ") || batch.batch_id;
+    for (const caseId of batch.cases) {
+      let labels = cases.get(caseId);
+      if (!labels) cases.set(caseId, (labels = new Set()));
+      labels.add(label);
+    }
+  }
+  return cases;
+}
+function updateCaseSelection() {
+  const total = currentCases().size;
+  $("#case-selection").textContent = state.selectedCases.size ? `${state.selectedCases.size} / ${total} 已选` : `${total} case`;
+}
+function renderBatchOptions() {
+  const batches = state.inputs?.batches || [];
+  $("#batch-options").innerHTML = batches.length ? batches.map((batch) => {
+    const label = batch.folders.join(" / ") || batch.batch_id;
+    return `<label class="option-row"><input type="checkbox" data-batch-option value="${escapeHtml(batch.batch_id)}" ${state.selectedBatches.has(batch.batch_id) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
+      <span class="option-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(batch.batch_id)}</small></span>
+      <span class="option-meta">${batch.cases.length} case · ${batch.versions.length} 模型</span></label>`;
+  }).join("") : '<p class="empty-state">无可用批次</p>';
+}
+function renderCaseOptions() {
+  const filter = state.caseFilter.trim().toLocaleLowerCase();
+  const cases = [...currentCases()]
+    .filter(([caseId]) => !filter || caseId.toLocaleLowerCase().includes(filter))
+    .sort(([a], [b]) => a.localeCompare(b));
+  $("#case-options").innerHTML = cases.length ? cases.map(([caseId, labels]) =>
+    `<label class="option-row"><input type="checkbox" data-case-option value="${escapeHtml(caseId)}" ${state.selectedCases.has(caseId) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
+    <span class="option-name"><strong>${escapeHtml(caseId)}</strong><small>${escapeHtml([...labels].join(" · "))}</small></span></label>`).join("")
+    : '<p class="empty-state">无匹配 Case</p>';
+  updateCaseSelection();
+}
+async function loadInputs() {
+  $("#batch-options").innerHTML = loading("正在读取批次");
+  try {
+    const inventory = await api("/api/dashboard/inputs");
+    state.inputs = inventory;
+    const known = new Set(inventory.batches.map((batch) => batch.batch_id));
+    if (!state.batchesReady) {
+      state.selectedBatches = new Set(known);
+      state.batchesReady = true;
+    } else for (const id of [...state.selectedBatches]) if (!known.has(id)) state.selectedBatches.delete(id);
+    const cases = currentCases();
+    for (const id of [...state.selectedCases]) if (!cases.has(id)) state.selectedCases.delete(id);
+    renderBatchOptions();
+    renderCaseOptions();
+  } catch (error) {
+    state.inputs = null;
+    $("#batch-options").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
+    $("#case-options").innerHTML = "";
+    $("#case-selection").textContent = "";
+  }
+}
+async function loadConfig() {
+  try {
+    state.config = await api("/api/dashboard/config");
+    renderConfig();
+  } catch (error) { showError(`配置读取失败：${error.message}`); }
+}
 function renderConfig() {
   const config = state.config;
   if (!config) return;
@@ -305,8 +371,9 @@ function renderConfig() {
   $("#rewrite-comparison").checked = settings.rewrite.comparison;
 }
 function launchPayload() {
-  const batch = $("#batch").value.split(",").map((value) => value.trim()).filter(Boolean);
-  const cases = $("#case").value.split(",").map((value) => value.trim()).filter(Boolean);
+  const validCases = new Set(currentCases().keys());
+  const batch = [...state.selectedBatches];
+  const cases = [...state.selectedCases].filter((id) => validCases.has(id));
   const bindings = {};
   document.querySelectorAll("[data-model-stage]").forEach((input) => {
     const stage = input.dataset.modelStage;
@@ -335,14 +402,26 @@ function invalidatePreview() {
   state.preview = null;
   $("#launch-button").disabled = true;
   $("#preview-result").textContent = "需重新预检";
+  if (state.rangeLocked) {
+    state.rangeLocked = false;
+    renderBatchOptions();
+    renderCaseOptions();
+  }
 }
 async function preview() {
   if (!$("#start-form").reportValidity()) return;
+  if (!state.selectedBatches.size) {
+    $("#preview-result").textContent = "至少选择一个批次";
+    return;
+  }
   $("#preview-button").disabled = true;
   $("#preview-result").innerHTML = loading("正在预检");
   try {
     const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
     state.preview = value;
+    state.rangeLocked = Boolean(value.resuming);
+    renderBatchOptions();
+    renderCaseOptions();
     $("#launch-button").disabled = !value.resuming && !value.tasks;
     const summary = value.summary || {};
     const issues = summary.issues || [];
@@ -357,6 +436,9 @@ async function preview() {
       ${issues.length ? `<details><summary>输入异常 ${issues.length}</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
   } catch (error) {
     state.preview = null;
+    state.rangeLocked = false;
+    renderBatchOptions();
+    renderCaseOptions();
     $("#launch-button").disabled = true;
     $("#preview-result").textContent = `预检失败：${error.message}`;
   } finally { $("#preview-button").disabled = false; }
@@ -435,7 +517,41 @@ $("#case-filters").addEventListener("submit", (event) => {
 });
 $("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
 $("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
+$("#batch-options").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-batch-option]");
+  if (!input) return;
+  if (input.checked) state.selectedBatches.add(input.value);
+  else state.selectedBatches.delete(input.value);
+  renderCaseOptions();
+});
+$("#case-options").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-case-option]");
+  if (!input) return;
+  if (input.checked) state.selectedCases.add(input.value);
+  else state.selectedCases.delete(input.value);
+  updateCaseSelection();
+});
+$("#case-filter").addEventListener("input", (event) => {
+  event.stopPropagation();
+  state.caseFilter = $("#case-filter").value;
+  renderCaseOptions();
+});
+$("#batch-all").addEventListener("click", () => {
+  if (state.rangeLocked) return;
+  for (const batch of state.inputs?.batches || []) state.selectedBatches.add(batch.batch_id);
+  renderBatchOptions();
+  renderCaseOptions();
+  invalidatePreview();
+});
+$("#batch-none").addEventListener("click", () => {
+  if (state.rangeLocked) return;
+  state.selectedBatches.clear();
+  renderBatchOptions();
+  renderCaseOptions();
+  invalidatePreview();
+});
 $("#refresh-button").addEventListener("click", async () => {
+  await loadInputs();
   await refresh();
   if (state.selectedCase) {
     await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
@@ -448,9 +564,7 @@ $("#preview-button").addEventListener("click", () => void preview());
 $("#start-form").addEventListener("submit", (event) => { event.preventDefault(); void startRun(); });
 
 (async () => {
-  try { state.config = await api("/api/dashboard/config"); renderConfig(); }
-  catch (error) { showError(`配置读取失败：${error.message}`); }
-  await refresh();
+  await Promise.all([loadConfig(), loadInputs(), refresh()]);
   let ticks = 0;
   setInterval(async () => {
     await refresh();

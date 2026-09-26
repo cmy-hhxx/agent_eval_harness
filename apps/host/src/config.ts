@@ -285,13 +285,22 @@ export function dashboardSettings(value: unknown): ConfigObject {
   return patch;
 }
 
+async function mergedSource(sources: string | string[], settings?: unknown): Promise<ConfigObject> {
+  const original = await readConfigSources(sources);
+  return settings === undefined ? original : mergeConfig(original, dashboardSettings(settings));
+}
+
+/** Evaluation-only load, without model endpoints; the dashboard uses it for input discovery. */
+export async function loadEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
+  return buildEvaluation(await mergedSource(sources, settings));
+}
+
 export async function loadConfig(
   sources: string | string[],
   env = process.env,
   settings?: unknown,
 ): Promise<HostConfig> {
-  const original = await readConfigSources(sources);
-  const source = settings === undefined ? original : mergeConfig(original, dashboardSettings(settings));
+  const source = await mergedSource(sources, settings);
   const evaluation = buildEvaluation(source),
     models = buildModels(source, env);
   if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)

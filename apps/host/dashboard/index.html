@@ -54,9 +54,13 @@
             <div class="form-grid">
               <label><span>Run ID</span><input id="run-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" /></label>
               <label><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
-              <label><span>批次（逗号分隔）</span><input id="batch" placeholder="全部批次" /></label>
-              <label><span>Case（逗号分隔）</span><input id="case" placeholder="全部 Case" /></label>
               <label><span>最多 Case</span><input id="limit-cases" type="number" min="1" placeholder="不限" /></label>
+            </div>
+            <div class="settings-section" id="range-section">
+              <div class="section-heading"><h3>批次</h3><div class="section-actions"><button id="batch-all" class="button button-quiet" type="button">全选</button><button id="batch-none" class="button button-quiet" type="button">清空</button></div></div>
+              <div id="batch-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取批次"><span class="spinner" aria-hidden="true"></span></span></div>
+              <div class="section-heading"><h3>Case</h3><input id="case-filter" class="case-filter-input" placeholder="筛选" /><span id="case-selection" class="muted"></span></div>
+              <div id="case-options" class="option-list" aria-live="polite"></div>
             </div>
             <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
             <div class="settings-section"><h3>执行预算</h3><div class="form-grid">

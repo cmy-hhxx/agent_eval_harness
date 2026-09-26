@@ -4,9 +4,9 @@ import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, locateRun, readJson } from "@eval/data";
-import { editableDashboardSettings, readConfigSources } from "./config.js";
+import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
-import { listRunCases, readCaseDetail, readRegisteredInput } from "@eval/workflows/comparison";
+import { listInputInventory, listRunCases, readCaseDetail, readRegisteredInput } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -214,6 +214,8 @@ export async function startDashboard(options: DashboardOptions) {
         environment: modelReadiness(current),
       });
     }
+    if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")
+      return json(res, await listInputInventory(await loadEvaluation(options.configPaths)));
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
       return json(res, await allRuns(outputDir));
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
