@@ -6,6 +6,7 @@ export * from "./run-data.js";
 export * from "./codec.js";
 export * from "./report.js";
 export * from "./results.js";
+export * from "./commentary.js";
 export * from "./annotations.js";
 export * from "./validate.js";
 export { outputSchema } from "./schema.js";

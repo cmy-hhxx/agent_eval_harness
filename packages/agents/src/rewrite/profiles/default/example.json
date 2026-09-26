@@ -1,0 +1,55 @@
+{
+  "request": {
+    "input": {
+      "kind": "comparison",
+      "case": {
+        "batch_id": "b1",
+        "case_id": "q",
+        "question": "计算2+2"
+      },
+      "items": [
+        {
+          "id": "assessment.A.summary",
+          "label": "候选A 结论",
+          "text": "正确给出了结果。"
+        },
+        {
+          "id": "assessment.B.summary",
+          "label": "候选B 结论",
+          "text": "正确给出了结果。"
+        },
+        {
+          "id": "tradeoff",
+          "label": "权衡说明",
+          "text": "双方均满足同一要求，没有结果差异。"
+        },
+        {
+          "id": "verdict.A__vs__B.reason",
+          "label": "候选A 与候选B 的两两结论",
+          "text": "双方都完成核心要求且没有实质差异。"
+        }
+      ]
+    },
+    "sources": {}
+  },
+  "result": {
+    "rewrites": [
+      {
+        "id": "assessment.A.summary",
+        "text": "结果正确，直接完成核心要求。"
+      },
+      {
+        "id": "assessment.B.summary",
+        "text": "结果正确，直接完成核心要求。"
+      },
+      {
+        "id": "tradeoff",
+        "text": "双方交付相同，无实质差异。"
+      },
+      {
+        "id": "verdict.A__vs__B.reason",
+        "text": "双方都完成核心要求，无实质差异。"
+      }
+    ]
+  }
+}

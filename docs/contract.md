@@ -5,9 +5,9 @@
 ## 唯一规则来源
 
 - 输入与分组：[input.ts](../packages/workflows/src/comparison/input.ts)。
-- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)。
-- Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile 与问题库](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约。
-- 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)和[Workflow schemas](../schemas/workflow/)。
+- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)、[改写规则](../packages/agents/src/rewrite/profiles/default/instructions.md)。
+- Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile 与问题库](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约。Rewrite 的[公开入口](../packages/agents/src/rewrite/index.ts)只交换文本槽位，不接触证据。
+- 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)、[Rewrite schemas](../schemas/rewrite/)和[Workflow schemas](../schemas/workflow/)。
 - 正式导出组装：[schema.ts](../packages/workflows/src/comparison/schema.ts)。
 - 导出与工具回溯：[report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts)。
 
@@ -34,14 +34,15 @@
 - `submission.schema.json`：模型通过提交工具返回的 JSON。证据使用 attempt 内的 `evidence_id`；Attribution 还必须为每个 finding 提供本条回答内唯一的 `finding_id`。
 - `result.schema.json`：Host 展开证据并接受后的阶段结果。证据变为 `message_index + quote`，finding_id 保留以维护归因树的样本血缘。
 
-两个阶段的 Agent 输出契约如下：
+各阶段的 Agent 输出契约如下：
 
 | 阶段 | 一次处理 | 输出内容 | 下游用途 |
 |---|---|---|---|
 | Attribution | 一条候选回答 | `has_standard_answer`、条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、`findings`（含 finding、证据、要求关联和 problem 节点） | 写入 `attribution.jsonl`，并追加到该模型的归因树；Comparison 只读取它 |
 | Comparison | 一个对比组 | `task_analysis`、分层 `ranking`、每个候选的 `assessments.meets_core/summary`、`decision_basis.tradeoff/decisive_findings` | Workflow 恢复盲测标签、生成 `comparison.jsonl` 和派生 `verdicts` |
+| Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
 
-Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison 不改写提交内容，`schemas/comparison/result.schema.json` 同时作为模型提交和接受结果 Schema，不再维护第二份副本。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行。
+Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison 与 Rewrite 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema，不再维护第二份副本。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写产物另由 `schemas/workflow/commentary.schema.json` 描述。
 
 ## 输入
 
@@ -76,7 +77,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 必须挂到归因树节点：优先召回已有节点（`problem.node_id`），没有对应节点时填 `null` 并给出 `component`/`label`/`definition`，组件是工具/大类。
 
-对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与修正，不新建归因节点，也不新增 finding。
+对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建归因节点，也不新增 finding。
 
 归因树是每个模型的跨 run 问题库：组件为顶层节点，问题挂在组件下，出现样本挂在问题上。合并按 `(节点, input_id, finding)` 幂等，节点 ID 用持久化 UUID；问题 finding 命中已有节点时复用，未命中时新建。每个出现样本保留 `batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题反查到样本、再回到原始数据；合并或重分类保留 `previous_node_id` 与 `events` 血缘。树文件按模型一份，`tree_version`/`previous_tree` 预留分版本。
 
@@ -96,6 +97,16 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 有标准答案时，归因 `is_correct=false` 的候选不得判为 `meets_core=true`。Host 在接收提交、恢复和离线校验时检查排名是候选的划分、`assessments` 覆盖全部候选、决定性发现引用既有归因 finding；这些检查只保证结构与引用关系，不能代替事实和影响判断。
 
 提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 解释相邻层的差异与同层并列的理由。对比阶段不提交 evidence、不新增 finding。
+
+## 改写
+
+改写阶段可选（配置 `rewrite.comparison` / `rewrite.attribution`），把已接受的归因或对比结论润色为更简洁规整的表达。每个源结果对应一个改写任务：对比组写 `assessments[].summary`、`decision_basis.tradeoff` 和派生 `verdicts[].reason`；归因写 `summary` 和非空的 `correctness_reason`。
+
+- 输入是 Workflow 选定的文本槽位（`items[].id/label/text`），不含原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
+- 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；文本中的候选标签、数字、单位和不确定性原样保留。
+- 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写写入 `commentary.jsonl`，用 `source_task_id` 和 `source_result_id` 关联正式结果。
+- `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。
+- 续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；已接受的评测结果不受影响。
 
 ## 证据与导出
 

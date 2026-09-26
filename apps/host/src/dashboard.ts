@@ -151,13 +151,16 @@ function taskRows(state: RunState) {
   return state.manifest.tasks.map((task) => {
     const data = task.data as {
       candidates?: Record<string, { batch_id?: string; case_id?: string; version?: string }>;
+      case?: { batch_id?: string; case_id?: string };
     };
     const candidate = data.candidates?.A || data.candidates?.a || {};
+    // Rewrite tasks own no candidates and carry their location on `case` instead.
+    const identity = data.case || candidate;
     return {
       id: task.id,
       stage: task.stage,
-      batch_id: candidate.batch_id || "",
-      case_id: candidate.case_id || "",
+      batch_id: identity.batch_id || "",
+      case_id: identity.case_id || "",
       version: candidate.version || "",
       state: taskState(state.manifest.states[task.id]),
     };

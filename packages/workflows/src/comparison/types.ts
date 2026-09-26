@@ -28,6 +28,11 @@ export interface EvalConfig {
   attribution: AttributionTarget;
   /** Comparison groups; every version inside a group is compared in one task. */
   comparisons: string[][];
+  /** Language polish targets. Every accepted source result gets one rewrite task. */
+  rewrite: {
+    comparison: boolean;
+    attribution: boolean;
+  };
 }
 export interface Message extends JsonObject {
   type?: string;
@@ -76,9 +81,23 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
+export type Stage = "attribution" | "comparison" | "rewrite";
+/** The accepted result a rewrite task polishes. */
+export interface RewriteSource {
+  stage: "attribution" | "comparison";
+  taskId: string;
+  /** Result id used to join the source JSONL row. */
+  resultId: string;
+}
+/** Business identity for tasks that own no input material. */
+export interface TaskCase {
+  batch_id: string;
+  case_id: string;
+  question: string;
+}
 export interface TaskData {
   initialContextChars?: number;
-  stage: "attribution" | "comparison";
+  stage: Stage;
   candidates: Record<string, Candidate>;
   reference: unknown;
   /** Recalled attribution tree for the single attribution candidate. */
@@ -86,6 +105,10 @@ export interface TaskData {
   /** Compared group version IDs, in declaration order. */
   group?: string[];
   comparisonId?: string;
+  /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
+  rewriteOf?: RewriteSource;
+  /** Present on rewrite tasks, which carry no candidates. */
+  case?: TaskCase;
   revision?: number;
 }
 export type { Finding, TaskAnalysis, ComparisonResult } from "@eval/agents/comparison";

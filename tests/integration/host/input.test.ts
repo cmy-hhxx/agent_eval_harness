@@ -62,6 +62,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.models.judge?.apiKeyEnv, "EVAL_API_KEY");
   assert.equal(host.models.bindings.attribution?.profile, "judge");
   assert.equal(host.models.bindings.comparison?.profile, "judge");
+  assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers"));
@@ -74,6 +75,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(modelForStage("attribution").maxOutputTokens, 4096);
   assert.equal(modelForStage("comparison").maxOutputTokens, 8192);
   assert.equal(modelForStage("comparison").thinking, "low");
+  assert.equal(modelForStage("rewrite").model, "your-gateway-model-id");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
 });

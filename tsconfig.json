@@ -39,6 +39,9 @@
       "@eval/agents/attribution": [
         "./packages/agents/src/attribution/index.ts"
       ],
+      "@eval/agents/rewrite": [
+        "./packages/agents/src/rewrite/index.ts"
+      ],
       "@eval/workflows/comparison": [
         "./packages/workflows/src/comparison/index.ts"
       ],

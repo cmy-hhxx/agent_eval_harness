@@ -99,7 +99,18 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     output: source.output as OutputTarget,
     attribution: source.attribution as AttributionTarget,
     comparisons: [],
+    rewrite: { comparison: false, attribution: false },
   };
+  if (source.rewrite !== undefined) {
+    if (!isObject(source.rewrite)) throw new Error("Invalid rewrite");
+    for (const key of ["comparison", "attribution"] as const)
+      if (source.rewrite[key] !== undefined && typeof source.rewrite[key] !== "boolean")
+        throw new Error(`Invalid rewrite.${key}`);
+    config.rewrite = {
+      comparison: source.rewrite.comparison === true,
+      attribution: source.rewrite.attribution === true,
+    };
+  }
   const versions = config.inputs?.versions;
   if (!Array.isArray(versions) || versions.length < 2) throw new Error("至少配置两个输入版本");
   for (const item of versions) {
@@ -213,5 +224,9 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
 
 export async function loadConfig(sources: string | string[], env = process.env): Promise<HostConfig> {
   const source = await readConfigSources(sources);
-  return { evaluation: buildEvaluation(source), models: buildModels(source, env) };
+  const evaluation = buildEvaluation(source),
+    models = buildModels(source, env);
+  if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)
+    throw new Error("rewrite 已启用但缺少 bindings.rewrite");
+  return { evaluation, models };
 }

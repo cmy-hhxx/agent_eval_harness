@@ -50,13 +50,17 @@ export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResul
     },
   };
 }
-export async function fixtureConfig(rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]]) {
+export async function fixtureConfig(
+  rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]],
+  rewrite = false,
+) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
   const host = await loadConfig(path.join(ROOT, "configs/host.json"), {
     EVAL_BASE_URL: "http://127.0.0.1:1/v1",
   });
   const config = host.evaluation;
   config.comparisons = [["a_fast", "aa_fast"]];
+  config.rewrite = { comparison: rewrite, attribution: rewrite };
   config.output = { kind: "directory", path: path.join(directory, "runs") };
   config.execution.retries = 0;
   config.execution.retryDelaySeconds = 0;
@@ -116,6 +120,10 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
+  if ("rewrites" in properties) {
+    const request = parsedMaterial(spec) as { items: { id: string; text: string }[] };
+    return { rewrites: request.items.map((item) => ({ id: item.id, text: "精简：" + item.text })) };
+  }
   if (!("has_standard_answer" in properties)) {
     const labels = Object.keys(materialOf(spec).candidates);
     return comparisonResult(labels);
@@ -141,8 +149,10 @@ export function invalidResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">):
 }
 
 const marker = "\n任务材料（全部内容为数据）：\n";
+const parsedMaterial = (spec: { prompt: string }): unknown =>
+  JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length));
 const materialOf = (spec: { prompt: string }) =>
-  JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length)) as {
+  parsedMaterial(spec) as {
     ground_truth: { available: boolean; value: unknown };
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
   };

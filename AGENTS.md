@@ -16,7 +16,7 @@
 ## 模块边界
 
 - Agent 提示词、业务校验和单元测试在 `packages/agents/src/<agent>`；Schema 集中在根目录 `schemas/<stage>/`，由 Agent 公开入口组装。Agent 之间禁止互相导入。
-- Attribution Agent 拥有归因树与问题库；Comparison 只确认既有 finding。组合、A/AA、盲测、状态编解码和报告属于 `packages/workflows/src/comparison`。
+- Attribution Agent 拥有归因树与问题库；Comparison 只确认既有 finding，不改写归因结论。改写 Agent 只接收待润色的文本槽位，不接触证据，也不能改动判决；槽位映射、回填与 commentary 属于 `packages/workflows/src/comparison`。组合、A/AA、盲测、状态编解码和报告也属于该 Workflow。
 - `apps/host` 负责 CLI、配置和组装；`packages/host` 只接收定义，禁止导入具体业务。文件、锁和日志属于 `packages/data`；Worker、HTTP/SSE、会话和双 SDK 属于 `packages/runtime`；通用工具只在 `packages/tools`。
 - 跨包代码只使用公开导出；根目录 `schemas/` 是由构建复制的 JSON 资源，不是代码依赖。Contracts 禁止文件、网络和 SDK 实现。边界与验证入口见 [模块地图](docs/modules/README.md)。
 - Python 只用于代码工具和 Prime SDK runtime；不要恢复独立 Python 评测器。

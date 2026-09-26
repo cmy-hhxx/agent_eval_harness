@@ -1,6 +1,7 @@
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
 import { attributionAgent, attributionProfile } from "@eval/agents/attribution";
+import { rewriteAgent, rewriteProfile } from "@eval/agents/rewrite";
 import { comparisonWorkflow, comparisonRepository, reportRun, outputSchema } from "@eval/workflows/comparison";
 import path from "node:path";
 import { createFileLogger } from "@eval/data";
@@ -10,7 +11,7 @@ export const logger = createFileLogger({
   lockDirectory: path.join(ROOT, ".runtime/log-writer"),
   secrets: [process.env.EVAL_API_KEY || ""],
 });
-export const agents = new AgentRegistry([comparisonAgent, attributionAgent]);
+export const agents = new AgentRegistry([comparisonAgent, attributionAgent, rewriteAgent]);
 export const services = {
   logger,
   agents,
@@ -31,6 +32,9 @@ export const services = {
       attributionSubmissionSchema: attributionProfile.submissionSchema,
       attributionResultSchema: attributionProfile.resultSchema,
       comparisonResultSchema: comparisonProfile.resultSchema,
+      rewriteSystemPrompt: rewriteProfile.systemPrompt,
+      rewriteInstructions: rewriteProfile.instructions,
+      rewriteResultSchema: rewriteProfile.resultSchema,
     },
   },
 };

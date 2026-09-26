@@ -5,10 +5,13 @@ import type { JsonObject, PlannedTask, SubmissionReceipt, Usage } from "@eval/co
 import { atomicWrite, exists, internalPath, locateRun, readJson, writeJson, writeJsonl } from "@eval/data";
 import { canonical } from "@eval/contracts";
 import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
+import { toRewrites, type RewriteResult, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
 import { display, comparisonRow } from "./results.js";
 import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncAttributionLibraries } from "./attribution-library.js";
+import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
+import { taskCase } from "./input.js";
 
 interface HeadToHeadStats {
   evaluated: number;
@@ -36,8 +39,8 @@ function summarizeResults(
 ) {
   const cases = new Set([
     ...tasks.map((task) => {
-      const candidate = (task.data as TaskData).candidates.A;
-      return canonical([candidate.batch_id, candidate.case_id]);
+      const c = taskCase(task.data as TaskData);
+      return canonical([c.batch_id, c.case_id]);
     }),
     ...skipped.map((item) => canonical([item.batch_id, item.case_id])),
   ]);
@@ -166,6 +169,15 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       receipts.set(task.id, receipt);
     }
   }
+  // Accepted rewrites are presentation-only; reports prefer them, formal JSONL keeps the judge wording.
+  const commentaryBySource = new Map<string, Rewrites>();
+  for (const task of manifest.tasks) {
+    if (task.stage !== "rewrite") continue;
+    const evaluation = receipts.get(task.id)?.evaluation as RewriteResult | undefined;
+    if (evaluation)
+      commentaryBySource.set((task.data as TaskData).rewriteOf!.taskId, toRewrites(evaluation));
+  }
+  const commentary: CommentaryLookup = { of: (sourceTaskId) => commentaryBySource.get(sourceTaskId || "") };
   // Persist both stages before compacting the ledger, including checkpoint-only recovery.
   await createResultWriter(run, inputs)(state);
   await syncAttributionLibraries(state);
@@ -185,9 +197,12 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       task_id: task.id,
       stage: task.stage,
       status,
+      case: taskCase(data),
       candidates: data.candidates,
       reason: manifest.states[task.id]?.reason || null,
     });
+    // Rewrite receipts feed the report view, not the per-case result sections.
+    if (task.stage === "rewrite") continue;
     if (!receipt) {
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
@@ -218,18 +233,19 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
     comparisons.push(row);
     receipt.exported = { id: String(row.comparison_id), row };
-    const analysis = row.task_analysis as ComparisonResult["task_analysis"];
-    const reviews = row.evaluations as Record<
+    const view = polishComparisonRow(row, task, names, commentary);
+    const analysis = view.task_analysis as ComparisonResult["task_analysis"];
+    const reviews = view.evaluations as Record<
       string,
       { summary: string; findings: Finding[]; is_correct: boolean | null; correctness_reason: string }
     >;
-    const verdicts = row.verdicts as Record<string, JsonObject>;
+    const verdicts = view.verdicts as Record<string, JsonObject>;
     const candidates = Object.fromEntries(
       Object.entries(reviews).map(([id, review]) => [
         id,
         {
-          model: (row.models as JsonObject)[id],
-          assessment: (row.assessments as JsonObject)[id],
+          model: (view.models as JsonObject)[id],
+          assessment: (view.assessments as JsonObject)[id],
           is_correct: review.is_correct,
           summary: review.summary,
           strengths: review.findings.filter((f) => f.type === "strength"),
@@ -238,17 +254,17 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       ]),
     );
     summaries.push({
-      request_time: row.request_time,
-      has_standard_answer: row.has_standard_answer,
+      request_time: view.request_time,
+      has_standard_answer: view.has_standard_answer,
 
-      comparison_id: row.comparison_id,
-      case: row.case,
+      comparison_id: view.comparison_id,
+      case: view.case,
       question: data.candidates[Object.keys(data.candidates)[0]!]!.question,
       task_type: analysis.task_type,
       goal: analysis.goal,
       requirements: analysis.requirements,
-      ranking: row.ranking,
-      assessments: row.assessments,
+      ranking: view.ranking,
+      assessments: view.assessments,
       verdicts,
       candidates,
       scoring_points: analysis.scoring_points,
@@ -258,7 +274,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     markdown.push(
       `# ${first.batch_id} / ${first.case_id}`,
       "",
-      `**排名**：${(row.ranking as string[][])
+      `**排名**：${(view.ranking as string[][])
         .map((tier, index) => `${index + 1}. ${tier.map((v) => names[v] || v).join("、")}`)
         .join("；")}`,
       "",
@@ -285,7 +301,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       .map((c) => `${names[c.version]}：${c.answer_timing.finish_seconds!.toFixed(3)} 秒`);
     if (timingLines.length) markdown.push("**原始回答耗时**：" + timingLines.join("；"), "");
     for (const [id, review] of Object.entries(reviews)) {
-      const assessment = (row.assessments as JsonObject)[id] as { meets_core: boolean; summary: string };
+      const assessment = (view.assessments as JsonObject)[id] as { meets_core: boolean; summary: string };
       markdown.push(
         `## ${names[id] || id}（${assessment.meets_core ? "完成核心要求" : "未完成核心要求"}）`,
         "",
@@ -324,7 +340,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   for (const old of await localFiles.list(results))
     if (
       old.endsWith(".jsonl") &&
-      !["attribution.jsonl", "comparison.jsonl"].includes(old)
+      !["attribution.jsonl", "comparison.jsonl", "commentary.jsonl"].includes(old)
     )
       await localFiles.remove(path.join(results, old));
   if (comparisons.length) await writeJsonl(path.join(results, "comparison.jsonl"), comparisons);
@@ -410,7 +426,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     p95_seconds: durations.length ? durations[Math.floor((durations.length - 1) * 0.95)] : null,
   };
   const batches = new Set([
-    ...manifest.tasks.map((task) => (task.data as TaskData).candidates.A.batch_id),
+    ...manifest.tasks.map((task) => taskCase(task.data as TaskData).batch_id),
     ...skipped.map((item) => String(item.batch_id)),
     ...issues.flatMap((item) => (item.batch_id ? [String(item.batch_id)] : [])),
   ]);
@@ -418,8 +434,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     [...batches].sort().map((batch) => {
       // Per-batch standings duplicate the run-level table; keep only counts here.
       const { standings: _standings, ...stats } = summarizeResults(
-        manifest.tasks.filter((task) => (task.data as TaskData).candidates.A.batch_id === batch),
-        outcomes.filter((outcome) => (outcome.candidates as TaskData["candidates"]).A.batch_id === batch),
+        manifest.tasks.filter((task) => taskCase(task.data as TaskData).batch_id === batch),
+        outcomes.filter((outcome) => (outcome.case as { batch_id: string }).batch_id === batch),
         attribution.filter((row) => row.batch_id === batch),
         comparisons.filter((row) => (row.case as JsonObject).batch_id === batch),
         skipped.filter((item) => item.batch_id === batch),
@@ -428,6 +444,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       return [batch, stats];
     }),
   );
+  const resultArtifacts = ["results/attribution.jsonl"];
+  if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
+  if (commentaryBySource.size) resultArtifacts.push("results/commentary.jsonl");
   const summary = {
     debug: manifest.debug,
     run_id: manifest.runId,
@@ -437,9 +456,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     by_batch: byBatch,
     artifacts: {
       authoritative: "results/",
-      results: comparisons.length
-        ? ["results/attribution.jsonl", "results/comparison.jsonl"]
-        : ["results/attribution.jsonl"],
+      results: resultArtifacts,
       report: "report.md",
       summaries: "task_summaries.md",
       state: "state.json",

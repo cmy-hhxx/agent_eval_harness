@@ -10,9 +10,9 @@ import { loadRunInputs, readRunState } from "./run-data.js";
 import type { Candidate, EvalConfig, ComparisonResult, RawInput, TaskData } from "./types.js";
 import { adapt, candidateKey } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { outputSchema } from "./schema.js";
+import { commentarySchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
-import { comparisonRow, attributionRow } from "./results.js";
+import { comparisonRow, attributionRow, commentaryRow } from "./results.js";
 
 export async function validateRun(
   run: string,
@@ -20,7 +20,8 @@ export async function validateRun(
 ) {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const outputValidator = ajv.compile(outputSchema),
-    attributionValidator = ajv.compile(attributionProfile.resultSchema!);
+    attributionValidator = ajv.compile(attributionProfile.resultSchema!),
+    commentaryValidator = ajv.compile(commentarySchema);
   const state = await readRunState(run),
     manifest = state.manifest;
   const errors: string[] = [],
@@ -124,6 +125,15 @@ export async function validateRun(
           expected.get(name)!.push(canonical(row));
           continue;
         }
+        if (task.stage === "rewrite") {
+          const row = receipt.exported?.row || commentaryRow(task, receipt),
+            name = "commentary.jsonl";
+          if (!commentaryValidator(row) || canonical(row) !== canonical(commentaryRow(task, receipt)))
+            throw new Error("改写结果结构或收据不一致");
+          if (!expected.has(name)) expected.set(name, []);
+          expected.get(name)!.push(canonical(row));
+          continue;
+        }
         const value = receipt.evaluation as ComparisonResult;
         const row = receipt.exported?.row || comparisonRow(inputs, task, value, receipts, names),
           name = "comparison.jsonl";
@@ -165,7 +175,7 @@ export async function validateRun(
       errors: artifactErrors,
     },
     completed_comparisons: [...expected].reduce(
-      (n, [name, rows]) => n + (name === "attribution.jsonl" ? 0 : rows.length),
+      (n, [name, rows]) => n + (name === "comparison.jsonl" ? rows.length : 0),
       0,
     ),
     errors: [...errors, ...evidenceErrors],

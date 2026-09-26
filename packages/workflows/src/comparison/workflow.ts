@@ -8,12 +8,30 @@ import { cite, evidenceSources } from "@eval/tools";
 import { buildPlan, contentText } from "./input.js";
 import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
+import { sourceSlots } from "./commentary.js";
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
   dependencies: Record<string, SubmissionReceipt | undefined>,
 ) {
   const data = task.data as TaskData;
+  if (data.stage === "rewrite") {
+    const source = dependencies.source;
+    if (!source || !data.rewriteOf)
+      throw new Error("改写任务缺少已接受的源结果：" + data.rewriteOf?.taskId);
+    return {
+      agent: "rewrite",
+      profile: "default",
+      request: {
+        input: {
+          kind: data.rewriteOf.stage,
+          case: data.case!,
+          items: sourceSlots(data.rewriteOf.stage, source.evaluation),
+        },
+        sources: {},
+      },
+    };
+  }
   if (data.stage === "comparison" && (data.group?.length ?? 0) < 2)
     throw new Error("对比组至少需要两个候选");
   const materials = Object.fromEntries(

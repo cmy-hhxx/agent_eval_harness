@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
-import type { Candidate, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
+import { resultFile } from "./results.js";
 
 type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
 type Patch = { path: string[]; value?: unknown }[];
@@ -13,7 +14,7 @@ type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "submitt
   exported?: DiskReference;
 };
 type SavedTask = TaskState & {
-  stage: string;
+  stage: Stage;
   inputIds: Record<string, string>;
   dependencies: Record<string, string>;
   data: Omit<TaskData, "candidates" | "stage" | "revision">;
@@ -83,7 +84,7 @@ function encodeState(state: RunState): Checkpoint {
       const value: SavedTask = {
         ...states[task.id],
         revision: revision || 1,
-        stage: task.stage,
+        stage: task.stage as Stage,
         inputIds: task.inputIds,
         dependencies: task.dependencies,
         data,
@@ -92,7 +93,7 @@ function encodeState(state: RunState): Checkpoint {
       if (receipt) {
         const { exported, evaluation, submitted, ...rest } = receipt;
         const reference = exported && {
-          ...(task.stage === "attribution" ? { taskId: exported.id } : { comparisonId: exported.id }),
+          ...(task.stage === "comparison" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
         };
         const evaluationPatch = exported
@@ -146,7 +147,9 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 }
 
 function resultEvaluation(data: TaskData, row: JsonObject): unknown {
-  return data.stage === "attribution" ? row.evaluation : evaluationFromRow(data, row);
+  if (data.stage === "attribution") return row.evaluation;
+  if (data.stage === "rewrite") return { rewrites: row.rewrites };
+  return evaluationFromRow(data, row);
 }
 
 function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => JsonObject): RunState {
@@ -208,12 +211,38 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       continue;
     }
     const data = task.data as TaskData;
+    if (data.stage === "rewrite") {
+      const source = data.rewriteOf!;
+      if (receipt.exported.taskId !== source.taskId)
+        throw new Error("改写结果引用与源任务不一致：" + task.id);
+      const file = receipt.exported.file || resultFile("rewrite");
+      const row = getRow({ id: receipt.exported.taskId, file });
+      if (
+        row.commentary_type !== source.stage ||
+        row.source_task_id !== source.taskId ||
+        row.source_result_id !== source.resultId ||
+        canonical(row.case) !==
+          canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id })
+      )
+        throw new Error("改写结果身份不一致：" + task.id);
+      const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
+      state.receipts[task.id] = {
+        ...value,
+        evaluation,
+        ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
+        exported: {
+          id: source.taskId,
+          ...(receipt.exported.file ? { file: receipt.exported.file } : {}),
+          row,
+        },
+      };
+      continue;
+    }
     const correctness = data.stage === "attribution";
     if (correctness ? receipt.exported.taskId !== task.id : !receipt.exported.comparisonId)
       throw new Error("结果引用类型或任务身份不一致：" + task.id);
     const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
-    const file =
-      receipt.exported.file || (correctness ? "attribution.jsonl" : "comparison.jsonl");
+    const file = receipt.exported.file || resultFile(correctness ? "attribution" : "comparison");
     const row = getRow({ file, id: resultId });
     if (
       canonical(row.case) !==
@@ -246,7 +275,7 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
 export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   decode: decodeState,
-  resultId: (row) => String(row.task_id ?? row.comparison_id),
+  resultId: (row) => String(row.task_id ?? row.comparison_id ?? row.source_task_id),
   references(checkpoint) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.values(checkpoint.tasks).flatMap((task) => {
@@ -255,11 +284,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
         ? [
             {
               id: ref.taskId ?? ref.comparisonId!,
-              file:
-                ref.file ||
-                (task.stage === "attribution"
-                  ? "attribution.jsonl"
-                  : "comparison.jsonl"),
+              file: ref.file || resultFile(task.stage),
             },
           ]
         : [];

@@ -6,9 +6,11 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
-import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, TaskData } from "./types.js";
+import type { RewriteResult } from "@eval/agents/rewrite";
+import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, Stage, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
-import { outputSchema } from "./schema.js";
+import { commentarySchema, outputSchema } from "./schema.js";
+import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
     return (
@@ -24,12 +26,6 @@ export function display<T>(value: T, names: Record<string, string>, key = ""): T
   if (value && typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, display(v, names, k)])) as T;
   return value;
-}
-
-function tierOf(ranking: string[][]): Map<string, number> {
-  const tiers = new Map<string, number>();
-  ranking.forEach((tier, index) => tier.forEach((label) => tiers.set(label, index)));
-  return tiers;
 }
 
 /** Derive every two-way verdict from the group ranking plus per-candidate core classification. */
@@ -48,33 +44,20 @@ function deriveVerdicts(
         vb = group[j]!,
         la = labelOf.get(va)!,
         lb = labelOf.get(vb)!;
-      const ma = result.assessments[la]!.meets_core,
-        mb = result.assessments[lb]!.meets_core;
-      let verdict: JsonObject, reason: string;
-      if (ma && !mb) {
-        verdict = { result: "win", winner_version: va, winner_name: labels[la] };
-        reason = `【候选${la}】完成核心要求而【候选${lb}】未完成。`;
-      } else if (!ma && mb) {
-        verdict = { result: "win", winner_version: vb, winner_name: labels[lb] };
-        reason = `【候选${lb}】完成核心要求而【候选${la}】未完成。`;
-      } else if (!ma && !mb) {
-        verdict = { result: "both_bad", winner_version: null, winner_name: null };
-        reason = "双方都未完成核心要求，没有实质胜者。";
-      } else {
-        const ta = tiers.get(la)!,
-          tb = tiers.get(lb)!;
-        if (ta < tb) {
-          verdict = { result: "win", winner_version: va, winner_name: labels[la] };
-          reason = `双方都完成核心要求，【候选${la}】实际可用性更优。`;
-        } else if (tb < ta) {
-          verdict = { result: "win", winner_version: vb, winner_name: labels[lb] };
-          reason = `双方都完成核心要求，【候选${lb}】实际可用性更优。`;
-        } else {
-          verdict = { result: "both_good", winner_version: null, winner_name: null };
-          reason = "双方都完成核心要求且没有实质差异。";
-        }
-      }
-      verdicts[va + "__vs__" + vb] = { ...verdict, reason: display(reason, labels) };
+      const decision = decideVerdict(
+        result.assessments[la]!.meets_core,
+        result.assessments[lb]!.meets_core,
+        tiers.get(la) ?? 0,
+        tiers.get(lb) ?? 0,
+      );
+      const winnerVersion = decision.winner === "first" ? va : decision.winner === "second" ? vb : null;
+      const winnerLabel = decision.winner === "first" ? la : decision.winner === "second" ? lb : null;
+      verdicts[va + "__vs__" + vb] = {
+        result: decision.outcome,
+        winner_version: winnerVersion,
+        winner_name: winnerLabel ? labels[winnerLabel] : null,
+        reason: display(verdictReason(decision, la, lb), labels),
+      };
     }
   return verdicts;
 }
@@ -157,10 +140,31 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
     evaluation: receipt.evaluation,
   };
 }
+/** Result file per stage; the single place that maps stages to JSONL artifacts. */
+export function resultFile(stage: Stage): string {
+  return stage === "attribution"
+    ? "attribution.jsonl"
+    : stage === "comparison"
+      ? "comparison.jsonl"
+      : "commentary.jsonl";
+}
+/** Accepted polish of one source result; only text slots, joined by business ids. */
+export function commentaryRow(task: PlannedTask, receipt: SubmissionReceipt): JsonObject {
+  const data = task.data as TaskData,
+    source = data.rewriteOf!;
+  return {
+    commentary_type: source.stage,
+    source_task_id: source.taskId,
+    source_result_id: source.resultId,
+    case: { batch_id: data.case!.batch_id, case_id: data.case!.case_id },
+    rewrites: (receipt.evaluation as RewriteResult).rewrites,
+  };
+}
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
-  validateAttribution = ajv.compile(attributionProfile.resultSchema!);
+  validateAttribution = ajv.compile(attributionProfile.resultSchema!),
+  validateCommentary = ajv.compile(commentarySchema);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>) {
   const receipt = state.receipts[task.id];
   if (task.stage === "attribution") {
@@ -168,6 +172,12 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     if (!validateAttribution(row.evaluation))
       throw new Error("归因结果 schema 无效：" + ajv.errorsText(validateAttribution.errors));
     return { id: task.id, file: "attribution.jsonl", row };
+  }
+  if (task.stage === "rewrite") {
+    const row = receipt.exported?.row || commentaryRow(task, receipt);
+    if (!validateCommentary(row))
+      throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateCommentary.errors));
+    return { id: String(row.source_task_id), file: "commentary.jsonl", row };
   }
   const config = state.manifest.config as EvalConfig;
   const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));

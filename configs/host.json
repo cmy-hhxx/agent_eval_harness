@@ -43,6 +43,10 @@
   "comparisons": [
     ["a_fast", "a_expert", "aa_fast", "aa_expert"]
   ],
+  "rewrite": {
+    "comparison": true,
+    "attribution": true
+  },
   "models": {
     "judge": {
       "provider": "evaluation-gateway",
@@ -60,6 +64,9 @@
       "maxOutputTokens": 4096
     },
     "comparison": {
+      "profile": "judge"
+    },
+    "rewrite": {
       "profile": "judge"
     }
   },

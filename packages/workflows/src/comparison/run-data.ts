@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { createRunRepository, fileSourceReader } from "@eval/data";
-import { buildPlan, candidateKey, inputSources, locateRecord } from "./input.js";
+import { buildPlan, candidateKey, inputSources, locateRecord, taskCase } from "./input.js";
 import type { BatchPreflight, Candidate, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
 import { encodeResult } from "./results.js";
@@ -64,6 +64,8 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const selected: EvalConfig = {
     ...config,
     execution: supplied.execution,
+    // Presentation stages may be enabled or disabled on resume without touching accepted evaluations.
+    rewrite: supplied.rewrite,
     inputs: {
       ...config.inputs,
       versions: config.inputs.versions.map((v) => ({
@@ -81,33 +83,45 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   });
   const tasks = new Map(plan.tasks.map((task) => [task.id, task]));
   // Accepted work is immutable within a run. Only unfinished/new tasks use the latest source records.
-  for (const task of previous) if (state.receipts[task.id] || !tasks.has(task.id)) tasks.set(task.id, task);
+  for (const task of previous) {
+    if (task.stage === "rewrite" && !state.receipts[task.id]) {
+      const target = (task.data as TaskData).rewriteOf!.stage;
+      if (!selected.rewrite[target]) continue;
+    }
+    if (state.receipts[task.id] || !tasks.has(task.id)) tasks.set(task.id, task);
+  }
   const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));
   for (const [id, task] of tasks)
     if (task.stage === "attribution" && !dependencies.has(id) && !state.receipts[id]) tasks.delete(id);
-  plan.tasks = [...tasks.values()];
   // Unfinished tasks whose source records are no longer available are dropped with a diagnostic
   // instead of aborting the run; accepted work is never affected.
   const issues = [...((plan.summary.issues as unknown[]) || [])];
   for (const [id, task] of tasks) {
     if (state.receipts[id]) continue;
+    if (task.stage === "rewrite") continue;
     const missing = Object.values(task.inputIds).find((inputId) => !Object.hasOwn(plan.inputs, inputId));
     if (!missing) continue;
     tasks.delete(id);
     issues.push({
-      batch_id: (task.data as TaskData).candidates.A.batch_id,
-      case_id: (task.data as TaskData).candidates.A.case_id,
+      batch_id: taskCase(task.data as TaskData).batch_id,
+      case_id: taskCase(task.data as TaskData).case_id,
       stage: task.stage,
       reason: "input_source_unavailable",
       input_id: missing,
     });
   }
+  // A rewrite task whose source task is no longer planned and that never finished has nothing to polish.
+  for (const [id, task] of tasks) {
+    if (task.stage !== "rewrite" || state.receipts[id]) continue;
+    if (!tasks.has((task.data as TaskData).rewriteOf!.taskId)) tasks.delete(id);
+  }
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
   plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison").length;
+  plan.summary.rewrite_tasks = plan.tasks.filter((task) => task.stage === "rewrite").length;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
-    const selected = plan.tasks.filter((task) => (task.data as TaskData).candidates.A.batch_id === batch);
+    const selected = plan.tasks.filter((task) => taskCase(task.data as TaskData).batch_id === batch);
     counts.attribution_tasks = selected.filter((task) => task.stage === "attribution").length;
     counts.comparison_tasks = selected.filter((task) => task.stage === "comparison").length;
   }

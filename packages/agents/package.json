@@ -10,6 +10,10 @@
     "./attribution": {
       "types": "./attribution.d.ts",
       "import": "./attribution.js"
+    },
+    "./rewrite": {
+      "types": "./rewrite.d.ts",
+      "import": "./rewrite.js"
     }
   }
 }

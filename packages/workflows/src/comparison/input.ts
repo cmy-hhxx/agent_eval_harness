@@ -11,6 +11,7 @@ import type {
   EvalConfig,
   LibraryProjection,
   RawInput,
+  TaskCase,
   TaskData,
   Timing,
   VersionConfig,
@@ -192,10 +193,18 @@ export function locateRecord(
   throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
 }
 export const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+/** Business identity for any task, including rewrite tasks that own no input. */
+export function taskCase(data: TaskData): { batch_id: string; case_id: string } {
+  return data.case ?? { batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id };
+}
 export function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData,
-    a = data.candidates.A;
-  return canonical([a.batch_id, a.case_id, task.stage, data.group || [a.version]]);
+    c = taskCase(data);
+  const selector =
+    data.stage === "rewrite"
+      ? ["rewrite", data.rewriteOf!.taskId]
+      : data.group || [data.candidates.A.version];
+  return canonical([c.batch_id, c.case_id, task.stage, selector]);
 }
 export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promise<TaskPlan> {
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
@@ -376,7 +385,35 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
   }
   const tasks: PlannedTask[] = [],
     checks = new Map<string, PlannedTask>(),
+    rewrites = new Map<string, PlannedTask>(),
     groupCounts: Record<string, number> = {};
+  /** One polish task per accepted source result; rewrite tasks own no input material. */
+  function addRewrite(
+    sourceStage: "attribution" | "comparison",
+    sourceTaskId: string,
+    resultId: string,
+    caseInfo: TaskCase,
+    revision: number,
+  ) {
+    if (sourceStage === "comparison" ? !config.rewrite.comparison : !config.rewrite.attribution) return;
+    if (rewrites.has(sourceTaskId)) return;
+    const key = canonical([caseInfo.batch_id, caseInfo.case_id, "rewrite", ["rewrite", sourceTaskId]]);
+    const old = oldTasks.get(key);
+    rewrites.set(sourceTaskId, {
+      id: old?.id || randomUUID(),
+      stage: "rewrite",
+      dependencies: { source: sourceTaskId },
+      inputIds: {},
+      data: {
+        stage: "rewrite",
+        candidates: {},
+        reference: null,
+        rewriteOf: { stage: sourceStage, taskId: sourceTaskId, resultId },
+        case: caseInfo,
+        revision,
+      },
+    });
+  }
   const byBatch = new Map<string, BatchPreflight>();
   function batchStats(batch: string): BatchPreflight {
     if (!byBatch.has(batch))
@@ -475,6 +512,13 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
           inputIds: { A: record.input_id },
           data,
         });
+        addRewrite(
+          "attribution",
+          checkId,
+          checkId,
+          { batch_id: record.batch_id, case_id: record.case_id, question: record.question },
+          data.revision || 1,
+        );
         dependencies[label] = checkId;
       }
       const data: TaskData = {
@@ -494,13 +538,21 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
                 )),
           ),
       };
-      tasks.push({
+      const comparisonTask: PlannedTask = {
         id: oldGroup?.id || randomUUID(),
         stage: "comparison",
         dependencies,
         inputIds: Object.fromEntries(Object.entries(candidates).map(([k, r]) => [k, r.input_id])),
         data,
-      });
+      };
+      tasks.push(comparisonTask);
+      addRewrite(
+        "comparison",
+        comparisonTask.id,
+        data.comparisonId!,
+        { batch_id: batch, case_id: id, question: ordered[0]!.question },
+        data.revision || 1,
+      );
       const name = group.join("+");
       groupCounts[name] = (groupCounts[name] || 0) + 1;
       stats.comparison_tasks++;
@@ -513,7 +565,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
   );
   const used = new Set(catalog.map((record) => record.input_id));
   return {
-    tasks: [...checks.values(), ...tasks],
+    tasks: [...checks.values(), ...tasks, ...rewrites.values()],
     inputs: Object.fromEntries(Object.entries(inputs).filter(([id]) => used.has(id))),
     catalog,
     summary: {
@@ -521,6 +573,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
       cases: selected.length,
       attribution_tasks: checks.size,
       comparison_tasks: tasks.length,
+      rewrite_tasks: rewrites.size,
       comparisons: config.comparisons,
       group_counts: groupCounts,
       sources: resolvedSources,
