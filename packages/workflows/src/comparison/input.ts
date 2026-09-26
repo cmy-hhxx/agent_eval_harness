@@ -240,7 +240,15 @@ export function taskIdentity(data: TaskData): { batch_id: string; case_id: strin
   const c = taskCase(data);
   return { batch_id: c.batch_id, case_id: c.case_id };
 }
-export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promise<TaskPlan> {
+export interface PlanOptions {
+  /** Skip raw input materialization when only task counts or summaries are needed. */
+  materializeInputs?: boolean;
+}
+export async function buildPlan(
+  config: EvalConfig,
+  previous?: TaskPlan,
+  options: PlanOptions = {},
+): Promise<TaskPlan> {
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
   const oldRecords = new Map(
     (
@@ -709,7 +717,7 @@ export async function buildPlan(config: EvalConfig, previous?: TaskPlan): Promis
   const used = new Set(catalog.map((record) => record.input_id));
   // The inventory has no comparisons and needs only the compact catalog. For real plans,
   // load the selected raw records in a second bounded scan, never all source text at once.
-  if (config.comparisons.length) {
+  if (config.comparisons.length && options.materializeInputs !== false) {
     const bySource = new Map<string, Map<number, Candidate[]>>();
     for (const record of catalog) {
       if (!freshRecords.has(record)) continue;

@@ -1,9 +1,9 @@
 import path from "node:path";
 import { readJson, locateRun, problemLibraryFile, readProblemLibrary } from "@eval/data";
-import type { TaskState } from "@eval/contracts";
-import { readRunState } from "./run-data.js";
-import { buildPlan, contentText, locateRecordStream, taskIdentity } from "./input.js";
-import type { Candidate, EvalConfig, TaskData } from "./types.js";
+import type { JsonObject, TaskState } from "@eval/contracts";
+import { readRunTasks } from "./run-data.js";
+import { buildPlan, contentText, locateRecordStream } from "./input.js";
+import type { Candidate, EvalConfig, Stage, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 
 /** Read-only workflow projection: the dashboard never interprets blind labels or result files. */
@@ -134,42 +134,110 @@ export async function listRunCases(run: string, filter: CaseFilter) {
   };
 }
 
+const clip = (value: unknown, limit: number): unknown =>
+  typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}…` : value;
+const clipEvidence = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map((item) => {
+        const entry = (item ?? {}) as JsonObject;
+        return { message_index: entry.message_index, quote: clip(entry.quote ?? entry.observation, 4000) };
+      })
+    : value;
+/** Only the fields the sample view renders; long text and comparison `evaluations` stay in the JSONL. */
+export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonObject | null {
+  if (!row) return null;
+  if (stage === "attribution") {
+    const value = (row.evaluation ?? {}) as JsonObject;
+    return {
+      evaluation: {
+        is_correct: value.is_correct,
+        correctness_reason: clip(value.correctness_reason, 8000),
+        correctness_evidence: clipEvidence(value.correctness_evidence),
+        summary: clip(value.summary, 8000),
+        findings: Array.isArray(value.findings)
+          ? value.findings.map((finding) => {
+              const item = (finding ?? {}) as JsonObject;
+              return {
+                type: item.type,
+                stage: item.stage,
+                text: clip(item.text, 4000),
+                reason: clip(item.reason, 4000),
+                evidence: clipEvidence(item.evidence),
+              };
+            })
+          : value.findings,
+      },
+    };
+  }
+  if (stage === "rewrite") return { rewrites: row.rewrites };
+  if (stage === "comparison")
+    return {
+      models: row.models,
+      ground_truth: row.ground_truth,
+      ranking: row.ranking,
+      task_analysis: row.task_analysis,
+      decision_basis: row.decision_basis,
+      assessments: row.assessments,
+      verdicts: row.verdicts,
+    };
+  return null;
+}
+
 export async function readCaseDetail(run: string, batch: string, caseId: string) {
-  // Repository decoding checks the accepted references against authoritative JSONL rows.
-  const state = await readRunState(run);
-  const tasks = state.manifest.tasks.filter((task) => {
-    const identity = taskIdentity(task.data as TaskData);
-    return identity.case_id === caseId && identity.batch_id === batch;
+  const saved = await checkpoint(run);
+  const taskIds = Object.entries(saved.tasks).flatMap(([id, task]) => {
+    // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
+    if (task.stage === "clustering") return [];
+    const candidate = Object.values(task.inputIds)
+      .map((inputId) => saved.inputs[inputId])
+      .find(Boolean);
+    const identity = (task.data as TaskData).case || candidate;
+    return identity?.batch_id === batch && identity?.case_id === caseId ? [id] : [];
   });
-  if (!tasks.length) return undefined;
+  if (!taskIds.length) return undefined;
   const candidates = new Map<string, Candidate>();
-  for (const task of tasks)
-    for (const candidate of Object.values((task.data as TaskData).candidates))
-      candidates.set(candidate.input_id, candidate);
-  const first = tasks[0].data as TaskData;
+  for (const id of taskIds)
+    for (const inputId of Object.values(saved.tasks[id]!.inputIds)) {
+      const candidate = saved.inputs[inputId];
+      if (candidate) candidates.set(inputId, { ...candidate, input_id: inputId });
+    }
+  const first = saved.tasks[taskIds[0]!]!;
   return {
     batch_id: batch,
     case_id: caseId,
-    question: [...candidates.values()][0]?.question || first.case?.question || "",
+    question: [...candidates.values()][0]?.question || (first.data as TaskData).case?.question || "",
     candidates: [...candidates.values()].map(({ input_id, version, name }) => ({
       input_id, version, name,
     })),
-    tasks: tasks.map((task) => {
-      const status: TaskState = state.manifest.states[task.id];
-      const data = task.data as TaskData;
+    tasks: taskIds.map((id) => {
+      const task = saved.tasks[id]!;
+      const status: TaskState = task;
       return {
-        id: task.id,
+        id,
         stage: task.stage,
         status: status.status,
         attempts: status.attempts,
         reason: status.reason || status.failure?.errors[0]?.message || null,
         last_progress_at: status.lastProgressAt ?? null,
         duration_ms: status.durationMs ?? null,
-        versions: Object.values(data.candidates).map((c) => c.version),
-        rewrite_of: data.rewriteOf ?? null,
-        result: state.receipts[task.id]?.exported?.row ?? null,
+        versions: Object.values(task.inputIds).flatMap((inputId) => saved.inputs[inputId]?.version ?? []),
+        rewrite_of: (task.data as TaskData).rewriteOf ?? null,
       };
     }),
+  };
+}
+
+/** One task's accepted row, loaded when the sample view expands it. */
+export async function readTaskResult(run: string, taskId: string) {
+  const saved = await checkpoint(run);
+  const task = saved.tasks[taskId];
+  if (!task) return undefined;
+  // Repository decoding checks the accepted reference against its authoritative JSONL row.
+  const state = await readRunTasks(run, [taskId]);
+  return {
+    task_id: taskId,
+    stage: task.stage,
+    result: caseResultView(task.stage as Stage, state.receipts[taskId]?.exported?.row),
   };
 }
 

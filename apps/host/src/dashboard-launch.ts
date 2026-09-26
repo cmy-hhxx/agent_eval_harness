@@ -95,7 +95,7 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
     if (chosen.case) config.inputs.case_ids = chosen.case;
     if (chosen.limitCases) config.inputs.limit = chosen.limitCases;
   }
-  const plan = resuming ? undefined : await comparisonWorkflow.plan(config);
+  const plan = resuming ? undefined : await comparisonWorkflow.plan(config, { materializeInputs: false });
   return { runId, engine, chosen, settings, resuming, plan, run, config };
 }
 

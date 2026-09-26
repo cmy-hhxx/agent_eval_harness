@@ -184,7 +184,7 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 }
 
 .problem-library { margin-top: 12px; }
-.problem-library h3 { margin-bottom: 6px; }
+.problem-library > summary { color: var(--muted); font-size: 12px; cursor: pointer; }
 .library-model { margin-bottom: 4px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .library-model > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; cursor: pointer; }
 .library-component { margin: 8px 0 0; }

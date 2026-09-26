@@ -96,7 +96,7 @@ export async function appendJsonl(file: string, rows: Iterable<unknown>): Promis
   }
 }
 
-export async function* readJsonl(file: string): AsyncGenerator<unknown> {
+export async function* readJsonlText(file: string, keepFinalLine = false): AsyncGenerator<string> {
   const source = createReadStream(file);
   const stream = file.endsWith(".gz") ? source.pipe(createGunzip()) : source;
   source.on("error", (error) => stream.destroy(error));
@@ -109,14 +109,19 @@ export async function* readJsonl(file: string): AsyncGenerator<unknown> {
       while ((end = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, end);
         buffer = buffer.slice(end + 1);
-        if (line.trim()) yield JSON.parse(line);
+        if (line.trim()) yield line;
       }
     }
     buffer += decoder.decode();
-    if (buffer.trim()) yield JSON.parse(buffer);
+    // An interrupted append can leave an incomplete trailing line; callers that need it opt in.
+    if (keepFinalLine && buffer.trim()) yield buffer;
   } finally {
     source.destroy();
   }
+}
+
+export async function* readJsonl(file: string): AsyncGenerator<unknown> {
+  for await (const line of readJsonlText(file, true)) yield JSON.parse(line);
 }
 
 export async function compressFile(file: string): Promise<void> {

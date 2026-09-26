@@ -12,7 +12,8 @@ import type { BatchPreflight, Candidate, EvalConfig, TaskData } from "./types.js
 import { comparisonCodec } from "./codec.js";
 import { encodeResult } from "./results.js";
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
-export const { readRun: readRunState, writeRun: writeRunState, createResultWriter } = comparisonRepository;
+export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
+  comparisonRepository;
 export async function loadRunInputs(
   manifest: RunManifest,
   issues?: ValidationIssue[],

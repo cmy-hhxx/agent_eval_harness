@@ -5,7 +5,7 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { cite, evidenceSources } from "@eval/tools";
-import { buildPlan, contentText } from "./input.js";
+import { buildPlan, contentText, type PlanOptions } from "./input.js";
 import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 import { sourceSlots } from "./commentary.js";
@@ -144,7 +144,7 @@ export function bindTask(
 }
 export const comparisonWorkflow: WorkflowDefinition = {
   id: "comparison",
-  plan: (config) => buildPlan(config as EvalConfig),
+  plan: (config, options) => buildPlan(config as EvalConfig, undefined, options as PlanOptions),
   reconcile: reconcileRun,
   bind: bindTask,
 };

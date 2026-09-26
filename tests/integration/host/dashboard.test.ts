@@ -10,7 +10,8 @@ import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contrac
 import { exists, readJson, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
-  attributionRow, buildPlan, listInputInventory, listRunCases, readCaseDetail, readRegisteredInput, writeRunState,
+  attributionRow, buildPlan, caseResultView, listInputInventory, listRunCases, readCaseDetail,
+  readRegisteredInput, readRunTasks, readTaskResult, writeRunState,
 } from "@eval/workflows/comparison";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
@@ -188,8 +189,10 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
     assert.equal(page.cases[0].case_id, "q1");
     assert.equal((await listRunCases(fixture.run, { page: 2, pageSize: 1 })).cases[0].case_id, "q2");
     const detail = (await readCaseDetail(fixture.run, "b1", "q1"))!;
-    assert.equal(detail.tasks.find((item) => item.id === fixture.task.id)?.result?.evaluation_type, "attribution");
-    assert.match(JSON.stringify(detail.tasks.find((item) => item.id === fixture.task.id)?.result), /正确给出结果/);
+    assert.equal("result" in detail.tasks.find((item) => item.id === fixture.task.id)!, false);
+    const attribution = (await readTaskResult(fixture.run, fixture.task.id))!.result;
+    assert.deepEqual(Object.keys(attribution!), ["evaluation"]);
+    assert.match(JSON.stringify(attribution), /正确给出结果/);
     const inputId = fixture.task.inputIds.A;
     const source = fixture.config.inputs.versions.find((version) => version.id === fixture.row.version)!.sources[0].path;
     const registered = (await readRegisteredInput(fixture.run, inputId))!;
@@ -206,13 +209,68 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
     assert.equal(Object.hasOwn(shifted, "raw"), false);
     assert.equal(await readRegisteredInput(fixture.run, "not-registered"), undefined);
     await rm(path.join(fixture.run, "results", "attribution.jsonl"));
-    await assert.rejects(readCaseDetail(fixture.run, "b1", "q1"), /结果文件缺失/);
+    assert.equal((await readCaseDetail(fixture.run, "b1", "q1"))?.case_id, "q1");
+    await assert.rejects(readTaskResult(fixture.run, fixture.task.id), /结果文件缺失/);
+    const comparisonTask = detail.tasks.find((item) => item.stage === "comparison")!;
+    const targeted = await readRunTasks(fixture.run, [comparisonTask.id]);
+    assert.deepEqual(Object.keys(targeted.receipts), [], "unrelated result rows stay on disk");
     assert.equal((await readRegisteredInput(fixture.run, inputId))?.case_id, "q1");
     await rm(source);
     await assert.rejects(readRegisteredInput(fixture.run, inputId), /ENOENT/);
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test("dashboard case results keep only the fields the sample view renders", () => {
+  const comparison = caseResultView("comparison", {
+    evaluation_type: "group_model_comparison",
+    evaluator_version: "r1",
+    evaluations: { a_fast: { findings: ["x"] } },
+    models: { a_fast: { version: "A组Fast", llm: "x", trace_id: null } },
+    ground_truth: { available: false, value: null },
+    ranking: [["a_fast"]],
+    task_analysis: { goal: "g" },
+    decision_basis: { tradeoff: "t", decisive_findings: [] },
+    assessments: { a_fast: { meets_core: true, summary: "s" } },
+    verdicts: { a_fast__vs__aa_fast: { result: "win" } },
+  })!;
+  assert.equal(Object.hasOwn(comparison, "evaluations"), false);
+  assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
+  assert.deepEqual(Object.keys(comparison).sort(), [
+    "assessments", "decision_basis", "ground_truth", "models", "ranking", "task_analysis", "verdicts",
+  ]);
+  assert.deepEqual(caseResultView("rewrite", { rewrites: [{ id: "summary", text: "t" }] }), {
+    rewrites: [{ id: "summary", text: "t" }],
+  });
+  const longQuote = "q".repeat(5000);
+  const attribution = caseResultView("attribution", {
+    evaluation: {
+      is_correct: true,
+      correctness_reason: "r",
+      correctness_evidence: [{ message_index: 1, quote: longQuote }],
+      summary: "s",
+      findings: [{
+        type: "problem", stage: "final_answer", text: "t", reason: "r",
+        evidence: [{ message_index: 1, quote: "q" }],
+      }],
+    },
+  })!;
+  const evaluation = attribution.evaluation as {
+    is_correct: boolean;
+    summary: string;
+    correctness_evidence: { quote: string }[];
+    findings: unknown[];
+  };
+  assert.equal(evaluation.is_correct, true);
+  assert.equal(evaluation.summary, "s");
+  assert.equal(evaluation.correctness_evidence[0]!.quote.length, 4001);
+  assert.deepEqual(evaluation.findings, [{
+    type: "problem", stage: "final_answer", text: "t", reason: "r",
+    evidence: [{ message_index: 1, quote: "q" }],
+  }]);
+  assert.deepEqual(Object.keys(attribution), ["evaluation"]);
+  assert.equal(caseResultView("attribution", undefined), null);
 });
 
 test("input inventory lists dates and cases from the configured sources", async () => {
@@ -368,7 +426,8 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
   try {
     const config = await get("/api/dashboard/config");
     assert.equal(config.headers.get("cache-control"), "no-store");
-    assert.match(config.headers.get("content-security-policy") || "", /script-src 'self'/);
+    assert.equal(config.headers.get("content-security-policy"), null, "local overlays must be able to inject inline styles");
+    assert.equal(config.headers.get("x-frame-options"), null, "local annotation tools may embed the page");
     const text = await config.text();
     assert(!text.includes("private-key-do-not-expose"));
     assert(!text.includes(gateway));
@@ -376,10 +435,16 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     const inventory = await (await get("/api/dashboard/inputs")).json();
     assert.equal(inventory.dates.length, 1);
     assert.deepEqual(inventory.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
+    await writeJsonl(fixture.config.inputs.versions[0]!.sources[0]!.path, [raw("q1"), raw("q2"), { ...raw("q3"), batch_id: "b2" }]);
+    const refreshed = await (await get("/api/dashboard/inputs")).json();
+    assert.deepEqual(refreshed.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2", "q3"]);
     const list = await (await get("/api/dashboard/runs/run-one/cases?status=succeeded")).json();
     assert.equal(list.total, 1);
     const detail = await (await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).json();
     assert.equal(detail.tasks.find((item: { id: string }) => item.id === fixture.task.id).status, "succeeded");
+    const taskResult = await (await get(`/api/dashboard/runs/run-one/tasks/${fixture.task.id}/result`)).json();
+    assert.match(JSON.stringify(taskResult.result), /正确给出结果/);
+    assert.equal((await get("/api/dashboard/runs/run-one/tasks/unknown/result")).status, 404);
     const input = await (await get(`/api/dashboard/runs/run-one/inputs/${fixture.task.inputIds.A}`)).json();
     assert.equal(input.question, "计算2+2");
     assert.equal(input.answer, "2+2=4");
@@ -404,9 +469,10 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal((await post("/api/dashboard/runs", { runId: "../escape" })).status, 400);
     assert.equal((await get("/api/dashboard/runs/run-one/cases?page=-1")).status, 400);
     await rm(path.join(fixture.run, "results", "attribution.jsonl"));
-    const missing = await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1");
+    const missing = await get(`/api/dashboard/runs/run-one/tasks/${fixture.task.id}/result`);
     assert.equal(missing.status, 500);
     assert.match((await missing.json()).error, /结果文件缺失/);
+    assert.equal((await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).status, 200);
   } finally {
     await server.close();
     if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;

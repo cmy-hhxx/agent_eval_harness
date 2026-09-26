@@ -153,7 +153,11 @@ function resultEvaluation(data: TaskData, row: JsonObject): unknown {
   return evaluationFromRow(data, row);
 }
 
-function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => JsonObject): RunState {
+function decodeState(
+  checkpoint: Checkpoint,
+  getRow: (ref: ResultReference) => JsonObject,
+  taskIds?: ReadonlySet<string>,
+): RunState {
   const { tasks: savedTasks, inputs, usage, recordedAttempts, ...metadata } = checkpoint;
   if (metadata.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
   if (typeof metadata.evaluatorVersion !== "string" || !metadata.evaluatorVersion.trim())
@@ -210,6 +214,7 @@ function decodeState(checkpoint: Checkpoint, getRow: (ref: ResultReference) => J
       ...status
     } = saved;
     state.manifest.states[task.id] = status;
+    if (taskIds && !taskIds.has(task.id)) continue;
     if (!receipt) continue;
     const { evaluationPatch, submittedPatch, ...value } = receipt;
     if (!receipt.exported) {
@@ -311,9 +316,10 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   decode: decodeState,
   resultId: (row) => String(row.task_id ?? row.comparison_id ?? row.source_task_id),
-  references(checkpoint) {
+  references(checkpoint, taskIds) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
-    return Object.values(checkpoint.tasks).flatMap((task) => {
+    return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {
+      if (taskIds && !taskIds.has(id)) return [];
       const ref = task.receipt?.exported;
       return ref
         ? [

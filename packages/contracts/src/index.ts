@@ -319,7 +319,7 @@ export interface AgentBinding {
 }
 export interface WorkflowDefinition {
   id: string;
-  plan(config: unknown): Promise<TaskPlan>;
+  plan(config: unknown, options?: unknown): Promise<TaskPlan>;
   reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
   bind(
     task: PlannedTask,
@@ -329,6 +329,8 @@ export interface WorkflowDefinition {
 }
 export interface RunRepository {
   readRun(run: string): Promise<RunState>;
+  /** Decode only the requested tasks; unrelated result rows stay on disk. */
+  readTasks(run: string, taskIds: string[]): Promise<RunState>;
   writeRun(run: string, state: RunState): Promise<void>;
   createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
 }

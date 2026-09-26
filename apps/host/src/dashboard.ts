@@ -3,10 +3,10 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
-import { exists, locateRun, readJson } from "@eval/data";
+import { exists, fileSourceReader, locateRun, readJson } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
-import { listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput } from "@eval/workflows/comparison";
+import { listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -32,6 +32,37 @@ interface DashboardCheckpoint {
 }
 
 const ASSET_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
+
+const asset = (name: string) => readFile(path.join(ASSET_DIR, name), "utf8");
+type InputInventory = Awaited<ReturnType<typeof listInputInventory>>;
+let inventoryMemo: { key: string; value: Promise<InputInventory> } | undefined;
+/** The inventory is a read-only projection; memoize it by config and source revisions. */
+async function sourceRevision(evaluation: Parameters<typeof listInputInventory>[0]): Promise<string> {
+  const versions = await Promise.all(
+    evaluation.inputs.versions.map(async (version) => {
+      try {
+        const files = await fileSourceReader.files(version.sources);
+        return [
+          version.id,
+          await Promise.all(files.map(async (file) => [file, await fileSourceReader.revision(file)])),
+        ];
+      } catch (error) {
+        return [version.id, "unavailable", errorText(error)];
+      }
+    }),
+  );
+  return JSON.stringify({ inputs: evaluation.inputs, versions });
+}
+async function readInventory(evaluation: Parameters<typeof listInputInventory>[0]): Promise<InputInventory> {
+  const key = await sourceRevision(evaluation);
+  if (inventoryMemo?.key === key) return inventoryMemo.value;
+  const value = listInputInventory(evaluation).catch((error) => {
+    if (inventoryMemo?.key === key) inventoryMemo = undefined;
+    throw error;
+  });
+  inventoryMemo = { key, value };
+  return value;
+}
 
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, message);
@@ -186,34 +217,29 @@ export async function startDashboard(options: DashboardOptions) {
   if (!isRecord(output) || typeof output.path !== "string")
     throw new Error("Invalid output target in dashboard config");
   const outputDir = path.resolve(output.path);
-  const [html, css, javascript] = await Promise.all([
-    readFile(path.join(ASSET_DIR, "index.html"), "utf8"),
-    readFile(path.join(ASSET_DIR, "dashboard.css"), "utf8"),
-    readFile(path.join(ASSET_DIR, "dashboard.js"), "utf8"),
-  ]);
   const server = await listen(async (req, res, url) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
-    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'");
-    const host = req.headers.host || "";
-    if (!/^127\.0\.0\.1:\d+$/.test(host)) throw new HttpError(403, "Only loopback requests are allowed");
+    // No CSP / X-Frame-Options: local annotation overlays inject styles and need to embed the page.
+    const host = (req.headers.host || "").toLowerCase();
+    if (!/^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host))
+      throw new HttpError(403, "Only loopback requests are allowed");
     if (req.method === "POST" && req.headers.origin !== `http://${host}`)
       throw new HttpError(403, "Request origin does not match the dashboard");
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(html);
+      res.end(await asset("index.html"));
       return;
     }
     if (req.method === "GET" && url.pathname === "/dashboard.css") {
       res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
-      res.end(css);
+      res.end(await asset("dashboard.css"));
       return;
     }
     if (req.method === "GET" && url.pathname === "/dashboard.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      res.end(javascript);
+      res.end(await asset("dashboard.js"));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
@@ -225,7 +251,7 @@ export async function startDashboard(options: DashboardOptions) {
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")
-      return json(res, await listInputInventory(await loadEvaluation(options.configPaths)));
+      return json(res, await readInventory(await loadEvaluation(options.configPaths)));
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
       return json(res, await allRuns(outputDir));
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
@@ -245,6 +271,11 @@ export async function startDashboard(options: DashboardOptions) {
       const detail = await readCaseDetail(directory, batch, caseId);
       if (!detail) throw new HttpError(404, "Case not found");
       return json(res, detail);
+    }
+    if (req.method === "GET" && parts[4] === "tasks" && parts[6] === "result" && parts.length === 7) {
+      const result = await readTaskResult(directory, safeId(parts[5]));
+      if (!result) throw new HttpError(404, "Task not found");
+      return json(res, result);
     }
     if (req.method === "GET" && parts[4] === "cases" && parts.length === 5) {
       const page = Number(url.searchParams.get("page") || "1");

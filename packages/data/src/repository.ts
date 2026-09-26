@@ -9,15 +9,19 @@ import {
   type RunRepository,
   type RunState,
 } from "@eval/contracts";
-import { appendJsonl, exists, readJson, writeJson, writeJsonl } from "./files.js";
+import { appendJsonl, exists, readJson, readJsonlText, writeJson, writeJsonl } from "./files.js";
 import { locateRun } from "./run-layout.js";
 
 /** Codecs are pure business conversions. Only this module accesses run files. */
 export interface RunCodec<Checkpoint> {
   encode(state: RunState): Checkpoint;
-  references(checkpoint: Checkpoint): ResultReference[];
+  references(checkpoint: Checkpoint, taskIds?: ReadonlySet<string>): ResultReference[];
   resultId(row: JsonObject): string;
-  decode(checkpoint: Checkpoint, row: (reference: ResultReference) => JsonObject): RunState;
+  decode(
+    checkpoint: Checkpoint,
+    row: (reference: ResultReference) => JsonObject,
+    taskIds?: ReadonlySet<string>,
+  ): RunState;
 }
 export type ResultEncoder = (
   task: PlannedTask,
@@ -60,6 +64,41 @@ export function createRunRepository<Checkpoint>(
         if (!row) throw new Error("结果文件缺失：" + reference.id);
         return row;
       });
+    },
+    /** Decode only the requested tasks; unrelated result rows stay on disk. */
+    async readTasks(run, taskIds) {
+      const layout = locateRun(run);
+      const checkpoint = await readJson<Checkpoint>(layout.stateFile);
+      const wanted = new Set(taskIds);
+      const byFile = new Map<string, Set<string>>();
+      for (const reference of codec.references(checkpoint, wanted)) {
+        const name = safeId(reference.file!);
+        (byFile.get(name) ?? byFile.set(name, new Set()).get(name)!).add(reference.id);
+      }
+      const rows = new Map<string, JsonObject>();
+      for (const [name, ids] of byFile) {
+        const file = path.join(layout.results, name);
+        if (!(await exists(file))) continue;
+        for await (const line of readJsonlText(file)) {
+          const row = JSON.parse(line) as JsonObject,
+            id = codec.resultId(row);
+          if (!ids.has(id)) continue;
+          const key = name + "\u0000" + id,
+            previous = rows.get(key);
+          if (previous && canonical(previous) !== canonical(row))
+            throw new Error("结果 ID 对应冲突结果：" + id);
+          rows.set(key, row);
+        }
+      }
+      return codec.decode(
+        checkpoint,
+        (reference) => {
+          const row = rows.get(safeId(reference.file!) + "\u0000" + reference.id);
+          if (!row) throw new Error("结果文件缺失：" + reference.id);
+          return row;
+        },
+        wanted,
+      );
     },
     createResultWriter(run, inputs) {
       const written = new Map<string, ResultReference & { row: JsonObject }>();
