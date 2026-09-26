@@ -231,6 +231,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
   const rewrite = isObject(source.rewrite) ? source.rewrite : {};
   const models = isObject(source.models) ? source.models : {};
   const bindings = isObject(source.bindings) ? source.bindings : {};
+  const inputs = isObject(source.inputs) ? source.inputs : {};
   return {
     execution: {
       concurrency: execution.concurrency ?? EXECUTION_DEFAULTS.concurrency,
@@ -239,6 +240,11 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
     },
     rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true },
+    models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
+      isObject(version) && typeof version.id === "string"
+        ? [{ id: version.id, name: String(version.display_name || version.name || version.id) }]
+        : [],
+    ),
     // Only stages the launch seam accepts are editable; other bindings stay config-owned.
     bindings: Object.fromEntries(Object.entries(bindings)
       .filter(([stage]) => DASHBOARD_STAGES.includes(stage as typeof DASHBOARD_STAGES[number]))
@@ -257,9 +263,14 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
 /** Only these non-secret, run-scoped settings may cross the dashboard launch seam. */
 export function dashboardSettings(value: unknown): ConfigObject {
   if (!isObject(value)) throw new Error("运行设置必须是对象");
-  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite"].includes(key)))
+  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite", "versions"].includes(key)))
     throw new Error("运行设置包含不允许修改的字段");
   const patch: ConfigObject = {};
+  if (value.versions !== undefined) {
+    if (!Array.isArray(value.versions) || value.versions.some((id) => typeof id !== "string" || !id))
+      throw new Error("模型选择无效");
+    patch.versions = [...new Set(value.versions)];
+  }
   if (value.execution !== undefined) {
     if (!isObject(value.execution) ||
         Object.keys(value.execution).some((key) => !DASHBOARD_EXECUTION.includes(key as typeof DASHBOARD_EXECUTION[number])))
@@ -285,14 +296,35 @@ export function dashboardSettings(value: unknown): ConfigObject {
   return patch;
 }
 
-async function mergedSource(sources: string | string[], settings?: unknown): Promise<ConfigObject> {
+async function mergedSource(
+  sources: string | string[],
+  settings?: unknown,
+): Promise<{ source: ConfigObject; versions?: string[] }> {
   const original = await readConfigSources(sources);
-  return settings === undefined ? original : mergeConfig(original, dashboardSettings(settings));
+  if (settings === undefined) return { source: original };
+  const patch = dashboardSettings(settings);
+  const versions = patch.versions as string[] | undefined;
+  delete patch.versions;
+  return { source: mergeConfig(original, patch), versions };
+}
+
+/** Narrows an evaluation to the selected models; configured groups keep their remaining members. */
+function selectVersions(evaluation: EvalConfig, ids: string[]): EvalConfig {
+  if (ids.length < 2) throw new Error("至少选择两个模型");
+  const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
+  if (versions.length !== ids.length) throw new Error("运行设置包含未登记的模型");
+  const comparisons = evaluation.comparisons
+    .map((group) => group.filter((id) => ids.includes(id)))
+    .filter((group) => group.length >= 2);
+  if (!comparisons.length) throw new Error("所选模型没有可比较的组合");
+  return { ...evaluation, inputs: { ...evaluation.inputs, versions }, comparisons };
 }
 
 /** Evaluation-only load, without model endpoints; the dashboard uses it for input discovery. */
 export async function loadEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
-  return buildEvaluation(await mergedSource(sources, settings));
+  const { source, versions } = await mergedSource(sources, settings);
+  const evaluation = buildEvaluation(source);
+  return versions ? selectVersions(evaluation, versions) : evaluation;
 }
 
 export async function loadConfig(
@@ -300,9 +332,9 @@ export async function loadConfig(
   env = process.env,
   settings?: unknown,
 ): Promise<HostConfig> {
-  const source = await mergedSource(sources, settings);
-  const evaluation = buildEvaluation(source),
-    models = buildModels(source, env);
+  const { source, versions } = await mergedSource(sources, settings);
+  const base = buildEvaluation(source), models = buildModels(source, env);
+  const evaluation = versions ? selectVersions(base, versions) : base;
   if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   return { evaluation, models };

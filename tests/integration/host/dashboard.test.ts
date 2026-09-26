@@ -99,11 +99,11 @@ test("input inventory lists batches and cases from the configured sources", asyn
     const inventory = await listInputInventory(config);
     assert.deepEqual(inventory.batches.map((batch) => batch.batch_id), ["b1", "b2"]);
     const first = inventory.batches.find((batch) => batch.batch_id === "b1")!;
-    assert.deepEqual(first.cases, ["q1"]);
+    assert.deepEqual(first.cases, [{ id: "q1", versions: ["a_fast", "aa_fast"] }]);
     assert.deepEqual(first.versions, ["a_fast", "aa_fast"]);
     assert.deepEqual(first.folders, [path.basename(directory)]);
     const second = inventory.batches.find((batch) => batch.batch_id === "b2")!;
-    assert.deepEqual(second.cases, ["q2"]);
+    assert.deepEqual(second.cases, [{ id: "q2", versions: ["a_fast"] }]);
     assert.deepEqual(second.versions, ["a_fast"]);
     assert.equal(inventory.issues, 0);
   } finally {
@@ -157,7 +157,7 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal(JSON.parse(text).settings.bindings.attribution.model, "fixture-model");
     const inventory = await (await get("/api/dashboard/inputs")).json();
     assert.deepEqual(inventory.batches.map((batch: { batch_id: string }) => batch.batch_id), ["b1"]);
-    assert.deepEqual(inventory.batches[0].cases, ["q1", "q2"]);
+    assert.deepEqual(inventory.batches[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
     const list = await (await get("/api/dashboard/runs/run-one/cases?status=succeeded")).json();
     assert.equal(list.total, 1);
     const detail = await (await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).json();
@@ -252,6 +252,23 @@ test("run-scoped settings are validated with the same model and execution config
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
+    const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
+      versions: ["a_fast", "aa_fast"],
+    });
+    assert.deepEqual(selected.evaluation.inputs.versions.map((version) => version.id), ["a_fast", "aa_fast"]);
+    assert.deepEqual(selected.evaluation.comparisons, [["a_fast", "aa_fast"]]);
+    await assert.rejects(
+      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast"] }),
+      /至少选择两个模型/,
+    );
+    await assert.rejects(
+      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast", "ghost"] }),
+      /未登记的模型/,
+    );
+    await assert.rejects(
+      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast", "a_expert"] }),
+      /没有可比较的组合/,
+    );
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }

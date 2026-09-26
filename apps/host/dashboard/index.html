@@ -13,7 +13,6 @@
         <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL CONTROL</strong></div>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
-        <a class="button button-primary new-run" href="#config">设置并启动运行</a>
       </aside>
 
       <main class="main-content">
@@ -22,6 +21,45 @@
           <span class="service-badge">本机看板</span>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+        <section class="panel launch-panel" id="config" aria-labelledby="config-title">
+          <div class="panel-heading"><div><h2 id="config-title">开始评测</h2></div></div>
+          <form id="start-form" class="start-form">
+            <div class="settings-section">
+              <div class="section-heading"><h3>批次</h3><div class="section-actions"><button id="batch-all" class="button button-quiet" type="button">全选</button><button id="batch-none" class="button button-quiet" type="button">清空</button></div></div>
+              <div id="batch-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取批次"><span class="spinner" aria-hidden="true"></span></span></div>
+            </div>
+            <div class="settings-section">
+              <div class="section-heading"><h3>模型</h3><div class="section-actions"><button id="model-all" class="button button-quiet" type="button">全选</button><button id="model-none" class="button button-quiet" type="button">清空</button></div></div>
+              <div id="model-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取模型"><span class="spinner" aria-hidden="true"></span></span></div>
+            </div>
+            <div class="form-grid">
+              <label><span>Run ID</span><input id="run-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" /></label>
+              <label><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
+              <label><span>抽样数量</span><input id="sample-size" type="number" min="1" placeholder="全部" /></label>
+            </div>
+            <details class="advanced-settings">
+              <summary>高级设置</summary>
+              <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
+              <div class="settings-section"><h3>执行预算</h3><div class="form-grid">
+                <label><span>并发数</span><input id="setting-concurrency" type="number" min="1" required /></label>
+                <label><span>任务超时（秒）</span><input id="setting-timeout" type="number" min="1" required /></label>
+                <label><span>工具调用上限</span><input id="setting-tools" type="number" min="1" required /></label>
+                <label><span>传输重试次数</span><input id="setting-retries" type="number" min="0" required /></label>
+              </div></div>
+              <div class="settings-checks">
+                <label><input id="rewrite-attribution" type="checkbox" /> 改写归因评语</label>
+                <label><input id="rewrite-comparison" type="checkbox" /> 改写对比评语</label>
+                <label><input id="debug" type="checkbox" /> 保存 Debug 材料</label>
+              </div>
+              <p id="config-path" class="config-path"></p>
+            </details>
+            <div id="env-status" class="env-status" aria-label="网关配置状态"></div>
+            <div class="launch-actions"><button id="preview-button" class="button" type="button">预检</button><button id="launch-button" class="button button-primary" type="submit" disabled>确认启动 / 续跑</button></div>
+            <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
+          </form>
+        </section>
+
         <section class="run-overview" id="run-overview" aria-labelledby="run-title" hidden>
           <div class="overview-head">
             <div><h2 id="run-title"></h2><p id="run-description"></p></div>
@@ -48,38 +86,6 @@
           </div>
         </section>
 
-        <section class="panel launch-panel" id="config" aria-labelledby="config-title">
-          <div class="panel-heading"><div><h2 id="config-title">设置并启动运行</h2></div></div>
-          <form id="start-form" class="start-form">
-            <div class="form-grid">
-              <label><span>Run ID</span><input id="run-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" /></label>
-              <label><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
-              <label><span>最多 Case</span><input id="limit-cases" type="number" min="1" placeholder="不限" /></label>
-            </div>
-            <div class="settings-section" id="range-section">
-              <div class="section-heading"><h3>批次</h3><div class="section-actions"><button id="batch-all" class="button button-quiet" type="button">全选</button><button id="batch-none" class="button button-quiet" type="button">清空</button></div></div>
-              <div id="batch-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取批次"><span class="spinner" aria-hidden="true"></span></span></div>
-              <div class="section-heading"><h3>Case</h3><input id="case-filter" class="case-filter-input" placeholder="筛选" /><span id="case-selection" class="muted"></span></div>
-              <div id="case-options" class="option-list" aria-live="polite"></div>
-            </div>
-            <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
-            <div class="settings-section"><h3>执行预算</h3><div class="form-grid">
-              <label><span>并发数</span><input id="setting-concurrency" type="number" min="1" required /></label>
-              <label><span>任务超时（秒）</span><input id="setting-timeout" type="number" min="1" required /></label>
-              <label><span>工具调用上限</span><input id="setting-tools" type="number" min="1" required /></label>
-              <label><span>传输重试次数</span><input id="setting-retries" type="number" min="0" required /></label>
-            </div></div>
-            <div class="settings-checks">
-              <label><input id="rewrite-attribution" type="checkbox" /> 改写归因评语</label>
-              <label><input id="rewrite-comparison" type="checkbox" /> 改写对比评语</label>
-              <label><input id="debug" type="checkbox" /> 保存 Debug 材料</label>
-            </div>
-            <div id="env-status" class="env-status" aria-label="网关配置状态"></div>
-            <p id="config-path" class="config-path"></p>
-            <div class="launch-actions"><button id="preview-button" class="button" type="button">预检输入与配置</button><button id="launch-button" class="button button-primary" type="submit" disabled>确认启动 / 续跑</button></div>
-            <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
-          </form>
-        </section>
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
       </main>
     </div>

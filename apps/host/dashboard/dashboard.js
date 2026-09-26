@@ -2,8 +2,9 @@ const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
   caseDetail: null, selectedInput: null, rawInput: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, filters: {},
-  inputs: null, selectedBatches: new Set(), selectedCases: new Set(), batchesReady: false,
-  caseFilter: "", rangeLocked: false,
+  inputs: null, selectedBatches: new Set(), batchesReady: false,
+  selectedModels: new Set(), modelsReady: false,
+  sampledCases: null, sampleInfo: null, rangeLocked: false,
 };
 const $ = (selector) => document.querySelector(selector);
 const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写" };
@@ -259,7 +260,6 @@ async function refresh() {
     state.runs = runs;
     const previousRun = state.selectedRun;
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
-    if (!state.selectedRun && runs.length) state.selectedRun = runs[0].run_id;
     if (previousRun !== state.selectedRun) {
       ++state.caseRequest;
       state.selectedCase = state.caseDetail = state.selectedInput = state.rawInput = null;
@@ -287,23 +287,6 @@ async function selectRun(runId) {
   renderRuns(); renderCases(); renderDetail();
   await refresh();
 }
-function currentCases() {
-  const cases = new Map();
-  for (const batch of state.inputs?.batches || []) {
-    if (!state.selectedBatches.has(batch.batch_id)) continue;
-    const label = batch.folders.join(" / ") || batch.batch_id;
-    for (const caseId of batch.cases) {
-      let labels = cases.get(caseId);
-      if (!labels) cases.set(caseId, (labels = new Set()));
-      labels.add(label);
-    }
-  }
-  return cases;
-}
-function updateCaseSelection() {
-  const total = currentCases().size;
-  $("#case-selection").textContent = state.selectedCases.size ? `${state.selectedCases.size} / ${total} 已选` : `${total} case`;
-}
 function renderBatchOptions() {
   const batches = state.inputs?.batches || [];
   $("#batch-options").innerHTML = batches.length ? batches.map((batch) => {
@@ -313,16 +296,37 @@ function renderBatchOptions() {
       <span class="option-meta">${batch.cases.length} case · ${batch.versions.length} 模型</span></label>`;
   }).join("") : '<p class="empty-state">无可用批次</p>';
 }
-function renderCaseOptions() {
-  const filter = state.caseFilter.trim().toLocaleLowerCase();
-  const cases = [...currentCases()]
-    .filter(([caseId]) => !filter || caseId.toLocaleLowerCase().includes(filter))
-    .sort(([a], [b]) => a.localeCompare(b));
-  $("#case-options").innerHTML = cases.length ? cases.map(([caseId, labels]) =>
-    `<label class="option-row"><input type="checkbox" data-case-option value="${escapeHtml(caseId)}" ${state.selectedCases.has(caseId) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
-    <span class="option-name"><strong>${escapeHtml(caseId)}</strong><small>${escapeHtml([...labels].join(" · "))}</small></span></label>`).join("")
-    : '<p class="empty-state">无匹配 Case</p>';
-  updateCaseSelection();
+function renderModelOptions() {
+  const models = state.config?.settings?.models || [];
+  $("#model-options").innerHTML = models.length ? models.map((model) =>
+    `<label class="option-row"><input type="checkbox" data-model-option value="${escapeHtml(model.id)}" ${state.selectedModels.has(model.id) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
+    <span class="option-name"><strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)}</small></span></label>`).join("")
+    : '<p class="empty-state">无可用模型</p>';
+}
+function sampleSize() {
+  const value = Number($("#sample-size").value);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+function viableCases() {
+  const selected = [...state.selectedModels];
+  const cases = new Set();
+  for (const batch of state.inputs?.batches || []) {
+    if (!state.selectedBatches.has(batch.batch_id)) continue;
+    for (const item of batch.cases)
+      if (selected.length && selected.every((version) => item.versions.includes(version)))
+        cases.add(item.id);
+  }
+  return [...cases];
+}
+function pickSample() {
+  const size = sampleSize(),
+    viable = viableCases();
+  if (!size) return { cases: null, size: null, available: viable.length };
+  for (let i = viable.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [viable[i], viable[j]] = [viable[j], viable[i]];
+  }
+  return { cases: viable.slice(0, size), size, available: viable.length };
 }
 async function loadInputs() {
   $("#batch-options").innerHTML = loading("正在读取批次");
@@ -334,21 +338,22 @@ async function loadInputs() {
       state.selectedBatches = new Set(known);
       state.batchesReady = true;
     } else for (const id of [...state.selectedBatches]) if (!known.has(id)) state.selectedBatches.delete(id);
-    const cases = currentCases();
-    for (const id of [...state.selectedCases]) if (!cases.has(id)) state.selectedCases.delete(id);
     renderBatchOptions();
-    renderCaseOptions();
   } catch (error) {
     state.inputs = null;
     $("#batch-options").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
-    $("#case-options").innerHTML = "";
-    $("#case-selection").textContent = "";
   }
 }
 async function loadConfig() {
   try {
     state.config = await api("/api/dashboard/config");
+    const known = new Set((state.config.settings?.models || []).map((model) => model.id));
+    if (!state.modelsReady) {
+      state.selectedModels = new Set(known);
+      state.modelsReady = true;
+    } else for (const id of [...state.selectedModels]) if (!known.has(id)) state.selectedModels.delete(id);
     renderConfig();
+    renderModelOptions();
   } catch (error) { showError(`配置读取失败：${error.message}`); }
 }
 function renderConfig() {
@@ -371,22 +376,20 @@ function renderConfig() {
   $("#rewrite-comparison").checked = settings.rewrite.comparison;
 }
 function launchPayload() {
-  const validCases = new Set(currentCases().keys());
   const batch = [...state.selectedBatches];
-  const cases = [...state.selectedCases].filter((id) => validCases.has(id));
+  const cases = state.sampledCases || [];
   const bindings = {};
   document.querySelectorAll("[data-model-stage]").forEach((input) => {
     const stage = input.dataset.modelStage;
     const thinking = document.querySelector(`[data-thinking-stage="${stage}"]`).value;
     bindings[stage] = { ...(input.value.trim() ? { model: input.value.trim() } : {}), thinking };
   });
-  const limit = $("#limit-cases").value;
   return {
     runId: $("#run-id").value.trim(), engine: $("#engine").value,
     ...(batch.length ? { batch } : {}), ...(cases.length ? { case: cases } : {}),
-    ...(limit ? { limitCases: Number(limit) } : {}),
     debug: $("#debug").checked,
     settings: {
+      versions: [...state.selectedModels],
       bindings,
       execution: {
         concurrency: Number($("#setting-concurrency").value),
@@ -400,18 +403,32 @@ function launchPayload() {
 }
 function invalidatePreview() {
   state.preview = null;
+  state.sampledCases = null;
+  state.sampleInfo = null;
   $("#launch-button").disabled = true;
   $("#preview-result").textContent = "需重新预检";
   if (state.rangeLocked) {
     state.rangeLocked = false;
     renderBatchOptions();
-    renderCaseOptions();
+    renderModelOptions();
   }
 }
 async function preview() {
   if (!$("#start-form").reportValidity()) return;
   if (!state.selectedBatches.size) {
     $("#preview-result").textContent = "至少选择一个批次";
+    return;
+  }
+  if (state.selectedModels.size < 2) {
+    $("#preview-result").textContent = "至少选择两个模型";
+    return;
+  }
+  state.sampleInfo = pickSample();
+  state.sampledCases = state.sampleInfo.cases;
+  if (state.sampleInfo.size && !state.sampledCases.length) {
+    state.sampleInfo = null;
+    state.sampledCases = null;
+    $("#preview-result").textContent = "所选范围没有完整样本";
     return;
   }
   $("#preview-button").disabled = true;
@@ -421,13 +438,14 @@ async function preview() {
     state.preview = value;
     state.rangeLocked = Boolean(value.resuming);
     renderBatchOptions();
-    renderCaseOptions();
+    renderModelOptions();
     $("#launch-button").disabled = !value.resuming && !value.tasks;
     const summary = value.summary || {};
     const issues = summary.issues || [];
     const stats = [
       value.resuming ? `未完成 ${value.remaining || 0}` : `任务 ${value.tasks || 0}`,
       `样本 ${summary.cases || 0}`,
+      ...(state.sampleInfo?.size ? [`抽样 ${(state.sampledCases || []).length} / 可用 ${state.sampleInfo.available}`] : []),
       `有效输入 ${summary.valid_inputs || 0}`,
       `输入异常 ${summary.issues_count || 0}`,
       `跳过组 ${summary.skipped_count || 0}`,
@@ -438,7 +456,7 @@ async function preview() {
     state.preview = null;
     state.rangeLocked = false;
     renderBatchOptions();
-    renderCaseOptions();
+    renderModelOptions();
     $("#launch-button").disabled = true;
     $("#preview-result").textContent = `预检失败：${error.message}`;
   } finally { $("#preview-button").disabled = false; }
@@ -522,32 +540,35 @@ $("#batch-options").addEventListener("change", (event) => {
   if (!input) return;
   if (input.checked) state.selectedBatches.add(input.value);
   else state.selectedBatches.delete(input.value);
-  renderCaseOptions();
 });
-$("#case-options").addEventListener("change", (event) => {
-  const input = event.target.closest("[data-case-option]");
+$("#model-options").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-model-option]");
   if (!input) return;
-  if (input.checked) state.selectedCases.add(input.value);
-  else state.selectedCases.delete(input.value);
-  updateCaseSelection();
-});
-$("#case-filter").addEventListener("input", (event) => {
-  event.stopPropagation();
-  state.caseFilter = $("#case-filter").value;
-  renderCaseOptions();
+  if (input.checked) state.selectedModels.add(input.value);
+  else state.selectedModels.delete(input.value);
 });
 $("#batch-all").addEventListener("click", () => {
   if (state.rangeLocked) return;
   for (const batch of state.inputs?.batches || []) state.selectedBatches.add(batch.batch_id);
   renderBatchOptions();
-  renderCaseOptions();
   invalidatePreview();
 });
 $("#batch-none").addEventListener("click", () => {
   if (state.rangeLocked) return;
   state.selectedBatches.clear();
   renderBatchOptions();
-  renderCaseOptions();
+  invalidatePreview();
+});
+$("#model-all").addEventListener("click", () => {
+  if (state.rangeLocked) return;
+  for (const model of state.config?.settings?.models || []) state.selectedModels.add(model.id);
+  renderModelOptions();
+  invalidatePreview();
+});
+$("#model-none").addEventListener("click", () => {
+  if (state.rangeLocked) return;
+  state.selectedModels.clear();
+  renderModelOptions();
   invalidatePreview();
 });
 $("#refresh-button").addEventListener("click", async () => {
@@ -564,6 +585,11 @@ $("#preview-button").addEventListener("click", () => void preview());
 $("#start-form").addEventListener("submit", (event) => { event.preventDefault(); void startRun(); });
 
 (async () => {
+  if (!$("#run-id").value) {
+    const now = new Date(),
+      pad = (value) => String(value).padStart(2, "0");
+    $("#run-id").value = `eval-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  }
   await Promise.all([loadConfig(), loadInputs(), refresh()]);
   let ticks = 0;
   setInterval(async () => {

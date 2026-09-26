@@ -18,7 +18,7 @@ export interface InputBatch {
   /** Source folder names, for operator-facing labels only; identity stays `batch_id`. */
   folders: string[];
   versions: string[];
-  cases: string[];
+  cases: { id: string; versions: string[] }[];
 }
 /** Scans configured sources with the plan parser, so offered batches match what a run accepts. */
 export async function listInputInventory(config: EvalConfig): Promise<{ batches: InputBatch[]; issues: number }> {
@@ -27,23 +27,30 @@ export async function listInputInventory(config: EvalConfig): Promise<{ batches:
     comparisons: [],
     inputs: { ...config.inputs, batches: undefined, case_ids: undefined, limit: undefined },
   });
-  const batches = new Map<string, { folders: Set<string>; versions: Set<string>; cases: Set<string> }>();
+  const batches = new Map<
+    string,
+    { folders: Set<string>; versions: Set<string>; cases: Map<string, Set<string>> }
+  >();
   for (const record of (plan.catalog as Candidate[]) || []) {
-    const item = batches.get(record.batch_id) ?? { folders: new Set(), versions: new Set(), cases: new Set() };
+    const item =
+      batches.get(record.batch_id) ?? { folders: new Set(), versions: new Set(), cases: new Map() };
     item.folders.add(path.basename(path.dirname(record.source)));
     item.versions.add(record.version);
-    item.cases.add(record.case_id);
+    let covered = item.cases.get(record.case_id);
+    if (!covered) item.cases.set(record.case_id, (covered = new Set()));
+    covered.add(record.version);
     batches.set(record.batch_id, item);
   }
+  const versionOrder = config.inputs.versions.map((version) => version.id);
   return {
     batches: [...batches]
       .map(([batch_id, item]) => ({
         batch_id,
         folders: [...item.folders].sort(),
-        versions: config.inputs.versions
-          .filter((version) => item.versions.has(version.id))
-          .map((version) => version.id),
-        cases: [...item.cases].sort(),
+        versions: versionOrder.filter((id) => item.versions.has(id)),
+        cases: [...item.cases]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, covered]) => ({ id, versions: versionOrder.filter((version) => covered.has(version)) })),
       }))
       .sort(
         (a, b) =>

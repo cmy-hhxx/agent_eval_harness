@@ -28,7 +28,7 @@ delegated: plain HTML/CSS/JavaScript served by the existing TypeScript Host; kee
 
 ## Capabilities and Constraints
 
-看板按批次与 case 查看输入、正式结果和 Attribution / Comparison / Rewrite 阶段状态；运行设置可编辑本次启动的模型 ID、推理等级与部分预算，并从数据源扫描结果中勾选批次与 case、预检输入。看板支持以 Pi 或 Prime 启动新 run、停止运行、调整并发和续跑。当前不提供远程访问、用户鉴权、任务级独立调度或持久化配置编辑；Host 仍是唯一写入者。
+看板按批次与 case 查看输入、正式结果和 Attribution / Comparison / Rewrite 阶段状态；运行设置选择评测批次与模型、按数量抽样并预检输入，模型 ID、推理等级与部分预算在高级设置中编辑。看板支持以 Pi 或 Prime 启动新 run、停止运行、调整并发和续跑。当前不提供远程访问、用户鉴权、任务级独立调度或持久化配置编辑；Host 仍是唯一写入者。
 
 ## Product Principles
 
