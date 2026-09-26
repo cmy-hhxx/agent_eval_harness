@@ -10,34 +10,38 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="运行导航">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL CONTROL</strong></div>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL</strong></div>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
       </aside>
 
       <main class="main-content">
         <header class="page-header">
-          <div><h1>评测工作台</h1><p id="refresh-time"></p></div>
-          <span class="service-badge">本机看板</span>
+          <h1>评测工作台</h1>
+          <div class="header-meta"><span id="refresh-time"></span><span class="service-badge">本机</span></div>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
 
         <section class="panel launch-panel" id="config" aria-labelledby="config-title">
-          <div class="panel-heading"><div><h2 id="config-title">开始评测</h2></div></div>
+          <div class="panel-heading"><h2 id="config-title">新建评测</h2><div id="env-status" class="env-status" aria-label="网关配置状态"></div></div>
           <form id="start-form" class="start-form">
-            <div class="settings-section">
-              <div class="section-heading"><h3>批次</h3><div class="section-actions"><button id="batch-all" class="button button-quiet" type="button">全选</button><button id="batch-none" class="button button-quiet" type="button">清空</button></div></div>
-              <div id="batch-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取批次"><span class="spinner" aria-hidden="true"></span></span></div>
+            <div class="field-row">
+              <span class="field-label">批次</span>
+              <div id="batch-options" class="chip-row" role="group" aria-label="批次"><span class="loading" role="status" aria-label="正在读取批次"><span class="spinner" aria-hidden="true"></span></span></div>
+              <div class="field-actions"><button id="batch-all" type="button">全部</button><button id="batch-none" type="button">清空</button></div>
             </div>
-            <div class="settings-section">
-              <div class="section-heading"><h3>模型</h3><div class="section-actions"><button id="model-all" class="button button-quiet" type="button">全选</button><button id="model-none" class="button button-quiet" type="button">清空</button></div></div>
-              <div id="model-options" class="option-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取模型"><span class="spinner" aria-hidden="true"></span></span></div>
+            <div class="field-row">
+              <span class="field-label">模型</span>
+              <div id="model-options" class="chip-row" role="group" aria-label="模型"><span class="loading" role="status" aria-label="正在读取模型"><span class="spinner" aria-hidden="true"></span></span></div>
+              <div class="field-actions"><button id="model-all" type="button">全部</button><button id="model-none" type="button">清空</button></div>
             </div>
-            <div class="form-grid">
-              <label><span>Run ID</span><input id="run-id" required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}" placeholder="pi-local-001" /></label>
-              <label><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
-              <label><span>抽样数量</span><input id="sample-size" type="number" min="1" placeholder="全部" /></label>
+            <div class="launch-row">
+              <label class="inline-field"><span>抽样</span><input id="sample-size" type="number" min="1" placeholder="全部" /></label>
+              <label class="inline-field"><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
+              <button id="preview-button" class="button" type="button">预检</button>
+              <button id="launch-button" class="button button-primary" type="submit" disabled>启动</button>
             </div>
+            <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
             <details class="advanced-settings">
               <summary>高级设置</summary>
               <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
@@ -54,30 +58,21 @@
               </div>
               <p id="config-path" class="config-path"></p>
             </details>
-            <div id="env-status" class="env-status" aria-label="网关配置状态"></div>
-            <div class="launch-actions"><button id="preview-button" class="button" type="button">预检</button><button id="launch-button" class="button button-primary" type="submit" disabled>确认启动 / 续跑</button></div>
-            <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
           </form>
         </section>
 
-        <section class="run-overview" id="run-overview" aria-labelledby="run-title" hidden>
+        <section class="run-overview" id="run-overview" hidden>
           <div class="overview-head">
-            <div><h2 id="run-title"></h2><p id="run-description"></p></div>
+            <div class="overview-title"><h2 id="run-title"></h2><span id="run-status" class="status-chip"></span></div>
+            <p id="run-description"></p>
             <div class="overview-actions" id="run-actions"></div>
           </div>
           <div id="stage-summary" class="stage-summary"></div>
         </section>
 
-        <section class="explorer" id="explorer" aria-label="样本与评测结果" hidden>
+        <section class="explorer" id="explorer" hidden>
           <div class="panel cases-panel">
-            <div class="panel-heading"><h2>样本</h2><span id="case-count" class="muted">—</span></div>
-            <form id="case-filters" class="case-filters" role="search">
-              <label><span>批次</span><input name="batch" id="filter-batch" placeholder="全部批次" /></label>
-              <label><span>Case / 问题</span><input name="query" id="filter-query" placeholder="搜索编号或问题" /></label>
-              <label><span>阶段</span><select name="stage" id="filter-stage"><option value="">全部阶段</option><option value="attribution">归因</option><option value="comparison">对比</option><option value="rewrite">改写</option></select></label>
-              <label><span>状态</span><select name="status" id="filter-status"><option value="">全部状态</option><option value="pending">排队</option><option value="running">运行中</option><option value="succeeded">已接受</option><option value="failed">失败</option><option value="timed_out">超时</option><option value="blocked">阻塞</option><option value="cancelled">取消</option></select></label>
-              <button class="button" type="submit">筛选</button>
-            </form>
+            <div class="panel-heading"><h2>样本</h2><input id="case-search" class="search-input" placeholder="搜索 case / 问题" /><span id="case-count" class="muted"></span></div>
             <div id="case-list" class="case-list" aria-live="polite"></div>
             <div class="pager"><button id="prev-page" class="button" type="button" disabled>上一页</button><span id="page-label">—</span><button id="next-page" class="button" type="button" disabled>下一页</button></div>
           </div>

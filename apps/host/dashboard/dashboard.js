@@ -1,10 +1,10 @@
 const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
   caseDetail: null, selectedInput: null, rawInput: null, config: null, page: 1,
-  preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, filters: {},
+  preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, query: "", runId: "",
   inputs: null, selectedBatches: new Set(), batchesReady: false,
   selectedModels: new Set(), modelsReady: false,
-  sampledCases: null, sampleInfo: null, rangeLocked: false,
+  sampledCases: null, sampleInfo: null, rangeLocked: false, searchTimer: 0,
 };
 const $ = (selector) => document.querySelector(selector);
 const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写" };
@@ -19,6 +19,13 @@ const escapeHtml = (value) => String(value ?? "")
 const label = (status) => statusLabels[status] || status;
 const stageLabel = (stage) => stageLabels[stage] || stage;
 const dateText = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
+const runLabel = (run) => run.started_at
+  ? new Date(run.started_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+  : "—";
+function suggestedRunId() {
+  const now = new Date(), pad = (value) => String(value).padStart(2, "0");
+  return `eval-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
 const urlFor = (id) => `/api/dashboard/runs/${encodeURIComponent(id)}`;
 const loading = (label) => `<span class="loading" role="status" aria-label="${escapeHtml(label)}"><span class="spinner" aria-hidden="true"></span></span>`;
 
@@ -53,33 +60,39 @@ function renderRuns() {
     list.innerHTML = "";
     return;
   }
-  list.innerHTML = state.runs.map((run) => `
-    <button class="run-select ${state.selectedRun === run.run_id ? "selected" : ""}" type="button"
-      data-run="${escapeHtml(run.run_id)}" aria-current="${state.selectedRun === run.run_id ? "true" : "false"}">
-      <span class="run-name">${escapeHtml(run.run_id)}</span>
-      <span class="run-meta"><span class="status-indicator ${escapeHtml(run.status)}"></span>${escapeHtml(run.engine)} · ${escapeHtml(statusText(run))}</span>
-      <span class="run-progress">${run.progress?.accepted || 0} 已接受 · ${run.progress?.running || 0} 执行中</span>
-    </button>`).join("");
+  list.innerHTML = state.runs.map((run) => {
+    const progress = run.progress || {};
+    const failures = Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
+    const total = (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + failures;
+    const selected = state.selectedRun === run.run_id;
+    return `<button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
+      <span class="run-line"><span class="status-dot ${escapeHtml(run.status)}${failures ? " has-failure" : ""}"></span><span class="run-label">${escapeHtml(runLabel(run))}</span></span>
+      <span class="run-meta">${escapeHtml(run.engine)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 异常` : ""}</span>
+    </button>`;
+  }).join("");
 }
 function renderOverview() {
   const run = state.run;
   $("#run-overview").hidden = !run;
   $("#explorer").hidden = !run;
   if (!run) return;
-  $("#run-title").textContent = run.run_id;
+  $("#run-title").textContent = runLabel(run);
+  const status = $("#run-status");
+  status.textContent = statusText(run);
+  status.className = `status-chip ${run.status}${Object.values(run.progress?.failures || {}).some(Boolean) ? " has-failure" : ""}`;
   const progress = run.progress || {};
-  $("#run-description").textContent = `${statusText(run)} · ${run.engine} · ${dateText(run.started_at)} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0}`;
+  $("#run-description").textContent = `${run.engine} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}`;
   $("#run-actions").innerHTML = run.status === "running"
-    ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止运行</button>`
-    : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">用此 ID 续跑</button>`;
+    ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
+    : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button>`;
   $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? `${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常` : "未启用"}</span></div>`;
   }).join("");
 }
-function filterQuery() {
-  return new URLSearchParams({ page: String(state.page), ...state.filters }).toString();
+function caseQuery() {
+  return new URLSearchParams({ page: String(state.page), ...(state.query ? { query: state.query } : {}) }).toString();
 }
 function renderCases() {
   const page = state.cases;
@@ -161,7 +174,7 @@ function renderResult(task, detail) {
   }
   const source = detail.tasks.find((item) => item.id === task.rewrite_of?.taskId);
   const original = source?.result?.evaluation || source?.result;
-  return `<div class="result-body"><p class="muted">源任务 ${escapeHtml(row.source_task_id || "—")}</p>
+  return `<div class="result-body">
     ${(row.rewrites || []).map((item) => {
       let before = item.id === "summary" ? original?.summary
         : item.id === "correctness_reason" ? original?.correctness_reason
@@ -194,7 +207,10 @@ function renderDetail() {
     <div class="detail-section"><h3>Agent 与正式输出</h3>${detail.tasks.map((task) => `<details class="task-detail" ${["failed", "running"].includes(task.status) || (task.stage === "comparison" && task.result) ? "open" : ""}>
       <summary><span><strong>${escapeHtml(stageLabel(task.stage))}</strong>${task.versions.length ? ` · ${task.versions.map(escapeHtml).join(" / ")}` : ` · ${escapeHtml(task.rewrite_of?.stage || "")}`}</span>
       <span class="task-status ${escapeHtml(task.status)}">${escapeHtml(label(task.status))} · ${task.attempts} 次尝试</span></summary>
-      <div class="task-content"><p class="muted">任务 ${escapeHtml(task.id)} · 最近进展 ${escapeHtml(dateText(task.last_progress_at))}${task.duration_ms != null ? ` · 累计 ${Math.round(task.duration_ms / 1000)} 秒` : ""}</p>
+      <div class="task-content">${[
+        task.last_progress_at ? `最近进展 ${dateText(task.last_progress_at)}` : "",
+        task.duration_ms != null ? `累计 ${Math.round(task.duration_ms / 1000)} 秒` : "",
+      ].filter(Boolean).map((item) => `<span class="task-meta">${escapeHtml(item)}</span>`).join("")}
       ${task.reason ? `<p class="inline-error">${escapeHtml(task.reason)}</p>` : ""}${renderResult(task, detail)}
       ${task.result ? `<details class="raw-details"><summary>查看正式结果 JSON</summary><pre>${compactJson(task.result)}</pre></details>` : ""}</div>
     </details>`).join("") || ""}</div>`;
@@ -242,7 +258,7 @@ async function loadCases() {
   if (!state.selectedRun) { state.cases = null; renderCases(); return; }
   const runId = state.selectedRun;
   try {
-    const page = await api(`${urlFor(runId)}/cases?${filterQuery()}`);
+    const page = await api(`${urlFor(runId)}/cases?${caseQuery()}`);
     if (state.selectedRun !== runId || request !== state.casePageRequest) return;
     state.cases = page;
     renderCases();
@@ -283,6 +299,8 @@ async function selectRun(runId) {
   ++state.caseRequest;
   state.selectedRun = runId;
   state.selectedCase = state.caseDetail = state.selectedInput = state.rawInput = state.cases = null;
+  state.query = "";
+  $("#case-search").value = "";
   state.page = 1;
   renderRuns(); renderCases(); renderDetail();
   await refresh();
@@ -290,18 +308,17 @@ async function selectRun(runId) {
 function renderBatchOptions() {
   const batches = state.inputs?.batches || [];
   $("#batch-options").innerHTML = batches.length ? batches.map((batch) => {
-    const label = batch.folders.join(" / ") || batch.batch_id;
-    return `<label class="option-row"><input type="checkbox" data-batch-option value="${escapeHtml(batch.batch_id)}" ${state.selectedBatches.has(batch.batch_id) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
-      <span class="option-name"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(batch.batch_id)}</small></span>
-      <span class="option-meta">${batch.cases.length} case · ${batch.versions.length} 模型</span></label>`;
+    const on = state.selectedBatches.has(batch.batch_id);
+    const label = batch.folders.join(" + ") || batch.batch_id;
+    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-batch-option="${escapeHtml(batch.batch_id)}" title="${escapeHtml(batch.batch_id)}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(label)}<span class="chip-count">${batch.cases.length}</span></button>`;
   }).join("") : '<p class="empty-state">无可用批次</p>';
 }
 function renderModelOptions() {
   const models = state.config?.settings?.models || [];
-  $("#model-options").innerHTML = models.length ? models.map((model) =>
-    `<label class="option-row"><input type="checkbox" data-model-option value="${escapeHtml(model.id)}" ${state.selectedModels.has(model.id) ? "checked" : ""} ${state.rangeLocked ? "disabled" : ""} />
-    <span class="option-name"><strong>${escapeHtml(model.name)}</strong><small>${escapeHtml(model.id)}</small></span></label>`).join("")
-    : '<p class="empty-state">无可用模型</p>';
+  $("#model-options").innerHTML = models.length ? models.map((model) => {
+    const on = state.selectedModels.has(model.id);
+    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-model-option="${escapeHtml(model.id)}" title="${escapeHtml(model.id)}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(model.name)}</button>`;
+  }).join("") : '<p class="empty-state">无可用模型</p>';
 }
 function sampleSize() {
   const value = Number($("#sample-size").value);
@@ -385,7 +402,7 @@ function launchPayload() {
     bindings[stage] = { ...(input.value.trim() ? { model: input.value.trim() } : {}), thinking };
   });
   return {
-    runId: $("#run-id").value.trim(), engine: $("#engine").value,
+    runId: state.runId, engine: $("#engine").value,
     ...(batch.length ? { batch } : {}), ...(cases.length ? { case: cases } : {}),
     debug: $("#debug").checked,
     settings: {
@@ -468,6 +485,7 @@ async function startRun() {
     const value = await api("/api/dashboard/runs", { method: "POST", body: JSON.stringify(launchPayload()) });
     toast(`已提交运行 ${value.run_id}`);
     state.preview = null;
+    state.runId = suggestedRunId();
     $("#preview-result").textContent = "已提交";
     await new Promise((resolve) => setTimeout(resolve, 700));
     await refresh();
@@ -485,11 +503,11 @@ $("#run-actions").addEventListener("click", async (event) => {
   const node = event.target.closest("[data-stop], [data-resume]");
   if (!node) return;
   if (node.dataset.resume) {
-    $("#run-id").value = node.dataset.resume;
+    state.runId = node.dataset.resume;
     $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
     $("#config").scrollIntoView({ behavior: "smooth" });
-    $("#run-id").focus();
+    $("#preview-button").focus();
   } else if (node.dataset.stop && confirm(`确定停止 ${node.dataset.stop}？已接受结果会保留。`)) {
     try { await api(`${urlFor(node.dataset.stop)}/stop`, { method: "POST" }); toast("已发送停止请求"); await refresh(); }
     catch (error) { toast(`停止失败：${error.message}`, true); }
@@ -524,28 +542,35 @@ $("#case-detail").addEventListener("click", async (event) => {
   if (trace) trace.open = true;
   document.getElementById(`message-${candidate.input_id}-${evidence.dataset.evidenceIndex}`)?.scrollIntoView({ block: "center" });
 });
-$("#case-filters").addEventListener("submit", (event) => {
-  event.preventDefault();
-  state.filters = Object.fromEntries([["batch", "#filter-batch"], ["query", "#filter-query"], ["stage", "#filter-stage"], ["status", "#filter-status"]]
-    .map(([key, id]) => [key, $(id).value.trim()]).filter(([, value]) => value));
-  state.page = 1;
-  state.selectedCase = state.caseDetail = state.selectedInput = state.rawInput = null;
-  renderDetail();
-  void loadCases();
+$("#case-search").addEventListener("input", () => {
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => {
+    state.query = $("#case-search").value.trim();
+    state.page = 1;
+    state.selectedCase = state.caseDetail = null;
+    renderDetail();
+    void loadCases();
+  }, 300);
 });
 $("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
 $("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
-$("#batch-options").addEventListener("change", (event) => {
-  const input = event.target.closest("[data-batch-option]");
-  if (!input) return;
-  if (input.checked) state.selectedBatches.add(input.value);
-  else state.selectedBatches.delete(input.value);
+$("#batch-options").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-batch-option]");
+  if (!chip || chip.disabled) return;
+  const id = chip.dataset.batchOption;
+  if (state.selectedBatches.has(id)) state.selectedBatches.delete(id);
+  else state.selectedBatches.add(id);
+  renderBatchOptions();
+  invalidatePreview();
 });
-$("#model-options").addEventListener("change", (event) => {
-  const input = event.target.closest("[data-model-option]");
-  if (!input) return;
-  if (input.checked) state.selectedModels.add(input.value);
-  else state.selectedModels.delete(input.value);
+$("#model-options").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-model-option]");
+  if (!chip || chip.disabled) return;
+  const id = chip.dataset.modelOption;
+  if (state.selectedModels.has(id)) state.selectedModels.delete(id);
+  else state.selectedModels.add(id);
+  renderModelOptions();
+  invalidatePreview();
 });
 $("#batch-all").addEventListener("click", () => {
   if (state.rangeLocked) return;
@@ -585,11 +610,7 @@ $("#preview-button").addEventListener("click", () => void preview());
 $("#start-form").addEventListener("submit", (event) => { event.preventDefault(); void startRun(); });
 
 (async () => {
-  if (!$("#run-id").value) {
-    const now = new Date(),
-      pad = (value) => String(value).padStart(2, "0");
-    $("#run-id").value = `eval-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  }
+  state.runId = suggestedRunId();
   await Promise.all([loadConfig(), loadInputs(), refresh()]);
   let ticks = 0;
   setInterval(async () => {
