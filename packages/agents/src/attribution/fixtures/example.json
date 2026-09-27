@@ -5,19 +5,21 @@
         "available": true,
         "value": "4"
       },
-      "candidates": {
-        "A": {
-          "question": "计算2+2",
-          "final_message_index": 1,
-          "final_answer": "2+2=4",
-          "original_answer_timing": {
-            "finish_seconds": null
-          }
-        }
+      "answer": {
+        "identity": { "version_id": "example", "display_name": "测试回答", "answer_model": null },
+        "question": "计算2+2",
+        "final_message_index": 1,
+        "final_answer": "2+2=4",
+        "final_evidence": [],
+        "initial_material": [],
+        "catalog": [],
+        "input_file": "inputs/answer.json",
+        "original_answer_timing": { "finish_seconds": null },
+        "note": "完整回答已展示；其余材料可在 inputs/ 查看。"
       }
     },
     "sources": {
-      "A": {
+      "answer": {
         "id": "input-A",
         "value": {
           "batch_id": "b1",

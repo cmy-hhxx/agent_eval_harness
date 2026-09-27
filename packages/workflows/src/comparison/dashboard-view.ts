@@ -410,6 +410,7 @@ export async function readProblemClass(run: string, model: string, classId: stri
       version: occurrence.version,
       evaluator_version: occurrence.evaluator_version,
       finding_id: occurrence.finding_id,
+      evidence_status: occurrence.evidence_status,
       message_index: occurrence.message_index,
       quote: occurrence.quote,
       source: occurrence.source,

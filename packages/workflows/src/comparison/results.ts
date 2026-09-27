@@ -84,15 +84,15 @@ export function comparisonRow(
       : undefined;
     if (!attribution) throw new Error("缺少归因任务收据");
     const raw = inputs[c.input_id] as RawInput;
-    const findings = display(structuredClone(attribution.findings), labels) as (AttributionResult["findings"][number] & { stage_trace?: JsonObject })[];
+    const findings = structuredClone(attribution.findings) as (AttributionResult["findings"][number] & { stage_trace?: JsonObject })[];
     const traces = annotateFindings(raw, findings);
     findings.forEach((finding, i) => {
       finding.stage_trace = traces[i];
     });
     evaluations[c.version] = {
       is_correct: attribution.is_correct,
-      correctness_reason: display(attribution.correctness_reason, { A: labels[label] }),
-      summary: display(attribution.summary, labels),
+      correctness_reason: attribution.correctness_reason,
+      summary: attribution.summary,
       findings,
     };
   }
@@ -139,7 +139,7 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
     evaluator_version: receipt.evaluatorVersion,
     task_id: task.id,
     submission_id: receipt.submissionId,
-    input_id: task.inputIds.A,
+    input_id: task.inputIds.answer,
     case: { batch_id: candidate.batch_id, case_id: candidate.case_id },
     version: candidate.version,
     evaluation: receipt.evaluation,
@@ -178,7 +178,8 @@ export function clusteringRow(
     task_id: task.id,
     model: scope.version,
     batch_id: scope.batch_id,
-    items: observations.map(({ id, component, label, count }) => ({ id, component, label, count })),
+    items: observations.map(({ id, component, label, count, established_count, uncertain_count }) =>
+      ({ id, component, label, count, established_count, uncertain_count })),
     result: receipt.evaluation as ClusteringResult,
   };
 }

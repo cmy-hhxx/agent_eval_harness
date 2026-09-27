@@ -20,11 +20,11 @@ const validate = new Ajv2020({ allErrors: true, strict: false }).compile<unknown
 export function resolveSubmission(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown {
   if (!validate(draft)) throw new ValidationError(schemaIssues(validate.errors, draft));
   const errors: ValidationIssue[] = [];
-  const source = request.sources.A.value as { messages: Record<string, unknown>[] };
+  const source = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const resolveRefs = (refs: EvidenceRef[], location: string) =>
     refs.flatMap((value, i) => {
       try {
-        return [resolveEvidence(source, request.sources.A.id, value, "A", audit.viewedImages, `${location}/${i}`)];
+        return [resolveEvidence(source, request.sources.answer.id, value, "answer", audit.viewedImages, `${location}/${i}`)];
       } catch (error) {
         if (error instanceof ValidationError) errors.push(...error.issues!);
         else throw error;
@@ -41,6 +41,7 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
   }));
   const resolved = {
     ...value,
+    has_standard_answer: (request.input.ground_truth as { available: boolean }).available,
     findings,
     correctness_evidence: resolveRefs(value.correctness_evidence, "/correctness_evidence"),
   };

@@ -10,6 +10,8 @@ import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 import { sourceSlots } from "./commentary.js";
 import { observationsFor, requestItems } from "./observations.js";
+import { blindMaterials } from "./blind.js";
+import type { AttributionResult } from "@eval/agents/attribution";
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
@@ -53,11 +55,21 @@ export function bindTask(
   }
   if (data.stage === "comparison" && (data.group?.length ?? 0) < 2)
     throw new Error("对比组至少需要两个候选");
+  const attribution = data.stage === "attribution";
+  const blind = attribution ? undefined : blindMaterials(data.candidates);
+  const reference = blind ? blind.value(data.reference) : data.reference;
+  const sources = Object.fromEntries(
+    Object.entries(task.inputIds).map(([label, id]) => [label, {
+      id,
+      value: blind ? blind.trace(inputs[id] as RawInput) : inputs[id],
+    }]),
+  );
   const materials = Object.fromEntries(
-    Object.entries(data.candidates).map(([label, candidate]) => {
-      const raw = inputs[task.inputIds[label]] as RawInput;
+    (attribution ? [["answer", data.candidates.A] as const] : Object.entries(data.candidates)).map(([label, candidate]) => {
+      const raw = sources[label].value as RawInput;
       const final = contentText(raw.messages[candidate.final_index].content);
-      let used = final.length + candidate.question.length;
+      const question = blind ? blind.value(candidate.question) : candidate.question;
+      let used = final.length + question.length;
       const initial: {
         message_index: number;
         value: unknown;
@@ -93,7 +105,7 @@ export function bindTask(
       return [
         label,
         {
-          question: candidate.question,
+          question,
           final_message_index: candidate.final_index,
           final_answer: final,
           final_evidence: evidenceSources(raw.messages[candidate.final_index])
@@ -110,35 +122,39 @@ export function bindTask(
             chars: canonical(m).length,
           })),
           input_file: `inputs/${label}.json`,
-          original_answer_timing: candidate.answer_timing,
+          original_answer_timing: blind ? blind.value(candidate.answer_timing) : candidate.answer_timing,
           note: "完整问题和最终回答已展示；其余材料可通过工具或输入文件继续查看。",
         },
       ];
     }),
   );
 
-  const attribution = data.stage === "attribution";
   return {
     agent: attribution ? "attribution" : "comparison",
     profile: "default",
     request: {
       input: attribution
         ? {
-            ground_truth: { available: data.reference !== null, value: data.reference },
-            candidates: materials,
+            ground_truth: { available: data.reference !== null, value: reference },
+            answer: {
+              ...materials.answer,
+              identity: {
+                version_id: data.candidates.A.version,
+                display_name: data.candidates.A.name,
+                answer_model: data.candidates.A.llm,
+              },
+            },
           }
         : {
-            ground_truth: { available: data.reference !== null, value: data.reference },
+            ground_truth: { available: data.reference !== null, value: reference },
             candidates: materials,
             attributions: Object.fromEntries(
               Object.entries(dependencies)
                 .filter(([label, r]) => r?.taskId === task.dependencies[label] && r?.status === "succeeded")
-                .map(([label, r]) => [label, r!.evaluation]),
+                .map(([label, r]) => [label, blind!.attribution(r!.evaluation as AttributionResult)]),
             ),
           },
-      sources: Object.fromEntries(
-        Object.entries(task.inputIds).map(([label, id]) => [label, { id, value: inputs[id] }]),
-      ),
+      sources,
     },
   };
 }

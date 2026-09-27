@@ -19,7 +19,7 @@ export interface Finding {
   reason: string;
   evidence: Evidence[];
   assessment: {
-    requirement_index: number;
+    requirement_index: number | null;
     observation: string;
     evidence_status: "established" | "uncertain";
     impact: string;

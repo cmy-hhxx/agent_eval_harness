@@ -175,6 +175,8 @@ export interface ProblemOccurrence {
   task_id: string;
   submission_id: string;
   finding_id: string;
+  /** Certainty of this occurrence, not of its problem class. */
+  evidence_status: "established" | "uncertain";
   message_index: number;
   quote: string;
   source: { file: string; line: number };

@@ -16,6 +16,8 @@ const observation = (id: string, component: string, label: string, inputId: stri
   label,
   definition: `${label}。`,
   count: 1,
+  established_count: 1,
+  uncertain_count: 0,
   examples: [
     {
       finding: label,
@@ -23,6 +25,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
       dimension: "correctness",
       importance: "high",
       stage: "final_answer",
+      evidence_status: "established",
     },
   ],
   refs: [
@@ -31,6 +34,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
       case_id: `case-${inputId}`,
       source: { file: "f.jsonl", line: 7 },
       finding_id: `f-${id}`,
+      evidence_status: "established",
       message_index: 3,
       quote: "q",
     },
@@ -55,6 +59,10 @@ const receipt = (
 test("clustering creates components and classes and keeps occurrence lineage", () => {
   let library = emptyLibrary("a_fast");
   const observations = [observation("o1", "色值工具", "色值错误", "in-1")];
+  observations[0]!.refs[0]!.evidence_status = "uncertain";
+  observations[0]!.examples[0]!.evidence_status = "uncertain";
+  observations[0]!.established_count = 0;
+  observations[0]!.uncertain_count = 1;
   library = applyClustering(
     library,
     receipt(observations, {
@@ -85,6 +93,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   assert.equal(library.occurrences[0]!.evaluator_version, "r1");
   assert.equal(library.occurrences[0]!.source.line, 7);
   assert.equal(library.occurrences[0]!.classification, "created");
+  assert.equal(library.occurrences[0]!.evidence_status, "uncertain");
 
   library = applyClustering(
     library,

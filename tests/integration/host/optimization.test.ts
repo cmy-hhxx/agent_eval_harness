@@ -95,6 +95,69 @@ async function until(check: () => boolean | Promise<boolean>) {
   throw new Error("Condition did not settle");
 }
 
+test("attribution reads identity while comparison worker sees only its blind prompt and trace", async () => {
+  const first = raw("q", "4 来自 secret-model");
+  first.messages[0]!.content = "计算2+2；请核查 a_fast 和 aa_fast 的结果";
+  first.messages[1]!.model = "secret-model";
+  first.meta!.usage = { type: "secret-model" };
+  first.meta!.first_token_time_cost = "secret-model";
+  const second = raw("q", "4 来自 secret-model");
+  second.messages[0]!.content = first.messages[0]!.content;
+  second.messages[1]!.model = "other-model";
+  const { directory, config, modelForStage } = await fixtureConfig([[first], [], [second], []]);
+  const stages: string[] = [];
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() {
+          const stage = options.spec.evaluation.id;
+          stages.push(stage);
+          const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
+          if (stage === "attribution") {
+            assert.match(options.spec.prompt, /version_id/);
+            assert.equal(options.spec.inputs[0]!.name, "answer");
+            assert.equal(input.messages[1]!.model, options.spec.prompt.includes('"version_id":"a_fast"') ? "secret-model" : "other-model");
+            const result = taskResult(options.spec) as { summary: string };
+            result.summary = "a_fast 或 aa_fast 的有效计算";
+            await options.execute("submit_evaluation", draftFor(options.spec, result));
+          } else {
+            assert.equal(stage, "comparison");
+            assert.equal(options.spec.inputs.length, 2);
+            const unbound = await fetch(`${options.spec.hostUrl}/api/inputs/${options.spec.inputs[0]!.id}`);
+            assert.equal(unbound.status, 404, "the worker cannot bypass its bound blind view");
+            assert.equal(input.meta, undefined);
+            assert.equal(input.messages[1]!.model, undefined);
+            for (const identity of ["a_fast", "aa_fast", "secret-model", "other-model", "A组Fast", "AA组Fast"]) {
+              assert(!options.spec.prompt.includes(identity), `prompt leaks ${identity}`);
+              assert(!JSON.stringify(input).includes(identity), `trace leaks ${identity}`);
+            }
+            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          }
+        },
+        async abort() {},
+        async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  try {
+    const result = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
+    const saved = await readRunState(path.join(config.output.path, "test"));
+    assert.equal(result.completed_comparisons, 1, JSON.stringify(saved.manifest.states));
+    const comparison = saved.manifest.tasks.find((task) => task.stage === "comparison")!;
+    const row = saved.receipts[comparison.id]!.exported!.row as {
+      ground_truth: { value: string };
+      evaluations: Record<string, { summary: string }>;
+    };
+    assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
+    assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison"]);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("preflight keeps unknown-batch errors under a selection and aggregates independent field errors", async () => {
   const missing = raw("missing", null);
   delete missing.batch_id;
@@ -231,7 +294,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       async createSession(options) {
         return {
           async run() {
-            const input = await readJson<RawInput>(path.join(options.workdir, "inputs/A.json"));
+            const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
             calls.push(input.case_id!);
             if (input.case_id === "todo" && !resumed) throw new Error("stop before submission");
             await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
@@ -259,7 +322,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       await writeJsonl(version.sources[0].path, changed);
     resumed = true;
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
-    assert.equal(calls.filter((c) => c === "done").length, 3, "accepted work is not re-evaluated");
+    assert.equal(calls.filter((c) => c === "done").length, 2, "accepted attribution work is not re-evaluated");
     const after = await readRunState(run);
     assert.deepEqual(after.receipts[accepted.id], original);
     assert.deepEqual(
@@ -269,7 +332,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
     assert.equal((await validateRun(run)).results.valid, true);
     for (const version of config.inputs.versions) await rm(version.sources[0].path);
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);
-    assert.equal(calls.filter((c) => c === "done").length, 3, "accepted work does not require a second model call or an input backup");
+    assert.equal(calls.filter((c) => c === "done").length, 2, "accepted attribution work does not require a second model call or an input backup");
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });

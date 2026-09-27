@@ -182,7 +182,7 @@ test("image observations require an actual image tool audit", async () => {
       {
         attemptId: "image",
         workdir: directory,
-        inputs: new Map([["A", input]]),
+        inputs: new Map([["answer", input]]),
         policy: config.execution,
         audit,
         artifacts: new ArtifactStore(path.join(directory, "artifacts")),
@@ -191,7 +191,7 @@ test("image observations require an actual image tool audit", async () => {
     );
     const viewed = await runtime.execute(
       "view_image",
-      { candidate: "A", message_index: 1 },
+      { candidate: "answer", message_index: 1 },
       new AbortController().signal,
     );
     assert.equal(viewed.content[1].type, "image");
@@ -259,15 +259,19 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       for (const [name, description] of Object.entries(prepared.evaluation.toolDescriptions))
         assert.equal(description, (await readFile(path.join(prompts, "tools", `${name}.md`), "utf8")).trim());
       const rules = system + "\n" + instruction;
-      assert(rules.includes("evidence_id"));
       assert(rules.includes("submit_evaluation"));
       if (stage === "attribution") {
-        assert(!rules.includes("both_good"));
-        assert(!rules.includes("decisive_findings"));
+        assert(rules.includes("evidence_id"));
         assert(instruction.includes("final_message_index"));
-        assert(rules.includes("strength 的 problem 必须为 null"));
-        assert(rules.includes("问题库由聚类阶段统一维护"));
+        assert(rules.includes("优点的 `problem=null`"));
+        assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
+        assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
+        assert(prepared.prompt.includes('"answer":{'));
+        assert(prepared.prompt.includes('"version_id"'));
+        assert(!prepared.prompt.includes('"candidates"'));
       } else {
+        assert(!rules.includes("不提交 evidence_id"));
+        assert(!rules.includes("不新建问题节点"));
         for (const rule of [
           "ranking",
           "assessments",

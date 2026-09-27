@@ -165,7 +165,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
       merges: [],
     };
   }
-  if (!("has_standard_answer" in properties)) {
+  if (!("answer" in materialOf(spec))) {
     const labels = Object.keys(materialOf(spec).candidates);
     return comparisonResult(labels);
   }
@@ -196,6 +196,7 @@ const materialOf = (spec: { prompt: string }) =>
   parsedMaterial(spec) as {
     ground_truth: { available: boolean; value: unknown };
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
+    answer?: { question: string; final_answer: string; final_message_index: number };
   };
 
 /** Convert a resolved result (message_index/quote) into a submission draft (evidence_id/finding_id). */
@@ -211,7 +212,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
           evidence_id: evidenceId(inputId, item.message_index, "image"),
           observation: item.quote.slice(6),
         };
-      const c = material.candidates[label],
+      const c = label === "answer" ? material.answer! : material.candidates[label]!,
         text = item.message_index === c.final_message_index ? c.final_answer : c.question;
       const start = text.indexOf(item.quote);
       return {
@@ -225,18 +226,18 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
         ),
       };
     });
-  if ("has_standard_answer" in result) {
-    // Attribution: align the verdict with the actual case, then resolve its evidence.
-    result.has_standard_answer = material.ground_truth.available;
+  if (material.answer && "findings" in result) {
+    // The Host, not the model, supplies the standard-answer flag on the accepted result.
+    delete result.has_standard_answer;
     if (!material.ground_truth.available) {
       result.is_correct = null;
       result.correctness_reason = "";
       result.correctness_evidence = [];
     } else if (typeof result.is_correct !== "boolean") result.is_correct = true;
-    result.correctness_evidence = evidence(result.correctness_evidence, "A");
+    result.correctness_evidence = evidence(result.correctness_evidence, "answer");
     (result.findings as Record<string, unknown>[]).forEach((finding, i) => {
       finding.finding_id = "f" + i;
-      finding.evidence = evidence(finding.evidence, "A");
+      finding.evidence = evidence(finding.evidence, "answer");
     });
     return result;
   }

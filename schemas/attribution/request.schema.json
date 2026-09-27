@@ -1,32 +1,77 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["ground_truth", "candidates"],
+  "additionalProperties": false,
+  "required": ["ground_truth", "answer"],
   "properties": {
     "ground_truth": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["available", "value"],
-      "properties": {
-        "available": { "type": "boolean" },
-        "value": {}
-      }
+      "properties": { "available": { "type": "boolean" }, "value": {} }
     },
-    "candidates": {
+    "answer": {
       "type": "object",
-      "required": ["A"],
-      "additionalProperties": {
-        "type": "object",
-        "required": ["final_message_index", "original_answer_timing"],
-        "properties": {
-          "final_message_index": { "type": "integer", "minimum": 0 },
-          "original_answer_timing": {
+      "additionalProperties": false,
+      "required": ["identity", "question", "final_message_index", "final_answer", "final_evidence", "initial_material", "catalog", "input_file", "original_answer_timing", "note"],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version_id", "display_name", "answer_model"],
+          "properties": {
+            "version_id": { "type": "string", "minLength": 1 },
+            "display_name": { "type": "string", "minLength": 1 },
+            "answer_model": { "type": ["string", "null"] }
+          }
+        },
+        "question": { "type": "string", "minLength": 1 },
+        "final_message_index": { "type": "integer", "minimum": 0 },
+        "final_answer": { "type": "string", "minLength": 1 },
+        "final_evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "initial_material": {
+          "type": "array",
+          "items": {
             "type": "object",
-            "required": ["finish_seconds"],
+            "additionalProperties": false,
+            "required": ["message_index", "value", "evidence"],
             "properties": {
-              "finish_seconds": { "type": ["number", "null"] }
+              "message_index": { "type": "integer", "minimum": 0 },
+              "value": {},
+              "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
             }
           }
-        }
+        },
+        "catalog": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["message_index", "type", "chars"],
+            "properties": {
+              "message_index": { "type": "integer", "minimum": 0 },
+              "type": { "type": "string", "minLength": 1 },
+              "role": { "type": "string" },
+              "name": { "type": ["string", "null"] },
+              "chars": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "input_file": { "const": "inputs/answer.json" },
+        "original_answer_timing": { "type": "object", "required": ["finish_seconds"], "properties": { "finish_seconds": { "type": ["number", "null"] } } },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "message_index", "quote"],
+      "properties": {
+        "evidence_id": { "type": "string", "minLength": 1 },
+        "message_index": { "type": "integer", "minimum": 0 },
+        "quote": { "type": "string", "minLength": 1 }
       }
     }
   }

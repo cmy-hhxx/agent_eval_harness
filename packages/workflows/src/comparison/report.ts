@@ -7,7 +7,7 @@ import { canonical } from "@eval/contracts";
 import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
 import { toRewrites, type RewriteResult, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
-import { display, comparisonRow } from "./results.js";
+import { comparisonRow } from "./results.js";
 import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
@@ -223,9 +223,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (data.stage === "attribution") {
       attribution.push({
         ...data.candidates.A,
-        ...display(receipt.evaluation as AttributionResult, {
-          A: names[data.candidates.A.version] || data.candidates.A.name,
-        }),
+        ...(receipt.evaluation as AttributionResult),
         task_id: task.id,
       });
       continue;

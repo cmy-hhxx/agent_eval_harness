@@ -72,6 +72,7 @@ export interface ClusteringObservationRef {
   finding_id: string;
   message_index: number;
   quote: string;
+  evidence_status: "established" | "uncertain";
 }
 /** One deduplicated proposal plus the finding coordinates needed to record occurrences. */
 export interface ClusteringObservation {
@@ -80,12 +81,15 @@ export interface ClusteringObservation {
   label: string;
   definition: string;
   count: number;
+  established_count: number;
+  uncertain_count: number;
   examples: {
     finding: string;
     reason: string;
     dimension: string;
     importance: string;
     stage: string;
+    evidence_status: "established" | "uncertain";
   }[];
   refs: ClusteringObservationRef[];
 }
@@ -241,6 +245,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         task_id: input.task_id,
         submission_id: input.submission_id,
         finding_id: ref.finding_id,
+        evidence_status: ref.evidence_status,
         message_index: ref.message_index,
         quote: ref.quote,
         source: ref.source,

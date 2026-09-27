@@ -39,13 +39,24 @@
           "label": "加法结果错误",
           "definition": "计算与事实不符。",
           "count": 3,
+          "established_count": 2,
+          "uncertain_count": 1,
           "examples": [
             {
               "finding": "加法结果错误",
               "reason": "与题目要求一致。",
               "dimension": "correctness",
               "importance": "high",
-              "stage": "final_answer"
+              "stage": "final_answer",
+              "evidence_status": "established"
+            },
+            {
+              "finding": "加法结果可能错误",
+              "reason": "缺少核验所需的完整数值。",
+              "dimension": "correctness",
+              "importance": "high",
+              "stage": "final_answer",
+              "evidence_status": "uncertain"
             }
           ]
         },
@@ -55,13 +66,16 @@
           "label": "单位换算遗漏",
           "definition": "最后一步没有把结果换算成题目要求的单位。",
           "count": 2,
+          "established_count": 2,
+          "uncertain_count": 0,
           "examples": [
             {
               "finding": "没有把公里换算成米",
               "reason": "最终回答缺少单位换算。",
               "dimension": "completeness",
               "importance": "medium",
-              "stage": "final_answer"
+              "stage": "final_answer",
+              "evidence_status": "established"
             }
           ]
         }

@@ -69,6 +69,18 @@ test("observations collapse identical problems and keep exact finding coordinate
   );
 });
 
+test("confirmed and suspected occurrences share a class proposal but keep distinct certainty", () => {
+  const confirmed = problem("f1", "Search", "结果时效性风险", "旧时间戳");
+  const suspected = problem("f2", "Search", "结果时效性风险", "旧时间戳");
+  suspected.assessment.evidence_status = "uncertain";
+  const [item] = groupObservations([source("in-1", "a", [confirmed]), source("in-2", "b", [suspected])]);
+  assert.equal(item!.count, 2);
+  assert.equal(item!.established_count, 1);
+  assert.equal(item!.uncertain_count, 1);
+  assert.deepEqual(item!.refs.map((ref) => ref.evidence_status), ["established", "uncertain"]);
+  assert.deepEqual(item!.examples.map((example) => example.evidence_status), ["established", "uncertain"]);
+});
+
 test("identical wording across cases yields one observation with an accurate count", () => {
   const observations = groupObservations([
     source("in-1", "case-1", [problem("f1", "模型自身推理", "算术错误", "算错")]),

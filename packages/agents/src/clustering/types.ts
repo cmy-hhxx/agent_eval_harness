@@ -16,6 +16,7 @@ export interface ClusteringExample {
   dimension: string;
   importance: string;
   stage: string;
+  evidence_status: "established" | "uncertain";
 }
 /** One deduplicated problem observation: identical proposals collapsed before clustering. */
 export interface ClusteringItem {
@@ -24,6 +25,8 @@ export interface ClusteringItem {
   label: string;
   definition: string;
   count: number;
+  established_count: number;
+  uncertain_count: number;
   examples: ClusteringExample[];
 }
 export interface ClusteringRequest {

@@ -38,14 +38,14 @@
 
 阶段输出则分为两种：
 
-- `submission.schema.json`：模型通过提交工具返回的 JSON。证据使用 attempt 内的 `evidence_id`；Attribution 还必须为每个 finding 提供本条回答内唯一的 `finding_id`。
+- `submission.schema.json`：模型通过提交工具返回的 JSON。证据使用 attempt 内的 `evidence_id`；Attribution 还必须为每个 finding 提供本条回答内唯一的 `finding_id`，不提交可从请求推导的 `has_standard_answer`。
 - `result.schema.json`：Host 展开证据并接受后的阶段结果。证据变为 `message_index + quote`，finding_id 保留以维护问题库的样本血缘。
 
 各阶段的 Agent 输出契约如下：
 
 | 阶段 | 一次处理 | 输出内容 | 下游用途 |
 |---|---|---|---|
-| Attribution | 一条候选回答 | `has_standard_answer`、条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、`findings`（含 finding、证据、要求关联和 `problem.component/label/definition`） | 写入 `attribution.jsonl`；Comparison 只读取它，Clustering 读它的问题描述 |
+| Attribution | 一条已标明版本的回答 | 条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、有证据的优点及确定/疑似问题 `findings`；Host 在接受结果时加入 `has_standard_answer` | 写入 `attribution.jsonl`；Comparison 读取去身份视图，Clustering 读取问题观察并维护问题库 |
 | Comparison | 一个对比组 | `task_analysis`、分层 `ranking`、每个候选的 `assessments.meets_core/summary`、`decision_basis.tradeoff/decisive_findings` | Workflow 恢复盲测标签、生成 `comparison.jsonl` 和派生 `verdicts` |
 | Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
 | Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
@@ -79,11 +79,11 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 参与对比的版本组合由配置的 `comparisons` 声明，每项是一组已登记版本；组内所有版本在同一次判断中比较，不限定数量或档案名，DeepSeek、Kimi 等只需登记为版本并写进同一组。每个批次内的 case 对每组生成一个对比任务；组内缺少任一有效版本则跳过该组。结果写入 `results/comparison.jsonl`。
 
-盲测标签 A、B、C… 是按组首次随机分配并持久化的匿名标签，不代表实际版本或模型身份；导出时恢复稳定版本 ID。组内候选的导出顺序与候选位置不影响派生判决。
+盲测标签 A、B、C… 仅属于 Comparison，按组首次随机分配并持久化，不代表实际版本或模型身份；导出时恢复稳定版本 ID。归因任务使用单数 `answer` 并可见真实版本身份。进入 Comparison 前，Workflow 对题目、标准答案、原始耗时字段、归因文本和工具可读取的 trace 使用同一份去身份视图；原始来源、归因正式结果和证据不因此改写。可区分的版本、展示名和回答模型标识在文本及结构化字段名中会遮蔽；图片字节保持原样供工具查看。单字符或与业务正文混淆的简称，以及仅隐含在正文中的身份，仍需人工检查盲测要求。组内候选的导出顺序与候选位置不影响派生判决。
 
 ## 归因与判决
 
-每条回答先经过归因 Agent：它总是先判断本题有没有标准答案，有则必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""`；无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。问题型 finding 只描述问题：`problem.component` 是该回答调用链中的具体工具名（与材料 `catalog` 的 `name` 一致），与工具无关的问题用「模型自身推理」，不得使用能力/阶段名；`problem.label` 与 `problem.definition` 说明问题是什么。归因不读问题库、不指定分类、不建类。
+每条回答先经过归因 Agent：以 Workflow 的 `ground_truth.available` 为准，有标准答案时必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""` 和空对错证据；`has_standard_answer` 由 Host 从请求填入接受结果。无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。`scoring_points` / `red_flags` 没有实际内容时为空，finding 无对应核心要求时 `requirement_index=null`。有证据的优点用 strength；确定或疑似问题用 problem，并以 `assessment.evidence_status` 区分已确认与待核实，不能把疑似写成确定错误。每个问题只描述问题观察：`problem.component` 必须是该回答实际工具调用或结果中确切的工具名（与材料 `catalog.name` 一致），模型误读工具结果或自行推理/表达的问题用「模型自身推理」，不得使用能力/阶段名；`problem.label` 与 `problem.definition` 给出可复用的现象及边界。工具名表示问题发生部位，不表示工具提供方有责任。归因不读问题库、不指定分类、不建类。
 
 对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建 finding。
 
@@ -106,7 +106,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 ## 问题库与聚类
 
-问题库是每个模型一份的跨 run 知识库（`data/problems/<version>.json`），只有聚类阶段能写入。每条已接受聚类决定记录：`assignments` 把每个观察（按 `component + label` 归一化聚合的同一问题）归入已有类或新类，`new_classes` 声明新类的 `component/label/definition` 以及最接近的已有类和 novelty 理由，`merges` 把同一组件下的近义旧类合并到保留类。相同问题名可分别属于不同工具组件；观察只可归入同一组件内的类（已有组件的别名等同于该组件）。写库顺序是先合并、再建类、最后落出现样本；每个出现样本保留 `class_id`、`evaluator_version`（归类收据的版本；原归因版本见归因结果行）、`batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题类反查到样本、再回到原始数据；合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label 与 aliases 追加到目标类。入库按 `(class_id, input_id, finding_id)` 幂等，重复 report 或续跑不会重复计样本。
+问题库是每个模型一份的跨 run 知识库（`data/problems/<version>.json`），只有聚类阶段能写入。每条已接受聚类决定记录：`assignments` 把每个观察（按 `component + label` 归一化聚合的同一问题）归入已有类或新类，`new_classes` 声明新类的 `component/label/definition` 以及最接近的已有类和 novelty 理由，`merges` 把同一组件下的近义旧类合并到保留类。疑似和已确认观察都交给聚类；类别按现象复用，不为确定程度另建类。聚类请求给出两种出现次数及示例的 `evidence_status`，库中每个出现样本保留自己的 `evidence_status`，不将疑似样本冒充为已确认。相同问题名可分别属于不同工具组件；观察只可归入同一组件内的类（已有组件的别名等同于该组件）。写库顺序是先合并、再建类、最后落出现样本；每个出现样本保留 `class_id`、`evaluator_version`（归类收据的版本；原归因版本见归因结果行）、`batch_id`/`case_id`/`version`/`input_id`/`run_id`/`task_id`/`submission_id`/`finding_id`、消息位置、原文与源文件行号，可从问题类反查到样本、再回到原始数据；合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label 与 aliases 追加到目标类。入库按 `(class_id, input_id, finding_id)` 幂等，重复 report 或续跑不会重复计样本。
 
 数量由程序硬控，提示词只做引导：
 
@@ -137,7 +137,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
 
-归因任务只使用候选 A，对错证据必须来自该候选 `final_message_index` 对应的最终回答，不能引用问题、标准答案、工具结果或中间推理（findings 证据可引用该候选的调用链）。正式归因行包含 `task_id`、`submission_id`、`input_id`、`case`、稳定 `version` 和 `evaluation`（判对结论、理由、展开的原文证据），保留原始匿名评语。结果文件位置与恢复规则见[运行产物](usage.md#运行产物)。
+归因任务使用单份 `answer`，对错证据必须来自其 `final_message_index` 对应的最终回答，不能引用问题、标准答案、工具结果或中间推理（findings 证据可引用该回答的调用链）。正式归因行包含 `task_id`、`submission_id`、`input_id`、`case`、稳定 `version` 和 `evaluation`（判对结论、理由、展开的原文证据）；评语不做盲测标签替换。结果文件位置与恢复规则见[运行产物](usage.md#运行产物)。
 
 `stage` 表示发现属于上下文回溯、推理、执行或最终回答；`stage_trace` 由程序从原始消息生成，包含工具、位置、置信度与来源。只回溯当前 finding 引用的证据；无法唯一定位时保留候选工具，不猜测确定来源。
 

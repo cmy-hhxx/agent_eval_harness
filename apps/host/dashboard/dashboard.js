@@ -142,7 +142,7 @@ function libraryDetailHtml() {
     <p class="muted">${escapeHtml(detail.component?.label || "—")} · 出现 ${detail.total} 次${detail.class.status === "merged" ? " · 已合并" : ""}</p>
     ${detail.class.first_seen ? `<p class="muted">首次 ${escapeHtml(detail.class.first_seen.batch_id)} / ${escapeHtml(detail.class.first_seen.case_id)} · 评测器 ${escapeHtml(detail.class.first_seen.evaluator_version)} · ${dateText(detail.class.first_seen.at)}</p>` : ""}
     ${detail.occurrences.length ? detail.occurrences.map((item) => `<div class="library-occurrence">
-      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · 评测器 ${escapeHtml(item.evaluator_version)} · ${item.classification === "created" ? "新建" : "归入"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
+      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · 评测器 ${escapeHtml(item.evaluator_version)} · ${item.classification === "created" ? "新建" : "归入"} · ${item.evidence_status === "uncertain" ? "待核实" : item.evidence_status === "established" ? "已确认" : "状态缺失"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
       ${item.quote ? `<blockquote>${clipped(item.quote, 2000)}</blockquote>` : ""}
       <p class="muted">finding ${escapeHtml(item.finding_id)} · 消息 #${item.message_index} · ${escapeHtml(item.source.file)}:${item.source.line} · ${dateText(item.at)}</p>
     </div>`).join("") : '<p class="empty-state">暂无出现样本</p>'}

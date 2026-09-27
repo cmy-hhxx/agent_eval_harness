@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   emptyUsage,
   type AttemptSpec,
+  type AgentBinding,
   type AttemptRecord,
   type Artifact,
   type AttemptStatus,
@@ -143,6 +144,8 @@ export async function runEvaluation(options: RunOptions) {
     }
     await store.save();
     const current = store;
+    // A task may expose a stage-specific view of its source without persisting a second input.
+    const attemptSources = new Map<string, Map<string, unknown>>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
@@ -165,8 +168,9 @@ export async function runEvaluation(options: RunOptions) {
       }
       if (url.pathname === "/api/progress" && req.method === "GET") return json(res, progressSnapshot(saved));
       if (req.method === "GET" && parts[0] === "api" && parts[1] === "inputs" && parts[2]) {
-        const value = inputs[safeId(parts[2])];
-        if (!value) throw new HttpError(404, "Unknown input");
+        const attempt = url.searchParams.get("attempt");
+        const value = attempt && attemptSources.get(safeId(attempt))?.get(safeId(parts[2]));
+        if (value === undefined || value === null) throw new HttpError(404, "Unknown attempt input");
         return json(res, value);
       }
       if (req.method === "POST" && parts[0] === "api" && parts[1] === "tasks" && parts[3] === "checkpoint") {
@@ -244,6 +248,7 @@ export async function runEvaluation(options: RunOptions) {
       task: PlannedTask,
       worker: (typeof workers)[number],
       prepared: ReturnType<typeof options.agents.prepare>,
+      sources: AgentBinding["request"]["sources"],
     ): Promise<void> {
       let workerUrl = worker.url;
       const identity = identities[engineForTask(task)]!;
@@ -299,6 +304,14 @@ export async function runEvaluation(options: RunOptions) {
           hostUrl,
           deadline: Date.now() + options.policy.timeoutSeconds * 1000,
         };
+        const bound = new Map<string, unknown>();
+        for (const ref of spec.inputs) {
+          const source = sources[ref.name];
+          if (!source || source.id !== ref.id) throw new Error(`Task source mismatch: ${ref.name}`);
+          bound.set(ref.id, source.value);
+        }
+        attemptSources.set(spec.attemptId, bound);
+        try {
         state.startedAt = state.lastProgressAt = Date.now();
         let lastSeq = -1;
         await current.activate(spec);
@@ -505,6 +518,9 @@ export async function runEvaluation(options: RunOptions) {
             status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, transportRetries - 1) : 0,
           ),
         );
+        } finally {
+          attemptSources.delete(spec.attemptId);
+        }
       }
     }
     const running = new Map<string, Promise<void>>();
@@ -549,9 +565,8 @@ export async function runEvaluation(options: RunOptions) {
           continue;
         }
         if (dependencies.some((s) => s !== "succeeded")) continue;
-        const prepared = options.agents.prepare(
-          options.workflow.bind(task, inputs, await current.dependencies(task)),
-        );
+        const binding = options.workflow.bind(task, inputs, await current.dependencies(task));
+        const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(
           (w) =>
             w.health.identity.engine === engineForTask(task) &&
@@ -562,7 +577,7 @@ export async function runEvaluation(options: RunOptions) {
         if (!worker || running.size >= desiredConcurrency) continue;
         busy.add(worker);
         scheduled = true;
-        const promise = execute(task, worker, prepared)
+        const promise = execute(task, worker, prepared, binding.request.sources)
           .catch(async (error) => {
             manifest.states[task.id].status = "failed";
             manifest.states[task.id].reason = errorText(error);

@@ -185,7 +185,7 @@ function decodeState(
       candidates: Object.fromEntries(
         Object.entries(t.inputIds).map(([label, id]) => {
           if (!candidates[id]) throw new Error("输入引用缺失：" + id);
-          return [label, candidates[id]];
+          return [t.stage === "attribution" ? "A" : label, candidates[id]];
         }),
       ),
     },
@@ -292,7 +292,7 @@ function decodeState(
         }) ||
       (correctness &&
         (row.evaluation_type !== "attribution" ||
-          row.input_id !== task.inputIds.A ||
+          row.input_id !== task.inputIds.answer ||
           row.version !== data.candidates.A.version ||
           row.submission_id !== receipt.submissionId))
     )

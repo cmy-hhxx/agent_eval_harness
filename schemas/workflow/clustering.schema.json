@@ -42,7 +42,9 @@
           "id",
           "component",
           "label",
-          "count"
+          "count",
+          "established_count",
+          "uncertain_count"
         ],
         "properties": {
           "id": {
@@ -60,7 +62,9 @@
           "count": {
             "type": "integer",
             "minimum": 1
-          }
+          },
+          "established_count": { "type": "integer", "minimum": 0 },
+          "uncertain_count": { "type": "integer", "minimum": 0 }
         }
       }
     },

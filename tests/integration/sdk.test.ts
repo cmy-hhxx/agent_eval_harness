@@ -41,7 +41,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             content: unknown;
           }[];
           const ranCode = messages.some((m) => m.role === "tool");
-          const attribution = "has_standard_answer" in submit.function.parameters.properties;
+          const attribution = "is_correct" in submit.function.parameters.properties;
           const descriptions = attribution ? attributionProfile.toolDescriptions : comparisonProfile.toolDescriptions;
           for (const tool of tools)
             assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
@@ -57,17 +57,17 @@ for (const engine of ["pi", "prime"] as Engine[])
           const material = JSON.parse(
             prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0],
           ) as {
-            candidates: Record<string, { final_evidence: { evidence_id: string }[] }>;
+            answer?: { final_evidence: { evidence_id: string }[] };
+            candidates?: Record<string, { final_evidence: { evidence_id: string }[] }>;
           };
-          const evidenceFor = (label: string) => ({
-            evidence_id: material.candidates[label].final_evidence[0].evidence_id,
+          const evidenceFor = () => ({
+            evidence_id: material.answer!.final_evidence[0]!.evidence_id,
           });
           const evaluation = attribution
             ? {
-                has_standard_answer: true,
                 is_correct: true,
                 correctness_reason: "计算结果与标准答案一致。",
-                correctness_evidence: [evidenceFor("A")],
+                correctness_evidence: [evidenceFor()],
                 task_analysis: {
                   task_type: "整数加法",
                   goal: "计算2+2",
@@ -84,7 +84,7 @@ for (const engine of ["pi", "prime"] as Engine[])
                     importance: "high",
                     text: "加法结果正确",
                     reason: "与题目要求一致。",
-                    evidence: [evidenceFor("A")],
+                    evidence: [evidenceFor()],
                     assessment: {
                       requirement_index: 0,
                       observation: "2+2=4",
@@ -97,7 +97,7 @@ for (const engine of ["pi", "prime"] as Engine[])
                 ],
               }
             : (() => {
-                const labels = Object.keys(material.candidates);
+                const labels = Object.keys(material.candidates!);
                 return {
                   task_analysis: {
                     task_type: "整数加法",
@@ -134,24 +134,16 @@ for (const engine of ["pi", "prime"] as Engine[])
             };
           } else if (attribution && engine === "pi" && !rejected) {
             name = "submit_evaluation";
-            const result = structuredClone(evaluation) as {
-              evidence?: { evidence_id: string }[];
-              correctness_evidence?: { evidence_id: string }[];
-              evaluations?: Record<string, { findings: { evidence: { evidence_id: string }[] }[] }>;
-            };
-            (
-              result.correctness_evidence ??
-              result.evidence ??
-              result.evaluations!.A.findings[0].evidence
-            )[0].evidence_id = "invented";
+            const result = structuredClone(evaluation) as { correctness_evidence: { evidence_id: string }[] };
+            result.correctness_evidence[0]!.evidence_id = "invented";
             args = result;
           } else if (attribution && engine === "pi" && !repaired) {
             name = "execute_code";
             args = {
               language: "python",
               code:
-                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\ne=r.get('correctness_evidence') or r.get('evidence') or r['evaluations']['A']['findings'][0]['evidence']\ne[0]['evidence_id']=" +
-                JSON.stringify(evidenceFor("A").evidence_id) +
+                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['correctness_evidence'][0]['evidence_id']=" +
+                JSON.stringify(evidenceFor().evidence_id) +
                 "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')",
             };
           } else if (attribution) {

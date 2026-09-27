@@ -8,7 +8,7 @@ import { resolveSubmission } from "./resolve.js";
 export * from "./types.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
-  "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
+  "read_trace", "search_trace", "view_image", "calculate", "execute_code",
   "read_artifact",
 ];
 export const attributionProfile: AgentProfile = {

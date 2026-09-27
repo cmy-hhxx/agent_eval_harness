@@ -51,6 +51,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
           case_id: source.case_id,
           source: source.source,
           finding_id: finding.finding_id,
+          evidence_status: finding.assessment.evidence_status,
           message_index: evidence?.message_index ?? -1,
           quote: evidence?.quote ?? "",
         },
@@ -60,6 +61,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
           dimension: finding.dimension,
           importance: finding.importance,
           stage: finding.stage,
+          evidence_status: finding.assessment.evidence_status,
         },
       });
       groups.set(key, group);
@@ -73,8 +75,9 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
       const examples: ClusteringItem["examples"] = [];
       const seen = new Set<string>();
       for (const entry of entries) {
-        if (seen.has(entry.example.finding)) continue;
-        seen.add(entry.example.finding);
+        const key = canonical([entry.example.finding, entry.example.evidence_status]);
+        if (seen.has(key)) continue;
+        seen.add(key);
         examples.push(entry.example);
         if (examples.length >= 3) break;
       }
@@ -84,6 +87,8 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
         label: group.label,
         definition: group.definition,
         count: entries.length,
+        established_count: entries.filter((entry) => entry.ref.evidence_status === "established").length,
+        uncertain_count: entries.filter((entry) => entry.ref.evidence_status === "uncertain").length,
         examples,
         refs: entries.map((entry) => entry.ref),
       };

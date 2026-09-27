@@ -26,6 +26,17 @@ test("all stage texts come from one resource tree; tool descriptions are complet
   assert.throws(() => agentPrompt("rewrite", ["submit_evaluation"]), /Duplicate prompt tool/);
 });
 
+test("stage instructions discuss only available materials and actions", () => {
+  const attribution = agentPrompt("attribution", ["read_trace", "execute_code"]);
+  assert(!/其他回答|A\/B\/C|问题库/.test(attribution.systemPrompt + attribution.instructions));
+  for (const stage of ["rewrite", "clustering"] as const) {
+    const prompt = agentPrompt(stage, []);
+    assert(!/execute_code|submit_evaluation_file|inputs\//.test(prompt.instructions));
+  }
+  const rewrite = agentPrompt("rewrite", []);
+  assert(!/看不到|工具记录|原始回答|核验过材料/.test(rewrite.systemPrompt + rewrite.instructions));
+});
+
 test("task materials and per-attempt budget/recovery render once and in order", () => {
   const prompt = agentPrompt("rewrite", []);
   const task = prompt.renderPrompt(material);

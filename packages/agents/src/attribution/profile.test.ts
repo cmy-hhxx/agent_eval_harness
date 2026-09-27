@@ -9,8 +9,9 @@ const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
 test("Attribution judges one answer, conditionally on the standard answer", () => {
   assert.deepEqual(Object.keys(attributionAgent.profiles), ["default"]);
   attributionProfile.validate!(example.request, example.result, audit);
+  const { has_standard_answer: _derived, ...submission } = example.result;
   const draft = {
-    ...example.result,
+    ...submission,
     correctness_evidence: [{ evidence_id: evidenceId("input-A", 1, "text", "/content", 0, 5) }],
     findings: example.result.findings.map((finding) => ({
       ...finding,
@@ -58,9 +59,10 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
 
 test("problem components must name a tool from the answer call chain", () => {
   const request = structuredClone(example.request);
-  (request.input.candidates.A as { catalog?: { name?: string }[] }).catalog = [
-    { name: "Search" },
-    { name: "FinQuery" },
+  (request.input.answer as { catalog: { name: string; type: string; role?: string }[] }).catalog = [
+    { name: "Search", type: "function_call" },
+    { name: "FinQuery", type: "function_call_output" },
+    { name: "NotATool", type: "message", role: "assistant" },
   ];
   const finding = (component: string) => ({
     ...example.result,
@@ -73,9 +75,16 @@ test("problem components must name a tool from the answer call chain", () => {
     ],
   });
   attributionProfile.validate!(request, finding("Search"), audit);
-  attributionProfile.validate!(request, finding("search"), audit);
+  const suspected = finding("FinQuery") as AttributionResult;
+  suspected.findings[0]!.assessment.evidence_status = "uncertain";
+  suspected.findings[0]!.assessment.requirement_index = null;
+  suspected.task_analysis.scoring_points = [];
+  suspected.task_analysis.red_flags = [];
+  attributionProfile.validate!(request, suspected, audit);
+  attributionProfile.validate!(request, { ...suspected, findings: [] }, audit);
+  assert.throws(() => attributionProfile.validate!(request, finding("search"), audit), /调用链中的工具名/);
   attributionProfile.validate!(request, finding("模型自身推理"), audit);
-  for (const component of ["Context Recall", "上下文召回", "检索阶段", "WebSearch"])
+  for (const component of ["Context Recall", "上下文召回", "检索阶段", "WebSearch", "NotATool"])
     assert.throws(
       () => attributionProfile.validate!(request, finding(component), audit),
       /调用链中的工具名/,

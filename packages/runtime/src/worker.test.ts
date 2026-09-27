@@ -176,7 +176,7 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
   const partial = { role: "assistant", content: "重复快照".repeat(10000) };
   const fixture = await harness(async (options) => {
     workdir = options.workdir;
-    assert(await exists(path.join(workdir, "inputs/A.json")));
+    assert(await exists(path.join(workdir, "inputs/answer.json")));
     await assert.rejects(request(fixture.worker.url + "/api/attempts/attempt", "DELETE"), /still running/);
     return {
       async run() {
@@ -250,7 +250,7 @@ test("exhausted exploration budget still permits submission and two repairs", as
     async (options) => ({
       async run() {
         await options.execute("read_trace", {
-          candidate: "A",
+          candidate: "answer",
           message_index: 1,
         });
         assert.equal(
@@ -292,7 +292,7 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
     async (options) => ({
       async run() {
         await options.execute("read_trace", {
-          candidate: "A",
+          candidate: "answer",
           message_index: 1,
         });
         const invalid = invalidResult(options.spec) as any;
@@ -569,7 +569,7 @@ test("token budget aborts at the model response boundary", async () => {
           },
         });
         await options.execute("read_trace", {
-          candidate: "A",
+          candidate: "answer",
           message_index: 1,
         });
       },

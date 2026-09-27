@@ -529,6 +529,7 @@ export async function buildPlan(
       for (const [label, record] of Object.entries(candidates)) {
         const data: TaskData = {
           stage: "attribution",
+          // Internal slot only; attribution materials and tools use `answer`.
           candidates: { A: record },
           reference,
           initialContextChars: config.execution.initialContextChars,
@@ -548,7 +549,7 @@ export async function buildPlan(
           id: checkId,
           stage: "attribution",
           dependencies: {},
-          inputIds: { A: record.input_id },
+          inputIds: { answer: record.input_id },
           data,
         });
         addRewrite(

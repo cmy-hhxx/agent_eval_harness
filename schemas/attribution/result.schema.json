@@ -75,7 +75,6 @@
         },
         "scoring_points": {
           "type": "array",
-          "minItems": 1,
           "maxItems": 6,
           "items": {
             "type": "string",
@@ -84,7 +83,6 @@
         },
         "red_flags": {
           "type": "array",
-          "minItems": 1,
           "maxItems": 6,
           "items": {
             "type": "string",
@@ -99,7 +97,6 @@
     },
     "findings": {
       "type": "array",
-      "minItems": 1,
       "maxItems": 8,
       "items": {
         "type": "object",
@@ -196,7 +193,7 @@
             ],
             "properties": {
               "requirement_index": {
-                "type": "integer",
+                "type": ["integer", "null"],
                 "minimum": 0
               },
               "observation": {

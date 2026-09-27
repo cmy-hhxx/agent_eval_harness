@@ -112,7 +112,7 @@ export async function startWorker(
       const inputs = new Map<string, unknown>();
       for (const ref of spec.inputs) {
         const value = await request<unknown>(
-          `${spec.hostUrl}/api/inputs/${safeId(ref.id)}`,
+          `${spec.hostUrl}/api/inputs/${safeId(ref.id)}?attempt=${safeId(spec.attemptId)}`,
           "GET",
           undefined,
           controller.signal,

@@ -104,7 +104,7 @@ data/
       _internal/                 # 仅 debug
 ```
 
-每个模型维护一份跨 run 问题库，只有聚类阶段能写入：归因 Agent 只输出问题描述，聚类 Agent 先把问题归入已有类、确实没有才在预算内新建，必要时合并近义类。每次 `report`/run 结束会把已接受的聚类收据应用进库，即使续跑时关闭聚类也会保留并应用已接受收据；按 `(class_id, input_id, finding_id)` 幂等，重复报告不刷新未变化库的时间戳。`stats.json` 的 `problem_library` 与 `report.md` 记录当前类数、出现样本数以及本 run 的归类数、提议新类数和合并决定数（提议数不等于实际新增数）。类 ID 用持久化 UUID，合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label/aliases 追加到目标类；每个出现样本保留 `batch/case/version/input_id` 与源文件行号，可从问题类反查到样本、再回到原始数据。数量由程序硬控：每模型活跃类上限（默认 80）+ 每次任务新增预算（默认 8）+ 达到 60 类时提示合并整理。跨 run 更新按模型上锁；所有模型的上限校验完成前不写库。
+每个模型维护一份跨 run 问题库，只有聚类阶段能写入：归因 Agent 只输出问题描述，聚类 Agent 先把问题归入已有类、确实没有才在预算内新建，必要时合并近义类。每次 `report`/run 结束会把已接受的聚类收据应用进库，即使续跑时关闭聚类也会保留并应用已接受收据；按 `(class_id, input_id, finding_id)` 幂等，重复报告不刷新未变化库的时间戳。`stats.json` 的 `problem_library` 与 `report.md` 记录当前类数、出现样本数以及本 run 的归类数、提议新类数和合并决定数（提议数不等于实际新增数）。类 ID 用持久化 UUID，合并保留 `previous_class_id` 与 `class_merged`/`occurrence_moved` 事件，被合并类的 label/aliases 追加到目标类；每个出现样本保留 `batch/case/version/input_id`、`evidence_status`（已确认或待核实）与源文件行号，可从问题类反查到样本、再回到原始数据。数量由程序硬控：每模型活跃类上限（默认 80）+ 每次任务新增预算（默认 8）+ 达到 60 类时提示合并整理。跨 run 更新按模型上锁；所有模型的上限校验完成前不写库。
 
 新增评测日只需在对应模型目录放入 `YYYY-MM-DD.jsonl`（文件名用评测运行开始日），`sources` 直接指向模型目录，无需修改配置；跨天任务归开始日。批次身份取 JSON 中的 `batch_id`，目录和文件名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。每天一份 `_daily/<日期>.json` 清单记录该日的批次与各模型行数/case 数，只用于核对，不参与评测。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
 

@@ -12,14 +12,10 @@ import schema from "../../../../schemas/attribution/result.schema.json" with { t
 
 interface Input {
   ground_truth: { available: boolean; value: unknown };
-  candidates: Record<
-    string,
-    {
-      final_message_index: number;
-      original_answer_timing: { finish_seconds: number | null };
-      catalog?: { name?: string | null }[];
-    }
-  >;
+  answer: {
+    final_message_index: number;
+    catalog: { type: string; role?: string; name?: string | null }[];
+  };
 }
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -55,11 +51,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("correctness_evidence_forbidden", "/correctness_evidence", "无标准答案时不得给出对错证据");
   }
 
-  const normalize = (value: string): string => value.trim().replace(/\s+/gu, " ").toLowerCase();
-  const tools = new Set(
-    (input.candidates.A?.catalog ?? []).flatMap((message) => (message?.name ? [normalize(message.name)] : [])),
-  );
-  const toolNames = [...new Set((input.candidates.A?.catalog ?? []).map((message) => message.name).filter(Boolean))];
+  const toolMessages = new Set(["function_call", "function_call_output", "tool_call", "tool_result"]);
+  const tools = new Set(input.answer.catalog.flatMap((message) =>
+    message.name && (toolMessages.has(message.type) || message.role === "tool") ? [message.name] : [],
+  ));
+  const toolNames = [...tools];
   const findingIds = new Set<string>();
   value.findings.forEach((finding, index) => {
     if (findingIds.has(finding.finding_id))
@@ -70,7 +66,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         finding.finding_id,
       );
     findingIds.add(finding.finding_id);
-    if (finding.assessment.requirement_index >= value.task_analysis.requirements.length)
+    if (finding.assessment.requirement_index !== null &&
+      finding.assessment.requirement_index >= value.task_analysis.requirements.length)
       issue(
         "requirement_index_invalid",
         `/findings/${index}/assessment/requirement_index`,
@@ -94,8 +91,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     if (
       finding.type === "problem" &&
       finding.problem &&
-      normalize(finding.problem.component) !== normalize("模型自身推理") &&
-      !tools.has(normalize(finding.problem.component))
+      finding.problem.component !== "模型自身推理" &&
+      !tools.has(finding.problem.component)
     )
       issue(
         "problem_component_not_tool",
@@ -106,13 +103,13 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       );
   });
 
-  const candidate = input.candidates.A;
-  const raw = request.sources.A.value as { messages: Record<string, unknown>[] };
+  const candidate = input.answer;
+  const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   repairErrors.push(
     ...validateTraceEvidence(
       raw,
       value.correctness_evidence.map((item, i) => ({ item, location: `correctness_evidence[${i}]` })),
-      "A",
+      "answer",
       audit,
       candidate.final_message_index,
     ),
@@ -122,7 +119,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       ...validateTraceEvidence(
         raw,
         finding.evidence.map((item, j) => ({ item, location: `findings[${i}].evidence[${j}]` })),
-        "A",
+        "answer",
         audit,
         undefined,
       ),
