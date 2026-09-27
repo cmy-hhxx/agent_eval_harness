@@ -4,6 +4,8 @@ import path from "node:path";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { attributionProfile } from "@eval/agents/attribution";
+import { comparisonProfile } from "@eval/agents/comparison";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
@@ -222,7 +224,7 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
   }
 });
 
-test("dashboard case results keep only the fields the sample view renders", () => {
+test("dashboard case results preserve Schema fields without duplicated comparison evaluations", () => {
   const comparison = caseResultView("comparison", {
     evaluation_type: "group_model_comparison",
     evaluator_version: "r1",
@@ -243,33 +245,12 @@ test("dashboard case results keep only the fields the sample view renders", () =
   assert.deepEqual(caseResultView("rewrite", { rewrites: [{ id: "summary", text: "t" }] }), {
     rewrites: [{ id: "summary", text: "t" }],
   });
-  const longQuote = "q".repeat(5000);
-  const attribution = caseResultView("attribution", {
-    evaluation: {
-      is_correct: true,
-      correctness_reason: "r",
-      correctness_evidence: [{ message_index: 1, quote: longQuote }],
-      summary: "s",
-      findings: [{
-        type: "problem", stage: "final_answer", text: "t", reason: "r",
-        evidence: [{ message_index: 1, quote: "q" }],
-      }],
-    },
-  })!;
-  const evaluation = attribution.evaluation as {
-    is_correct: boolean;
-    summary: string;
-    correctness_evidence: { quote: string }[];
-    findings: unknown[];
-  };
-  assert.equal(evaluation.is_correct, true);
-  assert.equal(evaluation.summary, "s");
-  assert.equal(evaluation.correctness_evidence[0]!.quote.length, 4001);
-  assert.deepEqual(evaluation.findings, [{
-    type: "problem", stage: "final_answer", text: "t", reason: "r",
-    evidence: [{ message_index: 1, quote: "q" }],
-  }]);
-  assert.deepEqual(Object.keys(attribution), ["evaluation"]);
+  const source = attributionResult();
+  source.findings[0]!.evidence[0]!.quote = "q".repeat(5000);
+  const attribution = caseResultView("attribution", { evaluation: source })!;
+  const expected = structuredClone(source);
+  expected.findings[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
+  assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
   assert.equal(caseResultView("attribution", undefined), null);
 });
 
@@ -432,6 +413,23 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert(!text.includes("private-key-do-not-expose"));
     assert(!text.includes(gateway));
     assert.equal(JSON.parse(text).settings.bindings.attribution.model, "fixture-model");
+    const referencePage = await get("/reference");
+    assert.equal(referencePage.status, 200);
+    assert.match(await referencePage.text(), /数据与流程/);
+    assert.equal((await get("/reference.js")).status, 200);
+    const reference = await (await get("/api/dashboard/reference")).json();
+    assert.equal(reference.evaluator_version, fakeEvaluatorVersion);
+    assert.deepEqual(reference.inputs.versions, fixture.config.inputs.versions);
+    assert.deepEqual(reference.comparisons, fixture.config.comparisons);
+    assert.deepEqual(reference.stages.map((stage: { id: string }) => stage.id), ["attribution", "comparison", "rewrite", "clustering"]);
+    assert.deepEqual(reference.stages[0].schemas.result, attributionProfile.resultSchema);
+    assert.deepEqual(reference.stages[0].schemas.submission, attributionProfile.submissionSchema);
+    assert.equal(reference.stages[0].prompts.system, attributionProfile.systemPrompt);
+    assert.equal(reference.stages[1].prompts.instructions, comparisonProfile.instructions);
+    assert.equal(Object.hasOwn(reference.stages[1].schemas, "submission"), false, "comparison has one shared submission/result definition");
+    assert.deepEqual(Object.keys(reference.exports), ["comparison", "commentary", "clustering"]);
+    assert(!JSON.stringify(reference).includes("private-key-do-not-expose"));
+    assert(!JSON.stringify(reference).includes(gateway));
     const inventory = await (await get("/api/dashboard/inputs")).json();
     assert.equal(inventory.dates.length, 1);
     assert.deepEqual(inventory.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);

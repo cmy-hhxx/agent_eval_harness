@@ -11,6 +11,7 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="运行导航">
         <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL</strong></div>
+        <nav class="workspace-nav" aria-label="工作台导航"><a href="/" aria-current="page">运行工作台</a><a href="/reference">数据与流程</a></nav>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
       </aside>
@@ -36,7 +37,7 @@
               <div class="field-actions"><button id="model-all" type="button">全部</button><button id="model-none" type="button">清空</button></div>
             </div>
             <div class="launch-row">
-              <label class="inline-field"><span>抽样</span><input id="sample-size" type="number" min="1" placeholder="全部" /></label>
+              <div class="sample-field"><span class="inline-field-label">抽样数量</span><div class="sample-control" role="group" aria-label="抽样数量"><button id="sample-all" class="sample-mode selected" type="button" aria-pressed="true">全部</button><span class="sample-input"><input id="sample-size" type="number" min="1" inputmode="numeric" placeholder="指定数量" aria-label="指定抽样数量" aria-describedby="sample-hint" /><span aria-hidden="true">个</span></span></div><span id="sample-hint" class="field-hint">可选</span></div>
               <label class="inline-field"><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
               <button id="preview-button" class="button" type="button">预检</button>
               <button id="launch-button" class="button button-primary" type="submit" disabled>启动</button>
@@ -44,8 +45,8 @@
             <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
             <details class="advanced-settings">
               <summary>高级设置</summary>
-              <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="form-grid"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
-              <div class="settings-section"><h3>执行预算</h3><div class="form-grid">
+              <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="model-fields"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
+              <div class="settings-section"><h3>执行预算</h3><div class="budget-grid">
                 <label><span>并发数</span><input id="setting-concurrency" type="number" min="1" required /></label>
                 <label><span>任务超时（秒）</span><input id="setting-timeout" type="number" min="1" required /></label>
                 <label><span>工具调用上限</span><input id="setting-tools" type="number" min="1" required /></label>
@@ -77,7 +78,7 @@
 
         <section class="explorer" id="explorer" hidden>
           <div class="panel cases-panel">
-            <div class="panel-heading"><h2>样本</h2><input id="case-search" class="search-input" placeholder="搜索 case / 问题" /><span id="case-count" class="muted"></span></div>
+            <div class="panel-heading"><h2>样本</h2><span id="case-count" class="muted"></span></div>
             <div id="case-list" class="case-list" aria-live="polite"></div>
             <div class="pager"><button id="prev-page" class="button" type="button" disabled>上一页</button><span id="page-label">—</span><button id="next-page" class="button" type="button" disabled>下一页</button></div>
           </div>
@@ -89,6 +90,6 @@
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
       </main>
     </div>
-    <script src="/dashboard.js"></script>
+    <script type="module" src="/dashboard.js"></script>
   </body>
 </html>

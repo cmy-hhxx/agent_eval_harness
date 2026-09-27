@@ -5,6 +5,7 @@ import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, fileSourceReader, locateRun, readJson } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
+import { dashboardReference } from "./dashboard-reference.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
@@ -232,14 +233,25 @@ export async function startDashboard(options: DashboardOptions) {
       res.end(await asset("index.html"));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/reference") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(await asset("reference.html"));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/dashboard/reference") {
+      const [evaluation, current] = await Promise.all([
+        loadEvaluation(options.configPaths), readConfigSources(options.configPaths),
+      ]);
+      return json(res, dashboardReference(evaluation, current.evaluatorVersion));
+    }
     if (req.method === "GET" && url.pathname === "/dashboard.css") {
       res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
       res.end(await asset("dashboard.css"));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/dashboard.js") {
+    if (req.method === "GET" && ["/dashboard.js", "/dashboard-view.js", "/reference.js"].includes(url.pathname)) {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      res.end(await asset("dashboard.js"));
+      res.end(await asset(url.pathname.slice(1)));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
@@ -280,12 +292,9 @@ export async function startDashboard(options: DashboardOptions) {
     if (req.method === "GET" && parts[4] === "cases" && parts.length === 5) {
       const page = Number(url.searchParams.get("page") || "1");
       if (!Number.isSafeInteger(page) || page < 1) throw new HttpError(400, "Invalid page");
-      const query = url.searchParams.get("query") || "";
-      if (query.length > 200) throw new HttpError(400, "Search is too long");
       return json(res, await listRunCases(directory, {
         page, pageSize: 40,
         batch: url.searchParams.get("batch") || undefined,
-        query,
         stage: url.searchParams.get("stage") || undefined,
         status: url.searchParams.get("status") || undefined,
       }));

@@ -70,7 +70,6 @@ export async function listInputInventory(config: EvalConfig): Promise<{ dates: I
 
 export interface CaseFilter {
   batch?: string;
-  query?: string;
   stage?: string;
   status?: string;
   page: number;
@@ -115,12 +114,10 @@ export async function listRunCases(run: string, filter: CaseFilter) {
     if ((!filter.stage || filter.stage === task.stage) && (!filter.status || filter.status === task.status))
       item.matches = true;
   }
-  const query = (filter.query || "").toLocaleLowerCase();
   const rows = [...cases.values()]
     .filter((item) =>
       item.matches &&
-      (!filter.batch || item.batch_id === filter.batch) &&
-      (!query || `${item.case_id} ${item.question}`.toLocaleLowerCase().includes(query)),
+      (!filter.batch || item.batch_id === filter.batch),
     )
     .sort((a, b) =>
       a.batch_id.localeCompare(b.batch_id) || a.case_id.localeCompare(b.case_id),
@@ -140,17 +137,19 @@ const clipEvidence = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map((item) => {
         const entry = (item ?? {}) as JsonObject;
-        return { message_index: entry.message_index, quote: clip(entry.quote ?? entry.observation, 4000) };
+        return { message_index: entry.message_index, quote: clip(entry.quote, 4000) };
       })
     : value;
-/** Only the fields the sample view renders; long text and comparison `evaluations` stay in the JSONL. */
+/** Sample-view projection of an accepted row: current Schema fields, long text clipped; comparison `evaluations` stay in the JSONL. */
 export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonObject | null {
   if (!row) return null;
   if (stage === "attribution") {
     const value = (row.evaluation ?? {}) as JsonObject;
     return {
       evaluation: {
+        has_standard_answer: value.has_standard_answer,
         is_correct: value.is_correct,
+        task_analysis: value.task_analysis,
         correctness_reason: clip(value.correctness_reason, 8000),
         correctness_evidence: clipEvidence(value.correctness_evidence),
         summary: clip(value.summary, 8000),
@@ -158,11 +157,16 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonO
           ? value.findings.map((finding) => {
               const item = (finding ?? {}) as JsonObject;
               return {
+                finding_id: item.finding_id,
                 type: item.type,
+                dimension: item.dimension,
+                importance: item.importance,
                 stage: item.stage,
                 text: clip(item.text, 4000),
                 reason: clip(item.reason, 4000),
                 evidence: clipEvidence(item.evidence),
+                assessment: item.assessment,
+                problem: item.problem,
               };
             })
           : value.findings,

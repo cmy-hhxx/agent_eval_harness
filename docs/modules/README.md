@@ -6,7 +6,7 @@
 
 | 模块 | 职责与修改位置 | 公开入口 | 项目依赖 | 验证入口 |
 |---|---|---|---|---|
-| 应用 Host | [CLI](../../apps/host/src/cli.ts)、[看板](../../apps/host/src/dashboard.ts)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、看板、跨模块回归、doctor |
+| 应用 Host | [CLI](../../apps/host/src/cli.ts)、[看板服务](../../apps/host/src/dashboard.ts)、[看板视图模块](../../apps/host/dashboard/dashboard-view.js)、[数据与流程](../../apps/host/src/dashboard-reference.ts)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、看板、跨模块回归、doctor |
 | 应用 Worker | [底座与进程入口](../../apps/worker/src/cli.ts) | 根 `worker` | Runtime、Contracts | 双 SDK 集成、独立构建 |
 | Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |

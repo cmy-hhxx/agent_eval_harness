@@ -1,13 +1,15 @@
+import { createDashboardViews } from "./dashboard-view.js";
+
 const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
   caseDetail: null, selectedInput: null, inputView: null, config: null, page: 1,
-  preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, query: "", runId: "",
+  preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, runId: "",
   inputs: null, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
-  sampledCases: null, sampleInfo: null, rangeLocked: false, searchTimer: 0,
+  sampledCases: null, sampleInfo: null, rangeLocked: false,
   library: null, libraryDetail: null, libraryRequest: 0, libraryDetailRequest: 0,
   libraryRun: null, libraryShownRun: null, libraryStatus: null, libraryOpen: new Set(),
-  taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(),
+  inputOpen: false, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), expandedTexts: new Set(),
   refreshTimer: 0, runsSignature: "", overviewSignature: "", casesSignature: "", datesSignature: "", modelsSignature: "",
 };
 const $ = (selector) => document.querySelector(selector);
@@ -102,10 +104,10 @@ function renderOverview() {
   status.textContent = statusText(run);
   status.className = `status-chip ${run.status}${Object.values(run.progress?.failures || {}).some(Boolean) ? " has-failure" : ""}`;
   const progress = run.progress || {};
-  const library = Object.entries(run.problem_library || {})
-    .map(([model, counts]) => `${model} ${counts.classes} 类`)
-    .join(" / ");
-  $("#run-description").textContent = `${run.engine} · 评测器 ${run.evaluator_version} · 已接受 ${progress.accepted || 0} / 排队 ${progress.queued || 0} / 运行 ${progress.running || 0} · ${dateText(run.started_at)}` + (library ? ` · 问题库：${library}` : "");
+  const totalTasks = (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
+  const libraryModels = Object.keys(run.problem_library || {}).length;
+  const engineLabel = run.engine === "prime" ? "Prime" : "Pi";
+  $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button>`;
@@ -148,11 +150,15 @@ function libraryDetailHtml() {
   </div>`;
 }
 function renderLibrary() {
-  const models = state.library || [];
-  if (!models.length) {
+  if (state.library === null) {
     $("#problem-library").innerHTML = state.libraryRun === state.selectedRun
       ? loading("正在读取问题库")
       : '<p class="empty-state">暂无问题类</p>';
+    return;
+  }
+  const models = state.library;
+  if (!models.length) {
+    $("#problem-library").innerHTML = '<p class="empty-state">暂无问题类</p>';
     return;
   }
   $("#problem-library").innerHTML = models.map((model) => `
@@ -198,7 +204,7 @@ async function loadLibraryClass(model, classId, page) {
   } catch (error) { toast(`问题库读取失败：${error.message}`, true); }
 }
 function caseQuery() {
-  return new URLSearchParams({ page: String(state.page), ...(state.query ? { query: state.query } : {}) }).toString();
+  return new URLSearchParams({ page: String(state.page) }).toString();
 }
 function renderCases() {
   const signature = JSON.stringify([state.selectedRun, state.selectedCase, state.cases]);
@@ -210,9 +216,11 @@ function renderCases() {
     $("#case-list").innerHTML = state.selectedRun ? loading("正在读取样本") : "";
     $("#page-label").textContent = "—";
     $("#prev-page").disabled = $("#next-page").disabled = true;
+    $(".pager").hidden = true;
     return;
   }
   $("#case-count").textContent = `${page.total} 个样本`;
+  $(".pager").hidden = page.total <= page.page_size;
   $("#page-label").textContent = `${page.page} / ${Math.max(1, Math.ceil(page.total / page.page_size))}`;
   $("#prev-page").disabled = page.page <= 1;
   $("#next-page").disabled = page.page * page.page_size >= page.total;
@@ -233,112 +241,20 @@ const clipped = (value, limit) => {
   const text = String(value ?? "");
   return escapeHtml(text.length > limit ? `${text.slice(0, limit)}…` : text);
 };
-const textBlock = (value) => clipped(value, 40000);
 const compactJson = (value) => escapeHtml(JSON.stringify(value, null, 2) ?? "—");
-function renderInput() {
-  const input = state.inputView;
-  if (!state.selectedInput) return "";
-  if (!input) return loading("正在读取问题与回答");
-  if (input.error) return `<p class="inline-error">${escapeHtml(input.error)}</p>`;
-  return `<p class="source-note">源记录 · 第 ${input.line} 行${input.recorded_line !== input.line ? `（登记时第 ${input.recorded_line} 行）` : ""}</p>
-    <div class="input-highlights"><div><strong>问题</strong><pre>${textBlock(input.question)}</pre></div><div><strong>最终回答</strong><pre>${textBlock(input.answer)}</pre></div></div>`;
-}
-function evidence(items) {
-  if (!Array.isArray(items) || !items.length) return "";
-  return `<ul class="evidence-list">${items.map((item) => `<li>${clipped(item.quote || item.observation || "", 4000)}</li>`).join("")}</ul>`;
-}
-function renderResult(task, detail) {
-  const row = task.result;
-  if (!row) return task.status === "succeeded" ? '<p class="muted">写入中</p>' : "";
-  if (task.stage === "attribution") {
-    const value = row.evaluation || {};
-    return `<div class="result-body"><p><strong>结论</strong> ${clipped(value.summary || "—", 8000)}</p>
-      <p><strong>标准答案判定</strong> ${value.is_correct === null ? "无标准答案" : value.is_correct ? "正确" : "错误"} ${clipped(value.correctness_reason || "", 8000)}</p>
-      ${evidence(value.correctness_evidence)}
-      <h4>发现 · ${(value.findings || []).length}</h4>
-      ${(value.findings || []).map((finding) => `<div class="finding"><strong>${escapeHtml(finding.type)} · ${escapeHtml(finding.stage)}</strong><p>${clipped(finding.text, 4000)}</p><p class="muted">${clipped(finding.reason, 4000)}</p>${evidence(finding.evidence)}</div>`).join("")}
-    </div>`;
-  }
-  if (task.stage === "comparison") {
-    const names = Object.fromEntries(Object.entries(row.models || {}).map(([id, info]) => [id, info.version || id]));
-    return `<div class="result-body"><p><strong>任务分析</strong> ${clipped(row.task_analysis?.goal || "—", 4000)}</p>
-      <p><strong>本题共享标准答案</strong> ${row.ground_truth?.available ? clipped(JSON.stringify(row.ground_truth.value), 4000) : "无"}</p>
-      <h4>排名</h4><ol class="ranking">${(row.ranking || []).map((tier) => `<li>${tier.map((id) => escapeHtml(names[id] || id)).join(" · ")}</li>`).join("")}</ol>
-      <p><strong>权衡</strong> ${clipped(row.decision_basis?.tradeoff || "—", 8000)}</p>
-      <h4>决定性发现</h4><p>${(row.decision_basis?.decisive_findings || []).map((ref) => `${escapeHtml(names[ref.candidate] || ref.candidate)} · 发现 #${escapeHtml(ref.finding_index)}`).join("；") || "未引用发现"}</p>
-      <h4>候选评估</h4>${Object.entries(row.assessments || {}).map(([id, item]) => `<p><strong>${escapeHtml(names[id] || id)} · ${item.meets_core ? "满足核心要求" : "未满足核心要求"}</strong><br />${clipped(item.summary, 8000)}</p>`).join("")}
-      <h4>两两判决</h4>${Object.entries(row.verdicts || {}).map(([pair, verdict]) => `<p><strong>${pair.split("__vs__").map((id) => escapeHtml(names[id] || id)).join(" / ")} · ${escapeHtml(verdict.result === "win" ? verdict.winner_name || verdict.winner_version : verdict.result)}</strong><br />${clipped(verdict.reason, 8000)}</p>`).join("")}
-    </div>`;
-  }
-  const source = detail.tasks.find((item) => item.id === task.rewrite_of?.taskId);
-  const original = source?.result?.evaluation || source?.result;
-  return `<div class="result-body">
-    ${(row.rewrites || []).map((item) => {
-      let before = item.id === "summary" ? original?.summary
-        : item.id === "correctness_reason" ? original?.correctness_reason
-        : item.id === "tradeoff" ? original?.decision_basis?.tradeoff : null;
-      const assessment = /^assessment\.([A-Z])\.summary$/.exec(item.id);
-      if (assessment) {
-        const version = source?.versions[assessment[1].charCodeAt(0) - 65];
-        before = original?.assessments?.[version]?.summary;
-      }
-      const verdict = /^verdict\.([A-Z])__vs__([A-Z])\.reason$/.exec(item.id);
-      if (verdict) {
-        const first = source?.versions[verdict[1].charCodeAt(0) - 65];
-        const second = source?.versions[verdict[2].charCodeAt(0) - 65];
-        before = original?.verdicts?.[`${first}__vs__${second}`]?.reason || original?.verdicts?.[`${second}__vs__${first}`]?.reason;
-      }
-      return `<div class="rewrite-item"><strong>${escapeHtml(item.id)}</strong>${before ? `<p class="muted">原文：${escapeHtml(before)}</p>` : ""}<p>改写：${escapeHtml(item.text)}</p></div>`;
-    }).join("")}
-  </div>`;
-}
-function renderDetail() {
-  const detail = state.caseDetail;
-  if (!detail) {
-    $("#case-detail").innerHTML = state.selectedCase ? loading("正在读取样本详情") : "";
-    return;
-  }
-  const candidates = detail.candidates || [];
-  const inputs = candidates.map((candidate) => `<button type="button" class="candidate-tab ${state.selectedInput === candidate.input_id ? "selected" : ""}" data-input="${escapeHtml(candidate.input_id)}">${escapeHtml(candidate.name || candidate.version)}</button>`).join("");
-  $("#case-detail").innerHTML = `<div class="detail-heading"><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span><h2>${escapeHtml(detail.question || "—")}</h2></div>
-    <div class="detail-section"><h3>评测输入</h3><div class="candidate-tabs" role="group" aria-label="选择版本">${inputs}</div><div class="input-view">${renderInput()}</div></div>
-    <div class="detail-section"><h3>Agent 与正式输出</h3>${detail.tasks.map((task) => {
-      const open = state.openTasks.has(task.id) || ["failed", "running"].includes(task.status);
-      return `<details class="task-detail" data-task="${escapeHtml(task.id)}" ${open ? "open" : ""}>
-      <summary><span><strong>${escapeHtml(stageLabel(task.stage))}</strong>${task.versions.length ? ` · ${task.versions.map(escapeHtml).join(" / ")}` : ` · ${escapeHtml(task.rewrite_of?.stage || "")}`}</span>
-      <span class="task-status ${escapeHtml(task.status)}">${escapeHtml(label(task.status))} · ${task.attempts} 次尝试</span></summary>
-      <div class="task-content">${[
-        task.last_progress_at ? `最近进展 ${dateText(task.last_progress_at)}` : "",
-        task.duration_ms != null ? `累计 ${Math.round(task.duration_ms / 1000)} 秒` : "",
-      ].filter(Boolean).map((item) => `<span class="task-meta">${escapeHtml(item)}</span>`).join("")}
-      ${task.reason ? `<p class="inline-error">${escapeHtml(task.reason)}</p>` : ""}<div class="task-result" data-result-for="${escapeHtml(task.id)}">${resultNodeHtml(task.id, open)}</div></div>
-    </details>`;
-    }).join("") || ""}</div>`;
-}
-/** Sample-view task with its lazily loaded result, shared by the task and its rewrite source. */
-function taskView(taskId) {
-  const detail = state.caseDetail;
-  if (!detail) return undefined;
-  const tasks = detail.tasks.map((task) => ({ ...task, result: state.taskResults[task.id]?.result ?? null }));
-  return { detail: { ...detail, tasks }, task: tasks.find((task) => task.id === taskId) };
-}
-function resultNodeHtml(taskId, open) {
-  const cached = state.taskResults[taskId];
-  if (cached?.error) return `<p class="inline-error">${escapeHtml(cached.error)}</p>`;
-  const view = taskView(taskId);
-  if (!view?.task) return "";
-  return cached ? renderResult(view.task, view.detail) : open ? loading("正在读取结果") : "";
-}
-function renderTaskResult(taskId) {
-  const node = [...document.querySelectorAll("[data-result-for]")].find((item) => item.dataset.resultFor === taskId);
-  if (!node) return;
-  const cached = state.taskResults[taskId];
-  if (cached?.error) { node.innerHTML = `<p class="inline-error">${escapeHtml(cached.error)}</p>`; return; }
-  const view = taskView(taskId);
-  node.innerHTML = view?.task && cached ? renderResult(view.task, view.detail) : loading("正在读取结果");
-}
+const { renderDetail, renderTaskResult } = createDashboardViews({
+  state,
+  $,
+  document,
+  loading,
+  escapeHtml,
+  label,
+  stageLabel,
+  dateText,
+});
 async function loadTaskResult(taskId) {
-  if (!taskId || state.taskResults[taskId] || state.taskResultsLoading.has(taskId)) return;
+  if (!taskId || state.caseDetail?.tasks.find((task) => task.id === taskId)?.status !== "succeeded"
+      || state.taskResults[taskId] || state.taskResultsLoading.has(taskId)) return;
   state.taskResultsLoading.add(taskId);
   const runId = state.selectedRun,
     caseId = state.caseDetail?.case_id;
@@ -346,8 +262,6 @@ async function loadTaskResult(taskId) {
     const value = await api(`${urlFor(runId)}/tasks/${encodeURIComponent(taskId)}/result`);
     if (state.selectedRun !== runId || state.caseDetail?.case_id !== caseId) return;
     state.taskResults[taskId] = { result: value.result ?? null };
-    const task = state.caseDetail?.tasks.find((item) => item.id === taskId);
-    if (task?.rewrite_of) await loadTaskResult(task.rewrite_of.taskId);
   } catch (error) {
     state.taskResults[taskId] = { error: error.message };
   } finally {
@@ -379,6 +293,8 @@ async function loadCase(batch, caseId) {
     state.taskResults = {};
     state.taskResultsLoading = new Set();
     state.openTasks = new Set();
+    state.expandedTexts = new Set();
+    state.inputOpen = false;
   }
   renderCases();
   try {
@@ -388,6 +304,12 @@ async function loadCase(batch, caseId) {
     const previous = state.caseDetail;
     const signature = (value) => JSON.stringify(value.tasks.map((item) => [item.id, item.status, item.attempts]));
     state.caseDetail = detail;
+    for (const task of detail.tasks) {
+      const oldTask = previous?.tasks.find((item) => item.id === task.id);
+      if (oldTask && oldTask.status === task.status && oldTask.attempts === task.attempts) continue;
+      delete state.taskResults[task.id];
+      if (["failed", "timed_out"].includes(task.status)) state.openTasks.add(task.id);
+    }
     if (previous?.batch_id === batch && previous?.case_id === caseId && signature(previous) === signature(detail)) return;
     const available = detail.candidates.some((item) => item.input_id === state.selectedInput);
     if (!available) { state.selectedInput = null; state.inputView = null; }
@@ -469,8 +391,6 @@ async function selectRun(runId) {
   ++state.caseRequest;
   state.selectedRun = runId;
   state.selectedCase = state.caseDetail = state.selectedInput = state.inputView = state.cases = null;
-  state.query = "";
-  $("#case-search").value = "";
   state.page = 1;
   renderRuns(); renderCases(); renderDetail();
   await refresh();
@@ -486,7 +406,7 @@ function renderDateOptions() {
   state.datesSignature = signature;
   const dates = state.inputs?.dates || [];
   $("#date-options").innerHTML = !state.inputs
-    ? '<button type="button" class="button button-quiet" id="load-dates">加载日期</button>'
+    ? loading("正在读取日期")
     : dates.length ? dates.map((date) => {
     const on = state.selectedDates.has(date.date);
     return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.date)}<span class="chip-count">${viableCount(date)}/${date.cases.length}</span></button>`;
@@ -505,6 +425,13 @@ function renderModelOptions() {
 function sampleSize() {
   const value = Number($("#sample-size").value);
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+function syncSampleMode() {
+  const input = $("#sample-size"), all = $("#sample-all");
+  if (!input || !all) return;
+  const selected = !input.value.trim();
+  all.classList.toggle("selected", selected);
+  all.setAttribute("aria-pressed", String(selected));
 }
 function viableCases() {
   const selected = [...state.selectedModels];
@@ -540,6 +467,7 @@ function pickSample() {
   return { cases: viable.slice(0, size), size, available: viable.length };
 }
 async function loadInputs() {
+  state.datesSignature = "";
   $("#date-options").innerHTML = loading("正在读取日期");
   try {
     const inventory = await api("/api/dashboard/inputs");
@@ -577,9 +505,8 @@ function renderConfig() {
   $("#env-status").innerHTML = [
     ["URL", env.base_url_configured], ["Key", env.api_key_configured], ["基础模型", env.model_configured],
   ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
-  $("#model-fields").innerHTML = Object.entries(settings.bindings || {}).map(([stage, binding]) => `
-    <label><span>${escapeHtml(stageLabel(stage))}模型 ID</span><input data-model-stage="${escapeHtml(stage)}" value="${escapeHtml(binding.model)}" /></label>
-    <label><span>${escapeHtml(stageLabel(stage))}推理等级</span><select data-thinking-stage="${escapeHtml(stage)}">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></label>`).join("");
+  $("#model-fields").innerHTML = `<div class="model-fields-head" aria-hidden="true"><span>阶段</span><span>模型</span><span>推理</span></div>${Object.entries(settings.bindings || {}).map(([stage, binding]) => `
+    <div class="model-field-row"><span class="model-stage">${escapeHtml(stageLabel(stage))}</span><input data-model-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}模型 ID" value="${escapeHtml(binding.model)}" /><select data-thinking-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}推理等级">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></div>`).join("")}`;
   $("#setting-concurrency").value = settings.execution.concurrency;
   $("#setting-timeout").value = settings.execution.timeoutSeconds;
   $("#setting-tools").value = settings.execution.maxToolCalls;
@@ -622,7 +549,9 @@ function invalidatePreview() {
   state.sampledCases = null;
   state.sampleInfo = null;
   $("#launch-button").disabled = true;
-  $("#preview-result").textContent = "需重新预检";
+  const status = $("#preview-result");
+  status.className = "preview-result is-stale";
+  status.textContent = "设置已变化 · 请重新预检";
   if (state.rangeLocked) {
     state.rangeLocked = false;
     renderDateOptions();
@@ -633,11 +562,15 @@ async function preview() {
   if (!$("#start-form").reportValidity()) return;
   if (!state.inputs) await loadInputs();
   if (!state.selectedDates.size) {
-    $("#preview-result").textContent = "至少选择一个日期";
+    const status = $("#preview-result");
+    status.className = "preview-result is-error";
+    status.textContent = "至少选择一个日期";
     return;
   }
   if (state.selectedModels.size < 2) {
-    $("#preview-result").textContent = "至少选择两个模型";
+    const status = $("#preview-result");
+    status.className = "preview-result is-error";
+    status.textContent = "至少选择两个模型";
     return;
   }
   state.sampleInfo = pickSample();
@@ -645,11 +578,15 @@ async function preview() {
   if (state.sampleInfo.size && !state.sampledCases.length) {
     state.sampleInfo = null;
     state.sampledCases = null;
-    $("#preview-result").textContent = "所选范围没有完整样本";
+    const status = $("#preview-result");
+    status.className = "preview-result is-error";
+    status.textContent = "所选范围没有完整样本";
     return;
   }
   $("#preview-button").disabled = true;
-  $("#preview-result").innerHTML = loading("正在预检");
+  const status = $("#preview-result");
+  status.className = "preview-result is-loading";
+  status.innerHTML = loading("正在预检");
   try {
     const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
     state.preview = value;
@@ -667,7 +604,8 @@ async function preview() {
       `输入异常 ${summary.issues_count || 0}`,
       `跳过组 ${summary.skipped_count || 0}`,
     ];
-    $("#preview-result").innerHTML = `<div class="preview-stats">${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+    status.className = "preview-result is-ready";
+    status.innerHTML = `<div class="preview-stats">${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
       ${issues.length ? `<details><summary>输入异常 ${issues.length}</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
   } catch (error) {
     state.preview = null;
@@ -675,7 +613,8 @@ async function preview() {
     renderDateOptions();
     renderModelOptions();
     $("#launch-button").disabled = true;
-    $("#preview-result").textContent = `预检失败：${error.message}`;
+    status.className = "preview-result is-error";
+    status.textContent = `预检失败：${error.message}`;
   } finally { $("#preview-button").disabled = false; }
 }
 async function startRun() {
@@ -686,6 +625,7 @@ async function startRun() {
     toast(`已提交运行 ${value.run_id}`);
     state.preview = null;
     state.runId = suggestedRunId();
+    $("#preview-result").className = "preview-result is-ready";
     $("#preview-result").textContent = "已提交";
     await new Promise((resolve) => setTimeout(resolve, 700));
     await refresh();
@@ -762,6 +702,16 @@ $("#problem-library-panel").addEventListener("toggle", (event) => {
     void loadLibrary(state.selectedRun);
 });
 $("#case-detail").addEventListener("click", async (event) => {
+  const toggle = event.target.closest("[data-expand-text]");
+  if (toggle) {
+    const key = toggle.dataset.expandText;
+    const expanded = !state.expandedTexts.has(key);
+    if (expanded) state.expandedTexts.add(key); else state.expandedTexts.delete(key);
+    document.getElementById(toggle.getAttribute("aria-controls")).classList.toggle("is-clamped", !expanded);
+    toggle.setAttribute("aria-expanded", String(expanded));
+    toggle.textContent = expanded ? "收起" : "展开";
+    return;
+  }
   const input = event.target.closest("[data-input]");
   if (input) await loadInput(input.dataset.input);
 });
@@ -769,7 +719,12 @@ $("#case-detail").addEventListener("click", async (event) => {
 $("#case-detail").addEventListener(
   "toggle",
   (event) => {
-    const node = event.target.closest?.(".task-detail");
+    const inputDisclosure = event.target.matches?.(".input-disclosure") ? event.target : null;
+    if (inputDisclosure) {
+      state.inputOpen = inputDisclosure.open;
+      return;
+    }
+    const node = event.target.matches?.(".task-detail") ? event.target : null;
     if (!node?.dataset.task) return;
     if (node.open) {
       state.openTasks.add(node.dataset.task);
@@ -778,20 +733,9 @@ $("#case-detail").addEventListener(
   },
   true,
 );
-$("#case-search").addEventListener("input", () => {
-  clearTimeout(state.searchTimer);
-  state.searchTimer = setTimeout(() => {
-    state.query = $("#case-search").value.trim();
-    state.page = 1;
-    state.selectedCase = state.caseDetail = null;
-    renderDetail();
-    void loadCases();
-  }, 300);
-});
 $("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
 $("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
 $("#date-options").addEventListener("click", (event) => {
-  if (event.target.closest("#load-dates")) { void loadInputs(); return; }
   const chip = event.target.closest("[data-date-option]");
   if (!chip || chip.disabled) return;
   const id = chip.dataset.dateOption;
@@ -837,7 +781,7 @@ $("#model-none").addEventListener("click", () => {
   invalidatePreview();
 });
 $("#refresh-button").addEventListener("click", async () => {
-  if (state.inputs) await loadInputs();
+  await loadInputs();
   await refresh();
   if (state.selectedCase) {
     await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
@@ -846,10 +790,17 @@ $("#refresh-button").addEventListener("click", async () => {
 });
 $("#start-form").addEventListener("input", invalidatePreview);
 $("#start-form").addEventListener("change", invalidatePreview);
+$("#sample-all").addEventListener("click", () => {
+  $("#sample-size").value = "";
+  syncSampleMode();
+  invalidatePreview();
+});
+$("#sample-size").addEventListener("input", syncSampleMode);
+syncSampleMode();
 $("#preview-button").addEventListener("click", () => void preview());
 $("#start-form").addEventListener("submit", (event) => { event.preventDefault(); void startRun(); });
 
 (async () => {
   state.runId = suggestedRunId();
-  await Promise.all([loadConfig(), refresh()]);
+  await Promise.all([loadConfig(), loadInputs(), refresh()]);
 })();
