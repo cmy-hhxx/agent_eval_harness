@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { root, run } from "./lib.mjs";
 
-const roots = ["dist/packages", "dist/tests/architecture", "dist/tests/integration/host"];
+const roots = ["dist/packages", "dist/agent/tests", "dist/tests/architecture", "dist/tests/integration/host"];
 const files = (
   await Promise.all(
     roots.map(async (directory) =>

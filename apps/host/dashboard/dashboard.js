@@ -395,10 +395,15 @@ async function selectRun(runId) {
   renderRuns(); renderCases(); renderDetail();
   await refresh();
 }
+function selectedGroups() {
+  const selected = state.selectedModels;
+  return (state.config?.settings?.comparisons || [])
+    .map((group) => group.filter((id) => selected.has(id)))
+    .filter((group) => group.length >= 2);
+}
 function viableCount(date) {
-  const selected = [...state.selectedModels];
-  if (!selected.length) return date.cases.length;
-  return date.cases.filter((item) => selected.every((version) => item.versions.includes(version))).length;
+  const groups = selectedGroups();
+  return date.cases.filter((item) => groups.some((group) => group.every((id) => item.versions.includes(id)))).length;
 }
 function renderDateOptions() {
   const signature = JSON.stringify([state.rangeLocked, [...state.selectedDates], [...state.selectedModels], state.inputs]);
@@ -434,12 +439,12 @@ function syncSampleMode() {
   all.setAttribute("aria-pressed", String(selected));
 }
 function viableCases() {
-  const selected = [...state.selectedModels];
+  const groups = selectedGroups();
   const cases = new Set();
   for (const date of state.inputs?.dates || []) {
     if (!state.selectedDates.has(date.date)) continue;
     for (const item of date.cases)
-      if (selected.length && selected.every((version) => item.versions.includes(version)))
+      if (groups.some((group) => group.every((id) => item.versions.includes(id))))
         cases.add(item.id);
   }
   return [...cases];
@@ -706,10 +711,14 @@ $("#case-detail").addEventListener("click", async (event) => {
   if (toggle) {
     const key = toggle.dataset.expandText;
     const expanded = !state.expandedTexts.has(key);
+    const content = document.getElementById(toggle.getAttribute("aria-controls"));
+    const returnToPreview = !expanded && content.getBoundingClientRect().top < 0;
     if (expanded) state.expandedTexts.add(key); else state.expandedTexts.delete(key);
-    document.getElementById(toggle.getAttribute("aria-controls")).classList.toggle("is-clamped", !expanded);
+    content.classList.toggle("is-clamped", !expanded);
     toggle.setAttribute("aria-expanded", String(expanded));
     toggle.textContent = expanded ? "收起" : "展开";
+    if (returnToPreview)
+      toggle.closest(".expandable-text").scrollIntoView({ block: "start", behavior: "instant" });
     return;
   }
   const input = event.target.closest("[data-input]");

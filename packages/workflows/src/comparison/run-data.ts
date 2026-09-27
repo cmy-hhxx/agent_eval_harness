@@ -65,6 +65,10 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const selected: EvalConfig = {
     ...config,
     execution: supplied.execution,
+    // Replan within the original versions using today's fair groups; accepted older tasks remain immutable.
+    comparisons: supplied.comparisons
+      .map((group) => group.filter((id) => config.inputs.versions.some((version) => version.id === id)))
+      .filter((group) => group.length >= 2),
     // Presentation and library stages may be enabled or disabled on resume without touching evaluations.
     rewrite: supplied.rewrite,
     clustering: supplied.clustering,

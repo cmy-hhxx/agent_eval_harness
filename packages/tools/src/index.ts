@@ -31,7 +31,7 @@ function message(ctx: ToolContext, candidate: string, i: number): unknown {
   if (!value) throw new Error("消息索引不存在");
   return value;
 }
-function images(value: unknown): ToolContent[] {
+export function images(value: unknown): ToolContent[] {
   if (typeof value === "string") {
     const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(value);
     return match ? [{ type: "image", mimeType: match[1], data: match[2] }] : [];

@@ -1,11 +1,12 @@
 {
-  "evaluatorVersion": "r6",
+  "evaluatorVersion": "r7",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
       {
         "id": "a_fast",
         "name": "A Fast",
+        "comparison_tier": "Fast",
         "display_name": "A组Fast",
         "adapter": "a",
         "sources": [
@@ -15,6 +16,7 @@
       {
         "id": "a_expert",
         "name": "A Expert",
+        "comparison_tier": "Expert",
         "display_name": "A组Expert",
         "adapter": "a",
         "sources": [
@@ -24,6 +26,7 @@
       {
         "id": "aa_fast",
         "name": "AA Fast",
+        "comparison_tier": "Fast",
         "display_name": "AA组Fast",
         "adapter": "aa",
         "sources": [
@@ -33,6 +36,7 @@
       {
         "id": "aa_expert",
         "name": "AA Expert",
+        "comparison_tier": "Expert",
         "display_name": "AA组Expert",
         "adapter": "aa",
         "sources": [
@@ -42,7 +46,8 @@
     ]
   },
   "comparisons": [
-    ["a_fast", "a_expert", "aa_fast", "aa_expert"]
+    ["a_fast", "aa_fast"],
+    ["a_expert", "aa_expert"]
   ],
   "rewrite": {
     "comparison": true,

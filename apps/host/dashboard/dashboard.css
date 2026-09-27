@@ -152,19 +152,21 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .case-progress { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .case-progress.has-failure { color: var(--danger); }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; color: var(--muted); border-top: 1px solid var(--line); font-size: 12px; }
-.detail-panel { min-height: 320px; }
+.detail-panel { min-height: 320px; overflow: clip; }
 .case-detail { padding: 20px 24px; }
 .detail-heading { min-width: 0; }
 .detail-heading .section-heading { flex-wrap: wrap; margin-bottom: 12px; }
 .detail-heading .case-identity { overflow-wrap: anywhere; font-size: 11px; }
 .detail-heading h2 { font-size: 14px; }
-.expandable-text { min-width: 0; }
+.expandable-text { min-width: 0; scroll-margin-block: 12px; }
 .text-content { margin: 0; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }
 .text-content.is-clamped { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 6; }
 .question-text { font-size: 15px; }
 .question-text .is-clamped { -webkit-line-clamp: 3; }
-.text-toggle { display: block; min-height: 28px; padding: 3px 0; color: var(--accent); background: none; border: 0; font-size: 12px; }
+.text-toggle { display: block; min-width: 44px; min-height: 32px; margin-left: -8px; padding: 4px 8px; color: var(--accent); background: none; border: 1px solid transparent; border-radius: var(--radius); font-size: 12px; }
+.text-toggle[aria-expanded="true"] { position: sticky; bottom: 12px; z-index: 1; margin-left: auto; background: var(--surface); border-color: var(--line); }
 .text-toggle:hover { text-decoration: underline; }
+@media (pointer: coarse) { .text-toggle { min-height: 44px; } }
 .detail-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .detail-section h3 { margin: 0 0 8px; color: var(--text); font-size: 14px; }
 .input-disclosure { padding-top: 0; }
@@ -211,14 +213,17 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .schema-section { margin-top: 24px; }
 .schema-section h5 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; }
 .schema-section h5 code, .schema-field dt code { color: var(--muted); font: 10px/1.5 var(--mono); overflow-wrap: anywhere; }
-.schema-fields { margin: 12px 0 0; }
-.schema-field { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 7px 0; }
-.schema-field dt { display: grid; align-content: start; gap: 2px; color: var(--muted); font-size: 12px; }
+.schema-fields { container-type: inline-size; margin: 12px 0 0; }
+.schema-field { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 16px; padding: 8px 0; }
+.schema-field dt { display: grid; min-width: 0; align-content: start; gap: 2px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .schema-field dd { min-width: 0; margin: 0; }
 .schema-field:has(> dd > .schema-fields) { grid-template-columns: 1fr; gap: 4px; }
-.schema-field:has(> dd > .schema-fields) > dt { display: flex; align-items: baseline; gap: 8px; }
+.schema-field:has(> dd > .schema-fields) > dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .schema-field dd > .schema-fields { margin: 0; padding-left: 12px; border-left: 1px solid var(--line); }
-.schema-field dd > .schema-fields .schema-field { grid-template-columns: 100px minmax(0, 1fr); }
+@container (max-width: 480px) {
+  .schema-field { grid-template-columns: 1fr; gap: 4px; }
+  .schema-field > dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+}
 .schema-list { margin: 0; padding-left: 22px; }
 .schema-list li + li { margin-top: 6px; }
 .schema-list li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -257,9 +262,6 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
   .field-hint { grid-column: 2; }
   .case-detail { padding: 16px; }
   .task-content { padding-left: 0; }
-  .schema-field { grid-template-columns: 100px minmax(0, 1fr); gap: 10px; }
-  .schema-field dd > .schema-fields .schema-field { grid-template-columns: 1fr; gap: 4px; }
-  .schema-field dd > .schema-fields dt { display: flex; flex-wrap: wrap; gap: 6px; }
   .answer-block { max-height: 420px; }
   .budget-grid { grid-template-columns: 1fr; }
   .stage-summary { display: block; }

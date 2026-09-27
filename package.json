@@ -9,7 +9,8 @@
   "packageManager": "npm@11.11.0",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "agent"
   ],
   "imports": {
     "#pi-sdk": "./vendor/pi/packages/coding-agent/dist/index.js",
@@ -27,13 +28,61 @@
     "test:integration": "npm run build:app && node --test dist/tests/integration/*.test.js",
     "build:pi": "node scripts/build.mjs pi",
     "build:prime": "node scripts/build.mjs prime",
-    "worker": "node --env-file-if-exists=.env dist/apps/worker/src/cli.js"
+    "worker": "node --env-file-if-exists=.env dist/apps/worker/src/cli.js",
+    "build:agent": "node scripts/build-agent.mjs",
+    "agent": "node --env-file-if-exists=.env dist/apps/host/src/agent.js",
+    "test:agent:upstream": "vitest run --config agent/vitest.config.mjs",
+    "test:agent:browser": "node agent/tests/browser-smoke.mjs && node agent/tests/browser-conversation.mjs",
+    "test:agent:performance": "node scripts/build-agent-benchmarks.mjs && vitest run --config agent/benchmarks.config.mjs benchmarks/"
   },
   "dependencies": {
-    "ajv": "8.17.1"
+    "@lexical/history": "0.49.0",
+    "@lexical/plain-text": "0.49.0",
+    "@lexical/text": "0.49.0",
+    "@lexical/utils": "0.49.0",
+    "@shikijs/langs": "4.4.3",
+    "@tanstack/react-virtual": "3.14.13",
+    "ajv": "8.17.1",
+    "anser": "2.3.5",
+    "clsx": "2.1.1",
+    "diff": "9.0.0",
+    "immer": "10.2.0",
+    "katex": "0.16.47",
+    "lexical": "0.49.0",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-math": "3.0.0",
+    "micromark-core-commonmark": "2.0.4",
+    "micromark-extension-gfm": "3.0.0",
+    "micromark-extension-math": "3.1.0",
+    "micromark-factory-space": "2.1.0",
+    "micromark-util-character": "2.1.1",
+    "micromark-util-classify-character": "2.0.1",
+    "micromark-util-sanitize-uri": "2.0.1",
+    "micromark-util-symbol": "2.0.1",
+    "picomatch": "4.0.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "shiki": "4.4.3",
+    "simple-icons": "16.31.0",
+    "use-sync-external-store": "1.2.0",
+    "ws": "8.22.0",
+    "zod": "4.6.5",
+    "zustand": "4.4.7"
   },
   "devDependencies": {
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/node": "24.10.0",
-    "typescript": "5.9.3"
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.25.12",
+    "fast-check": "4.10.2",
+    "jsdom": "29.1.1",
+    "playwright": "1.63.0",
+    "typescript": "5.9.3",
+    "vite": "6.4.3",
+    "vitest": "3.2.7"
   }
 }

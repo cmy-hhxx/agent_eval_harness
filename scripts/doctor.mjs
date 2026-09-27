@@ -17,7 +17,7 @@ for (const [command, args, expected] of [
     console.error(`${command}: expected ${expected}, got ${actual || result.error}`);
   } else console.log(`${command}: ${actual}`);
 }
-for (const [engine, item] of Object.entries(upstream)) {
+for (const [engine, item] of Object.entries(upstream).filter(([name]) => name === "pi" || name === "prime")) {
   try {
     const stamp = JSON.parse(await readFile(path.join(root, ".runtime", `${engine}.json`), "utf8"));
     const directory = path.join(root, item.directory);

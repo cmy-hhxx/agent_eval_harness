@@ -50,7 +50,7 @@
 | Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
 | Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
 
-Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison 与 Rewrite 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema，不再维护第二份副本。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写产物另由 `schemas/workflow/commentary.schema.json` 描述。
+Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison、Rewrite 与 Clustering 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写与聚类产物分别由 `schemas/workflow/commentary.schema.json`、`schemas/workflow/clustering.schema.json` 描述。分析助手的工具输入见 [assistant/tools.json](../schemas/assistant/tools.json)，它不是评测提交 Schema。
 
 ## 输入
 
@@ -77,7 +77,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 ## 对比组
 
-参与对比的版本组合由配置的 `comparisons` 声明，每项是一组已登记版本；组内所有版本在同一次判断中比较，不限定数量或档案名，DeepSeek、Kimi 等只需登记为版本并写进同一组。每个批次内的 case 对每组生成一个对比任务；组内缺少任一有效版本则跳过该组。结果写入 `results/comparison.jsonl`。
+参与对比的版本组合由配置的 `comparisons` 声明，每项是一组已登记版本；组内所有版本在同一次判断中比较。版本的可选 `comparison_tier` 声明模型规模档位：同一组不能出现不同档位，不能让 A组Fast 与 A组Expert 排名。默认是 `[a_fast, aa_fast]`、`[a_expert, aa_expert]` 两个独立对比组。DeepSeek、Kimi 等可登记为未标档位的第三方基线，分别加入 Fast、Expert 组（如 `[a_fast, aa_fast, deepseek]` 与 `[a_expert, aa_expert, kimi]`）；若第三方也标档位，则必须与组内一致。档位按配置声明，不从版本名、适配器或真实模型 ID 猜测。每个批次内的 case 对每组生成一个对比任务；组内缺少任一有效版本则跳过该组。选多个组不会合并排名；续跑以当前对比组规划未完成任务，既有已接受结果仍保留。结果写入 `results/comparison.jsonl`。
 
 盲测标签 A、B、C… 仅属于 Comparison，按组首次随机分配并持久化，不代表实际版本或模型身份；导出时恢复稳定版本 ID。归因任务使用单数 `answer` 并可见真实版本身份。进入 Comparison 前，Workflow 对题目、标准答案、原始耗时字段、归因文本和工具可读取的 trace 使用同一份去身份视图；原始来源、归因正式结果和证据不因此改写。可区分的版本、展示名和回答模型标识在文本及结构化字段名中会遮蔽；图片字节保持原样供工具查看。单字符或与业务正文混淆的简称，以及仅隐含在正文中的身份，仍需人工检查盲测要求。组内候选的导出顺序与候选位置不影响派生判决。
 
@@ -124,7 +124,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 改写阶段可选（配置 `rewrite.comparison` / `rewrite.attribution`），把已接受的归因或对比结论润色为更简洁规整的表达。每个源结果对应一个改写任务：对比组写 `assessments[].summary`、`decision_basis.tradeoff` 和派生 `verdicts[].reason`；归因写 `summary` 和非空的 `correctness_reason`。
 
 - 输入是 Workflow 选定的文本槽位（`items[].id/label/text`），不含原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
-- 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；文本中的候选标签、数字、单位和不确定性原样保留。
+- 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；候选标签、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
 - 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写写入 `commentary.jsonl`，用 `source_task_id` 和 `source_result_id` 关联正式结果。
 - `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。
 - 续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；已接受的评测结果不受影响。

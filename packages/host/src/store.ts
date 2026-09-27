@@ -18,7 +18,7 @@ import { AgentRegistry } from "./agents.js";
 export interface EvaluationServices {
   logger?: LogSink;
   repository: RunRepository;
-  workflow: WorkflowDefinition;
+  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile">;
   agents: AgentRegistry;
 }
 
@@ -65,7 +65,7 @@ export class RunStore {
           if (
             await this.services.logger.evaluation({
               time: new Date(receipt.acceptedAt).toISOString(),
-              workflow: this.services.workflow.id,
+              workflow: this.services.taskSource.id,
               run_id: snapshot.manifest.runId,
               task_id: task.id,
               attempt_id: receipt.attemptId,
@@ -202,7 +202,7 @@ export class RunStore {
       throw new HttpError(400, "Invalid tool audit");
     let evaluation: unknown;
     try {
-      const binding = this.services.workflow.bind(task, this.inputs, await this.dependencies(task));
+      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task));
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
       this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {

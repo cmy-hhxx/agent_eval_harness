@@ -279,6 +279,20 @@ export async function readRegisteredInput(run: string, inputId: string): Promise
   };
 }
 
+/** Business ID -> locator -> source body; no raw input is copied into a run. */
+export async function locateAnalysisInput(run: string, inputId: string) {
+  const saved = await checkpoint(run);
+  const candidate = saved.inputs[inputId];
+  if (!candidate) throw new Error("输入未登记：" + inputId);
+  return { run, inputId, candidate: { ...candidate, input_id: inputId }, config: saved.config as EvalConfig };
+}
+export async function readAnalysisInput(locator: Awaited<ReturnType<typeof locateAnalysisInput>>) {
+  const { candidate, config } = locator;
+  const version = config.inputs.versions.find((entry) => entry.id === candidate.version);
+  if (!version) throw new Error("输入版本未登记：" + candidate.version);
+  return (await locateRecordStream(candidate.source, candidate, version, config.inputs.default_batch_id)).raw;
+}
+
 export interface ProblemClassView {
   id: string;
   label: string;

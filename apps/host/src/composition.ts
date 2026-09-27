@@ -16,7 +16,7 @@ export const agents = new AgentRegistry([comparisonAgent, attributionAgent, rewr
 export const services = {
   logger,
   agents,
-  workflow: comparisonWorkflow,
+  taskSource: comparisonWorkflow,
   repository: comparisonRepository,
   runtime: runtimePaths,
   report: reportRun,

@@ -78,18 +78,49 @@ test("named datasets index only business coordinates and select exact model file
   }
 });
 
+test("resume plans the current fair groups within the original model selection", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const original = await buildPlan(config);
+    const state: RunState = {
+      manifest: {
+        format: "evaluation-run", debug: false, runId: "resume", status: "interrupted",
+        engine: fakeIdentity, evaluatorVersion: "fixture", config: structuredClone(config),
+        tasks: original.tasks, inputCatalog: original.catalog, inputs: {},
+        states: Object.fromEntries(original.tasks.map((task) => [task.id, { status: "pending", attempts: 0 }])),
+        preflight: original.summary, startedAt: Date.now(),
+      },
+      receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
+    };
+    config.comparisons = [["a_fast", "aa_fast"], ["a_expert", "aa_expert"]];
+    const resumed = await reconcileRun(directory, state, config);
+    assert.deepEqual(resumed.summary.comparisons, config.comparisons);
+    assert.equal(resumed.summary.comparison_tasks, 2);
+    assert(resumed.tasks.some((task) => task.id === original.tasks.find((old) => old.stage === "comparison")!.id));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("CLI indexes a named dataset and preflights it without scanning unrelated model files", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const overlay = path.join(directory, "comparison.json");
-    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "a_expert"]] }));
+    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "aa_fast"]] }));
+    await writeJsonl(config.inputs.versions.find((v) => v.id === "aa_fast")!.sources[0]!.path, [{
+      ...raw(),
+      messages: [
+        { type: "user_question", role: "user", content: "计算2+2" },
+        { type: "final_answer", role: "assistant", content: "2+2=4" },
+      ],
+    }]);
     const catalog = path.join(directory, "catalog");
     const args = ["--config", path.join(ROOT, "configs/host.json"), "--config", overlay, "--catalog", catalog];
     const entry = path.join(ROOT, "dist/apps/host/src/cli.js");
     const env = { ...process.env, EVAL_BASE_URL: "http://127.0.0.1:1/v1" };
     const { stdout } = await exec(process.execPath, [entry, "index", ...args,
       "--dataset", "competitor", "--dataset-name", "竞品对比",
-      ...["a_fast", "a_expert"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),
+      ...["a_fast", "aa_fast"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),
     ], { env });
     assert.equal(JSON.parse(stdout).valid, 2);
     const { stdout: preflight } = await exec(process.execPath,
@@ -113,7 +144,7 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
 test("a named dataset supplies its ID as the batch only for records missing batch_id", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    config.inputs.versions = config.inputs.versions.slice(0, 2);
+    config.inputs.versions = [config.inputs.versions[0]!, config.inputs.versions[2]!];
     config.comparisons = [[config.inputs.versions[0]!.id, config.inputs.versions[1]!.id]];
     const missingBatch = raw();
     delete missingBatch.batch_id;
@@ -136,7 +167,7 @@ test("index errors contain locations rather than raw messages and cannot be sele
   const { directory, config } = await fixtureConfig();
   try {
     const catalog = path.join(directory, "catalog");
-    config.inputs.versions = config.inputs.versions.slice(0, 2);
+    config.inputs.versions = [config.inputs.versions[0]!, config.inputs.versions[2]!];
     config.comparisons = [[config.inputs.versions[0]!.id, config.inputs.versions[1]!.id]];
     const good = await indexDataset(config, catalog, "dataset", "评测集");
     assert.equal(good.invalid, 0);

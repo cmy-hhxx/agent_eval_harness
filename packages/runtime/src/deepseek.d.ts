@@ -1,0 +1,40 @@
+/** Typed application seam over the bundled upstream implementation. */
+import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
+import type { JsonObject } from "@eval/contracts";
+export class Context {
+  effect(callback: () => (() => void), name?: string): () => void;
+  fiber: { dispose(): Promise<void> };
+}
+export interface Peer { id: string; ctx: Context; dispose(): Promise<void> }
+export class RemoteStreamMuxServer {
+  constructor(open: (endpoint: string, payload: unknown, uplink: AsyncIterable<unknown>, peer: Peer, control: AbortController) => Promise<AsyncIterable<unknown>>, failure: (error: unknown) => unknown, heartbeat: number, inboxBytes: number);
+  handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, peer: Peer): void;
+  close(): Promise<void>;
+}
+export class RemoteStreamMuxClient {
+  constructor(endpointUrl?: string);
+  start(): void;
+  close(): Promise<void>;
+  open(endpoint: string, payload: unknown, signal: AbortSignal): AsyncIterable<unknown>;
+}
+export function rpcFetchHandler(channel: string, handler: (endpoint: string, payload: unknown, signal: AbortSignal, peer: Peer) => Promise<unknown>, peer: Peer): { fetch(request: Request): Promise<Response> };
+export function bootThemeInjections(preference: "light", fontSize?: number): { kind: string; text: string; placement?: string }[];
+export const SESSION_FORMAT_VERSION: number;
+export class AssistantStreamAccumulator {
+  push(value: {time: number; chunk: JsonObject}): unknown;
+  snapshot(): JsonObject[];
+}
+export class SessionAssistantStreamAccumulator {
+  accept(frame: JsonObject, durableCursor: number): void;
+  snapshot(): JsonObject;
+}
+export function createUserMessage(input: JsonObject): JsonObject;
+export function createAssistantMessage(input: JsonObject): JsonObject;
+export function createToolResultMessage(input: JsonObject): JsonObject;
+export function createSystemMessage(text: string): JsonObject;
+
+export class RemoteStreamCarrierError extends Error {}
+export function assistantSettingsDescribe(): JsonObject;
+
+export function createAssistantMetrics(): {accept(event: import("@eval/contracts").AssistantEvent): void; view(): JsonObject};

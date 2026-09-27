@@ -185,7 +185,7 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
       identity,
       output: { kind: "directory" as const, path: directory },
       plan: dependentPlan,
-      workflow: dependentWorkflow,
+      taskSource: dependentWorkflow,
       repository,
       agents: new AgentRegistry([
         {
@@ -302,7 +302,7 @@ test("parallel runs isolate sessions, workspaces, results and cancellation; comp
     identity,
     output: { kind: "directory" as const, path: directory },
     plan,
-    workflow,
+    taskSource: workflow,
     repository,
     agents: new AgentRegistry([agent]),
     runtime: { root: directory, workerEntry: "unused-with-external-workers" },

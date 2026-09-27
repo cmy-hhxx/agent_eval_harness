@@ -11,7 +11,9 @@ flowchart LR
   CLI --> Host
   CLI --> Agents[Comparison / Attribution / Rewrite / Clustering Profiles]
   CLI --> Workflow[Comparison Workflow]
-  Workflow --> Data[Data Repository]
+  Assistant[独立分析助手] --> Host
+  Assistant --> Data[Data Repository]
+  Workflow --> Data
   Host <-->|HTTP / JSON + SSE| Pi[Pi Worker]
   Host <-->|HTTP / JSON + SSE| Prime[Prime Worker]
   Pi --> PiSDK[vendored Pi SDK]
@@ -22,7 +24,8 @@ flowchart LR
 
 | 位置 | 职责 |
 |---|---|
-| `apps/host`、`apps/worker` | CLI、本机看板、配置、具体 Agent / Workflow / 底座组装 |
+| `apps/host`、`apps/worker` | CLI、本机看板、分析助手入口、配置、具体 Agent / Workflow / 底座组装 |
+| `agent` | 独立 Web 对话、分析工具及 Deepseek 客户端装配；能力通过 Contracts 注入 |
 | `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
@@ -31,11 +34,12 @@ flowchart LR
 | `packages/agents/src/attribution` | 归因 Profile、业务校验；只描述问题，不维护问题库；使用集中提示词与根目录 `schemas/attribution` |
 | `packages/agents/src/clustering` | 聚类 Profile、纯问题库归类/合并与数量上限校验；文件读写和锁属于 Data；使用集中提示词与根目录 `schemas/clustering` |
 | `packages/workflows/src/comparison` | 适配器注册表、评测集元信息抽取、配置化分组对比、盲测、依赖与材料映射、改写组合、状态编解码、报告 |
-| `packages/data` | 本地源读取与输入索引存储、原子状态保存、结果追加、锁 |
+| `packages/data` | 本地源读取与输入索引存储、原子状态保存、结果及会话记录追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物；执行逻辑不保存模型可见描述 |
-| `packages/prompts` | 集中维护四阶段规则、任务材料/预算/恢复文案、九个内置工具描述及组装顺序；专家示例尚未启用 |
-| `schemas` | 集中维护 Attribution、Comparison、Rewrite、Clustering 与 Workflow 的 JSON Schema |
+| `packages/prompts` | 集中维护四阶段评测规则、总分析助手提示词、任务材料/预算/恢复文案及工具描述；专家示例尚未启用 |
+| `schemas` | 集中维护四阶段、Workflow 导出及分析助手工具输入的 JSON Schema |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
+| `vendor/deepseek` | 分析助手移植的 Deepseek 客户端、传输及会话投影源码；来源与局部修改见 [Agent 说明](../agent/README.md#模块与上游) |
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
@@ -89,7 +93,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，评测集目录只保存显式来源和逐行字节坐标（不保存消息正文），任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
 
-归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
+归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。组合属于 Workflow。
 
 改写已实现于 `packages/agents/src/rewrite`：它只接收 Workflow 选定的文本槽位，输出同 id 的润色文本；正式结果 JSONL 保留裁判原文，改写写入 `results/commentary.jsonl`，报告与逐题总结优先展示改写文案。
 
@@ -135,3 +139,11 @@ await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 Pi 的本地 vendor 修改关闭内置模型与图片 Provider 登记。构建不生成或加载第三方模型数据；Worker 只注册应用从 `.env` 网关和运行配置解析出的模型，并关闭自动网络刷新。具体修改记录在 `vendor/upstream.json`。
 
 构建记录位于 `.runtime/pi.json`、`.runtime/prime.json`，记录显式版本、上游提交和随机构建 UUID；启动及 doctor 检查版本、入口与运行能力。修改源码必须重建。更新上游属于显式升级，需要更新提交、锁文件、来源清单并重新验证，不在运行时自动升级；哈希与兼容约束见[开发指南](development.md#禁止项目哈希与兼容层)。
+
+## 独立分析助手
+
+[agent/](../agent/README.md) 为用户提供独立 Web 对话。总 Agent 通过 Contracts 中的数据源、专业任务网关与 Session 接口访问能力；应用 Host 注入具体实现。专业 Agent 互不导入，也不依赖总 Agent。
+
+Host 的 `taskSource` 只需要 `id`、`bind` 和可选 `reconcile`，既接收 Workflow 定义，也接受已经准备好材料的独立专业任务；Worker、业务校验、正式结果提交与同 run ID 恢复共享同一生命周期。原有 Workflow 组合职责不变。
+
+Runtime 将 Pi 的事件转换为 Deepseek Session 事件和 Assistant 流，前端只接收上游模型。HTTP RPC、WebSocket 多路流、连接代次、完整 baseline、增量组装及渲染来自记录基线源码。Data 维护权威追加记录和持锁执行者；本机其他副本转发至该执行者，确认 PID 退出后接管。原始材料通过业务定位引用重读，Pi 内存历史从追加记录恢复。

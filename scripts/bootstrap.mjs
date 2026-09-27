@@ -2,7 +2,7 @@ import { root, upstream, run } from "./lib.mjs";
 import path from "node:path";
 
 await run("npm", ["ci", "--ignore-scripts"]);
-for (const item of Object.values(upstream))
+for (const item of [upstream.pi, upstream.prime])
   await run("npm", ["ci", "--ignore-scripts"], path.join(root, item.directory));
 await run("uv", ["venv", "--allow-existing", "--python", "3.12.12", path.join(root, ".venv")]);
 process.env.UV_PROJECT_ENVIRONMENT = path.join(root, ".runtime/prime-python");

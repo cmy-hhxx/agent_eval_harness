@@ -12,6 +12,8 @@ export interface VersionConfig {
   id: string;
   name: string;
   display_name?: string;
+  /** Declared size class for fair comparisons; unclassified external baselines may join either class. */
+  comparison_tier?: string;
   sources: InputSource[];
   adapter: string;
   timing_unit?: "ms" | "s";

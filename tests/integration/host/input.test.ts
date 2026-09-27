@@ -80,6 +80,57 @@ test("configuration composes layered files and resolves bound models", async () 
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
 });
 
+test("default comparisons plan separate Fast and Expert matches", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const loaded = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "https://gateway.example/v1" });
+    config.comparisons = loaded.evaluation.comparisons;
+    const plan = await buildPlan(config);
+    assert.deepEqual(plan.summary.comparisons, [
+      ["a_fast", "aa_fast"], ["a_expert", "aa_expert"],
+    ]);
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
+      .map((task) => (task.data as TaskData).group), plan.summary.comparisons);
+    assert.equal(plan.summary.attribution_tasks, 4);
+    assert.equal(plan.summary.comparison_tasks, 2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("comparison tiers reject Fast/Expert mixing, but allow a third model in each group", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const file = path.join(directory, "comparison.json");
+    await writeFile(file, JSON.stringify({ comparisons: [["a_fast", "a_expert"]] }));
+    await assert.rejects(loadConfig([path.join(ROOT, "configs/host.json"), file], { EVAL_BASE_URL: "https://gateway.example/v1" }), /Fast.*Expert|fast.*expert/i);
+    config.comparisons = [["a_fast", "a_expert"]];
+    await assert.rejects(buildPlan(config), /Fast.*Expert|fast.*expert/i);
+    await assert.rejects(loadConfig(path.join(ROOT, "configs/host.json"),
+      { EVAL_BASE_URL: "https://gateway.example/v1" }, { versions: ["a_fast", "a_expert"] }),
+    /没有可比较的组合/);
+    for (const [id, name] of [["deepseek", "DeepSeek"], ["kimi", "Kimi"]] as const) {
+      const source = path.join(directory, `${id}.jsonl`);
+      await writeJsonl(source, [raw("q1")]);
+      config.inputs.versions.push({ id, name, adapter: "a", sources: [{ kind: "file", path: source }] });
+    }
+    config.comparisons = [["a_fast", "aa_fast", "deepseek"], ["a_expert", "aa_expert", "kimi"]];
+    const root = path.join(ROOT, "configs/host.json");
+    const loaded = await loadConfig(root, { EVAL_BASE_URL: "https://gateway.example/v1" });
+    await writeFile(file, JSON.stringify({
+      inputs: { versions: [...loaded.evaluation.inputs.versions, ...config.inputs.versions.slice(4)] },
+      comparisons: config.comparisons,
+    }));
+    assert.deepEqual((await loadConfig([root, file], { EVAL_BASE_URL: "https://gateway.example/v1" })).evaluation.comparisons, config.comparisons);
+    const plan = await buildPlan(config);
+    assert.equal(plan.summary.comparison_tasks, 2);
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
+      .map((task) => (task.data as TaskData).group), config.comparisons);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("directory input paths merge matching files from date folders", async () => {
   const { directory, config } = await fixtureConfig();
   try {

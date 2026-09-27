@@ -68,11 +68,12 @@ async function closeProcess(proc: ChildProcess): Promise<void> {
 export async function consumeEvents(
   url: string,
   attemptId: string,
-  file: string,
+  file: string | undefined,
   signal: AbortSignal,
+  onEvent?: (event: WorkerEvent) => void,
 ): Promise<boolean> {
   let cursor = 0;
-  await mkdir(path.dirname(file), { recursive: true });
+  if (file) await mkdir(path.dirname(file), { recursive: true });
   while (!signal.aborted) {
     try {
       const response = await fetch(`${url}/api/attempts/${attemptId}/events?after=${cursor}`, { signal });
@@ -90,7 +91,8 @@ export async function consumeEvents(
           const event = JSON.parse(line.slice(6)) as WorkerEvent;
           if (event.attemptId !== attemptId || event.seq <= cursor) continue;
           if (event.seq !== cursor + 1) throw new Error("Event sequence gap");
-          await appendFile(file, JSON.stringify(event) + "\n");
+          if (file) await appendFile(file, JSON.stringify(event) + "\n");
+          onEvent?.(event);
           cursor = event.seq;
           if (event.type === "finished") return true;
         }

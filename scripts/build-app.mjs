@@ -24,3 +24,5 @@ async function resources(directory) {
 await resources("packages/agents/src");
 await resources("packages/prompts/resources");
 await resources("schemas");
+
+await run("node", ["scripts/build-agent.mjs"]);

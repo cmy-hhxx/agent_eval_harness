@@ -71,13 +71,24 @@
       ],
       "@eval/host-app/composition": [
         "./apps/host/src/composition.ts"
+      ],
+      "@eval/runtime/assistant": [
+        "./packages/runtime/src/assistant.ts"
+      ],
+      "@eval/assistant": [
+        "./agent/src/core/index.ts"
+      ],
+      "@eval/assistant/server": [
+        "./agent/src/server/index.ts"
       ]
     }
   },
   "include": [
     "apps/*/src/**/*.ts",
     "packages/*/src/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "agent/src/**/*.ts",
+    "agent/tests/**/*.ts"
   ],
   "exclude": [
     "vendor",

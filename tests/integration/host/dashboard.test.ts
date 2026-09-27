@@ -545,6 +545,8 @@ test("run-scoped settings are validated with the same model and execution config
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
+    const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
+    assert.deepEqual(fairSettings.comparisons, [["a_fast", "aa_fast"], ["a_expert", "aa_expert"]]);
     const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
       versions: ["a_fast", "aa_fast"],
     });

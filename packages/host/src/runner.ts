@@ -50,6 +50,7 @@ export interface RunOptions extends EvaluationServices {
   engineForTask?: (task: PlannedTask) => Engine;
   identities?: Partial<Record<Engine, EngineIdentity>>;
   onProgress?: (message: string) => void;
+  onEvent?: (event: unknown) => void;
 }
 export async function runEvaluation(options: RunOptions) {
   safeId(options.runId);
@@ -85,8 +86,8 @@ export async function runEvaluation(options: RunOptions) {
     let inputs = options.plan.inputs;
     if (await exists(layout.stateFile)) {
       saved = await options.repository.readRun(run);
-      if (options.workflow.reconcile)
-        inputs = (await options.workflow.reconcile(run, saved, options.config)).inputs;
+      if (options.taskSource.reconcile)
+        inputs = (await options.taskSource.reconcile(run, saved, options.config)).inputs;
       else inputs = options.plan.inputs;
       saved.manifest.engine = identity;
       saved.manifest.evaluatorVersion = options.evaluatorVersion;
@@ -335,12 +336,13 @@ export async function runEvaluation(options: RunOptions) {
               throw error;
             }
           }
-          if (manifest.debug)
+          if (manifest.debug || options.onEvent)
             stream = consumeEvents(
               workerUrl,
               spec.attemptId,
-              path.join(attemptDir, "events.jsonl"),
+              manifest.debug ? path.join(attemptDir, "events.jsonl") : undefined,
               eventController.signal,
+              options.onEvent,
             );
           while (true) {
             if (controller.signal.aborted || Date.now() > spec.deadline) {
@@ -565,7 +567,7 @@ export async function runEvaluation(options: RunOptions) {
           continue;
         }
         if (dependencies.some((s) => s !== "succeeded")) continue;
-        const binding = options.workflow.bind(task, inputs, await current.dependencies(task));
+        const binding = options.taskSource.bind(task, inputs, await current.dependencies(task));
         const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(
           (w) =>

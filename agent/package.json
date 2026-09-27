@@ -1,0 +1,9 @@
+{
+  "name": "@eval/assistant",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.d.ts", "import": "./index.js" },
+    "./server": { "types": "./server.d.ts", "import": "./server.js" }
+  }
+}

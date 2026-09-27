@@ -240,6 +240,15 @@ export function taskIdentity(data: TaskData): { batch_id: string; case_id: strin
   const c = taskCase(data);
   return { batch_id: c.batch_id, case_id: c.case_id };
 }
+/** Prevent a comparison task from ranking answers of different declared size classes. */
+export function assertComparableGroups(config: Pick<EvalConfig, "inputs" | "comparisons">): void {
+  const tiers = new Map(config.inputs.versions.map((version) => [version.id, version.comparison_tier]));
+  for (const group of config.comparisons) {
+    const declared = new Set(group.map((id) => tiers.get(id)).filter((tier): tier is string => !!tier));
+    if (declared.size > 1)
+      throw new Error(`对比组混合了不同模型规模（${[...declared].join(" / ")}）：${group.join(" / ")}`);
+  }
+}
 export interface PlanOptions {
   /** Skip raw input materialization when only task counts or summaries are needed. */
   materializeInputs?: boolean;
@@ -249,6 +258,7 @@ export async function buildPlan(
   previous?: TaskPlan,
   options: PlanOptions = {},
 ): Promise<TaskPlan> {
+  assertComparableGroups(config);
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
   const oldRecords = new Map(
     (

@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-delegated: plain HTML/CSS/JavaScript served by the existing TypeScript Host; keep the service dependency-free and local-only.
+看板：原有 TypeScript Host + 原生 HTML/CSS/JavaScript。独立分析 Agent：TypeScript Host + Pi，直接移植 Deepseek 的 React 组件、样式、状态与流式传输；两者独立启动并只监听本机。
 
 ## Users
 
@@ -48,3 +48,11 @@ delegated: plain HTML/CSS/JavaScript served by the existing TypeScript Host; kee
 ## Accessibility & Inclusion
 
 看板应支持键盘操作、可见焦点、足够的文字对比度，并在窄屏下保持任务控制可用。
+
+## 独立评测分析助手
+
+根目录 `agent/` 提供面向评测分析的对话入口，通过 `bash agent/run.sh` 启动并打开浏览器。直接复用 Deepseek 的浅色组件与样式，不开发替代视觉；移除 Logo 与官方品牌标识，不提供深色、跟随系统、模型市场或通用编程入口。
+
+助手自主读取已登记材料、调用 Attribution / Comparison、解释正式结果并保存带引用的 Markdown 总结。原始消息只通过业务引用定位本地源文件并读取，不复制到会话。Session、专业任务和产物按 userId 隔离；本机副本共享数据目录，由文件锁保持单个执行者。使用与验证见 [Agent 说明](agent/README.md)。
+
+分析助手通过左下角“常用模型”勾选 `.env` 网关提供的模型，在输入框切换模型和推理等级。思考、工具过程、结果卡片与用量统计沿用上游组件；正文里的 provider `<think>` 包装由服务端转换，不显示为回答文本。

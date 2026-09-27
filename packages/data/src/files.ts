@@ -149,6 +149,16 @@ export class ArtifactStore {
   }
 }
 
+/** Read-only liveness check; never steals a lock from a living process. */
+export async function hasLiveRunOwner(directory: string): Promise<boolean> {
+  const file = path.join(directory, ".run-lock");
+  let owner: { pid: number };
+  try { owner = await readJson<{ pid: number }>(file); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+  try { process.kill(owner.pid, 0); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+}
+
 export async function runLock(directory: string): Promise<() => Promise<void>> {
   await mkdir(directory, { recursive: true });
   const file = path.join(directory, ".run-lock");

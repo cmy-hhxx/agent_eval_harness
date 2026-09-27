@@ -433,3 +433,4 @@ export interface FailureContext {
 }
 
 export * from "./validation.js";
+export type * from "./assistant.js";

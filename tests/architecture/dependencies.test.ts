@@ -17,8 +17,9 @@ async function files(directory: string): Promise<string[]> {
     )
   ).flat();
 }
-const owner = (file: string) => file.split("/").slice(0, 2).join("/");
+const owner = (file: string) => file.startsWith("agent/") ? "agent/assistant" : file.split("/").slice(0, 2).join("/");
 const allowed: Record<string, string[]> = {
+  assistant: ["contracts", "prompts", "tools", "runtime"],
   contracts: [],
   prompts: ["contracts"],
   data: ["contracts"],
@@ -32,8 +33,8 @@ const allowed: Record<string, string[]> = {
 test("public package boundaries, independent Agents and acyclic implementation imports", async () => {
   const config = JSON.parse(await readFile(path.join(root, "tsconfig.json"), "utf8"));
   const aliases = config.compilerOptions.paths as Record<string, string[]>;
-  const sources = [...(await files("packages")), ...(await files("apps"))].filter(
-    (file) => file.includes("/src/") && file.endsWith(".ts") && !file.endsWith(".test.ts"),
+  const sources = [...(await files("packages")), ...(await files("apps")), ...(await files("agent/src"))].filter(
+    (file) => file.includes("/src/") && /\.(?:ts|js)$/.test(file) && !file.endsWith(".test.ts"),
   );
   const graph = new Map<string, string[]>();
   for (const file of sources) {
@@ -61,12 +62,12 @@ test("public package boundaries, independent Agents and acyclic implementation i
         target = path.normalize(path.join(path.dirname(file), specifier)).replace(/\.js$/, ".ts");
         if (specifier.endsWith(".json"))
           assert(target.startsWith("schemas/"), `${file}: relative JSON imports must come from root schemas/`);
-        else assert.equal(owner(target), from, `${file}: cross-package relative import ${specifier}`);
+        else if (!((file === "packages/runtime/src/deepseek.js" || file.startsWith("agent/src/client/")) && target.startsWith("vendor/deepseek/"))) assert.equal(owner(target), from, `${file}: cross-package relative import ${specifier}`);
       } else if (specifier.startsWith("@eval/")) {
         assert(aliases[specifier], `${file}: undeclared public entry ${specifier}`);
         target = aliases[specifier][0].replace(/^\.\//, "");
         const targetPackage = owner(target).split("/")[1];
-        if (from.startsWith("packages/") && owner(target) !== from)
+        if ((from.startsWith("packages/") || from.startsWith("agent/")) && owner(target) !== from)
           assert(
             allowed[pkg].includes(targetPackage) && target.startsWith("packages/"),
             `${file}: forbidden dependency ${specifier}`,
@@ -114,16 +115,41 @@ test("public package boundaries, independent Agents and acyclic implementation i
   }
 });
 
-test("documentation links resolve and no replaced package paths remain", async () => {
-  const docs = ["README.md", "AGENTS.md", ...(await files("docs"))].filter((file) => file.endsWith(".md"));
+test("documentation links and section anchors resolve; no replaced package paths remain", async () => {
+  const docs = [
+    "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "schemas/README.md",
+    "packages/prompts/README.md", ...(await files("docs")),
+  ].filter((file) => file.endsWith(".md"));
+  const links = new Map<string, string[]>();
+  const headings = (text: string) => new Set(
+    [...text.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, title]) =>
+      title.replace(/<[^>]+>/g, "").replace(/[`*_]/g, "").toLowerCase()
+        .replace(/[^\p{L}\p{N}\p{M}_ -]/gu, "").replace(/ /g, "-")),
+  );
   for (const file of docs) {
     const text = await readFile(path.join(root, file), "utf8");
+    const targets: string[] = [];
     for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-      const href = match[1].split("#")[0];
-      if (!href || /^[a-z]+:/i.test(href)) continue;
-      await access(path.resolve(root, path.dirname(file), href));
+      const [href, anchor] = match[1].split("#");
+      if (/^[a-z]+:/i.test(href)) continue;
+      const target = path.resolve(root, path.dirname(file), href || path.basename(file));
+      await access(target);
+      targets.push(path.relative(root, target));
+      if (anchor && target.endsWith(".md")) {
+        const linked = await readFile(target, "utf8");
+        assert(headings(linked).has(decodeURIComponent(anchor)), `${file}: missing section ${match[1]}`);
+      }
     }
+    links.set(file, targets);
   }
+  const reachable = new Set<string>();
+  const visit = (file: string) => {
+    if (reachable.has(file)) return;
+    reachable.add(file);
+    for (const target of links.get(file) ?? []) if (links.has(target)) visit(target);
+  };
+  visit("README.md");
+  for (const file of docs) assert(reachable.has(file), `${file}: not reachable from README.md`);
   const paths = [
     ...docs,
     ...(await files("scripts")),

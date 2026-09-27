@@ -1,0 +1,10 @@
+{
+  "list_data": "查询共享只读评测数据目录。省略 runId 列出运行；提供 runId 分页查询输入和任务业务引用。",
+  "read_data": "按业务引用读取正式结果或原始消息；原始消息先定位再读取。支持分页，结果保留可追溯引用。",
+  "search_data": "在指定原始输入中搜索文本，返回匹配消息索引和片段，支持分页。",
+  "view_image": "按输入引用及 messageIndex 读取原始消息中的图片，仅查看已有材料。",
+  "calculate": "执行精确十进制计算；operation 为 add、subtract、multiply、divide，operands 使用十进制字符串。",
+  "call_specialist": "独立调用 Attribution 或 Comparison。只提交登记的输入引用；Comparison 必须引用已接受的归因，缺少时返回 missingAttributions。operationId 使用 UUID，相同 ID 重试查询已接受结果。",
+  "read_specialist": "按 operationId 查询本会话专业任务的正式结果及 evaluatorVersion。",
+  "save_summary": "保存 Markdown 总结产物。references 必须引用已接受的专业结果，服务端核验后保存；不得伪造正式判词。"
+}

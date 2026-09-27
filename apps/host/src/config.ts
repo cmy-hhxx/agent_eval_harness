@@ -2,7 +2,7 @@ import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import type { EvalConfig } from "@eval/workflows/comparison";
-import { inputAdapterIds } from "@eval/workflows/comparison";
+import { assertComparableGroups, inputAdapterIds } from "@eval/workflows/comparison";
 import {
   THINKING_LEVELS,
   type ModelCatalog,
@@ -180,6 +180,9 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     if (!/^[a-z][a-z0-9_]*$/.test(item.id) || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
     if (!Array.isArray(item.sources) || !item.sources.length) throw new Error("Missing input sources");
+    if (item.comparison_tier !== undefined &&
+        (typeof item.comparison_tier !== "string" || !item.comparison_tier.trim()))
+      throw new Error(`Invalid comparison_tier for ${item.id}`);
     item.timing_unit ??= config.inputs.timing_unit ?? "ms";
     if (!["ms", "s"].includes(item.timing_unit)) throw new Error("Invalid timing unit");
   }
@@ -205,6 +208,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     seenGroups.add(key);
   }
   config.comparisons = rawGroups as string[][];
+  assertComparableGroups(config);
   for (const key of [
     "concurrency",
     "timeoutSeconds",
@@ -305,6 +309,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
     },
     rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true },
     clustering: { enabled: clustering.enabled === true },
+    comparisons: Array.isArray(source.comparisons) ? source.comparisons : [],
     models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
       isObject(version) && typeof version.id === "string"
         ? [{ id: version.id, name: String(version.display_name || version.name || version.id) }]

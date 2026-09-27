@@ -45,3 +45,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[]) {
     },
   };
 }
+
+export function assistantPrompt() {
+  return { systemPrompt: resource("assistant/system.md"), recoveryMessage: resource("assistant/recovery.md"), toolDescriptions: JSON.parse(resource("assistant/tools.json")) as Record<string, string> };
+}

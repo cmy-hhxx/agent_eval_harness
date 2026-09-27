@@ -17,6 +17,10 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 阅读顺序：先看本页和 `AGENTS.md`；定位任务后只打开对应文档和源码入口。规则只维护一份，其他页面通过链接引用。
 
+## 独立分析 Agent
+
+配置根目录 `.env` 后运行 `bash agent/run.sh`，浏览器会打开浅色评测分析助手。支持 `--port`、`--user`、`--no-open`；对话、独立 Attribution / Comparison 调用、原始数据引用与多副本恢复见 [Agent 使用说明](agent/README.md)。看板仍使用根目录 `bash run.sh`。
+
 ## 最短运行路径
 
 ```bash
@@ -38,6 +42,6 @@ npm run eval -- run --engine pi --run-id pi-001 \
 
 默认结果写入 `data/runs/comparison/<run-id>/`，日志写入 `log/runtime.log` 和 `log/evaluation.log`。同一个 `run-id` 会续跑未完成和新增任务，并保留已接受任务；输入、选择、模型和恢复细节见[使用指南](docs/usage.md#运行与恢复)。需要按样本查看输入、正式输出和 Agent 状态，或在页面预检并启动运行，在项目根目录执行 `bash run.sh`；详情见[本机看板](docs/usage.md#本机运行看板)。
 
-输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；对比组由 `comparisons` 配置，不依赖目录命名。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。按日期或名称组织的多模型文件可用 `eval index --dataset ...` 登记为评测集，再用 `preflight/run --dataset ...` 选择；索引只保存定位信息，完整消息仍留在源文件，详见[输入治理](docs/usage.md#输入治理)。不要修改入库的原始输入、评测结果或 `dist/`。
+输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；默认分为 A组Fast vs AA组Fast、A组Expert vs AA组Expert 两组；`comparisons` 可为任一组增加 DeepSeek、Kimi 等第三方模型，但不能混排 Fast 与 Expert（由 `comparison_tier` 校验）。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。按日期或名称组织的多模型文件可用 `eval index --dataset ...` 登记为评测集，再用 `preflight/run --dataset ...` 选择；索引只保存定位信息，完整消息仍留在源文件，详见[输入治理](docs/usage.md#输入治理)。不要修改入库的原始输入、评测结果或 `dist/`。
 
 固定工具版本见 [mise.toml](mise.toml)，底座版本与来源见 [vendor/upstream.json](vendor/upstream.json)。

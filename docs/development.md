@@ -29,6 +29,7 @@
 | 输入适配、分组、盲测、报告 | `packages/workflows/src/comparison` | 注册表、映射、编解码、结果 |
 | 本地存储、锁、日志 | `packages/data` | 原子保存、追加、恢复、并行写入 |
 | 调度、收据、恢复 | `packages/host`、`packages/runtime` | 重复提交、断连、失败状态 |
+| 独立分析助手 | `agent/src`、`apps/host/src/assistant-*`、`packages/runtime/src/assistant-*`、`packages/data/src/assistant-store.ts` | 会话追加、专业任务恢复、网关模型、浏览器回归；详见 [Agent 验证](../agent/README.md#验证) |
 | 工具与 SDK | `packages/tools`、`packages/runtime/src/adapters` | 预算、回收、真实 SDK 集成 |
 | 安装、构建、依赖 | `scripts`、锁文件 | 独立构建、doctor、干净安装 |
 
@@ -78,3 +79,7 @@ README 是唯一入口；正文按使用、契约、架构、开发、质量和�
 - 先给结论和最短操作，再按需要展开细节；不要把实现历史、完成计划或重复字段表写进长期文档。
 - 行为变更与文档同步；校对提示词、工具描述、错误修复提示、测试名称和 Schema 字段。
 - 临时计划和验证日志放 `.artifacts/`；历史通过 Git 查阅，不建立 archive 文档树。
+
+## 独立分析 Agent 验证
+
+总 Agent 的上游回归、浏览器、视觉与性能命令见 [Agent 验证](../agent/README.md#验证)。`build:app` 同时编译 Runtime 的上游桥接与 Web 资源；不需要相邻的 Deepseek 仓库。源代码移植维护使用 `scripts/vendor-deepseek.mjs`，局部修改集中记录在 `vendor/deepseek/local.patch` 和 `vendor/upstream.json`。
