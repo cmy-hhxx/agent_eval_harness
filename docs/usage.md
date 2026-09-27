@@ -66,6 +66,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
 | `configs/models.example.json` | 本地模型配置模板，复制为 `configs/local/models.json` 后填写模型 ID | 是 |
 | `configs/local/` | 本机配置（如 `models.json`），可覆盖或补充共享配置；路径同样相对于配置文件目录 | 否 |
 | `data/sources/<dataset>/<model>/<date>.jsonl` | 原始输入；当前回答数据集为 `model-answers`，每个模型一个目录、每个评测运行日一份文件 | 否 |
+| `data/input-catalog/<dataset-id>/` | 本地评测集索引：`index.json` 汇总与逐行位置 JSONL，无原始消息 | 否 |
 | `data/runs/<workflow>/<run-id>/` | 一次运行的状态、结果和报告；当前工作流为 `comparison` | 否 |
 | `log/runtime.log`、`log/evaluation.log` | 全项目共用的错误日志和业务日志 | 否 |
 | `.cache/npm/`、`.cache/uv/` | 下载缓存 | 否 |
@@ -86,6 +87,10 @@ data/
     aa_fast/2026-09-22.jsonl
     aa_expert/2026-09-22.jsonl
     _daily/2026-09-22.json       # 每日清单：批次与各模型行数/case 数
+  input-catalog/
+    competitor_comparison/
+      index.json                 # 评测集名称、模型文件与汇总；记录文件指针
+      records-<uuid>.jsonl      # 行号、UTF-8 字节范围、批次/case 与错误码
   problems/
     a_fast.json                  # 每个模型一份问题库：组件 + 问题类 + 出现样本 + 血缘事件
     aa_fast.json
@@ -103,7 +108,31 @@ data/
 
 新增评测日只需在对应模型目录放入 `YYYY-MM-DD.jsonl`（文件名用评测运行开始日），`sources` 直接指向模型目录，无需修改配置；跨天任务归开始日。批次身份取 JSON 中的 `batch_id`，目录和文件名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。每天一份 `_daily/<日期>.json` 清单记录该日的批次与各模型行数/case 数，只用于核对，不参与评测。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
 
-输入只做记录有效性校验，不因文件元数据变化阻止续跑。`state.json` 登记每个版本的来源路径与行号供恢复与证据核对；证据按业务标识（`batch_id + case_id + version`）定位，文件的追加或整理不影响已接受结果。未完成任务的来源缺失或无效时，该任务会被跳过并在预检诊断中报告，不中断整个 run。运行 ID、任务 ID、输入 ID 和盲测映射与目录无关。
+续跑会重新读取原始记录，不因评测集索引或文件元数据变化而拒绝恢复。`state.json` 登记每个版本的来源路径与行号供恢复与证据核对；证据按业务标识（`batch_id + case_id + version`）定位，文件的追加或整理不影响已接受结果。未完成任务的来源缺失或无效时，该任务会被跳过并在预检诊断中报告，不中断整个 run。运行 ID、任务 ID、输入 ID 和盲测映射与目录无关。
+
+## 输入治理
+
+日期文件和任务命名文件都可以登记为**评测集**；评测集 ID 是显式业务标识，不从目录或文件名推断。登记前先在 `inputs.versions` 注册被评模型（`id`、`name`、`adapter`），并在 `comparisons` 声明要比较的模型组合；新增模型不会自动加入已有组，同一 run 也不会追加新版本。各模型的同一 case 必须提供相同的 `batch_id + case_id`，问题和标准答案也不能冲突；单纯同名文件不能替代记录身份。已选评测集中，若记录没有 `batch_id` 且未配置 `inputs.default_batch_id`，使用评测集 ID 作为该记录的默认批次；记录已有的批次不变，同一评测集仍可含多个显式批次。被评模型与 `bindings` 中的判官模型是两回事。
+
+以每个模型目录下的 `竞品对比.jsonl` 为例，先按文件显式登记，不要让目录扫描把每日输入一起索引进去：
+
+```bash
+npm run eval -- index --dataset competitor_comparison --dataset-name 竞品对比 \
+  --input a_fast=data/sources/model-answers/a_fast/竞品对比.jsonl \
+  --input a_expert=data/sources/model-answers/a_expert/竞品对比.jsonl \
+  --input aa_fast=data/sources/model-answers/aa_fast/竞品对比.jsonl \
+  --input aa_expert=data/sources/model-answers/aa_expert/竞品对比.jsonl \
+  --config configs/host.json
+npm run eval -- preflight --dataset competitor_comparison
+npm run eval -- run --dataset competitor_comparison --engine pi --run-id competitor-001 \
+  --config configs/host.json --config configs/local/models.json
+```
+
+默认配置是四模型同组，所以例子登记四份文件；只想对比其中两款模型时，在运行配置中声明对应的对比组。`index` 可按一次评测所需的模型文件多次传入 `--input`；路径可以是文件或明确限定的目录。相同方式可给某个日期命名评测集。`--catalog <目录>` 可改变默认索引根目录 `data/input-catalog/`，索引和后续 `--dataset` 选择需使用同一目录。未传 `--dataset` 时，CLI 仍按 `inputs.versions[].sources` 扫描全部配置来源；`--dataset` 与临时 `--input` 不可混用。
+
+`index.json` 只记录 ID、名称、索引时采用的默认批次、模型/适配器/文件路径、文件字节数与行数、有效/无效数量；逐行 JSONL 只记录文件序号、行号、UTF-8 字节偏移/长度、有效记录的 `batch_id + case_id` 或无效记录的错误码。**不存** `messages`、问题、答案、标准答案或内容哈希。无效和重复输入也能产出诊断索引，但 `--dataset` 拒绝选择；启动新 run 前会逐行核对索引与原始文件的字节坐标、业务标识和缺行，并重新校验记录，默认批次变更也须重新索引。修正文件后重新 `index`。新索引完整写入后才切换 `index.json` 指向的记录文件；原始 JSONL 不变，索引不作为正式结果缓存。`preflight` 会重新读取原始文件并校验业务冲突，`run` 当前仍按选中的源文件装载原始记录；将来接入 OSS 时可使用对象 key + 字节范围按需读取，**当前还没有 OSS 读取实现**。同 run ID 续跑使用 `state.json` 中登记的来源，不依赖索引文件，即便再次传入 `--dataset` 也不会切换已有运行的来源（CLI 会提示忽略该选项）；索引更新不改变已接受判决。文件原路径消失时，历史结果仍保留，但证据核对可能报告材料不可用。
+
+本机看板的输入选择目前仍按日期展示，命名文件会按其父目录兜底展示，尚不提供评测集选择；用上述 CLI 命令选择命名评测集。
 
 ## 日志
 
@@ -182,7 +211,7 @@ bash run.sh
 
 打开终端输出的地址即可点击左侧运行，按批次和 case 查看问题与各版本最终回答，以及归因、对比和改写 Agent 的任务状态与正式输出；输入盘点会在看板打开时自动逐行读取大 JSONL，仅保留样本索引，不把全部回答常驻内存；运行总览显示各阶段进度（含聚类）和该 run 结束时的 `stats.json` 问题库覆盖模型数，聚类按模型×批次统计、不挂在单个 case 上。运行总览下方是只读的「问题库」面板：按本 run 计划聚类的模型展示当前共享库中的组件与活跃类；点击类可查看定义、别名、首次出现和逐条出现样本（批次/case/证据引文/源文件位置），合并记录在模型列表中。样本列表按 case 分页。看板响应不设 CSP 和 X-Frame-Options，本机标注工具可以在页面内注入覆盖层；仅监听回环地址，不要绑定公网。刷新按钮会重新读取日期和运行状态；样本按 run 登记的 `input_id` 流式定位源记录，只取问题和最终回答，不加载原始消息链路；case 详情只显示一份问题，长文本原位展开与收起；「评测输入」按版本切换最终回答，默认收起。归因、对比、改写分组直接列出任务，展开一行即显示「评测输出」，按当前 Schema 标记字段，保留任务分析、判定、发现及其要求评估、问题定义和证据；发现与要求的索引从 0 开始，与结果中的引用一致。改写展示槽位 ID 与文本。失败或超时任务默认展开错误，其他任务默认收起；只有已接受任务读取正式结果，不为无结果任务展示空容器。证据与长字段同样只保留一份正文并原位展开；正式结果按任务读取，不加载整个 run 的结果文件，超长文本与证据引文按显示上限裁剪；高级设置和问题库均为可展开的折叠面板，问题库仅在展开面板时读取，已加载但暂无问题类时显示空状态；来源变化时显示当前记录或材料不可用。看板只在有运行进行中时轮询刷新，空闲或已结束的页面不再改 DOM，便于外部标注工具稳定选中内容。已接受结论始终来自正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，仅在可信本机打开看板。
 
-导航中的「数据与流程」（`/reference`）独立于运行页：输入区按日期和版本展示覆盖，并可搜索每个日期的 case / 批次、核对缺失版本、来源和对比组；流程区列出阶段依赖、产物、当前执行与聚类预算；定义区按 Agent 切换请求 / 提交 / 结果 Schema 和系统 / 任务提示词。Schema 以字段树展示，完整 JSON 按需展开；内容直接读取当前应用使用的公开 Profile 和 Workflow Schema，不保存另一份契约副本，也不代表历史 run 的提示词快照。数据与流程页为只读视图。
+导航中的「数据与流程」（`/reference`）独立于运行页：输入区按日期和版本展示覆盖，并可搜索每个日期的 case / 批次、核对缺失版本、来源和对比组；流程区列出阶段依赖、产物、当前执行与聚类预算；定义区按 Agent 切换请求 / 提交 / 结果 Schema 和系统 / 任务提示词，并列出本阶段及提交工具的描述；文案来自[集中提示词模块](../packages/prompts/README.md)。Schema 以字段树展示，完整 JSON 按需展开；内容直接读取当前应用使用的公开 Profile 和 Workflow Schema，不保存另一份契约副本，也不代表历史 run 的提示词快照。数据与流程页为只读视图。
 
 「开始评测」选择本次运行的日期（数据源目录，默认全选；胶囊显示当前模型下可评测 case 数/总数）、模型（默认全选，至少两个同组模型）和抽样数量（留空即全部）；运行 ID 由看板自动生成，不需要填写。日期选择会转换为已登记的 `batch_id` + case 过滤写入运行配置，评测契约仍以 `batch_id` 为准。预检不调用模型、不创建 run，确认后才启动；阶段模型 ID / 推理等级、并发、超时、工具调用、传输重试预算、改写开关、聚类开关和 Debug 收在「高级设置」。设置不改写 `configs/host.json` 或本地模型文件；网关地址、密钥、输入和输出路径不在页面编辑，密钥值不会发送给浏览器。预检所用来源可能在启动前变化，启动时会重新读取。看板可以启动 Pi / Prime 运行、停止当前运行、动态调整并发，并从运行详情按钮续跑未完成任务；停止不会删除已接受结果。续跑沿用原批次、模型和抽样范围；已接受任务不重评，本次设置仅作用于未完成任务。停止和并发控制仍由 Host 持有运行锁令牌，看板只转发操作，不在页面暴露令牌。看板不提供远程认证，只监听本机回环地址，不应绑定到公网地址。
 
@@ -211,7 +240,7 @@ bash run.sh
 
 | debug 文件 | 用途 |
 |---|---|
-| `_internal/contract.json`、`_internal/output_schema.json` | 提示词、契约与 schema 快照 |
+| `_internal/contract.json`、`_internal/output_schema.json` | 各 Profile 的系统/任务提示词、工具描述、契约与 schema 快照；每次 attempt 的最终任务文本另见 `attempt.json` |
 | `_internal/tasks/<id>/attempt-NNN/attempt.json` | 尝试的参数 `spec`、终态 `status`、最终用量与审计 `metrics`、失败原因及未接受的最后一次提交；未收齐的字段缺省 |
 | `_internal/tasks/<id>/attempt-NNN/events.jsonl.gz` | 尝试的压缩执行日志 |
 | `_internal/tasks/<id>/artifacts/` | 成功及失败尝试的脚本、stdout/stderr 和生成文件 |

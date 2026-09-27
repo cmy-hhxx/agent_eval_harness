@@ -18,6 +18,8 @@ export interface VersionConfig {
 }
 export interface EvalConfig {
   inputs: {
+    /** Explicit dataset selection persisted for run reconciliation. */
+    dataset_id?: string;
     versions: VersionConfig[];
     batches?: string[];
     case_ids?: string[];

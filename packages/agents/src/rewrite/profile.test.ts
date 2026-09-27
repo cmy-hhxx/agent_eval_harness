@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rewriteAgent, rewriteProfile } from "./index.js";
-import example from "./profiles/default/example.json" with { type: "json" };
+import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
 test("Rewrite returns exactly the requested slots and nothing else", () => {

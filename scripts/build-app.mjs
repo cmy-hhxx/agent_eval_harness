@@ -22,4 +22,5 @@ async function resources(directory) {
   }
 }
 await resources("packages/agents/src");
+await resources("packages/prompts/resources");
 await resources("schemas");

@@ -242,14 +242,12 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    const prompts = path.join(ROOT, "packages/agents/src");
+    const prompts = path.join(ROOT, "packages/prompts/resources");
     const systems: Record<string, string> = {};
     const instructions: Record<string, string> = {};
     for (const stage of ["attribution", "comparison"]) {
-      const profile =
-        stage === "comparison" ? "comparison/profiles/default" : "attribution/profiles/default";
-      const system = (await readFile(path.join(prompts, profile, "system.md"), "utf8")).trim();
-      const instruction = (await readFile(path.join(prompts, profile, "instructions.md"), "utf8")).trim();
+      const system = (await readFile(path.join(prompts, stage, "default/system.md"), "utf8")).trim();
+      const instruction = (await readFile(path.join(prompts, stage, "default/instructions.md"), "utf8")).trim();
       systems[stage] = system;
       instructions[stage] = instruction;
       const task = plan.tasks.find((item) => item.stage === stage)!;
@@ -257,6 +255,9 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       assert.equal(prepared.evaluation.systemPrompt, system);
       assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
       assert(prepared.prompt.includes("计算2+2"));
+      assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
+      for (const [name, description] of Object.entries(prepared.evaluation.toolDescriptions))
+        assert.equal(description, (await readFile(path.join(prompts, "tools", `${name}.md`), "utf8")).trim());
       const rules = system + "\n" + instruction;
       assert(rules.includes("evidence_id"));
       assert(rules.includes("submit_evaluation"));
@@ -277,9 +278,14 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
           assert(rules.includes(rule), rule);
       }
     }
-    const snapshot = appServices.snapshots["contract.json"] as Record<string, unknown>;
-    assert.equal(snapshot.systemPrompt, systems.comparison);
-    assert.deepEqual(snapshot.instructions, instructions);
+    const snapshot = appServices.snapshots["contract.json"] as {
+      profiles: Record<string, { systemPrompt: string; instructions: string; toolDescriptions: Record<string, string> }>;
+    };
+    for (const stage of ["attribution", "comparison"]) {
+      assert.equal(snapshot.profiles[stage].systemPrompt, systems[stage]);
+      assert.equal(snapshot.profiles[stage].instructions, instructions[stage]);
+      assert(snapshot.profiles[stage].toolDescriptions.submit_evaluation);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

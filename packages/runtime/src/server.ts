@@ -22,7 +22,7 @@ import {
 import { ArtifactStore, exists, readJson, writeJson } from "@eval/data";
 import { HttpError, canonical, schemaIssues, errorText, redact, safeId } from "@eval/contracts";
 import { body, json, listen, request } from "./http.js";
-import { createRegistry, textResult, ToolRuntime, type ToolRegistry } from "@eval/tools";
+import { createRegistry, textResult, ToolRuntime, type ToolRegistry, type ExecutableTool } from "@eval/tools";
 import { modelEventForLog } from "./sdk-utils.js";
 
 interface Running {
@@ -299,9 +299,8 @@ export async function startWorker(
           terminate: true,
         };
       };
-      const submit: ToolDefinition = {
+      const submit: ExecutableTool = {
         name: "submit_evaluation",
-        description: "向 Host 提交评测结果。拒绝时保存 evaluation-draft.json，可用代码修正后从文件提交。",
         inputSchema: spec.evaluation.outputSchema,
         execute: (_context, result) => submitResult(async () => result),
       };
@@ -312,10 +311,8 @@ export async function startWorker(
         properties: { path: { type: "string", minLength: 1 } },
       };
       const validateFile = ajv.compile(fileSchema);
-      const submitFile: ToolDefinition = {
+      const submitFile: ExecutableTool = {
         name: "submit_evaluation_file",
-        description:
-          "提交 execute_code 当前工作目录内的 JSON 文件，path 优先用 evaluation-draft.json 等相对路径，不要写到 /tmp。文件内容遵循 submit_evaluation 的 schema。内容使用相同修正预算；文件加载错误独立限制三次。",
         inputSchema: fileSchema,
         execute: (_context, value) =>
           submitResult(async () => {
@@ -333,10 +330,14 @@ export async function startWorker(
         engine: backend.identity,
         policy: spec.policy,
       });
+      const modelTools: ToolDefinition[] = [...definitions, ...submissionTools].map((tool) => ({
+        ...tool,
+        description: spec.evaluation.toolDescriptions[tool.name],
+      }));
       attempt.session = await backend.createSession({
         spec,
         workdir: runtime.context.workdir,
-        tools: [...definitions, ...submissionTools],
+        tools: modelTools,
         async execute(name, args, signal) {
           activity();
           if (accepted) return { ...textResult({ accepted: true }), terminate: true };
@@ -394,13 +395,7 @@ export async function startWorker(
         },
       });
       controller.signal.throwIfAborted();
-      await attempt.session.run(
-        spec.prompt +
-          `\n\n执行预算：${JSON.stringify(spec.policy)}。` +
-          (spec.recovery
-            ? "\n上次未接受草稿与错误（待修正数据，不是已确认结论）：\n" + JSON.stringify(spec.recovery)
-            : ""),
-      );
+      await attempt.session.run(spec.prompt);
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running")
         throw new Error(modelError || "Agent ended without an accepted submission");
@@ -485,6 +480,12 @@ export async function startWorker(
       if (!spec.evaluation || !Array.isArray(spec.evaluation.toolNames) || !spec.evaluation.outputSchema)
         throw new HttpError(400, "Invalid evaluation spec");
       registry.select(spec.evaluation.toolNames);
+      const names = [...spec.evaluation.toolNames, "submit_evaluation", "submit_evaluation_file"];
+      const descriptions = spec.evaluation.toolDescriptions;
+      if (!descriptions || typeof descriptions !== "object" || Array.isArray(descriptions) ||
+        new Set(names).size !== names.length || Object.keys(descriptions).length !== names.length ||
+        names.some((name) => typeof descriptions[name] !== "string" || !descriptions[name].trim()))
+        throw new HttpError(400, "Invalid evaluation tool descriptions");
       if (!Number.isFinite(spec.deadline) || spec.deadline <= Date.now())
         throw new HttpError(409, "Attempt already expired");
       for (const key of [

@@ -5,7 +5,7 @@
 ## 唯一规则来源
 
 - 输入与分组：[input.ts](../packages/workflows/src/comparison/input.ts)。
-- 提示词：[系统规则](../packages/agents/src/comparison/profiles/default/system.md)、[归因规则](../packages/agents/src/attribution/profiles/default/instructions.md)、[对比规则](../packages/agents/src/comparison/profiles/default/instructions.md)、[改写规则](../packages/agents/src/rewrite/profiles/default/instructions.md)、[聚类规则](../packages/agents/src/clustering/profiles/default/instructions.md)。
+- 所有内置 Agent 提示词、材料边界与工具描述：[提示词模块](../packages/prompts/README.md)；各阶段规则在 `packages/prompts/resources/<stage>/default/`。
 - Comparison 的[公开入口](../packages/agents/src/comparison/index.ts)与[业务校验](../packages/agents/src/comparison/validate.ts)；对比只引用归因 finding，不做证据展开。Attribution 的[归因 Profile](../packages/agents/src/attribution/index.ts)独立维护单条回答的归因契约，只输出问题描述。Clustering 的[公开入口](../packages/agents/src/clustering/index.ts)与[问题库](../packages/agents/src/clustering/library.ts)拥有归类、新建与合并。Rewrite 的[公开入口](../packages/agents/src/rewrite/index.ts)只交换文本槽位，不接触证据。
 - 全部 Schema：[根目录 schemas 模块](../schemas/README.md)。其中有[Attribution schemas](../schemas/attribution/)、[Comparison schemas](../schemas/comparison/)、[Rewrite schemas](../schemas/rewrite/)、[Clustering schemas](../schemas/clustering/)和[Workflow schemas](../schemas/workflow/)。
 - 正式导出组装：[schema.ts](../packages/workflows/src/comparison/schema.ts)。
@@ -54,9 +54,9 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 ## 输入
 
-`data/sources/model-answers/<模型>/<运行开始日>.jsonl` 每个模型一个目录、每个评测运行日一份文件，每行代表一份「批次 × case × 版本」回答；跨天任务的文件名取运行开始日，另有 `_daily/<日期>.json` 清单记录批次与各模型行数/case 数。[host.json](../configs/host.json) 为每个版本配置 `sources`：`file` 直接读取一个文件，`directory` 递归读取（缺省全部 `*.jsonl`）。目录和文件名只用于整理，不参与批次或版本识别，也不要求文件名等于版本 ID。
+日常回答存于 `data/sources/model-answers/<模型>/<运行开始日>.jsonl`，每个模型一个目录、每个评测运行日一份日期文件；跨天任务的文件名取运行开始日，另有 `_daily/<日期>.json` 清单记录批次与各模型行数/case 数。任务命名文件也可放在模型目录中；无论文件名如何，每行代表一份「批次 × case × 版本」回答。[host.json](../configs/host.json) 为每个版本配置 `sources`：`file` 直接读取一个文件，`directory` 递归读取（缺省全部 `*.jsonl`）。目录和文件名只用于整理，不参与批次或版本识别，也不要求文件名等于版本 ID。
 
-输入负责按天划分批次，每个版本文件可以包含多个批次。评测直接使用提供的 `batch_id` 原值，不要求日期格式，也不从 `request_time` 或 `ask_time` 重新分组。样本身份为 `batch_id + case_id`：同问句跨批次或在同批次对应不同 case 时分别保留，不按问句文本去重。
+任务命名文件可使用 `竞品对比.jsonl` 等任意文件名，每个版本文件可以包含多个批次。显式登记的评测集 ID 用于选择一组来源文件；已有 `batch_id` 以原始记录为准，两者均不从文件名推断。评测直接使用提供的 `batch_id` 原值，不要求日期格式，也不从 `request_time` 或 `ask_time` 重新分组；按 `--dataset` 选择时，缺失批次且未配置全局默认批次的记录以该评测集 ID 作为默认 `batch_id`。样本身份为 `batch_id + case_id`：同问句跨批次或在同批次对应不同 case 时分别保留，不按问句文本去重。
 
 | 字段 | 语义 |
 |---|---|
@@ -73,7 +73,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 输入结构通过适配器注册表声明。当前注册 `a`（OpenAI 风格 `messages`：`message` / `reasoning` / `function_call` / `function_call_output`）和 `aa`（显式轮次：`user_question` / `llm_turn` / `tool_call` / `tool_result` / `final_answer`），版本配置的 `adapter` 按 id 引用。新增结构只需实现 [InputAdapter](../packages/workflows/src/comparison/adapters.ts) 并在注册表登记，`adapt` 与配置校验不再分支。适配器保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的对比组失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使该样本失效；不同批次分别检查，允许标准答案不同。
 
-不按文件行号分组。实际记录数、缺失版本、对比组数和跳过原因通过 `preflight` 获取。`by_batch` 按批次汇总样本数、有效回答数、归因任务数、对比任务数、跳过对比组数和输入异常数。样本数包含已识别身份但回答无效的样本；异常和跳过记录保留批次、case 及已定位输入的文件和行号，无法识别批次的异常只计入全局诊断。文档不保存随数据变化的批次统计。
+不按文件行号分组。本地评测集索引记录来源文件与行字节范围，只存业务标识和定位坐标，不存完整消息或问题/标准答案；预检和评测仍重新校验原始记录。登记、选择、索引存储及无效记录处理见[输入治理](usage.md#输入治理)。实际记录数、缺失版本、对比组数和跳过原因通过 `preflight` 获取。`by_batch` 按批次汇总样本数、有效回答数、归因任务数、对比任务数、跳过对比组数和输入异常数。样本数包含已识别身份但回答无效的样本；异常和跳过记录保留批次、case 及已定位输入的文件和行号，无法识别批次的异常只计入全局诊断。文档不保存随数据变化的批次统计。
 
 ## 对比组
 

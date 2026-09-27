@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r1",
+  "evaluatorVersion": "r2",
   "inputs": {
     "timing_unit": "ms",
     "versions": [

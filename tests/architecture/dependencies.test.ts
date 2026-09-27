@@ -20,11 +20,12 @@ async function files(directory: string): Promise<string[]> {
 const owner = (file: string) => file.split("/").slice(0, 2).join("/");
 const allowed: Record<string, string[]> = {
   contracts: [],
+  prompts: ["contracts"],
   data: ["contracts"],
   tools: ["contracts", "data"],
   runtime: ["contracts", "data", "tools"],
   host: ["contracts", "data", "runtime"],
-  agents: ["contracts", "tools"],
+  agents: ["contracts", "tools", "prompts"],
   workflows: ["contracts", "data", "tools", "agents"],
 };
 

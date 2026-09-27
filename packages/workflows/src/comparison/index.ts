@@ -2,6 +2,7 @@ export * from "./workflow.js";
 export * from "./types.js";
 export * from "./adapters.js";
 export * from "./input.js";
+export * from "./input-catalog.js";
 export * from "./run-data.js";
 export * from "./dashboard-view.js";
 export * from "./codec.js";

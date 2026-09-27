@@ -21,7 +21,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
       { id: "clustering", name: "聚类", unit: "模型 × 批次分片", input: "问题观察与当前问题库", output: "归类、新类与合并决定", dependency: "该分片归因完成；聚类开启", file: "clustering.jsonl", profile: clusteringProfile },
     ].map(({ profile, ...stage }) => ({
       ...stage,
-      tools: profile.toolNames,
+      toolDescriptions: profile.toolDescriptions,
       schemas: stage.id === "attribution"
         ? { request: profile.requestSchema, submission: profile.submissionSchema, result: profile.resultSchema }
         : { request: profile.requestSchema, result: profile.resultSchema },

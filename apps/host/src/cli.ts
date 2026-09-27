@@ -7,7 +7,7 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { comparisonWorkflow } from "@eval/workflows/comparison";
+import { comparisonWorkflow, indexDataset, selectDataset } from "@eval/workflows/comparison";
 import { reportRun } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
@@ -25,6 +25,9 @@ async function main(): Promise<void> {
       run: { type: "string" },
       output: { type: "string" },
       input: { type: "string", multiple: true },
+      dataset: { type: "string" },
+      "dataset-name": { type: "string" },
+      catalog: { type: "string" },
       debug: { type: "boolean" },
       batch: { type: "string", multiple: true },
       case: { type: "string", multiple: true },
@@ -41,7 +44,7 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      "eval preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nstatus/validate/report: --run data/runs/comparison/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
+      "eval index|preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nindex: --dataset ID --dataset-name NAME --input VERSION=PATH ... [--catalog DIR]\npreflight/run: --dataset ID [--catalog DIR] 选择已索引的评测集\nstatus/validate/report: --run data/runs/comparison/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
     );
     return;
   }
@@ -61,6 +64,10 @@ async function main(): Promise<void> {
     return;
   }
   if (values.details && command !== "report") throw new Error("--details 仅用于 report");
+  if (values["dataset-name"] && command !== "index") throw new Error("--dataset-name 仅用于 index");
+  if (values.dataset && !["index", "preflight", "run"].includes(command))
+    throw new Error("--dataset 仅用于 index、preflight 和 run");
+  if (values.catalog && !values.dataset) throw new Error("--catalog 需要同时指定 --dataset");
   if (values.debug && command !== "run") throw new Error("--debug 仅用于 run");
   if (values["dashboard-settings"] && command !== "run") throw new Error("--dashboard-settings 仅用于 run");
   if (command === "concurrency" || command === "progress") {
@@ -119,8 +126,13 @@ async function main(): Promise<void> {
     process.env,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
-  const config = host.evaluation;
+  let config = host.evaluation;
   if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
+  const resuming = command === "run" && !!values["run-id"] &&
+    await exists(runLayout(config.output, values["run-id"]).stateFile);
+  if (command !== "index" && values.dataset && values.input?.length)
+    throw new Error("--dataset 与 --input 不能同时使用");
+  const indexedVersions = new Set<string>();
   for (const item of values.input || []) {
     const separator = item.indexOf("=");
     if (separator < 1) throw new Error("--input 需要 ID=PATH");
@@ -128,10 +140,29 @@ async function main(): Promise<void> {
       target = path.resolve(item.slice(separator + 1));
     const version = config.inputs.versions.find((entry) => entry.id === id);
     if (!version) throw new Error(`未知的输入版本：${id}`);
+    if (indexedVersions.has(id)) throw new Error(`重复指定输入版本：${id}`);
+    indexedVersions.add(id);
     const info = await stat(target).catch(() => undefined);
     if (!info) throw new Error(`输入路径不存在：${target}`);
     version.sources = [{ kind: info.isDirectory() ? "directory" : "file", path: target }];
   }
+  const catalogRoot = values.catalog ? path.resolve(values.catalog) : path.join(ROOT, "data/input-catalog");
+  if (command === "index") {
+    if (!values.dataset || !values["dataset-name"] || !indexedVersions.size)
+      throw new Error("index 需要 --dataset ID --dataset-name NAME 和至少一个 --input VERSION=PATH");
+    config = { ...config, inputs: {
+      ...config.inputs,
+      versions: config.inputs.versions.filter((version) => indexedVersions.has(version.id)),
+    } };
+    const index = await indexDataset(config, catalogRoot, values.dataset, values["dataset-name"]);
+    console.log(JSON.stringify(index, null, 2));
+    if (index.invalid) process.exitCode = 2;
+    return;
+  }
+  // A resumed run owns its registered source selection; a stale/missing index must not block it.
+  if (values.dataset && resuming)
+    console.error(`续跑使用 state.json 中的来源，忽略 --dataset ${values.dataset}`);
+  else if (values.dataset) config = await selectDataset(config, catalogRoot, values.dataset);
   for (const profile of boundProfiles(host.models))
     logger.addSecrets(process.env[profile.apiKeyEnv] || "");
   if (values.batch) config.inputs.batches = values.batch;
@@ -141,11 +172,8 @@ async function main(): Promise<void> {
     if (!Number.isInteger(limit) || limit < 1) throw new Error("limit-cases must be positive");
     config.inputs.limit = limit;
   }
-  const resuming =
-    command === "run" &&
-    values["run-id"] &&
-    (await exists(runLayout(config.output, values["run-id"]).stateFile));
-  const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await comparisonWorkflow.plan(config);
+  const plan = resuming ? { tasks: [], inputs: {}, summary: {} } :
+    await comparisonWorkflow.plan(config, command === "preflight" ? { materializeInputs: false } : undefined);
   if (command === "preflight") {
     console.log(JSON.stringify({ evaluator_version: host.evaluatorVersion, ...plan.summary }, null, 2));
     if ((plan.summary.issues as unknown[]).length) {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { AgentRequest } from "@eval/contracts";
 import { clusteringAgent, clusteringProfile } from "./index.js";
 import type { ClusteringRequest, ClusteringResult } from "./types.js";
-import example from "./profiles/default/example.json" with { type: "json" };
+import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
 const request = () => structuredClone(example.request) as unknown as AgentRequest;

@@ -24,21 +24,21 @@ export const services = {
     "output_schema.json": outputSchema,
     "contract.json": {
       id: "comparison",
-
-      systemPrompt: comparisonProfile.systemPrompt,
-      instructions: {
-        comparison: comparisonProfile.instructions,
-        attribution: attributionProfile.instructions,
-      },
-      attributionSubmissionSchema: attributionProfile.submissionSchema,
-      attributionResultSchema: attributionProfile.resultSchema,
-      comparisonResultSchema: comparisonProfile.resultSchema,
-      rewriteSystemPrompt: rewriteProfile.systemPrompt,
-      rewriteInstructions: rewriteProfile.instructions,
-      rewriteResultSchema: rewriteProfile.resultSchema,
-      clusteringSystemPrompt: clusteringProfile.systemPrompt,
-      clusteringInstructions: clusteringProfile.instructions,
-      clusteringResultSchema: clusteringProfile.resultSchema,
+      profiles: Object.fromEntries(
+        Object.entries({
+          attribution: attributionProfile,
+          comparison: comparisonProfile,
+          rewrite: rewriteProfile,
+          clustering: clusteringProfile,
+        }).map(([stage, profile]) => [stage, {
+          systemPrompt: profile.systemPrompt,
+          instructions: profile.instructions,
+          toolDescriptions: profile.toolDescriptions,
+          requestSchema: profile.requestSchema,
+          submissionSchema: profile.submissionSchema,
+          resultSchema: profile.resultSchema,
+        }]),
+      ),
     },
   },
 };

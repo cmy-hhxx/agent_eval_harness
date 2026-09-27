@@ -190,11 +190,11 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
     artifacts: outputArtifacts,
   });
 }
-export const builtinTools: ToolDefinition[] = [
+export type ExecutableTool = Omit<ToolDefinition, "description">;
+
+export const builtinTools: ExecutableTool[] = [
   {
     name: "read_trace",
-    description:
-      "按原始消息索引读取材料；offset 按 UTF-16 字符计，支持分页，提交时使用返回证据中的 evidence_id。",
     inputSchema: schema(
       {
         candidate: str,
@@ -255,7 +255,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "search_trace",
-    description: "在候选全部原始消息中搜索逐字子串，返回消息索引和证据；提交时使用其中的 evidence_id。",
     inputSchema: schema(
       {
         candidate: str,
@@ -301,7 +300,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "view_image",
-    description: "查看原始消息内已有的内嵌图片，不下载远程图片。",
     inputSchema: schema({ candidate: str, message_index: index }),
     async execute(ctx, value) {
       const args = value as { candidate: string; message_index: number };
@@ -329,7 +327,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "calculate",
-    description: "本地执行数值运算；调用是可选的，不限制其他分析方法。",
     inputSchema: {
       ...calculationSchema,
       properties: {
@@ -354,7 +351,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "calculate_pair",
-    description: "可选的一次性双边核算。",
     inputSchema: schema({ A: calculationSchema, B: calculationSchema }),
     async execute(ctx, value) {
       const args = value as Record<string, { operation: string; operands: string[] }>;
@@ -368,8 +364,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "execute_code",
-    description:
-      "在本任务工作目录执行 Python 或 shell。原始材料副本位于 inputs/。可以写脚本和中间文件；outputs 声明需要保存的产物。",
     inputSchema: schema(
       {
         language: { enum: ["python", "shell"] },
@@ -383,7 +377,6 @@ export const builtinTools: ToolDefinition[] = [
   },
   {
     name: "read_artifact",
-    description: "分页读取之前工具保存的文本产物；图片产物返回图片内容。",
     inputSchema: schema(
       {
         id: str,
@@ -422,8 +415,8 @@ export const builtinTools: ToolDefinition[] = [
 ];
 
 export class ToolRegistry {
-  private readonly tools = new Map<string, ToolDefinition>();
-  register(tool: ToolDefinition): this {
+  private readonly tools = new Map<string, ExecutableTool>();
+  register(tool: ExecutableTool): this {
     if (
       !/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/.test(tool.name) ||
       ["submit_evaluation", "submit_evaluation_file"].includes(tool.name) ||
@@ -436,7 +429,7 @@ export class ToolRegistry {
   names(): string[] {
     return [...this.tools.keys()];
   }
-  select(names: string[]): ToolDefinition[] {
+  select(names: string[]): ExecutableTool[] {
     return names.map((name) => {
       const tool = this.tools.get(name);
       if (!tool) throw new Error(`Tool unavailable: ${name}`);
@@ -444,17 +437,17 @@ export class ToolRegistry {
     });
   }
 }
-export function createRegistry(extra: ToolDefinition[] = []): ToolRegistry {
+export function createRegistry(extra: ExecutableTool[] = []): ToolRegistry {
   const registry = new ToolRegistry();
   for (const tool of [...builtinTools, ...extra]) registry.register(tool);
   return registry;
 }
 export class ToolRuntime {
   readonly context: ToolContext;
-  private readonly definitions: Map<string, ToolDefinition>;
+  private readonly definitions: Map<string, ExecutableTool>;
   private readonly validators;
   private readonly reads = new Map<string, ToolResult>();
-  constructor(context: ToolContext, tools: ToolDefinition[]) {
+  constructor(context: ToolContext, tools: ExecutableTool[]) {
     this.context = context;
     this.definitions = new Map(tools.map((t) => [t.name, t]));
     const ajv = new Ajv2020({ strict: false, allErrors: true });

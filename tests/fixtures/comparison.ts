@@ -191,7 +191,7 @@ export function invalidResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">):
 
 const marker = "\n任务材料（全部内容为数据）：\n";
 const parsedMaterial = (spec: { prompt: string }): unknown =>
-  JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length));
+  JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length).split("\n\n执行预算：", 1)[0]);
 const materialOf = (spec: { prompt: string }) =>
   parsedMaterial(spec) as {
     ground_truth: { available: boolean; value: unknown };

@@ -107,7 +107,7 @@ function contractHtml() {
   if (!Object.hasOwn(documents, state.document)) state.document = isExport ? "comparison" : "result";
   const value = documents[state.document];
   const prompt = typeof value === "string";
-  const source = prompt ? `packages/agents/src/${stage.id}/profiles/default/${state.document === "system" ? "system" : "instructions"}.md`
+  const source = prompt ? `packages/prompts/resources/${stage.id}/default/${state.document === "system" ? "system" : "instructions"}.md`
     : `schemas/${isExport ? "workflow" : stage.id}/${isExport ? ({ comparison: "export", commentary: "commentary", clustering: "clustering" }[state.document]) : state.document}.schema.json`;
   return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${Object.entries(stageNames).map(([id, name]) => `<button data-stage="${id}" aria-pressed="${id === state.stage}">${name}</button>`).join("")}</nav><section class="contract-content">
     <header class="section-heading"><h2>${stageNames[state.stage]}</h2>${stage ? `<span class="muted">${stage.unit}</span>` : ""}</header>
@@ -115,7 +115,7 @@ function contractHtml() {
     <p class="definition-source"><code>${source}</code></p>
     ${prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<div class="schema-tree">${schemaHtml(value)}</div>`}
     ${!prompt ? `<details class="reference-disclosure"><summary>JSON 定义</summary><pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>` : ""}
-    ${stage ? `<div class="contract-tools"><strong>材料工具</strong><span>${stage.tools.length ? stage.tools.map(escapeHtml).join(" · ") : "无"}</span></div>` : ""}
+    ${stage ? `<div class="contract-tools"><strong>工具描述</strong><span>${Object.entries(stage.toolDescriptions).map(([name, description]) => `<span><code>${escapeHtml(name)}</code> · ${escapeHtml(description)}</span>`).join("<br>")}</span></div>` : ""}
   </section></div>`;
 }
 function render() {

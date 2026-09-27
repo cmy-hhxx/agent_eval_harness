@@ -26,13 +26,14 @@ flowchart LR
 | `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
-| `packages/agents/src/comparison` | 对比 Profile、提示词、业务校验；使用根目录 `schemas/comparison` |
-| `packages/agents/src/rewrite` | 改写 Profile、提示词、槽位校验；只润色文本，不接触证据；使用根目录 `schemas/rewrite` |
-| `packages/agents/src/attribution` | 归因 Profile、提示词、业务校验；只描述问题，不维护问题库；使用根目录 `schemas/attribution` |
-| `packages/agents/src/clustering` | 聚类 Profile、纯问题库归类/合并与数量上限校验；文件读写和锁属于 Data；使用根目录 `schemas/clustering` |
-| `packages/workflows/src/comparison` | 适配器注册表、配置化分组对比、盲测、依赖与材料映射、改写组合、状态编解码、报告 |
-| `packages/data` | 本地源读取、原子状态保存、结果追加、锁 |
-| `packages/tools` | 材料、检索、图片、计算、代码执行和产物 |
+| `packages/agents/src/comparison` | 对比 Profile、业务校验；使用集中提示词与根目录 `schemas/comparison` |
+| `packages/agents/src/rewrite` | 改写 Profile、槽位校验；只润色文本，不接触证据；使用集中提示词与根目录 `schemas/rewrite` |
+| `packages/agents/src/attribution` | 归因 Profile、业务校验；只描述问题，不维护问题库；使用集中提示词与根目录 `schemas/attribution` |
+| `packages/agents/src/clustering` | 聚类 Profile、纯问题库归类/合并与数量上限校验；文件读写和锁属于 Data；使用集中提示词与根目录 `schemas/clustering` |
+| `packages/workflows/src/comparison` | 适配器注册表、评测集元信息抽取、配置化分组对比、盲测、依赖与材料映射、改写组合、状态编解码、报告 |
+| `packages/data` | 本地源读取与输入索引存储、原子状态保存、结果追加、锁 |
+| `packages/tools` | 材料、检索、图片、计算、代码执行和产物；执行逻辑不保存模型可见描述 |
+| `packages/prompts` | 集中维护四阶段规则、任务材料/预算/恢复文案、九个内置工具描述及组装顺序；专家示例尚未启用 |
 | `schemas` | 集中维护 Attribution、Comparison、Rewrite、Clustering 与 Workflow 的 JSON Schema |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
 
@@ -84,9 +85,9 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
 - `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
 
-[应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新提示词、请求/提交/接受结果 Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验请求 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后的结果。Schema 文件集中在根目录的 [`schemas/`](../schemas/README.md) 模块；当前通过 TypeScript 对象组合任务，不引入新编排语言。
+[应用组装](../apps/host/src/composition.ts)将以上定义注入 `runEvaluation`。替换 Profile 时一起更新[集中提示词](../packages/prompts/README.md)、请求/提交/接受结果 Schema 和校验；Host 在依赖收据就绪后绑定任务输入、校验请求 Schema 并选择具备所需工具的 Worker，提交时再检查提交和解析后的结果。Host 将每个 attempt 的完整提示词及所选工具描述交给 Worker，两种 SDK Adapter 只接收组装好的文本；Tools 和 Runtime 不导入评测提示词模块。Schema 文件集中在根目录的 [`schemas/`](../schemas/README.md) 模块；当前通过 TypeScript 对象组合任务，不引入新编排语言。
 
-源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，评测集目录只保存显式来源和逐行字节坐标（不保存消息正文），任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
 
 归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。新的金融领域能力遵循相同接口，组合属于 Workflow。Schema 驱动的后续改进沿这些模块边界扩展，本阶段没有 Coding Agent 或 RSI 系统。
 
@@ -110,9 +111,8 @@ await runEvaluation({
 ## 新工具
 
 ```ts
-const extraTool: ToolDefinition = {
+const extraTool: ExecutableTool = {
   name: 'count_inputs',
-  description: '统计当前任务的输入份数',
   inputSchema: {type:'object', properties:{}, additionalProperties:false},
   async execute(context, _arguments, signal) {
     signal.throwIfAborted();
@@ -122,7 +122,7 @@ const extraTool: ToolDefinition = {
 await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 ```
 
-将工具名加入 Profile 的 `toolNames`。两种 Adapter 自动转换为原生 SDK 工具，无须修改调度代码。当前通过 `createRegistry` 按代码注册工具。
+将工具名加入 Profile 的 `toolNames`，同时在 Profile 的 `toolDescriptions` 中提供非空描述；缺失会拒绝创建 attempt。内置评测工具的描述只编辑[提示词模块](../packages/prompts/README.md)的 `resources/tools/<工具名>.md` 并登记在其工具清单，不在 Tools/Runtime 中写第二份。两种 Adapter 自动转换为原生 SDK 工具，无须修改调度代码。当前通过 `createRegistry` 按代码注册执行逻辑。
 
 探索调用统一计数，参数错误也占预算；提交有独立修正预算。材料工具提供分页、定位和用于提交的 `evidence_id`。`read_trace`、`search_trace`、`read_artifact` 在单个 attempt 内复用相同参数的读取结果，重复调用仍计入预算。代码返回摘要，完整 stdout/stderr、脚本和 `outputs` 声明的文件存为可分页读取的产物；代码执行不缓存。
 

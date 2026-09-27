@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionAgent, attributionProfile } from "./index.js";
 import type { AttributionResult } from "./types.js";
-import example from "./profiles/default/example.json" with { type: "json" };
+import example from "./fixtures/example.json" with { type: "json" };
 import { evidenceId } from "@eval/tools";
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };

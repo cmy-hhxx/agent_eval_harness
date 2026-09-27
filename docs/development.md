@@ -23,7 +23,8 @@
 
 | 修改内容 | 入口 | 验证重点 |
 |---|---|---|
-| Agent 提示词、业务校验、样例 | `packages/agents/src/<agent>` | Agent 契约、证据、判决 |
+| Agent 规则、公共材料文案、工具描述 | `packages/prompts/resources/`，装配在 `packages/prompts/src/` | 实际模型文本、工具描述覆盖、评测判词 |
+| Agent 业务校验、测试样例 | `packages/agents/src/<agent>` | Agent 契约、证据、判决 |
 | 请求 / 提交 / 结果 Schema | 根目录 `schemas/<stage>/` | 对应 Profile、解析、校验和快照 |
 | 输入适配、分组、盲测、报告 | `packages/workflows/src/comparison` | 注册表、映射、编解码、结果 |
 | 本地存储、锁、日志 | `packages/data` | 原子保存、追加、恢复、并行写入 |
@@ -31,7 +32,7 @@
 | 工具与 SDK | `packages/tools`、`packages/runtime/src/adapters` | 预算、回收、真实 SDK 集成 |
 | 安装、构建、依赖 | `scripts`、锁文件 | 独立构建、doctor、干净安装 |
 
-Agent 测试跟随 Agent 放置；跨模块和运行测试放在 `tests/`，共享 fixture 只保留仍被多个测试使用的最小集合。Schema 修改时同步检查 Profile `index.ts`、`validate.ts`、（如有）`resolve.ts`、提示词和样例。
+Agent 测试跟随 Agent 放置，集中提示词模块的测试在 `packages/prompts/src/`；跨模块和运行测试放在 `tests/`，共享 fixture 只保留仍被多个测试使用的最小集合。Schema 修改时同步检查 Profile `index.ts`、`validate.ts`、（如有）`resolve.ts`、[提示词](../packages/prompts/README.md)和测试样例。
 
 ## 验证
 

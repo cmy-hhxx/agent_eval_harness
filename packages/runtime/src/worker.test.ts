@@ -79,13 +79,15 @@ async function harness(
     path.join(directory, "worker"),
   );
   const prepared = prepare(task, plan.inputs, {});
+  const attemptPolicy = { ...DEFAULT_POLICY, ...policy };
   const spec: AttemptSpec = {
     inputRevision: 1,
     runId: "test",
     taskId: task.id,
     attemptId: "attempt",
     engine: fakeIdentity,
-    ...prepared,
+    evaluation: prepared.evaluation,
+    prompt: prepared.renderAttempt(attemptPolicy),
     model: {
       provider: "fixture",
       baseUrl: "http://127.0.0.1",
@@ -96,7 +98,7 @@ async function harness(
       contextWindow: 10000,
       maxOutputTokens: 1000,
     },
-    policy: { ...DEFAULT_POLICY, ...policy },
+    policy: attemptPolicy,
     inputs: Object.entries(task.inputIds).map(([name, id]) => ({
       id,
       name,
@@ -518,7 +520,7 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
       await fixture.close();
     }
   });
-test("mismatched engine and unknown tools are refused before a model session", async () => {
+test("mismatched engine, unknown tools and missing descriptions are refused before a model session", async () => {
   let sessions = 0;
   const fixture = await harness(async () => {
     sessions++;
@@ -538,6 +540,16 @@ test("mismatched engine and unknown tools are refused before a model session", a
         evaluation: { ...fixture.spec.evaluation, toolNames: ["unavailable"] },
       }),
       /Tool unavailable/,
+    );
+    await assert.rejects(
+      request(fixture.worker.url + "/api/attempts", "POST", {
+        ...fixture.spec,
+        evaluation: {
+          ...fixture.spec.evaluation,
+          toolDescriptions: { submit_evaluation: "Only one submission description" },
+        },
+      }),
+      /Invalid evaluation tool descriptions/,
     );
     assert.equal(sessions, 0);
   } finally {

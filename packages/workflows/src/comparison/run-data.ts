@@ -72,7 +72,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       ...config.inputs,
       versions: config.inputs.versions.map((v) => ({
         ...v,
-        sources: supplied.inputs.versions.find((item) => item.id === v.id)?.sources || v.sources,
+        sources: config.inputs.dataset_id && supplied.inputs.dataset_id !== config.inputs.dataset_id
+          ? v.sources
+          : supplied.inputs.versions.find((item) => item.id === v.id)?.sources || v.sources,
       })),
     },
   };

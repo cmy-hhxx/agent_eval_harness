@@ -36,6 +36,8 @@ const profile: AgentProfile = {
   systemPrompt: "Evaluate JSON.",
   instructions: "Return the value as score.",
   toolNames: [],
+  toolDescriptions: { submit_evaluation: "Submit JSON", submit_evaluation_file: "Submit JSON file" },
+  renderPrompt(input) { return this.instructions + "\n" + JSON.stringify(input); },
   requestSchema: {
     type: "object",
     required: ["value"],
@@ -194,6 +196,9 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
               ...profile,
               id: "dependent",
               toolNames: scenario === "missing-tool" ? ["unavailable_tool"] : [],
+              toolDescriptions: scenario === "missing-tool"
+                ? { ...profile.toolDescriptions, unavailable_tool: "Unavailable test tool" }
+                : profile.toolDescriptions,
             },
           },
         },

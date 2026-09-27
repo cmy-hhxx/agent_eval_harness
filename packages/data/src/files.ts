@@ -70,10 +70,10 @@ async function* gzip(source: () => Readable): AsyncGenerator<Uint8Array> {
   }
 }
 
-export async function writeJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
+export async function writeJsonl(file: string, rows: Iterable<unknown> | AsyncIterable<unknown>): Promise<void> {
   const lines = Readable.from(
-    (function* () {
-      for (const row of rows) yield Buffer.from((JSON.stringify(row) ?? "null") + "\n");
+    (async function* () {
+      for await (const row of rows) yield Buffer.from((JSON.stringify(row) ?? "null") + "\n");
     })(),
   );
   await atomicWrite(file, file.endsWith(".gz") ? gzip(() => lines) : lines);

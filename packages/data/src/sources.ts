@@ -8,7 +8,7 @@ export interface SourceReader {
   files(sources: InputSource[]): Promise<string[]>;
   read(file: string): Promise<string>;
   revision(file: string): Promise<string>;
-  lines(file: string, revision?: string): AsyncIterable<{ line: string; index: number }>;
+  lines(file: string, revision?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }>;
 }
 
 async function fileRevision(source: string): Promise<string> {
@@ -26,26 +26,29 @@ export async function readInputSource(source: string): Promise<string> {
 }
 
 /** Stream large JSONL inputs without retaining whole files; reject concurrent source edits. */
-export async function* readInputSourceLines(source: string, expected?: string): AsyncIterable<{ line: string; index: number }> {
+export async function* readInputSourceLines(source: string, expected?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }> {
   const revision = await fileRevision(source);
   if (expected !== undefined && revision !== expected)
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
   const stream = createReadStream(source);
   try {
     let index = 0;
+    let byteOffset = 0;
     let fragments: Buffer[] = [];
-    const decode = (parts: Buffer[]): string => {
-      const bytes = parts.length === 1 ? parts[0]! : Buffer.concat(parts);
-      const text = (bytes.at(-1) === 13 ? bytes.subarray(0, -1) : bytes).toString("utf8");
-      return index === 1 ? text.replace(/^\uFEFF/, "") : text;
+    const decode = (bytes: Buffer, stripCR: boolean) => {
+      const bom = index === 1 && bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+      const end = stripCR && bytes.at(-1) === 13 ? bytes.length - 1 : bytes.length;
+      return { line: bytes.subarray(bom, end).toString("utf8"), byteOffset: byteOffset + bom, byteLength: end - bom };
     };
     for await (const chunk of stream) {
       let start = 0, end: number;
       while ((end = chunk.indexOf(10, start)) !== -1) {
         index++;
-        const line = decode([...fragments, chunk.subarray(start, end)]);
+        const bytes = fragments.length ? Buffer.concat([...fragments, chunk.subarray(start, end)]) : chunk.subarray(start, end);
+        const record = decode(bytes, true);
         fragments = [];
-        yield { line, index };
+        yield { ...record, index };
+        byteOffset += bytes.length + 1;
         start = end + 1;
       }
       if (start < chunk.length) fragments.push(chunk.subarray(start));
@@ -53,8 +56,8 @@ export async function* readInputSourceLines(source: string, expected?: string): 
     if (fragments.length) {
       index++;
       // A final line without a newline is valid; unlike CRLF, a bare trailing CR is not stripped.
-      const text = (fragments.length === 1 ? fragments[0]! : Buffer.concat(fragments)).toString("utf8");
-      yield { line: index === 1 ? text.replace(/^\uFEFF/, "") : text, index };
+      const bytes = fragments.length === 1 ? fragments[0]! : Buffer.concat(fragments);
+      yield { ...decode(bytes, false), index };
     }
     if ((await fileRevision(source)) !== revision)
       throw new Error("读取期间输入文件发生变化，请重试：" + source);

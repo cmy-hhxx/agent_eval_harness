@@ -7,6 +7,8 @@ import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
 import { object } from "@eval/contracts";
 import { createModelResolver } from "@eval/host-app/config";
+import { attributionProfile } from "@eval/agents/attribution";
+import { comparisonProfile } from "@eval/agents/comparison";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
@@ -27,7 +29,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           const payload = object(await body(req));
           requests.push(payload);
           const tools = payload.tools as {
-            function: { name: string; parameters: { properties: object } };
+            function: { name: string; description: string; parameters: { properties: object } };
           }[];
           const submit = tools.find((t) => t.function.name === "submit_evaluation")!;
           assert(submit);
@@ -40,6 +42,9 @@ for (const engine of ["pi", "prime"] as Engine[])
           }[];
           const ranCode = messages.some((m) => m.role === "tool");
           const attribution = "has_standard_answer" in submit.function.parameters.properties;
+          const descriptions = attribution ? attributionProfile.toolDescriptions : comparisonProfile.toolDescriptions;
+          for (const tool of tools)
+            assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
           const prompt = messages
             .flatMap((m) =>
               typeof m.content === "string"

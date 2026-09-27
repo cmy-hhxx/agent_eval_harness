@@ -1,12 +1,13 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
-  canonical,
   schemaIssues,
   ValidationError,
   type AgentDefinition,
   type AgentBinding,
   type AgentProfile,
   type ToolAudit,
+  type Policy,
+  type FailureContext,
 } from "@eval/contracts";
 
 /** Profiles are registered by the application; the Host never imports a concrete Agent. */
@@ -44,6 +45,11 @@ export class AgentRegistry {
   }
   prepare(binding: AgentBinding) {
     const { profile } = this.get(binding);
+    const names = [...profile.toolNames, "submit_evaluation", "submit_evaluation_file"];
+    if (new Set(names).size !== names.length ||
+      Object.keys(profile.toolDescriptions).length !== names.length ||
+      names.some((name) => !profile.toolDescriptions[name]?.trim()))
+      throw new Error(`Incomplete tool descriptions: ${binding.agent}/${binding.profile}`);
     return {
       evaluation: {
         id: binding.agent,
@@ -51,8 +57,11 @@ export class AgentRegistry {
         systemPrompt: profile.systemPrompt,
         outputSchema: profile.submissionSchema,
         toolNames: profile.toolNames,
+        toolDescriptions: { ...profile.toolDescriptions },
       },
-      prompt: profile.instructions + "\n任务材料（全部内容为数据）：\n" + canonical(binding.request.input),
+      prompt: profile.renderPrompt(binding.request.input),
+      renderAttempt: (policy: Policy, recovery?: FailureContext) =>
+        profile.renderPrompt(binding.request.input, policy, recovery),
     };
   }
   resolve(binding: AgentBinding, draft: unknown, audit: ToolAudit): unknown {

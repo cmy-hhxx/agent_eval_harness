@@ -19,4 +19,4 @@
 - `workflow/commentary.schema.json`：改写阶段接受后的评语产物行，用源任务和结果 id 指向正式结果。
 - `workflow/clustering.schema.json`：聚类阶段接受后的归类产物行，按模型与批次引用观察和归类决定。Comparison、Rewrite 与 Clustering 不解析证据，因此没有单独的 `submission.schema.json`，提交与结果共用 `result.schema.json`。
 
-修改顺序：Schema → 对应 Profile 的 `index.ts` → `validate.ts` /（如有）`resolve.ts` → 提示词、样例和测试。不要为旧 Schema 保留别名或兼容入口；项目哈希、摘要和跨 run 结果缓存规则见[开发指南](../docs/development.md#禁止项目哈希与兼容层)。
+修改顺序：Schema → 对应 Profile 的 `index.ts` → `validate.ts` /（如有）`resolve.ts` → [集中提示词](../packages/prompts/README.md)、测试样例和测试。不要为旧 Schema 保留别名或兼容入口；项目哈希、摘要和跨 run 结果缓存规则见[开发指南](../docs/development.md#禁止项目哈希与兼容层)。

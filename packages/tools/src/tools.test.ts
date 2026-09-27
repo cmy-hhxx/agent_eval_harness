@@ -53,7 +53,6 @@ test("registered tools are available without engine-specific changes and budgets
     const registry = createRegistry([
       {
         name: "custom_count",
-        description: "count",
         inputSchema: {
           type: "object",
           properties: {},

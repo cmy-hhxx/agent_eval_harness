@@ -290,7 +290,7 @@ export async function runEvaluation(options: RunOptions) {
           evaluation: prepared.evaluation,
           model,
           policy: options.policy,
-          prompt: prepared.prompt,
+          prompt: prepared.renderAttempt(options.policy, state.failure),
           recovery: state.failure,
           inputs: Object.entries(task.inputIds).map(([name, id]) => ({
             ...manifest.inputs[id],

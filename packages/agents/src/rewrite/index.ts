@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { agentPrompt } from "@eval/prompts";
 import type { AgentDefinition, AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/rewrite/request.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/rewrite/result.schema.json" with { type: "json" };
@@ -11,14 +11,7 @@ export const rewriteProfile: AgentProfile = {
   requestSchema,
   submissionSchema: resultSchema,
   resultSchema,
-  systemPrompt: readFileSync(
-    new URL("./profiles/default/system.md", import.meta.url),
-    "utf8",
-  ).trim(),
-  instructions: readFileSync(
-    new URL("./profiles/default/instructions.md", import.meta.url),
-    "utf8",
-  ).trim(),
+  ...agentPrompt("rewrite", []),
   toolNames: [],
   validate: validateEvaluation,
 };

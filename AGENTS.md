@@ -15,7 +15,7 @@
 
 ## 模块边界
 
-- Agent 提示词、业务校验和单元测试在 `packages/agents/src/<agent>`；Schema 集中在根目录 `schemas/<stage>/`，由 Agent 公开入口组装。Agent 之间禁止互相导入。
+- 所有内置 Agent 的提示词、共用材料文案和工具描述集中在 [`packages/prompts`](packages/prompts/README.md)；业务校验和单元测试在 `packages/agents/src/<agent>`；Schema 集中在根目录 `schemas/<stage>/`，由 Agent 公开入口组装。Agent 之间禁止互相导入。
 - Attribution Agent 只输出每条回答的归因结果和问题描述（component/label/definition），不读问题库、不建类；Clustering Agent 拥有问题库，负责归类、新建类和合并类。Comparison 只确认既有 finding，不改写归因结论。改写 Agent 只接收待润色的文本槽位，不接触证据，也不能改动判决；槽位映射、回填与 commentary 属于 `packages/workflows/src/comparison`。组合、A/AA、盲测、状态编解码和报告也属于该 Workflow。
 - `apps/host` 负责 CLI、配置和组装；`packages/host` 只接收定义，禁止导入具体业务。文件、锁和日志属于 `packages/data`；Worker、HTTP/SSE、会话和双 SDK 属于 `packages/runtime`；通用工具只在 `packages/tools`。
 - 本机看板只呈现数据、状态和错误，不写解释性、占位或使用说明式小字；界面文案与视觉规则见 [PRODUCT.md](PRODUCT.md)。
