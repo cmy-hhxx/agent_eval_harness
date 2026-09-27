@@ -10,6 +10,7 @@ import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 import { sourceSlots } from "./commentary.js";
 import { observationsFor, requestItems } from "./observations.js";
+import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
 import type { AttributionResult } from "@eval/agents/attribution";
 export function bindTask(
@@ -21,6 +22,13 @@ export function bindTask(
   if (data.stage === "clustering") {
     const scope = data.scope;
     if (!scope) throw new Error("clustering task is missing its scope");
+    const library = data.projection ?? { components: [] };
+    const items = requestItems(observationsFor(scope, (inputId) => dependencies[inputId]));
+    const knownComponents = new Set(
+      library.components.flatMap((component) =>
+        [component.label, ...component.aliases].map((label) => normalizeLabel(label)),
+      ),
+    );
     return {
       agent: "clustering",
       profile: "default",
@@ -28,9 +36,19 @@ export function bindTask(
         input: {
           model: scope.version,
           batch_id: scope.batch_id,
-          budget: scope.budget,
-          library: data.projection ?? { components: [] },
-          items: requestItems(observationsFor(scope, (inputId) => dependencies[inputId])),
+          // Observations narrow this shard's reserved headroom, but cannot enlarge it:
+          // other shards may accept new components against the same model library.
+          budget: {
+            ...scope.budget,
+            max_new_components: Math.min(
+              scope.budget.max_new_components,
+              new Set(
+                items.map((item) => normalizeLabel(item.component)).filter((component) => !knownComponents.has(component)),
+              ).size,
+            ),
+          },
+          library,
+          items,
         },
         sources: {},
       },
@@ -90,15 +108,16 @@ export function bindTask(
           ),
         );
         const text = canonical(value);
-        if (used + text.length <= (data.initialContextChars ?? 16000) && !text.includes("data:image/")) {
-          initial.push({
-            message_index: i,
-            value,
-            evidence: evidenceSources(raw.messages[i])
-              .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
-              .map((source) => cite(candidate.input_id, i, source, 0, source.text.length)),
-          });
-          used += text.length;
+        // Evidence must describe the projected material actually shown, and its quotes count
+        // against the same budget. Raw-only fields stay behind read_trace for progressive
+        // disclosure instead of inflating the first prompt with quotes from hidden content.
+        const evidence = evidenceSources(value)
+          .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
+          .map((source) => cite(i, source, 0, source.text.length));
+        const cost = text.length + evidence.reduce((total, item) => total + item.quote.length, 0);
+        if (used + cost <= (data.initialContextChars ?? 16000) && !text.includes("data:image/")) {
+          initial.push({ message_index: i, value, evidence });
+          used += cost;
         }
       }
       initial.sort((a, b) => a.message_index - b.message_index);
@@ -112,7 +131,7 @@ export function bindTask(
             .filter(
               (source) => source.kind === "text" && source.path.startsWith("/content") && source.text.length,
             )
-            .map((source) => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
+            .map((source) => cite(candidate.final_index, source, 0, source.text.length)),
           initial_material: initial,
           catalog: raw.messages.map((m, i) => ({
             message_index: i,

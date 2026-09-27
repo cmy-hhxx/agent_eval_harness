@@ -33,6 +33,8 @@ export function providerConfig(config: ModelConfig) {
         id: config.model,
         name: config.model,
         reasoning: config.thinking !== "off",
+        // Declare xhigh so SDKs pass it through instead of clamping to high.
+        thinkingLevelMap: { xhigh: "xhigh" },
         input: ["text", "image"] as ("text" | "image")[],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: config.contextWindow,

@@ -339,7 +339,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
   }
 });
 
-test("raw strings, Markdown, numeric JSON and pages resolve exactly; foreign snapshots and indexes fail", () => {
+test("raw strings, Markdown and JSON pages resolve exactly; unknown sources and indexes fail", () => {
   const input = {
     messages: [
       {
@@ -351,39 +351,25 @@ test("raw strings, Markdown, numeric JSON and pages resolve exactly; foreign sna
   };
   for (const source of evidenceSources(input.messages[0])) {
     for (let start = 0; start < source.text.length; start += 7) {
-      const evidence = cite("snapshot", 0, source, start, Math.min(start + 7, source.text.length));
+      const evidence = cite(0, source, start, Math.min(start + 7, source.text.length));
       assert.equal(
-        resolveEvidence(input, "snapshot", evidence, "A", [], "/evidence").quote,
+        resolveEvidence(input, evidence, "A", [], "/evidence").quote,
         source.text.slice(start, start + 7),
       );
     }
   }
-  const ref = {
-    evidence_id: evidenceId("old-snapshot", 0, "text", "/content", 0, 2),
-  };
-  assert.throws(() => resolveEvidence(input, "snapshot", ref, "A", [], "/evidence"), /当前输入/);
+  assert.equal(evidenceId(10, "text", "/content/0/text", 0, 2410), "ev_10_text_0_2410_/content/0/text");
+  assert.equal(evidenceId(6, "image"), "ev_6_image");
   assert.throws(
-    () =>
-      resolveEvidence(
-        input,
-        "old-snapshot",
-        { evidence_id: evidenceId("old-snapshot", 1, "json", "", 0, 2) },
-        "A",
-        [],
-        "/evidence",
-      ),
+    () => resolveEvidence(input, { evidence_id: "ev_not-a-coordinate" }, "A", [], "/evidence"),
+    /无法解析/,
+  );
+  assert.throws(
+    () => resolveEvidence(input, { evidence_id: evidenceId(1, "json", "", 0, 2) }, "A", [], "/evidence"),
     /索引/,
   );
   assert.throws(
-    () =>
-      resolveEvidence(
-        input,
-        "snapshot",
-        { evidence_id: evidenceId("snapshot", 0, "text", "/data/value", 0, 6) },
-        "A",
-        [],
-        "/evidence",
-      ),
+    () => resolveEvidence(input, { evidence_id: evidenceId(0, "text", "/data/value", 0, 6) }, "A", [], "/evidence"),
     /原文位置/,
   );
 });

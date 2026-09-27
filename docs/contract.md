@@ -50,7 +50,7 @@
 | Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
 | Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
 
-Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison、Rewrite 与 Clustering 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写与聚类产物分别由 `schemas/workflow/commentary.schema.json`、`schemas/workflow/clustering.schema.json` 描述。分析助手的工具输入见 [assistant/tools.json](../schemas/assistant/tools.json)，它不是评测提交 Schema。
+Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison、Rewrite 与 Clustering 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写与聚类产物分别由 `schemas/workflow/commentary.schema.json`、`schemas/workflow/clustering.schema.json` 描述。分析助手的工具输入见 [eris/tools.json](../schemas/eris/tools.json)，它不是评测提交 Schema。
 
 ## 输入
 
@@ -110,10 +110,10 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 数量由程序硬控，提示词只做引导：
 
-- 计划期把该模型本 run 的 `maxClassesPerModel − 活跃类数` 均摊到全部分片，得到每个任务的 `max_new_classes`；
+- 计划期把该模型本 run 的 `maxClassesPerModel − 活跃类数` 和 `maxComponentsPerModel − 活跃组件数` 分别均摊到全部分片；绑定任务时按该分片实际观察到的未知组件数收窄 `max_new_components`，不得突破预留份额；
 - 提交必须覆盖全部观察且只归一次，`class_id` 必须是库中活跃类，新类必须被至少一个观察使用且覆盖样本数达到 `minSupport`；
 - 同一组件内，`新类 label` 归一化后命中活跃类 label 或 alias 时直接拒绝，要求复用该 `class_id`；
-- `活跃类 − merges + new ≤ maxClassesPerModel`，新组件受 `maxComponentsPerModel`/`maxNewComponentsPerTask` 限制；
+- `活跃类 − merges + new ≤ maxClassesPerModel`；新组件只能来自本任务观察到的组件，并受 `maxComponentsPerModel` 限制；
 - 活跃类达到 `consolidateAt` 时提示 Agent 检查同组件近义类并输出 `merges`；合并不增加当前任务的 `max_new_classes`，腾出的预算在后续 run 规划时重算。
 - 写库按模型锁住读、合并、校验和保存；不同 run 共享同一模型时不会互相覆盖。所有模型的上限校验通过后才写文件；若有模型超出 `maxClassesPerModel` 或 `maxComponentsPerModel`（例如并发 run 或手工下调上限），本次报告不写入任何模型的库，并提示调高上限。
 
@@ -133,7 +133,9 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 对比结果 JSONL 和逐题总结 JSONL 的每行都以 `request_time`、`has_standard_answer` 两个顶层字段开头，其后是产出该行的 `evaluator_version`。`request_time` 取该组第一个版本（按 `comparisons` 声明顺序）的输入原值，缺失时为 `null`，不受盲测标签影响；`has_standard_answer` 为布尔值，表示本题是否有有效标准答案、是否进入归因的对错判定，与 `ground_truth.available` 一致。
 
-内部提交使用工具或初始材料提供的 `evidence_id`，绑定输入、消息和原文位置；程序展开为正式结果的 `message_index + quote`。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
+内部提交使用工具或初始材料提供的 `evidence_id`，绑定消息、来源路径和原文位置；程序展开为正式结果的 `message_index + quote`。ID 是明文坐标：`ev_<消息索引>_<text|json>_<起>_<止>_<路径>`，图片为 `ev_<消息索引>_image`；模型逐字复制，Host 按坐标重新定位来源。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
+
+初始材料是渐进式披露的首屏：只展示 `initialContextChars` 预算内的投影消息，投影会剔除 `input_messages`、`model`、`model_parameters` 等内部字段，证据引文同样计入预算；完整消息和隐藏字段通过材料工具按需读取，工具结果按 `maxOutputChars` 截断并可将完整内容存为可分页产物。
 
 每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
 

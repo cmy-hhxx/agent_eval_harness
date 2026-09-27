@@ -91,7 +91,7 @@ function wireDraft(fixture) {
             const start = source.text.indexOf(ref.quote);
             if (start >= 0 && ref.quote)
               return {
-                evidence_id: cite(id, ref.message_index, source, start, start + ref.quote.length).evidence_id,
+                evidence_id: cite(ref.message_index, source, start, start + ref.quote.length).evidence_id,
               };
           }
           return {

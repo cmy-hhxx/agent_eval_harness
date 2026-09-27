@@ -45,7 +45,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       throw new Error(
         `Missing model id for profile "${binding.profile}"; set models.${binding.profile}.model in a local config`,
       );
-    const thinking = binding.thinking ?? profile.thinking ?? "off";
+    const thinking = binding.thinking ?? profile.thinking ?? "xhigh";
     if (!THINKING_LEVELS.includes(thinking)) throw new Error(`Invalid thinking for stage "${stage}"`);
     const contextWindow = binding.contextWindow ?? profile.contextWindow;
     if (contextWindow === undefined || !Number.isInteger(contextWindow) || contextWindow <= 0)

@@ -128,7 +128,6 @@ export async function startWorker(
           execution,
           workdir: path.join(attempt.directory, "workspace"),
           inputs,
-          inputIds: new Map(spec.inputs.map((ref) => [ref.name, ref.id])),
           audit,
           policy: spec.policy,
           artifacts,

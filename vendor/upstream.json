@@ -23,9 +23,10 @@
     "local_changes": [
       "Source-only UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies; aliases and source exports are recorded in sources.json. No dependency on the adjacent repository at build or run time.",
       "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold/render algorithms and all CSS are unchanged.",
-      "Official logo/wordmark artwork and their exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Brand slots are empty except the product text. Theme boot injection is fixed light.",
+      "Official logo/wordmark artwork and their exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-owned Eris artwork and name occupy the existing brand slots; the hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",
       "Server bundle substitutes the original llm package manifest version literal for createRequire relative lookup; no protocol version or algorithm change.",
       "ModelSelect's parameterized test uses the identical expected string with toBe, because the repository's Vitest runner does not allow inline snapshots inside it.each.",
+      "Settings reuse ui-settings-general with optional technical rows omitted and ui-theme with its appearance selector omitted. Chat progress copy is localized as analysis; matching upstream test expectations are updated. All settings CSS and interaction components remain upstream.",
       "Gateway model selection reuses ui-input-trigger, ui-commands, ui-model-selection and ModelListEditor (selectionOnly skips manual model editing). Original token/session metric projections are reused. Original transport, conversation, Markdown, model selection and metric projection tests with their test-support dependencies and benchmark fixtures/budgets are retained. agent test adapters supply local Pi/session persistence and the installed Chrome binary."
     ]
   }

@@ -216,7 +216,6 @@ export const builtinTools: ExecutableTool[] = [
         offset = args.offset || 0,
         length = args.max_chars || 12000;
       const text = full.slice(offset, offset + length);
-      const inputId = ctx.inputIds?.get(args.candidate) || args.candidate;
       const citations = evidenceSources(source)
         .flatMap((source) => {
           if (source.kind === "json")
@@ -224,7 +223,6 @@ export const builtinTools: ExecutableTool[] = [
               ? []
               : [
                   cite(
-                    inputId,
                     args.message_index,
                     source,
                     offset,
@@ -236,20 +234,21 @@ export const builtinTools: ExecutableTool[] = [
           for (const line of source.text.split("\n")) {
             const end = start + Math.min(line.length, 640);
             if (line.trim() && text.includes(JSON.stringify(source.text.slice(start, end)).slice(1, -1)))
-              matches.push(cite(inputId, args.message_index, source, start, end));
+              matches.push(cite(args.message_index, source, start, end));
             start += line.length + 1;
           }
           return matches;
         })
         .filter((item) => item.quote)
         .slice(0, 12);
+      // Evidence coordinates stay first so truncating a long trace never hides them.
       return textResult({
-        text,
         evidence: citations,
         offset,
         next_offset: offset + length,
         total_chars: full.length,
         has_more: offset + length < full.length,
+        text,
       });
     },
   },
@@ -277,7 +276,6 @@ export const builtinTools: ExecutableTool[] = [
             position: number;
           while ((position = text.indexOf(args.query, start)) >= 0) {
             const evidence = cite(
-              ctx.inputIds?.get(args.candidate) || args.candidate,
               i,
               source,
               Math.max(0, position - 100),
@@ -313,11 +311,7 @@ export const builtinTools: ExecutableTool[] = [
             type: "text",
             text: JSON.stringify({
               message: `原始消息 ${id}，${content.length} 张图片`,
-              evidence_id: evidenceId(
-                ctx.inputIds?.get(args.candidate) || args.candidate,
-                args.message_index,
-                "image",
-              ),
+              evidence_id: evidenceId(args.message_index, "image"),
             }),
           },
           ...content,

@@ -35,6 +35,7 @@ export function createToolResultMessage(input: JsonObject): JsonObject;
 export function createSystemMessage(text: string): JsonObject;
 
 export class RemoteStreamCarrierError extends Error {}
-export function assistantSettingsDescribe(): JsonObject;
+export function assistantSettingsDescribe(document: import("@eval/contracts").AssistantPreferences): JsonObject;
+export function assistantSettingsMutation(document: import("@eval/contracts").AssistantPreferences, namespace: string, ops: unknown, expectedRevision: unknown): import("@eval/contracts").AssistantPreferences;
 
 export function createAssistantMetrics(): {accept(event: import("@eval/contracts").AssistantEvent): void; view(): JsonObject};

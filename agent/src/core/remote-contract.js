@@ -17,7 +17,7 @@ const methods = {
     insertBefore: ["request"], insertSessionBefore: ["request"], archiveSession: ["request"],
     unarchiveSession: ["request"], pinSession: ["request"], unpinSession: ["request"],
   },
-  settings: { describe: [], update: ["ns", "patch", "expectedRevision"], replace: ["ns", "section", "expectedRevision"] },
+  settings: { describe: [], mutate: ["ns", "ops", "expectedRevision"] },
   commands: { list: ["agentId"], execute: ["agentId", "line", "attachments"] },
   subagents: { prompt: ["request"], interruptByParent: ["childSessionId", "parentSessionId", "mode"] },
   directoryPicker: { capabilities: [], pick: [] },

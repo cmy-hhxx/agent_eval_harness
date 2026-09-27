@@ -79,6 +79,8 @@ export interface AssistantModelOptions {
 }
 export interface AssistantSessionRuntime {
   readonly options: { directory: string; model: ModelConfig; models?: AssistantModelDirectory };
+  settings(userId: string): Promise<JsonObject>;
+  mutateSettings(userId: string, namespace: string, ops: unknown, expectedRevision: unknown): Promise<JsonObject>;
   selectModel(scope: AssistantScope, selection: AssistantModelSelection): Promise<void>;
   list(userId: string): Promise<AssistantSessionState[]>;
   create(userId: string, sessionId?: string): Promise<AssistantSessionState>;
@@ -93,6 +95,9 @@ export interface AssistantSessionRuntime {
   events(scope: AssistantScope, signal: AbortSignal): AsyncIterable<unknown>;
   dispose(): Promise<void>;
 }
+
+/** Upstream settings revisions detect concurrent writes; they are not format versions. */
+export interface AssistantPreferences { revision: number; revisions: Record<string, number>; values: Record<string, JsonObject> }
 
 export interface AssistantModelSelection { provider: string; model: string; reasoningEffort?: ModelConfig['thinking'] }
 export interface AssistantModelEntry { id: string; name: string; contextWindow?: number; maxTokens?: number; reasoning?: { defaultEffort?: string; efforts: {id: string; name: string}[] } }

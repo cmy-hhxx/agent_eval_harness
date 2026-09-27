@@ -50,7 +50,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const evidence = sources.flatMap((source) => {
       const start = Math.max(0, offset - position), end = Math.min(source.text.length, offset + limit - position);
       position += source.text.length + 1;
-      return end > start ? [cite(reference.inputId!, reference.messageIndex!, source, start, end)] : [];
+      return end > start ? [cite(reference.messageIndex!, source, start, end)] : [];
     });
     return { reference, total: full.length, offset, text: full.slice(offset, offset + limit), evidence };
   }

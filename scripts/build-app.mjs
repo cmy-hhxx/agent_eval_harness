@@ -3,7 +3,7 @@ import path from "node:path";
 import { root, run } from "./lib.mjs";
 
 await Promise.all(
-  ["apps", "packages", "tests"].map((name) =>
+  ["apps", "packages", "tests", "schemas"].map((name) =>
     rm(path.join(root, "dist", name), { recursive: true, force: true }),
   ),
 );

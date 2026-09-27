@@ -1,4 +1,4 @@
-# 评测分析 Agent
+# Eris
 
 在项目根目录启动：
 
@@ -6,7 +6,7 @@
 bash agent/run.sh
 ```
 
-脚本读取根目录 `.env`，检查依赖和两套 SDK 构建，构建独立 Web 应用，等服务监听成功后打开浏览器。对话运行时只使用 Pi。首次安装沿用项目的 Node/npm/uv/Python 工具链，见根目录 [README](../README.md)。
+脚本读取根目录 `.env`，检查依赖和两套 SDK 构建，构建独立 Web 应用，等服务监听成功后打开浏览器。正常启动仅显示准备状态和访问地址；准备失败会输出完整错误并退出，`--debug` 显示全部安装与构建诊断。对话运行时只使用 Pi。首次安装沿用项目的 Node/npm/uv/Python 工具链，见根目录 [README](../README.md)。
 
 ```bash
 bash agent/run.sh --port 4181 --user alice --no-open
@@ -16,7 +16,9 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 `.env` 使用现有 `EVAL_BASE_URL`、`EVAL_API_KEY`，可设置 `AGENT_MODEL` 指定总 Agent 的网关模型、`AGENT_CONTEXT_WINDOW`（默认 131072）、`AGENT_MAX_TOKENS`（默认 8192）。未设置 `AGENT_MODEL` 时使用 `configs/local/models.json` 的 Attribution 模型配置。专业调用继续使用现有阶段模型绑定；不加载内置第三方模型目录。
 
-点击左下角“常用模型”→“勾选常用模型”，服务端使用 `.env` 的网关地址和密钥读取 `/models`。勾选并保存后，在输入框右下角切换模型与推理等级；`/model` 也使用同一选择器。常用模型按用户保存，当前模型与推理等级写入会话追加记录，刷新、续聊和本机副本转发后保持一致。切换不打断正在执行的轮次，下次用户请求使用新选择。密钥不会发送给浏览器。
+点击左下角“设置”→“常用模型”→“勾选常用模型”，服务端使用 `.env` 的网关地址和密钥读取 `/models`。勾选并保存后，在输入框右下角切换模型与推理等级；`/model` 也使用同一选择器。常用模型按用户保存，当前模型与推理等级写入会话追加记录，刷新、续聊和本机副本转发后保持一致。切换不打断正在执行的轮次，下次用户请求使用新选择。密钥不会发送给浏览器。
+
+设置直接复用上游面板。通用设置包含语言、会话字号、工作步骤展示、性能与用量和繁忙时的发送行为（排队 / 插话），按用户保存，刷新和本机副本间保持同步。外观固定浅色；运行中的思考状态显示“正在分析”。
 
 ## 能力与数据
 
@@ -32,20 +34,33 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 ## 模块与上游
 
-- `src/core`：工具和能力注册，只依赖公共接口。
+- `src/core`：`createEris` 统一装配提示词、Schema、工具和依赖，只依赖公共接口。
 - `src/server`：Session / Workspace 产品操作，将 HTTP 和 WebSocket 交给 Runtime。
 - `src/client`：原组件装配；没有自定义 CSS。
 - `packages/runtime`：Pi、会话执行者、Deepseek Connection/Gateway 接入。
 - `packages/data`：追加记录、文件锁、数据与产物 IO。
 - `apps/host`：配置、本地数据和专业 Agent 的具体组装。
-- `packages/prompts/resources/assistant`：总 Agent 提示词和工具文案。
-- `schemas/assistant`：分析工具输入约束。
+- `packages/prompts/resources/eris`：总 Agent 提示词和工具文案。
+- `schemas/eris`：分析工具输入约束。
 
 界面固定浅色，直接使用 Deepseek 的布局、输入、消息、工具树、Markdown 和代码块源码。MiniMax 等网关的正文 `<think>` 包装在服务端转换为 reasoning 流，分片标签不会混入正文；原始会话仍保留用于 Pi 恢复的消息。思考和工具过程沿用上游折叠组件，业务结果使用上游 ToolDetails 卡片，统计沿用上游 Session / Token 投影。
 
-Logo 图形源码与默认引用已移除，官方品牌插件不装配，侧栏显示“评测分析 Agent”。不提供主题切换、第三方模型市场、编程工具或工作目录管理。
+上游 Logo 图形源码与默认引用已移除，官方品牌插件不装配。原创 Eris 标记通过现有品牌插槽显示在侧栏与欢迎页，同一 SVG 用作浏览器图标；页面标题和品牌名称统一为 Eris。不提供主题切换、第三方模型市场、编程工具或工作目录管理。
 
 来源基线和变更见 [upstream.json](../vendor/upstream.json)、[源码映射](../vendor/deepseek/sources.json)、[局部补丁](../vendor/deepseek/local.patch)及 [MIT 许可证](../vendor/deepseek/LICENSE)。普通构建完全使用本仓库源码；只有维护命令 `node scripts/vendor-deepseek.mjs <上游仓库>` 才读取外部仓库，并重新应用已登记补丁。
+
+## 修改 Eris
+
+| 修改内容 | 唯一入口 |
+|---|---|
+| 身份、工作规则、恢复指令 | [system.md](../packages/prompts/resources/eris/system.md)、[recovery.md](../packages/prompts/resources/eris/recovery.md) |
+| 各工具的模型可见说明 | [resources/eris/tools/](../packages/prompts/resources/eris/tools/) 中的独立 Markdown 文件 |
+| 工具参数 | [schemas/eris/tools.json](../schemas/eris/tools.json) |
+| 工具注册、校验和执行 | [core/tools.ts](src/core/tools.ts) |
+| 完整 Agent 定义 | [core/profile.ts](src/core/profile.ts) 导出的 `createEris` |
+| 界面名称和标记 | [brand.js](src/client/brand.js)、[eris.svg](src/client/brand/eris.svg)；浏览器标题通过 [vite.config.mjs](vite.config.mjs) 的上游 `DSH_CLIENT_TITLE` 配置；欢迎语维护在上游 [local.patch](../vendor/deepseek/local.patch) |
+
+新增工具时同步 Schema、工具说明、执行器与测试；Host 仅注入 `ErisDependencies`，不再单独拼装提示词。构建并重启 `bash agent/run.sh` 后生效。当前工具提供数据分析和专业评测；命令执行、数据整理与持续监控尚未接入。
 
 ## 验证
 
@@ -59,6 +74,6 @@ npm run test:agent:browser
 npm run test:agent:performance
 ```
 
-浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型与推理等级切换、思考折叠、工具详情和刷新恢复。上游性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
+浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型与推理等级切换、设置保存与语言切换、思考状态文案与折叠、工具详情和刷新恢复。上游性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
 
 视觉检查先运行 `node scripts/build-agent-reference.mjs`，再执行 `AGENT_VISUAL_REFERENCE=1 npm run test:agent:browser`。参考构建反向应用 UI 局部补丁，使用原始上游组件和同一份会话内容；对侧栏、标题栏、消息、Markdown、代码块区域逐像素比较。输入文案、不可用的功能入口和品牌标识属于明确差异。截图与检查结果写入 `.artifacts/agent-browser/`。

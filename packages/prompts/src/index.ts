@@ -46,6 +46,12 @@ export function agentPrompt(stage: PromptStage, toolNames: string[]) {
   };
 }
 
-export function assistantPrompt() {
-  return { systemPrompt: resource("assistant/system.md"), recoveryMessage: resource("assistant/recovery.md"), toolDescriptions: JSON.parse(resource("assistant/tools.json")) as Record<string, string> };
+/** Eris owns its instructions and tool wording separately from evaluation profiles. */
+export function erisPrompt(toolNames: string[]) {
+  if (new Set(toolNames).size !== toolNames.length) throw new Error("Duplicate prompt tool in Eris");
+  const toolDescriptions = Object.fromEntries(toolNames.map((name) => {
+    if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid Eris tool name: ${name}`);
+    return [name, resource(`eris/tools/${name}.md`)];
+  }));
+  return { systemPrompt: resource("eris/system.md"), recoveryMessage: resource("eris/recovery.md"), toolDescriptions };
 }

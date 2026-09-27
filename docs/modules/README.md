@@ -7,7 +7,7 @@
 | 模块 | 职责与修改位置 | 公开入口 | 项目依赖 | 验证入口 |
 |---|---|---|---|---|
 | 应用 Host | [CLI](../../apps/host/src/cli.ts)、[看板服务](../../apps/host/src/dashboard.ts)、[看板视图模块](../../apps/host/dashboard/dashboard-view.js)、[数据与流程](../../apps/host/src/dashboard-reference.ts)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、看板、跨模块回归、doctor |
-| 总分析 Agent | [核心工具](../../agent/src/core/index.ts)、[产品接口](../../agent/src/server/index.ts)、[原界面装配](../../agent/src/client/main.js) | `@eval/assistant`、`@eval/assistant/server` | Contracts、Prompts、Tools、Runtime；具体业务由应用 Host 注入 | 会话、浏览器、原上游回归与性能 |
+| Eris | [完整定义](../../agent/src/core/profile.ts)、[核心工具](../../agent/src/core/tools.ts)、[产品接口](../../agent/src/server/index.ts)、[原界面装配](../../agent/src/client/main.js) | `@eval/assistant`、`@eval/assistant/server` | Contracts、Prompts、Tools、Runtime；具体业务由应用 Host 注入 | 会话、浏览器、原上游回归与性能 |
 | 应用 Worker | [底座与进程入口](../../apps/worker/src/cli.ts) | 根 `worker` | Runtime、Contracts | 双 SDK 集成、独立构建 |
 | Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |
@@ -26,6 +26,8 @@ Agent 不导入其他 Agent 或 Workflow。新增 Profile 在 `packages/prompts`
 
 正式对比结果由 [Workflow Schema](../../packages/workflows/src/comparison/schema.ts)引用两个 Agent 的接受结果 Schema，再添加身份、对错摘要与回溯字段；Workflow 自己的 [export schema](../../schemas/workflow/export.schema.json) 只描述这层正式导出，改写产物由 [commentary schema](../../schemas/workflow/commentary.schema.json) 描述，聚类产物由 [clustering schema](../../schemas/workflow/clustering.schema.json) 描述。Schema 统一存放在[根目录 schemas 模块](../../schemas/README.md)，Agent 的业务结构仍在各自目录的校验和类型中维护；模型可见文案集中在[提示词模块](../../packages/prompts/README.md)。
 
-总分析 Agent 的 `AnalysisDataSource`、`SpecialistGateway`、`AssistantSessionRuntime` 和执行者协调接口位于 [Contracts](../../packages/contracts/src/assistant.ts)。单任务入口 [runAgentTask](../../packages/host/src/single-task.ts) 复用 Host 执行、校验和结果提交；[应用专业网关](../../apps/host/src/assistant-specialists.ts) 通过 Workflow 的公开 `bindTask` 复用材料与盲测规则，不创建批量 Workflow。
+Eris 通过 `createEris` 统一装配独立的 [提示词与工具说明](../../packages/prompts/resources/eris/)、[工具 Schema](../../schemas/eris/tools.json) 和执行器；修改入口见 [Eris 定义](../../agent/README.md#修改-eris)。`AnalysisDataSource`、`SpecialistGateway`、`AssistantSessionRuntime` 和执行者协调接口位于 [Contracts](../../packages/contracts/src/assistant.ts)。单任务入口 [runAgentTask](../../packages/host/src/single-task.ts) 复用 Host 执行、校验和结果提交；[应用专业网关](../../apps/host/src/assistant-specialists.ts) 通过 Workflow 的公开 `bindTask` 复用材料与盲测规则，不创建批量 Workflow。
 
 分析助手的网关模型发现位于 Runtime，模型目录与常用模型组装位于应用 Host，用户选择 IO 位于 Data；客户端装配上游模型选择、命令入口和模型勾选组件。Pi 正文中的 `<think>` 包装只在展示适配时归入 reasoning，不改写原始恢复消息。
+
+分析助手设置通过原有 Deepseek ConfigForms / settings RPC 读写，Runtime 适配上游设置 Schema，Data 按用户保存偏好并检查并发修改；前端沿用上游通用设置面板和各功能控件。

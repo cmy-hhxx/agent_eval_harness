@@ -707,10 +707,8 @@ export async function buildPlan(
               ),
               active_components: activeComponents,
               max_components: config.clustering.maxComponentsPerModel,
-              max_new_components: Math.min(
-                config.clustering.maxNewComponentsPerTask,
-                share(Math.max(0, config.clustering.maxComponentsPerModel - activeComponents)),
-              ),
+              // Bind narrows this to the components the task's observations actually use.
+              max_new_components: share(Math.max(0, config.clustering.maxComponentsPerModel - activeComponents)),
               consolidate: activeClasses >= config.clustering.consolidateAt,
               min_support: config.clustering.minSupport,
             },

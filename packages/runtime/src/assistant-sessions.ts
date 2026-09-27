@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject } from "@eval/contracts";
-import { AssistantJournal, assistantId, assistantOwner, assistantUser, ownAssistantSession, listAssistantSessions, type AssistantOwner } from "@eval/data";
+import { AssistantJournal, assistantId, assistantOwner, assistantUser, ownAssistantSession, listAssistantSessions, readAssistantPreferences, updateAssistantPreferences, type AssistantOwner } from "@eval/data";
 import { createPiConversation, type ConversationDriver, type ConversationDriverFactory } from "./assistant-pi.js";
-import { createAssistantMetrics, createAssistantMessage, createToolResultMessage, createUserMessage, AssistantStreamAccumulator, SessionAssistantStreamAccumulator, SESSION_FORMAT_VERSION, RemoteStreamMuxClient } from "./deepseek.js";
+import { assistantSettingsDescribe, assistantSettingsMutation, createAssistantMetrics, createAssistantMessage, createToolResultMessage, createUserMessage, AssistantStreamAccumulator, SessionAssistantStreamAccumulator, SESSION_FORMAT_VERSION, RemoteStreamMuxClient } from "./deepseek.js";
 
 import { assistantContent, AssistantContentStream } from "./assistant-content.js";
 
@@ -86,6 +86,11 @@ export class AssistantSessions implements AssistantSessionRuntime {
     this.ownership = options.ownership ?? { locate: (scope) => assistantOwner(options.directory, scope), claim: (scope, owner) => ownAssistantSession(options.directory, scope, owner) };
   }
   list(userId: string) { return listAssistantSessions(this.options.directory, userId); }
+  async settings(userId: string) { return assistantSettingsDescribe(await readAssistantPreferences(this.options.directory, userId)); }
+  async mutateSettings(userId: string, namespace: string, ops: unknown, expectedRevision: unknown) {
+    const document = await updateAssistantPreferences(this.options.directory, userId, current => assistantSettingsMutation(current, namespace, ops, expectedRevision));
+    return (assistantSettingsDescribe(document).namespaces as JsonObject[]).find(view => view.ns === namespace)!;
+  }
   async create(userId: string, sessionId?: string) {
     const journal = await AssistantJournal.create(this.options.directory, userId, sessionId);
     return journal.state;
@@ -448,10 +453,15 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if (kind === "events") yield { type: "ready", clientId: randomUUID(), host: { home: this.options.directory } };
     else yield { type: "baseline", value: { projections: Object.fromEntries(await Promise.all(states.map(async (state) => [state.sessionId, await this.projections(state)]))) } };
     let favorites = JSON.stringify(await this.options.models?.readFavorites(userId));
+    let settingsRevision = (await readAssistantPreferences(this.options.directory, userId)).revision;
     const seen = new Map(states.map((state) => [state.sessionId, JSON.stringify(state)]));
     while (!signal.aborted) {
       await delay(150, undefined, { signal }).catch(() => {});
       if (signal.aborted) break;
+      if (kind === "events") {
+        const current = (await readAssistantPreferences(this.options.directory, userId)).revision;
+        if (current !== settingsRevision) { settingsRevision = current; yield {type:"emit",event:"settings/document-updated",args:[]}; }
+      }
       if (kind === "events" && this.options.models) {
         const current = JSON.stringify(await this.options.models.readFavorites(userId));
         if (current !== favorites) { favorites = current; yield {type:"emit",event:"llm/adapters-updated",args:[]}; }

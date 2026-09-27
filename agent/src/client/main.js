@@ -8,6 +8,7 @@ import * as session from "@deepseek-ai/dsh-api-session-controller/client";
 import * as workspace from "@deepseek-ai/dsh-api-workspace-controller/client";
 import * as fileUpload from "@deepseek-ai/dsh-client-file-upload/client";
 import * as settings from "@deepseek-ai/dsh-client-ui-settings/client";
+import * as settingsGeneral from "@deepseek-ai/dsh-client-ui-settings-general/client";
 import * as locale from "@deepseek-ai/dsh-client-locale/client";
 import * as theme from "@deepseek-ai/dsh-client-ui-theme/client";
 import * as shortcuts from "@deepseek-ai/dsh-client-shortcuts/client";
@@ -27,6 +28,7 @@ import * as commands from "@deepseek-ai/dsh-client-ui-commands/client";
 import * as modelSelection from "@deepseek-ai/dsh-client-ui-model-selection/client";
 import * as modelFavorites from "./models.js";
 import * as analysisToolViews from "./tools.js";
+import * as erisBrand from "./brand.js";
 import { contribution } from "../core/remote-contract.js";
 
 // All presentation, stores, subscriptions and transport are the upstream plugins.
@@ -36,15 +38,15 @@ const pending = [renderer, typert, connection, gateway].map((plugin) => ctx.plug
 await Promise.all(pending);
 await ctx.remote.$mount(contribution);
 await Promise.all([
-  session, workspace, fileUpload, settings, locale, theme, shortcuts, resources,
-  layout, sidebar, uiSession, sidebarRight, chat, tool, trajectory, analysisToolViews, inputTriggers, commands, modelSelection, modelFavorites,
-].map((plugin) => ctx.plugin(plugin.default ?? plugin)));
+  ctx.plugin(theme, { appearanceSelector: false }),
+  ctx.plugin(settingsGeneral, { technicalRows: false }),
+  ...[
+  session, workspace, fileUpload, settings, locale, shortcuts, resources,
+  layout, sidebar, erisBrand, uiSession, sidebarRight, chat, tool, trajectory, analysisToolViews, inputTriggers, commands, modelSelection, modelFavorites,
+  ].map((plugin) => ctx.plugin(plugin.default ?? plugin)),
+]);
 await ctx.plugin(uiWorkspace, { allowFork: false, readOnlyWorkspace: true });
 await ctx.plugin(conversation, { allowAttachments: false });
-ctx.inject(["slots"], () => {
-  for (const name of ["sidebar.brand.mark", "conversation.hero.brand.mark"]) ctx.slots.inject(name, () => ctx.slots.register({ name }, () => null));
-  ctx.slots.inject("sidebar.brand.name", () => ctx.slots.register({ name: "sidebar.brand.name" }, () => "评测分析 Agent"));
-});
 ctx.inject(["layout", "uiWorkspace", "uiConversation", "uiSession", "sessions", "sidebarRight"], () => {
   ctx.uiRenderer.mount(document.getElementById("root"));
 });

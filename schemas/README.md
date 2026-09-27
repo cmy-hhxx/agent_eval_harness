@@ -9,7 +9,7 @@
 | `rewrite/` | 改写阶段的请求和结果；只交换文本槽位、不解析证据，因此提交与结果共用 `result.schema.json` |
 | `clustering/` | 聚类阶段的请求和结果；只归类问题观察、不解析证据，因此提交与结果共用 `result.schema.json` |
 | `workflow/` | Workflow 组合后的正式导出、回溯标注、改写与聚类产物 Schema |
-| `assistant/` | 独立分析助手的数据读取、专业任务及总结工具输入 |
+| `eris/` | 独立分析助手的数据读取、专业任务及总结工具输入 |
 
 ## 文件含义
 
@@ -19,7 +19,7 @@
 - `workflow/export.schema.json`：加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行。
 - `workflow/commentary.schema.json`：改写阶段接受后的评语产物行，用源任务和结果 id 指向正式结果。
 - `workflow/clustering.schema.json`：聚类阶段接受后的归类产物行，按模型与批次引用观察和归类决定。
-- `assistant/tools.json`：独立分析助手的数据读取、专业任务及总结工具输入，不接受自行填写的专业判词。
+- `eris/tools.json`：独立分析助手的数据读取、专业任务及总结工具输入，不接受自行填写的专业判词。
 
 Comparison、Rewrite 与 Clustering 不解析证据，因此没有单独的 `submission.schema.json`，提交与结果共用 `result.schema.json`。
 

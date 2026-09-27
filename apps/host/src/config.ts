@@ -25,7 +25,6 @@ const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   maxClassesPerModel: 80,
   maxNewClassesPerTask: 8,
   maxComponentsPerModel: 12,
-  maxNewComponentsPerTask: 1,
   consolidateAt: 60,
   minSupport: 1,
   maxCasesPerTask: 100,
@@ -148,11 +147,6 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
           clustering.maxComponentsPerModel,
           "clustering.maxComponentsPerModel",
         ) ?? CLUSTERING_DEFAULTS.maxComponentsPerModel,
-      maxNewComponentsPerTask:
-        optionalNonNegativeInteger(
-          clustering.maxNewComponentsPerTask,
-          "clustering.maxNewComponentsPerTask",
-        ) ?? CLUSTERING_DEFAULTS.maxNewComponentsPerTask,
       consolidateAt:
         optionalNonNegativeInteger(clustering.consolidateAt, "clustering.consolidateAt") ??
         CLUSTERING_DEFAULTS.consolidateAt,
@@ -324,7 +318,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
         const defaults = isObject(profile) ? profile : {};
         return [stage, {
           model: binding.model ?? defaults.model ?? "",
-          thinking: binding.thinking ?? defaults.thinking ?? "off",
+          thinking: binding.thinking ?? defaults.thinking ?? "xhigh",
         }];
       })),
   };

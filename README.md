@@ -17,9 +17,9 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 阅读顺序：先看本页和 `AGENTS.md`；定位任务后只打开对应文档和源码入口。规则只维护一份，其他页面通过链接引用。
 
-## 独立分析 Agent
+## Eris 评测助手
 
-配置根目录 `.env` 后运行 `bash agent/run.sh`，浏览器会打开浅色评测分析助手。支持 `--port`、`--user`、`--no-open`；对话、独立 Attribution / Comparison 调用、原始数据引用与多副本恢复见 [Agent 使用说明](agent/README.md)。看板仍使用根目录 `bash run.sh`。
+配置根目录 `.env` 后运行 `bash agent/run.sh`，浏览器会打开浅色 Eris 评测助手。支持 `--port`、`--user`、`--no-open`；对话、独立 Attribution / Comparison 调用、原始数据引用与多副本恢复见 [Agent 使用说明](agent/README.md)。看板仍使用根目录 `bash run.sh`。
 
 ## 最短运行路径
 

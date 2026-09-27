@@ -1,8 +1,8 @@
 # 评测提示词
 
-此模块是专业 Agent 的评测指令与工具描述、总分析助手提示词与工具描述的唯一来源。四阶段系统/任务规则、任务材料/预算/恢复文案及内置评测工具描述在此装配；`packages/agents` 选择所需工具并组装 Profile，Tools 只负责执行，Host / Worker 不维护第二份规则正文。
+此模块是专业 Agent 的评测指令与工具描述、Eris 提示词与工具描述的唯一来源。四阶段系统/任务规则、任务材料/预算/恢复文案及内置评测工具描述在此装配；`packages/agents` 选择所需工具并组装 Profile，Tools 只负责执行，Host / Worker 不维护第二份规则正文。
 
-专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；助手的规则和工具描述分别位于 `resources/assistant/system.md`、`resources/assistant/tools.json`。组装顺序见 `src/index.ts`，`shared/` 只存共同的消息边界。
+专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；Eris 的系统规则、恢复文案和工具描述集中在 `resources/eris/system.md`、`resources/eris/recovery.md` 和 `resources/eris/tools/<tool>.md`。组装顺序见 `src/index.ts`，`shared/` 只存共同的消息边界。
 
 ## 提示词写法
 
@@ -16,4 +16,4 @@
 
 改动规则、工具描述、材料组装或启用专家示例等可能影响判词的内容时，人工更新配置中的 `evaluatorVersion`。纯文件搬迁且模型实际接收的文本不变不需要更新标识；禁止用摘要代替人工声明。调试时使用 `--debug` 的契约与 attempt 快照，当前看板也只显示运行应用的公开 Profile 定义。
 
-总分析助手的公开提示词入口为 `assistantPrompt()`；它通过引用请求专业结论，不取代专业 Agent 的判词规则。
+Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，再由 Host 注入数据源和专业网关。Eris 通过引用请求专业结论，不取代专业 Agent 的判词规则。具体修改位置见 [Eris 定义](../../agent/README.md#修改-eris)。

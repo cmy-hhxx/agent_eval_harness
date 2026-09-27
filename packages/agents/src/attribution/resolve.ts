@@ -24,7 +24,7 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
   const resolveRefs = (refs: EvidenceRef[], location: string) =>
     refs.flatMap((value, i) => {
       try {
-        return [resolveEvidence(source, request.sources.answer.id, value, "answer", audit.viewedImages, `${location}/${i}`)];
+        return [resolveEvidence(source, value, "answer", audit.viewedImages, `${location}/${i}`)];
       } catch (error) {
         if (error instanceof ValidationError) errors.push(...error.issues!);
         else throw error;

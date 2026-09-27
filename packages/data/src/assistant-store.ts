@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { canonical, type AssistantEvent, type AssistantPrompt, type AssistantRecord, type AssistantScope, type AssistantSessionState } from "@eval/contracts";
+import { canonical, type AssistantPreferences, type AssistantEvent, type AssistantPrompt, type AssistantRecord, type AssistantScope, type AssistantSessionState } from "@eval/contracts";
 import { exists, readJson, runLock, writeJson } from "./files.js";
 
 export function assistantUser(value: string): string {
@@ -165,4 +165,19 @@ export async function writeAssistantFavorites(root: string, userId: string, favo
   await mkdir(directory, {recursive: true});
   const release = await runLock(directory);
   try { await writeJson(path.join(directory, "models.json"), {favorites}); } finally { await release(); }
+}
+
+export async function readAssistantPreferences(root: string, userId: string): Promise<AssistantPreferences> {
+  const file = path.join(root, "users", assistantUser(userId), "preferences", "interface.json");
+  return await exists(file) ? readJson<AssistantPreferences>(file) : {revision: 0, revisions: {}, values: {}};
+}
+export async function updateAssistantPreferences(root: string, userId: string, update: (current: AssistantPreferences) => AssistantPreferences): Promise<AssistantPreferences> {
+  const directory = path.join(root, "users", assistantUser(userId), "preferences");
+  await mkdir(directory, {recursive: true});
+  const release = await runLock(directory);
+  try {
+    const next = update(await readAssistantPreferences(root, userId));
+    await writeJson(path.join(directory, "interface.json"), next);
+    return next;
+  } finally { await release(); }
 }

@@ -231,7 +231,6 @@ export interface ToolContext {
   attemptId: string;
   workdir: string;
   inputs: Map<string, unknown>;
-  inputIds?: Map<string, string>;
   audit: ToolAudit;
   policy: Policy;
   artifacts: {

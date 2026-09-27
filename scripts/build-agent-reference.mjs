@@ -1,5 +1,5 @@
 // Rebuild the recorded upstream baseline for screenshot parity. The application
-// binding and non-brand slots are shared; local UI patches are reversed except the explicit no-logo requirement.
+// binding and Eris brand slots are shared; local UI patches are reversed except the removal of official artwork.
 import { cp, mkdir, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';

@@ -206,24 +206,16 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
   const material = materialOf(spec);
   const evidence = (items: unknown, label: string) =>
     (items as { message_index: number; quote: string }[]).map((item) => {
-      const inputId = spec.inputs.find((r) => r.name === label)!.id;
       if (item.quote.startsWith("[图像观察]"))
         return {
-          evidence_id: evidenceId(inputId, item.message_index, "image"),
+          evidence_id: evidenceId(item.message_index, "image"),
           observation: item.quote.slice(6),
         };
       const c = label === "answer" ? material.answer! : material.candidates[label]!,
         text = item.message_index === c.final_message_index ? c.final_answer : c.question;
       const start = text.indexOf(item.quote);
       return {
-        evidence_id: evidenceId(
-          inputId,
-          item.message_index,
-          "text",
-          "/content",
-          start,
-          start + item.quote.length,
-        ),
+        evidence_id: evidenceId(item.message_index, "text", "/content", start, start + item.quote.length),
       };
     });
   if (material.answer && "findings" in result) {

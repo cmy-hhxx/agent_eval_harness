@@ -11,7 +11,7 @@
    private keepAlive: Promise<void> | undefined
 @@ -224,7 +226,7 @@
    }
- 
+
    private connect(): Promise<WebSocket> {
 -    const socket = new WebSocket(remoteStreamUrl())
 +    const socket = new WebSocket(this.endpointUrl ?? remoteStreamUrl())
@@ -23,7 +23,7 @@
 @@ -219,7 +219,7 @@
    }
  }
- 
+
 -function rpcFetchHandler(
 +export function rpcFetchHandler(
    channel: string,
@@ -38,13 +38,13 @@
 +  allowAttachments?: boolean
    maxConcurrentFileUploads?: number
  }
- 
+
  /** Validated Conversation runtime configuration. */
  export const Config: z<Config> = z.object({
 +  allowAttachments: z.boolean().default(true),
    maxConcurrentFileUploads: z.natural().min(1).default(2),
  })
- 
+
 @@ -456,7 +458,7 @@
        const bridge = hostPathBridge()
        return {
@@ -75,7 +75,7 @@
    'settings.enter.steer': '插话发送',
 -  'hero.headline': '探索未至之境',
 -  'hero.preview': '预览版',
-+  'hero.headline': '评测分析',
++  'hero.headline': 'Eris',
 +  'hero.preview': '',
    'hero.chooseWorkspace': '选择工作区',
    'session.hierarchy': '会话层级',
@@ -99,7 +99,7 @@
    'settings.enter.steer': 'Steer',
 -  'hero.headline': 'Into the Unknown',
 -  'hero.preview': 'Preview',
-+  'hero.headline': 'Evaluation Analysis',
++  'hero.headline': 'Eris',
 +  'hero.preview': '',
    'hero.chooseWorkspace': 'Choose workspace',
    'session.hierarchy': 'Session hierarchy',
@@ -128,11 +128,11 @@
 +++ b/packages/client/ui-theme/src/theme-settings.ts
 @@ -18,7 +18,7 @@
  export type ThemePreference = typeof THEME_PREFERENCES[number]
- 
+
  /** Default preference when the user-settings document has no override. */
 -export const DEFAULT_PREFERENCE: ThemePreference = 'system'
 +export const DEFAULT_PREFERENCE: ThemePreference = 'light'
- 
+
  /** Smallest accepted content font size (px). */
  export const FONT_SIZE_MIN = 12
 --- a/packages/client/ui-workspace/src/client/contract/slots.ts
@@ -321,7 +321,7 @@
 --- a/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
 +++ b/packages/client/ui-settings-models/src/client/ModelListEditor.tsx
 @@ -63,6 +63,9 @@
- 
+
  /** Props of {@link ModelListEditor}. */
  export interface ModelListEditorProps {
 +  /** Application-owned gateway: pick favorites without editing provider models. */
@@ -385,4 +385,192 @@
 +      .toBe('deepseek-official/deepseek-v4-flashHigh')
      expect(directory.getSnapshot().current).toEqual(state().current)
    })
- 
+
+--- a/packages/client/ui-settings-general/src/client/index.ts
++++ b/packages/client/ui-settings-general/src/client/index.ts
+@@ -72,7 +72,8 @@
+  * section, each once its slot declaration is on the ledger.
+  * @param ctx - client root context.
+  */
+-export function apply(ctx: ClientContext): void {
++export function apply(ctx: ClientContext, config: { technicalRows?: boolean } = {}): void {
++  if (config.technicalRows !== false) {
+   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+     name: 'settings.general.item', id: 'developer-tools', order: 15, locale: NS,
+     inject: (): DeveloperToolsRowInjected => ({
+@@ -84,6 +85,7 @@
+   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+     name: 'settings.general.item', id: 'current-version', order: 100, locale: NS,
+   }, CurrentVersionRow))
++  }
+   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-general: dictionaries')
+   const connection = ctx.get('connection') as ConnectionHandle
+   const carrier = (globalThis as typeof globalThis & { dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge } }).dshDesktop
+--- a/packages/client/ui-theme/src/client/index.ts
++++ b/packages/client/ui-theme/src/client/index.ts
+@@ -426,7 +426,7 @@
+  * slot (a feature owns its settings surface).
+  * @param ctx - client cordis context.
+  */
+-export function apply(ctx: ClientContext): void {
++export function apply(ctx: ClientContext, config: { appearanceSelector?: boolean } = {}): void {
+   installThemeStyles(ctx)
+   const host = ctx.configForms.get<ThemeSettings>(THEME_SETTINGS_NAMESPACE)
+   const theme = new ThemeRuntime(ctx, host)
+@@ -452,7 +452,7 @@
+       setTheme: (id) => { theme.setTheme(id) },
+     }
+   }
+-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
++  if (config.appearanceSelector !== false) ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+     name: 'settings.general.item',
+     id: 'appearance',
+     order: 10,
+--- a/packages/client/ui-chat/src/client/locale.ts
++++ b/packages/client/ui-chat/src/client/locale.ts
+@@ -62,7 +62,7 @@
+   'message.trigger.plugin': '插件状态更新',
+   'message.trigger.explanation': '这条通知触发了本轮回复。',
+   'message.turnProcess.worked': '已完成工作',
+-  'message.turnProcess.deepDivingFor': '深度求索中，用时{duration}',
++  'message.turnProcess.deepDivingFor': '正在分析，用时{duration}',
+   'message.turnProcess.took': '用时 {duration}',
+   'message.turnProcess.failed': '处理失败',
+   'view.chat': '对话',
+@@ -87,7 +87,7 @@
+   'chat.loadError': '历史加载失败：{message}（{code}）',
+   'chat.loadOlder': '加载更早',
+   'chat.toBottom': '回到底部',
+-  'chat.deepDiving': '深度求索中',
++  'chat.deepDiving': '正在分析',
+   'chat.turnNavigation.label': '轮次导航',
+   'chat.turnNavigation.jump': '跳转到第 {turn} 轮',
+   'chat.turnNavigation.jumpLoad': '加载并跳转到第 {turn} 轮',
+@@ -255,7 +255,7 @@
+   'message.trigger.plugin': 'Plugin status updated',
+   'message.trigger.explanation': 'This notification triggered this response.',
+   'message.turnProcess.worked': 'Worked',
+-  'message.turnProcess.deepDivingFor': 'Deep diving for {duration}',
++  'message.turnProcess.deepDivingFor': 'Analyzing for {duration}',
+   'message.turnProcess.took': 'Took {duration}',
+   'message.turnProcess.failed': 'Failed',
+   'view.chat': 'Chat',
+@@ -280,7 +280,7 @@
+   'chat.loadError': 'Failed to load history: {message} ({code})',
+   'chat.loadOlder': 'Load earlier',
+   'chat.toBottom': 'Back to bottom',
+-  'chat.deepDiving': 'Deep diving...',
++  'chat.deepDiving': 'Analyzing...',
+   'chat.turnNavigation.label': 'Turn navigation',
+   'chat.turnNavigation.jump': 'Jump to turn {turn}',
+   'chat.turnNavigation.jumpLoad': 'Load and jump to turn {turn}',
+--- a/packages/client/ui-chat/tests/chat-view.client.spec.tsx
++++ b/packages/client/ui-chat/tests/chat-view.client.spec.tsx
+@@ -1619,7 +1619,7 @@
+     fireEvent.click(within(pendingBubble as HTMLElement).getByRole('button', { name: '复制' }))
+     expect(writeText).toHaveBeenCalledWith('interrupt now')
+     expect(within(pendingBubble as HTMLElement).queryByRole('button', { name: '在新对话中分支' })).toBeNull()
+-    expect(turnProcessControl(view.container)?.textContent).toBe('深度求索中，用时2秒')
++    expect(turnProcessControl(view.container)?.textContent).toBe('正在分析，用时2秒')
+     expect(view.getByRole('status').compareDocumentPosition(view.getByText('interrupt now'))
+       & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+
+@@ -2271,7 +2271,7 @@
+     const h = makeHarness({ chat: initial }, { running: true })
+     const view = render(<h.ChatView {...h.props} />)
+     expect(renderedFlowKinds(view.container)).toEqual(['user', 'turn-process'])
+-    expect(turnProcessControl(view.container)?.textContent).toBe('深度求索中，用时4秒')
++    expect(turnProcessControl(view.container)?.textContent).toBe('正在分析，用时4秒')
+     expect(view.container.querySelector('[data-chat-flow-kind="system-prompt"]')).toBeNull()
+
+     act(() => {
+@@ -2453,7 +2453,7 @@
+       turnTimings: new Map([[1, { startTime: 0 }]]),
+     })
+     const view = render(<h.ChatView {...h.props} />)
+-    const liveToggle = view.getByRole('button', { name: '深度求索中，用时3秒' }) as HTMLButtonElement
++    const liveToggle = view.getByRole('button', { name: '正在分析，用时3秒' }) as HTMLButtonElement
+     expect(liveToggle.disabled).toBe(true)
+     expect(liveToggle.getAttribute('aria-expanded')).toBe('true')
+     const processRow = view.getByText('inspect').closest('[data-chat-flow-kind="assistant-step"]') as HTMLElement
+@@ -3203,8 +3203,8 @@
+     const view = render(<h.ChatView {...h.props} />)
+     expect(view.getByTestId('tool-seat-r1')).toBeTruthy()
+     expect(h.toolOwners[0]?.block).toMatchObject({ callId: 'r1', argsRaw: '{"command":"cmd-r1"}' })
+-    expect(view.getByRole('status').textContent).toBe('深度求索中')
+-    const toggle = view.getByRole('button', { name: '深度求索中，用时2秒' }) as HTMLButtonElement
++    expect(view.getByRole('status').textContent).toBe('正在分析')
++    const toggle = view.getByRole('button', { name: '正在分析，用时2秒' }) as HTMLButtonElement
+     expect(toggle.disabled).toBe(true)
+     expect(toggle.getAttribute('aria-expanded')).toBe('true')
+   }))
+@@ -3265,10 +3265,10 @@
+     )
+     const view = render(<h.ChatView {...h.props} />)
+     const status = view.getByRole('status')
+-    const toggle = view.getByRole('button', { name: '深度求索中，用时2分5秒' }) as HTMLButtonElement
++    const toggle = view.getByRole('button', { name: '正在分析，用时2分5秒' }) as HTMLButtonElement
+     expect(toggle).toBe(turnProcessControl(view.container))
+     expect(toggle.disabled).toBe(true)
+-    expect(status.textContent).toBe('深度求索中')
++    expect(status.textContent).toBe('正在分析')
+     expect(status.getAttribute('aria-live')).toBe('polite')
+     expect(status.getAttribute('aria-atomic')).toBe('true')
+     expect(toggle.closest('[aria-live]')).toBeNull()
+@@ -3281,21 +3281,21 @@
+         role: 'user', source: { kind: 'user' },
+       }] } })
+     })
+-    expect(toggle.textContent).toBe('深度求索中，用时2分5秒')
++    expect(toggle.textContent).toBe('正在分析，用时2分5秒')
+     act(() => { vi.advanceTimersByTime(2_000) })
+-    expect(toggle.textContent).toBe('深度求索中，用时2分7秒')
++    expect(toggle.textContent).toBe('正在分析，用时2分7秒')
+     expect(view.getByRole('status')).toBe(status)
+-    expect(status.textContent).toBe('深度求索中')
++    expect(status.textContent).toBe('正在分析')
+     act(() => {
+       h.setSession({ testInbox: { 'next-turn': [], 'next-step': [] } })
+       h.setChat({ nodes: [trigger, { ...steering(2, 'also', 1), time: 128_000 }] })
+     })
+     expect(turnProcessControl(view.container)).toBe(toggle)
+-    expect(toggle.textContent).toBe('深度求索中，用时2分7秒')
++    expect(toggle.textContent).toBe('正在分析，用时2分7秒')
+     expect(view.getByText('also').closest('[data-pending-steering]')).toBeNull()
+     act(() => { vi.advanceTimersByTime(1_000) })
+-    expect(toggle.textContent).toBe('深度求索中，用时2分8秒')
+-    expect(status.textContent).toBe('深度求索中')
++    expect(toggle.textContent).toBe('正在分析，用时2分8秒')
++    expect(status.textContent).toBe('正在分析')
+     view.unmount()
+     expect(vi.getTimerCount()).toBe(0)
+   }))
+@@ -3308,12 +3308,12 @@
+       { running: true },
+     )
+     const view = render(<h.ChatView {...h.props} />)
+-    const toggle = view.getByRole('button', { name: '深度求索中，用时59分59秒' })
++    const toggle = view.getByRole('button', { name: '正在分析，用时59分59秒' })
+     act(() => { vi.advanceTimersByTime(1_000) })
+-    expect(toggle.textContent).toBe('深度求索中，用时1小时00分0秒')
++    expect(toggle.textContent).toBe('正在分析，用时1小时00分0秒')
+     act(() => { vi.advanceTimersByTime(303_000) })
+-    expect(toggle.textContent).toBe('深度求索中，用时1小时05分3秒')
+-    expect(view.getByRole('status').textContent).toBe('深度求索中')
++    expect(toggle.textContent).toBe('正在分析，用时1小时05分3秒')
++    expect(view.getByRole('status').textContent).toBe('正在分析')
+     view.unmount()
+     expect(vi.getTimerCount()).toBe(0)
+   }))
+diff --git a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+--- a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+@@ -91,7 +91,7 @@
+           <span className={css.titleGroup}>
+             {/* Own element: keeps the headline text addressable apart from the badge. */}
+             <span>{t('hero.headline')}</span>
+-            <span className={css.previewBadge}>{t('hero.preview')}</span>
++            {t('hero.preview') && <span className={css.previewBadge}>{t('hero.preview')}</span>}
+           </span>
+         </div>
+         <div className={css.body}>

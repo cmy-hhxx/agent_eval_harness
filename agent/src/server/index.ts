@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { object, type AssistantModelSelection, type AssistantPrompt, type AssistantSessionRuntime, type JsonObject } from "@eval/contracts";
-import { assistantSettingsDescribe, sessionSummary, type AssistantEndpoints } from "@eval/runtime/assistant";
+import { sessionSummary, type AssistantEndpoints } from "@eval/runtime/assistant";
 
 /** Product operations; transport framing belongs entirely to upstream Runtime. */
 export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?: AssistantEndpoints["artifact"]): AssistantEndpoints {
@@ -50,10 +50,11 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?:
         case "workspace/unarchiveSession": return sessions.mark(scope, "archived", false);
         case "workspace/pinSession": return sessions.mark(scope, "pinned", true);
         case "workspace/unpinSession": return sessions.mark(scope, "pinned", false);
-        case "settings/describe": return assistantSettingsDescribe();
+        case "settings/describe": return sessions.settings(userId);
+        case "settings/mutate": return sessions.mutateSettings(userId, String(args.ns), args.ops, args.expectedRevision);
         case "commands/list": return [];
         case "directoryPicker/capabilities": return { native: false, browse: false };
-        default: throw new Error(`当前评测分析 Agent 不提供 ${endpoint}`);
+        default: throw new Error(`当前 Eris 不提供 ${endpoint}`);
       }
     },
     async stream(userId, endpoint, payload, signal) {

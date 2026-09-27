@@ -1,12 +1,18 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { type AnalysisDataSource, type AnalysisReference, type AssistantScope, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest } from "@eval/contracts";
-import { assistantPrompt } from "@eval/prompts";
 import { calculate, textResult } from "@eval/tools";
-import schemas from "../../../schemas/assistant/tools.json" with { type: "json" };
+import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 
-export function analysisTools(options: { data: AnalysisDataSource; specialists: SpecialistGateway; save(scope: AssistantScope, markdown: string): Promise<JsonObject> }): AssistantTool[] {
-  const descriptions = assistantPrompt().toolDescriptions;
-  const execute: Record<string, AssistantTool["execute"]> = {
+export interface ErisDependencies {
+  data: AnalysisDataSource;
+  specialists: SpecialistGateway;
+  save(scope: AssistantScope, markdown: string): Promise<JsonObject>;
+}
+
+export const erisToolNames = Object.keys(schemas) as (keyof typeof schemas)[];
+
+export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
+  const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
     list_data: async (value) => textResult(await options.data.list(value as JsonObject)),
     read_data: async (value) => { const args = value as { reference: AnalysisReference; offset?: number; limit?: number }; const result = textResult(await options.data.read(args.reference, args)); return args.reference.taskId ? result : { ...result, details: { sourceRead: { tool: "read_data", args } } }; },
     search_data: async (value) => { const args = value as { reference: AnalysisReference; query: string; offset?: number; limit?: number }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
@@ -33,7 +39,8 @@ export function analysisTools(options: { data: AnalysisDataSource; specialists: 
     },
   };
   const ajv = new Ajv2020({ allErrors: true, strict: false });
-  return Object.entries(schemas).map(([name, inputSchema]) => {
+  return erisToolNames.map((name) => {
+    const inputSchema = schemas[name];
     const validate = ajv.compile(inputSchema);
     return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "view_image", "calculate", "read_specialist"].includes(name),
       async execute(value, context) {

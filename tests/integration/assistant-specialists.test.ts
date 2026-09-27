@@ -12,7 +12,7 @@ import { LocalAnalysisData } from "../../apps/host/src/assistant-data.js";
 import { loadConfig } from "@eval/host-app/config";
 import { services, ROOT } from "../fixtures/services.js";
 import { fixtureConfig, fakeIdentity, taskResult, draftFor } from "../fixtures/comparison.js";
-import { analysisTools } from "@eval/assistant";
+import { createEris } from "@eval/assistant";
 import type { AnalysisReference } from "@eval/contracts";
 
 test("standalone Attribution and Comparison share material, validation, accepted results and resume", {timeout:30000}, async()=>{
@@ -50,7 +50,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const serialized=JSON.stringify(result.result);assert(serialized.includes("正确"));assert(serialized.includes("evaluator_version"));
   await assert.rejects(gateway.read({userId:"bob",sessionId:scope.sessionId},operationId),/ENOENT/);
   let saved="";
-  const tools=analysisTools({data:source,specialists:gateway,save:async(_,text)=>{saved=text;return {id:"summary"};}});
+  const {tools}=createEris({data:source,specialists:gateway,save:async(_,text)=>{saved=text;return {id:"summary"};}});
   const save=tools.find(tool=>tool.name==="save_summary")!;
   const context={scope,signal,callId:"summary",progress(){}};
   await save.execute({markdown:"评测总结",references:[{operationId}]},context);

@@ -5,12 +5,12 @@ import path from "node:path";
 import type { AgentBackend, JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { exists, readJson, readJsonl, writeJson, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
-import { emptyLibrary, type ClusteringResult } from "@eval/agents/clustering";
+import { clusteringProfile, emptyLibrary, type ClusteringResult } from "@eval/agents/clustering";
 import { runEvaluation } from "@eval/host";
-import { buildPlan, reportRun, readRunState, syncProblemLibrary } from "@eval/workflows/comparison";
-import type { AttributionResult } from "@eval/workflows/comparison";
+import { buildPlan, comparisonWorkflow, reportRun, readRunState, syncProblemLibrary } from "@eval/workflows/comparison";
+import type { AttributionResult, TaskData } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult } from "../../fixtures/comparison.js";
+import { attributionResult, draftFor, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -54,6 +54,75 @@ function backendWith(calls: { value: number }): AgentBackend {
     },
   };
 }
+
+test("a batch may create every component its own observations use", async () => {
+  const { directory, config } = await fixtureConfig(undefined, false, true);
+  try {
+    const plan = await buildPlan(config);
+    const task = plan.tasks.find((entry) => entry.stage === "clustering")!;
+    const inputId = Object.keys(task.dependencies)[0]!;
+    const finding = attributionResult(false).findings[0]!;
+    const evaluation = {
+      ...attributionResult(false),
+      findings: [
+        { ...finding, finding_id: "f0", problem: { component: "Search", label: "检索不足", definition: "缺证据。" } },
+        { ...finding, finding_id: "f1", problem: { component: "模型自身推理", label: "算术错误", definition: "计算不符。" } },
+      ],
+    };
+    const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
+    const bound = comparisonWorkflow.bind(task, {}, dependencies).request.input as {
+      items: unknown[];
+      budget: { max_new_components: number };
+    };
+    assert.equal(bound.items.length, 2);
+    assert.equal(bound.budget.max_new_components, 2, "two unseen components are both allowed");
+
+    const known = structuredClone(task);
+    (known.data as { projection: unknown }).projection = {
+      components: [{ id: "c1", label: "Search", definition: "", aliases: ["搜索"], classes: [] }],
+    };
+    const narrowed = comparisonWorkflow.bind(known, {}, dependencies).request.input as {
+      budget: { max_new_components: number };
+    };
+    assert.equal(narrowed.budget.max_new_components, 1, "the known component and its alias do not count again");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("clustering bind preserves each shard's reserved component headroom", async () => {
+  const { directory, config } = await fixtureConfig(
+    [[raw("q1"), raw("q2")], [], [raw("q1"), raw("q2")], []], false, true,
+  );
+  config.clustering.maxCasesPerTask = 1;
+  config.clustering.maxComponentsPerModel = 1;
+  try {
+    const plan = await buildPlan(config);
+    const shards = plan.tasks.filter((task) =>
+      task.stage === "clustering" && (task.data as TaskData).scope?.version === "a_fast",
+    );
+    assert.equal(shards.length, 2);
+    assert.deepEqual(shards.map((task) => (task.data as TaskData).scope!.budget.max_new_components), [1, 0]);
+    const bound = shards.map((task, index) => {
+      const inputId = Object.keys(task.dependencies)[0]!;
+      const evaluation = attributionResult(false);
+      const component = index === 0 ? "Search" : "模型自身推理";
+      evaluation.findings[0]!.problem = { component, label: "算术错误", definition: "计算不符。" };
+      const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
+      const request = comparisonWorkflow.bind(task, {}, dependencies).request;
+      return { request, component };
+    });
+    assert.deepEqual(bound.map(({ request }) => (request.input as { budget: { max_new_components: number } }).budget.max_new_components), [1, 0]);
+    for (const [index, { request, component }] of bound.entries()) {
+      const proposal = proposedClass();
+      proposal.new_classes[0]!.component = component;
+      if (index === 0) assert.doesNotThrow(() => clusteringProfile.validate!(request, proposal, emptyAudit()));
+      else assert.throws(() => clusteringProfile.validate!(request, proposal, emptyAudit()), /新增组件超过本次预算/);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("clustering builds a bounded per-model library and recalls classes across runs", async () => {
   const { directory, config, modelForStage } = await fixtureConfig(

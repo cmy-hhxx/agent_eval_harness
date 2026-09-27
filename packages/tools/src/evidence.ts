@@ -32,34 +32,35 @@ export function evidenceSources(message: unknown): { kind: "text" | "json"; path
     { kind: "json", path: "", text: renderMessage(message) },
   ];
 }
+/**
+ * A plain-text evidence coordinate. It encodes the message, source kind, character
+ * range and source path directly so the model can copy or rebuild it without an
+ * opaque encoding step; only the mapping from kind+path back to source text is
+ * resolved at submission time.
+ */
 export function evidenceId(
-  inputId: string,
   messageIndex: number,
   kind: "text" | "json" | "image",
   path = "",
   start = 0,
   end = 0,
 ): string {
-  return (
-    "ev_" + Buffer.from(JSON.stringify([inputId, messageIndex, kind, path, start, end])).toString("base64url")
-  );
+  return kind === "image" ? `ev_${messageIndex}_image` : `ev_${messageIndex}_${kind}_${start}_${end}_${path}`;
 }
 export function cite(
-  inputId: string,
   messageIndex: number,
   source: ReturnType<typeof evidenceSources>[number],
   start: number,
   end: number,
 ) {
   return {
-    evidence_id: evidenceId(inputId, messageIndex, source.kind, source.path, start, end),
+    evidence_id: evidenceId(messageIndex, source.kind, source.path, start, end),
     message_index: messageIndex,
     quote: source.text.slice(start, end),
   };
 }
 export function resolveEvidence(
   raw: { messages: unknown[] },
-  inputId: string,
   value: { evidence_id: string; observation?: string },
   candidate: string,
   viewed: string[],
@@ -77,32 +78,24 @@ export function resolveEvidence(
     };
     throw new ValidationError([issue]);
   };
-  let parts: unknown;
-  try {
-    parts = JSON.parse(Buffer.from(value.evidence_id.slice(3), "base64url").toString());
-  } catch {
-    return fail("evidence_id_invalid", "证据 ID 无法解析");
-  }
-  if (!value.evidence_id.startsWith("ev_") || !Array.isArray(parts) || parts.length !== 6)
-    return fail("evidence_id_invalid", "证据 ID 格式错误");
-  const [id, index, kind, path, start, end] = parts;
-  if (id !== inputId) return fail("evidence_input_mismatch", "证据不属于本候选的当前输入");
-  if (!Number.isInteger(index) || index < 0 || !raw.messages[index])
-    return fail("message_index_invalid", "证据消息索引越界");
-  if (kind === "image") {
+  const image = /^ev_(\d+)_image$/.exec(value.evidence_id);
+  if (image) {
+    const index = Number(image[1]);
+    if (!raw.messages[index]) return fail("message_index_invalid", "证据消息索引越界");
     if (!viewed.includes(`${candidate}:${index}`)) return fail("image_not_viewed", "不能引用未查看的图片");
     if (!value.observation?.trim()) return fail("image_observation_missing", "图片证据需要填写观察内容");
     return { message_index: index, quote: "[图像观察]" + value.observation };
   }
+  const match = /^ev_(\d+)_(text|json)_(\d+)_(\d+)_([\s\S]*)$/.exec(value.evidence_id);
+  if (!match) return fail("evidence_id_invalid", "证据 ID 无法解析");
+  const index = Number(match[1]);
+  const kind = match[2] as "text" | "json";
+  const start = Number(match[3]);
+  const end = Number(match[4]);
+  const path = match[5];
+  if (!raw.messages[index]) return fail("message_index_invalid", "证据消息索引越界");
   const source = evidenceSources(raw.messages[index]).find((s) => s.kind === kind && s.path === path);
-  if (
-    !source ||
-    !Number.isInteger(start) ||
-    !Number.isInteger(end) ||
-    start < 0 ||
-    end <= start ||
-    end > source.text.length
-  )
+  if (!source || end <= start || end > source.text.length)
     return fail("evidence_range_invalid", "证据原文位置无效");
   const quote = source.text.slice(start, end);
   if (quote.includes(imagePlaceholder)) return fail("evidence_placeholder", "展示占位符不能作为原文证据");

@@ -6,4 +6,4 @@
 4. 优点的 `problem=null`；问题的 `problem.label/definition` 写现象及边界。`stage` 写发生阶段；`problem.component` 对工具调用或返回写调用链 `catalog.name` 中的确切工具名；对模型误读结果、推理或表达写「模型自身推理」。疑似问题也要定位部位，并以 `assessment.evidence_status="uncertain"` 写明尚未证实的判断。
 5. `summary` 概括完成情况、主要优点和缺口，避免重复逐条 finding。
 
-使用材料或 read_trace/search_trace/view_image 返回的 `evidence_id`；图片须先查看并填写 observation，数值争议要核算。调用 submit_evaluation 提交；长 JSON 可用 execute_code 写入当前工作目录，再用 submit_evaluation_file。校验失败时修正对应字段，判断改变时重新核验。
+使用材料或 read_trace/search_trace/view_image 返回的 `evidence_id`（逐字复制，不要改写）；图片须先查看并填写 observation，数值争议要核算。调用 submit_evaluation 提交；长 JSON 可用 execute_code 写入当前工作目录，再用 submit_evaluation_file。校验失败时修正对应字段，判断改变时重新核验。

@@ -206,6 +206,7 @@ for (const engine of ["pi", "prime"] as Engine[])
       process.env.EVAL_API_KEY = "integration-fixture-secret";
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
+        models.models.judge!.thinking = "xhigh";
         const modelForStage = createModelResolver(models);
         config.execution.timeoutSeconds = 45;
         config.execution.idleTimeoutSeconds = 15;
@@ -268,7 +269,8 @@ for (const engine of ["pi", "prime"] as Engine[])
         assert.equal(requests.length, expectedRequests);
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
-          assert(["4096", "8192"].includes(String(payload.max_completion_tokens)));
+          assert.equal(payload.reasoning_effort, "xhigh");
+          assert.equal(String(payload.max_completion_tokens), "8192");
         }
       } finally {
         if (previous === undefined) delete process.env.EVAL_API_KEY;

@@ -15,6 +15,6 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   esbuild: { jsx: "automatic", tsconfigRaw: { compilerOptions: { experimentalDecorators: false } } },
-  define: { "process.env.DSH_CLIENT_BUILD_PROFILE": JSON.stringify("official"), "process.env.NODE_ENV": JSON.stringify("production") },
+  define: { "process.env.DSH_CLIENT_BUILD_PROFILE": JSON.stringify("official"), "process.env.DSH_CLIENT_TITLE": JSON.stringify("Eris"), "process.env.NODE_ENV": JSON.stringify("production") },
   build: { outDir: path.join(root, "dist/agent/web"), emptyOutDir: true, target: "es2023", sourcemap: true },
 });

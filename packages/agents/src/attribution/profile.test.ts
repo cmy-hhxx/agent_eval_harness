@@ -12,11 +12,11 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
   const { has_standard_answer: _derived, ...submission } = example.result;
   const draft = {
     ...submission,
-    correctness_evidence: [{ evidence_id: evidenceId("input-A", 1, "text", "/content", 0, 5) }],
+    correctness_evidence: [{ evidence_id: evidenceId(1, "text", "/content", 0, 5) }],
     findings: example.result.findings.map((finding) => ({
       ...finding,
       finding_id: "f1",
-      evidence: [{ evidence_id: evidenceId("input-A", 1, "text", "/content", 0, 5) }],
+      evidence: [{ evidence_id: evidenceId(1, "text", "/content", 0, 5) }],
     })),
   };
   assert.deepEqual(attributionProfile.resolve!(example.request, draft, audit), example.result);

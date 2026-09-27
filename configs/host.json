@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r7",
+  "evaluatorVersion": "r9",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -58,7 +58,6 @@
     "maxClassesPerModel": 80,
     "maxNewClassesPerTask": 8,
     "maxComponentsPerModel": 12,
-    "maxNewComponentsPerTask": 1,
     "consolidateAt": 60,
     "minSupport": 1,
     "maxCasesPerTask": 100
@@ -69,15 +68,14 @@
       "baseUrlEnv": "EVAL_BASE_URL",
       "api": "openai-completions",
       "apiKeyEnv": "EVAL_API_KEY",
-      "thinking": "low",
+      "thinking": "xhigh",
       "contextWindow": 524288,
       "maxOutputTokens": 8192
     }
   },
   "bindings": {
     "attribution": {
-      "profile": "judge",
-      "maxOutputTokens": 4096
+      "profile": "judge"
     },
     "comparison": {
       "profile": "judge"

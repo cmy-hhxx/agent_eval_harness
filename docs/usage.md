@@ -40,12 +40,12 @@ EVAL_API_KEY=your-key
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内统一排名，不能混用不同 `comparison_tier`；未标档位的第三方模型可加入任一组 |
 | `rewrite` | 改写开关：`{ comparison, attribution }`；开启后每个归因/对比任务对应一个改写任务，源结果接受后执行，结果写入 `results/commentary.jsonl`；启用时必须有 `bindings.rewrite` |
-| `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`、`apiKeyEnv` 及默认 `thinking`、`contextWindow`、`maxOutputTokens` |
+| `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`、`apiKeyEnv` 及默认 `thinking`（缺省 `xhigh`）、`contextWindow`、`maxOutputTokens` |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试 |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
 | `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
-| `clustering` | 问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`maxNewComponentsPerTask`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；启用时必须有 `bindings.clustering` |
+| `clustering` | 问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；启用时必须有 `bindings.clustering` |
 
 入库的 [configs/host.json](../configs/host.json) 只定义共享的输入、执行预算和模型档案骨架，不含具体模型 ID。具体模型放在不入库的本地配置：
 
@@ -271,4 +271,4 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
 
 ## 独立评测分析 Agent
 
-执行 `bash agent/run.sh` 自动打开对话；可用 `--port 4181 --user alice --no-open` 启动另一副本。浅色界面复用 Deepseek 源码，不使用其 Logo。配置、工具、用户归属与恢复规则见 [Agent 说明](../agent/README.md)。
+执行 `bash agent/run.sh` 自动打开对话；可用 `--port 4181 --user alice --no-open` 启动另一副本。Eris 浅色界面复用 Deepseek 源码，使用独立的 Eris Logo。配置、工具、用户归属与恢复规则见 [Agent 说明](../agent/README.md)。

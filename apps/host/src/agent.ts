@@ -2,10 +2,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import { exists, assistantUser, writeAssistantArtifact, readAssistantArtifact } from "@eval/data";
-import { assistantPrompt } from "@eval/prompts";
 import { AssistantSessions, serveAssistant } from "@eval/runtime/assistant";
 import { assistantEndpoints } from "@eval/assistant/server";
-import { analysisTools } from "@eval/assistant";
+import { createEris } from "@eval/assistant";
 import { loadConfig, createModelResolver } from "./config.js";
 import { ROOT } from "./paths.js";
 import { logger } from "./composition.js";
@@ -22,16 +21,16 @@ if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(pat
 const config = await loadConfig(sources);
 const model = process.env.AGENT_MODEL ? {
   provider: "evaluation-gateway", baseUrl: process.env.EVAL_BASE_URL!, api: "openai-completions" as const, apiKeyEnv: "EVAL_API_KEY", model: process.env.AGENT_MODEL,
-  thinking: "low" as const, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
+  thinking: "xhigh" as const, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
 } : createModelResolver(config.models)("attribution");
 if (!model.baseUrl || !process.env[model.apiKeyEnv]) throw new Error("请在根目录 .env 中配置 EVAL_BASE_URL、EVAL_API_KEY 和 AGENT_MODEL（或 configs/local/models.json）");
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
-  directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model), systemPrompt: assistantPrompt().systemPrompt, recoveryMessage: assistantPrompt().recoveryMessage,
-  tools: analysisTools({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
+  directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model),
+  ...createEris({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
   onError: (error) => { void logger.error(error, { component: "assistant", event: "error" }); },
 }), (userId, sessionId, id) => readAssistantArtifact(path.join(ROOT, "data/assistant"), { userId, sessionId }, id)), onError: (error) => { void logger.error(error, { component: "assistant-http", event: "error" }); } });
 const url = `${server.url}/u/${userId}/`;
-console.log(`评测分析 Agent: ${url}`);
+console.log(`Eris: ${url}`);
 if (!values["no-open"]) {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const child = spawn(command, process.platform === "win32" ? ["/c", "start", "", url] : [url], { stdio: "ignore", detached: true });

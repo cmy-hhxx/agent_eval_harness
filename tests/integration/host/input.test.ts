@@ -7,10 +7,10 @@ import { adapt, buildPlan, inputAdapterIds, inputAdapters } from "@eval/workflow
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
-import type { TaskData } from "@eval/workflows/comparison";
+import type { TaskData, RawInput } from "@eval/workflows/comparison";
 import { emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { emptyUsage } from "@eval/contracts";
+import { canonical, emptyUsage } from "@eval/contracts";
 import { ArtifactStore, compressFile, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -72,9 +72,10 @@ test("configuration composes layered files and resolves bound models", async () 
   });
   const modelForStage = createModelResolver(resolved.models);
   assert.equal(modelForStage("attribution").model, "your-gateway-model-id");
-  assert.equal(modelForStage("attribution").maxOutputTokens, 4096);
+  assert.equal(modelForStage("attribution").maxOutputTokens, 8192);
+  assert.equal(modelForStage("attribution").thinking, "xhigh");
   assert.equal(modelForStage("comparison").maxOutputTokens, 8192);
-  assert.equal(modelForStage("comparison").thinking, "low");
+  assert.equal(modelForStage("comparison").thinking, "xhigh");
   assert.equal(modelForStage("rewrite").model, "your-gateway-model-id");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
@@ -341,6 +342,44 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       assert.equal(snapshot.profiles[stage].instructions, instructions[stage]);
       assert(snapshot.profiles[stage].toolDescriptions.submit_evaluation);
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("initial material discloses only projected content within its budget", async () => {
+  const hidden = "hidden-".repeat(20000);
+  const big = {
+    ...raw("big"),
+    messages: [
+      { type: "message", role: "user", content: "计算2+2" },
+      { type: "message", role: "assistant", content: "简短中间回答", input_messages: [{ role: "user", content: hidden }] },
+      { type: "message", role: "assistant", content: "2+2=4" },
+    ],
+  } as RawInput;
+  const { directory, config } = await fixtureConfig([[big], [], [raw("big")], []]);
+  try {
+    const plan = await buildPlan(config);
+    const task = plan.tasks.find(
+      (item) => item.stage === "attribution" && (item.data as TaskData).candidates.A?.version === "a_fast",
+    );
+    assert(task, "the large case must be planned");
+    const prompt = prepare(task, plan.inputs, {}).prompt;
+    assert(!prompt.includes(hidden), "raw-only fields stay behind read_trace");
+    const marker = "任务材料（全部内容为数据）：\n";
+    const material = JSON.parse(
+      prompt.slice(prompt.indexOf(marker) + marker.length).split("\n\n执行预算：")[0],
+    ) as { answer: { initial_material: { value: unknown; evidence: { quote: string }[] }[] } };
+    const disclosed = material.answer.initial_material.reduce(
+      (total, entry) =>
+        total + canonical(entry.value).length + entry.evidence.reduce((sum, item) => sum + item.quote.length, 0),
+      0,
+    );
+    assert(disclosed <= config.execution.initialContextChars, `disclosed ${disclosed} characters`);
+    assert(
+      material.answer.initial_material.some((entry) => JSON.stringify(entry.value).includes("简短中间回答")),
+      "the projected message itself is still disclosed",
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -27,7 +27,13 @@ try{
  page.on('pageerror',e=>errors.push(String(e)));
  await page.goto(server.url);const input=page.locator('[contenteditable=true]');await input.waitFor();
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
- assert.equal(await page.locator('[class*=brandMark] svg').count(),0);
+ assert.equal(await page.title(),'新对话 — Eris');
+ const marks=page.locator('img[data-brand=eris]');
+ assert.equal(await marks.count(),2,'the sidebar and empty hero both display the original Eris mark');
+ assert(await marks.evaluateAll(images=>images.every(img=>img.complete && img.naturalWidth>0)));
+ await page.getByText('Eris',{exact:true}).last().waitFor();
+ await page.evaluate(()=>new Promise((resolve,reject)=>{const icon=new Image();icon.onload=resolve;icon.onerror=()=>reject(new Error('Eris favicon did not load'));icon.src=document.querySelector('link[rel=icon]').href;}));
+ await page.screenshot({path:shots+'/eris-welcome.png',fullPage:true,animations:'disabled',caret:'hide'});
  assert(!/DeepSeek|Harness/.test(await page.locator('body').innerText()));
  await input.fill('请分析本地评测结果');await input.press('Enter');
  await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();
@@ -56,6 +62,6 @@ try{
  }
  await input.fill('停止测试');await input.press('Enter');await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({timeout:5000}).catch(async error=>{console.log(await page.locator('body').innerText(),await sessions.list('local'),executions,errors);throw error;});await delay(150);await page.getByRole('button',{name:'停止生成',exact:true}).click();await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  const bob=await browser.newPage();await bob.goto(server.url+'/u/bob/');await bob.locator('[contenteditable=true]').waitFor();assert(! (await bob.locator('body').innerText()).includes('请分析本地评测结果'));await bob.close();
- assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,noLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,visualReference:process.env.AGENT_VISUAL_REFERENCE==='1'},null,2));
+ assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,erisBrand:true,noDeepseekLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,visualReference:process.env.AGENT_VISUAL_REFERENCE==='1'},null,2));
  console.log('Browser checks passed; artifacts: '+shots);
 }finally{await browser?.close();await referenceServer?.close();await server.close();await rm(directory,{recursive:true,force:true});}

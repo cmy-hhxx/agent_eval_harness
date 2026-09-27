@@ -50,7 +50,6 @@ export interface EvalConfig {
     maxClassesPerModel: number;
     maxNewClassesPerTask: number;
     maxComponentsPerModel: number;
-    maxNewComponentsPerTask: number;
     /** Active class count at which the agent must look for near-duplicates to merge. */
     consolidateAt: number;
     minSupport: number;

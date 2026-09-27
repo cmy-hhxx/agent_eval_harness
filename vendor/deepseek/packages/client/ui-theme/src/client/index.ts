@@ -426,7 +426,7 @@ export const inject = ['slots', 'locale', 'remote', 'configForms']
  * slot (a feature owns its settings surface).
  * @param ctx - client cordis context.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: ClientContext, config: { appearanceSelector?: boolean } = {}): void {
   installThemeStyles(ctx)
   const host = ctx.configForms.get<ThemeSettings>(THEME_SETTINGS_NAMESPACE)
   const theme = new ThemeRuntime(ctx, host)
@@ -452,7 +452,7 @@ export function apply(ctx: ClientContext): void {
       setTheme: (id) => { theme.setTheme(id) },
     }
   }
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+  if (config.appearanceSelector !== false) ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item',
     id: 'appearance',
     order: 10,
