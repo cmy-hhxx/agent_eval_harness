@@ -27,7 +27,7 @@ export type ResultEncoder = (
   task: PlannedTask,
   state: RunState,
   inputs: Record<string, unknown>,
-) => ResultReference & { row: JsonObject };
+) => ResultReference & { row: JsonObject; auxiliary?: boolean };
 
 export function createRunRepository<Checkpoint>(
   codec: RunCodec<Checkpoint>,
@@ -101,7 +101,7 @@ export function createRunRepository<Checkpoint>(
       );
     },
     createResultWriter(run, inputs) {
-      const written = new Map<string, ResultReference & { row: JsonObject }>();
+      const written = new Map<string, ResultReference & { row: JsonObject; auxiliary?: boolean }>();
       const directory = locateRun(run).results;
       let initialized = false;
       return async (state) => {
@@ -110,25 +110,37 @@ export function createRunRepository<Checkpoint>(
           for (const [id, exported] of written) if (receipts[id]) receipts[id].exported = exported;
           const pending = manifest.tasks.filter((task) => receipts[task.id] && !written.has(task.id));
           if (initialized && !pending.length) return;
-          const groups: Record<string, JsonObject[]> = {};
-          const exports = new Map<string, ResultReference & { row: JsonObject }>();
+          const exports = new Map(written);
+          const updates = new Set<string>();
+          const groups: Record<string, Map<string, JsonObject>> = {};
           for (const task of pending) {
             const result = encodeResult(task, state, inputs);
-            (groups[safeId(result.file!)] ??= []).push(result.row);
+            const file = safeId(result.file!);
+            const matching = [...exports].filter(([, value]) => value.file === file && value.id === result.id);
+            if (matching.some(([, value]) => canonical(value.row) !== canonical(result.row)) && !result.auxiliary)
+              throw new Error("结果 ID 对应冲突结果：" + result.id);
+            if (matching.length) updates.add(file);
+            for (const [id, previous] of matching)
+              exports.set(id, { ...previous, row: result.row });
+            (groups[file] ??= new Map()).set(result.id, result.row);
             exports.set(task.id, result);
           }
           if (!initialized) {
             await mkdir(directory, { recursive: true });
             for (const file of await readdir(directory))
               if (file.endsWith(".jsonl") && !groups[file]) await writeJsonl(path.join(directory, file), []);
-            for (const [file, rows] of Object.entries(groups))
-              await writeJsonl(path.join(directory, file), rows);
-          } else
-            for (const [file, rows] of Object.entries(groups))
-              await appendJsonl(path.join(directory, file), rows);
-          for (const task of pending) {
-            receipts[task.id].exported = exports.get(task.id)!;
-            written.set(task.id, receipts[task.id].exported!);
+          }
+          for (const [file, rows] of Object.entries(groups)) {
+            if (!initialized || updates.has(file)) {
+              const all = new Map<string, JsonObject>();
+              for (const result of exports.values())
+                if (result.file === file) all.set(result.id, result.row);
+              await writeJsonl(path.join(directory, file), [...all.values()]);
+            } else await appendJsonl(path.join(directory, file), [...rows.values()]);
+          }
+          for (const [id, exported] of exports) {
+            receipts[id].exported = exported;
+            written.set(id, exported);
           }
           initialized = true;
         } catch (error) {

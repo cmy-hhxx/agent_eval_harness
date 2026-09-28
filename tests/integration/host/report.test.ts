@@ -6,6 +6,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { writeJson } from "@eval/data";
 import { adapt } from "@eval/workflows/comparison";
+import { comparisonWorkflow } from "@eval/workflows/comparison";
+import { comparisonProfile } from "@eval/agents/comparison";
 import { outputSchema } from "@eval/workflows/comparison";
 import { validateEvaluation } from "../../fixtures/services.js";
 import { comparisonRow, reportRun } from "@eval/workflows/comparison";
@@ -32,6 +34,8 @@ for (const objective of [false, true])
               ),
               request_time: version === "a_fast" ? "2026-09-24 11:37:31" : "2026-09-24 11:37:29",
               has_standard_answer: objective,
+              meta: { ground_truth: reference, finish_answer_time_cost: version === "a_fast" ? 8000 : 40000,
+                usage: { input_tokens: version === "a_fast" ? 100 : 1000, output_tokens: 20 } },
             },
           ]),
         );
@@ -117,6 +121,13 @@ for (const objective of [false, true])
           Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
         );
         validateEvaluation(task, snapshots, result, emptyAudit(), dependencies);
+        const binding = comparisonWorkflow.bind(task, snapshots, dependencies);
+        const validateRequest = new Ajv2020({ strict: false }).compile(comparisonProfile.requestSchema!);
+        assert(validateRequest(binding.request.input), JSON.stringify(validateRequest.errors));
+        const materials = (binding.request.input as { candidates: Record<string, { original_answer_usage: { total_tokens: number }; original_answer_timing: { finish_seconds: number } }> }).candidates;
+        assert.equal(materials[aFast]!.original_answer_usage.total_tokens, 120);
+        assert.equal(materials[aaFast]!.original_answer_usage.total_tokens, 1020);
+        assert.equal(materials[aFast]!.original_answer_timing.finish_seconds, 8);
         const row = comparisonRow(snapshots, task, result, receipts, {
           a_fast: "A组Fast",
           aa_fast: "AA组Fast",

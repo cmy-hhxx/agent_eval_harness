@@ -61,7 +61,7 @@ export class RunStore {
       if (this.services.logger)
         for (const task of snapshot.manifest.tasks) {
           const receipt = snapshot.receipts[task.id];
-          if (!receipt?.exported || this.logged.has(receipt.submissionId)) continue;
+          if (!receipt?.exported || receipt.exported.auxiliary || this.logged.has(receipt.submissionId)) continue;
           if (
             await this.services.logger.evaluation({
               time: new Date(receipt.acceptedAt).toISOString(),

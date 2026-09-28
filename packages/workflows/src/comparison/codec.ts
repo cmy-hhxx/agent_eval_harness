@@ -3,7 +3,7 @@ import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState } 
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
-import { resultFile } from "./results.js";
+import { originalResultRow, stageResult, resultFile } from "./results.js";
 
 type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
 type Patch = { path: string[]; value?: unknown }[];
@@ -147,8 +147,9 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 }
 
 function resultEvaluation(data: TaskData, row: JsonObject): unknown {
+  if (data.stage === "rewrite") return { rewrites: (stageResult(data.rewriteOf!.stage, row).rewritten as JsonObject).rewrites };
+  row = originalResultRow(data.stage, row);
   if (data.stage === "attribution") return row.evaluation;
-  if (data.stage === "rewrite") return { rewrites: row.rewrites };
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
 }
@@ -162,9 +163,9 @@ function decodeState(
   if (metadata.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
   if (typeof metadata.evaluatorVersion !== "string" || !metadata.evaluatorVersion.trim())
     throw new Error("运行状态缺少评测器版本");
-  const resultRow = (receipt: SavedReceipt, ref: ResultReference) => {
+  const resultRow = (receipt: SavedReceipt, ref: ResultReference, rewrittenStage?: string) => {
     const row = getRow(ref);
-    if (row.evaluator_version !== receipt.evaluatorVersion)
+    if ((rewrittenStage ? (stageResult(rewrittenStage, row).rewritten as JsonObject)?.evaluator_version : row.evaluator_version) !== receipt.evaluatorVersion)
       throw new Error("结果评测器版本与收据不一致：" + ref.id);
     return row;
   };
@@ -253,16 +254,15 @@ function decodeState(
     }
     if (data.stage === "rewrite") {
       const source = data.rewriteOf!;
-      if (receipt.exported.taskId !== source.taskId)
+      if (receipt.exported.taskId !== source.resultId)
         throw new Error("改写结果引用与源任务不一致：" + task.id);
-      const file = receipt.exported.file || resultFile("rewrite");
-      const row = resultRow(receipt, { id: receipt.exported.taskId, file });
+      const file = receipt.exported.file || resultFile(source.stage);
+      const row = resultRow(receipt, { id: receipt.exported.taskId, file }, source.stage);
       if (
-        row.commentary_type !== source.stage ||
-        row.source_task_id !== source.taskId ||
-        row.source_result_id !== source.resultId ||
-        canonical(row.case) !==
-          canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id })
+        (row.task_id ?? row.comparison_id) !== source.resultId ||
+        (data.rewriteScope
+          ? row.batch_id !== data.rewriteScope.batch_id
+          : canonical(row.case) !== canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id }))
       )
         throw new Error("改写结果身份不一致：" + task.id);
       const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
@@ -271,7 +271,8 @@ function decodeState(
         evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
         exported: {
-          id: source.taskId,
+          id: source.resultId,
+          auxiliary: true,
           ...(receipt.exported.file ? { file: receipt.exported.file } : {}),
           row,
         },
@@ -315,7 +316,7 @@ function decodeState(
 export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   decode: decodeState,
-  resultId: (row) => String(row.task_id ?? row.comparison_id ?? row.source_task_id),
+  resultId: (row) => String(row.task_id ?? row.comparison_id),
   references(checkpoint, taskIds) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {

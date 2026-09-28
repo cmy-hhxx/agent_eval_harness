@@ -226,7 +226,7 @@ export interface SubmissionReceipt extends Submission {
   /** Resolved judge model ID used by the accepted attempt (no endpoint configuration). */
   judge: string;
   submitted?: unknown;
-  exported?: ResultReference & { row: JsonObject };
+  exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
 }
 export interface ToolContext {
   execution?: { python: string };
@@ -436,3 +436,9 @@ export interface FailureContext {
 
 export * from "./validation.js";
 export type * from "./assistant.js";
+
+/** Optional language polish attached after a stage has accepted its decision. */
+export interface RewrittenResult {
+  evaluator_version: string;
+  rewrites: { id: string; text: string }[];
+}

@@ -73,9 +73,9 @@ test("configuration composes layered files and resolves bound models", async () 
   const modelForStage = createModelResolver(resolved.models);
   assert.equal(modelForStage("attribution").model, "your-gateway-model-id");
   assert.equal(modelForStage("attribution").maxOutputTokens, 8192);
-  assert.equal(modelForStage("attribution").thinking, "xhigh");
+  assert.equal(modelForStage("attribution").thinking, "medium");
   assert.equal(modelForStage("comparison").maxOutputTokens, 8192);
-  assert.equal(modelForStage("comparison").thinking, "xhigh");
+  assert.equal(modelForStage("comparison").thinking, "medium");
   assert.equal(modelForStage("rewrite").model, "your-gateway-model-id");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);

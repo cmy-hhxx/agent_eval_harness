@@ -39,7 +39,7 @@ function summarizeResults(
 ) {
   const cases = new Set([
     ...tasks
-      .filter((task) => task.stage !== "clustering")
+      .filter((task) => task.stage === "attribution" || task.stage === "comparison")
       .map((task) => {
         const c = taskCase(task.data as TaskData);
         return canonical([c.batch_id, c.case_id]);
@@ -171,7 +171,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       receipts.set(task.id, receipt);
     }
   }
-  // Accepted rewrites are presentation-only; reports prefer them, formal JSONL keeps the judge wording.
+  // Accepted rewrites are presentation-only; reports prefer them, formal JSONL keeps the judge wording alongside rewritten.
   const commentaryBySource = new Map<string, Rewrites>();
   for (const task of manifest.tasks) {
     if (task.stage !== "rewrite") continue;
@@ -266,6 +266,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       requirements: analysis.requirements,
       ranking: view.ranking,
       assessments: view.assessments,
+      decision_basis: view.decision_basis,
       verdicts,
       candidates,
       scoring_points: analysis.scoring_points,
@@ -297,6 +298,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       ...analysis.requirements.map((v) => `- ${v}`),
       "",
     );
+    markdown.push("## 同项对比", "", (view.decision_basis as ComparisonResult["decision_basis"]).tradeoff, "");
     const timingLines = Object.values(data.candidates)
       .filter((c) => c.answer_timing.finish_seconds !== null)
       .map((c) => `${names[c.version]}：${c.answer_timing.finish_seconds!.toFixed(3)} 秒`);
@@ -341,7 +343,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   for (const old of await localFiles.list(results))
     if (
       old.endsWith(".jsonl") &&
-      !["attribution.jsonl", "comparison.jsonl", "commentary.jsonl", "clustering.jsonl"].includes(
+      !["attribution.jsonl", "comparison.jsonl", "clustering.jsonl"].includes(
         old,
       )
     )
@@ -449,7 +451,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   );
   const resultArtifacts = ["results/attribution.jsonl"];
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
-  if (commentaryBySource.size) resultArtifacts.push("results/commentary.jsonl");
   if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
     resultArtifacts.push("results/clustering.jsonl");
   const evaluatorVersions = [...new Set([...receipts.values()].map((receipt) => receipt.evaluatorVersion))].sort();

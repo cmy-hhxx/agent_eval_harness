@@ -5,6 +5,7 @@ import { readRunTasks } from "./run-data.js";
 import { buildPlan, contentText, locateRecordStream } from "./input.js";
 import type { Candidate, EvalConfig, Stage, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
+import { verdictSlotId } from "./commentary.js";
 
 /** Read-only workflow projection: the dashboard never interprets blind labels or result files. */
 async function checkpoint(run: string): Promise<Checkpoint> {
@@ -89,7 +90,7 @@ export async function listRunCases(run: string, filter: CaseFilter) {
   for (const task of Object.values(saved.tasks)) {
     const data = task.data as TaskData;
     // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
-    if (task.stage === "clustering") continue;
+    if (task.stage === "clustering" || data.rewriteOf?.stage === "clustering") continue;
     // Checkpoints strip `candidates`; the registered input restores the sample identity.
     const candidate = Object.values(task.inputIds).map((inputId) => saved.inputs[inputId]).find(Boolean);
     const identity = data.case || candidate;
@@ -140,9 +141,31 @@ const clipEvidence = (value: unknown): unknown =>
         return { message_index: entry.message_index, quote: clip(entry.quote, 4000) };
       })
     : value;
-/** Sample-view projection of an accepted row: current Schema fields, long text clipped; comparison `evaluations` stay in the JSONL. */
-export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonObject | null {
+/** Sample-view projection of accepted rows, including each comparison model's attribution. */
+export function caseResultView(stage: Stage, row: JsonObject | undefined, versions: Record<string, string> = {}): JsonObject | null {
   if (!row) return null;
+  const source = (stage === "attribution" ? row.evaluation : stage === "clustering" ? row.result : row) as JsonObject;
+  const rewritten = source.rewritten as { evaluator_version: string; rewrites: { id: string; text: string }[] } | undefined;
+  const paths = new Map<string, string>();
+  if (stage === "comparison" && rewritten) {
+    paths.set("tradeoff", "decision_basis.tradeoff");
+    for (const [label, version] of Object.entries(versions))
+      paths.set(`assessment.${label}.summary`, `assessments.${version}.summary`);
+    const labels = new Map(Object.entries(versions).map(([label, version]) => [version, label]));
+    for (const pair of Object.keys(row.verdicts as JsonObject)) {
+      const [first, second] = pair.split("__vs__").map((version) => labels.get(version));
+      if (first && second) paths.set(verdictSlotId(first, second), `verdicts.${pair}.reason`);
+    }
+  }
+  // Resolve blind slot IDs in the workflow, never by browser order or display names.
+  const rewriteView = rewritten ? { rewritten: {
+    evaluator_version: rewritten.evaluator_version,
+    rewrites: rewritten.rewrites.map((item) => {
+      const fieldPath = stage === "comparison" ? paths.get(item.id) : item.id;
+      if (!fieldPath) throw new Error(`改写槽位缺少字段映射：${item.id}`);
+      return { ...item, path: fieldPath, text: clip(item.text, 8000) };
+    }),
+  } } : {};
   if (stage === "attribution") {
     const value = (row.evaluation ?? {}) as JsonObject;
     return {
@@ -171,9 +194,13 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonO
             })
           : value.findings,
       },
+      ...rewriteView,
     };
   }
-  if (stage === "rewrite") return { rewrites: row.rewrites };
+  if (stage === "clustering") {
+    const { rewritten, ...result } = row.result as JsonObject;
+    return { result, ...rewriteView };
+  }
   if (stage === "comparison")
     return {
       models: row.models,
@@ -182,7 +209,12 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined): JsonO
       task_analysis: row.task_analysis,
       decision_basis: row.decision_basis,
       assessments: row.assessments,
+      evaluations: Object.fromEntries(Object.entries((row.evaluations ?? {}) as Record<string, JsonObject>).map(([version, evaluation]) => {
+        const view = caseResultView("attribution", { evaluation })!;
+        return [version, { ...view.evaluation as JsonObject, ...(view.rewritten ? { rewritten: view.rewritten } : {}) }];
+      })),
       verdicts: row.verdicts,
+      ...rewriteView,
     };
   return null;
 }
@@ -191,7 +223,7 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
   const saved = await checkpoint(run);
   const taskIds = Object.entries(saved.tasks).flatMap(([id, task]) => {
     // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
-    if (task.stage === "clustering") return [];
+    if (task.stage === "clustering" || task.data.rewriteOf?.stage === "clustering") return [];
     const candidate = Object.values(task.inputIds)
       .map((inputId) => saved.inputs[inputId])
       .find(Boolean);
@@ -206,6 +238,7 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
       if (candidate) candidates.set(inputId, { ...candidate, input_id: inputId });
     }
   const first = saved.tasks[taskIds[0]!]!;
+  const rewriteIds = rewriteSubmissionIds(saved);
   return {
     batch_id: batch,
     case_id: caseId,
@@ -213,22 +246,47 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
     candidates: [...candidates.values()].map(({ input_id, version, name }) => ({
       input_id, version, name,
     })),
-    tasks: taskIds.map((id) => {
-      const task = saved.tasks[id]!;
-      const status: TaskState = task;
-      return {
-        id,
-        stage: task.stage,
-        status: status.status,
-        attempts: status.attempts,
-        reason: status.reason || status.failure?.errors[0]?.message || null,
-        last_progress_at: status.lastProgressAt ?? null,
-        duration_ms: status.durationMs ?? null,
-        versions: Object.values(task.inputIds).flatMap((inputId) => saved.inputs[inputId]?.version ?? []),
-        rewrite_of: (task.data as TaskData).rewriteOf ?? null,
-      };
-    }),
+    tasks: taskIds.filter((id) => saved.tasks[id]!.stage !== "rewrite")
+      .map((id) => taskDetails(saved, id, rewriteIds)),
   };
+}
+
+function rewriteSubmissionIds(saved: Checkpoint): Map<string, string[]> {
+  const ids = new Map<string, string[]>();
+  for (const task of Object.values(saved.tasks)) {
+    if (task.stage !== "rewrite" || !task.receipt) continue;
+    const source = task.data.rewriteOf!.taskId;
+    const submissions = ids.get(source) ?? [];
+    submissions.push(task.receipt.submissionId);
+    ids.set(source, submissions);
+  }
+  return ids;
+}
+
+function taskDetails(saved: Checkpoint, id: string, rewriteIds: Map<string, string[]>) {
+  const task = saved.tasks[id]!;
+  const status: TaskState = task;
+  const scope = task.data.scope;
+  return {
+    id, stage: task.stage, status: status.status, attempts: status.attempts,
+    reason: status.reason || status.failure?.errors[0]?.message || null,
+    last_progress_at: status.lastProgressAt ?? null,
+    duration_ms: status.durationMs ?? null,
+    versions: scope ? [scope.version]
+      : Object.values(task.inputIds).flatMap((inputId) => saved.inputs[inputId]?.version ?? []),
+    ...(scope ? { batch_id: scope.batch_id, shard: scope.shard } : {}),
+    rewrite_submission_ids: [id, ...(task.stage === "comparison" ? Object.values(task.dependencies) : [])]
+      .flatMap((source) => rewriteIds.get(source) ?? []),
+  };
+}
+
+/** Run-level clustering tasks; accepted result bodies are loaded on expansion. */
+export async function listClusteringTasks(run: string) {
+  const saved = await checkpoint(run);
+  const rewriteIds = rewriteSubmissionIds(saved);
+  return Object.entries(saved.tasks).flatMap(([id, task]) =>
+    task.stage === "clustering" ? [taskDetails(saved, id, rewriteIds)] : [],
+  );
 }
 
 /** One task's accepted row, loaded when the sample view expands it. */
@@ -237,11 +295,22 @@ export async function readTaskResult(run: string, taskId: string) {
   const task = saved.tasks[taskId];
   if (!task) return undefined;
   // Repository decoding checks the accepted reference against its authoritative JSONL row.
-  const state = await readRunTasks(run, [taskId]);
+  const dependencies = task.stage === "comparison" ? Object.values(task.dependencies) : [];
+  const state = await readRunTasks(run, [taskId, ...dependencies]);
+  let row = state.receipts[taskId]?.exported?.row;
+  if (row && task.stage === "comparison") {
+    const evaluations = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => {
+      const attribution = state.receipts[id]?.exported?.row;
+      if (!attribution) throw new Error(`缺少归因任务结果：${id}`);
+      return [saved.inputs[task.inputIds[label]].version, attribution.evaluation];
+    }));
+    row = { ...row, evaluations };
+  }
   return {
     task_id: taskId,
     stage: task.stage,
-    result: caseResultView(task.stage as Stage, state.receipts[taskId]?.exported?.row),
+    result: caseResultView(task.stage as Stage, row,
+      Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) => [label, saved.inputs[id].version]))),
   };
 }
 

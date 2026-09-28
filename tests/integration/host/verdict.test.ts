@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
 import {
@@ -133,8 +133,12 @@ test("two-way verdicts are derived from ranking and core classification", async 
   }
 });
 
-test("report aggregates rankings and derived verdicts", async () => {
-  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
+test("report preserves aligned comparison reasoning without reloading inputs", async () => {
+  const first = raw(), second = raw();
+  first.meta!.usage = { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 80 } };
+  second.meta!.usage = { input_tokens: 1000, output_tokens: 200, cached_read_tokens: 400 };
+  second.meta!.finish_answer_time_cost = 40000;
+  const { directory, config } = await fixtureConfig([[first], [], [second], []]);
   try {
     const plan = await buildPlan(config),
       task = comparisonTask(plan),
@@ -163,11 +167,13 @@ test("report aggregates rankings and derived verdicts", async () => {
       usage: emptyUsage(),
       recordedAttempts: plan.tasks.length,
     };
+    const evaluation = group(labels);
+    evaluation.decision_basis.tradeoff = "内容质量：A与B都正确给出4。完成耗时：A为1.2秒，B为40秒；总token：A为120，B为1200。";
     state.receipts[task.id] = {
       taskId: task.id,
       attemptId: "cmp",
       submissionId: randomUUID(),
-      evaluation: group(labels),
+      evaluation,
       evaluatorVersion: fakeEvaluatorVersion,
       judge: fakeJudge,
       audit: emptyAudit(),
@@ -177,12 +183,19 @@ test("report aggregates rankings and derived verdicts", async () => {
     };
     await createResultWriter(run, plan.inputs)(state);
     await writeRunState(run, state);
+    for (const version of config.inputs.versions)
+      await rm(path.join(directory, version.id + ".jsonl"));
     const summary = await reportRun(run);
     assert.equal(summary.completed_comparisons, 1);
     const standings = summary.standings as Record<string, { entered: number; first_tier: number }>;
     assert.equal(standings.a_fast!.entered, 1);
     assert.equal(standings.aa_fast!.entered, 1);
     assert.equal(standings.a_fast!.first_tier, 1);
+    const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
+    assert.match(markdown, /## 同项对比/);
+    assert.match(markdown, /内容质量：.*都正确给出4/);
+    assert.match(markdown, /完成耗时：.*1.2秒.*40秒/);
+    assert.match(markdown, /总token：.*120.*1200/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

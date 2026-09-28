@@ -37,13 +37,19 @@ test("stage instructions discuss only available materials and actions", () => {
   assert(!/看不到|工具记录|原始回答|核验过材料/.test(rewrite.systemPrompt + rewrite.instructions));
 });
 
-test("rewrite asks for sharp factual comments rather than judge self-ratings", () => {
+test("rewrite asks for direct factual critique without boilerplate or stronger certainty", () => {
   const { systemPrompt, instructions } = agentPrompt("rewrite", []);
   const text = systemPrompt + "\n" + instructions;
   assert.match(text, /短句|短评/);
+  assert.match(text, /通俗易懂/);
+  assert.match(text, /保留原意/);
   assert.match(text, /具体|事实/);
   assert.match(text, /置信度|自评/);
   assert.match(text, /删除|删去/);
+  assert.match(text, /犀利/);
+  assert.match(text, /同义词替换/);
+  assert.match(text, /重复判词/);
+  assert.match(text, /不能写成已证实错误/);
   assert(!text.includes("原样保留数字"), "self-rated 6/10 is not a source fact that must survive");
 });
 

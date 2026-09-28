@@ -47,10 +47,10 @@
 |---|---|---|---|
 | Attribution | 一条已标明版本的回答 | 条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`task_analysis`、`summary`、有证据的优点及确定/疑似问题 `findings`；Host 在接受结果时加入 `has_standard_answer` | 写入 `attribution.jsonl`；Comparison 读取去身份视图，Clustering 读取问题观察并维护问题库 |
 | Comparison | 一个对比组 | `task_analysis`、分层 `ranking`、每个候选的 `assessments.meets_core/summary`、`decision_basis.tradeoff/decisive_findings` | Workflow 恢复盲测标签、生成 `comparison.jsonl` 和派生 `verdicts` |
-| Rewrite | 一个归因结果或一个对比组结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入 `commentary.jsonl`；报告与逐题总结优先展示改写文案 |
+| Rewrite | 一个归因、对比或聚类结果 | 与请求 `items` 一一对应的 `rewrites`（相同 id、润色后的文本），不含判定、证据或新增条目 | 写入源结果的 `rewritten` 字段；报告与逐题总结优先展示改写文案 |
 | Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
 
-Attribution 需要 evidence resolution，所以同时有 submission/result 两份 Schema；Comparison、Rewrite 与 Clustering 不改写提交内容，各自只有一份 `result.schema.json`，同时作为模型提交和接受结果 Schema。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写与聚类产物分别由 `schemas/workflow/commentary.schema.json`、`schemas/workflow/clustering.schema.json` 描述。分析助手的工具输入见 [eris/tools.json](../schemas/eris/tools.json)，它不是评测提交 Schema。
+Attribution 需要 evidence resolution，保留 submission/result 两份 Schema。Attribution、Comparison、Clustering 的结果 Schema 均声明可选 `rewritten`；Comparison 与 Clustering 的提交 Schema 由公开入口从结果 Schema 去掉该字段，原 Agent 不提交改写内容。Rewrite 提交与结果共用其 `result.schema.json`。Workflow 的 export Schema 不是任一 Agent 的输出 Schema，只描述加入身份、模型信息、归因评语、回溯标注和派生判决后的正式对比行；改写槽位由三个阶段各自的 `result.schema.json` 描述，聚类导出由 `schemas/workflow/clustering.schema.json` 描述。分析助手的工具输入见 [eris/tools.json](../schemas/eris/tools.json)，它不是评测提交 Schema。
 
 ## 输入
 
@@ -102,7 +102,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 有标准答案时，归因 `is_correct=false` 的候选不得判为 `meets_core=true`。Host 在接收提交、恢复和离线校验时检查排名是候选的划分、`assessments` 覆盖全部候选、决定性发现引用既有归因 finding；这些检查只保证结构与引用关系，不能代替事实和影响判断。
 
-提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 解释相邻层的差异与同层并列的理由。对比阶段不提交 evidence、不新增 finding。
+提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 按同一比较方面逐段对照全部候选，再解释相邻层差异与同层并列理由；共同优点不能写成独有优势，缺少同名 finding 不代表另一方没有该能力。内容质量和回答体验都要对照，质量相当时明显的等待或资源差异可以影响排名，速度不能抵消核心错误。对比阶段不提交 evidence、不新增 finding。
 
 ## 问题库与聚类
 
@@ -121,11 +121,13 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 ## 改写
 
-改写阶段可选（配置 `rewrite.comparison` / `rewrite.attribution`），把已接受的归因或对比结论润色为更简洁规整的表达。每个源结果对应一个改写任务：对比组写 `assessments[].summary`、`decision_basis.tradeoff` 和派生 `verdicts[].reason`；归因写 `summary` 和非空的 `correctness_reason`。
+改写阶段可选（配置 `rewrite.attribution` / `rewrite.comparison` / `rewrite.clustering`），把已接受的归因、对比或聚类结论润色为更简洁规整的表达。每个源结果对应一个改写任务：对比组写 `assessments[].summary`、`decision_basis.tradeoff` 和派生 `verdicts[].reason`；归因写 `summary`、非空的 `correctness_reason`、finding 的 `text/reason` 与 `assessment.observation/impact`；聚类写新类的 `definition/novelty` 和 `merges[].reason`，无新类和合并时返回空改写。
 
-- 输入是 Workflow 选定的文本槽位（`items[].id/label/text`），不含原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
-- 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；候选标签、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
-- 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写写入 `commentary.jsonl`，用 `source_task_id` 和 `source_result_id` 关联正式结果。
+- 对比裁判继续盲测；Workflow 在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、AA组Fast），槽位 id 不变。
+- 输入是 Workflow 选定的文本槽位（`items[].id/label/text`）及 case 的批次/case ID 或聚类的批次/模型定位信息，不含原题、原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
+- 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；真实组别与模型称谓、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
+- 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本），不单独生成结果文件或业务日志。
+- 看板同时展示原始输出和改写后内容，聚类详情在运行总览。问题库的类身份、归属与原始定义不被改写覆盖。
 - `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。
 - 续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；已接受的评测结果不受影响。
 
@@ -137,10 +139,12 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 初始材料是渐进式披露的首屏：只展示 `initialContextChars` 预算内的投影消息，投影会剔除 `input_messages`、`model`、`model_parameters` 等内部字段，证据引文同样计入预算；完整消息和隐藏字段通过材料工具按需读取，工具结果按 `maxOutputChars` 截断并可将完整内容存为可分页产物。
 
-每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
+每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`；`verdicts[].reason` 是程序生成的规则概述，逐题的具体差异与反向事实在 `decision_basis.tradeoff`、候选评估和归因 findings 中。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
 
 归因任务使用单份 `answer`，对错证据必须来自其 `final_message_index` 对应的最终回答，不能引用问题、标准答案、工具结果或中间推理（findings 证据可引用该回答的调用链）。正式归因行包含 `task_id`、`submission_id`、`input_id`、`case`、稳定 `version` 和 `evaluation`（判对结论、理由、展开的原文证据）；评语不做盲测标签替换。结果文件位置与恢复规则见[运行产物](usage.md#运行产物)。
 
 `stage` 表示发现属于上下文回溯、推理、执行或最终回答；`stage_trace` 由程序从原始消息生成，包含工具、位置、置信度与来源。只回溯当前 finding 引用的证据；无法唯一定位时保留候选工具，不猜测确定来源。
 
-逐题总结由同一次提交生成，包括问题、要求、判决、双方优缺点、得分点、red flags 和原始回答耗时。耗时统一转为秒，缺失值保持 `null`，不拿裁判耗时替代被评回答耗时。
+Comparison 请求的 `original_answer_timing` 包含首 token、首段回答与完成耗时，统一为秒；`original_answer_usage` 从被评输入 `meta.usage` 提取输入、输出、总 token 和缓存输入，记录来源字段、总量依据及数据异常。A 的 `input_tokens_details.cached_tokens` 和 AA 的 `cached_read_tokens` 统一为 `cached_input_tokens`，它是输入子集，不重复累加；未记录总量且输入、输出都有效时才相加。缺失或无效指标为 `null`，总量冲突与缓存超出输入会标记异常，不使用裁判 SDK 消耗或累加 trace 快照。对比结论在 `decision_basis.tradeoff` 中引用实际比较的数值与差异，报告沿用已接受结论，不重读来源来重评。
+
+逐题总结包含问题、要求、判决、同项对比理由、各方优缺点、得分点、red flags 和原始回答体验对照。逐项使用可比数据，未知指标不填零；token 量不等于价格，单次耗时不代表长期性能。

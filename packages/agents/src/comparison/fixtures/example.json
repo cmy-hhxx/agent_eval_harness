@@ -7,13 +7,41 @@
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
-          "original_answer_timing": { "finish_seconds": null }
+          "original_answer_timing": { "finish_seconds": null },
+          "original_answer_usage": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null,
+            "cached_input_tokens": null,
+            "total_tokens_basis": null,
+            "source_fields": {
+              "input_tokens": "meta.usage.input_tokens",
+              "output_tokens": "meta.usage.output_tokens",
+              "total_tokens": "meta.usage.total_tokens",
+              "cached_input_tokens": "meta.usage.cached_read_tokens"
+            },
+            "issues": []
+          }
         },
         "B": {
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
-          "original_answer_timing": { "finish_seconds": null }
+          "original_answer_timing": { "finish_seconds": null },
+          "original_answer_usage": {
+            "input_tokens": null,
+            "output_tokens": null,
+            "total_tokens": null,
+            "cached_input_tokens": null,
+            "total_tokens_basis": null,
+            "source_fields": {
+              "input_tokens": "meta.usage.input_tokens",
+              "output_tokens": "meta.usage.output_tokens",
+              "total_tokens": "meta.usage.total_tokens",
+              "cached_input_tokens": "meta.usage.cached_read_tokens"
+            },
+            "issues": []
+          }
         }
       },
       "attributions": {
@@ -124,7 +152,7 @@
       "B": { "meets_core": true, "summary": "正确给出结果。" }
     },
     "decision_basis": {
-      "tradeoff": "双方都正确交付，无实质差异，同层并列。",
+      "tradeoff": "计算结果：A和B都给出2+2=4，均完成核心要求；表达：双方都直接给出结果，无实质差异。等待时间与token消耗均未记录，无法比较体验差异，因此并列。",
       "decisive_findings": [
         { "candidate": "A", "finding_index": 0 },
         { "candidate": "B", "finding_index": 0 }

@@ -1,3 +1,4 @@
+import type { RewrittenResult } from "@eval/contracts";
 import type { ProblemProjection } from "@eval/contracts";
 
 export interface ClusteringBudget {
@@ -56,6 +57,7 @@ export interface ClusteringMerge {
   reason: string;
 }
 export interface ClusteringResult {
+  rewritten?: RewrittenResult;
   assignments: ClusteringAssignment[];
   new_classes: ClusteringNewClass[];
   merges: ClusteringMerge[];

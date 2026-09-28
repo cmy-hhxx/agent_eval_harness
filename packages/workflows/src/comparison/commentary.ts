@@ -1,4 +1,5 @@
 import type { JsonObject, PlannedTask } from "@eval/contracts";
+import type { ClusteringResult } from "@eval/agents/clustering";
 import type { RewriteItem, Rewrites } from "@eval/agents/rewrite";
 import { display } from "./results.js";
 import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
@@ -20,6 +21,12 @@ export function attributionSlots(result: AttributionResult): RewriteItem[] {
       label: result.is_correct === false ? "判错理由" : "判对理由",
       text: result.correctness_reason,
     });
+  result.findings.forEach((finding, index) => {
+    for (const field of ["text", "reason"] as const)
+      items.push({ id: `findings.${index}.${field}`, label: `发现 ${index + 1} · ${field === "text" ? "点评" : "理由"}`, text: finding[field] });
+    for (const field of ["observation", "impact"] as const)
+      items.push({ id: `findings.${index}.assessment.${field}`, label: `发现 ${index + 1} · ${field === "observation" ? "观察说明" : "影响"}`, text: finding.assessment[field] });
+  });
   return items;
 }
 export function comparisonSlots(result: ComparisonResult): RewriteItem[] {
@@ -52,7 +59,22 @@ export function comparisonSlots(result: ComparisonResult): RewriteItem[] {
     }
   return items;
 }
-export function sourceSlots(stage: "attribution" | "comparison", result: unknown): RewriteItem[] {
+export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
+  return [
+    ...result.new_classes.flatMap((item, index) =>
+      (["definition", "novelty"] as const).map((field) => ({
+        id: `new_classes.${index}.${field}`,
+        label: `${item.label} · ${field === "definition" ? "定义" : "新建理由"}`,
+        text: item[field],
+      })),
+    ),
+    ...result.merges.map((item, index) => ({
+      id: `merges.${index}.reason`, label: "合并理由", text: item.reason,
+    })),
+  ];
+}
+export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown): RewriteItem[] {
+  if (stage === "clustering") return clusteringSlots(result as ClusteringResult);
   return stage === "attribution"
     ? attributionSlots(result as AttributionResult)
     : comparisonSlots(result as ComparisonResult);
@@ -75,7 +97,7 @@ export function polishComparisonRow(
   );
   const view = structuredClone(row);
   const assessments = view.assessments as Record<string, { summary: string }>;
-  const evaluations = view.evaluations as Record<string, { summary: string; correctness_reason: string }>;
+  const evaluations = view.evaluations as Record<string, { summary: string; correctness_reason: string; findings: AttributionResult["findings"] }>;
   for (const [label, candidate] of Object.entries(data.candidates)) {
     const assessmentText = own?.[`assessment.${label}.summary`];
     if (assessmentText && assessments[candidate.version])
@@ -86,6 +108,16 @@ export function polishComparisonRow(
     if (attribution.summary) review.summary = display(attribution.summary, labels);
     if (attribution.correctness_reason)
       review.correctness_reason = display(attribution.correctness_reason, { A: labels[label]! });
+    review.findings?.forEach((finding, index) => {
+      for (const field of ["text", "reason"] as const) {
+        const text = attribution[`findings.${index}.${field}`];
+        if (text) finding[field] = display(text, { A: labels[label]! });
+      }
+      for (const field of ["observation", "impact"] as const) {
+        const text = attribution[`findings.${index}.assessment.${field}`];
+        if (text) finding.assessment[field] = display(text, { A: labels[label]! });
+      }
+    });
   }
   if (own?.tradeoff)
     (view.decision_basis as { tradeoff: string }).tradeoff = display(own.tradeoff, labels);

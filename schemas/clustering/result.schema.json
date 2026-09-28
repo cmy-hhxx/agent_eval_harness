@@ -118,6 +118,43 @@
           }
         }
       }
+    },
+    "rewritten": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluator_version",
+        "rewrites"
+      ],
+      "properties": {
+        "evaluator_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rewrites": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "text"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

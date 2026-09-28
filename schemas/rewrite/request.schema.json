@@ -4,14 +4,14 @@
   "additionalProperties": false,
   "required": [
     "kind",
-    "case",
     "items"
   ],
   "properties": {
     "kind": {
       "enum": [
         "attribution",
-        "comparison"
+        "comparison",
+        "clustering"
       ]
     },
     "case": {
@@ -19,8 +19,7 @@
       "additionalProperties": false,
       "required": [
         "batch_id",
-        "case_id",
-        "question"
+        "case_id"
       ],
       "properties": {
         "batch_id": {
@@ -30,16 +29,12 @@
         "case_id": {
           "type": "string",
           "minLength": 1
-        },
-        "question": {
-          "type": "string",
-          "minLength": 1
         }
       }
     },
     "items": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -64,6 +59,59 @@
           }
         }
       }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batch_id",
+        "model"
+      ],
+      "properties": {
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": {
+          "enum": [
+            "attribution",
+            "comparison"
+          ]
+        }
+      },
+      "required": [
+        "case"
+      ],
+      "not": {
+        "required": [
+          "scope"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "kind": {
+          "const": "clustering"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "not": {
+        "required": [
+          "case"
+        ]
+      }
+    }
+  ]
 }

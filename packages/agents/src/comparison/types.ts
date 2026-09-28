@@ -1,3 +1,4 @@
+import type { RewrittenResult } from "@eval/contracts";
 import type { JsonObject } from "@eval/contracts";
 
 export interface Evidence {
@@ -50,6 +51,7 @@ export interface ComparisonAssessment {
  * classification. Two-way verdicts are derived from these two, never judged in isolation.
  */
 export interface ComparisonResult {
+  rewritten?: RewrittenResult;
   task_analysis: TaskAnalysis;
   /** Blind labels grouped by tier, best first; every candidate appears exactly once. */
   ranking: string[][];

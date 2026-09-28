@@ -124,7 +124,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     output: source.output as OutputTarget,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
-    rewrite: { comparison: false, attribution: false },
+    rewrite: { comparison: false, attribution: false, clustering: false },
     clustering: { ...CLUSTERING_DEFAULTS },
   };
   if (source.clustering !== undefined) {
@@ -160,12 +160,13 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   }
   if (source.rewrite !== undefined) {
     if (!isObject(source.rewrite)) throw new Error("Invalid rewrite");
-    for (const key of ["comparison", "attribution"] as const)
+    for (const key of ["comparison", "attribution", "clustering"] as const)
       if (source.rewrite[key] !== undefined && typeof source.rewrite[key] !== "boolean")
         throw new Error(`Invalid rewrite.${key}`);
     config.rewrite = {
       comparison: source.rewrite.comparison === true,
       attribution: source.rewrite.attribution === true,
+      clustering: source.rewrite.clustering === true,
     };
   }
   const versions = config.inputs?.versions;
@@ -301,7 +302,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
     },
-    rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true },
+    rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true, clustering: rewrite.clustering === true },
     clustering: { enabled: clustering.enabled === true },
     comparisons: Array.isArray(source.comparisons) ? source.comparisons : [],
     models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
@@ -353,7 +354,7 @@ export function dashboardSettings(value: unknown): ConfigObject {
   }
   if (value.rewrite !== undefined) {
     if (!isObject(value.rewrite) ||
-        Object.keys(value.rewrite).some((key) => !["comparison", "attribution"].includes(key)))
+        Object.keys(value.rewrite).some((key) => !["comparison", "attribution", "clustering"].includes(key)))
       throw new Error("改写设置包含不允许修改的字段");
     patch.rewrite = value.rewrite;
   }
@@ -408,7 +409,7 @@ export async function loadConfig(
   const evaluatorVersion = readEvaluatorVersion(source);
   const base = buildEvaluation(source), models = buildModels(source, env);
   const evaluation = versions ? selectVersions(base, versions) : base;
-  if ((evaluation.rewrite.comparison || evaluation.rewrite.attribution) && !models.bindings.rewrite)
+  if (Object.values(evaluation.rewrite).some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");

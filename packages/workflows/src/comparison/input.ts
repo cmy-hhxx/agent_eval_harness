@@ -10,7 +10,6 @@ import type {
   Candidate,
   EvalConfig,
   RawInput,
-  TaskCase,
   TaskData,
   Timing,
   VersionConfig,
@@ -227,6 +226,8 @@ export function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
   if (data.stage === "clustering")
     return canonical([data.scope!.batch_id, "clustering", data.scope!.version, data.scope!.shard]);
+  if (data.rewriteScope)
+    return canonical([data.rewriteScope.batch_id, "rewrite", data.rewriteOf!.taskId]);
   const c = taskCase(data);
   const selector =
     data.stage === "rewrite"
@@ -237,6 +238,7 @@ export function taskKey(task: PlannedTask): string {
 /** Batch identity for every stage, including clustering tasks that span cases. */
 export function taskIdentity(data: TaskData): { batch_id: string; case_id: string | null } {
   if (data.scope) return { batch_id: data.scope.batch_id, case_id: null };
+  if (data.rewriteScope) return { batch_id: data.rewriteScope.batch_id, case_id: null };
   const c = taskCase(data);
   return { batch_id: c.batch_id, case_id: c.case_id };
 }
@@ -439,15 +441,18 @@ export async function buildPlan(
     groupCounts: Record<string, number> = {};
   /** One polish task per accepted source result; rewrite tasks own no input material. */
   function addRewrite(
-    sourceStage: "attribution" | "comparison",
+    sourceStage: "attribution" | "comparison" | "clustering",
     sourceTaskId: string,
     resultId: string,
-    caseInfo: TaskCase,
+    context: Pick<TaskData, "case" | "rewriteScope">,
     revision: number,
+    names: Record<string, string>,
   ) {
-    if (sourceStage === "comparison" ? !config.rewrite.comparison : !config.rewrite.attribution) return;
+    if (!config.rewrite[sourceStage]) return;
     if (rewrites.has(sourceTaskId)) return;
-    const key = canonical([caseInfo.batch_id, caseInfo.case_id, "rewrite", ["rewrite", sourceTaskId]]);
+    const key = context.rewriteScope
+      ? canonical([context.rewriteScope.batch_id, "rewrite", sourceTaskId])
+      : canonical([context.case!.batch_id, context.case!.case_id, "rewrite", ["rewrite", sourceTaskId]]);
     const old = oldTasks.get(key);
     rewrites.set(sourceTaskId, {
       id: old?.id || randomUUID(),
@@ -459,7 +464,8 @@ export async function buildPlan(
         candidates: {},
         reference: null,
         rewriteOf: { stage: sourceStage, taskId: sourceTaskId, resultId },
-        case: caseInfo,
+        rewriteNames: names,
+        ...context,
         revision,
       },
     });
@@ -566,8 +572,9 @@ export async function buildPlan(
           "attribution",
           checkId,
           checkId,
-          { batch_id: record.batch_id, case_id: record.case_id, question: record.question },
+          { case: { batch_id: record.batch_id, case_id: record.case_id, question: record.question } },
           data.revision || 1,
+          { A: record.name },
         );
         dependencies[label] = checkId;
       }
@@ -600,8 +607,9 @@ export async function buildPlan(
         "comparison",
         comparisonTask.id,
         data.comparisonId!,
-        { batch_id: batch, case_id: id, question: ordered[0]!.question },
+        { case: { batch_id: batch, case_id: id, question: ordered[0]!.question } },
         data.revision || 1,
+        Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.name])),
       );
       const name = group.join("+");
       groupCounts[name] = (groupCounts[name] || 0) + 1;
@@ -716,6 +724,11 @@ export async function buildPlan(
           revision: Math.max(...shard.cases.map((entry) => entry.revision), 1),
         },
       });
+      const task = clusteringTasks.at(-1)!;
+      const version = config.inputs.versions.find((item) => item.id === shard.version)!;
+      addRewrite("clustering", task.id, task.id, {
+        rewriteScope: { batch_id: shard.batch_id, model: version.display_name || version.name },
+      }, (task.data as TaskData).revision!, {});
     }
   }
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
@@ -756,7 +769,7 @@ export async function buildPlan(
     }
   }
   return {
-    tasks: [...checks.values(), ...tasks, ...rewrites.values(), ...clusteringTasks],
+    tasks: [...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
     inputs: Object.fromEntries(Object.entries(inputs).filter(([id]) => used.has(id))),
     catalog,
     summary: {

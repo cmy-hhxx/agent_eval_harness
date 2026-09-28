@@ -1,7 +1,8 @@
 {
   "models": {
     "judge": {
-      "model": "your-gateway-model-id"
+      "model": "your-gateway-model-id",
+      "thinking": "medium"
     }
   }
 }

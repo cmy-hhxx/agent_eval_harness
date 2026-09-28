@@ -55,6 +55,7 @@
               <div class="settings-checks">
                 <label><input id="rewrite-attribution" type="checkbox" /> 改写归因评语</label>
                 <label><input id="rewrite-comparison" type="checkbox" /> 改写对比评语</label>
+                <label><input id="rewrite-clustering" type="checkbox" /> 改写聚类描述</label>
                 <label><input id="clustering-enabled" type="checkbox" /> 维护问题库（聚类）</label>
                 <label><input id="debug" type="checkbox" /> 保存 Debug 材料</label>
               </div>
@@ -70,6 +71,10 @@
             <div class="overview-actions" id="run-actions"></div>
           </div>
           <div id="stage-summary" class="stage-summary"></div>
+          <details id="clustering-panel" class="problem-library">
+            <summary>聚类详情</summary>
+            <div id="clustering-tasks"></div>
+          </details>
           <details id="problem-library-panel" class="problem-library">
             <summary>问题库</summary>
             <div id="problem-library"></div>

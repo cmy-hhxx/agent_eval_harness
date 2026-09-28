@@ -3,11 +3,10 @@ import { attributionProfile } from "@eval/agents/attribution";
 import { object, type JsonSchema } from "@eval/contracts";
 import template from "../../../../schemas/workflow/export.schema.json" with { type: "json" };
 import annotation from "../../../../schemas/workflow/annotation.schema.json" with { type: "json" };
-import commentary from "../../../../schemas/workflow/commentary.schema.json" with { type: "json" };
 import clusteringResult from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 import clusteringTemplate from "../../../../schemas/workflow/clustering.schema.json" with { type: "json" };
 // Only export-specific identity, display and trace annotations belong to Workflow.
-export const commentarySchema: JsonSchema = commentary;
+export const rewrittenSchema = object(object(comparisonProfile.resultSchema!).properties).rewritten as JsonSchema;
 export const clusteringSchema: JsonSchema = {
   ...clusteringTemplate,
   properties: {
@@ -21,6 +20,10 @@ const findings = object(attribution.findings);
 object(object(findings.items).properties).stage_trace = annotation;
 export const outputSchema: JsonSchema = {
   ...template,
+  properties: {
+    ...template.properties,
+    rewritten: rewrittenSchema,
+  },
   $defs: {
     ...template.$defs,
     evaluation: {

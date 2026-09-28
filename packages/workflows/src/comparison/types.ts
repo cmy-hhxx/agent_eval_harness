@@ -43,6 +43,7 @@ export interface EvalConfig {
   rewrite: {
     comparison: boolean;
     attribution: boolean;
+    clustering: boolean;
   };
   /** Problem-library maintenance and its hard cardinality limits. */
   clustering: {
@@ -106,7 +107,7 @@ export interface BatchPreflight {
 export type Stage = "attribution" | "comparison" | "rewrite" | "clustering";
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
-  stage: "attribution" | "comparison";
+  stage: "attribution" | "comparison" | "clustering";
   taskId: string;
   /** Result id used to join the source JSONL row. */
   resultId: string;
@@ -141,6 +142,8 @@ export interface TaskData {
   comparisonId?: string;
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
+  rewriteNames?: Record<string, string>;
+  rewriteScope?: { batch_id: string; model: string };
   /** Present on rewrite tasks, which carry no candidates. */
   case?: TaskCase;
   /** Present on clustering tasks: the recalled problem-library projection. */

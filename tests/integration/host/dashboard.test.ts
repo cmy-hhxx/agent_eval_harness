@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
+import { filterGptModels, assertGptModelSelections } from "../../../apps/host/src/dashboard-models.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { exists, readJson, writeJson, writeJsonl } from "@eval/data";
@@ -183,6 +184,19 @@ async function setup(rewrite = false, clustering = false) {
   return { directory, config, configFile, task, run, row };
 }
 
+test("dashboard model catalog keeps only GPT-family gateway models", () => {
+  assert.deepEqual(filterGptModels([
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
+    { id: "claude-4", name: "Claude 4" },
+    { id: "GEMINI-3", name: "Gemini 3" },
+    { id: "gpt4o", name: "GPT-4o" },
+  ]), [
+    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
+    { id: "gpt4o", name: "GPT-4o" },
+  ]);
+  assert.throws(() => assertGptModelSelections({ bindings: { comparison: { model: "claude-4" } } }), /GPT/);
+});
+
 test("dashboard workflow view pages cases, resolves moved inputs, and reads authoritative results", async () => {
   const fixture = await setup();
   try {
@@ -224,11 +238,11 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
   }
 });
 
-test("dashboard case results preserve Schema fields without duplicated comparison evaluations", () => {
+test("dashboard case results include comparison evaluations and preserve attribution Schema fields", () => {
   const comparison = caseResultView("comparison", {
     evaluation_type: "group_model_comparison",
     evaluator_version: "r1",
-    evaluations: { a_fast: { findings: ["x"] } },
+    evaluations: { a_fast: attributionResult() },
     models: { a_fast: { version: "A组Fast", llm: "x", trace_id: null } },
     ground_truth: { available: false, value: null },
     ranking: [["a_fast"]],
@@ -237,14 +251,11 @@ test("dashboard case results preserve Schema fields without duplicated compariso
     assessments: { a_fast: { meets_core: true, summary: "s" } },
     verdicts: { a_fast__vs__aa_fast: { result: "win" } },
   })!;
-  assert.equal(Object.hasOwn(comparison, "evaluations"), false);
+  assert.deepEqual(comparison.evaluations, { a_fast: attributionResult() });
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
   assert.deepEqual(Object.keys(comparison).sort(), [
-    "assessments", "decision_basis", "ground_truth", "models", "ranking", "task_analysis", "verdicts",
+    "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "task_analysis", "verdicts",
   ]);
-  assert.deepEqual(caseResultView("rewrite", { rewrites: [{ id: "summary", text: "t" }] }), {
-    rewrites: [{ id: "summary", text: "t" }],
-  });
   const source = attributionResult();
   source.findings[0]!.evidence[0]!.quote = "q".repeat(5000);
   const attribution = caseResultView("attribution", { evaluation: source })!;
@@ -316,7 +327,7 @@ test("dashboard reads one input record without retaining its source file", async
   }
 });
 
-test("dashboard view projects rewrite tasks onto their source sample", async () => {
+test("dashboard keeps rewrite progress but does not list separate rewrite outputs", async () => {
   const fixture = await setup(true);
   try {
     const page = await listRunCases(fixture.run, { page: 1, pageSize: 40 });
@@ -328,13 +339,7 @@ test("dashboard view projects rewrite tasks onto their source sample", async () 
     const comparison = detail.tasks.find((task) => task.stage === "comparison")!;
     assert.deepEqual(comparison.versions, ["a_fast", "aa_fast"]);
     const rewrites = detail.tasks.filter((task) => task.stage === "rewrite");
-    assert.equal(rewrites.length, 3);
-    for (const task of rewrites) {
-      assert.deepEqual(task.versions, []);
-      assert(task.rewrite_of && detail.tasks.some((item) => item.id === task.rewrite_of!.taskId));
-    }
-    assert(rewrites.some((task) => task.rewrite_of!.stage === "attribution" && task.rewrite_of!.taskId === fixture.task.id));
-    assert(rewrites.some((task) => task.rewrite_of!.stage === "comparison" && task.rewrite_of!.taskId === comparison.id));
+    assert.equal(rewrites.length, 0);
     assert(attributionIds.has(fixture.task.id));
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
@@ -349,6 +354,9 @@ test("dashboard keeps clustering tasks run-level and never mixes them into cases
     assert.equal(page.total, 2, "clustering tasks must not break the case projection");
     const q1 = page.cases.find((item: { case_id: string }) => item.case_id === "q1");
     assert(!("clustering" in q1.stages), "clustering is not a per-case stage");
+    const clusteringTasks = await (await fetch(`${server.url}/api/dashboard/runs/run-one/clustering`)).json();
+    assert.equal(clusteringTasks.length, 2);
+    assert(clusteringTasks.every((task: { stage: string; batch_id: string }) => task.stage === "clustering" && task.batch_id === "b1"));
     const detail = await (
       await fetch(`${server.url}/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1`)
     ).json();
@@ -399,7 +407,14 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
   const previousKey = process.env.EVAL_API_KEY;
   process.env.EVAL_BASE_URL = gateway;
   process.env.EVAL_API_KEY = "private-key-do-not-expose";
-  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  const server = await startDashboard({
+    configPaths: [fixture.configFile],
+    port: 0,
+    modelCatalog: async () => [
+      { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
+      { id: "claude-4", name: "Claude 4" },
+    ],
+  });
   const get = async (route: string) => fetch(server.url + route);
   const post = async (route: string, payload: unknown, origin = server.url) => fetch(server.url + route, {
     method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(payload),
@@ -412,7 +427,9 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     const text = await config.text();
     assert(!text.includes("private-key-do-not-expose"));
     assert(!text.includes(gateway));
-    assert.equal(JSON.parse(text).settings.bindings.attribution.model, "fixture-model");
+    const dashboardConfig = JSON.parse(text);
+    assert.deepEqual(dashboardConfig.model_catalog, [{ id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }]);
+    assert.equal(dashboardConfig.settings.bindings.attribution.model, "");
     const referencePage = await get("/reference");
     assert.equal(referencePage.status, 200);
     assert.match(await referencePage.text(), /数据与流程/);
@@ -428,8 +445,8 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal(reference.stages[1].prompts.instructions, comparisonProfile.instructions);
     assert.equal(reference.stages[1].prompts.submissionNudge, comparisonProfile.submissionNudge);
     assert.deepEqual(reference.stages[0].toolDescriptions, attributionProfile.toolDescriptions);
-    assert.equal(Object.hasOwn(reference.stages[1].schemas, "submission"), false, "comparison has one shared submission/result definition");
-    assert.deepEqual(Object.keys(reference.exports), ["comparison", "commentary", "clustering"]);
+    assert.deepEqual(reference.stages[1].schemas.submission, comparisonProfile.submissionSchema);
+    assert.deepEqual(Object.keys(reference.exports), ["comparison", "clustering"]);
     assert(!JSON.stringify(reference).includes("private-key-do-not-expose"));
     assert(!JSON.stringify(reference).includes(gateway));
     const inventory = await (await get("/api/dashboard/inputs")).json();
@@ -454,8 +471,8 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     const preview = await post("/api/dashboard/preview", {
       runId: "new-run", batch: ["b1"], settings: { execution: { concurrency: 1 }, bindings: { comparison: { model: "other-model" } } },
     });
-    assert.equal(preview.status, 200);
-    assert.equal((await preview.json()).summary.cases, 2);
+    assert.equal(preview.status, 400);
+    assert.match((await preview.json()).error, /GPT/);
     assert.equal(await exists(path.join(fixture.config.output.path, "new-run")), false);
     const checkpoint = await readFile(path.join(fixture.run, "state.json"), "utf8");
     const resumed = await (await post("/api/dashboard/preview", { runId: "run-one", batch: ["unrelated"] })).json();

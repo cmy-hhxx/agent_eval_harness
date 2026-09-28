@@ -5,11 +5,11 @@ export interface RewriteItem {
   text: string;
 }
 export interface RewriteRequest {
-  kind: "attribution" | "comparison";
-  case: {
+  kind: "attribution" | "comparison" | "clustering";
+  scope?: { batch_id: string; model: string };
+  case?: {
     batch_id: string;
     case_id: string;
-    question: string;
   };
   items: RewriteItem[];
 }

@@ -14,7 +14,7 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 默认端口 `4180`、用户 `local`。入口 `/u/alice/` 或 `/?user=alice` 可指定用户；不同端口的本机副本共享 `data/assistant`。只监听 `127.0.0.1`。`userId` 是可信本机环境下的数据归属标志，不是登录或鉴权。按 Ctrl+C 停止服务。
 
-`.env` 使用现有 `EVAL_BASE_URL`、`EVAL_API_KEY`，可设置 `AGENT_MODEL` 指定总 Agent 的网关模型、`AGENT_CONTEXT_WINDOW`（默认 131072）、`AGENT_MAX_TOKENS`（默认 8192）。未设置 `AGENT_MODEL` 时使用 `configs/local/models.json` 的 Attribution 模型配置。专业调用继续使用现有阶段模型绑定；不加载内置第三方模型目录。
+`.env` 使用现有 `EVAL_BASE_URL`、`EVAL_API_KEY`，可设置 `AGENT_MODEL` 指定总 Agent 的网关模型、`AGENT_CONTEXT_WINDOW`（默认 131072）、`AGENT_MAX_TOKENS`（默认 8192）。设置 `AGENT_MODEL` 时总 Agent 使用 `medium` 推理强度；未设置时使用 `configs/local/models.json` 的 Attribution 模型配置及其推理等级。专业调用继续使用现有阶段模型绑定；不加载内置第三方模型目录。
 
 点击左下角“设置”→“常用模型”→“勾选常用模型”，服务端使用 `.env` 的网关地址和密钥读取 `/models`。勾选并保存后，在输入框右下角切换模型与推理等级；`/model` 也使用同一选择器。常用模型按用户保存，当前模型与推理等级写入会话追加记录，刷新、续聊和本机副本转发后保持一致。切换不打断正在执行的轮次，下次用户请求使用新选择。密钥不会发送给浏览器。
 

@@ -5,12 +5,14 @@ import resultSchema from "../../../../schemas/clustering/result.schema.json" wit
 import { validateEvaluation } from "./validate.js";
 export * from "./types.js";
 export * from "./library.js";
-// Clustering only assigns observations to classes, so one JSON Schema serves submission and result.
+// The source agent submits its decision; the workflow attaches later language polish.
+const submissionSchema = structuredClone(resultSchema);
+delete (submissionSchema.properties as Record<string, unknown>).rewritten;
 export const clusteringProfile: AgentProfile = {
   id: "default",
 
   requestSchema,
-  submissionSchema: resultSchema,
+  submissionSchema,
   resultSchema,
   ...agentPrompt("clustering", []),
   toolNames: [],

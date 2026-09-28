@@ -116,26 +116,30 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
     }]);
     const catalog = path.join(directory, "catalog");
     const args = ["--config", path.join(ROOT, "configs/host.json"), "--config", overlay, "--catalog", catalog];
-    const entry = path.join(ROOT, "dist/apps/host/src/cli.js");
+    const entry = path.join(ROOT, "dist/tests/fixtures/cli.js");
     const env = { ...process.env, EVAL_BASE_URL: "http://127.0.0.1:1/v1" };
-    const { stdout } = await exec(process.execPath, [entry, "index", ...args,
+    const { stdout } = await exec(process.execPath, [entry, directory, "index", ...args,
       "--dataset", "competitor", "--dataset-name", "竞品对比",
       ...["a_fast", "aa_fast"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),
     ], { env });
     assert.equal(JSON.parse(stdout).valid, 2);
     const { stdout: preflight } = await exec(process.execPath,
-      [entry, "preflight", ...args, "--dataset", "competitor"], { env });
+      [entry, directory, "preflight", ...args, "--dataset", "competitor"], { env });
     assert.equal(JSON.parse(preflight).comparison_tasks, 1);
     assert.equal(JSON.parse(preflight).cases, 1);
     const output = path.join(directory, "runs");
     await mkdir(path.join(output, "continued"), { recursive: true });
     await writeFile(path.join(output, "continued", "state.json"), "{}");
-    await assert.rejects(exec(process.execPath, [entry, "run", ...args,
+    await assert.rejects(exec(process.execPath, [entry, directory, "run", ...args,
       "--dataset", "stale", "--run-id", "continued", "--output", output, "--engine", "invalid",
     ], { env }), (error: unknown) => {
       const stderr = (error as { stderr: string }).stderr;
       return stderr.includes("忽略 --dataset stale") && stderr.includes("--engine must be pi or prime");
     }, "resume must use the registered sources instead of requiring the index");
+    const errors = [];
+    for await (const row of readJsonl(path.join(directory, "log/runtime.log"))) errors.push(row);
+    assert.equal(errors.length, 1);
+    assert.equal((errors[0] as { message: string }).message, "--engine must be pi or prime");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -8,11 +8,13 @@ import { cite, evidenceSources } from "@eval/tools";
 import { buildPlan, contentText, type PlanOptions } from "./input.js";
 import type { TaskData, RawInput, EvalConfig } from "./types.js";
 import { reconcileRun } from "./run-data.js";
+import { display } from "./results.js";
 import { sourceSlots } from "./commentary.js";
 import { observationsFor, requestItems } from "./observations.js";
 import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
 import type { AttributionResult } from "@eval/agents/attribution";
+import { originalAnswerUsage } from "./experience.js";
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
@@ -64,8 +66,16 @@ export function bindTask(
       request: {
         input: {
           kind: data.rewriteOf.stage,
-          case: data.case!,
-          items: sourceSlots(data.rewriteOf.stage, source.evaluation),
+          ...(data.rewriteScope ? { scope: data.rewriteScope } : { case: {
+            batch_id: data.case!.batch_id, case_id: data.case!.case_id,
+          } }),
+          items: sourceSlots(data.rewriteOf.stage, source.evaluation).map((item) => ({
+            ...item,
+            label: data.rewriteOf!.stage === "attribution"
+              ? `${data.rewriteNames!.A} ${item.label}`
+              : display(item.label, data.rewriteNames!),
+            text: display(item.text, data.rewriteNames!),
+          })),
         },
         sources: {},
       },
@@ -142,6 +152,7 @@ export function bindTask(
           })),
           input_file: `inputs/${label}.json`,
           original_answer_timing: blind ? blind.value(candidate.answer_timing) : candidate.answer_timing,
+          ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
           note: "完整问题和最终回答已展示；其余材料可通过工具或输入文件继续查看。",
         },
       ];

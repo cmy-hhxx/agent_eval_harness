@@ -5,6 +5,7 @@ import type { Rewrites } from "@eval/agents/rewrite";
 import {
   attributionSlots,
   comparisonSlots,
+  clusteringSlots,
   polishComparisonRow,
   verdictSlotId,
   type CommentaryLookup,
@@ -97,4 +98,18 @@ test("presentation view applies rewrites by slot and leaves unknown text alone",
     "原A",
     "the exported row is never mutated",
   );
+});
+
+test("clustering polish selects descriptions without changing class identities or assignments", () => {
+  const result = {
+    assignments: [{ item_id: "item1", new_class_key: "n1" }],
+    new_classes: [{ key: "n1", component: "工具", label: "缺失来源", definition: "没有列出来源。", closest_existing: "old", novelty: "适用边界不同。" }],
+    merges: [{ into: "target", from: ["source"], reason: "同一问题。" }],
+  };
+  const before = structuredClone(result);
+  assert.deepEqual(clusteringSlots(result).map((item) => item.id), [
+    "new_classes.0.definition", "new_classes.0.novelty", "merges.0.reason",
+  ]);
+  assert.deepEqual(result, before);
+  assert.deepEqual(clusteringSlots({ assignments: [{ item_id: "item1", class_id: "old" }], new_classes: [], merges: [] }), []);
 });

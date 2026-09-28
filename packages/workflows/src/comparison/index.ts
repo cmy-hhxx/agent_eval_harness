@@ -11,6 +11,6 @@ export * from "./results.js";
 export * from "./commentary.js";
 export * from "./annotations.js";
 export * from "./validate.js";
-export { outputSchema, commentarySchema, clusteringSchema } from "./schema.js";
+export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";
 export * from "./observations.js";

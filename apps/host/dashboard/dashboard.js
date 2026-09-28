@@ -2,6 +2,7 @@ import { createDashboardViews } from "./dashboard-view.js";
 
 const state = {
   runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
+  clusteringTasks: null, clusteringRun: null, clusteringRequest: 0,
   caseDetail: null, selectedInput: null, inputView: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, runId: "",
   inputs: null, selectedDates: new Set(), datesReady: false,
@@ -9,7 +10,7 @@ const state = {
   sampledCases: null, sampleInfo: null, rangeLocked: false,
   library: null, libraryDetail: null, libraryRequest: 0, libraryDetailRequest: 0,
   libraryRun: null, libraryShownRun: null, libraryStatus: null, libraryOpen: new Set(),
-  inputOpen: false, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), expandedTexts: new Set(),
+  inputOpen: false, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), openFindings: new Set(), expandedTexts: new Set(),
   refreshTimer: 0, runsSignature: "", overviewSignature: "", casesSignature: "", datesSignature: "", modelsSignature: "",
 };
 const $ = (selector) => document.querySelector(selector);
@@ -242,7 +243,7 @@ const clipped = (value, limit) => {
   return escapeHtml(text.length > limit ? `${text.slice(0, limit)}…` : text);
 };
 const compactJson = (value) => escapeHtml(JSON.stringify(value, null, 2) ?? "—");
-const { renderDetail, renderTaskResult } = createDashboardViews({
+const { renderDetail, renderTaskResult, renderClustering } = createDashboardViews({
   state,
   $,
   document,
@@ -252,15 +253,42 @@ const { renderDetail, renderTaskResult } = createDashboardViews({
   stageLabel,
   dateText,
 });
+async function loadClustering() {
+  const runId = state.selectedRun;
+  if (!runId) return;
+  const request = ++state.clusteringRequest;
+  if (state.clusteringRun !== runId) {
+    state.clusteringRun = runId;
+    state.clusteringTasks = null;
+    renderClustering();
+  }
+  try {
+    const tasks = await api(`${urlFor(runId)}/clustering`);
+    if (state.selectedRun !== runId || request !== state.clusteringRequest) return;
+    const changed = JSON.stringify(tasks) !== JSON.stringify(state.clusteringTasks);
+    for (const task of tasks) {
+      const old = state.clusteringTasks?.find((item) => item.id === task.id);
+      if (!old || old.status !== task.status || JSON.stringify(old.rewrite_submission_ids) !== JSON.stringify(task.rewrite_submission_ids))
+        delete state.taskResults[task.id];
+    }
+    state.clusteringTasks = tasks;
+    if (changed) renderClustering();
+    for (const task of tasks) if (state.openTasks.has(task.id)) void loadTaskResult(task.id);
+  } catch (error) {
+    if (state.selectedRun === runId && request === state.clusteringRequest)
+      $("#clustering-tasks").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
+  }
+}
 async function loadTaskResult(taskId) {
-  if (!taskId || state.caseDetail?.tasks.find((task) => task.id === taskId)?.status !== "succeeded"
+  const task = [...(state.caseDetail?.tasks || []), ...(state.clusteringTasks || [])].find((task) => task.id === taskId);
+  if (!taskId || task?.status !== "succeeded"
       || state.taskResults[taskId] || state.taskResultsLoading.has(taskId)) return;
   state.taskResultsLoading.add(taskId);
   const runId = state.selectedRun,
     caseId = state.caseDetail?.case_id;
   try {
     const value = await api(`${urlFor(runId)}/tasks/${encodeURIComponent(taskId)}/result`);
-    if (state.selectedRun !== runId || state.caseDetail?.case_id !== caseId) return;
+    if (state.selectedRun !== runId || (task.stage !== "clustering" && state.caseDetail?.case_id !== caseId)) return;
     state.taskResults[taskId] = { result: value.result ?? null };
   } catch (error) {
     state.taskResults[taskId] = { error: error.message };
@@ -302,11 +330,11 @@ async function loadCase(batch, caseId) {
     const detail = await api(`${urlFor(runId)}/cases/detail?${params}`);
     if (request !== state.caseRequest || runId !== state.selectedRun) return;
     const previous = state.caseDetail;
-    const signature = (value) => JSON.stringify(value.tasks.map((item) => [item.id, item.status, item.attempts]));
+    const signature = (value) => JSON.stringify(value.tasks.map((item) => [item.id, item.status, item.attempts, item.rewrite_submission_ids]));
     state.caseDetail = detail;
     for (const task of detail.tasks) {
       const oldTask = previous?.tasks.find((item) => item.id === task.id);
-      if (oldTask && oldTask.status === task.status && oldTask.attempts === task.attempts) continue;
+      if (oldTask && oldTask.status === task.status && oldTask.attempts === task.attempts && JSON.stringify(oldTask.rewrite_submission_ids) === JSON.stringify(task.rewrite_submission_ids)) continue;
       delete state.taskResults[task.id];
       if (["failed", "timed_out"].includes(task.status)) state.openTasks.add(task.id);
     }
@@ -339,6 +367,7 @@ async function loadCases() {
 }
 async function refresh(auto = false) {
   const request = ++state.runRequest;
+  const wasRunning = state.run?.status === "running";
   try {
     const { runs, errors } = await api("/api/dashboard/runs");
     if (request !== state.runRequest) return;
@@ -358,6 +387,9 @@ async function refresh(auto = false) {
     renderOverview();
     showError(errors?.length ? `${errors.length} 个运行状态无法读取：${errors.map((item) => item.run_id).join("、")}` : "");
     await loadCases();
+    if (state.selectedCase && (!auto || (wasRunning && state.run?.status !== "running")))
+      await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
+    if ($("#clustering-panel").open) await loadClustering();
     if (!auto) $("#refresh-time").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   } catch (error) {
     if (request === state.runRequest) showError(`运行状态读取失败：${error.message}`);
@@ -510,14 +542,22 @@ function renderConfig() {
   $("#env-status").innerHTML = [
     ["URL", env.base_url_configured], ["Key", env.api_key_configured], ["基础模型", env.model_configured],
   ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
-  $("#model-fields").innerHTML = `<div class="model-fields-head" aria-hidden="true"><span>阶段</span><span>模型</span><span>推理</span></div>${Object.entries(settings.bindings || {}).map(([stage, binding]) => `
-    <div class="model-field-row"><span class="model-stage">${escapeHtml(stageLabel(stage))}</span><input data-model-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}模型 ID" value="${escapeHtml(binding.model)}" /><select data-thinking-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}推理等级">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></div>`).join("")}`;
+  const gatewayModels = (config.model_catalog || []).filter((model) => typeof model.id === "string" && model.id.toLowerCase().startsWith("gpt"));
+  const modelOptions = (selected) => gatewayModels.length
+    ? `<option value="" ${selected ? "" : "selected"}>请选择 GPT 模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`
+    : `<option value="" selected>${config.model_catalog_error || "无可用 GPT 模型"}</option>`;
+  $("#model-fields").innerHTML = `<div class="model-fields-head" aria-hidden="true"><span>阶段</span><span>模型</span><span>推理</span></div>${Object.entries(settings.bindings || {}).map(([stage, binding]) => {
+    const selected = gatewayModels.some((model) => model.id === binding.model) ? binding.model : "";
+    return `
+    <div class="model-field-row"><span class="model-stage">${escapeHtml(stageLabel(stage))}</span><select data-model-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}模型 ID" ${gatewayModels.length ? "" : "disabled"}>${modelOptions(selected)}</select><select data-thinking-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}推理等级">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></div>`;
+  }).join("")}`;
   $("#setting-concurrency").value = settings.execution.concurrency;
   $("#setting-timeout").value = settings.execution.timeoutSeconds;
   $("#setting-tools").value = settings.execution.maxToolCalls;
   $("#setting-retries").value = settings.execution.retries;
   $("#rewrite-attribution").checked = settings.rewrite.attribution;
   $("#rewrite-comparison").checked = settings.rewrite.comparison;
+  $("#rewrite-clustering").checked = settings.rewrite.clustering;
   $("#clustering-enabled").checked = settings.clustering?.enabled === true;
 }
 function launchPayload() {
@@ -544,7 +584,7 @@ function launchPayload() {
         maxToolCalls: Number($("#setting-tools").value),
         retries: Number($("#setting-retries").value),
       },
-      rewrite: { attribution: $("#rewrite-attribution").checked, comparison: $("#rewrite-comparison").checked },
+      rewrite: { attribution: $("#rewrite-attribution").checked, comparison: $("#rewrite-comparison").checked, clustering: $("#rewrite-clustering").checked },
       clustering: { enabled: $("#clustering-enabled").checked },
     },
   };
@@ -701,12 +741,24 @@ $("#problem-library").addEventListener(
   },
   true,
 );
+$("#clustering-panel").addEventListener("toggle", (event) => {
+  if (event.target.open) void loadClustering();
+});
 // The library fetch happens only when the operator opens its panel.
 $("#problem-library-panel").addEventListener("toggle", (event) => {
   if (event.target.open && state.selectedRun && state.libraryRun !== state.selectedRun)
     void loadLibrary(state.selectedRun);
 });
-$("#case-detail").addEventListener("click", async (event) => {
+document.addEventListener("click", async (event) => {
+  const findingLink = event.target.closest("[data-finding-target]");
+  if (findingLink) {
+    const finding = document.getElementById(findingLink.dataset.findingTarget);
+    if (finding) {
+      finding.open = true;
+      state.openFindings.add(finding.dataset.finding);
+    }
+    return;
+  }
   const toggle = event.target.closest("[data-expand-text]");
   if (toggle) {
     const key = toggle.dataset.expandText;
@@ -725,9 +777,14 @@ $("#case-detail").addEventListener("click", async (event) => {
   if (input) await loadInput(input.dataset.input);
 });
 // `toggle` does not bubble; capture it so expanded tasks load their result once.
-$("#case-detail").addEventListener(
+document.addEventListener(
   "toggle",
   (event) => {
+    if (event.target.matches?.(".finding")) {
+      if (event.target.open) state.openFindings.add(event.target.dataset.finding);
+      else state.openFindings.delete(event.target.dataset.finding);
+      return;
+    }
     const inputDisclosure = event.target.matches?.(".input-disclosure") ? event.target : null;
     if (inputDisclosure) {
       state.inputOpen = inputDisclosure.open;

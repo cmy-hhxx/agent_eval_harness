@@ -6,12 +6,21 @@ import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, fileSourceReader, locateRun, readJson } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { dashboardReference } from "./dashboard-reference.js";
+import {
+  clearUnavailableDashboardModels,
+  discoverDashboardModels,
+  type DashboardModel,
+  type DashboardModelLoader,
+  filterGptModels,
+} from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
-import { listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
+import { listClusteringTasks, listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
   port: number;
+  /** Test seam; production discovery always uses the configured .env gateway. */
+  modelCatalog?: DashboardModelLoader;
 }
 
 interface CheckpointTask {
@@ -218,6 +227,15 @@ export async function startDashboard(options: DashboardOptions) {
   if (!isRecord(output) || typeof output.path !== "string")
     throw new Error("Invalid output target in dashboard config");
   const outputDir = path.resolve(output.path);
+  const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths));
+  let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
+  const readModels = async () => {
+    modelCatalogPromise ??= loadModels().then(filterGptModels).catch((error) => {
+      modelCatalogPromise = undefined;
+      throw error;
+    });
+    return modelCatalogPromise;
+  };
   const server = await listen(async (req, res, url) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -256,9 +274,17 @@ export async function startDashboard(options: DashboardOptions) {
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
       const current = await readConfigSources(options.configPaths);
+      let modelCatalog: DashboardModel[] = [];
+      let modelCatalogError = false;
+      try { modelCatalog = await readModels(); }
+      catch { modelCatalogError = true; }
+      const settings = editableDashboardSettings(current);
+      clearUnavailableDashboardModels(settings, modelCatalog.map((model) => model.id));
       return json(res, {
         paths: options.configPaths,
-        settings: editableDashboardSettings(current),
+        settings,
+        model_catalog: modelCatalog,
+        ...(modelCatalogError ? { model_catalog_error: "无法读取 .env 网关模型列表" } : {}),
         environment: modelReadiness(current),
       });
     }
@@ -267,9 +293,9 @@ export async function startDashboard(options: DashboardOptions) {
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
       return json(res, await allRuns(outputDir));
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
-      return json(res, await previewRun({ configPaths: options.configPaths, outputDir }, record(await body(req, 64 * 1024), "Expected JSON object")));
+      return json(res, await previewRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels }, record(await body(req, 64 * 1024), "Expected JSON object")));
     if (req.method === "POST" && url.pathname === "/api/dashboard/runs")
-      return json(res, await startRun({ configPaths: options.configPaths, outputDir }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
+      return json(res, await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");
@@ -299,6 +325,8 @@ export async function startDashboard(options: DashboardOptions) {
         status: url.searchParams.get("status") || undefined,
       }));
     }
+    if (req.method === "GET" && parts[4] === "clustering" && parts.length === 5)
+      return json(res, await listClusteringTasks(directory));
     if (req.method === "GET" && parts[4] === "library" && parts.length === 5)
       return json(res, await listProblemLibrary(directory));
     if (req.method === "GET" && parts[4] === "library" && parts.length === 8 && parts[5] && parts[6] === "classes" && parts[7]) {

@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   type JsonObject,
+  type ResultReference,
   type PlannedTask,
   type RunState,
   type SubmissionReceipt,
@@ -10,7 +11,7 @@ import type { RewriteResult } from "@eval/agents/rewrite";
 import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
 import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, Stage, TaskData } from "./types.js";
 import { annotateFindings } from "./annotations.js";
-import { clusteringSchema, commentarySchema, outputSchema } from "./schema.js";
+import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 import { taskObservations } from "./observations.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
@@ -149,19 +150,26 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
 export function resultFile(stage: Stage): string {
   if (stage === "attribution") return "attribution.jsonl";
   if (stage === "comparison") return "comparison.jsonl";
-  if (stage === "rewrite") return "commentary.jsonl";
+  if (stage === "rewrite") throw new Error("改写结果必须引用源结果文件");
   return "clustering.jsonl";
 }
-/** Accepted polish of one source result; only text slots, joined by business ids. */
-export function commentaryRow(task: PlannedTask, receipt: SubmissionReceipt): JsonObject {
-  const data = task.data as TaskData,
-    source = data.rewriteOf!;
+/** The stage output inside its exported identity envelope. */
+export function stageResult(stage: string, row: JsonObject): JsonObject {
+  return stage === "attribution" ? row.evaluation as JsonObject
+    : stage === "clustering" ? row.result as JsonObject : row;
+}
+function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
+  return stage === "attribution" ? { ...row, evaluation: result }
+    : stage === "clustering" ? { ...row, result } : result;
+}
+export function originalResultRow(stage: string, row: JsonObject): JsonObject {
+  const { rewritten: _rewritten, ...result } = stageResult(stage, row);
+  return replaceStageResult(stage, row, result);
+}
+/** Text-only polish embedded in the source result row. */
+export function rewrittenResult(receipt: SubmissionReceipt): JsonObject {
   return {
-    commentary_type: source.stage,
     evaluator_version: receipt.evaluatorVersion,
-    source_task_id: source.taskId,
-    source_result_id: source.resultId,
-    case: { batch_id: data.case!.batch_id, case_id: data.case!.case_id },
     rewrites: (receipt.evaluation as RewriteResult).rewrites,
   };
 }
@@ -187,9 +195,9 @@ export function clusteringRow(
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
   validateAttribution = ajv.compile(attributionProfile.resultSchema!),
-  validateCommentary = ajv.compile(commentarySchema),
+  validateRewritten = ajv.compile(rewrittenSchema),
   validateClustering = ajv.compile(clusteringSchema);
-export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>) {
+export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): ResultReference & { row: JsonObject; auxiliary?: boolean } {
   const receipt = state.receipts[task.id];
   if (task.stage === "attribution") {
     const row = receipt.exported?.row || attributionRow(task, receipt);
@@ -198,11 +206,19 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     return { id: task.id, file: "attribution.jsonl", row };
   }
   if (task.stage === "rewrite") {
-    const row = receipt.exported?.row || commentaryRow(task, receipt);
-    if (!validateCommentary(row))
-      throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateCommentary.errors));
-    return { id: String(row.source_task_id), file: "commentary.jsonl", row };
+    const source = (task.data as TaskData).rewriteOf!;
+    const sourceTask = state.manifest.tasks.find((item) => item.id === source.taskId)!;
+    const exported = encodeResult(sourceTask, state, inputs);
+    const rewritten = rewrittenResult(receipt);
+    if (!validateRewritten(rewritten))
+      throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateRewritten.errors));
+    return {
+      ...exported,
+      row: replaceStageResult(source.stage, exported.row, { ...stageResult(source.stage, exported.row), rewritten }),
+      auxiliary: true,
+    };
   }
+
   if (task.stage === "clustering") {
     const row =
       receipt.exported?.row ||

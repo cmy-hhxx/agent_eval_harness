@@ -7,10 +7,17 @@ import { comparisonWorkflow, readRunState, reconcileRun } from "@eval/workflows/
 import type { JsonObject } from "@eval/contracts";
 import { dashboardSettings, loadConfig } from "./config.js";
 import { createModelResolver } from "./models.js";
+import {
+  assertAvailableDashboardModels,
+  assertGptModelSelections,
+  discoverDashboardModels,
+  type DashboardModelLoader,
+} from "./dashboard-models.js";
 
 interface LaunchOptions {
   configPaths: string[];
   outputDir: string;
+  modelCatalog?: DashboardModelLoader;
 }
 interface RunLock {
   pid?: number;
@@ -69,14 +76,21 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
   let host: Awaited<ReturnType<typeof loadConfig>>;
   try {
     settings = dashboardSettings(value.settings ?? {});
+    assertGptModelSelections(settings);
     host = await loadConfig(options.configPaths, process.env, settings);
   } catch (error) {
     throw new HttpError(400, errorText(error));
   }
   if (launch) {
     try {
+      const models = await (options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths)))();
+      assertAvailableDashboardModels(models.map((model) => model.id), settings);
       const modelForStage = createModelResolver(host.models);
-      for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
+      const available = new Set(models.map((model) => model.id));
+      for (const stage of Object.keys(host.models.bindings)) {
+        const model = modelForStage(stage);
+        if (!available.has(model.model)) throw new Error(`阶段 ${stage} 的模型不在 .env 网关 GPT 模型列表中`);
+      }
       for (const binding of Object.values(host.models.bindings)) {
         const profile = host.models.models[binding.profile]!;
         if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);

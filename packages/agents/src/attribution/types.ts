@@ -1,3 +1,4 @@
+import type { RewrittenResult } from "@eval/contracts";
 export interface Evidence {
   message_index: number;
   quote: string;
@@ -49,6 +50,7 @@ export interface AttributionFinding extends Finding {
   problem: ProblemProposal | null;
 }
 export interface AttributionResult {
+  rewritten?: RewrittenResult;
   /** Whether the case carries a usable standard answer; mirrors the request input. */
   has_standard_answer: boolean;
   /** Must be boolean when a standard answer exists, otherwise null. */
