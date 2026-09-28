@@ -27,6 +27,8 @@ const entries = [
   "vendor/cordis/src/index.ts",
   "packages/client/ui-settings-models/src/client/ModelListEditor.tsx",
   "packages/client/ui-settings-general/src/client/index.ts",
+  "packages/client/ui-attachment/src/client/MessageImages.tsx",
+  "packages/client/ui-attachment/tests/message-image.client.spec.tsx",
   "packages/llm/token-meter/src/usage-projection.ts",
   "packages/session/session-stats/src/projection.ts",
   "packages/client/web/src/base.css",
@@ -144,6 +146,7 @@ upstream.deepseek = {
   directory: "vendor/deepseek",
   license: "MIT; component-specific licenses retained in copied package directories",
   local_changes: [
+    "Original attachment MessageImages/ImageGallery and lightbox are reused for source-reference tool inspection; bytes are resolved by the application only on expansion. Attachment presentation and CSS are unchanged, and upstream image behavior tests are retained.",
     "Source-only UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies; aliases and source exports are recorded in sources.json. No dependency on the adjacent repository at build or run time.",
     "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold/render algorithms and all CSS are unchanged.",
     "Official logo/wordmark artwork and their exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-owned Eris artwork and name occupy the existing brand slots; the hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",

@@ -426,6 +426,7 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.deepEqual(reference.stages[0].schemas.submission, attributionProfile.submissionSchema);
     assert.equal(reference.stages[0].prompts.system, attributionProfile.systemPrompt);
     assert.equal(reference.stages[1].prompts.instructions, comparisonProfile.instructions);
+    assert.equal(reference.stages[1].prompts.submissionNudge, comparisonProfile.submissionNudge);
     assert.deepEqual(reference.stages[0].toolDescriptions, attributionProfile.toolDescriptions);
     assert.equal(Object.hasOwn(reference.stages[1].schemas, "submission"), false, "comparison has one shared submission/result definition");
     assert.deepEqual(Object.keys(reference.exports), ["comparison", "commentary", "clustering"]);

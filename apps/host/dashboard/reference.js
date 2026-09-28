@@ -2,7 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const state = { data: null, inventory: null, inventoryError: "", section: "inputs", stage: "attribution", document: "result", date: null, search: "", page: 1 };
 const stageNames = { attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类", exports: "正式导出" };
-const documentNames = { request: "请求 Schema", submission: "提交 Schema", result: "结果 Schema", system: "系统提示词", instructions: "任务提示词", comparison: "对比结果", commentary: "改写结果", clustering: "聚类结果" };
+const documentNames = { request: "请求 Schema", submission: "提交 Schema", result: "结果 Schema", system: "系统提示词", instructions: "任务提示词", submissionNudge: "补交提示词", comparison: "对比结果", commentary: "改写结果", clustering: "聚类结果" };
 const onOff = (value) => value ? "开启" : "关闭";
 async function get(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
@@ -107,7 +107,7 @@ function contractHtml() {
   if (!Object.hasOwn(documents, state.document)) state.document = isExport ? "comparison" : "result";
   const value = documents[state.document];
   const prompt = typeof value === "string";
-  const source = prompt ? `packages/prompts/resources/${stage.id}/default/${state.document === "system" ? "system" : "instructions"}.md`
+  const source = prompt ? (state.document === "submissionNudge" ? "packages/prompts/resources/shared/nudge.md" : `packages/prompts/resources/${stage.id}/default/${state.document === "system" ? "system" : "instructions"}.md`)
     : `schemas/${isExport ? "workflow" : stage.id}/${isExport ? ({ comparison: "export", commentary: "commentary", clustering: "clustering" }[state.document]) : state.document}.schema.json`;
   return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${Object.entries(stageNames).map(([id, name]) => `<button data-stage="${id}" aria-pressed="${id === state.stage}">${name}</button>`).join("")}</nav><section class="contract-content">
     <header class="section-heading"><h2>${stageNames[state.stage]}</h2>${stage ? `<span class="muted">${stage.unit}</span>` : ""}</header>

@@ -11,7 +11,7 @@ const methods = {
     page: ["request"], follow: ["request"], control: [], projections: ["request"],
     selectModel: ["request"], modelCatalog: [], skillList: ["request"], workspacePathApplications: ["request"],
   },
-  assistant: { models: ["request"], favorites: ["request"] },
+  assistant: { models: ["request"], favorites: ["request"], toolResult: ["request"] },
   workspace: {
     follow: [], initializeDefault: [], create: ["request"], rename: ["request"], delete: ["request"],
     insertBefore: ["request"], insertSessionBefore: ["request"], archiveSession: ["request"],

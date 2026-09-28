@@ -25,7 +25,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
       schemas: stage.id === "attribution"
         ? { request: profile.requestSchema, submission: profile.submissionSchema, result: profile.resultSchema }
         : { request: profile.requestSchema, result: profile.resultSchema },
-      prompts: { system: profile.systemPrompt, instructions: profile.instructions },
+      prompts: { system: profile.systemPrompt, instructions: profile.instructions, submissionNudge: profile.submissionNudge },
     })),
     exports: { comparison: outputSchema, commentary: commentarySchema, clustering: clusteringSchema },
   };

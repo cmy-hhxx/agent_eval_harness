@@ -38,6 +38,8 @@ export interface EvaluationSpec {
   toolNames: string[];
   /** Model-facing descriptions for exactly the selected and submission tools. */
   toolDescriptions: Record<string, string>;
+  /** One bounded follow-up when a session ends without an accepted submission. */
+  submissionNudge: string;
 }
 export interface InputRef {
   id: string;
@@ -307,6 +309,7 @@ export interface AgentProfile {
   resultSchema?: JsonSchema;
   systemPrompt: string;
   instructions: string;
+  submissionNudge: string;
   toolNames: string[];
   toolDescriptions: Record<string, string>;
   /** Task material on its own for inspection; policy and recovery are added per attempt. */

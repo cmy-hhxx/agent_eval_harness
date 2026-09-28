@@ -1,6 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { type AnalysisDataSource, type AnalysisReference, type AssistantScope, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest } from "@eval/contracts";
-import { calculate, textResult } from "@eval/tools";
+import { calculate } from "@eval/tools";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 
 export interface ErisDependencies {
@@ -10,6 +10,10 @@ export interface ErisDependencies {
 }
 
 export const erisToolNames = Object.keys(schemas) as (keyof typeof schemas)[];
+
+// The JSON output already contains the business result. Metadata is reserved
+// for source locators; repeating the entire result there doubles the journal.
+const textResult = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value) }] });
 
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {

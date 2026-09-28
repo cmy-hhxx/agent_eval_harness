@@ -24,9 +24,11 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 可查询已登记的本地评测运行，分页读消息、搜索、查看图片、定位证据、做十进制计算，独立调用 Attribution / Comparison，并保存有正式结果引用的 Markdown 总结。Comparison 缺少归因时返回 `missingAttributions`，由总 Agent 决定补调。看板和批量 Workflow 仍由原入口启动。
 
-原始数据由 `AnalysisDataSource` 访问：业务 ID 先定位本地源文件，再读取正文。会话工具记录只保存原始消息的读取引用，恢复时重新读取；不会把原始输入文件复制进会话。
+原始数据由 `AnalysisDataSource` 访问：业务 ID 先定位本地源文件，再读取正文。对原始消息的读取，会话工具记录只保存定位引用，恢复时重新读取；不会把原始输入文件复制进会话。展开读取、搜索或图片工具时，服务端根据当前用户、Session 和已记录的 callId 解析引用，使用只读工具返回材料；前端继续使用上游 ToolDetails、代码块、图片画廊和大图预览，原始消息详情可展开对应证据 ID 与引文。浏览器不能自填工具参数或执行专业任务；读取失败直接显示错误，重新展开可重试。
 
-会话的权威记录为 `data/assistant/users/<user>/sessions/<id>/events.jsonl`；`state.json` 只存列表索引、进度和请求状态。Pi 使用内存 Session，并从追加记录重建消息与压缩边界。模型请求、工具执行前等待相关记录持久化。总结位于 Session 的 `artifacts/`，工具返回浏览器下载链接。专业任务位于 `operations/<operationId>/execution/`，通过现有 Host 校验和 JSONL 结果提交路径写入。
+数据目录返回可直接使用的 `reference`：原始材料为 `runId + inputId`，正式结果为 `runId + taskId`；两者不能混用。本会话独立任务使用 `operationId`。目录、搜索与原始消息的分页结果标明单位、`hasMore` 和 `nextOffset`：消息目录默认 30 条，正文默认 8000 个 UTF-16 字符；无下一页时 `nextOffset` 为 `null`。正式结果整条返回、不分页；缺少时错误会指明其他读取入口。
+
+会话的权威记录为 `data/assistant/users/<user>/sessions/<id>/events.jsonl`；`state.json` 只存列表索引、进度和请求状态。Pi 使用内存 Session，并从追加记录重建消息与压缩边界。模型请求、工具执行前等待相关记录持久化。总结位于 Session 的 `artifacts/`，工具返回浏览器下载链接。专业任务位于 `operations/<operationId>/execution/`，通过现有 Host 校验和 JSONL 结果提交路径写入。专业任务的过程预览每秒合并一次，仍沿用上游工具事件与序号，完成时写入完整过程；重复的同一预览不再追加。总 Agent 自身的 token 流不受此合并影响。工具的业务 JSON 只保存一份，元数据仅保留读取定位信息。
 
 同一 Session 仅一个进程持锁，其他副本转发请求及原始 Deepseek 多路流；锁 token 与 PID 同时匹配，确认进程退出后才接管。已接收用户请求及专业任务使用 UUID 去重，冲突内容拒绝。崩溃中未完成的轮次标为中断；再次继续前，助手按 operationId 读取已接受结果。排队消息会恢复，已发送的请求不盲目重放。
 

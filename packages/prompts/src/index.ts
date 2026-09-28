@@ -18,6 +18,7 @@ function resource(path: string): string {
 const material = resource("shared/material.md");
 const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
+const nudge = resource("shared/nudge.md");
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
 );
@@ -36,6 +37,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[]) {
   return {
     systemPrompt,
     instructions,
+    submissionNudge: nudge,
     toolDescriptions,
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");

@@ -48,7 +48,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const formal=await formalData.read({runId:operationId,taskId:operationId});
   assert.equal(formal.evaluatorVersion,config.evaluatorVersion);assert.deepEqual(formal.result,result.result);
   const serialized=JSON.stringify(result.result);assert(serialized.includes("正确"));assert(serialized.includes("evaluator_version"));
-  await assert.rejects(gateway.read({userId:"bob",sessionId:scope.sessionId},operationId),/ENOENT/);
+  await assert.rejects(gateway.read({userId:"bob",sessionId:scope.sessionId},operationId),/当前会话没有这个 operationId/);
   let saved="";
   const {tools}=createEris({data:source,specialists:gateway,save:async(_,text)=>{saved=text;return {id:"summary"};}});
   const save=tools.find(tool=>tool.name==="save_summary")!;
@@ -57,6 +57,18 @@ test("standalone Attribution and Comparison share material, validation, accepted
   assert(saved.includes(config.evaluatorVersion));assert(saved.includes(operationId));
   await assert.rejects(save.execute({markdown:"伪造",references:[{reference:{runId:"source",taskId:"missing"}}]},context));
   const read=await source.read({...inputs[0],messageIndex:1},{offset:2,limit:2});assert.equal(read.text,"ss");assert.equal((read.evidence as {quote:string}[])[0].quote,"ss");
+  await assert.rejects(source.read({...inputs[0],taskId:"wrong"}),/读取目标不明确/);
+  const catalogue=await source.read(inputs[0],{limit:1});
+  assert.equal(catalogue.unit,"messages");assert.equal(catalogue.nextOffset,1);assert.equal(catalogue.hasMore,true);
+  const entries=catalogue.messages as {reference:AnalysisReference;preview:string;chars:number}[];
+  const body=await source.read(entries[0].reference);
+  assert.equal(body.unit,"characters");assert.equal(body.limit,8000);assert.equal(body.hasMore,false);assert.equal(body.nextOffset,null);
+  assert.equal(entries[0].preview,(body.text as string).slice(0,160));assert.equal(entries[0].chars,body.total);
+  assert.equal(read.unit,"characters");assert.equal(read.nextOffset,4);assert.equal(read.hasMore,true);
+  const remainder=await source.read({...inputs[0],messageIndex:1},{offset:read.nextOffset as number});
+  assert.equal(remainder.hasMore,false);assert.equal(remainder.nextOffset,null);
+  const end=await source.read({...inputs[0],messageIndex:1},{offset:100000});
+  assert.equal(end.text,"");assert.equal(end.hasMore,false);assert.equal(end.nextOffset,null);
   const state=await readFile(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",operationId,"execution",operationId,"state.json"),"utf8");
   assert(!state.includes('"messages"'),"state keeps references, not original message bodies");
   assert(!JSON.stringify(read).includes("undefined"));

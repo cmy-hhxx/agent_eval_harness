@@ -50,6 +50,8 @@ export class AgentRegistry {
       Object.keys(profile.toolDescriptions).length !== names.length ||
       names.some((name) => !profile.toolDescriptions[name]?.trim()))
       throw new Error(`Incomplete tool descriptions: ${binding.agent}/${binding.profile}`);
+    if (typeof profile.submissionNudge !== "string" || !profile.submissionNudge.trim())
+      throw new Error(`Missing submission nudge: ${binding.agent}/${binding.profile}`);
     return {
       evaluation: {
         id: binding.agent,
@@ -58,6 +60,7 @@ export class AgentRegistry {
         outputSchema: profile.submissionSchema,
         toolNames: profile.toolNames,
         toolDescriptions: { ...profile.toolDescriptions },
+        submissionNudge: profile.submissionNudge,
       },
       prompt: profile.renderPrompt(binding.request.input),
       renderAttempt: (policy: Policy, recovery?: FailureContext) =>

@@ -33,6 +33,7 @@ export const services = {
         }).map(([stage, profile]) => [stage, {
           systemPrompt: profile.systemPrompt,
           instructions: profile.instructions,
+          submissionNudge: profile.submissionNudge,
           toolDescriptions: profile.toolDescriptions,
           requestSchema: profile.requestSchema,
           submissionSchema: profile.submissionSchema,

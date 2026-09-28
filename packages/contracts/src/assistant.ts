@@ -91,6 +91,7 @@ export interface AssistantSessionRuntime {
   rename(scope: AssistantScope, title: string): Promise<unknown>;
   mark(scope: AssistantScope, field: "archived" | "pinned", marked: boolean): Promise<unknown>;
   page(scope: AssistantScope, beforeSeq?: number, maxMessages?: number): Promise<unknown>;
+  toolResult(scope: AssistantScope, callId: string): Promise<ToolResult>;
   changes(userId: string, signal: AbortSignal, kind: "events" | "control"): AsyncIterable<unknown>;
   events(scope: AssistantScope, signal: AbortSignal): AsyncIterable<unknown>;
   dispose(): Promise<void>;

@@ -486,6 +486,49 @@ test("an unchanged error stops repair even when another field was fixed", async 
     await fixture.close();
   }
 });
+test("a session that stops before submitting gets one nudge and can still succeed", async () => {
+  const prompts: string[] = [];
+  const fixture = await harness(async (options) => ({
+    async run(prompt) {
+      prompts.push(prompt);
+      if (prompts.length === 1) return;
+      assert.equal(
+        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        true,
+      );
+    },
+    async abort() {},
+    async dispose() {},
+  }));
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0]!, /任务材料/);
+    assert.match(prompts[1]!, /没有收到通过校验的提交/);
+  } finally {
+    await fixture.close();
+  }
+});
+test("a session that ignores the nudge fails after one bounded follow-up", async () => {
+  let runs = 0;
+  const fixture = await harness(async () => ({
+    async run() {
+      runs++;
+    },
+    async abort() {},
+    async dispose() {},
+  }));
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.equal(runs, 2);
+    assert.equal(status.failure?.contentSubmissions, 0);
+  } finally {
+    await fixture.close();
+  }
+});
 for (const reason of ["idle", "deadline", "cancel"] as const)
   test(`worker ${reason} aborts and disposes its own session`, async () => {
     let disposed = false,
@@ -550,6 +593,13 @@ test("mismatched engine, unknown tools and missing descriptions are refused befo
         },
       }),
       /Invalid evaluation tool descriptions/,
+    );
+    await assert.rejects(
+      request(fixture.worker.url + "/api/attempts", "POST", {
+        ...fixture.spec,
+        evaluation: { ...fixture.spec.evaluation, submissionNudge: " " },
+      }),
+      /Invalid evaluation spec/,
     );
     assert.equal(sessions, 0);
   } finally {

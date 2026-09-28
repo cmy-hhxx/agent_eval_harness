@@ -37,10 +37,12 @@ test("two local processes forward one Session, deduplicate UUIDs and replace a d
   await Promise.all([rpc(b.url,"alice","session/prompt",request),rpc(a.url,"alice","session/prompt",request)]);
 
   const address={kind:"session",sessionId:id};
-  await until(async()=>(object(await rpc(b.url,"alice","session/page",{address})).records as {event:{type:string}}[]).some(r=>r.event.type==="user/message"));
+  await until(async()=>(object(await rpc(b.url,"alice","session/page",{address})).records as {event:{type:string}}[]).some(r=>r.event.type==="tool/result"));
   const page=await rpc(b.url,"alice","session/page",{address});
   assert.equal((page.records as {event:{type:string}}[]).filter(r=>r.event.type==="user/message").length,1);
   assert.deepEqual((await rpc(b.url,"bob","session/list")).items,[]);
+  const inspected=await rpc(b.url,"alice","assistant/toolResult",{sessionId:id,callId:"lookup-hold"});
+  assert.equal((inspected.content as {text:string}[])[0].text,String(a.child.pid),"source inspection forwards to the current owner");
 
   relay=new RemoteStreamMuxClient(`${b.url.replace(/^http/,"ws")}/u/alice/api/remote.mux`);relay.start();
   const controller=new AbortController(),follow=relay.open("session/follow",{args:{request:{address,assistantStream:true}}},AbortSignal.any([controller.signal,AbortSignal.timeout(5000)]))[Symbol.asyncIterator]();
@@ -55,6 +57,8 @@ test("two local processes forward one Session, deduplicate UUIDs and replace a d
   assert.equal(await carrierFailure,true,"replica closes the physical carrier so upstream generation recovery runs");
   await relay.close();relay=undefined;
   const restored=await rpc(b.url,"alice","session/page",{address});
+  const recoveredSource=await rpc(b.url,"alice","assistant/toolResult",{sessionId:id,callId:"lookup-hold"});
+  assert.equal((recoveredSource.content as {text:string}[])[0].text,String(b.child.pid),"the new owner can resolve the recorded reference");
   assert(JSON.stringify(restored).includes('"kind":"interrupted"'));
   await rpc(b.url,"alice","session/prompt",request);
   await rpc(b.url,"alice","session/prompt",{...request,requestId:randomUUID(),content:[{type:"text",text:"continue"}]});

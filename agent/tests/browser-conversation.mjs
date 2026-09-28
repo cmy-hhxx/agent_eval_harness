@@ -11,8 +11,13 @@ const shots=process.cwd()+'/.artifacts/agent-conversation';await mkdir(shots,{re
 const config={provider:'gateway',model:'analysis-a',thinking:'low',contextWindow:32000,maxOutputTokens:2048};
 const models=new GatewayAssistantModels(directory,config,async()=>[{id:'analysis-a',name:'analysis-a'},{id:'analysis-b',name:'analysis-b'}]);
 const selected=[];
+let sourceReads=0;let sourceAvailable=true;
+const sourceArgs={reference:{runId:'run-alpha',inputId:'input-one',messageIndex:0}};
+const sourceText='原始问题：请核对这条回答的证据。';
+const sourceTool={name:'read_data',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>{sourceReads++;if(!sourceAvailable)throw new Error('原始材料暂时不可用');return {content:[{type:'text',text:JSON.stringify({reference:sourceArgs.reference,text:sourceText,evidence:[{evidence_id:'ev_0_text_0_4_/content',quote:'原始问题'}],total:sourceText.length,hasMore:false,nextOffset:null})}]};}};
 const thinkingGate=Promise.withResolvers();
-const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[],driver:async({event,model})=>({
+const imageTool={name:'view_image',readOnly:true,description:'Read image',inputSchema:{type:'object'},execute:async()=>({content:[{type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6G2YAAAAASUVORK5CYII='}]})};
+const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool],driver:async({event,model})=>({
  async prompt(text){
   selected.push(model);const callId="lookup-"+selected.length;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
@@ -25,6 +30,10 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5}}],stopReason:'toolUse'}});
   await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5}});await delay(150);
   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:'{"items":[{"runId":"run-alpha","accepted":12}],"total":1}'}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'source-'+selected.length,toolName:'read_data',args:sourceArgs});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'source-'+selected.length,content:[{type:'text',text:sourceText}],details:{sourceRead:{tool:'read_data',args:sourceArgs}},isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'image-'+selected.length,toolName:'view_image',args:sourceArgs});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'image-'+selected.length,content:[],details:{sourceRead:{tool:'view_image',args:sourceArgs}},isError:false}});
   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
   await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'## 查询完成\n\n共有 12 条正式结果。'}});
   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:'## 查询完成\n\n共有 12 条正式结果。'}],stopReason:'stop'}});
@@ -55,6 +64,19 @@ try{
  assert(!(await page.locator('body').innerText()).includes('<think>'));
  await page.getByRole('button',{name:/查询评测数据/}).first().click();
  await page.getByText('run-alpha',{exact:true}).first().waitFor();
+ assert.equal(sourceReads,0,'collapsed source tools do not fetch materials');
+ await page.getByRole('button',{name:/读取材料/}).first().click();
+ await page.getByText(sourceText,{exact:true}).waitFor();
+ await page.getByText('证据',{exact:true}).first().click();
+ await page.getByText('ev_0_text_0_4_/content',{exact:true}).waitFor();
+ assert.equal(sourceReads,1,'expanding the upstream tool card resolves the stored reference');
+ await page.getByRole('button',{name:/查看图片/}).first().click();
+ await page.getByRole('img',{name:'图片 1',exact:true}).waitFor();
+ const material=page.getByRole('button',{name:/读取材料/}).first();
+ await material.click();sourceAvailable=false;await material.click();
+ await page.getByText('原始材料暂时不可用',{exact:true}).waitFor();
+ await material.click();sourceAvailable=true;await material.click();
+ await page.getByText(sourceText,{exact:true}).waitFor();
  await page.screenshot({path:shots+'/conversation-expanded.png',fullPage:true});
  await page.getByRole('button',{name:'设置',exact:true}).click();
  const settings=page.getByRole('dialog',{name:'设置',exact:true});
@@ -101,6 +123,10 @@ try{
  await page.getByRole('menuitemradio',{name:'high',exact:true}).click();
  await page.getByRole('button',{name:/analysis-b.*high/}).waitFor();
  await page.reload();await page.getByRole('button',{name:/analysis-b.*high/}).waitFor();
+ const sourceRow=page.getByRole('button',{name:/读取材料/}).first();await sourceRow.waitFor();
+ if(await sourceRow.getAttribute('aria-expanded')!=='true')await sourceRow.click();
+ await page.getByText(sourceText,{exact:true}).waitFor();
+ assert(sourceReads>=2,'source body remains inspectable after refresh');
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
  await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).model,'analysis-b');assert.equal(selected.at(-1).thinking,'high');
  assert.deepEqual(errors,[]);

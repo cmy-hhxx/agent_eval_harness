@@ -395,6 +395,15 @@ export async function startWorker(
       });
       controller.signal.throwIfAborted();
       await attempt.session.run(spec.prompt);
+      if (
+        !accepted &&
+        submissions === 0 &&
+        !modelError &&
+        !controller.signal.aborted &&
+        attempt.status.state === "running"
+      )
+        // A model that stopped before ever submitting still gets one bounded follow-up.
+        await attempt.session.run(spec.evaluation.submissionNudge);
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running")
         throw new Error(modelError || "Agent ended without an accepted submission");
@@ -476,7 +485,8 @@ export async function startWorker(
       safeId(spec.attemptId);
       if (canonical(spec.engine) !== canonical(backend.identity))
         throw new HttpError(409, "Worker engine build mismatch");
-      if (!spec.evaluation || !Array.isArray(spec.evaluation.toolNames) || !spec.evaluation.outputSchema)
+      if (!spec.evaluation || !Array.isArray(spec.evaluation.toolNames) || !spec.evaluation.outputSchema ||
+        typeof spec.evaluation.submissionNudge !== "string" || !spec.evaluation.submissionNudge.trim())
         throw new HttpError(400, "Invalid evaluation spec");
       registry.select(spec.evaluation.toolNames);
       const names = [...spec.evaluation.toolNames, "submit_evaluation", "submit_evaluation_file"];

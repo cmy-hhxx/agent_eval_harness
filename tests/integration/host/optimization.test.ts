@@ -372,6 +372,20 @@ test("raw strings, Markdown and JSON pages resolve exactly; unknown sources and 
     () => resolveEvidence(input, { evidence_id: evidenceId(0, "text", "/data/value", 0, 6) }, "A", [], "/evidence"),
     /原文位置/,
   );
+  const hint = (evidence: { evidence_id: string }) => {
+    try {
+      resolveEvidence(input, evidence, "A", [], "/evidence");
+    } catch (error) {
+      return (error as { issues?: { message: string }[] }).issues![0]!.message;
+    }
+    throw new Error("expected evidence rejection");
+  };
+  assert.match(hint({ evidence_id: "ev_0_text_0_1_3_/role" }), /证据原文位置无效/);
+  assert.match(hint({ evidence_id: "ev_0_text_0_99_/role" }), /文本长度为 4/);
+  assert.match(hint({ evidence_id: "ev_0_text_0_4_/data/tool" }), /值为「tool」的路径是 \/role/);
+  assert.match(hint({ evidence_id: "ev_0_text_0_6_/missing" }), /可引用路径：\/role、\/content/);
+  assert.match(hint({ evidence_id: evidenceId(0, "text", "/role", 2, 99) }), /文本长度为 4，起止应为 0 ≤ 起 < 止 ≤ 4/);
+  assert.match(hint({ evidence_id: "ev_0_text_0_99_100_/role" }), /可引用路径：\/role、\/content/);
 });
 
 test("normal runs persist drafts before cleanup, carry them to one repair attempt, then clear them", async () => {

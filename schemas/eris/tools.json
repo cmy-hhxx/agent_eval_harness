@@ -18,7 +18,7 @@
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 16000
+        "maximum": 100
       }
     },
     "required": []
@@ -50,6 +50,37 @@
         },
         "required": [
           "runId"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "inputId"
+            ],
+            "not": {
+              "required": [
+                "taskId"
+              ]
+            }
+          },
+          {
+            "required": [
+              "taskId"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "inputId"
+                  ]
+                },
+                {
+                  "required": [
+                    "messageIndex"
+                  ]
+                }
+              ]
+            }
+          }
         ]
       },
       "offset": {
@@ -59,11 +90,59 @@
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 16000
+        "maximum": 16000,
+        "description": "消息目录按条，默认30、最多100；正文按 UTF-16 字符，默认8000、最多16000。"
       }
     },
     "required": [
       "reference"
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "reference": {
+              "required": [
+                "taskId"
+              ]
+            }
+          }
+        },
+        "then": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "offset"
+                ]
+              },
+              {
+                "required": [
+                  "limit"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "reference": {
+              "required": [
+                "messageIndex"
+              ]
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "limit": {
+              "maximum": 100
+            }
+          }
+        }
+      }
     ]
   },
   "search_data": {
@@ -81,18 +160,11 @@
           "inputId": {
             "type": "string",
             "minLength": 1
-          },
-          "taskId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "messageIndex": {
-            "type": "integer",
-            "minimum": 0
           }
         },
         "required": [
-          "runId"
+          "runId",
+          "inputId"
         ]
       },
       "query": {
@@ -106,7 +178,7 @@
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 16000
+        "maximum": 100
       }
     },
     "required": [
@@ -130,17 +202,15 @@
             "type": "string",
             "minLength": 1
           },
-          "taskId": {
-            "type": "string",
-            "minLength": 1
-          },
           "messageIndex": {
             "type": "integer",
             "minimum": 0
           }
         },
         "required": [
-          "runId"
+          "runId",
+          "inputId",
+          "messageIndex"
         ]
       }
     },
@@ -203,18 +273,11 @@
             "inputId": {
               "type": "string",
               "minLength": 1
-            },
-            "taskId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "messageIndex": {
-              "type": "integer",
-              "minimum": 0
             }
           },
           "required": [
-            "runId"
+            "runId",
+            "inputId"
           ]
         },
         "minItems": 1,
@@ -246,6 +309,16 @@
           },
           "required": [
             "inputId"
+          ],
+          "oneOf": [
+            {
+              "required": ["operationId"],
+              "not": { "anyOf": [{ "required": ["runId"] }, { "required": ["taskId"] }] }
+            },
+            {
+              "required": ["runId", "taskId"],
+              "not": { "required": ["operationId"] }
+            }
           ]
         }
       }
@@ -298,25 +371,21 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "inputId": {
-                  "type": "string",
-                  "minLength": 1
-                },
                 "taskId": {
                   "type": "string",
                   "minLength": 1
-                },
-                "messageIndex": {
-                  "type": "integer",
-                  "minimum": 0
                 }
               },
               "required": [
-                "runId"
+                "runId",
+                "taskId"
               ]
             }
           },
-          "required": []
+          "oneOf": [
+            { "required": ["operationId"], "not": { "required": ["reference"] } },
+            { "required": ["reference"], "not": { "required": ["operationId"] } }
+          ]
         },
         "minItems": 1
       }

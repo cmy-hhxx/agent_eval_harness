@@ -2,10 +2,12 @@ import { serveAssistant, AssistantSessions } from '@eval/runtime/assistant';
 import { assistantEndpoints } from '@eval/assistant/server';
 const directory = process.argv[2];
 let interrupt;
-const server = await serveAssistant({port:0,userId:'alice',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:{provider:'test',model:'test'},systemPrompt:'test',tools:[],driver:async({event})=>({
+const server = await serveAssistant({port:0,userId:'alice',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:{provider:'test',model:'test'},systemPrompt:'test',tools:[{name:'lookup',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>({content:[{type:'text',text:String(process.pid)}]})}],driver:async({event})=>({
  async prompt(text) {
   await event({type:'agent_start'});await event({type:'turn_start'});
   await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
+  await event({type:'tool_execution_start',toolCallId:'lookup-'+text,toolName:'lookup',args:{}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'lookup-'+text,content:[{type:'text',text:'material'}],details:{sourceRead:{tool:'lookup',args:{}}}}});
   if(text==='hold') await new Promise(resolve=>{interrupt=resolve;});
   await event({type:'message_start',message:{role:'assistant'}});
   await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'reply:'+text}});

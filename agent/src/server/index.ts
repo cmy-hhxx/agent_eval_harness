@@ -29,6 +29,9 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?:
           return sessions.rename(scope, request.title.trim());
         }
         case "session/page": return sessions.page(scope, request.beforeSeq as number | undefined, request.maxMessages as number | undefined);
+        case "assistant/toolResult":
+          if (typeof request.callId !== "string" || !request.callId || request.callId.length > 256) throw new Error("Invalid tool call");
+          return sessions.toolResult(scope, request.callId);
         case "session/projections": return sessions.projections(scope);
         case "session/updateQueue": return sessions.updateQueue(scope, String(request.itemId), object(request.action));
         case "session/selectModel":

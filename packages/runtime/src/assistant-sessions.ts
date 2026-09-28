@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject } from "@eval/contracts";
+import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject, type ToolResult } from "@eval/contracts";
 import { AssistantJournal, assistantId, assistantOwner, assistantUser, ownAssistantSession, listAssistantSessions, readAssistantPreferences, updateAssistantPreferences, type AssistantOwner } from "@eval/data";
 import { createPiConversation, type ConversationDriver, type ConversationDriverFactory } from "./assistant-pi.js";
 import { assistantSettingsDescribe, assistantSettingsMutation, createAssistantMetrics, createAssistantMessage, createToolResultMessage, createUserMessage, AssistantStreamAccumulator, SessionAssistantStreamAccumulator, SESSION_FORMAT_VERSION, RemoteStreamMuxClient } from "./deepseek.js";
 
 import { assistantContent, AssistantContentStream } from "./assistant-content.js";
+import { readAssistantSource } from "./assistant-source.js";
 
 class Feed {
   private listeners = new Set<(value: unknown) => void>();
@@ -47,7 +48,7 @@ interface Owned {
   activeMessage?: JsonObject;
   lastFailure?: string;
   stopping: boolean;
-  progress: Map<string, { id: string; text: string; pending: string; operationId: string; timer?: ReturnType<typeof setTimeout> }>;
+  progress: Map<string, { id: string; text: string; pending: string; published: string; operationId: string; timer?: ReturnType<typeof setTimeout> }>;
 }
 export interface AssistantRuntimeOptions extends AssistantModelOptions {
   directory: string;
@@ -182,7 +183,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const update = object(raw), event = object(update.event ?? {}), data = event.data && typeof event.data === "object" ? object(event.data) : {};
     let progress = value.progress.get(callId);
     if (!progress) {
-      progress = { id: randomUUID(), text: "", pending: "", operationId: String(update.operationId ?? "") };
+      progress = { id: randomUUID(), text: "", pending: "", published: "", operationId: String(update.operationId ?? "") };
       value.progress.set(callId, progress);
       void this.append(value, "tool/ptc-dispatch-start", { rootCallId: callId, parentCallId: callId, subCallId: progress.id, name: "specialist_output", arguments: { operationId: progress.operationId } }).catch(this.options.onError);
     }
@@ -197,10 +198,11 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if (event.type === "finished") progress.pending = `专业任务：${String(data.state ?? data.status ?? "已结束")}`;
     // Projection of received output, not a professional verdict. The root call
     // remains running until its validated result arrives. Existing upstream
-    // ToolCallTree replaces this one dispatch row in place.
+    // ToolCallTree replaces this one dispatch row in place. Coalesce specialist
+    // previews to one durable update per second; Pi's own stream is untouched.
     if (progress.pending && !progress.timer) progress.timer = setTimeout(() => {
       progress!.timer = undefined; void this.flushProgress(value, callId).catch(this.options.onError);
-    }, 120);
+    }, 1000);
   }
   private async flushProgress(value: Owned, callId: string, final = false) {
     const progress = value.progress.get(callId);
@@ -208,9 +210,12 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if (progress.timer) clearTimeout(progress.timer);
     progress.timer = undefined;
     const text = final ? progress.text || progress.pending : progress.pending;
-    if (text) await this.append(value, "tool/ptc-dispatch", { rootCallId: callId, parentCallId: callId, subCallId: progress.id, name: "specialist_output", arguments: { operationId: progress.operationId }, content: [{ type: "text", text }], isError: false });
     progress.pending = "";
     if (final) value.progress.delete(callId);
+    if (text && text !== progress.published) {
+      progress.published = text;
+      await this.append(value, "tool/ptc-dispatch", { rootCallId: callId, parentCallId: callId, subCallId: progress.id, name: "specialist_output", arguments: { operationId: progress.operationId }, content: [{ type: "text", text }], isError: false });
+    }
   }
   private async modelEvent(value: Owned, raw: unknown) {
     const event = object(raw), message = event.message ? object(event.message) : undefined;
@@ -427,6 +432,16 @@ export class AssistantSessions implements AssistantSessionRuntime {
     return { sessionId: scope.sessionId };
   }
   private header(value: Owned) { return { version: SESSION_FORMAT_VERSION, id: value.journal.state.sessionId, createdAt: value.journal.state.createdAt, isSeeded: false }; }
+  async toolResult(scope: AssistantScope, callId: string): Promise<ToolResult> {
+    const value = await this.target(scope);
+    if (!("journal" in value)) return await this.forward(value, scope.userId, "assistant/toolResult", { request: { sessionId: scope.sessionId, callId } }) as unknown as ToolResult;
+    const event = value.journal.events.findLast(event => event.type === "tool/result" && object(event.data.message).toolCallId === callId);
+    if (!event || object(event.data.message).isError) throw new Error("没有可读取的工具结果");
+    const sourceRead = object(event.data.meta ?? {}).sourceRead;
+    if (!sourceRead) throw new Error("该工具结果没有原始材料引用");
+    // Arguments come exclusively from the durable record, never from the UI.
+    return readAssistantSource(this.options.tools, scope, callId, sourceRead);
+  }
   async page(scope: AssistantScope, beforeSeq = Infinity, maxMessages = 100) {
     const value = await this.target(scope);
     if ("url" in value) return this.forward(value, scope.userId, "session/page", { request: { address: { kind: "session", sessionId: scope.sessionId }, ...(Number.isFinite(beforeSeq) ? { beforeSeq } : {}), maxMessages } });

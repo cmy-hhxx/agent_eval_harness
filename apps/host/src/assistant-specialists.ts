@@ -16,6 +16,7 @@ export class LocalSpecialists implements SpecialistGateway {
   private run(scope: AssistantScope, id: string) { return path.join(this.operation(scope, id), "execution", id); }
   async read(scope: AssistantScope, operationId: string): Promise<SpecialistResult> {
     const directory = this.operation(scope, operationId);
+    if (!(await exists(path.join(directory, "request.json")))) throw new Error("当前会话没有这个 operationId。read_specialist 只读取本会话 call_specialist 创建的任务；已有评测运行的 taskId 请用 read_data({reference:{runId,taskId}})。");
     const request = await readJson<SpecialistRequest>(path.join(directory, "request.json"));
     if (await exists(path.join(this.run(scope, operationId), "state.json"))) {
       const state = await readRunTasks(this.run(scope, operationId), [operationId]);

@@ -297,6 +297,7 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
     const prompts = path.join(ROOT, "packages/prompts/resources");
     const systems: Record<string, string> = {};
     const instructions: Record<string, string> = {};
+    const nudge = (await readFile(path.join(prompts, "shared/nudge.md"), "utf8")).trim();
     for (const stage of ["attribution", "comparison"]) {
       const system = (await readFile(path.join(prompts, stage, "default/system.md"), "utf8")).trim();
       const instruction = (await readFile(path.join(prompts, stage, "default/instructions.md"), "utf8")).trim();
@@ -305,6 +306,7 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       const task = plan.tasks.find((item) => item.stage === stage)!;
       const prepared = prepare(task, plan.inputs, {});
       assert.equal(prepared.evaluation.systemPrompt, system);
+      assert.equal(prepared.evaluation.submissionNudge, nudge);
       assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
       assert(prepared.prompt.includes("计算2+2"));
       assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
@@ -335,11 +337,12 @@ test("prompt resources reach both task stages and the run snapshot", async () =>
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {
-      profiles: Record<string, { systemPrompt: string; instructions: string; toolDescriptions: Record<string, string> }>;
+      profiles: Record<string, { systemPrompt: string; instructions: string; submissionNudge: string; toolDescriptions: Record<string, string> }>;
     };
     for (const stage of ["attribution", "comparison"]) {
       assert.equal(snapshot.profiles[stage].systemPrompt, systems[stage]);
       assert.equal(snapshot.profiles[stage].instructions, instructions[stage]);
+      assert.equal(snapshot.profiles[stage].submissionNudge, nudge);
       assert(snapshot.profiles[stage].toolDescriptions.submit_evaluation);
     }
   } finally {

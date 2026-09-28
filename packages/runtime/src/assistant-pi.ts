@@ -2,6 +2,7 @@ import path from "node:path";
 import * as sdk from "#pi-sdk";
 import { object, type AssistantEvent, type AssistantRecord, type AssistantModelOptions, type AssistantScope, type JsonObject } from "@eval/contracts";
 import { providerConfig, sdkContent, transformPayload } from "./sdk-utils.js";
+import { readAssistantSource } from "./assistant-source.js";
 
 export interface ConversationDriver {
   prompt(text: string): Promise<void>;
@@ -52,9 +53,7 @@ async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntr
       const call = history.findLast((entry) => entry.type === "tool/call" && entry.data.callId === message.toolCallId);
       const sourceRead = object(data.meta ?? {}).sourceRead;
       if (sourceRead) {
-        const reference = object(sourceRead), tool = options.tools.find((item) => item.name === reference.tool);
-        if (!tool?.readOnly) throw new Error(`Source reader unavailable: ${String(reference.tool)}`);
-        message.content = sdkContent((await tool.execute(reference.args, { scope: options.scope, callId: String(message.toolCallId), signal: new AbortController().signal, progress: () => {} })).content);
+        message.content = sdkContent((await readAssistantSource(options.tools, options.scope, String(message.toolCallId), sourceRead)).content);
       }
       messages.push({ role: "toolResult", toolCallId: message.toolCallId, toolName: call?.data.name ?? "tool", content: message.content, isError: message.isError, timestamp: event.time });
     }

@@ -67,6 +67,16 @@ test("Pi conversation checkpoints before requests, deduplicates, invokes tools, 
     assert.equal(journal.filter((r) => r.event?.type === "tool/result").length, 1);
     assert.equal(toolExecutions, 2, "only the read-only source is rehydrated on resume");
     assert(!JSON.stringify(journal).includes("accepted:r6"), "original source bodies are not copied into the session journal");
+    const beforeInspect = await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8");
+    assert.equal((await sessions.toolResult(scope, "lookup-call")).content[0].text, "accepted:r6");
+    assert.equal(toolExecutions, 3);
+    assert.equal(await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8"), beforeInspect, "inspection does not add source bodies or replay events");
+    await assert.rejects(sessions.toolResult(scope, "unrecorded"), /没有可读取/);
+    await assert.rejects(sessions.toolResult({ ...scope, userId: "bob" }, "lookup-call"), /ENOENT/);
+    assert.equal(toolExecutions, 3, "unrecorded and foreign calls never reach a source reader");
+    options.tools[0].readOnly = false;
+    await assert.rejects(sessions.toolResult(scope, "lookup-call"), /Source reader unavailable/);
+    assert.equal(toolExecutions, 3, "inspection cannot execute a writable tool even if a journal entry names it");
     assert.deepEqual(errors, []);
   } finally {
     await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });

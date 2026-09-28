@@ -35,6 +35,7 @@ const profile: AgentProfile = {
   id: "default",
   systemPrompt: "Evaluate JSON.",
   instructions: "Return the value as score.",
+  submissionNudge: "Submit the score.",
   toolNames: [],
   toolDescriptions: { submit_evaluation: "Submit JSON", submit_evaluation_file: "Submit JSON file" },
   renderPrompt(input) { return this.instructions + "\n" + JSON.stringify(input); },
@@ -236,7 +237,8 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
         completed.receipts[plan.tasks[0].id].submissionId,
         interrupted.receipts[plan.tasks[0].id].submissionId,
       );
-      assert.deepEqual(entered, [plan.tasks[0].id, plan.tasks[1].id, plan.tasks[1].id]);
+      // The first task-2 attempt stops before submitting and receives one follow-up; resume then retries it.
+      assert.deepEqual(entered, [plan.tasks[0].id, plan.tasks[1].id, plan.tasks[1].id, plan.tasks[1].id]);
     } finally {
       await worker.close();
       await rm(directory, { recursive: true, force: true });

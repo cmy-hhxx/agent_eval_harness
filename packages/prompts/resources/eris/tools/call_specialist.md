@@ -1,1 +1,1 @@
-独立调用 Attribution 或 Comparison。只提交登记的输入引用；Comparison 必须引用已接受的归因，缺少时返回 missingAttributions。operationId 使用 UUID，相同 ID 重试查询已接受结果。
+独立调用 Attribution 或 Comparison。inputs 只传登记的 runId + inputId；Comparison 的 attributions 逐项用 inputId 对应已接受的 operationId 或 runId + taskId，缺少时返回 missingAttributions。operationId 使用 UUID，重试前先用 read_specialist 查询原 ID 的状态，已接受时不重复执行。

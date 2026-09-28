@@ -87,7 +87,7 @@ Attribution 需要 evidence resolution，所以同时有 submission/result 两�
 
 对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建 finding。
 
-Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用同一套内容校验，并共享提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。Host 保存有效收据后才算完成。退出、超时或模型报错保留失败状态。
+Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。通过 `submit_evaluation` 直接提交，或用 `submit_evaluation_file` 提交工作目录内的 JSON 文件；两者使用同一套内容校验，并共享提交修正预算。拒绝时保存 `evaluation-draft.json`，反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`，可用工具获取证据 ID 后修正草稿；每次允许的修正保留一次额外材料或代码工具调用。证据坐标解析失败时，`message` 给出该消息的可用路径或长度供重新检索。模型整回合没有提交且没有报错时，Worker 用集中提示词追加一次提交提示，仍无提交才记为失败。Host 保存有效收据后才算完成；未接受时退出、超时或模型报错保留失败状态。
 
 两两判决由排名与核心判定派生，不单独判定：
 
@@ -133,7 +133,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 对比结果 JSONL 和逐题总结 JSONL 的每行都以 `request_time`、`has_standard_answer` 两个顶层字段开头，其后是产出该行的 `evaluator_version`。`request_time` 取该组第一个版本（按 `comparisons` 声明顺序）的输入原值，缺失时为 `null`，不受盲测标签影响；`has_standard_answer` 为布尔值，表示本题是否有有效标准答案、是否进入归因的对错判定，与 `ground_truth.available` 一致。
 
-内部提交使用工具或初始材料提供的 `evidence_id`，绑定消息、来源路径和原文位置；程序展开为正式结果的 `message_index + quote`。ID 是明文坐标：`ev_<消息索引>_<text|json>_<起>_<止>_<路径>`，图片为 `ev_<消息索引>_image`；模型逐字复制，Host 按坐标重新定位来源。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
+内部提交使用工具或初始材料提供的 `evidence_id`，绑定消息、来源路径和原文位置；程序展开为正式结果的 `message_index + quote`。ID 是明文坐标：`ev_<消息索引>_<text|json>_<起>_<止>_<路径>`，图片为 `ev_<消息索引>_image`；模型逐字复制，Host 按坐标重新定位来源。索引、路径或起止范围无效时拒绝，不会从错误坐标猜测引文或把越界范围改成整段；反馈提供来源长度、可用路径，模型应重新读取工具返回的 ID。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行其他模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 
 初始材料是渐进式披露的首屏：只展示 `initialContextChars` 预算内的投影消息，投影会剔除 `input_messages`、`model`、`model_parameters` 等内部字段，证据引文同样计入预算；完整消息和隐藏字段通过材料工具按需读取，工具结果按 `maxOutputChars` 截断并可将完整内容存为可分页产物。
 
