@@ -38,8 +38,8 @@ export interface TaskAnalysis {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Concrete tool invocation/return/use site, or 模型自身推理 for errors unrelated to tools. */
-  component: string;
+  /** Evidence-backed responsible tools and/or 模型自身推理; definition explains each role; empty when responsibility is unresolved. */
+  component: string[];
   label: string;
   definition: string;
 }
@@ -57,6 +57,16 @@ export interface AttributionResult {
   is_correct: boolean | null;
   correctness_reason: string;
   correctness_evidence: Evidence[];
+  /** Same-unit standard-answer checks; matches is verified with decimal arithmetic. */
+  numeric_checks: {
+    label: string;
+    expected: string;
+    actual: string | null;
+    scale: string;
+    mode: "rounded" | "exact";
+    matches: boolean;
+    evidence_index: number;
+  }[];
   task_analysis: TaskAnalysis;
   summary: string;
   findings: AttributionFinding[];

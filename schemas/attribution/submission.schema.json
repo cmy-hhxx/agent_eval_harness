@@ -8,7 +8,8 @@
     "correctness_evidence",
     "task_analysis",
     "summary",
-    "findings"
+    "findings",
+    "numeric_checks"
   ],
   "properties": {
     "is_correct": {
@@ -182,7 +183,10 @@
             ],
             "properties": {
               "requirement_index": {
-                "type": ["integer", "null"],
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "minimum": 0
               },
               "observation": {
@@ -219,8 +223,14 @@
             ],
             "properties": {
               "component": {
-                "type": "string",
-                "minLength": 1
+                "type": "array",
+                "minItems": 0,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "有证据支持的责任组件；使用确切工具名或模型自身推理，逐个在 definition 中说明责任；根因尚未定位时为空数组，在 definition 说明已知来源和待查原因。"
               },
               "label": {
                 "type": "string",
@@ -231,6 +241,68 @@
                 "minLength": 1
               }
             }
+          }
+        }
+      }
+    },
+    "numeric_checks": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "逐项核对标准答案的数值。所有同口径数值均列出，不能仅列错误项；无标准、未提供结果或非数值任务填空数组。明确区间/容差任务用 correctness_reason 单独说明。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "expected",
+          "actual",
+          "scale",
+          "matches",
+          "mode",
+          "evidence_index"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "expected": {
+            "type": "string",
+            "pattern": "^[+-]?\\d+(?:\\.\\d+)?$",
+            "maxLength": 80,
+            "description": "标准中的原数值，保留全部小数位"
+          },
+          "actual": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[+-]?\\d+(?:\\.\\d+)?$",
+            "maxLength": 80,
+            "description": "最终回答原数值；确实未提供该项时为null，绝不能用0表示缺失"
+          },
+          "scale": {
+            "type": "string",
+            "pattern": "^[+-]?\\d+(?:\\.\\d+)?$",
+            "maxLength": 80,
+            "description": "回答单位转换到标准单位的正比例，同单位填1"
+          },
+          "matches": {
+            "type": "boolean",
+            "description": "actual*scale 按 expected 小数位四舍五入后是否相等，由程序复算"
+          },
+          "mode": {
+            "enum": [
+              "rounded",
+              "exact"
+            ],
+            "description": "连续量按标准精度rounded；整数计数等离散结果用exact"
+          },
+          "evidence_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "包含actual的 correctness_evidence 条目的零起始索引，证据必须指向最终回答"
           }
         }
       }

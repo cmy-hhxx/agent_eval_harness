@@ -20,7 +20,7 @@ export function display<T>(value: T, names: Record<string, string>, key = ""): T
       key === "quote"
         ? value
         : value.replace(
-            /【候选([A-Z])】|候选\s*([A-Z])(?![A-Za-z0-9_])|(?:中枢\s*A\s*\/\s*B|A\s*\/\s*B\s*\/\s*C|(?:公司|方案|情景|选项|计划|路径|项目|中枢)\s*[A-Z])|(?<![A-Za-z0-9_])([A-Z])(?![A-Za-z0-9_]|组|\s*(?:股|[+＋]\s*H|浪|类|级|轮|款|型))/gu,
+            /【候选([A-Z])】|候选\s*([A-Z])(?![A-Za-z0-9_])|(?:中枢\s*A\s*\/\s*B|A\s*\/\s*B\s*\/\s*C|(?:公司|方案|情景|选项|计划|路径|项目|中枢)\s*[A-Z])|(?<![A-Za-z0-9_全])([A-Z])(?![A-Za-z0-9_]|组|\s*(?:股|[+＋]\s*H|浪|类|级|轮|款|型))/gu,
             (match, bracketed: string | undefined, candidate: string | undefined, bare: string | undefined) =>
               names[bracketed || candidate || bare || ""] || match,
           )
@@ -93,6 +93,8 @@ export function comparisonRow(
     evaluations[c.version] = {
       is_correct: attribution.is_correct,
       correctness_reason: attribution.correctness_reason,
+      correctness_evidence: attribution.correctness_evidence,
+      numeric_checks: attribution.numeric_checks,
       summary: attribution.summary,
       findings,
     };

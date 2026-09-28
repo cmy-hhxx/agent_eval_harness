@@ -98,6 +98,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
     has_standard_answer: available,
     is_correct: available ? correct : null,
     correctness_reason: available ? "与标准答案一致。" : "",
+    numeric_checks: [],
     correctness_evidence: available ? [{ message_index: 1, quote: answer }] : [],
     task_analysis: {
       task_type: "整数加法",
@@ -125,7 +126,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。" },
+          : { component: ["模型自身推理"], label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };
@@ -169,8 +170,19 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
     };
   }
   if (!("answer" in materialOf(spec))) {
-    const labels = Object.keys(materialOf(spec).candidates);
-    return comparisonResult(labels);
+    const material = materialOf(spec), labels = Object.keys(material.candidates);
+    const result = comparisonResult(labels);
+    for (const label of labels) {
+      const failed = material.attributions?.[label]?.findings.some((finding) => finding.type === "problem" &&
+        finding.importance === "high" && finding.assessment.evidence_status === "established" &&
+        finding.assessment.requirement_index !== null);
+      result.assessments[label] = { meets_core: !failed, summary: failed ? "关键结果错误。" : "正确给出了结果。" };
+    }
+    result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
+      labels.filter((label) => !result.assessments[label]!.meets_core)].filter((tier) => tier.length);
+    result.decision_basis.tradeoff = labels.every((label) => !result.assessments[label]!.meets_core)
+      ? "双方关键结果均错误。" : "按关键结果的可用性比较。";
+    return result;
   }
   const result = attributionResult();
   const material = materialOf(spec);
@@ -199,6 +211,7 @@ const materialOf = (spec: { prompt: string }) =>
   parsedMaterial(spec) as {
     ground_truth: { available: boolean; value: unknown };
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
+    attributions?: Record<string, AttributionResult>;
     answer?: { question: string; final_answer: string; final_message_index: number };
   };
 

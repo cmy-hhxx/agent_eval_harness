@@ -102,7 +102,7 @@ for (const objective of [false, true])
           assessments: {
             [aFast]: { meets_core: true, summary: `候选${aFast}与候选${aaFast}相比，候选${aFast}更完整。` },
             [aaFast]: {
-              meets_core: !objective,
+              meets_core: false,
               summary: `候选${aaFast}结果错误。`,
             },
           },
@@ -132,6 +132,7 @@ for (const objective of [false, true])
         assert.equal(materials[aFast]!.original_answer_usage.total_tokens, 120);
         assert.equal(materials[aaFast]!.original_answer_usage.total_tokens, 1020);
         assert.equal(materials[aFast]!.original_answer_timing.finish_seconds, 8);
+        assert.deepEqual(Object.keys(materials[aFast]!.original_answer_timing), ["finish_seconds"]);
         assert.deepEqual(binding.request.input.strength_checks, [
           { candidate: aFast, finding_index: 0, counterparts: [aaFast] },
         ]);
@@ -168,9 +169,7 @@ for (const objective of [false, true])
           result: "win",
           winner_version: "a_fast",
           winner_name: "A组Fast",
-          reason: objective
-            ? "A组Fast完成核心要求而AA组Fast未完成。"
-            : "双方都完成核心要求，A组Fast实际可用性更优。",
+          reason: "A组Fast完成核心要求而AA组Fast未完成。",
         });
         const reviews = row.evaluations as Record<string, { is_correct: boolean | null; correctness_reason: string }>;
         assert.equal(reviews.a_fast!.is_correct, objective ? true : null);
@@ -181,6 +180,13 @@ for (const objective of [false, true])
           (row.assessments as Record<string, { summary: string }>).a_fast!.summary,
           `${displayA}与${displayB}相比，${displayA}更完整。`,
         );
+        const nearLimit = structuredClone(result);
+        nearLimit.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${aaFast}结果错误。`.padEnd(100, "。");
+        validateEvaluation(task, snapshots, nearLimit, emptyAudit(), dependencies);
+        const expanded = comparisonRow(snapshots, task, nearLimit, receipts, {
+          a_fast: "A组Fast", aa_fast: "AA组Fast",
+        }, fakeEvaluatorVersion);
+        assert(validateOutput(expanded), JSON.stringify(validateOutput.errors));
       }
     } finally {
       await rm(directory, { recursive: true, force: true });

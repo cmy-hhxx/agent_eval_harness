@@ -16,7 +16,7 @@ function render(stage: string, result: JsonObject, id = "task-one") {
   const { document } = dom.window;
   const task = { id, stage, status: "succeeded", versions: ["model"], attempts: 1 };
   const state = {
-    caseDetail: { question: "问题", batch_id: "batch", case_id: "case", candidates: [], tasks: [task] },
+    caseDetail: { question: "问题", batch_id: "batch", case_id: "case", ground_truth: { available: false, value: null as unknown }, candidates: [], tasks: [task] },
     clusteringTasks: [task], openTasks: new Set([id]), openFindings: new Set<string>(), expandedTexts: new Set(),
     taskResults: { [id]: { result } },
   };
@@ -31,6 +31,24 @@ function render(stage: string, result: JsonObject, id = "task-one") {
   if (stage === "clustering") views.renderClustering(); else views.renderDetail();
   return { dom, document, views, state };
 }
+
+test("case header shows available standard answers, including zero and structured values, and hides absent answers", () => {
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  try {
+    assert.equal(document.querySelector(".standard-answer"), null);
+    for (const value of ["21.6256", 0, false, { answer: ["A", "B"] }, '<img src=x onerror="alert(1)">']) {
+      state.caseDetail.ground_truth = { available: true, value };
+      views.renderDetail();
+      assert.equal(document.querySelector(".detail-heading .standard-answer h3").textContent, "标准答案");
+      assert.equal(document.querySelector(".standard-answer .text-content").textContent,
+        typeof value === "string" ? value : JSON.stringify(value, null, 2));
+      assert.equal(document.querySelector(".standard-answer img"), null);
+    }
+    state.caseDetail.ground_truth = { available: false, value: null };
+    views.renderDetail();
+    assert.equal(document.querySelector(".standard-answer"), null);
+  } finally { dom.window.close(); }
+});
 
 test("dashboard pairs attribution rewrites by slot and indexes strengths and problems without renumbering", () => {
   const evaluation = attributionResult();

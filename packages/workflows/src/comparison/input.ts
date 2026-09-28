@@ -179,23 +179,6 @@ function recordMatch(
     return undefined;
   }
 }
-/** Locate a registered record by business identity, tolerant of appends and reordering. */
-export function locateRecord(
-  text: string,
-  candidate: Candidate,
-  version: VersionConfig,
-  source: string,
-  defaultBatch?: string,
-): { raw: RawInput; line: number; record: Candidate } {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const direct = recordMatch(lines[candidate.line - 1], candidate.line, candidate, version, source, defaultBatch);
-  if (direct) return direct;
-  for (let index = 0; index < lines.length; index++) {
-    const found = recordMatch(lines[index], index + 1, candidate, version, source, defaultBatch);
-    if (found) return found;
-  }
-  throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
-}
 /** Stream one registered record: the recorded line is re-read first, then the whole source. */
 export async function locateRecordStream(
   source: string,

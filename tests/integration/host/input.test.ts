@@ -482,7 +482,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { component: "组件", label: "问题", definition: "描述" },
+      problem: { component: ["组件"], label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),

@@ -291,7 +291,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
           state,
           task.id,
           attributionResult(
-            candidate.batch_id === firstDay || candidate.version === "a_fast",
+            candidate.case_id !== "bad" && (candidate.reference === null || candidate.batch_id === firstDay || candidate.version === "a_fast"),
             "2+2=4",
             candidate.reference !== null,
           ),

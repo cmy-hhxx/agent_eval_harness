@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { createRunRepository, fileSourceReader } from "@eval/data";
-import { buildPlan, candidateKey, inputSources, locateRecord, taskCase, taskIdentity } from "./input.js";
+import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, taskCase, taskIdentity } from "./input.js";
 import type { BatchPreflight, Candidate, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
 import { encodeResult } from "./results.js";
@@ -23,9 +23,30 @@ export async function loadRunInputs(
   const config = manifest.config as EvalConfig;
   const sources = inputSources(manifest.inputCatalog as Candidate[]);
   for (const [source, candidates] of sources) {
-    let text: string;
+    const found: Record<string, unknown> = {};
+    let revision: string;
     try {
-      text = await fileSourceReader.read(source);
+      revision = await fileSourceReader.revision(source);
+      const byLine = new Map<number, Candidate[]>();
+      for (const candidate of candidates)
+        byLine.set(candidate.line, [...(byLine.get(candidate.line) || []), candidate]);
+      for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+        const registered = byLine.get(index);
+        if (!registered) continue;
+        for (const candidate of registered) {
+          try {
+            const version = config.inputs.versions.find((item) => item.id === candidate.version);
+            if (!version) throw new Error("Input version is not registered");
+            const raw = JSON.parse(line);
+            if (candidateKey(adapt(raw, version, source, index, config.inputs.default_batch_id)) === candidateKey(candidate))
+              found[candidate.input_id] = raw;
+          } catch { /* Reordered or missing records are resolved by business identity below. */ }
+        }
+        byLine.delete(index);
+        if (!byLine.size) break;
+      }
+      if (await fileSourceReader.revision(source) !== revision)
+        throw new Error("读取期间输入文件发生变化，请重试：" + source);
     } catch (error) {
       errors.push({
         category: "file",
@@ -41,8 +62,10 @@ export async function loadRunInputs(
       try {
         const version = config.inputs.versions.find((version) => version.id === candidate.version);
         if (!version) throw new Error("Input version is not registered");
-        const { raw } = locateRecord(text, candidate, version, source, config.inputs.default_batch_id);
-        inputs[candidate.input_id] = raw;
+        if (!Object.hasOwn(found, candidate.input_id)) {
+          const { raw } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
+          found[candidate.input_id] = raw;
+        }
       } catch (error) {
         errors.push({
           category: "file",
@@ -54,6 +77,10 @@ export async function loadRunInputs(
         });
       }
     }
+    if (await fileSourceReader.revision(source).catch(() => null) !== revision) {
+      errors.push({ category: "file", code: "input_source_changed", path: source,
+        message: "读取期间输入文件发生变化，请重试：" + source });
+    } else Object.assign(inputs, found);
   }
   if (issues) issues.push(...errors);
   else if (errors.length) throw new ValidationError(errors);

@@ -35,36 +35,38 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
   for (const source of sources)
     for (const finding of source.findings) {
       if (finding.type !== "problem" || !finding.problem) continue;
-      const key = `${normalizeLabel(finding.problem.component)}\u0000${normalizeLabel(finding.problem.label)}`;
-      const group = groups.get(key) ?? {
-        component: finding.problem.component,
-        label: finding.problem.label,
-        definition: "",
-        entries: [],
-      };
-      if (!group.definition && finding.problem.definition.trim())
-        group.definition = finding.problem.definition;
-      const evidence = finding.evidence[0];
-      group.entries.push({
-        ref: {
-          input_id: source.input_id,
-          case_id: source.case_id,
-          source: source.source,
-          finding_id: finding.finding_id,
-          evidence_status: finding.assessment.evidence_status,
-          message_index: evidence?.message_index ?? -1,
-          quote: evidence?.quote ?? "",
-        },
-        example: {
-          finding: finding.text,
-          reason: finding.reason,
-          dimension: finding.dimension,
-          importance: finding.importance,
-          stage: finding.stage,
-          evidence_status: finding.assessment.evidence_status,
-        },
-      });
-      groups.set(key, group);
+      for (const component of finding.problem.component) {
+        const key = `${normalizeLabel(component)}\u0000${normalizeLabel(finding.problem.label)}`;
+        const group = groups.get(key) ?? {
+          component: component,
+          label: finding.problem.label,
+          definition: "",
+          entries: [],
+        };
+        if (!group.definition && finding.problem.definition.trim())
+          group.definition = finding.problem.definition;
+        const evidence = finding.evidence[0];
+        group.entries.push({
+          ref: {
+            input_id: source.input_id,
+            case_id: source.case_id,
+            source: source.source,
+            finding_id: finding.finding_id,
+            evidence_status: finding.assessment.evidence_status,
+            message_index: evidence?.message_index ?? -1,
+            quote: evidence?.quote ?? "",
+          },
+          example: {
+            finding: finding.text,
+            reason: finding.reason,
+            dimension: finding.dimension,
+            importance: finding.importance,
+            stage: finding.stage,
+            evidence_status: finding.assessment.evidence_status,
+          },
+        });
+        groups.set(key, group);
+      }
     }
   return [...groups.values()]
     .sort((a, b) => (canonical([a.component, a.label]) < canonical([b.component, b.label]) ? -1 : 1))

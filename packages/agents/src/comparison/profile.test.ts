@@ -23,12 +23,9 @@ test("Comparison ranks a group and references attribution findings", () => {
     /归因结果中的既有 finding/,
   );
 
-  const contradiction = structuredClone(example.request);
-  contradiction.input.attributions.A.is_correct = false;
-  assert.throws(
-    () => comparisonProfile.validate!(contradiction, example.result, audit),
-    /不能同时判定满足核心要求/,
-  );
+  const localError = structuredClone(example.request);
+  localError.input.attributions.A.is_correct = false;
+  comparisonProfile.validate!(localError, example.result, audit);
 });
 
 test("Comparison requires full aligned coverage and a concise verdict", () => {
@@ -37,7 +34,7 @@ test("Comparison requires full aligned coverage and a concise verdict", () => {
   assert.throws(() => comparisonProfile.validate!(example.request, missingCandidate, audit), /同一行包含全部候选/);
   const missingStrength = structuredClone(example.result);
   missingStrength.decision_basis.comparisons[0].assessments.B.finding_indices = [];
-  assert.throws(() => comparisonProfile.validate!(example.request, missingStrength, audit), /覆盖全部待核对优点/);
+  assert.throws(() => comparisonProfile.validate!(example.request, missingStrength, audit), /B\.findings\[0\].*assessments\.B\.finding_indices.*索引从0开始/);
   const badRef = structuredClone(example.result);
   badRef.decision_basis.comparisons[0].assessments.A.finding_indices = [99];
   assert.throws(() => comparisonProfile.validate!(example.request, badRef, audit), /只能引用该候选/);
@@ -45,9 +42,79 @@ test("Comparison requires full aligned coverage and a concise verdict", () => {
   badAdvantage.decision_basis.comparisons[0].better_candidates = ["C"] as never[];
   assert.throws(() => comparisonProfile.validate!(example.request, badAdvantage, audit), /优势候选必须属于本组/);
   const long = structuredClone(example.result);
-  long.decision_basis.tradeoff = "长".repeat(161);
-  assert.throws(() => comparisonProfile.validate!(example.request, long, audit), /160 characters/);
+  long.decision_basis.tradeoff = "长".repeat(101);
+  assert.throws(() => comparisonProfile.validate!(example.request, long, audit), /100 characters/);
   const missedProblem = structuredClone(example.request);
   missedProblem.input.attributions.A.findings.push({ ...missedProblem.input.attributions.A.findings[0], type: "problem", importance: "medium" });
   assert.throws(() => comparisonProfile.validate!(missedProblem, example.result, audit), /中高重要性问题/);
+});
+
+test("core failures share the last tier, including in multi-candidate comparisons", () => {
+  const request = structuredClone(example.request);
+  for (const label of ["A", "B"] as const) request.input.attributions[label].findings[0]!.type = "problem";
+  const result = structuredClone(example.result);
+  result.assessments.A.meets_core = false;
+  result.assessments.B.meets_core = false;
+  result.decision_basis.tradeoff = "双方的关键结果都错了。";
+  result.ranking = [["A"], ["B"]];
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /未达标候选必须同层/);
+  result.ranking = [["A", "B"]];
+  comparisonProfile.validate!(request, result, audit);
+  for (const text of ["双方关键结果都错了，因此A居前。", "双方都差，B相对更可用。", "双方都差，A相对更好，但没有整体胜者。"]) {
+    result.decision_basis.tradeoff = text;
+    assert.throws(() => comparisonProfile.validate!(request, result, audit), /短评不能宣称/);
+  }
+  result.decision_basis.tradeoff = "双方都错了，但A耗时更少，故列前。";
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /短评不能宣称/);
+  result.decision_basis.tradeoff = "双方的关键结果都错了。";
+  result.assessments.B.meets_core = true;
+  request.input.attributions.B.findings[0]!.type = "strength";
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /达标候选必须排在/);
+  result.ranking = [["A"], ["B"]];
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /达标候选必须排在/);
+  result.ranking = [["B"], ["A"]];
+  comparisonProfile.validate!(request, result, audit);
+
+  Object.assign(request.input.candidates, { C: request.input.candidates.A });
+  Object.assign(result.assessments, { C: { meets_core: false, summary: "未完成" } });
+  Object.assign(result.decision_basis.comparisons[0].assessments, { C: { summary: "未完成", finding_indices: [] } });
+  result.ranking = [["B"], ["A", "C"]];
+  comparisonProfile.validate!(request, result, audit);
+  result.ranking = [["B"], ["A"], ["C"]];
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /未达标候选必须同层/);
+});
+
+test("core usability needs established evidence and is not copied from correctness or severity", () => {
+  const request = structuredClone(example.request);
+  request.input.attributions.A.is_correct = false;
+  const finding = request.input.attributions.A.findings[0]!;
+  finding.type = "problem";
+  finding.importance = "medium";
+  comparisonProfile.validate!(request, example.result, audit);
+  const result = structuredClone(example.result);
+  result.assessments.A.meets_core = false;
+  result.ranking = [["B"], ["A"]];
+  // A missing primary result remains unusable even if attribution rated its cause medium.
+  comparisonProfile.validate!(request, result, audit);
+  finding.importance = "high";
+  finding.assessment.evidence_status = "uncertain";
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /判核心不可用必须/);
+  finding.assessment.evidence_status = "established";
+  comparisonProfile.validate!(request, result, audit);
+  // Comparison assesses the whole deliverable; severity is not a second correctness flag.
+  comparisonProfile.validate!(request, example.result, audit);
+});
+
+test("both-good cannot ignore a one-sided material advantage", () => {
+  const result = structuredClone(example.result);
+  result.task_analysis.scoring_points = [];
+  result.task_analysis.red_flags = [];
+  comparisonProfile.validate!(example.request, result, audit);
+  result.decision_basis.comparisons[0]!.better_candidates = ["A"] as never[];
+  assert.throws(() => comparisonProfile.validate!(example.request, result, audit), /不能判都好/);
+  result.ranking = [["A"], ["B"]];
+  comparisonProfile.validate!(example.request, result, audit);
+  result.ranking = [["A", "B"]];
+  result.decision_basis.comparisons[0]!.importance = "low";
+  comparisonProfile.validate!(example.request, result, audit);
 });

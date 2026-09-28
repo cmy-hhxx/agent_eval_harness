@@ -35,10 +35,17 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             assert(!input.items.some((item) => /候选[A-Z]/.test(item.label + item.text)));
           }
           const evaluation = taskResult(options.spec);
+          if (!clustering && options.spec.evaluation.id === "rewrite") {
+            const rewrites = (evaluation as { rewrites: { id: string; text: string }[] }).rewrites;
+            for (const item of rewrites) {
+              if (item.id === "tradeoff" || /^comparison\./.test(item.id))
+                item.text = "精简：" + "两方都给出了题目要求的正确结果，已核对对应的计算和单位。".repeat(7);
+            }
+          }
           if (clustering && options.spec.evaluation.id === "attribution") {
             const finding = (evaluation as AttributionResult).findings[0]!;
             finding.type = "problem";
-            finding.problem = { component: "模型自身推理", label: "计算错误", definition: "计算与事实不符。" };
+            finding.problem = { component: ["模型自身推理"], label: "计算错误", definition: "计算与事实不符。" };
           }
           const result = await options.execute(
             "submit_evaluation",
@@ -91,7 +98,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(comparisons.length, 1);
     assert.equal(
       (comparisons[0]!.assessments as Record<string, { summary: string }>).a_fast!.summary,
-      "正确给出了结果。",
+      clustering ? "关键结果错误。" : "正确给出了结果。",
     );
     const attributions = await rows(path.join(run, "results", "attribution.jsonl"));
     assert.equal(attributions.length, 2);
@@ -128,7 +135,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     }
     assert(!(await readdir(path.join(run, "results"))).includes("commentary.jsonl"));
     const taskSummaries = await readFile(path.join(run, "task_summaries.md"), "utf8");
-    assert(taskSummaries.includes("精简：正确给出了结果。"));
+    assert(taskSummaries.includes(clustering ? "精简：关键结果错误。" : "精简：正确给出了结果。"));
     assert.deepEqual((summary.artifacts as { results: string[] }).results, [
       "results/attribution.jsonl", "results/comparison.jsonl", ...(clustering ? ["results/clustering.jsonl"] : []),
     ]);

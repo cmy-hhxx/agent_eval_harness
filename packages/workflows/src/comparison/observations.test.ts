@@ -23,7 +23,7 @@ const problem = (
     evidence_status: "established",
     impact: "i",
   },
-  problem: { component, label, definition: "d" },
+  problem: { component: [component], label, definition: "d" },
 });
 const strength = (finding_id: string): AttributionFinding => ({
   ...problem(finding_id, "模型自身推理", "无", "无"),
@@ -36,6 +36,22 @@ const source = (inputId: string, caseId: string, findings: AttributionFinding[])
   case_id: caseId,
   source: { file: "f.jsonl", line: 7 },
   findings,
+});
+
+test("joint responsibility expands by component while preserving one finding identity", () => {
+  const finding = problem("f1", "FinQuery", "口径冲突", "返回值冲突且模型忽略冲突");
+  finding.problem!.component.push("模型自身推理");
+  const observations = groupObservations([source("in-1", "case-1", [finding])]);
+  assert.deepEqual(observations.map((item) => item.component).sort(), ["FinQuery", "模型自身推理"]);
+  assert(observations.every((item) => item.count === 1 && item.refs[0]!.finding_id === "f1"));
+  assert.deepEqual(observations[0]!.refs, observations[1]!.refs);
+});
+
+test("unresolved responsibility does not create a speculative component class", () => {
+  const finding = problem("f1", "FinQuery", "与标准冲突", "工具数值与标准不同，根因待查");
+  finding.problem!.component = [];
+  assert.deepEqual(groupObservations([source("in-1", "case-1", [finding])]), []);
+  assert.equal(finding.assessment.evidence_status, "established");
 });
 
 test("observations collapse identical problems and keep exact finding coordinates", () => {

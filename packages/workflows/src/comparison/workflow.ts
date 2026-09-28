@@ -146,7 +146,7 @@ export function bindTask(
           initial_material: initial,
           catalog: traceCatalog(raw),
           input_file: `inputs/${label}.json`,
-          original_answer_timing: blind ? blind.value(candidate.answer_timing) : candidate.answer_timing,
+          original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
           ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
           note: "完整问题和最终回答已展示；其余材料可通过工具或输入文件继续查看。",
         },
@@ -157,7 +157,10 @@ export function bindTask(
   const attributions = attribution ? {} : Object.fromEntries(
     Object.entries(dependencies)
       .filter(([label, r]) => r?.taskId === task.dependencies[label] && r?.status === "succeeded")
-      .map(([label, r]) => [label, blind!.attribution(r!.evaluation as AttributionResult)]),
+      .map(([label, r]) => {
+        const result = blind!.attribution(r!.evaluation as AttributionResult);
+        return [label, { ...result, findings: result.findings.map((finding, index) => ({ ...finding, finding_index: index })) }];
+      }),
   );
   return {
     agent: attribution ? "attribution" : "comparison",

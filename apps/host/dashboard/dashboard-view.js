@@ -141,7 +141,9 @@ export function createDashboardViews({
 
   function valueHtml(value, path, key, rewrites) {
     if (Array.isArray(value)) {
-      if (!value.length) return '<span class="muted">无</span>';
+      if (!value.length) return `<span class="muted">${key === "component" ? "待定位" : "无"}</span>`;
+      if (key === "component")
+        return `<span class="finding-tags">${value.map((component) => `<span>${escapeHtml(component)}</span>`).join("")}</span>`;
       if (key === "evidence" || key === "correctness_evidence")
         return `<ul class="evidence-list">${value.map((item, index) => `<li><span class="evidence-location">消息 #${escapeHtml(item.message_index)}</span>${textHtml(item.quote, `${path}.${index}.quote`)}</li>`).join("")}</ul>`;
       if (key === "decisive_findings")
@@ -258,7 +260,9 @@ export function createDashboardViews({
     }
     const candidates = detail.candidates || [];
     const inputs = candidates.map((candidate) => `<button type="button" class="candidate-tab ${state.selectedInput === candidate.input_id ? "selected" : ""}" aria-pressed="${state.selectedInput === candidate.input_id}" data-input="${escapeHtml(candidate.input_id)}">${escapeHtml(candidate.name || candidate.version)}</button>`).join("");
-    $("#case-detail").innerHTML = `<header class="detail-heading"><div class="section-heading"><h2>问题</h2><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span></div>${textHtml(detail.question, "question", true)}</header>
+    const standardAnswer = detail.ground_truth?.available
+      ? `<section class="standard-answer"><h3>标准答案</h3>${textHtml(typeof detail.ground_truth.value === "string" ? detail.ground_truth.value : JSON.stringify(detail.ground_truth.value, null, 2), "ground_truth")}</section>` : "";
+    $("#case-detail").innerHTML = `<header class="detail-heading"><div class="section-heading"><h2>问题</h2><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span></div>${textHtml(detail.question, "question", true)}${standardAnswer}</header>
       <details class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><summary><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></summary><div class="input-content"><div class="candidate-tabs" role="group" aria-label="选择版本">${inputs}</div><div class="input-view">${renderInput()}</div></div></details>
       ${["attribution", "comparison"].map((stage) => {
         const tasks = detail.tasks.filter((task) => task.stage === stage);

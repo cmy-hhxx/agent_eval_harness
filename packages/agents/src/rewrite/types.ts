@@ -3,6 +3,7 @@ export interface RewriteItem {
   id: string;
   label: string;
   text: string;
+  constraint?: "no_winner";
 }
 export interface RewriteRequest {
   kind: "attribution" | "comparison" | "clustering";

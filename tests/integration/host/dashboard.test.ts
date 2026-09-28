@@ -205,6 +205,7 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
     assert.equal(page.cases[0].case_id, "q1");
     assert.equal((await listRunCases(fixture.run, { page: 2, pageSize: 1 })).cases[0].case_id, "q2");
     const detail = (await readCaseDetail(fixture.run, "b1", "q1"))!;
+    assert.deepEqual(detail.ground_truth, { available: true, value: "4" });
     assert.equal("result" in detail.tasks.find((item) => item.id === fixture.task.id)!, false);
     const attribution = (await readTaskResult(fixture.run, fixture.task.id))!.result;
     assert.deepEqual(Object.keys(attribution!), ["evaluation"]);

@@ -93,7 +93,7 @@
     "evaluation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["is_correct", "correctness_reason", "summary", "findings"],
+      "required": ["is_correct", "correctness_reason", "correctness_evidence", "numeric_checks", "summary", "findings"],
       "properties": {
         "is_correct": { "type": ["boolean", "null"] },
         "correctness_reason": { "type": "string" }

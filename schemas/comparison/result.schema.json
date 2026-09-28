@@ -39,7 +39,7 @@
         },
         "scoring_points": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 6,
           "items": {
             "type": "string",
@@ -48,7 +48,7 @@
         },
         "red_flags": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 6,
           "items": {
             "type": "string",
@@ -80,7 +80,8 @@
         ],
         "properties": {
           "meets_core": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "关键交付是否可用，须看整份最终回答；不直接复制 is_correct 或 importance。false 须引用已证实的问题，说明哪项必要结果缺失或错误到无法使用。"
           },
           "summary": {
             "type": "string",
@@ -102,7 +103,7 @@
         "tradeoff": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 160
+          "maxLength": 100
         },
         "comparisons": {
           "type": "array",

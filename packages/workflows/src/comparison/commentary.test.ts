@@ -11,6 +11,12 @@ import {
   type CommentaryLookup,
 } from "./commentary.js";
 import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
+import { display } from "./results.js";
+
+test("candidate display names do not replace business terms such as 全A", () => {
+  assert.equal(display("【候选A】采用同花顺全A（沪深京）及A股口径；B未注明。", { A: "A组Fast", B: "AA组Fast" }),
+    "A组Fast采用同花顺全A（沪深京）及A股口径；AA组Fast未注明。");
+});
 
 const comparison: ComparisonResult = {
   task_analysis: {
@@ -35,6 +41,7 @@ const attribution: AttributionResult = {
   has_standard_answer: true,
   is_correct: true,
   correctness_reason: "与标准答案一致。",
+  numeric_checks: [],
   correctness_evidence: [{ message_index: 1, quote: "2+2=4" }],
   task_analysis: structuredClone(comparison.task_analysis),
   summary: "回答正确。",
@@ -48,6 +55,11 @@ test("comparison slots cover every assessment, the tradeoff and each pair", () =
     ["assessment.A.summary", "assessment.B.summary", "tradeoff", "comparison.0.A.summary", "comparison.0.B.summary", verdictSlotId("A", "B")].sort(),
   );
   assert.match(items.find((item) => item.id === verdictSlotId("B", "A"))!.text, /【候选A】完成核心要求/);
+  const failed = structuredClone(comparison);
+  failed.assessments.A!.meets_core = false;
+  failed.ranking = [["A", "B"]];
+  assert.match(comparisonSlots(failed).find((item) => item.id === "tradeoff")!.label, /全部未达标，无整体胜者/);
+  assert.equal(comparisonSlots(failed).find((item) => item.id === "tradeoff")!.constraint, "no_winner");
 });
 
 test("attribution slots include the correctness reason only when it exists", () => {

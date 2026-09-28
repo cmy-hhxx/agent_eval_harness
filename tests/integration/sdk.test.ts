@@ -67,6 +67,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             ? {
                 is_correct: true,
                 correctness_reason: "计算结果与标准答案一致。",
+                numeric_checks: [],
                 correctness_evidence: [evidenceFor()],
                 task_analysis: {
                   task_type: "整数加法",

@@ -56,6 +56,12 @@
           "text": {
             "type": "string",
             "minLength": 1
+          },
+          "constraint": {
+            "enum": [
+              "no_winner"
+            ],
+            "description": "该槽位不存在整体胜者，禁止把局部差异改写成整体更好"
           }
         }
       }

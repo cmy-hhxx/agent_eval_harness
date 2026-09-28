@@ -17,6 +17,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const input = request.input as unknown as RewriteRequest;
   const value = result as RewriteResult;
   const expected = new Set(input.items.map((item) => item.id));
+  const noWinner = new Set(input.items.filter((item) => item.constraint === "no_winner").map((item) => item.id));
   const errors: ValidationIssue[] = [];
   const seen = new Set<string>();
   const issue = (code: string, path: string, message: string, actual: unknown) =>
@@ -27,11 +28,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     else if (seen.has(item.id))
       issue("rewrite_duplicate_id", `/rewrites/${index}/id`, "同一槽位只能改写一次", item.id);
     seen.add(item.id);
-    if (input.kind === "comparison") {
-      const limit = 160;
-      if ([...item.text].length > limit)
-        issue("rewrite_too_long", `/rewrites/${index}/text`, `对比点评最多${limit}字，请保留决定性事实并压缩表达`, [...item.text].length);
-    }
+    if (noWinner.has(item.id) && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选|排(?:在)?前|列(?:在)?前/u.test(item.text))
+      issue("rewrite_winner_contradiction", `/rewrites/${index}/text`, "此槽位没有整体胜者，只写共同失败；相对优势保留在逐项对比，不得写某方更好或居前", item.text);
   }
   for (const id of expected)
     if (!seen.has(id)) issue("rewrite_missing_id", "/rewrites", "每个槽位都必须返回改写文本", id);

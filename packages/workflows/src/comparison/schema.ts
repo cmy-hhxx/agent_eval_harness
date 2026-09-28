@@ -15,6 +15,12 @@ export const clusteringSchema: JsonSchema = {
   },
 };
 const comparison = object(structuredClone(comparisonProfile.resultSchema!).properties);
+// Display names and accepted rewrites can expand the judge's concise wording.
+const decision = object(object(comparison.decision_basis).properties);
+delete object(decision.tradeoff).maxLength;
+const aligned = object(object(object(decision.comparisons).items).properties);
+delete object(aligned.aspect).maxLength;
+delete object(object(object(object(aligned.assessments).additionalProperties).properties).summary).maxLength;
 const attribution = object(structuredClone(attributionProfile.resultSchema!).properties);
 const findings = object(attribution.findings);
 object(object(findings.items).properties).stage_trace = annotation;
@@ -31,6 +37,8 @@ export const outputSchema: JsonSchema = {
       properties: {
         ...template.$defs.evaluation.properties,
         summary: attribution.summary,
+        numeric_checks: attribution.numeric_checks,
+        correctness_evidence: attribution.correctness_evidence,
         findings,
       },
     },

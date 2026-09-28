@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assignments",
+    "new_classes",
+    "merges"
+  ],
+  "properties": {
+    "assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "pattern": "^O[1-9][0-9]*$"
+          },
+          "class_id": {
+            "type": "string",
+            "pattern": "^C[1-9][0-9]*$"
+          },
+          "new_class_key": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "class_id"
+            ]
+          },
+          {
+            "required": [
+              "new_class_key"
+            ]
+          }
+        ]
+      }
+    },
+    "new_classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "component",
+          "label",
+          "definition",
+          "closest_existing",
+          "novelty"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "closest_existing": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^C[1-9][0-9]*$"
+          },
+          "novelty": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "merges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "into",
+          "from",
+          "reason"
+        ],
+        "properties": {
+          "into": {
+            "type": "string",
+            "pattern": "^C[1-9][0-9]*$"
+          },
+          "from": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^C[1-9][0-9]*$"
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

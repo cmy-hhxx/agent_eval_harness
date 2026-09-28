@@ -38,6 +38,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       component.classes.map((problem) => [problem.id, component.id] as const),
     ),
   );
+  const classChoices = (component: string | undefined) => input.library.components
+    .filter((entry) => component !== undefined && entry.id === componentKey(component))
+    .flatMap((entry) => entry.classes.map(({ id, label }) => ({ id, label, component: entry.label })));
 
   const intoIds = new Set(value.merges.map((merge) => merge.into));
   const fromIds = new Set<string>();
@@ -62,13 +65,16 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
 
   const assigned = new Set<string>();
   for (const [index, assignment] of value.assignments.entries()) {
+    const item = items.get(assignment.item_id);
     if (!items.has(assignment.item_id))
       issue("clustering_item_unknown", `/assignments/${index}/item_id`, "归类必须对应请求中的观察", assignment.item_id);
     else if (assigned.has(assignment.item_id))
       issue("clustering_item_duplicate", `/assignments/${index}/item_id`, "同一观察只能归类一次", assignment.item_id);
     assigned.add(assignment.item_id);
     if (assignment.class_id && !classIds.has(assignment.class_id))
-      issue("clustering_class_unknown", `/assignments/${index}/class_id`, "class_id 必须是库中活跃问题类", assignment.class_id);
+      issue("clustering_class_unknown", `/assignments/${index}/class_id`,
+        "class_id 必须是库中活跃问题类；核对同组件候选的含义后选择编号，没有合适类时按预算新建。",
+        assignment.class_id, { available_classes: classChoices(item?.component) });
     if (assignment.class_id && fromIds.has(assignment.class_id))
       issue(
         "clustering_class_merged",
@@ -76,13 +82,13 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         "已合并的类不能作为归类目标，请使用 into 的目标类",
         assignment.class_id,
       );
-    const item = items.get(assignment.item_id);
     const assignedComponent = assignment.class_id
       ? classComponents.get(assignment.class_id)
       : value.new_classes.find((entry) => entry.key === assignment.new_class_key)?.component;
     if (item && assignedComponent && componentKey(item.component) !==
       (assignment.class_id ? assignedComponent : componentKey(assignedComponent)))
-      issue("clustering_component_mismatch", `/assignments/${index}`, "观察与目标问题类的组件不一致", item.component);
+      issue("clustering_component_mismatch", `/assignments/${index}`, "观察与目标问题类的组件不一致；只能归入同组件的类，不能改变观察的责任组件",
+        item.component, { available_classes: classChoices(item.component) });
     if (assignment.new_class_key && !value.new_classes.some((entry) => entry.key === assignment.new_class_key))
       issue(
         "clustering_new_key_unknown",

@@ -38,6 +38,7 @@ export interface ClusteringRequest {
   items: ClusteringItem[];
 }
 export interface ClusteringAssignment {
+  /** Resolved identities; the model submits request-local O/C references instead. */
   item_id: string;
   class_id?: string;
   new_class_key?: string;

@@ -24,7 +24,7 @@ function problemAttribution(): AttributionResult {
   result.findings[0] = {
     ...result.findings[0]!,
     type: "problem",
-    problem: { component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。" },
+    problem: { component: ["模型自身推理"], label: "算术错误", definition: "计算与事实不符。" },
   };
   return result;
 }
@@ -65,8 +65,7 @@ test("a batch may create every component its own observations use", async () => 
     const evaluation = {
       ...attributionResult(false),
       findings: [
-        { ...finding, finding_id: "f0", problem: { component: "Search", label: "检索不足", definition: "缺证据。" } },
-        { ...finding, finding_id: "f1", problem: { component: "模型自身推理", label: "算术错误", definition: "计算不符。" } },
+        { ...finding, finding_id: "f0", problem: { component: ["Search", "模型自身推理"], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -107,7 +106,7 @@ test("clustering bind preserves each shard's reserved component headroom", async
       const inputId = Object.keys(task.dependencies)[0]!;
       const evaluation = attributionResult(false);
       const component = index === 0 ? "Search" : "模型自身推理";
-      evaluation.findings[0]!.problem = { component, label: "算术错误", definition: "计算不符。" };
+      evaluation.findings[0]!.problem = { component: [component], label: "算术错误", definition: "计算不符。" };
       const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
       const request = comparisonWorkflow.bind(task, {}, dependencies).request;
       return { request, component };

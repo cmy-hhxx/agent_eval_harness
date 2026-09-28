@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r19",
+  "evaluatorVersion": "r32",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -89,9 +89,9 @@
     }
   },
   "execution": {
-    "concurrency": 4,
+    "concurrency": 48,
     "timeoutSeconds": 900,
-    "idleTimeoutSeconds": 600,
+    "idleTimeoutSeconds": 120,
     "maxToolCalls": 12,
     "repairAttempts": 2,
     "retries": 1,

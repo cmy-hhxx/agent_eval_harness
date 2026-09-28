@@ -1,22 +1,37 @@
 import { agentPrompt } from "@eval/prompts";
-import type { AgentDefinition, AgentProfile } from "@eval/contracts";
+import { ValidationError, type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/clustering/request.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
+import submissionSchema from "../../../../schemas/clustering/submission.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
+import { references, resolveSubmission } from "./references.js";
+import type { ClusteringRequest } from "./types.js";
 export * from "./types.js";
 export * from "./library.js";
-// The source agent submits its decision; the workflow attaches later language polish.
-const submissionSchema = structuredClone(resultSchema);
-delete (submissionSchema.properties as Record<string, unknown>).rewritten;
+const prompt = agentPrompt("clustering", []);
 export const clusteringProfile: AgentProfile = {
   id: "default",
 
   requestSchema,
   submissionSchema,
   resultSchema,
-  ...agentPrompt("clustering", []),
+  ...prompt,
+  renderPrompt(input, policy) {
+    const refs = references(input as unknown as ClusteringRequest);
+    // A new attempt can have a refreshed library. Old drafts and error indices must
+    // not be interpreted against its new reference table; in-session feedback is mapped below.
+    return prompt.renderPrompt(refs.project(input), policy);
+  },
   toolNames: [],
-  validate: validateEvaluation,
+  resolve: resolveSubmission,
+  validate(request, result, audit) {
+    try { validateEvaluation(request, result, audit); }
+    catch (error) {
+      if (error instanceof ValidationError && error.issues)
+        throw new ValidationError(references(request.input as unknown as ClusteringRequest).project(error.issues));
+      throw error;
+    }
+  },
 };
 export const clusteringAgent: AgentDefinition = {
   id: "clustering",

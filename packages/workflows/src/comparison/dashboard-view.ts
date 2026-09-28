@@ -195,6 +195,7 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
         task_analysis: value.task_analysis,
         correctness_reason: clip(value.correctness_reason, 8000),
         correctness_evidence: clipEvidence(value.correctness_evidence),
+        numeric_checks: value.numeric_checks,
         summary: clip(value.summary, 8000),
         findings: Array.isArray(value.findings)
           ? value.findings.map((finding) => {
@@ -263,6 +264,7 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
     batch_id: batch,
     case_id: caseId,
     question: [...candidates.values()][0]?.question || (first.data as TaskData).case?.question || "",
+    ground_truth: { available: first.data.reference !== null, value: first.data.reference },
     candidates: [...candidates.values()].map(({ input_id, version, name }) => ({
       input_id, version, name,
     })),

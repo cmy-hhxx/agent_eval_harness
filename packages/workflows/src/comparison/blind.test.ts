@@ -19,10 +19,10 @@ test("comparison removes source identity from prompt text, trace, and attributio
     finding_id: "f1", type: "problem", dimension: "correctness", stage: "execution", importance: "medium",
     text: "A组Fast 的 Search 可能异常", reason: "secret-model 尚待核实", evidence: [{ message_index: 2, quote: "A组Fast" }],
     assessment: { requirement_index: null, observation: "疑似异常", evidence_status: "uncertain", impact: "若属实会影响结果" },
-    problem: { component: "Search", label: "调用结果异常", definition: "结果不完整" },
+    problem: { component: ["Search"], label: "调用结果异常", definition: "结果不完整" },
   } as AttributionResult["findings"][number];
   const attribution: AttributionResult = {
-    has_standard_answer: false, is_correct: null, correctness_reason: "", correctness_evidence: [],
+    has_standard_answer: false, is_correct: null, correctness_reason: "", correctness_evidence: [], numeric_checks: [],
     task_analysis: { task_type: "计算", goal: "得到结果", requirements: ["给出结果"], scoring_points: [], red_flags: [] },
     summary: "A组Fast 给出可用答案", findings: [finding],
   };

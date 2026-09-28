@@ -42,7 +42,7 @@ export interface FindingRef {
   finding_index: number;
 }
 export interface ComparisonAssessment {
-  /** Whether the answer delivers every core requirement. */
+  /** Whether the essential deliverable is usable; not an exact-reference-match flag. */
   meets_core: boolean;
   summary: string;
 }

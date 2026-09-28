@@ -35,7 +35,11 @@ export function comparisonSlots(result: ComparisonResult): RewriteItem[] {
     label: `候选${label} 结论`,
     text: assessment.summary,
   }));
-  items.push({ id: "tradeoff", label: "裁决短评：结论与决定胜负的差异", text: result.decision_basis.tradeoff });
+  items.push({ id: "tradeoff", label: Object.values(result.assessments).every((assessment) => !assessment.meets_core)
+    ? "裁决短评：全部未达标，无整体胜者；保留共同失败结论"
+    : "裁决短评：结论与决定胜负的差异", text: result.decision_basis.tradeoff,
+    ...(Object.values(result.assessments).every((assessment) => !assessment.meets_core) ? { constraint: "no_winner" as const } : {}),
+  });
   result.decision_basis.comparisons.forEach((row, index) => {
     for (const [label, assessment] of Object.entries(row.assessments))
       items.push({ id: `comparison.${index}.${label}.summary`, label: `${row.aspect} · 候选${label} 的表现`, text: assessment.summary });

@@ -210,6 +210,8 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .task-result .loading { justify-content: flex-start; min-height: 28px; }
 .result-body { min-width: 0; container-type: inline-size; }
 .output-heading { margin: 16px 0 12px; color: var(--text); font-size: 13px; font-weight: 600; }
+.standard-answer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.standard-answer h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
 .schema-section { margin-top: 24px; }
 .schema-section h5 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; }
 .schema-section h5 code, .schema-field dt code { color: var(--muted); font: 10px/1.5 var(--mono); overflow-wrap: anywhere; }

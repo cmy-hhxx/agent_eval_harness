@@ -27,6 +27,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     errors.push({ category: "decision", code, path, message, candidate, actual });
 
   const labels = Object.keys(input.candidates);
+  const findingHelp = (label: string) => `该候选合法索引：${(input.attributions?.[label]?.findings ?? [])
+    .map((finding, index) => `${index}=${finding.text}`).join("；") || "无"}。只复制该候选现有索引；没有对应finding时填 []，不能填序号或其他候选的索引。`;
   const ranked = value.ranking.flat();
   if (new Set(ranked).size !== ranked.length)
     issue("ranking_duplicate", "/ranking", "排名包含重复候选", undefined, ranked);
@@ -36,6 +38,14 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const assessed = Object.keys(value.assessments);
   if (assessed.length !== labels.length || !labels.every((label) => assessed.includes(label)))
     issue("assessment_incomplete", "/assessments", "必须为本组每个候选给出 meets_core 与 summary", undefined, assessed);
+  const tierOf = (label: string) => value.ranking.findIndex((tier) => tier.includes(label));
+  const failed = labels.filter((label) => value.assessments[label]?.meets_core === false);
+  if (new Set(failed.map(tierOf)).size > 1)
+    issue("failed_ranking_split", "/ranking", "未达标候选必须同层；局部优势写在逐项对比，不能产生整体胜者");
+  if (labels.some((label) => value.assessments[label]?.meets_core && failed.some((other) => tierOf(label) >= tierOf(other))))
+    issue("core_ranking_contradiction", "/ranking", "达标候选必须排在所有未达标候选之前，不能同层或倒置");
+  if (failed.length === labels.length && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选|排(?:在)?前|列(?:在)?前/u.test(value.decision_basis.tradeoff))
+    issue("failed_tradeoff_winner", "/decision_basis/tradeoff", "全部核心不可用时短评不能宣称某方更好、胜出或排前；写清共同失败，局部优势留在 comparisons");
 
   const covered = new Map(labels.map((label) => [label, new Set<number>()]));
   for (const [index, row] of value.decision_basis.comparisons.entries()) {
@@ -48,7 +58,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     for (const [label, assessment] of Object.entries(row.assessments))
       for (const findingIndex of assessment.finding_indices) {
         if (!input.attributions?.[label]?.findings[findingIndex])
-          issue("finding_missing", `${path}/assessments/${label}/finding_indices`, "比较点只能引用该候选的既有 finding", label, findingIndex);
+          issue("finding_missing", `${path}/assessments/${label}/finding_indices`, "比较点只能引用该候选的既有 finding。" + findingHelp(label), label, findingIndex);
         else covered.get(label)?.add(findingIndex);
       }
   }
@@ -57,8 +67,13 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       ? [{ candidate, finding_index }] : []),
   );
   for (const ref of [...(input.strength_checks || []), ...materialProblems, ...value.decision_basis.decisive_findings])
-    if (!covered.get(ref.candidate)?.has(ref.finding_index))
-      issue("comparison_finding_uncovered", "/decision_basis/comparisons", "逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现，可在同一方面合并相关 finding", ref.candidate, ref.finding_index);
+    if (input.attributions?.[ref.candidate]?.findings[ref.finding_index] && !covered.get(ref.candidate)?.has(ref.finding_index)) {
+      const finding = input.attributions?.[ref.candidate]?.findings[ref.finding_index];
+      issue("comparison_finding_uncovered", "/decision_basis/comparisons",
+        `逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现。漏项为 ${ref.candidate}.findings[${ref.finding_index}]：${finding?.text ?? "见归因材料"}。` +
+        `请在讨论同一方面的行中，将 ${ref.finding_index} 加入 assessments.${ref.candidate}.finding_indices；索引从0开始，不是第几条的序号。不要只改文字，也不要填到其他候选。`,
+        ref.candidate, ref.finding_index);
+    }
 
   for (const [index, ref] of value.decision_basis.decisive_findings.entries()) {
     const findings = input.attributions?.[ref.candidate]?.findings;
@@ -66,20 +81,30 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue(
         "finding_missing",
         `/decision_basis/decisive_findings/${index}`,
-        "决定性发现必须引用归因结果中的既有 finding",
+        "决定性发现必须引用归因结果中的既有 finding。" + findingHelp(ref.candidate),
         ref.candidate,
         ref.finding_index,
       );
   }
-  if (input.ground_truth.available)
-    for (const label of labels)
-      if (input.attributions?.[label]?.is_correct === false && value.assessments[label]?.meets_core)
-        issue(
-          "correctness_contradiction",
-          `/assessments/${label}/meets_core`,
-          `${label} 的独立归因判为错误，不能同时判定满足核心要求`,
-          label,
-        );
+  for (const label of labels) {
+    const attribution = input.attributions?.[label];
+    if (!attribution) continue;
+    const coreProblem = attribution.findings.some((finding) => finding.type === "problem" &&
+      finding.assessment.evidence_status === "established" &&
+      finding.assessment.requirement_index !== null);
+    if (value.assessments[label]?.meets_core === false && !coreProblem)
+      issue("core_failure_unproven", `/assessments/${label}/meets_core`,
+        "判核心不可用必须引用已证实、关联核心要求的问题，并说明哪项必要结果无法使用；不能只凭疑似问题", label);
+  }
+  for (let i = 0; i < labels.length; i++)
+    for (const second of labels.slice(i + 1)) {
+      const first = labels[i]!;
+      if (!value.assessments[first]?.meets_core || !value.assessments[second]?.meets_core || tierOf(first) !== tierOf(second)) continue;
+      const advantage = (a: string, b: string) => value.decision_basis.comparisons.some((row) =>
+        row.importance !== "low" && row.better_candidates.includes(a) && !row.better_candidates.includes(b));
+      if (advantage(first, second) !== advantage(second, first))
+        issue("tie_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好；应根据实质差异分胜负");
+    }
 
   if (errors.length) throw new ValidationError(errors);
 }
