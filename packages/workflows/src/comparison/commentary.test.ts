@@ -25,7 +25,11 @@ const comparison: ComparisonResult = {
     A: { meets_core: true, summary: "A 结论" },
     B: { meets_core: false, summary: "B 结论" },
   },
-  decision_basis: { tradeoff: "A 完成核心要求，B 未完成。", decisive_findings: [] },
+  decision_basis: { tradeoff: "A 完成核心要求，B 未完成。", decisive_findings: [], comparisons: [{
+    aspect: "计算结果", importance: "high", better_candidates: ["A"], assessments: {
+      A: { summary: "正确给出4。", finding_indices: [] }, B: { summary: "未给出结果。", finding_indices: [] },
+    },
+  }] },
 };
 const attribution: AttributionResult = {
   has_standard_answer: true,
@@ -41,7 +45,7 @@ test("comparison slots cover every assessment, the tradeoff and each pair", () =
   const items = comparisonSlots(comparison);
   assert.deepEqual(
     items.map((item) => item.id).sort(),
-    ["assessment.A.summary", "assessment.B.summary", "tradeoff", verdictSlotId("A", "B")].sort(),
+    ["assessment.A.summary", "assessment.B.summary", "tradeoff", "comparison.0.A.summary", "comparison.0.B.summary", verdictSlotId("A", "B")].sort(),
   );
   assert.match(items.find((item) => item.id === verdictSlotId("B", "A"))!.text, /【候选A】完成核心要求/);
 });
@@ -70,12 +74,15 @@ test("presentation view applies rewrites by slot and leaves unknown text alone",
       b: { summary: "原归因B", correctness_reason: "原理由B" },
     },
     verdicts: { "a__vs__b": { reason: "原判决" } },
-    decision_basis: { tradeoff: "原权衡" },
+    decision_basis: { tradeoff: "原权衡", comparisons: [{ aspect: "结果", importance: "high", better_candidates: ["a"], assessments: {
+      a: { summary: "原表现A", finding_indices: [] }, b: { summary: "原表现B", finding_indices: [] },
+    } }] },
   };
   const bySource: Record<string, Rewrites> = {
     cmp: {
       "assessment.A.summary": "A 精简",
       tradeoff: "精简权衡",
+      "comparison.0.A.summary": "A 给出了4。",
       [verdictSlotId("A", "B")]: "精简判决",
     },
     "attr-a": { summary: "归因A精简", correctness_reason: "【候选A】正确" },
@@ -89,6 +96,10 @@ test("presentation view applies rewrites by slot and leaves unknown text alone",
     b: { meets_core: false, summary: "原B" },
   });
   assert.equal((view.decision_basis as { tradeoff: string }).tradeoff, "精简权衡");
+  const rows = (view.decision_basis as unknown as ComparisonResult["decision_basis"]).comparisons;
+  assert.equal(rows[0].assessments.a.summary, "A组 给出了4。");
+  assert.equal(rows[0].assessments.b.summary, "原表现B");
+  assert.deepEqual(rows[0].better_candidates, ["a"]);
   assert.equal((view.verdicts as Record<string, { reason: string }>)["a__vs__b"].reason, "精简判决");
   assert.equal(evaluations.a.summary, "归因A组精简");
   assert.equal(evaluations.a.correctness_reason, "A组正确");

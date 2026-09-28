@@ -14,7 +14,7 @@ interface Input {
   ground_truth: { available: boolean; value: unknown };
   answer: {
     final_message_index: number;
-    catalog: { type: string; role?: string; name?: string | null }[];
+    catalog: { message_index: number; type: string; role?: string; name?: string | null }[];
   };
 }
 
@@ -56,6 +56,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     message.name && (toolMessages.has(message.type) || message.role === "tool") ? [message.name] : [],
   ));
   const toolNames = [...tools];
+  const toolLocations = new Map(input.answer.catalog
+    .filter((message) => message.name && (toolMessages.has(message.type) || message.role === "tool"))
+    .map((message) => [message.message_index, message.name]));
   const findingIds = new Set<string>();
   value.findings.forEach((finding, index) => {
     if (findingIds.has(finding.finding_id))
@@ -100,6 +103,14 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         "problem.component 必须是该回答调用链中的工具名，或「模型自身推理」；不要用阶段/能力名",
         finding.problem.component,
         toolNames.join(", ") || "模型自身推理",
+      );
+    if (finding.problem && tools.has(finding.problem.component) &&
+      !finding.evidence.some((item) => toolLocations.get(item.message_index) === finding.problem!.component))
+      issue(
+        "problem_component_evidence_missing",
+        `/findings/${index}/evidence`,
+        "工具型 component 必须引用该工具的调用或返回证据，不能仅凭最终回答或其他工具定位根因",
+        finding.problem.component,
       );
   });
 

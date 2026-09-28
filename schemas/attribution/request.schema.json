@@ -53,6 +53,7 @@
               "type": { "type": "string", "minLength": 1 },
               "role": { "type": "string" },
               "name": { "type": ["string", "null"] },
+              "call_message_index": { "type": "integer", "minimum": 0 },
               "chars": { "type": "integer", "minimum": 0 }
             }
           }

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
-import { exists, fileSourceReader, locateRun, readJson } from "@eval/data";
+import { exists, locateRun, readJson } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { dashboardReference } from "./dashboard-reference.js";
 import {
@@ -14,7 +14,8 @@ import {
   filterGptModels,
 } from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
-import { listClusteringTasks, listInputInventory, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
+import { createDashboardInputs } from "./dashboard-inputs.js";
+import { listClusteringTasks, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -44,36 +45,6 @@ interface DashboardCheckpoint {
 const ASSET_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 
 const asset = (name: string) => readFile(path.join(ASSET_DIR, name), "utf8");
-type InputInventory = Awaited<ReturnType<typeof listInputInventory>>;
-let inventoryMemo: { key: string; value: Promise<InputInventory> } | undefined;
-/** The inventory is a read-only projection; memoize it by config and source revisions. */
-async function sourceRevision(evaluation: Parameters<typeof listInputInventory>[0]): Promise<string> {
-  const versions = await Promise.all(
-    evaluation.inputs.versions.map(async (version) => {
-      try {
-        const files = await fileSourceReader.files(version.sources);
-        return [
-          version.id,
-          await Promise.all(files.map(async (file) => [file, await fileSourceReader.revision(file)])),
-        ];
-      } catch (error) {
-        return [version.id, "unavailable", errorText(error)];
-      }
-    }),
-  );
-  return JSON.stringify({ inputs: evaluation.inputs, versions });
-}
-async function readInventory(evaluation: Parameters<typeof listInputInventory>[0]): Promise<InputInventory> {
-  const key = await sourceRevision(evaluation);
-  if (inventoryMemo?.key === key) return inventoryMemo.value;
-  const value = listInputInventory(evaluation).catch((error) => {
-    if (inventoryMemo?.key === key) inventoryMemo = undefined;
-    throw error;
-  });
-  inventoryMemo = { key, value };
-  return value;
-}
-
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, message);
   return value as Record<string, unknown>;
@@ -227,6 +198,7 @@ export async function startDashboard(options: DashboardOptions) {
   if (!isRecord(output) || typeof output.path !== "string")
     throw new Error("Invalid output target in dashboard config");
   const outputDir = path.resolve(output.path);
+  const inputs = createDashboardInputs();
   const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths));
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
   const readModels = async () => {
@@ -289,13 +261,13 @@ export async function startDashboard(options: DashboardOptions) {
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")
-      return json(res, await readInventory(await loadEvaluation(options.configPaths)));
+      return json(res, await inputs.read(await loadEvaluation(options.configPaths)));
     if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
       return json(res, await allRuns(outputDir));
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
-      return json(res, await previewRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels }, record(await body(req, 64 * 1024), "Expected JSON object")));
+      return json(res, await previewRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, record(await body(req, 64 * 1024), "Expected JSON object")));
     if (req.method === "POST" && url.pathname === "/api/dashboard/runs")
-      return json(res, await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
+      return json(res, await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");

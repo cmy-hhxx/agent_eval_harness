@@ -10,7 +10,7 @@ import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { filterGptModels, assertGptModelSelections } from "../../../apps/host/src/dashboard-models.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { exists, readJson, writeJson, writeJsonl } from "@eval/data";
+import { exists, fileSourceReader, readJson, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
   attributionRow, buildPlan, caseResultView, listInputInventory, listRunCases, readCaseDetail,
@@ -247,7 +247,9 @@ test("dashboard case results include comparison evaluations and preserve attribu
     ground_truth: { available: false, value: null },
     ranking: [["a_fast"]],
     task_analysis: { goal: "g" },
-    decision_basis: { tradeoff: "t", decisive_findings: [] },
+    decision_basis: { tradeoff: "t", decisive_findings: [], comparisons: [{ aspect: "结果", importance: "high", better_candidates: [], assessments: {
+      a_fast: { summary: "给出结果。", finding_indices: [0] },
+    } }] },
     assessments: { a_fast: { meets_core: true, summary: "s" } },
     verdicts: { a_fast__vs__aa_fast: { result: "win" } },
   })!;
@@ -264,6 +266,113 @@ test("dashboard case results include comparison evaluations and preserve attribu
   assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
   assert.equal(caseResultView("attribution", undefined), null);
 });
+
+test("dashboard dates respond while source scanning is blocked", async () => {
+  const fixture = await setup();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const original = fileSourceReader.lines;
+  fileSourceReader.lines = async function* (...args) { await gate; yield* original(...args); };
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    const response = await fetch(server.url + "/api/dashboard/inputs", { signal: AbortSignal.timeout(1000) });
+    const pending = await response.json();
+    assert.equal(pending.status, "loading");
+    assert.equal(pending.dates[0].date, path.basename(fixture.directory));
+    assert.equal(pending.dates[0].cases, null, "unscanned files must not claim zero valid samples");
+    release();
+    const inventory = await readyInventory(server.url);
+    assert.deepEqual(inventory.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
+  } finally {
+    release();
+    fileSourceReader.lines = original;
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard start reuses preview planning and invalidates changed sources", async () => {
+  const fixture = await setup();
+  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
+  process.env.EVAL_BASE_URL = gateway;
+  process.env.EVAL_API_KEY = "fixture";
+  const original = fileSourceReader.lines;
+  let scans = 0;
+  fileSourceReader.lines = async function* (...args) { scans++; yield* original(...args); };
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0,
+    modelCatalog: async () => [{ id: "gpt-fixture", name: "GPT fixture" }] });
+  const payload = { runId: "empty-preview", batch: ["absent"], settings: {
+    bindings: Object.fromEntries(["attribution", "comparison", "rewrite", "clustering"].map((stage) => [stage, { model: "gpt-fixture" }])),
+  } };
+  const post = (route: string) => fetch(server.url + route, { method: "POST",
+    headers: { "content-type": "application/json", origin: server.url }, body: JSON.stringify(payload) });
+  try {
+    assert.equal((await post("/api/dashboard/preview")).status, 200);
+    const previewScans = scans;
+    assert(previewScans > 0);
+    const rejected = await post("/api/dashboard/runs");
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error, /没有可评/);
+    assert.equal(scans, previewScans, "start must not parse all sources a second time");
+    payload.batch = ["another-absent-batch"];
+    assert.equal((await post("/api/dashboard/preview")).status, 200);
+    assert.equal(scans, previewScans, "selection changes rebuild the plan without rereading source bodies");
+    const selectionScans = scans;
+    await writeJsonl(fixture.config.inputs.versions[0]!.sources[0]!.path, [raw("changed")]);
+    assert.equal((await post("/api/dashboard/preview")).status, 200);
+    assert.equal(scans, selectionScans + 1, "only the changed source needs reparsing");
+  } finally {
+    fileSourceReader.lines = original;
+    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard preflight reuses date inventory across sample counts", async () => {
+  const fixture = await setup();
+  const previousUrl = process.env.EVAL_BASE_URL;
+  process.env.EVAL_BASE_URL = gateway;
+  const original = fileSourceReader.lines;
+  let scans = 0;
+  fileSourceReader.lines = async function* (...args) { scans++; yield* original(...args); };
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    await readyInventory(server.url);
+    const inventoryScans = scans;
+    const preview = async (limitCases: number) => {
+      const response = await fetch(server.url + "/api/dashboard/preview", {
+        method: "POST", headers: { "content-type": "application/json", origin: server.url },
+        body: JSON.stringify({ runId: "new-preview", limitCases }),
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const one = await preview(1);
+    assert.equal(one.summary.cases, 1);
+    assert.equal(scans, inventoryScans, "preflight must reuse the source scan already needed for dates");
+    const two = await preview(2);
+    assert.equal(two.summary.cases, 2);
+    assert.equal(scans, inventoryScans, "changing sample count must not rescan unchanged files");
+  } finally {
+    fileSourceReader.lines = original;
+    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+async function readyInventory(url: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await fetch(url + "/api/dashboard/inputs");
+    assert.equal(response.status, 200);
+    const inventory = await response.json();
+    if (inventory.status === "ready") return inventory;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Input inventory did not finish");
+}
 
 test("input inventory lists dates and cases from the configured sources", async () => {
   const { directory, config } = await fixtureConfig([
@@ -449,11 +558,11 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.deepEqual(Object.keys(reference.exports), ["comparison", "clustering"]);
     assert(!JSON.stringify(reference).includes("private-key-do-not-expose"));
     assert(!JSON.stringify(reference).includes(gateway));
-    const inventory = await (await get("/api/dashboard/inputs")).json();
+    const inventory = await readyInventory(server.url);
     assert.equal(inventory.dates.length, 1);
     assert.deepEqual(inventory.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2"]);
     await writeJsonl(fixture.config.inputs.versions[0]!.sources[0]!.path, [raw("q1"), raw("q2"), { ...raw("q3"), batch_id: "b2" }]);
-    const refreshed = await (await get("/api/dashboard/inputs")).json();
+    const refreshed = await readyInventory(server.url);
     assert.deepEqual(refreshed.dates[0].cases.map((item: { id: string }) => item.id), ["q1", "q2", "q3"]);
     const list = await (await get("/api/dashboard/runs/run-one/cases?status=succeeded")).json();
     assert.equal(list.total, 1);

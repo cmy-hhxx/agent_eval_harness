@@ -46,6 +46,13 @@ export interface ComparisonAssessment {
   meets_core: boolean;
   summary: string;
 }
+export interface AlignedComparison {
+  aspect: string;
+  importance: "high" | "medium" | "low";
+  /** Empty when no candidate has a verified advantage on this aspect. */
+  better_candidates: string[];
+  assessments: Record<string, { summary: string; finding_indices: number[] }>;
+}
 /**
  * One comparison over a whole group: a tiered ranking plus per-candidate core
  * classification. Two-way verdicts are derived from these two, never judged in isolation.
@@ -58,6 +65,7 @@ export interface ComparisonResult {
   assessments: Record<string, ComparisonAssessment>;
   decision_basis: {
     tradeoff: string;
+    comparisons: AlignedComparison[];
     decisive_findings: FindingRef[];
   };
 }

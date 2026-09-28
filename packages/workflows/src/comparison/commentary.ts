@@ -35,7 +35,11 @@ export function comparisonSlots(result: ComparisonResult): RewriteItem[] {
     label: `候选${label} 结论`,
     text: assessment.summary,
   }));
-  items.push({ id: "tradeoff", label: "权衡说明", text: result.decision_basis.tradeoff });
+  items.push({ id: "tradeoff", label: "裁决短评：结论与决定胜负的差异", text: result.decision_basis.tradeoff });
+  result.decision_basis.comparisons.forEach((row, index) => {
+    for (const [label, assessment] of Object.entries(row.assessments))
+      items.push({ id: `comparison.${index}.${label}.summary`, label: `${row.aspect} · 候选${label} 的表现`, text: assessment.summary });
+  });
   const labels = result.ranking.flat();
   const tiers = tierOf(result.ranking);
   for (let i = 0; i < labels.length; i++)
@@ -121,6 +125,13 @@ export function polishComparisonRow(
   }
   if (own?.tradeoff)
     (view.decision_basis as { tradeoff: string }).tradeoff = display(own.tradeoff, labels);
+  const comparisons = (view.decision_basis as { comparisons: ComparisonResult["decision_basis"]["comparisons"] }).comparisons;
+  comparisons.forEach((row, index) => {
+    for (const [label, candidate] of Object.entries(data.candidates)) {
+      const text = own?.[`comparison.${index}.${label}.summary`];
+      if (text) row.assessments[candidate.version]!.summary = display(text, labels);
+    }
+  });
   const labelOf = new Map(
     Object.entries(data.candidates).map(([label, candidate]) => [candidate.version, label]),
   );

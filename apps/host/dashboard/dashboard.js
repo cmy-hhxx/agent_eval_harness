@@ -1,11 +1,11 @@
 import { createDashboardViews } from "./dashboard-view.js";
 
 const state = {
-  runs: [], selectedRun: null, run: null, cases: null, selectedCase: null,
+  runs: [], selectedRun: null, startingRun: null, run: null, cases: null, selectedCase: null,
   clusteringTasks: null, clusteringRun: null, clusteringRequest: 0,
   caseDetail: null, selectedInput: null, inputView: null, config: null, page: 1,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, runId: "",
-  inputs: null, selectedDates: new Set(), datesReady: false,
+  inputs: null, inputsTimer: 0, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
   sampledCases: null, sampleInfo: null, rangeLocked: false,
   library: null, libraryDetail: null, libraryRequest: 0, libraryDetailRequest: 0,
@@ -373,6 +373,17 @@ async function refresh(auto = false) {
     if (request !== state.runRequest) return;
     state.runs = runs;
     const previousRun = state.selectedRun;
+    if (state.startingRun) {
+      if (runs.some((run) => run.run_id === state.startingRun.id)) {
+        state.selectedRun = state.startingRun.id;
+        state.startingRun = null;
+        state.page = 1;
+      } else if (Date.now() >= state.startingRun.deadline) {
+        const id = state.startingRun.id;
+        state.startingRun = null;
+        throw new Error(`运行 ${id} 启动等待超时`);
+      }
+    }
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
     if (previousRun !== state.selectedRun) {
       ++state.caseRequest;
@@ -398,12 +409,13 @@ async function refresh(auto = false) {
   }
 }
 let autoBusy = false, autoTicks = 0;
-/** Poll only while a run is live, one refresh at a time; idle pages stay static for annotation. */
+/** Include the gap between spawn and the first checkpoint; idle pages stop polling. */
 function scheduleAutoRefresh() {
   clearTimeout(state.refreshTimer);
   if (autoBusy) return;
   const live = state.run?.status === "running" || state.runs.some((run) => run.status === "running");
-  if (live) state.refreshTimer = setTimeout(() => void autoRefresh(), 5000);
+  if (live || state.startingRun)
+    state.refreshTimer = setTimeout(() => void autoRefresh(), state.startingRun ? 1000 : 5000);
 }
 async function autoRefresh() {
   autoBusy = true;
@@ -435,7 +447,7 @@ function selectedGroups() {
 }
 function viableCount(date) {
   const groups = selectedGroups();
-  return date.cases.filter((item) => groups.some((group) => group.every((id) => item.versions.includes(id)))).length;
+  return (date.cases || []).filter((item) => groups.some((group) => group.every((id) => item.versions.includes(id)))).length;
 }
 function renderDateOptions() {
   const signature = JSON.stringify([state.rangeLocked, [...state.selectedDates], [...state.selectedModels], state.inputs]);
@@ -446,7 +458,7 @@ function renderDateOptions() {
     ? loading("正在读取日期")
     : dates.length ? dates.map((date) => {
     const on = state.selectedDates.has(date.date);
-    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.date)}<span class="chip-count">${viableCount(date)}/${date.cases.length}</span></button>`;
+    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.date)}<span class="chip-count">${date.cases === null ? "扫描中" : `${viableCount(date)}/${date.cases.length}`}</span></button>`;
   }).join("") : '<p class="empty-state">无可用日期</p>';
 }
 function renderModelOptions() {
@@ -475,7 +487,7 @@ function viableCases() {
   const cases = new Set();
   for (const date of state.inputs?.dates || []) {
     if (!state.selectedDates.has(date.date)) continue;
-    for (const item of date.cases)
+    for (const item of date.cases || [])
       if (groups.some((group) => group.every((id) => item.versions.includes(id))))
         cases.add(item.id);
   }
@@ -489,7 +501,7 @@ function selectionScope() {
     cases = new Set();
   for (const date of selected) {
     for (const batch of date.batches) batches.add(batch);
-    for (const item of date.cases) cases.add(item.id);
+    for (const item of date.cases || []) cases.add(item.id);
   }
   return { full: selected.length === dates.length, batches: [...batches], cases: [...cases] };
 }
@@ -504,11 +516,13 @@ function pickSample() {
   return { cases: viable.slice(0, size), size, available: viable.length };
 }
 async function loadInputs() {
-  state.datesSignature = "";
-  $("#date-options").innerHTML = loading("正在读取日期");
+  clearTimeout(state.inputsTimer);
+  if (!state.inputs) $("#date-options").innerHTML = loading("正在读取日期");
   try {
     const inventory = await api("/api/dashboard/inputs");
     state.inputs = inventory;
+    $("#preview-button").disabled = inventory.status !== "ready";
+    if (inventory.status === "loading") state.inputsTimer = setTimeout(() => void loadInputs(), 500);
     const known = new Set(inventory.dates.map((date) => date.date));
     if (!state.datesReady) {
       state.selectedDates = new Set(known);
@@ -517,6 +531,8 @@ async function loadInputs() {
     renderDateOptions();
   } catch (error) {
     state.inputs = null;
+    state.datesSignature = "";
+    $("#preview-button").disabled = true;
     $("#date-options").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
   }
 }
@@ -606,6 +622,7 @@ function invalidatePreview() {
 async function preview() {
   if (!$("#start-form").reportValidity()) return;
   if (!state.inputs) await loadInputs();
+  if (state.inputs?.status !== "ready") return;
   if (!state.selectedDates.size) {
     const status = $("#preview-result");
     status.className = "preview-result is-error";
@@ -665,19 +682,21 @@ async function preview() {
 async function startRun() {
   if (!state.preview || !$("#start-form").reportValidity()) return;
   $("#launch-button").disabled = true;
+  $("#launch-button").textContent = "启动中…";
   try {
     const value = await api("/api/dashboard/runs", { method: "POST", body: JSON.stringify(launchPayload()) });
+    state.startingRun = { id: value.run_id, deadline: Date.now() + 120000 };
     toast(`已提交运行 ${value.run_id}`);
     state.preview = null;
     state.runId = suggestedRunId();
     $("#preview-result").className = "preview-result is-ready";
-    $("#preview-result").textContent = "已提交";
+    $("#preview-result").textContent = "进程已启动";
     await new Promise((resolve) => setTimeout(resolve, 700));
     await refresh();
   } catch (error) {
     toast(`启动失败：${error.message}`, true);
     $("#launch-button").disabled = false;
-  }
+  } finally { $("#launch-button").textContent = "启动"; }
 }
 
 $("#run-list").addEventListener("click", (event) => {
@@ -754,6 +773,8 @@ document.addEventListener("click", async (event) => {
   if (findingLink) {
     const finding = document.getElementById(findingLink.dataset.findingTarget);
     if (finding) {
+      for (let parent = finding.parentElement; parent; parent = parent.parentElement)
+        if (parent.tagName === "DETAILS") parent.open = true;
       finding.open = true;
       state.openFindings.add(finding.dataset.finding);
     }

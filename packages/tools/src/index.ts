@@ -7,7 +7,7 @@ import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult }
 import { fileURLToPath } from "node:url";
 import { canonical, errorText, object, schemaIssues, ValidationError } from "@eval/contracts";
 
-import { cite, evidenceId, evidenceSources, renderMessage } from "./evidence.js";
+import { cite, evidenceId, evidenceSources, imagePlaceholder } from "./evidence.js";
 
 const schema = (properties: JsonSchema, required = Object.keys(properties)): JsonSchema => ({
   type: "object",
@@ -199,6 +199,7 @@ export const builtinTools: ExecutableTool[] = [
       {
         candidate: str,
         message_index: index,
+        path: { type: "string" },
         offset: index,
         max_chars: { type: "integer", minimum: 1, maximum: 16000 },
       },
@@ -208,48 +209,45 @@ export const builtinTools: ExecutableTool[] = [
       const args = value as {
         candidate: string;
         message_index: number;
+        path?: string;
         offset?: number;
         max_chars?: number;
       };
-      const source = message(ctx, args.candidate, args.message_index),
-        full = renderMessage(source),
-        offset = args.offset || 0,
-        length = args.max_chars || 12000;
-      const text = full.slice(offset, offset + length);
-      const citations = evidenceSources(source)
-        .flatMap((source) => {
-          if (source.kind === "json")
-            return text.includes("[图像数据")
-              ? []
-              : [
-                  cite(
-                    args.message_index,
-                    source,
-                    offset,
-                    Math.min(offset + length, source.text.length),
-                  ),
-                ];
-          const matches = [];
-          let start = 0;
-          for (const line of source.text.split("\n")) {
-            const end = start + Math.min(line.length, 640);
-            if (line.trim() && text.includes(JSON.stringify(source.text.slice(start, end)).slice(1, -1)))
-              matches.push(cite(args.message_index, source, start, end));
-            start += line.length + 1;
-          }
-          return matches;
-        })
-        .filter((item) => item.quote)
-        .slice(0, 12);
-      // Evidence coordinates stay first so truncating a long trace never hides them.
-      return textResult({
-        evidence: citations,
-        offset,
-        next_offset: offset + length,
-        total_chars: full.length,
-        has_more: offset + length < full.length,
-        text,
-      });
+      const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
+      const source = args.path
+        ? sources.find((item) => item.kind === "text" && item.path === args.path)
+        : sources.find((item) => item.kind === "json");
+      if (!source) throw new Error("文本路径不存在；先省略 path 读取该消息的 text_sources，再选择其中的路径");
+      const offset = args.offset ?? 0;
+      if (offset > source.text.length) throw new Error(`offset 超出当前来源长度 ${source.text.length}，请使用上次返回的 next_offset`);
+      let end = Math.min(offset + (args.max_chars ?? 12000), source.text.length);
+      const paths = sources.filter((item) => item.kind === "text");
+      const shownPaths = source.kind === "json" ? paths.slice(0, 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
+      const page = () => {
+        const evidence = cite(args.message_index, source, offset, end);
+        const quotable = !!evidence.quote && !evidence.quote.includes(imagePlaceholder);
+        return textResult({
+          source: { kind: source.kind, path: source.path },
+          evidence: quotable ? [evidence] : [],
+          // Text is shown once, paired with its ID; image placeholders have no evidence ID.
+          ...(!quotable ? { text: evidence.quote } : {}),
+          offset, next_offset: end, total_chars: source.text.length, has_more: end < source.text.length,
+          ...(source.kind === "json" ? { text_sources: shownPaths, text_sources_has_more: shownPaths.length < paths.length } : {}),
+        });
+      };
+      let result = page();
+      // Fit the serialized response, including escaped quotes and metadata, before generic truncation.
+      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && end - offset > 1) {
+        end = offset + Math.max(1, Math.floor((end - offset) / 2));
+        result = page();
+      }
+      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && shownPaths.length) {
+        shownPaths.pop();
+        result = page();
+      }
+      if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
+        throw new Error("maxOutputChars 太小，无法完整返回一条证据；请增大工具输出预算");
+      return result;
     },
   },
   {
@@ -288,12 +286,21 @@ export const builtinTools: ExecutableTool[] = [
         }
       });
       const offset = args.offset || 0;
-      return textResult({
-        matches: matches.slice(offset, offset + 20),
+      const shown = matches.slice(offset, offset + 20);
+      const page = () => textResult({
+        matches: shown,
         total: matches.length,
-        next_offset: offset + 20,
-        has_more: offset + 20 < matches.length,
+        next_offset: offset + shown.length,
+        has_more: offset + shown.length < matches.length,
       });
+      let result = page();
+      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && shown.length > 1) {
+        shown.pop();
+        result = page();
+      }
+      if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
+        throw new Error("maxOutputChars 太小，无法完整返回一条检索证据；请增大工具输出预算");
+      return result;
     },
   },
   {

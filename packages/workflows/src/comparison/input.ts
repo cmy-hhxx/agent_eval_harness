@@ -251,9 +251,78 @@ export function assertComparableGroups(config: Pick<EvalConfig, "inputs" | "comp
       throw new Error(`对比组混合了不同模型规模（${[...declared].join(" / ")}）：${group.join(" / ")}`);
   }
 }
+interface ScannedInput {
+  index: number;
+  batchId: string | null;
+  caseId: string | null;
+  record?: Candidate;
+  raw?: RawInput;
+  error?: unknown;
+}
+type InputScanner = (source: string, version: VersionConfig, defaultBatch: string | undefined,
+  revision: string) => AsyncIterable<ScannedInput | undefined>;
+
+const scanInputFile: InputScanner = async function* (source, version, defaultBatch, revision) {
+  for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+    if (!line.trim()) { yield undefined; continue; }
+    const entry: ScannedInput = { index, batchId: null, caseId: null };
+    try {
+      const raw = object(JSON.parse(line)) as RawInput, meta = raw.meta || {};
+      const batch = raw.batch_id || meta.batch_id || defaultBatch, id = raw.case_id || meta.case_id;
+      entry.batchId = batch ? String(batch) : null;
+      entry.caseId = id ? String(id) : null;
+      entry.record = adapt(raw, version, source, index, defaultBatch);
+      entry.raw = raw;
+    } catch (error) { entry.error = error; }
+    yield entry;
+  }
+};
+
+/** One dashboard's compact file projections, shared by inventory and read-only planning. */
+export function createInputScanCache(): InputScanner {
+  const files = new Map<string, { key: string; value: Promise<(ScannedInput | undefined)[]> }>();
+  return async function* (source, version, defaultBatch, revision) {
+    const id = canonical([source, version.id]);
+    const { sources: _sources, ...adapterConfig } = version;
+    const key = canonical([adapterConfig, defaultBatch ?? null, revision]);
+    let entry = files.get(id);
+    if (entry?.key !== key) {
+      const value = (async () => {
+        const rows: (ScannedInput | undefined)[] = [];
+        try {
+          for await (const row of scanInputFile(source, version, defaultBatch, revision)) {
+            if (!row) { rows.push(undefined); continue; }
+            const { raw: _raw, ...projection } = row;
+            rows.push(projection);
+          }
+        } catch (error) {
+          // Do not turn a partial read into an ordinary missing-file diagnostic.
+          if (rows.length) throw new Error(errorText(error), { cause: error });
+          throw error;
+        }
+        return rows;
+      })();
+      entry = { key, value };
+      files.set(id, entry);
+    }
+    try {
+      // A concurrent inventory request may have populated this entry earlier in the request.
+      const rows = await entry.value;
+      if (await fileSourceReader.revision(source) !== revision)
+        throw new Error("读取期间输入文件发生变化，请重试：" + source);
+      for (const row of rows) yield row && { ...row, ...(row.record ? { record: { ...row.record } } : {}) };
+    } catch (error) {
+      if (files.get(id) === entry) files.delete(id);
+      throw error;
+    }
+  };
+}
+
 export interface PlanOptions {
   /** Skip raw input materialization when only task counts or summaries are needed. */
   materializeInputs?: boolean;
+  /** Compact projections are for new read-only previews, never execution or reconciliation. */
+  scanFile?: InputScanner;
 }
 export async function buildPlan(
   config: EvalConfig,
@@ -261,6 +330,8 @@ export async function buildPlan(
   options: PlanOptions = {},
 ): Promise<TaskPlan> {
   assertComparableGroups(config);
+  if (options.scanFile && (options.materializeInputs !== false || previous))
+    throw new Error("输入扫描索引仅用于新运行的只读预检");
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
   const oldRecords = new Map(
     (
@@ -318,27 +389,20 @@ export async function buildPlan(
       try {
         const revision = sourceRevisions.get(source) ?? await fileSourceReader.revision(source);
         sourceRevisions.set(source, revision);
-        for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+        for await (const row of (options.scanFile ?? scanInputFile)(source, version, config.inputs.default_batch_id, revision)) {
           scanned = true;
-          if (!line.trim()) continue;
-          let key: string | undefined,
-            batchId: string | null = null,
-            caseId: string | null = null;
+          if (!row) continue;
+          const { index, batchId, caseId, raw } = row;
+          let key: string | undefined;
           try {
-            const raw = object(JSON.parse(line)) as RawInput,
-              meta = raw.meta || {};
-            const batch = raw.batch_id || meta.batch_id || config.inputs.default_batch_id,
-              id = raw.case_id || meta.case_id;
             if (
-              (batch && config.inputs.batches?.length && !config.inputs.batches.includes(String(batch))) ||
-              (id && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(String(id)))
+              (batchId && config.inputs.batches?.length && !config.inputs.batches.includes(batchId)) ||
+              (caseId && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(caseId))
             )
               continue;
-            batchId = batch ? String(batch) : null;
-            caseId = id ? String(id) : null;
-            if (batch && id) {
-              key = canonical([String(batch), String(id), version.id]);
-              cases.set(canonical([String(batch), String(id)]), [String(batch), String(id)]);
+            if (batchId && caseId) {
+              key = canonical([batchId, caseId, version.id]);
+              cases.set(canonical([batchId, caseId]), [batchId, caseId]);
               const sources = locations.get(key) || [];
               sources.push({ version: version.id, source, line: index });
               locations.set(key, sources);
@@ -348,14 +412,15 @@ export async function buildPlan(
                     category: "input",
                     code: "duplicate_input",
                     path: "/",
-                    actual: [batch, id, version.id],
+                    actual: [batchId, caseId, version.id],
                     expected: "每个业务标识仅一条记录",
                     message: "duplicate_input: 同一批次、case、版本出现多条记录",
                   },
                 ]);
               seen.add(key);
             }
-            const record = adapt(raw, version, source, index, config.inputs.default_batch_id);
+            if (row.error) throw row.error;
+            const record = row.record!;
             const old = oldRecords.get(candidateKey(record));
             if (
               old &&

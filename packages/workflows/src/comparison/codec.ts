@@ -138,6 +138,11 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
     ),
     decision_basis: {
       tradeoff: basis.tradeoff,
+      comparisons: basis.comparisons.map((item) => ({
+        ...item,
+        better_candidates: item.better_candidates.map((version) => labels.get(version)!),
+        assessments: Object.fromEntries(Object.entries(item.assessments).map(([version, assessment]) => [labels.get(version)!, assessment])),
+      })),
       decisive_findings: basis.decisive_findings.map((ref) => ({
         ...ref,
         candidate: labels.get(ref.candidate)!,

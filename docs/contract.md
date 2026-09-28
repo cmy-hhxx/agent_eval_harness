@@ -83,7 +83,7 @@ Attribution 需要 evidence resolution，保留 submission/result 两份 Schema�
 
 ## 归因与判决
 
-每条回答先经过归因 Agent：以 Workflow 的 `ground_truth.available` 为准，有标准答案时必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""` 和空对错证据；`has_standard_answer` 由 Host 从请求填入接受结果。无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。`scoring_points` / `red_flags` 没有实际内容时为空，finding 无对应核心要求时 `requirement_index=null`。有证据的优点用 strength；确定或疑似问题用 problem，并以 `assessment.evidence_status` 区分已确认与待核实，不能把疑似写成确定错误。每个问题只描述问题观察：`problem.component` 必须是该回答实际工具调用或结果中确切的工具名（与材料 `catalog.name` 一致），模型误读工具结果或自行推理/表达的问题用「模型自身推理」，不得使用能力/阶段名；`problem.label` 与 `problem.definition` 给出可复用的现象及边界。工具名表示问题发生部位，不表示工具提供方有责任。归因不读问题库、不指定分类、不建类。
+每条回答先经过归因 Agent：以 Workflow 的 `ground_truth.available` 为准，有标准答案时必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""` 和空对错证据；`has_standard_answer` 由 Host 从请求填入接受结果。无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。`scoring_points` / `red_flags` 没有实际内容时为空，finding 无对应核心要求时 `requirement_index=null`。有证据的优点用 strength；确定或疑似问题用 problem，并以 `assessment.evidence_status` 区分已确认与待核实，不能把疑似写成确定错误。每个问题只描述问题观察：`problem.component` 必须是该回答实际工具调用或结果中确切的工具名（与材料 `catalog.name` 一致），工具调用参数、返回值及结果使用环节的问题都优先定位具体工具；与工具链无关的自行推理/表达才用「模型自身推理」，不得使用能力/阶段名。`reason/definition` 必须区分工具返回错误、模型调用错误和模型误读正确结果；沿调用链追溯可证实的最早出错环节，不把传播重复计为多个问题。工具型 component 至少引用该工具的一条调用或返回证据；材料目录按调用 ID 补全返回消息的工具名和 `call_message_index`，不按相邻位置猜测；`problem.label` 与 `problem.definition` 给出可复用的现象及边界。工具名表示问题发生部位，不表示工具提供方有责任。归因不读问题库、不指定分类、不建类。
 
 对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建 finding。
 
@@ -102,7 +102,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 有标准答案时，归因 `is_correct=false` 的候选不得判为 `meets_core=true`。Host 在接收提交、恢复和离线校验时检查排名是候选的划分、`assessments` 覆盖全部候选、决定性发现引用既有归因 finding；这些检查只保证结构与引用关系，不能代替事实和影响判断。
 
-提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 按同一比较方面逐段对照全部候选，再解释相邻层差异与同层并列理由；共同优点不能写成独有优势，缺少同名 finding 不代表另一方没有该能力。内容质量和回答体验都要对照，质量相当时明显的等待或资源差异可以影响排名，速度不能抵消核心错误。对比阶段不提交 evidence、不新增 finding。
+提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 只写裁决与决定胜负的差异（最多160字）；`decision_basis.comparisons` 按同一方面逐行对照，每行包含 `aspect`、`importance`、`better_candidates` 和全部候选的 `assessments`，各格用 `summary`（最多160字）说明表现，以 `finding_indices` 引用本候选既有归因。共同优点或无已证实优势时 `better_candidates=[]`。Host 校验每行候选完整、优势候选有效、引用存在，并要求全部待核对优点、中高重要性问题及决定性发现被比较行覆盖；导出与恢复按稳定版本 ID 转换行内候选，改写按比较行索引和候选槽位回填；Workflow 从全部既有 strength 生成双向 `strength_checks`（candidate/finding_index/counterparts）；每项优点核对其他候选在同一方面是否具备，确认缺失时明确写成其相对短板，共同优点合并，独立优势及反向优势不能漏掉。缺少同名 finding 不代表没有能力，材料不足保留未知；可选优势缺失不自动构成核心错误。体验点评围绕额外等待是否换来实际质量收益，只引用支撑判断的关键数据，不固定枚举耗时与 token，也不强制写资源段落。质量相当时明显等待差异可以影响排名，速度不能抵消核心错误。对比阶段不提交 evidence、不新增 finding。
 
 ## 问题库与聚类
 
@@ -137,7 +137,9 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 内部提交使用工具或初始材料提供的 `evidence_id`，绑定消息、来源路径和原文位置；程序展开为正式结果的 `message_index + quote`。ID 是明文坐标：`ev_<消息索引>_<text|json>_<起>_<止>_<路径>`，图片为 `ev_<消息索引>_image`；模型逐字复制，Host 按坐标重新定位来源。索引、路径或起止范围无效时拒绝，不会从错误坐标猜测引文或把越界范围改成整段；反馈提供来源长度、可用路径，模型应重新读取工具返回的 ID。读取、搜索和展开共享公共工具包中的字符串/JSON 表示，不进行其他模糊匹配。可引用消息内的原始字符串，也可引用该消息按两空格缩进显示的 JSON 连续片段，包括结构化工具返回的字段和数值；`search_trace` 同样支持查找这些片段。图片提交使用图片 evidence ID 与 `observation`，正式结果展开为 `[图像观察]`，工具审计必须存在实际 `view_image` 记录。Host 校验引用、索引和判决关系，事实判断仍需[质量复核](quality.md)。
 
-初始材料是渐进式披露的首屏：只展示 `initialContextChars` 预算内的投影消息，投影会剔除 `input_messages`、`model`、`model_parameters` 等内部字段，证据引文同样计入预算；完整消息和隐藏字段通过材料工具按需读取，工具结果按 `maxOutputChars` 截断并可将完整内容存为可分页产物。
+初始材料是渐进式披露的首屏：只展示 `initialContextChars` 预算内的投影消息，投影会剔除 `input_messages`、`model`、`model_parameters` 等内部字段，证据引文同样计入预算；完整消息和隐藏字段通过材料工具按需读取。`read_trace` 可用 `path` 读取原始文本字段，省略时读取整条消息 JSON 并给出文本路径目录；`source` 标明当前坐标来源，分页保持来源不变并使用返回的 `next_offset`。`read_trace` 和 `search_trace` 在 `maxOutputChars` 内分别缩短原文页、减少检索条目，始终完整返回配对的引文与 ID，不交给通用字符截断；其他工具超预算时仍截断并将完整内容存为可分页产物。
+
+证据范围无效时仍拒绝提交；反馈的 `expected.suggested_evidence` 提供从同一来源生成的短引文和有效 ID，`expected.read_request` 给出继续读取的参数。模型必须先核对片段是否支持原判断，再选择对应 ID；片段不足时继续读取或搜索，不手算坐标、不将建议直接视为已接受证据。无效路径没有建议引文，需先重新读取消息定位字段。
 
 每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`；`verdicts[].reason` 是程序生成的规则概述，逐题的具体差异与反向事实在 `decision_basis.tradeoff`、候选评估和归因 findings 中。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
 
@@ -145,6 +147,6 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 `stage` 表示发现属于上下文回溯、推理、执行或最终回答；`stage_trace` 由程序从原始消息生成，包含工具、位置、置信度与来源。只回溯当前 finding 引用的证据；无法唯一定位时保留候选工具，不猜测确定来源。
 
-Comparison 请求的 `original_answer_timing` 包含首 token、首段回答与完成耗时，统一为秒；`original_answer_usage` 从被评输入 `meta.usage` 提取输入、输出、总 token 和缓存输入，记录来源字段、总量依据及数据异常。A 的 `input_tokens_details.cached_tokens` 和 AA 的 `cached_read_tokens` 统一为 `cached_input_tokens`，它是输入子集，不重复累加；未记录总量且输入、输出都有效时才相加。缺失或无效指标为 `null`，总量冲突与缓存超出输入会标记异常，不使用裁判 SDK 消耗或累加 trace 快照。对比结论在 `decision_basis.tradeoff` 中引用实际比较的数值与差异，报告沿用已接受结论，不重读来源来重评。
+Comparison 请求的 `original_answer_timing` 包含首 token、首段回答与完成耗时，统一为秒；`original_answer_usage` 从被评输入 `meta.usage` 提取输入、输出、总 token 和缓存输入，记录来源字段、总量依据及数据异常。A 的 `input_tokens_details.cached_tokens` 和 AA 的 `cached_read_tokens` 统一为 `cached_input_tokens`，它是输入子集，不重复累加；未记录总量且输入、输出都有效时才相加。缺失或无效指标为 `null`，总量冲突与缓存超出输入会标记异常，不使用裁判 SDK 消耗或累加 trace 快照。指标供裁判判断，正文只在解释实际得失时引用必要数值，不强制展示全部字段；报告沿用已接受结论，不重读来源来重评。
 
 逐题总结包含问题、要求、判决、同项对比理由、各方优缺点、得分点、red flags 和原始回答体验对照。逐项使用可比数据，未知指标不填零；token 量不等于价格，单次耗时不代表长期性能。

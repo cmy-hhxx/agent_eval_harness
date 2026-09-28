@@ -3,8 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorText, HttpError, safeId } from "@eval/contracts";
 import { exists, locateRun, readJson } from "@eval/data";
-import { comparisonWorkflow, readRunState, reconcileRun } from "@eval/workflows/comparison";
-import type { JsonObject } from "@eval/contracts";
+import { readRunState, reconcileRun } from "@eval/workflows/comparison";
+import type { JsonObject, TaskPlan } from "@eval/contracts";
+import type { EvalConfig } from "@eval/workflows/comparison";
 import { dashboardSettings, loadConfig } from "./config.js";
 import { createModelResolver } from "./models.js";
 import {
@@ -18,6 +19,7 @@ interface LaunchOptions {
   configPaths: string[];
   outputDir: string;
   modelCatalog?: DashboardModelLoader;
+  plan: (config: EvalConfig) => Promise<TaskPlan>;
 }
 interface RunLock {
   pid?: number;
@@ -109,7 +111,7 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
     if (chosen.case) config.inputs.case_ids = chosen.case;
     if (chosen.limitCases) config.inputs.limit = chosen.limitCases;
   }
-  const plan = resuming ? undefined : await comparisonWorkflow.plan(config, { materializeInputs: false });
+  const plan = resuming ? undefined : await options.plan(config);
   return { runId, engine, chosen, settings, resuming, plan, run, config };
 }
 

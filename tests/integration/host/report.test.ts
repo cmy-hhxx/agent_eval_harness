@@ -108,6 +108,10 @@ for (const objective of [false, true])
           },
           decision_basis: {
             tradeoff: "候选B的优点不能抵消候选A的优势。",
+            comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [aFast], assessments: {
+              [aFast]: { summary: `候选${aFast}给出正确结果。`, finding_indices: [0] },
+              [aaFast]: { summary: `候选${aaFast}结果错误。`, finding_indices: [0] },
+            } }],
             decisive_findings: [
               { candidate: aFast, finding_index: 0 },
               { candidate: aaFast, finding_index: 0 },
@@ -128,11 +132,35 @@ for (const objective of [false, true])
         assert.equal(materials[aFast]!.original_answer_usage.total_tokens, 120);
         assert.equal(materials[aaFast]!.original_answer_usage.total_tokens, 1020);
         assert.equal(materials[aFast]!.original_answer_timing.finish_seconds, 8);
+        assert.deepEqual(binding.request.input.strength_checks, [
+          { candidate: aFast, finding_index: 0, counterparts: [aaFast] },
+        ]);
+        const mutual = structuredClone(dependencies);
+        for (const label of [aFast, aaFast]) {
+          const review = mutual[label]!.evaluation as ReturnType<typeof attributionResult>;
+          review.findings = [
+            { ...review.findings[0]!, type: "problem" },
+            ...Array.from({ length: label === aFast ? 3 : 1 }, () => ({
+              ...review.findings[0]!, type: "strength" as const, problem: null,
+            })),
+          ];
+        }
+        const mutualChecks = comparisonWorkflow.bind(task, snapshots, mutual).request.input.strength_checks;
+        assert.deepEqual(mutualChecks, Object.keys(dependencies).flatMap((label) =>
+          Array.from({ length: label === aFast ? 3 : 1 }, (_, index) => ({
+            candidate: label, finding_index: index + 1,
+            counterparts: [label === aFast ? aaFast : aFast],
+          })),
+        ));
         const row = comparisonRow(snapshots, task, result, receipts, {
           a_fast: "A组Fast",
           aa_fast: "AA组Fast",
         }, fakeEvaluatorVersion);
         assert(validateOutput(row), JSON.stringify(validateOutput.errors));
+        const aligned = (row.decision_basis as ComparisonResult["decision_basis"]).comparisons[0];
+        assert.deepEqual(aligned.better_candidates, ["a_fast"]);
+        assert.equal(aligned.assessments.a_fast.summary, "A组Fast给出正确结果。");
+        assert.deepEqual(aligned.assessments.aa_fast.finding_indices, [0]);
         assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
         assert.equal(row.request_time, "2026-09-24 11:37:31");
         assert.equal(row.has_standard_answer, objective);

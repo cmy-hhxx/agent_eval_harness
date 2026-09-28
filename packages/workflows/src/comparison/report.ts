@@ -298,7 +298,16 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       ...analysis.requirements.map((v) => `- ${v}`),
       "",
     );
-    markdown.push("## 同项对比", "", (view.decision_basis as ComparisonResult["decision_basis"]).tradeoff, "");
+    const basis = view.decision_basis as ComparisonResult["decision_basis"];
+    const versions = Object.keys(view.assessments as JsonObject);
+    const cell = (value: string) => value.replaceAll("|", "\\|").replace(/[\r\n]/g, " ");
+    const importance = { high: "高", medium: "中", low: "低" };
+    markdown.push("## 裁决短评", "", basis.tradeoff, "", "## 同项对比", "",
+      `| 比较点 | 重要性 | ${versions.map((version) => cell(names[version] || version)).join(" | ")} |`,
+      `| --- | --- | ${versions.map(() => "---").join(" | ")} |`,
+      ...basis.comparisons.map((item) => `| ${cell(item.aspect)} | ${importance[item.importance]} | ${versions.map((version) =>
+        cell((item.better_candidates.includes(version) ? "本项更好：" : "") + item.assessments[version]!.summary),
+      ).join(" | ")} |`), "");
     const timingLines = Object.values(data.candidates)
       .filter((c) => c.answer_timing.finish_seconds !== null)
       .map((c) => `${names[c.version]}：${c.answer_timing.finish_seconds!.toFixed(3)} 秒`);

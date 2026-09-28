@@ -1,13 +1,34 @@
 {
   "request": {
     "input": {
-      "ground_truth": { "available": true, "value": "4" },
+      "ground_truth": {
+        "available": true,
+        "value": "4"
+      },
+      "strength_checks": [
+        {
+          "candidate": "A",
+          "finding_index": 0,
+          "counterparts": [
+            "B"
+          ]
+        },
+        {
+          "candidate": "B",
+          "finding_index": 0,
+          "counterparts": [
+            "A"
+          ]
+        }
+      ],
       "candidates": {
         "A": {
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
-          "original_answer_timing": { "finish_seconds": null },
+          "original_answer_timing": {
+            "finish_seconds": null
+          },
           "original_answer_usage": {
             "input_tokens": null,
             "output_tokens": null,
@@ -27,7 +48,9 @@
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
-          "original_answer_timing": { "finish_seconds": null },
+          "original_answer_timing": {
+            "finish_seconds": null
+          },
           "original_answer_usage": {
             "input_tokens": null,
             "output_tokens": null,
@@ -49,14 +72,25 @@
           "has_standard_answer": true,
           "is_correct": true,
           "correctness_reason": "结果正确。",
-          "correctness_evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+          "correctness_evidence": [
+            {
+              "message_index": 1,
+              "quote": "2+2=4"
+            }
+          ],
           "summary": "正确给出结果。",
           "task_analysis": {
             "task_type": "整数加法",
             "goal": "计算2+2",
-            "requirements": ["给出正确的加法结果"],
-            "scoring_points": ["使用指定操作数"],
-            "red_flags": ["擅自替换操作数"]
+            "requirements": [
+              "给出正确的加法结果"
+            ],
+            "scoring_points": [
+              "使用指定操作数"
+            ],
+            "red_flags": [
+              "擅自替换操作数"
+            ]
           },
           "findings": [
             {
@@ -66,7 +100,12 @@
               "importance": "high",
               "text": "加法结果正确",
               "reason": "与要求一致。",
-              "evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+              "evidence": [
+                {
+                  "message_index": 1,
+                  "quote": "2+2=4"
+                }
+              ],
               "assessment": {
                 "requirement_index": 0,
                 "observation": "2+2=4",
@@ -81,14 +120,25 @@
           "has_standard_answer": true,
           "is_correct": true,
           "correctness_reason": "结果正确。",
-          "correctness_evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+          "correctness_evidence": [
+            {
+              "message_index": 1,
+              "quote": "2+2=4"
+            }
+          ],
           "summary": "正确给出结果。",
           "task_analysis": {
             "task_type": "整数加法",
             "goal": "计算2+2",
-            "requirements": ["给出正确的加法结果"],
-            "scoring_points": ["使用指定操作数"],
-            "red_flags": ["擅自替换操作数"]
+            "requirements": [
+              "给出正确的加法结果"
+            ],
+            "scoring_points": [
+              "使用指定操作数"
+            ],
+            "red_flags": [
+              "擅自替换操作数"
+            ]
           },
           "findings": [
             {
@@ -98,7 +148,12 @@
               "importance": "high",
               "text": "加法结果正确",
               "reason": "与要求一致。",
-              "evidence": [{ "message_index": 1, "quote": "2+2=4" }],
+              "evidence": [
+                {
+                  "message_index": 1,
+                  "quote": "2+2=4"
+                }
+              ],
               "assessment": {
                 "requirement_index": 0,
                 "observation": "2+2=4",
@@ -118,10 +173,21 @@
           "batch_id": "b1",
           "case_id": "q",
           "messages": [
-            { "type": "message", "role": "user", "content": "计算2+2" },
-            { "type": "message", "role": "assistant", "content": "2+2=4" }
+            {
+              "type": "message",
+              "role": "user",
+              "content": "计算2+2"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "2+2=4"
+            }
           ],
-          "meta": { "ok": true, "ground_truth": "4" }
+          "meta": {
+            "ok": true,
+            "ground_truth": "4"
+          }
         }
       },
       "B": {
@@ -130,10 +196,21 @@
           "batch_id": "b1",
           "case_id": "q",
           "messages": [
-            { "type": "message", "role": "user", "content": "计算2+2" },
-            { "type": "message", "role": "assistant", "content": "2+2=4" }
+            {
+              "type": "message",
+              "role": "user",
+              "content": "计算2+2"
+            },
+            {
+              "type": "message",
+              "role": "assistant",
+              "content": "2+2=4"
+            }
           ],
-          "meta": { "ok": true, "ground_truth": "4" }
+          "meta": {
+            "ok": true,
+            "ground_truth": "4"
+          }
         }
       }
     }
@@ -142,20 +219,64 @@
     "task_analysis": {
       "task_type": "整数加法",
       "goal": "计算2+2",
-      "requirements": ["给出正确的加法结果"],
-      "scoring_points": ["使用指定操作数"],
-      "red_flags": ["擅自替换操作数"]
+      "requirements": [
+        "给出正确的加法结果"
+      ],
+      "scoring_points": [
+        "使用指定操作数"
+      ],
+      "red_flags": [
+        "擅自替换操作数"
+      ]
     },
-    "ranking": [["A", "B"]],
+    "ranking": [
+      [
+        "A",
+        "B"
+      ]
+    ],
     "assessments": {
-      "A": { "meets_core": true, "summary": "正确给出结果。" },
-      "B": { "meets_core": true, "summary": "正确给出结果。" }
+      "A": {
+        "meets_core": true,
+        "summary": "正确给出结果。"
+      },
+      "B": {
+        "meets_core": true,
+        "summary": "正确给出结果。"
+      }
     },
     "decision_basis": {
-      "tradeoff": "计算结果：A和B都给出2+2=4，均完成核心要求；表达：双方都直接给出结果，无实质差异。等待时间与token消耗均未记录，无法比较体验差异，因此并列。",
+      "tradeoff": "A与B并列：都正确给出4，没有实质差异。",
       "decisive_findings": [
-        { "candidate": "A", "finding_index": 0 },
-        { "candidate": "B", "finding_index": 0 }
+        {
+          "candidate": "A",
+          "finding_index": 0
+        },
+        {
+          "candidate": "B",
+          "finding_index": 0
+        }
+      ],
+      "comparisons": [
+        {
+          "aspect": "计算结果",
+          "importance": "high",
+          "better_candidates": [],
+          "assessments": {
+            "A": {
+              "summary": "正确给出4。",
+              "finding_indices": [
+                0
+              ]
+            },
+            "B": {
+              "summary": "正确给出4。",
+              "finding_indices": [
+                0
+              ]
+            }
+          }
+        }
       ]
     }
   }

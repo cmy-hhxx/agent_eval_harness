@@ -295,23 +295,24 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
           candidate: "answer",
           message_index: 1,
         });
-        const invalid = invalidResult(options.spec) as any;
-        invalid.findings[0].evidence[0].quote = "2 + 2 = 4";
-        assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
-          true,
-        );
+        const invalid = draftFor(options.spec, taskResult(options.spec)) as any;
+        invalid.findings[0].evidence[0].evidence_id = "ev_1_text_0_8192_/content";
+        const rejected = await options.execute("submit_evaluation", invalid);
+        assert.equal(rejected.isError, true);
+        const feedback = JSON.parse(rejected.content[0]!.text!);
+        const issue = feedback.errors.find((item: { code: string }) => item.code === "evidence_range_invalid");
+        assert(issue, "Host rejection must preserve actionable evidence feedback through Worker");
+        const replacement = issue.expected.suggested_evidence.find((item: { quote: string }) => item.quote === "2+2=4");
+        assert(replacement, "repair must select a source-backed quote from feedback");
         assert.deepEqual(
           await readJson(path.join(options.workdir, "evaluation-draft.json")),
-          draftFor(options.spec, invalid),
+          invalid,
         );
         const fixed = await options.execute("execute_code", {
           language: "python",
           code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
             "VALID_ID",
-            JSON.stringify(
-              (draftFor(options.spec, taskResult(options.spec)) as any).findings[0].evidence[0].evidence_id,
-            ),
+            JSON.stringify(replacement.evidence_id),
           ),
         });
         assert.notEqual(fixed.isError, true);

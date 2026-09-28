@@ -30,3 +30,24 @@ test("Comparison ranks a group and references attribution findings", () => {
     /不能同时判定满足核心要求/,
   );
 });
+
+test("Comparison requires full aligned coverage and a concise verdict", () => {
+  const missingCandidate = structuredClone(example.result);
+  delete (missingCandidate.decision_basis.comparisons[0].assessments as Record<string, unknown>).B;
+  assert.throws(() => comparisonProfile.validate!(example.request, missingCandidate, audit), /同一行包含全部候选/);
+  const missingStrength = structuredClone(example.result);
+  missingStrength.decision_basis.comparisons[0].assessments.B.finding_indices = [];
+  assert.throws(() => comparisonProfile.validate!(example.request, missingStrength, audit), /覆盖全部待核对优点/);
+  const badRef = structuredClone(example.result);
+  badRef.decision_basis.comparisons[0].assessments.A.finding_indices = [99];
+  assert.throws(() => comparisonProfile.validate!(example.request, badRef, audit), /只能引用该候选/);
+  const badAdvantage = structuredClone(example.result);
+  badAdvantage.decision_basis.comparisons[0].better_candidates = ["C"] as never[];
+  assert.throws(() => comparisonProfile.validate!(example.request, badAdvantage, audit), /优势候选必须属于本组/);
+  const long = structuredClone(example.result);
+  long.decision_basis.tradeoff = "长".repeat(161);
+  assert.throws(() => comparisonProfile.validate!(example.request, long, audit), /160 characters/);
+  const missedProblem = structuredClone(example.request);
+  missedProblem.input.attributions.A.findings.push({ ...missedProblem.input.attributions.A.findings[0], type: "problem", importance: "medium" });
+  assert.throws(() => comparisonProfile.validate!(missedProblem, example.result, audit), /中高重要性问题/);
+});

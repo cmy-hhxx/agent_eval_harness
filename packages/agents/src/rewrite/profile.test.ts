@@ -24,3 +24,17 @@ test("Rewrite returns exactly the requested slots and nothing else", () => {
   empty.rewrites[0]!.text = "";
   assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|rewrites/);
 });
+
+test("comparison rewrites cannot expand a concise verdict or aligned cell into a long essay", () => {
+  const request = { agent: "rewrite", profile: "default", sources: {}, input: { kind: "comparison", items: [
+    { id: "tradeoff", label: "裁决短评", text: "A更好。" },
+    { id: "comparison.0.A.summary", label: "表现", text: "给出结果。" },
+  ] } };
+  const result = { rewrites: [{ id: "tradeoff", text: "短".repeat(160) }, { id: "comparison.0.A.summary", text: "短".repeat(160) }] };
+  rewriteProfile.validate!(request, result, audit);
+  result.rewrites[0].text += "长";
+  assert.throws(() => rewriteProfile.validate!(request, result, audit), /最多160字/);
+  result.rewrites[0].text = "A更好。";
+  result.rewrites[1].text += "长";
+  assert.throws(() => rewriteProfile.validate!(request, result, audit), /最多160字/);
+});

@@ -1,7 +1,7 @@
 import type { ValidationIssue } from "@eval/contracts";
 import { ValidationError } from "@eval/contracts";
 
-const imagePlaceholder = "[图像数据，请使用 view_image]";
+export const imagePlaceholder = "[图像数据，请使用 view_image]";
 export function renderMessage(value: unknown): string {
   return JSON.stringify(
     value,
@@ -66,13 +66,13 @@ export function resolveEvidence(
   viewed: string[],
   location: string,
 ) {
-  const fail = (code: string, message: string, hint?: string): never => {
+  const fail = (code: string, message: string, hint?: string, expected: unknown = "本候选当前输入中的有效证据 ID"): never => {
     const issue: ValidationIssue = {
       category: "evidence",
       code,
       path: location,
       candidate,
-      expected: "本候选当前输入中的有效证据 ID",
+      expected,
       actual: value,
       message: hint ? `${message}；${hint}` : message,
     };
@@ -92,7 +92,7 @@ export function resolveEvidence(
     return fail(
       "evidence_id_invalid",
       "证据 ID 无法解析",
-      "格式为 ev_消息索引_来源_起_止_路径（图片为 ev_消息索引_image），请逐字复制工具返回的 evidence_id",
+      "请直接复制材料或工具返回的完整 evidence_id，不要根据消息序号、路径或长度拼接",
     );
   const index = Number(match[1]);
   const kind = match[2] as "text" | "json";
@@ -103,8 +103,22 @@ export function resolveEvidence(
     return fail("message_index_invalid", "证据消息索引越界", `本候选共 ${raw.messages.length} 条消息`);
   const sources = evidenceSources(raw.messages[index]);
   const source = sources.find((s) => s.kind === kind && s.path === path);
-  if (!source || end <= start || end > source.text.length)
-    return fail("evidence_range_invalid", "证据原文位置无效", coordinateHint(sources, kind, path, index));
+  if (!source || end <= start || end > source.text.length) {
+    // Reject the submitted range; offer bounded source excerpts for an explicit new selection.
+    const starts = source?.text.length
+      ? [...new Set([start < source.text.length ? start : 0, Math.max(0, source.text.length - 400)])]
+      : [];
+    const suggested = source ? starts.map((offset) =>
+      cite(index, source, offset, Math.min(offset + 400, source.text.length)),
+    ).filter((item) => item.quote && !item.quote.includes(imagePlaceholder)) : [];
+    return fail("evidence_range_invalid", "证据原文位置无效", coordinateHint(sources, kind, path, index), {
+      suggested_evidence: suggested,
+      read_request: {
+        tool: "read_trace",
+        arguments: { candidate, message_index: index, ...(source ? { path: source.path } : {}) },
+      },
+    });
+  }
   const quote = source.text.slice(start, end);
   if (quote.includes(imagePlaceholder))
     return fail("evidence_placeholder", "展示占位符不能作为原文证据", "请改用该消息的其他文本路径");
@@ -133,6 +147,6 @@ function coordinateHint(
       `消息 ${index} 可引用路径：${paths.slice(0, 8).map(shownPath).join("、")}` +
         (paths.length > 8 ? ` 等 ${paths.length} 条` : ""),
     );
-  hints.push("请用 search_trace 按原文检索，逐字复制工具返回的 evidence_id");
+  hints.push("先核对 expected.suggested_evidence 的原文是否支持判断，符合时直接复制对应 evidence_id；片段不足则按 expected.read_request 读取，或用 search_trace 检索原文，不要手改坐标");
   return hints.join("；");
 }

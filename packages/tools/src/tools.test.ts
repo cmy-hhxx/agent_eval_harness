@@ -7,7 +7,7 @@ import path from "node:path";
 import { DEFAULT_POLICY, type ToolContext } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
 import { ROOT } from "../../../tests/fixtures/services.js";
-import { createRegistry, ToolRuntime } from "@eval/tools";
+import { createRegistry, resolveEvidence, ToolRuntime } from "@eval/tools";
 import { emptyAudit, raw } from "../../../tests/fixtures/comparison.js";
 
 async function context() {
@@ -46,6 +46,104 @@ test("trace search finds numeric tool fields and returns an exact structured quo
   } finally {
     await rm(ctx.workdir, { recursive: true, force: true });
   }
+});
+test("out-of-range evidence can be repaired from source-backed feedback without guessing offsets", () => {
+  const input = { messages: Array.from({ length: 31 }, () => ({
+    role: "assistant", content: [{ type: "text", text: "数".repeat(4096) }], type: "message",
+  })) };
+  let issue: { message: string; expected: unknown } | undefined;
+  try {
+    resolveEvidence(input, { evidence_id: "ev_30_text_0_8192_/content/0/text" }, "answer", [], "/findings/0/evidence/0");
+    assert.fail("an invalid range must still be rejected");
+  } catch (error) {
+    issue = (error as { issues: { message: string; expected: unknown }[] }).issues[0];
+  }
+  assert.match(issue!.message, /文本长度为 4096/);
+  const repair = issue!.expected as { suggested_evidence?: { evidence_id: string; quote: string }[] };
+  assert(repair.suggested_evidence?.length, "feedback must offer source-backed IDs, not require manual coordinate repair");
+  for (const evidence of repair.suggested_evidence)
+    assert.equal(resolveEvidence(input, evidence, "answer", [], "/findings/0/evidence/0").quote, evidence.quote);
+});
+test("trace pages keep evidence intact within the output budget", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxOutputChars = 4096;
+    ctx.inputs.set("A", { messages: [{ role: "assistant", content: "长文本".repeat(4000) }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0, max_chars: 16000 }, new AbortController().signal);
+    assert(!result.isError);
+    const text = result.content[0]!.text!;
+    assert(text.length <= ctx.policy.maxOutputChars, "pagination must happen before generic result truncation");
+    const page = JSON.parse(text);
+    assert(page.evidence.length);
+    assert(page.has_more);
+    for (const evidence of page.evidence)
+      assert.equal(resolveEvidence(ctx.inputs.get("A") as { messages: unknown[] }, evidence, "A", [], "/evidence").quote, evidence.quote);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
+test("trace text-path pagination uses field coordinates and returns copyable evidence for every page", async () => {
+  const ctx = await context();
+  try {
+    const text = '值"\\\n🙂'.repeat(800).slice(0, 4096);
+    const input = { messages: [{ role: "assistant", content: [{ type: "text", text }] }] };
+    ctx.inputs.set("A", input);
+    ctx.policy.maxOutputChars = 4096;
+    ctx.policy.maxToolCalls = 30;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    let offset = 0, recovered = "";
+    do {
+      const result = await runtime.execute("read_trace", {
+        candidate: "A", message_index: 0, path: "/content/0/text", offset, max_chars: 16000,
+      }, new AbortController().signal);
+      assert(!result.isError, JSON.stringify(result));
+      const page = JSON.parse(result.content[0]!.text!);
+      assert.equal(page.total_chars, 4096);
+      assert.equal(page.source.path, "/content/0/text");
+      assert.equal(page.evidence.length, 1);
+      const evidence = page.evidence[0];
+      assert.equal(resolveEvidence(input, evidence, "A", [], "/evidence").quote, text.slice(offset, page.next_offset));
+      recovered += evidence.quote;
+      assert(page.next_offset > offset);
+      offset = page.next_offset;
+      if (!page.has_more) break;
+    } while (offset < text.length);
+    assert.equal(recovered, text);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("search pages preserve complete evidence and paginate without skipping matches", async () => {
+  const ctx = await context();
+  try {
+    const input = { messages: Array.from({ length: 12 }, (_, i) => ({
+      role: "tool", content: `${'"\\\n'.repeat(80)}目标${i}${'"\\\n'.repeat(80)}`,
+    })) };
+    ctx.inputs.set("A", input);
+    ctx.policy.maxOutputChars = 4096;
+    ctx.policy.maxToolCalls = 30;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    let offset = 0, total = 0;
+    const ids = new Set<string>();
+    do {
+      const result = await runtime.execute("search_trace", { candidate: "A", query: "目标", offset }, new AbortController().signal);
+      assert(!result.isError);
+      assert(result.content[0]!.text!.length <= ctx.policy.maxOutputChars);
+      const page = JSON.parse(result.content[0]!.text!);
+      total = page.total;
+      assert(page.matches.length);
+      for (const { evidence } of page.matches) {
+        assert.equal(resolveEvidence(input, evidence, "A", [], "/evidence").quote, evidence.quote);
+        assert(evidence.quote.includes("目标"));
+        assert(!ids.has(evidence.evidence_id));
+        ids.add(evidence.evidence_id);
+      }
+      assert.equal(page.next_offset, offset + page.matches.length);
+      offset = page.next_offset;
+      if (!page.has_more) break;
+    } while (offset < total);
+    assert.equal(ids.size, total);
+    assert.equal(total, 24);
+    assert.equal(ctx.audit.artifacts.length, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 test("registered tools are available without engine-specific changes and budgets are enforced", async () => {
   const ctx = await context();

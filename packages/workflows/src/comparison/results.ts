@@ -126,6 +126,15 @@ export function comparisonRow(
     task_analysis: display(result.task_analysis, labels),
     decision_basis: {
       tradeoff: display(result.decision_basis.tradeoff, labels),
+      comparisons: result.decision_basis.comparisons.map((item) => ({
+        aspect: display(item.aspect, labels),
+        importance: item.importance,
+        better_candidates: item.better_candidates.map((label) => data.candidates[label]!.version),
+        assessments: Object.fromEntries(Object.entries(item.assessments).map(([label, assessment]) => [
+          data.candidates[label]!.version,
+          { summary: display(assessment.summary, labels), finding_indices: assessment.finding_indices },
+        ])),
+      })),
       decisive_findings: result.decision_basis.decisive_findings.map((ref) => ({
         candidate: data.candidates[ref.candidate]!.version,
         finding_index: ref.finding_index,

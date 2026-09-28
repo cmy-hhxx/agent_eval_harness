@@ -186,6 +186,30 @@ export function createDashboardViews({
       + sectionHtml("findings", findings.map((finding, index) => findingHtml(finding, index, `${path}.findings.${index}`, rewrites, path)).join(""));
   }
 
+  function comparisonText(value, path, rewrites) {
+    const polished = rewrites.get(path);
+    return `<div class="comparison-copy">${textHtml(polished ?? value, polished ? `${path}.rewritten` : path)}${polished !== undefined
+      ? `<details class="comparison-original"><summary>原文</summary>${textHtml(value, path)}</details>` : ""}</div>`;
+  }
+
+  function comparisonHtml(row, taskId, rewrites) {
+    const versions = Object.keys(row.assessments);
+    const name = (version) => row.models?.[version]?.version || version;
+    const priorities = { high: 0, medium: 1, low: 2 };
+    const rows = row.decision_basis.comparisons.map((item, index) => ({ item, index }))
+      .sort((a, b) => priorities[a.item.importance] - priorities[b.item.importance]);
+    const verdicts = Object.entries(row.verdicts || {}).map(([pair, verdict]) => `<span>${escapeHtml(pair.split("__vs__").map(name).join(" / "))} · <strong>${escapeHtml(verdict.result === "win" ? `${verdict.winner_name}更好` : scalar(verdict.result, "result"))}</strong></span>`).join("");
+    return `<section class="comparison-decision"><h5>裁决</h5><div class="comparison-verdicts">${verdicts}</div>${comparisonText(row.decision_basis.tradeoff, `${taskId}.decision_basis.tradeoff`, rewrites)}</section>
+      <section class="schema-section"><h5>逐项对照</h5><div class="comparison-scroll" tabindex="0" role="region" aria-label="各模型逐项对照"><table class="comparison-table"><thead><tr><th scope="col">比较点</th>${versions.map((version) => `<th scope="col">${escapeHtml(name(version))}</th>`).join("")}</tr></thead><tbody>${rows.map(({ item, index }) => `<tr data-comparison-index="${index}"><th scope="row"><strong>${escapeHtml(item.aspect)}</strong><span class="comparison-importance">重要性 · ${escapeHtml(scalar(item.importance, "importance"))}</span></th>${versions.map((version) => {
+        const assessment = item.assessments[version];
+        const links = assessment.finding_indices.map((findingIndex) => {
+          const target = `finding-${taskId}.evaluations.${version}.findings.${findingIndex}`;
+          return `<a data-finding-target="${escapeHtml(target)}" href="#${encodeURIComponent(target)}">归因 #${findingIndex}</a>`;
+        }).join("");
+        return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">本项更好</strong>' : ""}${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">${links}</div></td>`;
+      }).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+  }
+
   function renderResult(task) {
     const row = task.result;
     if (!row) return task.status === "succeeded" ? '<p class="muted">写入中</p>' : "";
@@ -194,17 +218,19 @@ export function createDashboardViews({
     if (task.stage === "attribution") {
       body = attributionHtml(row.evaluation, task.id, row.rewritten);
     } else if (task.stage === "comparison") {
-      body = ["models", "task_analysis", "ground_truth", "ranking", "assessments", "decision_basis", "verdicts"]
+      body = comparisonHtml(row, task.id, rewrites);
+      body += `<details class="comparison-details"><summary>裁决明细</summary>` + ["models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
         .filter((key) => row[key] !== undefined)
-        .map((key) => sectionHtml(key, valueHtml(row[key], `${task.id}.${key}`, key, rewrites))).join("");
-      body += sectionHtml("evaluations", Object.entries(row.evaluations).map(([version, value]) => {
+        .map((key) => sectionHtml(key, valueHtml(row[key], `${task.id}.${key}`, key, rewrites))).join("")
+        + sectionHtml("decisive_findings", valueHtml(row.decision_basis.decisive_findings, `${task.id}.decision_basis.decisive_findings`, "decisive_findings", rewrites)) + "</details>";
+      body += `<details class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><summary>归因明细</summary>` + Object.entries(row.evaluations).map(([version, value]) => {
         const { rewritten, ...evaluation } = value;
         return `<section class="model-evaluation"><h6>${escapeHtml(row.models?.[version]?.version || version)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
-      }).join(""));
+      }).join("") + "</details>";
     } else if (task.stage === "clustering") {
       body = fieldsHtml(row.result, task.id, rewrites);
     }
-    body = `<h4 class="output-heading">${rewrites.size ? "原文与改写" : "原始输出"}</h4>${body}`;
+    if (task.stage !== "comparison") body = `<h4 class="output-heading">${rewrites.size ? "原文与改写" : "原始输出"}</h4>${body}`;
     return `<div class="result-body">${body}</div>`;
   }
 

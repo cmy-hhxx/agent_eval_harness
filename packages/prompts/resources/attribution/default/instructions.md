@@ -1,9 +1,9 @@
-按顺序评审 `answer`：
+按顺序评审 `answer`；材料工具的 `candidate` 固定填 `answer`：
 
 1. 从最后一条用户问题和必要历史提取目标、核心要求；确有加分项或致命风险时才填 `scoring_points` / `red_flags`，否则填 []。
-2. 按 `ground_truth.available` 判对错：有标准答案时填写布尔 `is_correct`、核对理由和最终回答 `answer.final_message_index` 的证据；没有时分别填 null、""、[]。
-3. 检查回答和调用链，写出有证据的优点、问题和疑似问题；同一现象写一条 finding，最多 8 条，`finding_id` 各不相同。`text` 写发现，`assessment.observation` 写看到的事实，`reason` 写判断依据，`assessment.impact` 写对任务的影响。关联核心要求时填 `requirement_index`，否则填 null；`importance` 表示影响大小。
-4. 优点的 `problem=null`；问题的 `problem.label/definition` 写现象及边界。`stage` 写发生阶段；`problem.component` 对工具调用或返回写调用链 `catalog.name` 中的确切工具名；对模型误读结果、推理或表达写「模型自身推理」。疑似问题也要定位部位，并以 `assessment.evidence_status="uncertain"` 写明尚未证实的判断。
+2. 按 `ground_truth.available` 判对错：有标准答案时填写布尔 `is_correct`、核对理由，`correctness_evidence` 只能引用最终回答 `answer.final_message_index`；工具来源证据放在相应 finding.evidence。没有标准答案时分别填 null、""、[]。
+3. 检查回答和调用链，写出有证据的优点、问题和疑似问题；同一现象写一条 finding，最多 8 条，`finding_id` 各不相同。不要把同一问题的不同表述或传播环节拆成多个缺点，不为凑数列轻微瑕疵。`text` 写发现，`assessment.observation` 写看到的事实，`reason` 写判断依据，`assessment.impact` 写对任务的影响。关联核心要求时填 `requirement_index`，否则填 null；`importance` 按实际影响：high 是核心结论错误或核心交付缺失，medium 是实质局部损失，low 是不影响核心结果的瑕疵。缺少链接、脚注编号错位、引用格式和来源展示不完整默认 low，不据此把正确内容判错，也不将它们描述成严重可靠性缺陷。来源确有伪造、关键引用与结论矛盾且影响核心事实时，依据具体证据评估实际严重性；用户明确要求可追溯来源时说明具体未交付项。没有展示来源不等于事实错误。
+4. 优点的 `problem=null`；问题的 `problem.label/definition` 写现象及边界，`stage` 写发生阶段。发现错误数值或事实时，沿“最终结论 → 引用的工具返回 → 调用参数/上游来源”追溯，不在最终回答处停止。通过 `catalog` 的 `call_message_index` 对齐调用与返回，缺少材料就用 read_trace/search_trace 查看相关消息。`problem.component` 优先写问题所处工具环节的确切 `catalog.name`，包括工具返回错误、调用参数或口径选择错误、误读/误用该工具结果；后两种在 `reason` 与 `problem.definition` 明确写是模型调用或使用结果出错，不能说成工具返回了错误值。若工具返回 21.87 且回答照抄，而标准值为 21.6256，应定位该取数工具并指出错误从返回值传入回答；若工具返回正确值但模型改错，应定位该工具的结果使用环节并明确“工具返回正确，模型误读”，不归咎工具提供方。工具型 component 的 evidence 至少引用该工具的一条调用或返回；尽可能同时引用错误传播到最终回答的证据。多工具链选择可证实的最早出错环节，在 reason 交代后续传播；找不到上游证据不得猜测根因。与具体工具链无关的自行推理或表达才用「模型自身推理」。尚不能确认的问题用 `assessment.evidence_status="uncertain"`，区分已证实的数值错误与尚未证实的上游原因；不要把同一错误的传播重复计成多个 finding。
 5. `summary` 概括完成情况、主要优点和缺口，避免重复逐条 finding。
 
-`evidence_id` 只能逐字复制材料或 read_trace/search_trace/view_image 返回的值，禁止按起止数字或路径自行拼接、猜测；没有现成 ID 时用 search_trace 检索原文取得。图片须先查看并填写 observation，数值争议要核算。调用 submit_evaluation 提交；长 JSON 可用 execute_code 写入当前工作目录，再用 submit_evaluation_file。校验失败时修正对应字段，判断改变时重新核验。
+先选支持判断的原文，再复制与它成对的完整 `evidence_id`。ID 只能来自材料、read_trace/search_trace/view_image 或校验反馈的 suggested_evidence；不得根据字数、分页位置或路径自行拼接，不修改 ID 中的数字。没有合适片段时用 search_trace 按短句检索，或 read_trace 指定消息与正文 path 读取；同一段原文可重复引用其同一个 ID。越界反馈中的 suggested_evidence 是供核对的候选原文，不是已接受证据：支持当前判断才选用，不合适就按 read_request 继续读，不能为通过校验换成无关片段。图片须先查看并填写 observation，数值争议要核算。调用 submit_evaluation 提交；长 JSON 可用 execute_code 写入当前工作目录，再用 submit_evaluation_file。校验失败时只修正对应证据槽位，判断改变时重新核验。

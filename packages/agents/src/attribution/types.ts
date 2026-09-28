@@ -38,7 +38,7 @@ export interface TaskAnalysis {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Concrete tool name from the evaluated answer's call chain, or 模型自身推理. */
+  /** Concrete tool invocation/return/use site, or 模型自身推理 for errors unrelated to tools. */
   component: string;
   label: string;
   definition: string;

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["ground_truth", "candidates"],
+  "required": ["ground_truth", "candidates", "attributions", "strength_checks"],
   "properties": {
     "ground_truth": {
       "type": "object",
@@ -86,6 +86,19 @@
     },
     "attributions": {
       "type": "object"
+    },
+    "strength_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate", "finding_index", "counterparts"],
+        "properties": {
+          "candidate": { "type": "string", "minLength": 1 },
+          "finding_index": { "type": "integer", "minimum": 0 },
+          "counterparts": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
     }
   }
 }

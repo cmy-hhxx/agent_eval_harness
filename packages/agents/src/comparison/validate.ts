@@ -13,6 +13,7 @@ interface Input {
   ground_truth: { available: boolean; value: unknown };
   candidates: Record<string, unknown>;
   attributions?: Record<string, { is_correct: boolean | null; findings: Finding[] }>;
+  strength_checks?: { candidate: string; finding_index: number }[];
 }
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -35,6 +36,29 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const assessed = Object.keys(value.assessments);
   if (assessed.length !== labels.length || !labels.every((label) => assessed.includes(label)))
     issue("assessment_incomplete", "/assessments", "必须为本组每个候选给出 meets_core 与 summary", undefined, assessed);
+
+  const covered = new Map(labels.map((label) => [label, new Set<number>()]));
+  for (const [index, row] of value.decision_basis.comparisons.entries()) {
+    const path = `/decision_basis/comparisons/${index}`;
+    const compared = Object.keys(row.assessments);
+    if (compared.length !== labels.length || !labels.every((label) => compared.includes(label)))
+      issue("comparison_incomplete", `${path}/assessments`, "每个比较点必须在同一行包含全部候选的表现", undefined, compared);
+    if (row.better_candidates.some((label) => !labels.includes(label)) || row.better_candidates.length >= labels.length)
+      issue("comparison_advantage_invalid", `${path}/better_candidates`, "优势候选必须属于本组；共同优点或无已证实优势时填空数组", undefined, row.better_candidates);
+    for (const [label, assessment] of Object.entries(row.assessments))
+      for (const findingIndex of assessment.finding_indices) {
+        if (!input.attributions?.[label]?.findings[findingIndex])
+          issue("finding_missing", `${path}/assessments/${label}/finding_indices`, "比较点只能引用该候选的既有 finding", label, findingIndex);
+        else covered.get(label)?.add(findingIndex);
+      }
+  }
+  const materialProblems = Object.entries(input.attributions || {}).flatMap(([candidate, attribution]) =>
+    attribution.findings.flatMap((finding, finding_index) => finding.type === "problem" && finding.importance !== "low"
+      ? [{ candidate, finding_index }] : []),
+  );
+  for (const ref of [...(input.strength_checks || []), ...materialProblems, ...value.decision_basis.decisive_findings])
+    if (!covered.get(ref.candidate)?.has(ref.finding_index))
+      issue("comparison_finding_uncovered", "/decision_basis/comparisons", "逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现，可在同一方面合并相关 finding", ref.candidate, ref.finding_index);
 
   for (const [index, ref] of value.decision_basis.decisive_findings.entries()) {
     const findings = input.attributions?.[ref.candidate]?.findings;

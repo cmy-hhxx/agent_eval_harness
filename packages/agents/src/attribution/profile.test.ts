@@ -59,22 +59,36 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
 
 test("problem components must name a tool from the answer call chain", () => {
   const request = structuredClone(example.request);
-  (request.input.answer as { catalog: { name: string; type: string; role?: string }[] }).catalog = [
-    { name: "Search", type: "function_call" },
-    { name: "FinQuery", type: "function_call_output" },
-    { name: "NotATool", type: "message", role: "assistant" },
+  (request.input.answer as { catalog: { message_index: number; name: string; type: string; role?: string }[] }).catalog = [
+    { message_index: 1, name: "Search", type: "function_call_output" },
+    { message_index: 2, name: "FinQuery", type: "function_call_output" },
+    { message_index: 3, name: "NotATool", type: "message", role: "assistant" },
   ];
+  request.sources.answer.value.messages.splice(1, 0,
+    { type: "function_call_output", role: "tool", content: "检索超时" },
+    { type: "function_call_output", role: "tool", content: "查询失败" },
+  );
+  request.input.answer.final_message_index = 3;
   const finding = (component: string) => ({
     ...example.result,
+    correctness_evidence: [{ message_index: 3, quote: "2+2=4" }],
     findings: [
       {
         ...example.result.findings[0],
         type: "problem",
         problem: { component, label: "取数失败", definition: "多次查询失败" },
+        evidence: component === "FinQuery"
+          ? [{ message_index: 2, quote: "查询失败" }]
+          : [{ message_index: 1, quote: "检索超时" }],
       },
     ],
   });
   attributionProfile.validate!(request, finding("Search"), audit);
+  const unsupported = finding("FinQuery");
+  unsupported.findings[0]!.evidence = [{ message_index: 3, quote: "2+2=4" }];
+  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用该工具/);
+  unsupported.findings[0]!.evidence = [{ message_index: 1, quote: "检索超时" }];
+  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用该工具/);
   const suspected = finding("FinQuery") as AttributionResult;
   suspected.findings[0]!.assessment.evidence_status = "uncertain";
   suspected.findings[0]!.assessment.requirement_index = null;

@@ -1,8 +1,8 @@
 import path from "node:path";
-import { readJson, locateRun, problemLibraryFile, readProblemLibrary } from "@eval/data";
+import { fileSourceReader, readJson, locateRun, problemLibraryFile, readProblemLibrary } from "@eval/data";
 import type { JsonObject, TaskState } from "@eval/contracts";
 import { readRunTasks } from "./run-data.js";
-import { buildPlan, contentText, locateRecordStream } from "./input.js";
+import { buildPlan, contentText, locateRecordStream, type PlanOptions } from "./input.js";
 import type { Candidate, EvalConfig, Stage, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 import { verdictSlotId } from "./commentary.js";
@@ -27,13 +27,29 @@ function sourceDate(source: string): string {
   const name = path.basename(source, path.extname(source));
   return /^\d{4}-\d{2}-\d{2}$/.test(name) ? name : path.basename(path.dirname(source));
 }
+/** File dates are available before answer validation; null counts cannot be used for sampling. */
+export async function listInputDates(config: EvalConfig) {
+  const dates = new Map<string, string[]>();
+  for (const version of config.inputs.versions) {
+    // Full inventory records unreadable/missing-source issues using the plan parser.
+    const files = await fileSourceReader.files(version.sources).catch(() => []);
+    for (const file of files) {
+      const date = sourceDate(file), versions = dates.get(date) ?? [];
+      if (!versions.includes(version.id)) versions.push(version.id);
+      dates.set(date, versions);
+    }
+  }
+  return [...dates].sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, versions]) => ({ date, versions, batches: [], cases: null }));
+}
 /** Scans configured sources with the plan parser, so offered dates match what a run accepts. */
-export async function listInputInventory(config: EvalConfig): Promise<{ dates: InputDate[]; issues: number }> {
+export async function listInputInventory(config: EvalConfig, options: Pick<PlanOptions, "scanFile"> = {}): Promise<{ dates: InputDate[]; issues: number }> {
   const plan = await buildPlan({
     ...config,
     comparisons: [],
+    clustering: { ...config.clustering, enabled: false },
     inputs: { ...config.inputs, batches: undefined, case_ids: undefined, limit: undefined },
-  });
+  }, undefined, { ...options, materializeInputs: false });
   const dates = new Map<
     string,
     { batches: Set<string>; versions: Set<string>; cases: Map<string, { versions: Set<string>; batches: Set<string> }> }
@@ -151,6 +167,10 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
     paths.set("tradeoff", "decision_basis.tradeoff");
     for (const [label, version] of Object.entries(versions))
       paths.set(`assessment.${label}.summary`, `assessments.${version}.summary`);
+    (row.decision_basis as { comparisons: unknown[] }).comparisons.forEach((_, index) => {
+      for (const [label, version] of Object.entries(versions))
+        paths.set(`comparison.${index}.${label}.summary`, `decision_basis.comparisons.${index}.assessments.${version}.summary`);
+    });
     const labels = new Map(Object.entries(versions).map(([label, version]) => [version, label]));
     for (const pair of Object.keys(row.verdicts as JsonObject)) {
       const [first, second] = pair.split("__vs__").map((version) => labels.get(version));

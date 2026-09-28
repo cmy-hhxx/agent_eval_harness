@@ -15,6 +15,7 @@ import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
 import type { AttributionResult } from "@eval/agents/attribution";
 import { originalAnswerUsage } from "./experience.js";
+import { traceCatalog } from "./catalog.js";
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
@@ -143,13 +144,7 @@ export function bindTask(
             )
             .map((source) => cite(candidate.final_index, source, 0, source.text.length)),
           initial_material: initial,
-          catalog: raw.messages.map((m, i) => ({
-            message_index: i,
-            type: m.type || "message",
-            role: m.role,
-            name: m.name,
-            chars: canonical(m).length,
-          })),
+          catalog: traceCatalog(raw),
           input_file: `inputs/${label}.json`,
           original_answer_timing: blind ? blind.value(candidate.answer_timing) : candidate.answer_timing,
           ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
@@ -159,6 +154,11 @@ export function bindTask(
     }),
   );
 
+  const attributions = attribution ? {} : Object.fromEntries(
+    Object.entries(dependencies)
+      .filter(([label, r]) => r?.taskId === task.dependencies[label] && r?.status === "succeeded")
+      .map(([label, r]) => [label, blind!.attribution(r!.evaluation as AttributionResult)]),
+  );
   return {
     agent: attribution ? "attribution" : "comparison",
     profile: "default",
@@ -178,10 +178,13 @@ export function bindTask(
         : {
             ground_truth: { available: data.reference !== null, value: reference },
             candidates: materials,
-            attributions: Object.fromEntries(
-              Object.entries(dependencies)
-                .filter(([label, r]) => r?.taskId === task.dependencies[label] && r?.status === "succeeded")
-                .map(([label, r]) => [label, blind!.attribution(r!.evaluation as AttributionResult)]),
+            attributions,
+            strength_checks: Object.entries(attributions).flatMap(([label, result]) =>
+              result.findings.flatMap((finding, index) => finding.type === "strength" ? [{
+                candidate: label,
+                finding_index: index,
+                counterparts: Object.keys(materials).filter((other) => other !== label),
+              }] : []),
             ),
           },
       sources,

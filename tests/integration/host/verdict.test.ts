@@ -50,6 +50,9 @@ function group(labels: string[], meets: Record<string, boolean> = {}): Compariso
     ),
     decision_basis: {
       tradeoff: "并列。",
+      comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { summary: "正确给出4。", finding_indices: [0] }]),
+      ) }],
       decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
     },
   };
@@ -193,6 +196,8 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     assert.equal(standings.a_fast!.first_tier, 1);
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert.match(markdown, /## 同项对比/);
+    assert.match(markdown, /\| 比较点 \| 重要性 \|/);
+    assert.match(markdown, /\| 计算结果 \| 高 \| 正确给出4。 \| 正确给出4。 \|/);
     assert.match(markdown, /内容质量：.*都正确给出4/);
     assert.match(markdown, /完成耗时：.*1.2秒.*40秒/);
     assert.match(markdown, /总token：.*120.*1200/);

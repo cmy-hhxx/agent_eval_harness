@@ -1,1 +1,1 @@
-按消息索引读取当前任务材料；offset 按 UTF-16 字符计，支持分页。提交时逐字复制返回证据中的 evidence_id（`ev_消息索引_来源_起_止_路径` 或 `ev_消息索引_image`），不要自行拼接或改写。
+按 message_index 读取消息。已知正文路径时传 path（如 /content/0/text），只读取该字段；不知道路径时省略 path，先看返回的 text_sources 再选择。evidence 中每条 quote 与 evidence_id 成对，核对原文后直接复制完整 ID，不解释或修改 ID 内的数字和路径。has_more=true 时沿用相同 candidate、message_index、path，并把返回的 next_offset 原样作为下一次 offset；不要自行计算位置，也不要将整条消息的分页位置套用到正文路径。分页长度会按输出预算自动缩小，以返回完整的证据条目。

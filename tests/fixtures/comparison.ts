@@ -50,6 +50,9 @@ export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResul
     ),
     decision_basis: {
       tradeoff: "双方均满足同一要求，没有结果差异。",
+      comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { summary: "正确给出4。", finding_indices: [0] }]),
+      ) }],
       decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
     },
   };
