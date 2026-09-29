@@ -399,6 +399,22 @@ export interface RunManifest {
   startedAt: number;
   finishedAt?: number;
   concurrency?: number;
+  /** Explicit repair scope; input discovery resumes only when the operator releases it. */
+  executionScope?: string[];
+  /** Circuit breaks survive restart; only explicit stage recovery clears them. */
+  pausedStages?: StagePause[];
+}
+export interface FailureGuardPolicy {
+  windowSize: number;
+  threshold: number;
+}
+export interface StagePause {
+  stage: string;
+  category: FailureCategory;
+  code: string;
+  path: string;
+  taskIds: string[];
+  at: number;
 }
 export interface RunState {
   manifest: RunManifest;

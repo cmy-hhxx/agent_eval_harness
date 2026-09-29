@@ -245,6 +245,24 @@ test("code timeout is enforced without waiting for the task deadline", async () 
     await rm(ctx.workdir, { recursive: true, force: true });
   }
 });
+test("cancellation falls back to the guardian when group signalling is denied", async (t) => {
+  const ctx = await context();
+  const kill = process.kill.bind(process);
+  t.mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
+    if (pid < 0) throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    return kill(pid, signal);
+  });
+  try {
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["execute_code"]));
+    const signal = new AbortController();
+    const started = Date.now();
+    const task = runtime.execute("execute_code", { language: "shell", code: "sleep 30 &\nwait" }, signal.signal);
+    setTimeout(() => signal.abort(), 150);
+    const result = await task;
+    assert.equal((result.details as { cancelled: boolean }).cancelled, true);
+    assert(Date.now() - started < 5000);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("worker SIGKILL does not leave an executing Python process behind", async () => {
   const ctx = await context(),
     child = spawn(process.execPath, [path.join(ROOT, "dist/tests/fixtures/code-child.js"), ctx.workdir], {

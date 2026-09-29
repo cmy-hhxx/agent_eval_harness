@@ -18,8 +18,21 @@
       "required": ["A", "B"],
       "additionalProperties": {
         "type": "object",
-        "required": ["final_message_index", "original_answer_timing", "original_answer_usage"],
+        "required": ["final_message_index", "deferred_final_material", "original_answer_timing", "original_answer_usage"],
         "properties": {
+          "deferred_final_material": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message_index", "path", "total_chars"],
+              "properties": {
+                "message_index": { "type": "integer", "minimum": 0 },
+                "path": { "type": "string", "minLength": 1 },
+                "total_chars": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
           "final_message_index": {
             "type": "integer",
             "minimum": 0

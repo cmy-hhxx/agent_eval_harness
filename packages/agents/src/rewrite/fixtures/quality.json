@@ -1,0 +1,102 @@
+[
+  {
+    "name": "真实返工：未展示不能扩大为未核查",
+    "origin": "0922，cmp_c868b521-284d-49e1-a76a-7010444d78e5；源槽位 comparison.2.B.summary；失败改写来自 style-repair 记录",
+    "item": {
+      "id": "comparison.2.B.summary", "label": "AA组Fast · 产品到回款证据链",
+      "text": "主要是财务指标和概括性风险标签，未逐公司展开验证、量产及四类风险证据。",
+      "context": "本项已确定的优势：A组Fast；对照信息不属于本格原文。",
+      "forbiddenPrefixes": ["A组Fast：", "本项已确定的优势："]
+    },
+    "approved": "主要列财务指标和概括性风险，未逐公司展开验证、量产及四类风险证据。",
+    "rejected": "主要停留在财务指标和概括性风险标签，未逐公司核查验证、量产及四类风险证据。",
+    "review": "拒绝把交付未展示升级为没有开展核查；此项必须人工核对，结构校验不能识别全部同义改写。"
+  },
+  {
+    "name": "真实问题的最小反例：优势标签串位",
+    "origin": "0922—0925 返工中观察到的错误形式，缩短为最小回归样本",
+    "item": {
+      "id": "comparison.0.B.summary", "label": "AA组Fast的逐项点评",
+      "text": "AA组Fast主要列财务指标和概括性风险标签。",
+      "context": "本项优势归A组Fast，但本格点评AA组Fast。",
+      "forbiddenPrefixes": ["A组Fast：", "没有已证实的单方优势："]
+    },
+    "approved": "主要列财务指标和概括性风险标签。",
+    "rejected": "A组Fast：AA组Fast主要列财务指标和概括性风险标签。",
+    "error_code": "rewrite_context_prefix",
+    "review": "对照标签不得作为本格主语或结论前缀。"
+  },
+  {
+    "name": "真实问题的最小反例：元信息混入正文",
+    "origin": "0922—0925 返工中观察到的错误形式，缩短为最小回归样本",
+    "item": {
+      "id": "comparison.0.A.summary", "label": "历史信息集",
+      "text": "时点三被未来信息污染。", "context": "没有已证实的单方优势",
+      "forbiddenPrefixes": ["没有已证实的单方优势："]
+    },
+    "approved": "时点三用了未来信息。",
+    "rejected": "没有已证实的单方优势：时点三用了未来信息。",
+    "error_code": "rewrite_context_prefix",
+    "review": "应直接说明该格事实，不能复制辅助标签。"
+  },
+  {
+    "name": "用户报告：双方达标也要解释已定偏好",
+    "origin": "本轮用户反馈的泛泛总结问题，事实部分为最小受控变体",
+    "item": {
+      "id": "verdict.A__vs__B.reason", "label": "本场偏好",
+      "text": "双方完成核心要求，A组Fast另列可核验的近期催化。", "preference": "A组Fast更好"
+    },
+    "approved": "A组Fast更好：核心结果相当，额外列明了可核验的近期催化。",
+    "rejected": "双方都完成了核心要求，未见共同遗漏。",
+    "error_code": "rewrite_preference_missing",
+    "review": "胜者正确还不够，后半句必须解释本场取舍。"
+  },
+  {
+    "name": "边界变体：局部优势不能被整体胜负吞掉",
+    "origin": "由本轮局部优势与整体偏好分离规则构造",
+    "item": {
+      "id": "comparison.3.B.summary", "label": "AA组Fast · 耗时",
+      "text": "AA组Fast比A组Fast快1.782秒。",
+      "context": "本项优势是AA组Fast。整体A组Fast因关键结果正确而胜出。"
+    },
+    "approved": "快约1.8秒，但这格只说明等待时间。",
+    "rejected": "虽然更快，但没有任何优势。",
+    "review": "保留AA组Fast在本项的速度优势；整体失败不抹去局部事实。允许合理数值表达，不凭数字字符串差异退回。"
+  },
+  {
+    "name": "边界变体：双方都差不能改出整体赢家",
+    "origin": "当前判决契约的最小边界样本",
+    "item": {
+      "id": "verdict.A__vs__B.reason", "label": "本场偏好",
+      "text": "双方均未提供用户要求的实际仓位。", "preference": "双方都差"
+    },
+    "approved": "双方都差：都没给实际仓位，核心交付缺失。",
+    "rejected": "双方都差：A组Fast更值得选择。",
+    "error_code": "rewrite_winner_contradiction",
+    "review": "局部差异可以描述，不能新增整体胜者。"
+  },
+  {
+    "name": "边界变体：相反系统约束分别合规",
+    "origin": "本轮用户提出的风险提示顺序反例；完整材料回归位于 optimization.test.ts",
+    "item": {
+      "id": "comparison.0.A.summary", "label": "A组Fast · 指令遵循",
+      "text": "按自己的系统要求将风险放在结论之后，未违反约束。",
+      "context": "AA组Fast的系统要求风险前置；另一方的要求不适用于本格。"
+    },
+    "approved": "风险放在结论之后，符合自身系统要求。",
+    "rejected": "风险没有前置，违反系统要求。",
+    "review": "逐方核对约束；不得把对照方的约束搬过来。"
+  },
+  {
+    "name": "真实原文：保留仓位数字和无法核验边界",
+    "origin": "0922，cmp_c868b521-284d-49e1-a76a-7010444d78e5，最终选择与仓位约束行；拒绝示例为受控变体",
+    "item": {
+      "id": "comparison.3.B.summary", "label": "AA组Fast · 最终选择与仓位约束",
+      "text": "给出三家公司名单并说明规则，但明确不提供实际仓位，现金下限无法核验。",
+      "context": "对照方给出35%、35%、20%、现金10%；这些数字不属于本格。"
+    },
+    "approved": "有三家公司名单和规则，却没有实际仓位，现金下限无法核验。",
+    "rejected": "仓位为35%、35%、20%，现金10%，满足下限。",
+    "review": "不得将另一方数字当成本方交付；无法核验不能升级为满足或不满足。"
+  }
+]

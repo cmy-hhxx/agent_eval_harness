@@ -11,6 +11,7 @@ type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "submitt
   evaluation?: unknown;
   evaluationPatch?: Patch;
   submittedPatch?: Patch;
+  rewriteIds?: string[];
   exported?: DiskReference;
 };
 type SavedTask = TaskState & {
@@ -92,15 +93,18 @@ function encodeState(state: RunState): Checkpoint {
       const receipt = state.receipts[task.id];
       if (receipt) {
         const { exported, evaluation, submitted, ...rest } = receipt;
+        const rewriteIds = task.stage === "rewrite"
+          ? (evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id) : undefined;
         const reference = exported && {
           ...(task.stage === "comparison" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
         };
         const evaluationPatch = exported
-          ? difference(resultEvaluation(task.data as TaskData, exported.row), evaluation)
+          ? difference(resultEvaluation(task.data as TaskData, exported.row, rewriteIds), evaluation)
           : [];
         value.receipt = {
           ...rest,
+          ...(rewriteIds ? { rewriteIds } : {}),
           ...(reference
             ? {
                 exported: reference,
@@ -151,8 +155,15 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
   };
 }
 
-function resultEvaluation(data: TaskData, row: JsonObject): unknown {
-  if (data.stage === "rewrite") return { rewrites: (stageResult(data.rewriteOf!.stage, row).rewritten as JsonObject).rewrites };
+function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
+  if (data.stage === "rewrite") {
+    const rewrites = (stageResult(data.rewriteOf!.stage, row).rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
+    return { rewrites: rewriteIds ? rewriteIds.map((id) => {
+      const item = rewrites.find((item) => item.id === id);
+      if (!item) throw new Error("改写槽位缺失：" + id);
+      return item;
+    }) : rewrites };
+  }
   row = originalResultRow(data.stage, row);
   if (data.stage === "attribution") return row.evaluation;
   if (data.stage === "clustering") return row.result;
@@ -222,7 +233,7 @@ function decodeState(
     state.manifest.states[task.id] = status;
     if (taskIds && !taskIds.has(task.id)) continue;
     if (!receipt) continue;
-    const { evaluationPatch, submittedPatch, ...value } = receipt;
+    const { evaluationPatch, submittedPatch, rewriteIds, ...value } = receipt;
     if (!receipt.exported) {
       state.receipts[task.id] = {
         ...value,
@@ -270,7 +281,7 @@ function decodeState(
           : canonical(row.case) !== canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id }))
       )
         throw new Error("改写结果身份不一致：" + task.id);
-      const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
+      const evaluation = restore(resultEvaluation(data, row, rewriteIds), evaluationPatch || []);
       state.receipts[task.id] = {
         ...value,
         evaluation,

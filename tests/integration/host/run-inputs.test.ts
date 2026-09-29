@@ -10,12 +10,13 @@ test("validation streams registered records and still resolves reordered and mis
   const { directory, config } = await fixtureConfig([[raw("q1"), raw("q2")], [], [raw("q1"), raw("q2")], []]);
   try {
     const plan = await buildPlan(config);
+    const expected = Object.fromEntries(Object.entries(plan.inputs));
     const manifest = { config, inputCatalog: plan.catalog } as unknown as RunManifest;
     t.mock.method(fileSourceReader, "read", async () => { throw new Error("File size is greater than 2 GiB"); });
-    assert.deepEqual(await loadRunInputs(manifest), plan.inputs);
+    assert.deepEqual(await loadRunInputs(manifest), expected);
     const source = config.inputs.versions[0]!.sources[0]!.path;
     await writeJsonl(source, [raw("unselected"), raw("q2"), raw("q1")]);
-    assert.deepEqual(await loadRunInputs(manifest), plan.inputs);
+    assert.deepEqual(await loadRunInputs(manifest), expected);
     await writeJsonl(source, [raw("q2")]);
     const issues: ValidationIssue[] = [];
     const available = await loadRunInputs(manifest, issues);
@@ -43,5 +44,19 @@ test("validation discards selected records if the source changes while reading",
     assert.equal(issues.length, 1);
     assert.match(issues[0]!.message, /读取期间输入文件发生变化/);
     assert.equal(Object.keys(available).length, Object.keys(plan.inputs).length - 1);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("validation keeps source coordinates and rejects edits after indexing", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const plan = await buildPlan(config);
+    const inputs = await loadRunInputs({ config, inputCatalog: plan.catalog } as unknown as RunManifest);
+    const candidate = (plan.catalog as { input_id: string; source: string }[])[0]!;
+    assert.equal(typeof Object.getOwnPropertyDescriptor(inputs, candidate.input_id)?.get, "function",
+      "validation must not retain every raw input body");
+    assert.deepEqual(inputs[candidate.input_id], plan.inputs[candidate.input_id]);
+    await writeJsonl(candidate.source, [raw("q1", "4", "changed")]);
+    assert.throws(() => inputs[candidate.input_id], /读取期间输入文件发生变化/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

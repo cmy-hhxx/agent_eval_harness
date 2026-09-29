@@ -29,40 +29,50 @@ export function attributionSlots(result: AttributionResult): RewriteItem[] {
   });
   return items;
 }
-export function comparisonSlots(result: ComparisonResult): RewriteItem[] {
-  const items: RewriteItem[] = Object.entries(result.assessments).map(([label, assessment]) => ({
-    id: `assessment.${label}.summary`,
-    label: `候选${label} 结论`,
-    text: assessment.summary,
-  }));
-  items.push({ id: "tradeoff", label: Object.values(result.assessments).every((assessment) => !assessment.meets_core)
-    ? "裁决短评：全部未达标，无整体胜者；保留共同失败结论"
-    : "裁决短评：结论与决定胜负的差异", text: result.decision_basis.tradeoff,
-    ...(Object.values(result.assessments).every((assessment) => !assessment.meets_core) ? { constraint: "no_winner" as const } : {}),
-  });
-  result.decision_basis.comparisons.forEach((row, index) => {
-    for (const [label, assessment] of Object.entries(row.assessments))
-      items.push({ id: `comparison.${index}.${label}.summary`, label: `${row.aspect} · 候选${label} 的表现`, text: assessment.summary });
-  });
+export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "items" = "verdicts"): RewriteItem[] {
+  if (scope === "items") return result.decision_basis.comparisons.flatMap((row, index) =>
+    Object.entries(row.assessments).map(([candidate, assessment]) => ({
+      id: `comparison.${index}.${candidate}.summary`,
+      label: `${row.aspect} · 候选${candidate}的逐项点评（只改写本格）`,
+      text: assessment.summary,
+      forbiddenPrefixes: [...new Set([
+        ...Object.keys(row.assessments).filter((label) => label !== candidate).map((label) => `【候选${label}】：`),
+        ...(row.better_candidates.length > 1 ? [row.better_candidates.map((label) => `【候选${label}】`).join("、") + "："] : []),
+        "没有已证实的单方优势：", "本项已确定的优势：", "待改写原文：",
+      ])],
+      context: [
+        `本项已确定的优势：${row.better_candidates.length ? row.better_candidates.map((label) => `【候选${label}】`).join("、") : "没有已证实的单方优势"}`,
+        ...Object.entries(row.assessments).filter(([label]) => label !== candidate)
+          .map(([label, other]) => `同项对照，不能写成本格事实：候选${label}：${other.summary}`),
+      ].join("\n"),
+    })),
+  );
+  const items: RewriteItem[] = [];
   const labels = result.ranking.flat();
   const tiers = tierOf(result.ranking);
   for (let i = 0; i < labels.length; i++)
     for (let j = i + 1; j < labels.length; j++) {
       const first = labels[i]!,
         second = labels[j]!;
+      const decision = decideVerdict(
+        result.assessments[first]?.meets_core ?? false,
+        result.assessments[second]?.meets_core ?? false,
+        tiers.get(first) ?? 0,
+        tiers.get(second) ?? 0,
+      );
+      const winner = decision.winner === "first" ? first : second;
+      const preference = decision.outcome === "win" ? `【候选${winner}】更好`
+        : decision.outcome === "both_good" ? "双方都好" : "双方都差";
       items.push({
         id: verdictSlotId(first, second),
-        label: `候选${first} 与候选${second} 的两两结论`,
-        text: verdictReason(
-          decideVerdict(
-            result.assessments[first]?.meets_core ?? false,
-            result.assessments[second]?.meets_core ?? false,
-            tiers.get(first) ?? 0,
-            tiers.get(second) ?? 0,
-          ),
-          first,
-          second,
-        ),
+        label: `候选${first} 与候选${second} 的偏好及理由`,
+        preference,
+        text: [
+          `已确定的对局结论：${verdictReason(decision, first, second)}`,
+          `原裁决依据：${result.decision_basis.tradeoff}`,
+          ...result.decision_basis.comparisons.map((row) =>
+            `${row.aspect}：候选${first}：${row.assessments[first]?.summary ?? ""}；候选${second}：${row.assessments[second]?.summary ?? ""}`),
+        ].join("\n"),
       });
     }
   return items;
@@ -81,11 +91,11 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
     })),
   ];
 }
-export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown): RewriteItem[] {
+export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" = "verdicts"): RewriteItem[] {
   if (stage === "clustering") return clusteringSlots(result as ClusteringResult);
   return stage === "attribution"
     ? attributionSlots(result as AttributionResult)
-    : comparisonSlots(result as ComparisonResult);
+    : comparisonSlots(result as ComparisonResult, scope);
 }
 /** Presentation-only view of an exported comparison row with own and dependency rewrites applied. */
 export function polishComparisonRow(

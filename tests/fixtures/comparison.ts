@@ -137,8 +137,8 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
   if ("rewrites" in properties) {
-    const request = parsedMaterial(spec) as { items: { id: string; text: string }[] };
-    return { rewrites: request.items.map((item) => ({ id: item.id, text: "精简：" + item.text })) };
+    const request = parsedMaterial(spec) as { items: { id: string; text: string; preference?: string }[] };
+    return { rewrites: request.items.map((item) => ({ id: item.id, text: item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text })) };
   }
   if ("assignments" in properties) {
     const request = parsedMaterial(spec) as {

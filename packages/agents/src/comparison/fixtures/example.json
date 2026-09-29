@@ -26,6 +26,7 @@
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
+          "deferred_final_material": [],
           "original_answer_timing": {
             "finish_seconds": null
           },
@@ -48,6 +49,7 @@
           "question": "计算2+2",
           "final_message_index": 1,
           "final_answer": "2+2=4",
+          "deferred_final_material": [],
           "original_answer_timing": {
             "finish_seconds": null
           },

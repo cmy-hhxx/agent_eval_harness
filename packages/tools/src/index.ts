@@ -123,7 +123,11 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
     try {
       process.kill(-proc.pid, "SIGTERM");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        // The invocation guardian also owns cleanup on IPC disconnect. A denied
+        // group signal must not escape the abort listener and crash the Worker.
+        if (proc.connected) proc.disconnect();
+      }
     }
     killTimer ??= setTimeout(() => {
       try {
@@ -146,7 +150,9 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
   try {
     exitCode = await new Promise<number | null>((resolve, reject) => {
       proc.once("error", reject);
-      proc.once("close", (code) => resolve(code));
+      // Output uses owned file descriptors, so no pipe drain is needed. Node can
+      // omit `close` after a manual IPC disconnect; the guardian's exit is final.
+      proc.once("exit", (code) => resolve(code));
     });
   } finally {
     clearTimeout(timeout);

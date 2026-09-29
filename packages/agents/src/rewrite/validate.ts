@@ -17,7 +17,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const input = request.input as unknown as RewriteRequest;
   const value = result as RewriteResult;
   const expected = new Set(input.items.map((item) => item.id));
-  const noWinner = new Set(input.items.filter((item) => item.constraint === "no_winner").map((item) => item.id));
+  const forbiddenPrefixes = new Map(input.items.map((item) => [item.id, item.forbiddenPrefixes ?? []]));
+  const preferences = new Map(input.items.filter((item) => item.preference).map((item) => [item.id, item.preference!]));
   const errors: ValidationIssue[] = [];
   const seen = new Set<string>();
   const issue = (code: string, path: string, message: string, actual: unknown) =>
@@ -28,8 +29,13 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     else if (seen.has(item.id))
       issue("rewrite_duplicate_id", `/rewrites/${index}/id`, "同一槽位只能改写一次", item.id);
     seen.add(item.id);
-    if (noWinner.has(item.id) && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选|排(?:在)?前|列(?:在)?前/u.test(item.text))
-      issue("rewrite_winner_contradiction", `/rewrites/${index}/text`, "此槽位没有整体胜者，只写共同失败；相对优势保留在逐项对比，不得写某方更好或居前", item.text);
+    if (forbiddenPrefixes.get(item.id)?.some((prefix) => item.text.trimStart().startsWith(prefix)))
+      issue("rewrite_context_prefix", `/rewrites/${index}/text`, "不要把对照信息或优势标签复制为点评前缀；直接写该槽位本身的事实，保持事实主体不变", item.text);
+    const preference = preferences.get(item.id);
+    if (preference && (!item.text.startsWith(preference + "：") || !item.text.slice(preference.length + 1).trim()))
+      issue("rewrite_preference_missing", `/rewrites/${index}/text`, `必须以“${preference}：”开头，随后给出本场对局的具体理由；不能丢掉或改变已确定偏好`, item.text);
+    if (preference?.startsWith("双方") && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选/u.test(item.text))
+      issue("rewrite_winner_contradiction", `/rewrites/${index}/text`, "此槽位没有整体胜者，不能改写为偏好某一方", item.text);
   }
   for (const id of expected)
     if (!seen.has(id)) issue("rewrite_missing_id", "/rewrites", "每个槽位都必须返回改写文本", id);

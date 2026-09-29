@@ -1,6 +1,7 @@
 import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
+import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
 import { assertComparableGroups, inputAdapterIds } from "@eval/workflows/comparison";
 import {
@@ -19,6 +20,7 @@ const EXECUTION_DEFAULTS = {
   retries: 1,
   retryDelaySeconds: 10,
   initialContextChars: 16000,
+  failureGuard: DEFAULT_FAILURE_GUARD,
 };
 const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
@@ -219,6 +221,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   for (const key of ["retries", "retryDelaySeconds", "repairAttempts"] as const)
     if (!Number.isInteger(config.execution[key]) || config.execution[key] < 0)
       throw new Error(`Invalid execution.${key}`);
+  validateFailureGuard(config.execution.failureGuard!);
   if (
     config.execution.maxTokens !== undefined &&
     (!Number.isInteger(config.execution.maxTokens) || config.execution.maxTokens < 1)

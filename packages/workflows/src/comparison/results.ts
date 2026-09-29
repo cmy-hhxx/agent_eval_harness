@@ -221,6 +221,10 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     const sourceTask = state.manifest.tasks.find((item) => item.id === source.taskId)!;
     const exported = encodeResult(sourceTask, state, inputs);
     const rewritten = rewrittenResult(receipt);
+    const previous = stageResult(source.stage, exported.row).rewritten as { rewrites?: { id: string; text: string }[] } | undefined;
+    const merged = new Map((previous?.rewrites ?? []).map((item) => [item.id, item]));
+    for (const item of (receipt.evaluation as RewriteResult).rewrites) merged.set(item.id, item);
+    rewritten.rewrites = [...merged.values()];
     if (!validateRewritten(rewritten))
       throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateRewritten.errors));
     return {

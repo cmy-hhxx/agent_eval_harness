@@ -7,11 +7,12 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { comparisonWorkflow, indexDataset, selectDataset } from "@eval/workflows/comparison";
+import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareFailedTasks } from "@eval/workflows/comparison";
 import { reportRun } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
 import { startDashboard } from "./dashboard.js";
+import { pilotTaskIds, comparisonRewriteReview, readRunState } from "@eval/workflows/comparison";
 
 let logRunId: string | undefined;
 async function main(): Promise<void> {
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
       "dataset-name": { type: "string" },
       catalog: { type: "string" },
       debug: { type: "boolean" },
+      "skip-failed": { type: "boolean" },
       batch: { type: "string", multiple: true },
       case: { type: "string", multiple: true },
       "limit-cases": { type: "string" },
@@ -36,6 +38,19 @@ async function main(): Promise<void> {
       help: { type: "boolean" },
       details: { type: "boolean" },
       value: { type: "string" },
+      scope: { type: "string" },
+      mode: { type: "string" },
+      task: { type: "string", multiple: true },
+      result: { type: "string", multiple: true },
+      slot: { type: "string", multiple: true },
+      all: { type: "boolean" },
+      apply: { type: "boolean" },
+      "discover-inputs": { type: "boolean" },
+      "resume-stage": { type: "string", multiple: true },
+      "require-rewrite": { type: "string", multiple: true },
+      "require-batch": { type: "string", multiple: true },
+      "pilot-cases": { type: "string" },
+      selected: { type: "boolean" },
       port: { type: "string", default: "4173" },
       "dashboard-settings": { type: "string" },
     },
@@ -44,7 +59,27 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      "eval index|preflight|run|status|validate|report|concurrency|progress|dashboard [--config FILE ...]\nrun: --engine pi|prime --run-id ID [--debug] [--worker URL ...]\n配置文件按顺序深度合并；具体模型放在不入库的 --config 中\n相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/\nselection: --batch ID --case ID --limit-cases N\ninputs/output: --input ID=PATH --output DIR\nindex: --dataset ID --dataset-name NAME --input VERSION=PATH ... [--catalog DIR]\npreflight/run: --dataset ID [--catalog DIR] 选择已索引的评测集\nstatus/validate/report: --run data/runs/comparison/ID\nreport: [--details] 为 debug 运行导出逐题 JSON 与任务状态\nconcurrency: --run PATH --value N\nprogress: --run PATH\ndashboard: --port 4173 在本机启动控制看板",
+      `eval index|preflight|run|status|validate|report|retry-failed|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
+run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
+配置文件按顺序深度合并；具体模型放在不入库的 --config 中
+相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
+selection: --batch ID --case ID --limit-cases N
+pilot: run --pilot-cases N；验收后 run --discover-inputs 释放其余任务
+recovery: run --resume-stage STAGE 解除已修复阶段的熔断，可重复
+inputs/output: --input ID=PATH --output DIR
+index: --dataset ID --dataset-name NAME --input VERSION=PATH ... [--catalog DIR]
+preflight/run: --dataset ID [--catalog DIR] 选择已索引的评测集
+status/validate/report: --run data/runs/comparison/ID
+validate: [--require-rewrite items|verdicts ...] [--require-batch ID ...] [--selected]
+report: [--details] 为 debug 运行导出逐题 JSON 与任务状态
+retry-failed: --run PATH [--task ID ...|--result ID ...] [--apply]
+rewrite-comparisons: --run PATH [--scope items|verdicts] [--mode missing|refresh]
+  [--task ID ...|--result ID ...|--all] [--slot ID ...] [--apply]
+修复命令默认仅预览；--apply 保存固定任务范围，随后同 run-id 续跑
+rewrite-review: --run PATH [--result ID ...] [--limit-cases N] 输出原文和改写供语义验收
+concurrency: --run PATH --value N
+progress: --run PATH
+dashboard: --port 4173 在本机启动控制看板`,
     );
     return;
   }
@@ -69,6 +104,17 @@ async function main(): Promise<void> {
     throw new Error("--dataset 仅用于 index、preflight 和 run");
   if (values.catalog && !values.dataset) throw new Error("--catalog 需要同时指定 --dataset");
   if (values.debug && command !== "run") throw new Error("--debug 仅用于 run");
+  for (const flag of ["discover-inputs", "resume-stage", "pilot-cases"] as const)
+    if (values[flag] && command !== "run") throw new Error(`--${flag} 仅用于 run`);
+  for (const flag of ["require-rewrite", "require-batch", "selected"] as const)
+    if (values[flag] && command !== "validate") throw new Error(`--${flag} 仅用于 validate`);
+  if (values.result && !["rewrite-comparisons", "retry-failed", "rewrite-review"].includes(command))
+    throw new Error("--result 仅用于修复或 rewrite-review");
+  for (const flag of ["task", "apply"] as const)
+    if (values[flag] && !["rewrite-comparisons", "retry-failed"].includes(command)) throw new Error(`--${flag} 仅用于修复命令`);
+  for (const flag of ["mode", "slot", "all"] as const)
+    if (values[flag] && command !== "rewrite-comparisons") throw new Error(`--${flag} 仅用于 rewrite-comparisons`);
+  if (values["skip-failed"] && command !== "run") throw new Error("--skip-failed 仅用于 run");
   if (values["dashboard-settings"] && command !== "run") throw new Error("--dashboard-settings 仅用于 run");
   if (command === "concurrency" || command === "progress") {
     if (!values.run) throw new Error("--run required");
@@ -95,6 +141,30 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  if (values.scope && command !== "rewrite-comparisons") throw new Error("--scope 仅用于 rewrite-comparisons");
+  if (command === "rewrite-review") {
+    if (!values.run) throw new Error("--run required");
+    const run = path.resolve(values.run), release = await runLock(run);
+    try { console.log(JSON.stringify(comparisonRewriteReview(await readRunState(run), values.result, Number(values["limit-cases"] ?? 50)), null, 2)); }
+    finally { await release(); }
+    return;
+  }
+  if (command === "rewrite-comparisons" || command === "retry-failed") {
+    if (!values.run) throw new Error("--run required");
+    const selection = { taskIds: values.task, resultIds: values.result, apply: values.apply };
+    if (command === "retry-failed") {
+      console.log(JSON.stringify(await prepareFailedTasks(path.resolve(values.run), selection), null, 2));
+      return;
+    }
+    const scope = values.scope || "items";
+    if (scope !== "items" && scope !== "verdicts") throw new Error("--scope 必须为 items 或 verdicts");
+    const mode = values.mode || "missing";
+    if (mode !== "missing" && mode !== "refresh") throw new Error("--mode 必须为 missing 或 refresh");
+    console.log(JSON.stringify(await prepareComparisonRewrites(path.resolve(values.run), {
+      ...selection, scope, mode, all: values.all, slotIds: values.slot,
+    }), null, 2));
+    return;
+  }
   if (["status", "validate", "report"].includes(command)) {
     if (!values.run) throw new Error("--run required");
     const run = path.resolve(values.run);
@@ -105,7 +175,10 @@ async function main(): Promise<void> {
         command === "status"
           ? await readJson(path.join(run, "state.json"))
           : command === "validate"
-            ? await validateRun(run, (binding, result, audit) => agents.validate(binding, result, audit))
+            ? await validateRun(run, (binding, result, audit) => agents.validate(binding, result, audit), {
+              rewriteScopes: values["require-rewrite"], batchIds: values["require-batch"],
+              selectedOnly: values.selected,
+            })
             : await reportRun(run, { details: values.details });
     } finally {
       await release();
@@ -130,6 +203,10 @@ async function main(): Promise<void> {
   if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
   const resuming = command === "run" && !!values["run-id"] &&
     await exists(runLayout(config.output, values["run-id"]).stateFile);
+  if (values["pilot-cases"] && (resuming || values["discover-inputs"]))
+    throw new Error("--pilot-cases 只用于新 run；通过验收后用 --discover-inputs 释放其余任务");
+  if (values["pilot-cases"] && values["limit-cases"])
+    throw new Error("--pilot-cases 不与 --limit-cases 同用；试跑保留全量计划，limit-cases 会限制原始输入范围");
   if (command !== "index" && values.dataset && values.input?.length)
     throw new Error("--dataset 与 --input 不能同时使用");
   const indexedVersions = new Set<string>();
@@ -218,6 +295,11 @@ async function main(): Promise<void> {
       policy: config.execution,
       modelForStage,
       concurrency: config.execution.concurrency,
+      skipFailed: values["skip-failed"],
+      discoverInputs: values["discover-inputs"],
+      resumeStages: values["resume-stage"],
+      failureGuard: config.execution.failureGuard,
+      taskIds: values["pilot-cases"] ? pilotTaskIds(plan, Number(values["pilot-cases"])) : undefined,
       retries: config.execution.retries,
       retryDelaySeconds: config.execution.retryDelaySeconds,
       debug: values.debug,
@@ -226,10 +308,10 @@ async function main(): Promise<void> {
       onProgress: console.log,
     });
     console.log(JSON.stringify(result, null, 2));
-    const statuses = result.task_statuses as Record<string, number>;
+    const statuses = result.execution_task_statuses;
     process.exitCode = controller.signal.aborted
       ? 130
-      : ["failed", "blocked", "timed_out", "cancelled", "pending", "running"].some((s) => statuses[s])
+      : result.paused_stages.length || ["failed", "blocked", "timed_out", "cancelled", "pending", "running"].some((s) => statuses[s])
         ? 2
         : 0;
   } finally {

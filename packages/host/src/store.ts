@@ -14,6 +14,7 @@ import type {
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
+import { checkpointSnapshot } from "./checkpoint.js";
 
 export interface EvaluationServices {
   logger?: LogSink;
@@ -30,7 +31,8 @@ export class RunStore {
   readonly services: EvaluationServices;
   readonly attempts = new Map<string, AttemptSpec>();
   private writes = Promise.resolve();
-  private submissions = Promise.resolve();
+  private queuedWrite?: Promise<void>;
+  private readonly submissions = new Map<string, Promise<void>>();
   private committedReceipts: Record<string, SubmissionReceipt>;
   private readonly writeResults: (state: RunState) => Promise<void>;
   private readonly logged = new Set<string>();
@@ -44,8 +46,10 @@ export class RunStore {
     this.writeResults = services.repository.createResultWriter(run, inputs);
   }
   save(): Promise<void> {
-    const snapshot = structuredClone(this.state);
+    if (this.queuedWrite) return this.queuedWrite;
     const next = this.writes.then(async () => {
+      this.queuedWrite = undefined;
+      const snapshot = checkpointSnapshot(this.state);
       const pending = snapshot.manifest.tasks.some(
         (task) => snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported,
       );
@@ -77,10 +81,15 @@ export class RunStore {
             this.logged.add(receipt.submissionId);
         }
     });
+    this.queuedWrite = next;
     this.writes = next.catch(() => {});
     return next;
   }
   async receipt(taskId: string): Promise<SubmissionReceipt | undefined> {
+    // Only this task's uncommitted receipt needs a durability barrier. Waiting
+    // on unrelated writes prevents the scheduler from filling free workers.
+    if (this.committedReceipts[taskId] || !this.state.receipts[taskId])
+      return this.committedReceipts[taskId];
     await this.writes;
     return this.committedReceipts[taskId];
   }
@@ -101,9 +110,16 @@ export class RunStore {
     throw new HttpError(404, "Submission not accepted");
   }
   async activate(spec: AttemptSpec): Promise<void> {
-    const operation = this.submissions.then(() => this.activateExclusive(spec));
-    this.submissions = operation.catch(() => {});
-    return operation;
+    return this.exclusive(spec.taskId, () => this.activateExclusive(spec));
+  }
+  private exclusive<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    const result = (this.submissions.get(taskId) || Promise.resolve()).then(operation);
+    const settled = result.then(() => {}, () => {});
+    this.submissions.set(taskId, settled);
+    void settled.then(() => {
+      if (this.submissions.get(taskId) === settled) this.submissions.delete(taskId);
+    });
+    return result;
   }
   private async activateExclusive(spec: AttemptSpec): Promise<void> {
     const state = this.manifest.states[spec.taskId];
@@ -132,42 +148,30 @@ export class RunStore {
     status: "failed" | "timed_out" | "cancelled",
     reason: string,
   ): Promise<void> {
-    const operation = this.submissions.then(async () => {
+    return this.exclusive(spec.taskId, async () => {
       const state = this.manifest.states[spec.taskId];
       if (state.attemptId !== spec.attemptId || (await this.receipt(spec.taskId))) return;
       state.status = status;
       state.reason = reason;
       await this.save();
     });
-    this.submissions = operation.catch(() => {});
-    return operation;
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
-    const result = this.submissions.then(() => this.acceptExclusive(value));
-    this.submissions = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
+    return this.exclusive(value.taskId, () => this.acceptExclusive(value));
   }
   async checkpoint(taskId: string, failure: FailureContext): Promise<void> {
-    const operation = this.submissions.then(async () => {
+    return this.exclusive(taskId, async () => {
       const state = this.manifest.states[taskId];
       if (!state || state.attemptId !== failure.attemptId || state.status !== "running")
         throw new HttpError(409, "Attempt is cancelled or superseded");
       state.failure = failure;
       await this.save();
     });
-    this.submissions = operation.catch(() => {});
-    return operation;
   }
   private async acceptExclusive(value: Submission): Promise<SubmissionReceipt> {
     const task = this.manifest.tasks.find((t) => t.id === value.taskId);
     if (!task) throw new HttpError(404, "Unknown task");
     safeId(value.submissionId);
-    for (const [id, receipt] of Object.entries(this.committedReceipts))
-      if (id !== task.id && receipt.submissionId === value.submissionId)
-        throw new HttpError(409, "Submission ID already belongs to another task");
     const old = await this.receipt(task.id);
     if (old) {
       if (
@@ -220,6 +224,10 @@ export class RunStore {
     };
     const failure = state.failure,
       repeatedErrors = state.repeatedErrors;
+    // Check and reserve without yielding: other tasks may also be waiting to commit.
+    for (const [id, receipt] of Object.entries(this.state.receipts))
+      if (id !== task.id && receipt.submissionId === value.submissionId)
+        throw new HttpError(409, "Submission ID already belongs to another task");
     this.state.receipts[task.id] = receipt;
     state.status = "succeeded";
     state.reason = undefined;

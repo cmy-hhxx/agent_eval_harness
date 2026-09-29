@@ -7,7 +7,7 @@ import { canonical } from "@eval/contracts";
 import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
 import { toRewrites, type RewriteResult, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
-import { comparisonRow } from "./results.js";
+import { comparisonRow, stageResult } from "./results.js";
 import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
@@ -175,9 +175,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const commentaryBySource = new Map<string, Rewrites>();
   for (const task of manifest.tasks) {
     if (task.stage !== "rewrite") continue;
-    const evaluation = receipts.get(task.id)?.evaluation as RewriteResult | undefined;
-    if (evaluation)
-      commentaryBySource.set((task.data as TaskData).rewriteOf!.taskId, toRewrites(evaluation));
+    const source = (task.data as TaskData).rewriteOf!;
+    const receipt = receipts.get(task.id);
+    const exported = receipt?.exported ?? receipts.get(source.taskId)?.exported;
+    const stored = exported ? stageResult(source.stage, exported.row).rewritten as RewriteResult | undefined : undefined;
+    const evaluation = receipt?.evaluation as RewriteResult | undefined;
+    if (stored || evaluation)
+      commentaryBySource.set(source.taskId, toRewrites({ rewrites: [...(stored?.rewrites ?? []), ...(evaluation?.rewrites ?? [])] }));
   }
   const commentary: CommentaryLookup = { of: (sourceTaskId) => commentaryBySource.get(sourceTaskId || "") };
   // Persist both stages before compacting the ledger, including checkpoint-only recovery.
@@ -471,6 +475,12 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (!models.includes(receipt.judge)) models.push(receipt.judge);
   }
   for (const models of Object.values(judgeModels)) models.sort();
+  const executionStatuses: Record<string, number> = {};
+  const executionScope = manifest.executionScope && new Set(manifest.executionScope);
+  for (const task of manifest.tasks) if (!executionScope || executionScope.has(task.id)) {
+    const status = manifest.states[task.id].status;
+    executionStatuses[status] = (executionStatuses[status] ?? 0) + 1;
+  }
   const summary = {
     debug: manifest.debug,
     run_id: manifest.runId,
@@ -478,6 +488,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     evaluator_versions: evaluatorVersions,
     judge_models: judgeModels,
     ...totals,
+    execution_task_statuses: executionStatuses,
+    paused_stages: manifest.pausedStages ?? [],
     quality,
     by_batch: byBatch,
     ...(Object.keys(problemLibrary).length ? { problem_library: problemLibrary } : {}),

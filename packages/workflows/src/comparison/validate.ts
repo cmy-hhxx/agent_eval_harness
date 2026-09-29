@@ -8,16 +8,18 @@ import type { AgentBinding, ToolAudit } from "@eval/contracts";
 import { writeOverview } from "./report.js";
 import { loadRunInputs, readRunState } from "./run-data.js";
 import type { Candidate, EvalConfig, ComparisonResult, RawInput, TaskData } from "./types.js";
-import { adapt, candidateKey } from "./input.js";
+import { adapt, candidateKey, taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
 import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow } from "./results.js";
 import { taskObservations } from "./observations.js";
+import { deliveryCoverage, type DeliveryRequirements } from "./delivery.js";
 
 export async function validateRun(
   run: string,
   validate: (binding: AgentBinding, result: unknown, audit: ToolAudit) => void,
+  requirements: DeliveryRequirements = {},
 ) {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const outputValidator = ajv.compile(outputSchema),
@@ -26,8 +28,10 @@ export async function validateRun(
     clusteringValidator = ajv.compile(clusteringSchema);
   const state = await readRunState(run),
     manifest = state.manifest;
+  const delivery = deliveryCoverage(state, requirements);
   const errors: string[] = [],
     evidenceErrors: string[] = [],
+    rewriteErrors: string[] = [],
     artifactErrors: string[] = [],
     receipts = new Map<string, SubmissionReceipt>();
   const inputIssues: ValidationIssue[] = [];
@@ -98,7 +102,7 @@ export async function validateRun(
           receipt.audit,
         );
     } catch (error) {
-      evidenceErrors.push(`${task.id}: ${errorText(error)}`);
+      (task.stage === "rewrite" ? rewriteErrors : evidenceErrors).push(`${task.id}: ${errorText(error)}`);
     }
     if (manifest.debug)
       for (const artifact of receipt.audit.artifacts) {
@@ -115,6 +119,28 @@ export async function validateRun(
       (manifest.config as EvalConfig).inputs.versions.map((v) => [v.id, v.display_name || v.name]),
     ),
     expected = new Map<string, string[]>();
+  const executionScope = new Set(manifest.executionScope);
+  const selectedSources = requirements.selectedOnly && new Set(manifest.tasks.filter((task) => executionScope.has(task.id))
+    .map((task) => (task.data as TaskData).rewriteOf?.taskId ?? task.id));
+  for (const task of manifest.tasks) {
+    const receipt = receipts.get(task.id);
+    if (task.stage !== "comparison" || !receipt?.exported) continue;
+    if (selectedSources && !selectedSources.has(task.id)) continue;
+    const data = task.data as TaskData;
+    const stored = stageResult("comparison", receipt.exported.row).rewritten as { rewrites: { id: string; text: string }[] } | undefined;
+    for (const scope of new Set(requirements.rewriteScopes ?? [])) {
+      const binding = bindTask({ ...task, stage: "rewrite", inputIds: {}, dependencies: { source: task.id }, data: {
+        stage: "rewrite", candidates: {}, reference: null, case: { ...taskCase(data), question: "" },
+        comparisonRewriteScope: scope as "items" | "verdicts",
+        rewriteOf: { stage: "comparison", taskId: task.id, resultId: data.comparisonId! },
+        rewriteNames: Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) => [label, names[candidate.version]!])),
+      } satisfies TaskData }, {}, { source: receipt });
+      const ids = new Set((binding.request.input.items as { id: string }[]).map((item) => item.id));
+      try {
+        validate(binding, { rewrites: stored?.rewrites.filter((item) => ids.has(item.id)) ?? [] }, receipt.audit);
+      } catch (error) { rewriteErrors.push(`${task.id}/${scope}: ${errorText(error)}`); }
+    }
+  }
   for (const task of manifest.tasks)
     if (receipts.has(task.id)) {
       try {
@@ -133,7 +159,12 @@ export async function validateRun(
         }
         if (task.stage === "rewrite") {
           const row = receipt.exported ? stageResult((task.data as TaskData).rewriteOf!.stage, receipt.exported.row).rewritten : rewrittenResult(receipt);
-          if (!rewrittenValidator(row) || canonical(row) !== canonical(rewrittenResult(receipt)))
+          if (!rewrittenValidator(row))
+            throw new Error("改写结果结构或收据不一致");
+          const stored = row as { evaluator_version: string; rewrites: { id: string; text: string }[] };
+          const owned = rewrittenResult(receipt) as typeof stored;
+          if (new Set(stored.rewrites.map((item) => item.id)).size !== stored.rewrites.length ||
+            canonical({ ...stored, rewrites: owned.rewrites.map((item) => stored.rewrites.find((saved) => saved.id === item.id)) }) !== canonical(owned))
             throw new Error("改写结果结构或收据不一致");
           continue;
         }
@@ -183,7 +214,9 @@ export async function validateRun(
     }
   }
   const validation = {
-    valid: errors.length === 0 && evidenceErrors.length === 0,
+    valid: errors.length === 0 && evidenceErrors.length === 0 && rewriteErrors.length === 0 && delivery.valid,
+    delivery,
+    rewrites: { valid: !rewriteErrors.length, errors: rewriteErrors, semantic_review: "required" },
     results: { valid: errors.length === 0, errors: [...errors] },
     evidence: { valid: evidenceErrors.length === 0, errors: evidenceErrors },
     artifacts: {
@@ -194,12 +227,13 @@ export async function validateRun(
       (n, [name, rows]) => n + (name === "comparison.jsonl" ? rows.length : 0),
       0,
     ),
-    errors: [...errors, ...evidenceErrors],
+    errors: [...errors, ...evidenceErrors, ...rewriteErrors, ...delivery.errors,
+      ...delivery.missing_slots.map((row) => `${row.task_id}: missing rewrite slots: ${row.slot_ids.join(", ")}`)],
     artifacts_checked: manifest.debug,
   };
   const file = locateRun(run).stats;
   const summary = (await exists(file)) ? await readJson(file) : undefined;
-  const { errors: _errors, results, evidence, artifacts, ...counts } = validation;
+  const { errors: _errors, results, evidence, artifacts, rewrites, delivery: coverage, ...counts } = validation;
   await writeJson(file, {
     ...summary,
     validation: {
@@ -207,6 +241,9 @@ export async function validateRun(
       error_count: validation.errors.length,
       results: { valid: results.valid, error_count: results.errors.length },
       evidence: { valid: evidence.valid, error_count: evidence.errors.length },
+      rewrites: { valid: rewrites.valid, error_count: rewrites.errors.length, semantic_review: rewrites.semantic_review },
+      delivery: { valid: coverage.valid, by_batch: coverage.by_batch, required_slots: coverage.required_slots,
+        filled_slots: coverage.filled_slots, missing_comparisons: coverage.missing_slots.length, error_count: coverage.errors.length },
       artifacts: {
         status: artifacts.status,
         error_count: artifacts.errors.length,

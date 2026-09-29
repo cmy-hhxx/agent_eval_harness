@@ -185,12 +185,13 @@ export async function locateRecordStream(
   candidate: Candidate,
   version: VersionConfig,
   defaultBatch?: string,
-): Promise<{ raw: RawInput; line: number; record: Candidate }> {
+): Promise<{ raw: RawInput; line: number; record: Candidate; byteOffset: number; byteLength: number }> {
   const scan = async (expectedLine?: number) => {
-    for await (const { line, index } of fileSourceReader.lines(source)) {
+    for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source)) {
       if (expectedLine !== undefined && index !== expectedLine) continue;
       const found = recordMatch(line, index, candidate, version, source, defaultBatch);
-      if (found || expectedLine !== undefined) return found;
+      if (found) return { ...found, byteOffset, byteLength };
+      if (expectedLine !== undefined) return undefined;
     }
     return undefined;
   };
@@ -405,11 +406,16 @@ export async function buildPlan(
             if (row.error) throw row.error;
             const record = row.record!;
             const old = oldRecords.get(candidateKey(record));
+            let unchanged = old?.source === record.source && old?.line === record.line;
+            if (old && Object.hasOwn(previous!.inputs, old.input_id)) {
+              try { unchanged = isDeepStrictEqual(previous!.inputs[old.input_id], raw); }
+              // A lazy prior plan cannot read the old body after a source rewrite. Its
+              // registered business identity still survives reordered or appended rows.
+              catch { unchanged = true; }
+            }
             if (
               old &&
-              (Object.hasOwn(previous!.inputs, old.input_id)
-                ? isDeepStrictEqual(previous!.inputs[old.input_id], raw)
-                : old.source === record.source && old.line === record.line)
+              unchanged
             )
               record.input_id = old.input_id;
             if (key && !invalid.has(key)) {
@@ -513,6 +519,10 @@ export async function buildPlan(
         reference: null,
         rewriteOf: { stage: sourceStage, taskId: sourceTaskId, resultId },
         rewriteNames: names,
+        ...((old?.data as TaskData | undefined)?.comparisonRewriteScope
+          ? { comparisonRewriteScope: (old!.data as TaskData).comparisonRewriteScope } : {}),
+        ...((old?.data as TaskData | undefined)?.rewriteSlotIds
+          ? { rewriteSlotIds: (old!.data as TaskData).rewriteSlotIds } : {}),
         ...context,
         revision,
       },
@@ -785,8 +795,7 @@ export async function buildPlan(
     selectedKeys.has(canonical([record.batch_id, record.case_id])),
   );
   const used = new Set(catalog.map((record) => record.input_id));
-  // The inventory has no comparisons and needs only the compact catalog. For real plans,
-  // load the selected raw records in a second bounded scan, never all source text at once.
+  // Retain byte coordinates only; the Host reads a record when preparing an active task.
   if (config.comparisons.length && options.materializeInputs !== false) {
     const bySource = new Map<string, Map<number, Candidate[]>>();
     for (const record of catalog) {
@@ -797,28 +806,32 @@ export async function buildPlan(
     }
     for (const [source, lines] of bySource) {
       const found = new Set<number>();
-      for await (const { line, index } of fileSourceReader.lines(source, sourceRevisions.get(source)!)) {
+      for await (const { index, byteOffset, byteLength } of fileSourceReader.lines(source, sourceRevisions.get(source)!)) {
         const candidates = lines.get(index);
         if (!candidates) continue;
-        const raw = object(JSON.parse(line)) as RawInput;
         for (const candidate of candidates) {
           const version = config.inputs.versions.find((item) => item.id === candidate.version)!;
-          const current = adapt(raw, version, source, index, config.inputs.default_batch_id);
-          if (
-            candidateKey(current) !== candidateKey(candidate) ||
-            current.question !== candidate.question ||
-            current.final_index !== candidate.final_index
-          ) throw new Error("读取期间输入源记录发生变化，请重试：" + source);
-          inputs[candidate.input_id] = raw;
+          Object.defineProperty(inputs, candidate.input_id, {
+            enumerable: true,
+            configurable: true,
+            get() {
+              const raw = object(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, sourceRevisions.get(source)!))) as RawInput;
+              const current = adapt(raw, version, source, index, config.inputs.default_batch_id);
+              if (candidateKey(current) !== candidateKey(candidate) || current.question !== candidate.question || current.final_index !== candidate.final_index)
+                throw new Error("读取期间输入源记录发生变化，请重试：" + source);
+              return raw;
+            },
+          });
         }
         found.add(index);
       }
       if (found.size !== lines.size) throw new Error("读取期间输入源记录缺失，请重试：" + source);
     }
   }
+  for (const id of Object.keys(inputs)) if (!used.has(id)) delete inputs[id];
   return {
     tasks: [...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
-    inputs: Object.fromEntries(Object.entries(inputs).filter(([id]) => used.has(id))),
+    inputs,
     catalog,
     summary: {
       valid_inputs: validInputs,

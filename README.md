@@ -14,6 +14,9 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 | 模块边界、Host / Worker、扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、验证、测试和文档 | [开发指南](docs/development.md) |
 | 评语和真实模型复核 | [评测质量](docs/quality.md) |
+| 批量评测经验、失败处置和优化优先级 | [0922—0925 评测复盘](docs/evaluation-lessons.md) |
+| 小批放量、失败补跑、逐格修复与交付核验 | [运行流程](docs/usage.md#运行与恢复) · [改写放量验收](docs/quality.md#改写放量验收) |
+| 远程输入数据服务交接 | [输入服务交接](docs/handoff.md) |
 
 阅读顺序：先看本页和 `AGENTS.md`；定位任务后只打开对应文档和源码入口。规则只维护一份，其他页面通过链接引用。
 

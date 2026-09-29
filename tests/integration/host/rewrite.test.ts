@@ -6,7 +6,7 @@ import type { AgentBackend, JsonObject, EvaluationLog } from "@eval/contracts";
 import { readJsonl, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
-import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult } from "@eval/workflows/comparison";
+import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult, prepareComparisonRewrites, writeRunState, createResultWriter } from "@eval/workflows/comparison";
 import type { TaskData, AttributionResult } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
@@ -35,13 +35,6 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             assert(!input.items.some((item) => /候选[A-Z]/.test(item.label + item.text)));
           }
           const evaluation = taskResult(options.spec);
-          if (!clustering && options.spec.evaluation.id === "rewrite") {
-            const rewrites = (evaluation as { rewrites: { id: string; text: string }[] }).rewrites;
-            for (const item of rewrites) {
-              if (item.id === "tradeoff" || /^comparison\./.test(item.id))
-                item.text = "精简：" + "两方都给出了题目要求的正确结果，已核对对应的计算和单位。".repeat(7);
-            }
-          }
           if (clustering && options.spec.evaluation.id === "attribution") {
             const finding = (evaluation as AttributionResult).findings[0]!;
             finding.type = "problem";
@@ -119,7 +112,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     for (const row of [...comparisons, ...attributions]) {
       const rewritten = stageResult(row.evaluation_type === "attribution" ? "attribution" : "comparison", row).rewritten as { rewrites: { id: string; text: string }[] };
       assert(rewritten, "source result must contain rewritten");
-      assert(rewritten.rewrites.every((item) => item.text.startsWith("精简：")));
+      assert(rewritten.rewrites.every((item) => item.id.startsWith("verdict.") ? /^(双方都好|双方都差|.+更好)：/.test(item.text) : item.text.startsWith("精简：")));
       assert(!rewritten.rewrites.some((item) => /候选[A-Z]|(?<![A-Za-z])[AB](?![A-Za-z]|组)/u.test(item.text)));
     }
     if (clustering) {
@@ -135,7 +128,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     }
     assert(!(await readdir(path.join(run, "results"))).includes("commentary.jsonl"));
     const taskSummaries = await readFile(path.join(run, "task_summaries.md"), "utf8");
-    assert(taskSummaries.includes(clustering ? "精简：关键结果错误。" : "精简：正确给出了结果。"));
+    assert(taskSummaries.includes(clustering ? "关键结果错误。" : "正确给出了结果。"));
     assert.deepEqual((summary.artifacts as { results: string[] }).results, [
       "results/attribution.jsonl", "results/comparison.jsonl", ...(clustering ? ["results/clustering.jsonl"] : []),
     ]);
@@ -165,10 +158,59 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(calls, expectedCalls);
     assert.equal((await reportRun(run)).completed_comparisons, 1);
 
+    // Refresh one field, preserving other existing presentation text and every judge receipt.
+    const existing = await readRunState(run);
+    const cmp = existing.receipts[comparisonTask.id]!;
+    const cmpRewrite = existing.manifest.tasks.find((task) => task.stage === "rewrite" && (task.data as TaskData).rewriteOf?.taskId === comparisonTask.id)!;
+    const untouched = { id: "assessment.A.summary", text: "保留已有的其他文案" };
+    (existing.receipts[cmpRewrite.id]!.evaluation as { rewrites: { text: string }[] }).rewrites[0]!.text = "双方都完成了核心要求，未见共同遗漏。";
+    (existing.receipts[cmpRewrite.id]!.evaluation as { rewrites: { id: string; text: string }[] }).rewrites.push(untouched);
+    await createResultWriter(run, {})(existing);
+    await writeRunState(run, existing);
+    const prior = await rows(comparisonFile);
+    const originalJudge = structuredClone(cmp.evaluation);
+    assert.equal((await prepareComparisonRewrites(run, { scope: "verdicts", mode: "refresh", all: true, apply: true })).count, 1);
+    assert(!((await readRunState(run)).receipts[cmpRewrite.id]));
+    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    assert.equal(calls, expectedCalls + 1, "only one rewrite executes; accepted judgments stay accepted");
+    const refreshed = await readRunState(run);
+    assert.deepEqual(refreshed.receipts[comparisonTask.id]!.evaluation, originalJudge);
+    const newRows = await rows(comparisonFile);
+    const oldSlot = (prior[0]!.rewritten as any).rewrites.find((item: any) => item.id.startsWith("verdict."));
+    const newSlot = (newRows[0]!.rewritten as any).rewrites.find((item: any) => item.id.startsWith("verdict."));
+    assert.notEqual(newSlot.text, oldSlot.text);
+    oldSlot.text = newSlot.text;
+    assert.deepEqual(newRows[0], prior[0], "only the requested verdict reason changes");
+    assert.deepEqual((newRows[0]!.rewritten as any).rewrites.find((item: any) => item.id === untouched.id), untouched);
+    assert.equal((refreshed.receipts[cmpRewrite.id]!.evaluation as any).rewrites.length, 1);
+    assert((await readFile(path.join(run, "task_summaries.md"), "utf8")).includes(untouched.text), "reports retain untouched presentation slots");
+    assert(!(await readFile(path.join(run, "state.json"), "utf8")).includes("核对了结果及具体交付"), "accepted rewrite text remains only in JSONL");
+    const refreshedValidation = await validateRun(run);
+    assert.equal(refreshedValidation.valid, true, JSON.stringify(refreshedValidation));
+
+    // Refresh table cells without changing a single accepted preference or judge field.
+    const beforeItems = structuredClone(newRows);
+    assert.equal((await prepareComparisonRewrites(run, { scope: "items", mode: "refresh", all: true, apply: true })).count, 1);
+    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    assert.equal(calls, expectedCalls + 2);
+    const afterItems = await rows(comparisonFile);
+    const cells = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => item.id.startsWith("comparison."));
+    assert.equal(cells.length, (afterItems[0]!.decision_basis as any).comparisons.length * 2);
+    assert(cells.length > 0);
+    assert(cells.every((item: any) => item.text.startsWith("精简：")));
+    (afterItems[0]!.rewritten as any).rewrites = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => !item.id.startsWith("comparison."));
+    assert.deepEqual(afterItems, beforeItems, "only comparison cell text is added");
+    const itemState = await readRunState(run);
+    assert.deepEqual(itemState.receipts[comparisonTask.id]!.evaluation, originalJudge);
+    assert.equal((itemState.manifest.tasks.find((task) => task.id === cmpRewrite.id)!.data as TaskData).comparisonRewriteScope, "items");
+    assert.equal((await validateRun(run)).valid, true);
+    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    assert.equal(calls, expectedCalls + 2, "accepted cell rewrites are not rerun");
+
     // Disabling rewrite on resume keeps accepted commentary and stops planning pending polish.
     config.rewrite = { comparison: false, attribution: false, clustering: false };
     await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
-    assert.equal(calls, expectedCalls);
+    assert.equal(calls, expectedCalls + 2);
     const disabled = await readRunState(run);
     assert.equal(disabled.manifest.tasks.filter((task) => task.stage === "rewrite").length, expectedRewrites);
     assert.equal((await validateRun(run)).valid, true);

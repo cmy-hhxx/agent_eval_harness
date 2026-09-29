@@ -61,6 +61,10 @@ export function bindTask(
     const source = dependencies.source;
     if (!source || !data.rewriteOf)
       throw new Error("改写任务缺少已接受的源结果：" + data.rewriteOf?.taskId);
+    const slots = sourceSlots(data.rewriteOf.stage, source.evaluation, data.comparisonRewriteScope);
+    if (data.rewriteSlotIds && (!data.rewriteSlotIds.length || new Set(data.rewriteSlotIds).size !== data.rewriteSlotIds.length ||
+      data.rewriteSlotIds.some((id) => !slots.some((item) => item.id === id))))
+      throw new Error("改写任务含未知、重复或空槽位选择：" + task.id);
     return {
       agent: "rewrite",
       profile: "default",
@@ -70,12 +74,15 @@ export function bindTask(
           ...(data.rewriteScope ? { scope: data.rewriteScope } : { case: {
             batch_id: data.case!.batch_id, case_id: data.case!.case_id,
           } }),
-          items: sourceSlots(data.rewriteOf.stage, source.evaluation).map((item) => ({
+          items: slots.filter((item) => !data.rewriteSlotIds || data.rewriteSlotIds.includes(item.id)).map((item) => ({
             ...item,
             label: data.rewriteOf!.stage === "attribution"
               ? `${data.rewriteNames!.A} ${item.label}`
               : display(item.label, data.rewriteNames!),
             text: display(item.text, data.rewriteNames!),
+            ...(item.context ? { context: display(item.context, data.rewriteNames!) } : {}),
+            ...(item.forbiddenPrefixes ? { forbiddenPrefixes: display(item.forbiddenPrefixes, data.rewriteNames!) } : {}),
+            ...(item.preference ? { preference: display(item.preference, data.rewriteNames!) } : {}),
           })),
         },
         sources: {},
@@ -96,7 +103,14 @@ export function bindTask(
   const materials = Object.fromEntries(
     (attribution ? [["answer", data.candidates.A] as const] : Object.entries(data.candidates)).map(([label, candidate]) => {
       const raw = sources[label].value as RawInput;
-      const final = contentText(raw.messages[candidate.final_index].content);
+      const finalSources = evidenceSources(raw.messages[candidate.final_index])
+        .filter((source) => source.kind === "text" && source.path.startsWith("/content") && source.text.length);
+      const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
+      const deferred = finalSources.filter((source) => source.text.length > finalBlockLimit);
+      const final = deferred.reduce(
+        (text, source, index) => text.replaceAll(source.text, JSON.stringify({ deferred_final_material: index })),
+        contentText(raw.messages[candidate.final_index].content),
+      );
       const question = blind ? blind.value(candidate.question) : candidate.question;
       let used = final.length + question.length;
       const initial: {
@@ -126,7 +140,8 @@ export function bindTask(
           .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
           .map((source) => cite(i, source, 0, source.text.length));
         const cost = text.length + evidence.reduce((total, item) => total + item.quote.length, 0);
-        if (used + cost <= (data.initialContextChars ?? 16000) && !text.includes("data:image/")) {
+        const ownInstructions = ["system", "developer"].includes(raw.messages[i].role || "");
+        if (ownInstructions || (used + cost <= (data.initialContextChars ?? 16000) && !text.includes("data:image/"))) {
           initial.push({ message_index: i, value, evidence });
           used += cost;
         }
@@ -138,17 +153,18 @@ export function bindTask(
           question,
           final_message_index: candidate.final_index,
           final_answer: final,
-          final_evidence: evidenceSources(raw.messages[candidate.final_index])
-            .filter(
-              (source) => source.kind === "text" && source.path.startsWith("/content") && source.text.length,
-            )
+          final_evidence: finalSources
+            .filter((source) => source.text.length <= finalBlockLimit)
             .map((source) => cite(candidate.final_index, source, 0, source.text.length)),
+          deferred_final_material: deferred.map((source) => ({
+            message_index: candidate.final_index, path: source.path, total_chars: source.text.length,
+          })),
           initial_material: initial,
           catalog: traceCatalog(raw),
           input_file: `inputs/${label}.json`,
           original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
           ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
-          note: "完整问题和最终回答已展示；其余材料可通过工具或输入文件继续查看。",
+          note: "问题及本回答的 system/developer 消息已展示；原始材料保留在 input_file，延后展示的最终回答片段列在 deferred_final_material。",
         },
       ];
     }),

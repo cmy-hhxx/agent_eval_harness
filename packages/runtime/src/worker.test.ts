@@ -1,7 +1,9 @@
 import { draftFor } from "../../../tests/fixtures/comparison.js";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import {
   DEFAULT_POLICY,
@@ -131,6 +133,37 @@ async function harness(
     },
   };
 }
+test("a burst of model events is persisted in batches with complete ordered replay", async (t) => {
+  const append = fs.appendFile;
+  let writes = 0;
+  t.mock.method(fs, "appendFile", async (...args: Parameters<typeof append>) => {
+    if (String(args[0]).endsWith("events.jsonl")) writes++;
+    return append(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (let i = 0; i < 200; i++) options.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: String(i) } });
+      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+    }, async abort() {}, async dispose() {},
+  }));
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    const response = await fetch(`${fixture.worker.url}/api/attempts/attempt/events?after=0`);
+    const events = (await response.text()).split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)) as WorkerEvent);
+    assert.equal(events.filter((event) => event.type === "model").length, 200);
+    assert.deepEqual(events.map((event) => event.seq), events.map((_, i) => i + 1));
+    const persisted = (await readFile(path.join(fixture.directory, "worker/attempt/events.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as WorkerEvent);
+    assert.deepEqual(persisted, events);
+    assert(writes < 10, `a burst must not open and append once per delta: ${writes}`);
+  } finally {
+    await fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 test("lost submission acknowledgement is recovered by ID; SSE replay is contiguous", async () => {
   const fixture = await harness(
     async (options) => ({
@@ -487,6 +520,40 @@ test("an unchanged error stops repair even when another field was fixed", async 
     await fixture.close();
   }
 });
+test("resuming a failed draft gets a repair opportunity within the new attempt", async () => {
+  let recovery: FailureContext | undefined;
+  const failed = await harness(async (options) => ({
+    async run() {
+      const draft = draftFor(options.spec, invalidResult(options.spec));
+      await options.execute("submit_evaluation", draft);
+      await options.execute("submit_evaluation", draft);
+    },
+    async abort() {}, async dispose() {},
+  }));
+  try {
+    await failed.start();
+    const status = await failed.done();
+    assert.equal(status.state, "failed");
+    assert.equal(status.failure?.repeatedErrors, 2);
+    recovery = { ...status.failure!, attemptId: "previous-attempt" };
+  } finally { await failed.close(); }
+  const resumed = await harness(async (options) => ({
+    async run() {
+      assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false,
+        "a stopped draft must not be offered as a repair file in a fresh attempt");
+      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, invalidResult(options.spec)))).isError, true);
+      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate, true);
+    },
+    async abort() {}, async dispose() {},
+  }));
+  resumed.spec.recovery = recovery;
+  try {
+    await resumed.start();
+    assert.equal((await resumed.done()).state, "succeeded");
+    assert.equal(resumed.counts().posts, 2);
+  } finally { await resumed.close(); }
+});
+
 test("a session that stops before submitting gets one nudge and can still succeed", async () => {
   const prompts: string[] = [];
   const fixture = await harness(async (options) => ({
@@ -532,13 +599,14 @@ test("a session that ignores the nudge fails after one bounded follow-up", async
 });
 for (const reason of ["idle", "deadline", "cancel"] as const)
   test(`worker ${reason} aborts and disposes its own session`, async () => {
-    let disposed = false,
+    let disposed = false, running = false,
       release: () => void = () => {};
     const fixture = await harness(
       async () => ({
         run: () =>
           new Promise<void>((r) => {
             release = r;
+            running = true;
           }),
         async abort() {
           release();
@@ -550,10 +618,13 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
       { idleTimeoutSeconds: reason === "idle" ? 1 : 10 },
     );
     try {
-      if (reason === "deadline") fixture.spec.deadline = Date.now() + 200;
+      // Allow session setup IO under load before testing deadline-driven disposal.
+      if (reason === "deadline") fixture.spec.deadline = Date.now() + 2000;
       await fixture.start();
       if (reason === "cancel") {
-        await new Promise((r) => setTimeout(r, 100));
+        for (let i = 0; i < 200 && !running; i++)
+          await new Promise((r) => setTimeout(r, 25));
+        assert.equal(running, true, "cancel only after the session exists");
         await request(fixture.worker.url + "/api/attempts/attempt/cancel", "POST", {});
       }
       const status = await fixture.done();

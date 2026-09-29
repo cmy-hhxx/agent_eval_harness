@@ -43,7 +43,9 @@ export function agentPrompt(stage: PromptStage, toolNames: string[]) {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
       return instructions + `\n${material}\n` + canonical(input) +
         (policy ? `\n\n${budget}${JSON.stringify(policy)}。` : "") +
-        (failure ? `\n${recovery}\n${JSON.stringify(failure)}` : "");
+        (failure ? `\n${recovery}\n${JSON.stringify({
+          ...(!failure.stopped ? { draft: failure.draft } : {}), errors: failure.errors,
+        })}` : "");
     },
   };
 }

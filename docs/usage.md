@@ -39,10 +39,11 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`comparison_tier` 可声明模型规模档位（默认 A/AA 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内统一排名，不能混用不同 `comparison_tier`；未标档位的第三方模型可加入任一组 |
-| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；默认只开启comparison并只改写对局偏好理由；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`、`apiKeyEnv` 及默认 `thinking`（缺省 `xhigh`）、`contextWindow`、`maxOutputTokens` |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认48并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
+| `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
 | `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
 | `clustering` | 问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；启用时必须有 `bindings.clustering` |
@@ -109,6 +110,8 @@ data/
 新增评测日只需在对应模型目录放入 `YYYY-MM-DD.jsonl`（文件名用评测运行开始日），`sources` 直接指向模型目录，无需修改配置；跨天任务归开始日。批次身份取 JSON 中的 `batch_id`，目录和文件名只用于整理；用 `--batch` 按实际 `batch_id` 选择，`--input` 可把某个版本指向其他文件或目录。每天一份 `_daily/<日期>.json` 清单记录该日的批次与各模型行数/case 数，只用于核对，不参与评测。`output.path` 指向工作流目录，Host 再创建 `<run-id>` 子目录。不同 run 隔离产物，同一 run 只有一个 Host 写入；原始输入不复制到 run。
 
 续跑会重新读取原始记录，不因评测集索引或文件元数据变化而拒绝恢复。`state.json` 登记每个版本的来源路径与行号供恢复与证据核对；证据按业务标识（`batch_id + case_id + version`）定位，文件的追加或整理不影响已接受结果。未完成任务的来源缺失或无效时，该任务会被跳过并在预检诊断中报告，不中断整个 run。运行 ID、任务 ID、输入 ID 和盲测映射与目录无关。
+
+运行规划和正式结果校验只在内存保留原始记录的字节位置，任务准备、提交校验和证据复核时再读取对应记录，不常驻整日回答正文。按记录读取仍检查文件修订和业务身份；启动后修改输入文件会中止受影响的读取，保存已接受结果后用同一 run 续跑即可读取新来源。
 
 ## 输入治理
 
@@ -186,9 +189,52 @@ npm run eval -- run --engine pi --run-id daily-a --batch <batch_id_a> --batch <b
 
 改写与聚类开关可以随续跑变化：开启后为已接受的归因/对比结果补齐改写任务、为该模型批次补齐聚类任务；关闭后不再计划未完成的对应任务；已接受的收据和正式评测结果都保留。
 
+通过试跑或修复命令保存了 `executionScope` 时，续跑只执行清单内的任务，不重新规划输入，也不根据开关增加或删去任务。只读取范围内未完成任务实际需要的源记录；纯改写无需原始输入。范围完成后仍保留清单；显式 `run --discover-inputs` 才恢复原选择范围内的输入发现和规划。此选项不会重评成功任务，也不会扩大原先的日期、case 或数量限制。
+
 续跑沿用原运行的批次、case 和数量筛选条件，按 `batch_id + case_id + 阶段 + 版本组合` 识别归因与对比任务，改写任务按 `批次 + case + 源任务 ID` 识别；本次传入的 `--batch`、`--case`、`--limit-cases` 不替换原范围。已经接受的归因、对比和改写结果不再评测，即使原输入、标准答案或模型参数发生变化。未完成任务使用最新有效输入，并加入原选择范围内的新增对比组；无效或冲突记录不能覆盖未完成任务，未完成任务的来源缺失或无效时使该任务跳过并记入预检诊断，不中断其他任务。需要新增日期批次或重新评测已完成样本时使用新 run ID。若某份归因收据已接受，而对比尚未完成，对比仍使用这份收据；想让两阶段都基于修改后的材料评测，同样需要新 run ID。累计 attempts 和已记录的 Token 保留历次执行成本。运行退出码：0 成功、2 有失败、130 被中断。
 
 内容修复、文件加载和传输错误使用独立预算。内容失败最多自动开启一次跨 attempt 续修，带入最后草稿和结构化反馈；连续两次出现相同字段、错误码及实际错误时停止。每次内容修复预留一次材料或代码工具调用；每 attempt 最多三次文件加载失败，路径/读取/JSON 解析错误不消耗内容修复次数。连接与流中断按 `execution.retries` 有界退避。
+
+续跑只推进尚可完成的任务、不重试已有失败项时，给 `run` 添加 `--skip-failed`。已有失败、超时及依赖阻塞状态保留；已接受结果始终保留，未完成及新增任务继续按各自依赖推进。
+
+### 只补失败与同类故障熔断
+
+停止该 run 的 Host 后，先预览再应用：
+
+```bash
+npm run eval -- retry-failed --run data/runs/comparison/daily-a
+npm run eval -- retry-failed --run data/runs/comparison/daily-a --task <task-uuid> --apply
+npm run eval -- run --run-id daily-a --config configs/host.json --config configs/local/models.json
+```
+
+不指定 ID 时选择失败、超时、取消和阻塞任务；`--task`、`--result` 可重复，后者使用正式 `comparison_id`。必要的未完成依赖与下游一起进入固定清单；共享聚类分片的其他依赖未完成时，不自动把它及其他题目拉入局部补跑。已成功任务不加入补跑；选择已成功的对比时，可以补它尚未完成的改写。预览列出任务、原状态和累计 attempts；`--apply` 只准备状态，随后同 run 续跑，不要求手改 `state.json`。其他未完成任务与后来追加数据不混入。零项选择不改状态。
+
+Host 按每阶段、不同任务维护最近结果窗口；同一题的反复尝试不重复计数。错误路径中的数组下标归一化为 `*`，类别、错误码或其他路径不同则分别统计。触发后保存 `pausedStages`（阶段、错误签名、样例 task ID 和时间），停止该阶段新派发和后续 attempt 重试；已派发的 attempt 完成清理，其他健康阶段继续。暂停状态跨重启保留，未到阈值的统计窗口属于本次 Host 会话。容量不足在创建 attempt 前处理，不计为题目内容失败。
+
+先依据样例定位并修复原因，再显式解除相应阶段；不能用重启绕过熔断：
+
+```bash
+npm run eval -- run --run-id daily-a --resume-stage rewrite \
+  --config configs/host.json --config configs/local/models.json
+```
+
+`--resume-stage` 可重复，只接受当前已暂停的阶段；它保留固定修复范围。日志统一写 `log/runtime.log`，进度输出 `stage_paused`；同错误签名是诊断线索，不证明所有样本同根因。暂停和失败会使 CLI 返回2。
+
+### 小批验收再放量
+
+新 run 用 `--pilot-cases N` 选择最多N场对比，按日期和模型组轮流抽取，并带上其归因与已开启的改写。聚类不进入试跑。完整计划保留；不要用会永久限制输入范围的 `--limit-cases` 代替试跑。
+
+```bash
+npm run eval -- run --run-id daily-a --batch <batch-id> --pilot-cases 40 \
+  --config configs/host.json --config configs/local/models.json
+npm run eval -- validate --run data/runs/comparison/daily-a --selected --require-rewrite verdicts
+npm run eval -- rewrite-review --run data/runs/comparison/daily-a --limit-cases 50
+# 按质量指南核对整场输出后，释放剩余任务；成功的试跑结果继续保留
+npm run eval -- run --run-id daily-a --discover-inputs \
+  --config configs/host.json --config configs/local/models.json
+```
+
+试跑并发取当前配置，可用本地配置先设为8。运行中逐级增加，检查各阶段净产出和错误，再决定下一档；一次配置过高会使故障发现前已有较多任务在途。分层抽样只保证日期与模型组覆盖，不保证语义边界覆盖；[固定反例与语义放量门槛](quality.md#改写放量验收)仍须逐项核对。普通结构检查成功不会自动批准放量。
 
 运行中可调整并发并查看进度：
 
@@ -197,7 +243,7 @@ npm run eval -- concurrency --run data/runs/comparison/pi-001 --value 8
 npm run eval -- progress --run data/runs/comparison/pi-001
 ```
 
-提高并发立即唤醒调度器并按需启动托管 Worker；降低并发停止补位，让健康任务自然完成。外部 Worker 只调整使用数量。默认并发保持配置值。进度包含排队、运行、接受、修复、失败分类、近期吞吐和最长无进展任务；至少五个耗时样本后才提供 ETA 区间。
+提高并发立即唤醒调度器并按需启动托管 Worker；降低并发停止补位，让健康任务自然完成。并发槽位或 Worker 已满时暂停材料组装，空出槽位后再为待执行任务准备材料。独立任务并行处理启动与提交，同一任务仍按序防重；等待写盘的状态变更合并为检查点，确认持久化后才返回成功。已持久化或尚未提交的任务可立即查询收据，不等待其他任务写盘；正在提交的收据仍须等自身持久化完成。外部 Worker 只调整使用数量。进度的 `concurrency` 是目标上限，`in_flight_tasks` 是 Host 实际占用槽位（包含提交、清理与 attempt 间等待），不等于 HTTP 请求数；`stages` 按阶段给出排队、依赖就绪、执行、接受和最近一分钟接受数，另有 `paused_stages` 与 `execution_scope_count`。至少五个耗时样本且无阶段暂停时才提供任务级 ETA；它不是完整对比交付的时间承诺。
 
 ### 本机运行看板
 
@@ -250,7 +296,20 @@ bash run.sh
 
 各阶段均在接受提交时先原子保存待落盘收据，再写入结果 JSONL 并刷盘；改写原子更新源结果行中的 `rewritten`，不追加独立行，随后将状态中的判决正文替换为结果引用。成功任务清除失败草稿和错误上下文，保留提交统计及重复错误计数。两次写入之间崩溃可从待落盘收据恢复；完成后正式 JSONL 是判决的唯一持久存储，不能删除它来清理空间。状态保留恢复原始提交所需的少量字段差异，以便同一提交 UUID 重发时确认内容一致。续跑可清除相同的重复行和中断尾行，冲突结果会报错；已压缩为引用的正式结果若丢失则明确报错，不自动重评。
 
-`report` 按已接受收据重建结果 JSONL、Markdown 和统计，并使旧校验结果失效；已有结果引用可用于重建，无需重新读取输入。`validate` 分别报告正式结果、证据关系和可选附件。附件未保存或缺失不撤销成功收据，也不产生结果缺失错误。普通模式切 debug 不补造历史附件或重评成功任务。原文件修改或删除后，旧结果保留，证据按业务标识定位：记录仍可找到则视为有效，找不到时才报告材料不可用，不触发重评。两条命令不调用模型；`report --details` 仅用于 debug 运行。
+并发状态保存共享等待中的下一次写入，只在实际写入开始时复制状态，避免磁盘繁忙时按并发数堆积完整状态副本；每个调用仍等待覆盖其变更的持久化写入完成。
+
+检查点隔离复制可变进度和每条收据的索引外壳；已接受的判词、证据及正式结果正文保持不可变并共享引用，避免每次保存进度都深拷贝整批正文。结果写入器以替换导出引用的方式更新改写呈现，持久化完成后才回填当前收据。
+
+`report` 按已接受收据重建结果 JSONL、Markdown 和统计，并使旧校验结果失效；已有结果引用可用于重建，无需重新读取输入。`validate` 分别报告正式结果、证据关系、交付覆盖及可选附件；计划中的对比未完成时，整体 `valid` 为 false，即使已有行的 `results.valid` 和 `evidence.valid` 为 true。附件未保存或缺失不撤销成功收据。普通模式切 debug 不补造历史附件或重评成功任务。原文件修改或删除后，旧结果保留，证据按业务标识定位：记录仍可找到则视为有效，找不到时报告材料不可用，不触发重评。两条命令不调用模型；`report --details` 仅用于 debug 运行，报告失败可独立重做。
+
+最终验收应声明本轮要求，重复 `--require-batch` 检查实际批次集合，重复 `--require-rewrite` 检查偏好和逐项点评全覆盖：
+
+```bash
+npm run eval -- validate --run data/runs/comparison/daily-a \
+  --require-batch <batch-id> --require-rewrite verdicts --require-rewrite items
+```
+
+`delivery` 输出分日期的计划、接受和满足改写要求的场数，及具体缺失槽位清单；同时检查业务键重复与未完成刷新，不能拿文件中的旧文案代替刷新成功。原字段/收据和重复/缺行由 `results` 核对，旧证据异常单列在 `evidence`。`--selected` 只将覆盖范围缩至当前固定清单对应的对比，用于试跑或定向修复；原字段、JSONL和证据仍检查该 run 的已有收据。四个日期分别执行上述验收，历史异常单独列明，不能将局部通过表述为全量通过。
 
 输入只长期保留在原始数据源。`state.json` 保存源文件路径与行号供恢复和证据核对，不保存消息正文，也不计算内容哈希；项目校验限制见[开发指南](development.md#禁止项目哈希与兼容层)。Worker 工作区中的 `inputs/` 是执行期间的临时材料，完成后清除，不归档到 run。普通模式的 Worker 工作区临时存在，清理前保存最后草稿、错误与用量；debug 模式额外收集事件和产物，收集不完整时保留 Worker 副本。debug 事件运行中追加 `events.jsonl`，收集结束后压缩，崩溃时可能保留未压缩日志。
 
@@ -265,10 +324,27 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
   --config configs/host.json --config configs/local/models.json
 ```
 
-外部 Worker 由调用方管理，所有进程使用相同的模型 URL 和 key。Worker 只监听回环地址，适用于可信单机调用。
+外部 Worker 由调用方管理，所有进程使用相同的模型 URL 和 key。任务开始前的健康检查最多等待10秒，避免短暂繁忙被误判为不可用；运行状态每秒查询一次，Worker 将连续事件合并写盘并保留完整有序回放，减少高并发 HTTP 和文件开关负载。停止信号会立即终止后续补位和依赖阻塞扫描。Worker 只监听回环地址，适用于可信单机调用。
 
-代码工具工作目录不是安全沙箱；取消、超时和 Worker 退出会回收所属进程组。需要隔离不可信代码时，应在受限部署环境运行整个系统。
+代码工具工作目录不是安全沙箱；取消、超时和 Worker 退出会回收所属进程组。进程组信号被系统拒绝时，通过断开 IPC 请求调用守护进程回收，避免取消异常终止 Worker。需要隔离不可信代码时，应在受限部署环境运行整个系统。
 
 ## 独立评测分析 Agent
 
 执行 `bash agent/run.sh` 自动打开对话；可用 `--port 4181 --user alice --no-open` 启动另一副本。Eris 浅色界面复用 Deepseek 源码，使用独立的 Eris Logo。配置、工具、用户归属与恢复规则见 [Agent 说明](../agent/README.md)。
+
+### 重新改写对比文案
+
+停止该 run 的活跃 Host 后，`rewrite-comparisons` 默认预览，`--apply` 才准备任务，然后用同一 run-id 续跑。默认 `--mode missing` 只补缺失槽位；`--mode refresh` 刷新已有文案，必须指定 `--task`、`--result` 或显式 `--all`。`--scope items`（默认）选择逐项点评，`--scope verdicts` 选择偏好理由；`--slot` 可重复，仅选择这些范围内的指定槽位。未知任务、结果或槽位会在任何状态变更前报错。也能为原来未开启改写的已接受对比创建改写任务。
+
+```bash
+# 预览全部缺失的逐项点评
+npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope items
+# 只刷新一场的一格，其他格、偏好和判决保持原样
+npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope items \
+  --mode refresh --result <comparison-id> --slot comparison.2.B.summary --apply
+# 准备全部缺失偏好，或明确刷新全部偏好
+npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope verdicts --apply
+npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope verdicts --mode refresh --all --apply
+```
+
+应用后保存固定任务和槽位清单；应执行完这份清单后再准备下一份，新的应用会替换当前执行范围。已完成归因、对比及未选文案保留，选中改写任务的 attempts 累计。只提交请求中的槽位，回填合并到原 `rewritten`；没有匹配项时不修改状态。选择槽位的含义与[改写契约](contract.md#改写)一致。

@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { readFile, rm } from "node:fs/promises";
 import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan } from "@eval/contracts";
-import { readJson, writeJsonl } from "@eval/data";
-import { buildPlan } from "@eval/workflows/comparison";
+import { fileSourceReader, readJson, writeJsonl } from "@eval/data";
+import { buildPlan, comparisonWorkflow } from "@eval/workflows/comparison";
 import { createResultWriter } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/comparison";
@@ -261,6 +262,77 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
   }
 });
 
+test("planned input bodies are read by record only when a task accesses them", async (t) => {
+  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
+  const reads = t.mock.method(fileSourceReader, "record");
+  try {
+    const plan = await buildPlan(config);
+    assert.equal(reads.mock.callCount(), 0);
+    const id = Object.keys(plan.inputs)[0];
+    assert.deepEqual(plan.inputs[id], raw());
+    assert.equal(reads.mock.callCount(), 1, "the planner must retain coordinates, not every original answer");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("each answer retains its own full system and developer constraints beyond the context budget", async () => {
+  const rows = ["不能把风险放在第一位", "必须把风险放在第一位"].map((rule) => ({
+    ...raw(), messages: [
+      { type: "message", role: "system", content: "背景。".repeat(9000) + rule },
+      { type: "message", role: "developer", content: "按自己的系统要求组织回答" },
+      ...raw().messages,
+    ],
+  }));
+  const { directory, config } = await fixtureConfig([[rows[0]], [], [rows[1]], []]);
+  config.execution.initialContextChars = 1;
+  try {
+    const plan = await buildPlan(config);
+    for (const task of plan.tasks) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, {});
+      const input = bound.request.input as { answer?: { initial_material: { message_index: number; value: unknown }[] }; candidates?: Record<string, { initial_material: { message_index: number; value: unknown }[] }> };
+      const materials = input.answer ? { answer: input.answer } : input.candidates!;
+      for (const [label, material] of Object.entries(materials)) {
+        const source = plan.inputs[task.inputIds[label]] as RawInput;
+        const constraints = material.initial_material.filter((m) => m.message_index < 2);
+        assert.equal(constraints.length, 2);
+        assert.deepEqual(constraints.map((m) => m.value), source.messages.slice(0, 2));
+      }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("oversized final-answer blocks are deferred without duplicating their payload in evidence", async () => {
+  const chart = JSON.stringify({ data: [{ y: { dtype: "f8", bdata: "A".repeat(1400000) } }], layout: { title: "业绩比较" } });
+  const row = raw();
+  row.messages[1].content = [
+    { type: "output_text", text: "比较结论：甲优于乙。" },
+    { type: "output_text", text: chart },
+    { type: "output_text", text: "图表之后的风险说明。" },
+  ];
+  const { directory, config } = await fixtureConfig([[row], [], [row], []]);
+  try {
+    const plan = await buildPlan(config);
+    for (const task of plan.tasks) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, {});
+      const input = bound.request.input as any;
+      services.agents.prepare(bound);
+      for (const [label, material] of Object.entries(input.answer ? { answer: input.answer } : input.candidates) as [string, any][]) {
+        assert(material.final_answer.includes("比较结论"));
+        assert(material.final_answer.includes("图表之后的风险说明"));
+        assert(JSON.stringify(material).length < 50000, "large encoded chart data must not overwhelm the model context");
+        assert.deepEqual(material.deferred_final_material, [{
+          message_index: 1, path: "/content/1/text", total_chars: chart.length,
+        }]);
+        const source = bound.request.sources[label].value as RawInput;
+        assert.equal((source.messages[1].content as any[])[1].text, chart);
+        for (const evidence of material.final_evidence)
+          assert.equal(resolveEvidence(source, evidence, label, [], "/evidence").quote, evidence.quote);
+      }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("planning a shared reference change increments dependent task revisions while preserving IDs", async () => {
   const { directory, config } = await fixtureConfig([
     [raw()],
@@ -337,6 +409,154 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
     await worker.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("skip-failed resume streams healthy comparisons and rewrites before the attribution backlog drains", async () => {
+  const rows = ["failed", "first", "last"].map((id) => raw(id, null));
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []], true);
+  config.rewrite.attribution = false;
+  const plan = await buildPlan(config);
+  const saved = stateFor(config, plan);
+  saved.receipts = {};
+  for (const state of Object.values(saved.manifest.states)) state.status = "pending";
+  const failed = plan.tasks.find((task) => task.stage === "attribution" &&
+    Object.values((task.data as TaskData).candidates).some((candidate) => candidate.case_id === "failed"))!;
+  saved.manifest.states[failed.id] = { status: "failed", attempts: 3, revision: 1, reason: "leave this failure alone" };
+  const run = path.join(config.output.path, "test");
+  await writeRunState(run, saved);
+  const started: { id: string; stage: string }[] = [];
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() {
+          started.push({ id: options.spec.taskId, stage: options.spec.evaluation.id });
+          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        },
+        async abort() {},
+        async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  try {
+    const result = await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]), skipFailed: true });
+    assert.equal(result.completed_comparisons, 2);
+    assert(!started.some((task) => task.id === failed.id));
+    const after = await readRunState(run);
+    assert.deepEqual(after.manifest.states[failed.id], saved.manifest.states[failed.id]);
+    assert(started.findIndex((task) => task.stage === "comparison") < started.findLastIndex((task) => task.stage === "attribution"));
+    assert(started.findIndex((task) => task.stage === "rewrite") < started.findLastIndex((task) => task.stage === "comparison"));
+    assert.equal(after.manifest.tasks.filter((task) => task.stage === "rewrite" && after.receipts[task.id]).length, 2);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const busyProbe of [1, 2]) test(`external worker recovers from busy health probe ${busyProbe} without failing work`, async (t) => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  const started: string[] = [];
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() {
+          started.push(options.spec.taskId);
+          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        },
+        async abort() {}, async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  let probes = 0;
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const response = await fetch(input, init);
+    if (String(input) === worker.url + "/api/health" && ++probes === busyProbe)
+      return new Response(JSON.stringify({ ...await response.json(), activeAttempt: "still-cleaning-up" }), { status: 200 });
+    return response;
+  });
+  try {
+    const plan = await buildPlan(config);
+    await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]), signal: AbortSignal.timeout(10000) });
+    const after = await readRunState(path.join(config.output.path, "test"));
+    assert.equal(started.length, plan.tasks.length);
+    assert.equal(new Set(started).size, started.length);
+    assert(Object.values(after.manifest.states).every(state => state.status === "succeeded" && state.attempts === 1));
+  } finally {
+    t.mock.restoreAll();
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an interrupted model stream receives one bounded transport retry", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  let interrupted = false;
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() {
+          if (!interrupted) { interrupted = true; throw new Error("Stream ended without finish_reason"); }
+          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        },
+        async abort() {}, async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  try {
+    const plan = await buildPlan(config);
+    await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]), retries: 1 });
+    const after = await readRunState(path.join(config.output.path, "test"));
+    assert(Object.values(after.manifest.states).every(state => state.status === "succeeded"));
+    assert.equal(Object.values(after.manifest.states).reduce((n, state) => n + state.attempts, 0), plan.tasks.length + 1);
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("failed dependencies are checkpointed as one batch", async () => {
+  const rows = Array.from({ length: 12 }, (_, i) => raw(String(i), null));
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
+  const plan = await buildPlan(config), saved = stateFor(config, plan);
+  saved.receipts = {};
+  for (const task of plan.tasks) saved.manifest.states[task.id].status = task.stage === "attribution" ? "failed" : "pending";
+  await writeRunState(path.join(config.output.path, "test"), saved);
+  let writes = 0;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession() { throw new Error("no healthy task should dispatch"); } }, path.join(directory, "worker"));
+  try {
+    await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]), skipFailed: true,
+      repository: { ...services.repository, async writeRun(...args) { writes++; return services.repository.writeRun(...args); } },
+    });
+    const after = await readRunState(path.join(config.output.path, "test"));
+    assert.equal(Object.values(after.manifest.states).filter(state => state.status === "blocked").length, 12);
+    assert(writes <= 3, `dependency handling saved the whole run ${writes} times`);
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a dependency waiting for its transport retry does not permanently block downstream work", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []], true);
+  const plan = await buildPlan(config), first = plan.tasks.find(task => task.stage === "attribution")!.id;
+  let release!: () => void, failed = false;
+  const failureSaved = new Promise<void>(resolve => { release = resolve; });
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      if (options.spec.taskId === first && !failed) { failed = true; throw new Error("Stream ended without finish_reason"); }
+      if (plan.tasks.find(task => task.id === options.spec.taskId)?.stage === "attribution" && options.spec.taskId !== first) await failureSaved;
+      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+    }, async abort() {}, async dispose() {} };
+  } };
+  const workers = await Promise.all([0, 1].map(index => startWorker(backend, path.join(directory, 'worker-' + index))));
+  try {
+    await runEvaluation({ ...optionsFor(config, modelForStage, plan, workers.map(worker => worker.url)),
+      concurrency: 2, retries: 1, retryDelaySeconds: 1,
+      repository: { ...services.repository, async writeRun(...args) {
+        await services.repository.writeRun(...args);
+        if (args[1].manifest.states[first]?.status === "failed") release();
+      } },
+    });
+    const after = await readRunState(path.join(config.output.path, "test"));
+    assert(Object.values(after.manifest.states).every(state => state.status === "succeeded"));
+  } finally { await Promise.all(workers.map(worker => worker.close())); await rm(directory, { recursive: true, force: true }); }
 });
 
 test("raw strings, Markdown and JSON pages resolve exactly; unknown sources and indexes fail", () => {
@@ -443,9 +663,101 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   }
 });
 
-test("live concurrency grows immediately and shrinking lets healthy attempts finish", async () => {
+test("a responsive external worker is not discarded after a one-second health delay", async (t) => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() { await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec))); },
+        async abort() {}, async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (String(input) === worker.url + "/api/health")
+      await delay(1100, undefined, { signal: init?.signal || undefined });
+    return fetch(input, init);
+  });
+  try {
+    const result = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
+    assert.equal(result.completed_comparisons, 1);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const [kind, observationError] of [
+  ["timeout", new DOMException("Status observation timed out", "TimeoutError")],
+  ["connection reset", new TypeError("fetch failed", { cause: { code: "ECONNRESET" } })],
+] as const)
+test(`a status observation ${kind} keeps the original worker attempt running`, async (t) => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
+  let launches = 0, cancellations = 0, timeouts = 0;
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      launches++;
+      return {
+        async run() {
+          await delay(100);
+          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        },
+        async abort() {}, async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = String(input);
+    if (url.startsWith(worker.url) && url.endsWith("/cancel")) cancellations++;
+    if (!timeouts && url.startsWith(worker.url + "/api/attempts/") && init?.method === "GET" &&
+        !url.endsWith("/record") && !url.includes("/events")) {
+      timeouts++;
+      throw observationError;
+    }
+    return fetch(input, init);
+  });
+  try {
+    const plan = await buildPlan(config);
+    const result = await runEvaluation(optionsFor(config, modelForStage, plan, [worker.url]));
+    assert.equal(timeouts, 1);
+    assert.equal(cancellations, 0, "a transient read failure must not cancel a healthy attempt");
+    assert.equal(launches, plan.tasks.length, "accepted work must not be relaunched");
+    assert.equal(result.completed_comparisons, 1);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("interruption stops the current scheduling scan before preparing more tasks", async (t) => {
+  const rows = [raw("one", null), raw("two", null)];
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
+  const controller = new AbortController();
+  const original = services.agents.prepare.bind(services.agents);
+  const prepared = t.mock.method(services.agents, "prepare", (...args: Parameters<typeof original>) => {
+    controller.abort();
+    return original(...args);
+  });
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession() { throw new Error("must not start after interruption"); } };
+  const workers = await Promise.all([0, 1, 2, 3].map((i) => startWorker(backend, path.join(directory, `worker-${i}`))));
+  try {
+    const result = await runEvaluation({ ...optionsFor(config, modelForStage, await buildPlan(config), workers.map((w) => w.url)), signal: controller.signal, concurrency: 4 });
+    assert.equal(result.status, "interrupted");
+    assert.equal(prepared.mock.callCount(), 1);
+  } finally {
+    await Promise.all(workers.map((worker) => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("live concurrency prepares only available slots and shrinking lets healthy attempts finish", async (t) => {
   const rows = [1, 2, 3, 4].map((id) => raw(String(id), null));
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
+  const prepared = t.mock.method(services.agents, "prepare");
   const started: string[] = [],
     releases = new Map<string, () => void>();
   let aborted = 0;
@@ -480,6 +792,7 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
       ),
     );
     await until(() => started.length === 1);
+    assert.equal(prepared.mock.callCount(), 1, "a full scheduler must not prepare the rest of the batch");
     const lock = await readJson<{ url: string; token: string }>(
       path.join(config.output.path, "test", ".run-lock"),
     );
@@ -496,6 +809,7 @@ test("live concurrency grows immediately and shrinking lets healthy attempts fin
     };
     await adjust(3);
     await until(() => started.length === 3);
+    assert.equal(prepared.mock.callCount(), 3, "growing concurrency prepares only the newly available slots");
     await adjust(1);
     const autoRelease = setInterval(() => {
       for (const id of started) releases.get(id)?.();

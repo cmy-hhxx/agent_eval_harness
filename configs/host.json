@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r32",
+  "evaluatorVersion": "r46",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -51,8 +51,8 @@
   ],
   "rewrite": {
     "comparison": true,
-    "attribution": true,
-    "clustering": true
+    "attribution": false,
+    "clustering": false
   },
   "clustering": {
     "enabled": true,
@@ -90,6 +90,7 @@
   },
   "execution": {
     "concurrency": 48,
+    "failureGuard": { "windowSize": 50, "threshold": 5 },
     "timeoutSeconds": 900,
     "idleTimeoutSeconds": 120,
     "maxToolCalls": 12,

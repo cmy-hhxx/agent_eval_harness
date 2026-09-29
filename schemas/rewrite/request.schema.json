@@ -57,11 +57,22 @@
             "type": "string",
             "minLength": 1
           },
-          "constraint": {
-            "enum": [
-              "no_winner"
-            ],
-            "description": "该槽位不存在整体胜者，禁止把局部差异改写成整体更好"
+          "preference": {
+            "type": "string",
+            "minLength": 1,
+            "description": "已确定的对局偏好，改写必须以此值加中文冒号开头，不得改变"
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1,
+            "description": "只读对照信息，不是待改写正文，不复制为开头或结论"
+          },
+          "forbiddenPrefixes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 },
+            "description": "不能复制到点评开头的呈现标签；正文直接说明本格事实"
           }
         }
       }

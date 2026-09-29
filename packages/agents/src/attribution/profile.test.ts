@@ -4,6 +4,7 @@ import { attributionAgent, attributionProfile } from "./index.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { evidenceId } from "@eval/tools";
+import { ValidationError } from "@eval/contracts";
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
 test("numeric ledger verifies rounded values against final-answer evidence", () => {
@@ -19,7 +20,12 @@ test("numeric ledger verifies rounded values against final-answer evidence", () 
   result.numeric_checks[0]!.matches = true;
   attributionProfile.validate!(request, result, audit);
   result.numeric_checks[0]!.actual = "19.36";
-  assert.throws(() => attributionProfile.validate!(request, result, audit), /原始数值/);
+  assert.throws(() => attributionProfile.validate!(request, result, audit), (error: unknown) => {
+    assert(error instanceof ValidationError);
+    assert.deepEqual(error.issues?.find((issue) => issue.code === "numeric_answer_missing")?.actual,
+      { number: "19.36", quote: "2023年9.36" });
+    return true;
+  });
   result.numeric_checks[0]!.actual = "9.36";
   result.numeric_checks[0]!.expected = "9.5";
   assert.throws(() => attributionProfile.validate!(request, result, audit), /来自标准答案/);
@@ -28,6 +34,15 @@ test("numeric ledger verifies rounded values against final-answer evidence", () 
   result.numeric_checks[0] = { label: "2023", expected: "9.4", actual: null, scale: "1", mode: "rounded", matches: false, evidence_index: 0 };
   result.is_correct = false;
   attributionProfile.validate!(request, result, audit);
+
+  request.input.ground_truth.value = "1.13018E+12元";
+  request.sources.answer.value.messages[1]!.content = "非流动资产1130181000000元";
+  result.correctness_evidence = [{ message_index: 1, quote: "非流动资产1130181000000元" }];
+  result.is_correct = true;
+  result.numeric_checks[0] = { label: "非流动资产", expected: "1.13018E+12", actual: "1130181000000", scale: "1", mode: "rounded", matches: true, evidence_index: 0 };
+  attributionProfile.validate!(request, result, audit);
+  result.numeric_checks[0].expected = "1130180000000";
+  assert.throws(() => attributionProfile.validate!(request, result, audit), /保留原有小数位和科学计数法指数/);
 });
 
 test("final-answer images must be inspected before claiming a missing deliverable", () => {

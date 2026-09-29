@@ -1,12 +1,29 @@
 import type { RunState } from "@eval/contracts";
 
 export function progressSnapshot(state: RunState, now = Date.now()) {
+  const stages: Record<string, { queued: number; ready: number; running: number; accepted: number; recent_completed_per_minute: number }> = {};
+  const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
+  for (const task of state.manifest.tasks) {
+    const stage = stages[task.stage] ??= { queued: 0, ready: 0, running: 0, accepted: 0, recent_completed_per_minute: 0 };
+    const status = state.manifest.states[task.id].status;
+    if (status === "pending" && (!scope || scope.has(task.id))) {
+      stage.queued++;
+      if (!state.manifest.pausedStages?.some((pause) => pause.stage === task.stage) &&
+        Object.values(task.dependencies).every((id) => state.receipts[id])) stage.ready++;
+    }
+    if (status === "running") stage.running++;
+    const receipt = state.receipts[task.id];
+    if (receipt) {
+      stage.accepted++;
+      if (receipt.acceptedAt >= now - 60000 && receipt.acceptedAt <= now) stage.recent_completed_per_minute++;
+    }
+  }
   const tasks = state.manifest.tasks.map((task) => ({
     id: task.id,
     ...state.manifest.states[task.id],
   }));
   const running = tasks.filter((task) => task.status === "running");
-  const queued = tasks.filter((task) => task.status === "pending").length;
+  const queued = tasks.filter((task) => task.status === "pending" && (!scope || scope.has(task.id))).length;
   const failures: Record<string, number> = {};
   for (const task of tasks)
     if (["failed", "timed_out", "cancelled", "blocked"].includes(task.status)) {
@@ -22,7 +39,7 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
   const remaining = queued + running.length;
   const waves = Math.ceil(remaining / concurrency);
   const eta =
-    durations.length < 5
+    durations.length < 5 || state.manifest.pausedStages?.length
       ? null
       : {
           p50_seconds: Math.round((waves * durations[Math.floor((durations.length - 1) * 0.5)]) / 1000),
@@ -33,6 +50,9 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
     (a, b) => (a.lastProgressAt || a.startedAt || now) - (b.lastProgressAt || b.startedAt || now),
   )[0];
   return {
+    stages,
+    paused_stages: state.manifest.pausedStages ?? [],
+    execution_scope_count: state.manifest.executionScope?.length ?? null,
     queued,
     running: running.length,
     accepted: Object.keys(state.receipts).length,
@@ -48,6 +68,6 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
         }
       : null,
     eta,
-    eta_status: eta ? "estimated" : "insufficient_samples",
+    eta_status: state.manifest.pausedStages?.length ? "paused" : eta ? "estimated" : "insufficient_samples",
   };
 }

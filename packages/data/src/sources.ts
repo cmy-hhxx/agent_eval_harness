@@ -1,5 +1,5 @@
 import { stat, readFile, readdir } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, openSync, closeSync, readSync, fstatSync, statSync, type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { InputSource } from "@eval/contracts";
 
@@ -9,6 +9,7 @@ export interface SourceReader {
   read(file: string): Promise<string>;
   revision(file: string): Promise<string>;
   lines(file: string, revision?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }>;
+  record(file: string, byteOffset: number, byteLength: number, revision: string): string;
 }
 
 async function fileRevision(source: string): Promise<string> {
@@ -23,6 +24,29 @@ export async function readInputSource(source: string): Promise<string> {
   if ((await fileRevision(source)) !== revision)
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
   return text;
+}
+
+/** Read one already indexed record without retaining the source file in memory. */
+export function readInputSourceRecord(source: string, byteOffset: number, byteLength: number, expected: string): string {
+  const descriptor = openSync(source, "r");
+  const revision = (info: BigIntStats) => [info.dev, info.ino, info.size, info.mtimeNs].join(":");
+  try {
+    if (revision(fstatSync(descriptor, { bigint: true })) !== expected)
+      throw new Error("读取期间输入文件发生变化，请重试：" + source);
+    const buffer = Buffer.allocUnsafe(byteLength);
+    let received = 0;
+    while (received < byteLength) {
+      const count = readSync(descriptor, buffer, received, byteLength - received, byteOffset + received);
+      if (!count) throw new Error("读取期间输入源记录缺失，请重试：" + source);
+      received += count;
+    }
+    if (revision(fstatSync(descriptor, { bigint: true })) !== expected ||
+        revision(statSync(source, { bigint: true })) !== expected)
+      throw new Error("读取期间输入文件发生变化，请重试：" + source);
+    return buffer.toString("utf8");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 /** Stream large JSONL inputs without retaining whole files; reject concurrent source edits. */
@@ -96,5 +120,5 @@ export async function sourceFiles(sources: InputSource[]): Promise<string[]> {
 }
 
 export const fileSourceReader: SourceReader = {
-  files: sourceFiles, read: readInputSource, revision: fileRevision, lines: readInputSourceLines,
+  files: sourceFiles, read: readInputSource, revision: fileRevision, lines: readInputSourceLines, record: readInputSourceRecord,
 };

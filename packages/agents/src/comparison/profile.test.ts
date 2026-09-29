@@ -49,6 +49,16 @@ test("Comparison requires full aligned coverage and a concise verdict", () => {
   assert.throws(() => comparisonProfile.validate!(missedProblem, example.result, audit), /中高重要性问题/);
 });
 
+test("comparison repair identifies exact candidate keys for display-label mistakes", () => {
+  const badLabels = JSON.parse(JSON.stringify(example.result).replaceAll('"A"', '"【候选A】"'));
+  assert.throws(() => comparisonProfile.validate!(example.request, badLabels, audit), (error: unknown) => {
+    assert(error instanceof Error);
+    assert.match(error.message, /合法候选标识.*\["A","B"\]/);
+    assert.match(error.message, /原样使用/);
+    return true;
+  });
+});
+
 test("core failures share the last tier, including in multi-candidate comparisons", () => {
   const request = structuredClone(example.request);
   for (const label of ["A", "B"] as const) request.input.attributions[label].findings[0]!.type = "problem";
@@ -98,7 +108,7 @@ test("core usability needs established evidence and is not copied from correctne
   comparisonProfile.validate!(request, result, audit);
   finding.importance = "high";
   finding.assessment.evidence_status = "uncertain";
-  assert.throws(() => comparisonProfile.validate!(request, result, audit), /判核心不可用必须/);
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /判核心不可用必须.*该候选自己的.*权限/);
   finding.assessment.evidence_status = "established";
   comparisonProfile.validate!(request, result, audit);
   // Comparison assesses the whole deliverable; severity is not a second correctness flag.

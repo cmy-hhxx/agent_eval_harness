@@ -33,6 +33,8 @@ interface Running {
   events: WorkerEvent[];
   clients: Map<ServerResponse, number>;
   saved: Promise<void>;
+  persistedEvents: number;
+  flushQueued?: boolean;
   done?: Promise<void>;
   directory: string;
   settled?: boolean;
@@ -60,13 +62,19 @@ export async function startWorker(
     };
     attempt.events.push(event);
     attempt.status.lastSeq = event.seq;
+    if (attempt.flushQueued) return;
+    attempt.flushQueued = true;
     attempt.saved = attempt.saved.then(async () => {
-      await appendFile(path.join(attempt.directory, "events.jsonl"), JSON.stringify(event) + "\n");
+      attempt.flushQueued = false;
+      const batch = attempt.events.slice(attempt.persistedEvents);
+      await appendFile(path.join(attempt.directory, "events.jsonl"), batch.map((item) => JSON.stringify(item)).join("\n") + "\n");
+      attempt.persistedEvents += batch.length;
       for (const [client, cursor] of attempt.clients)
-        if (!client.destroyed && event.seq > cursor) {
-          client.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
-          attempt.clients.set(client, event.seq);
-        }
+        for (const event of batch)
+          if (!client.destroyed && event.seq > cursor) {
+            client.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
+            attempt.clients.set(client, event.seq);
+          }
     });
   };
   const stop = async (attempt: Running, state: "cancelled" | "timed_out", reason: string) => {
@@ -148,8 +156,10 @@ export async function startWorker(
             stopped: false,
             attemptId: spec.attemptId,
           };
+      if (failure.stopped) delete failure.draft;
       failure.attemptId = spec.attemptId;
       failure.stopped = false;
+      failure.repeatedErrors = 0;
       if (failure.draft !== undefined) await writeJson(draftPath, failure.draft);
       const errorKey = ({ code, path, candidate, actual }: ValidationIssue) =>
         canonical({ code, path, candidate, actual });
@@ -417,7 +427,7 @@ export async function startWorker(
         );
         attempt.status.retryable =
           !controller.signal.aborted &&
-          /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout|timed\s+out/i.test(
+          /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
             attempt.status.error,
           );
       }
@@ -543,6 +553,7 @@ export async function startWorker(
         events: [],
         clients: new Map(),
         saved: Promise.resolve(),
+        persistedEvents: 0,
         directory: attemptDir,
       };
       attempts.set(spec.attemptId, attempt);

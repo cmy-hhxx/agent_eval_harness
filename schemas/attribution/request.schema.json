@@ -13,7 +13,7 @@
     "answer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["identity", "question", "final_message_index", "final_answer", "final_evidence", "initial_material", "catalog", "input_file", "original_answer_timing", "note"],
+      "required": ["identity", "question", "final_message_index", "final_answer", "final_evidence", "deferred_final_material", "initial_material", "catalog", "input_file", "original_answer_timing", "note"],
       "properties": {
         "identity": {
           "type": "object",
@@ -29,6 +29,19 @@
         "final_message_index": { "type": "integer", "minimum": 0 },
         "final_answer": { "type": "string", "minLength": 1 },
         "final_evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "deferred_final_material": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["message_index", "path", "total_chars"],
+            "properties": {
+              "message_index": { "type": "integer", "minimum": 0 },
+              "path": { "type": "string", "minLength": 1 },
+              "total_chars": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
         "initial_material": {
           "type": "array",
           "items": {

@@ -4,13 +4,26 @@ import { rewriteAgent, rewriteProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
-test("no-winner slots cannot turn a local advantage into a winner", () => {
+test("cell rewrites cannot copy the winning model label onto the other model's facts", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
-    { id: "tradeoff", label: "裁决", text: "双方都没有交付名单。", constraint: "no_winner" },
+    { id: "comparison.0.B.summary", label: "AA组Fast的点评", text: "没有给出结果。", context: "A组Fast给出结果。",
+      forbiddenPrefixes: ["A组Fast：", "AA组Fast：", "没有已证实的单方优势："] },
   ] } };
-  for (const text of ["A居前。", "A相对更好，但没有整体胜者。", "B相对更可用。"])
-    assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: "tradeoff", text }] }, audit), /没有整体胜者/);
-  rewriteProfile.validate!(request, { rewrites: [{ id: "tradeoff", text: "双方都没交付所需名单。" }] }, audit);
+  for (const prefix of request.input.items[0]!.forbiddenPrefixes)
+    assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0]!.id, text: prefix + "没有给出结果。" }] }, audit), /不要把对照信息/);
+  rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0]!.id, text: "没有给出结果。" }] }, audit);
+});
+test("pair rewrites must state the accepted preference and retain ties", () => {
+  const request = { sources: {}, input: { kind: "comparison", items: [
+    { id: "verdict.A__vs__B.reason", label: "偏好", text: "双方均达标，AA组Fast补充了近期事件催化。", preference: "AA组Fast更好" },
+  ] } };
+  for (const text of ["双方都完成了核心要求，未见共同遗漏。", "A组Fast更好：更完整。", "AA组Fast更好："])
+    assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text }] }, audit), /已确定偏好/);
+  rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text: "AA组Fast更好：补充了近期事件催化，解释更贴题。" }] }, audit);
+  for (const preference of ["双方都好", "双方都差"]) {
+    request.input.items[0].preference = preference;
+    assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text: preference + "：A组Fast更可用。" }] }, audit), /没有整体胜者/);
+  }
 });
 test("Rewrite returns exactly the requested slots and nothing else", () => {
   assert.deepEqual(Object.keys(rewriteAgent.profiles), ["default"]);

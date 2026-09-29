@@ -3,7 +3,11 @@ export interface RewriteItem {
   id: string;
   label: string;
   text: string;
-  constraint?: "no_winner";
+  /** Read-only context; never part of the text to return. */
+  context?: string;
+  /** Presentation labels that must not be copied into the prose. */
+  forbiddenPrefixes?: string[];
+  preference?: string;
 }
 export interface RewriteRequest {
   kind: "attribution" | "comparison" | "clustering";

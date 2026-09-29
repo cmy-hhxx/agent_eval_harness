@@ -17,20 +17,29 @@ export const { readRun: readRunState, writeRun: writeRunState, createResultWrite
 export async function loadRunInputs(
   manifest: RunManifest,
   issues?: ValidationIssue[],
+  taskIds?: ReadonlySet<string>,
 ): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
   const config = manifest.config as EvalConfig;
-  const sources = inputSources(manifest.inputCatalog as Candidate[]);
+  const inputIds = taskIds && new Set(manifest.tasks.filter((task) => taskIds.has(task.id)).flatMap((task) => Object.values(task.inputIds)));
+  const sources = inputSources((manifest.inputCatalog as Candidate[]).filter((candidate) => !inputIds || inputIds.has(candidate.input_id)));
   for (const [source, candidates] of sources) {
     const found: Record<string, unknown> = {};
     let revision: string;
+    const register = (candidate: Candidate, byteOffset: number, byteLength: number) => {
+      Object.defineProperty(found, candidate.input_id, {
+        enumerable: true,
+        configurable: true,
+        get: () => JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision)),
+      });
+    };
     try {
       revision = await fileSourceReader.revision(source);
       const byLine = new Map<number, Candidate[]>();
       for (const candidate of candidates)
         byLine.set(candidate.line, [...(byLine.get(candidate.line) || []), candidate]);
-      for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+      for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source, revision)) {
         const registered = byLine.get(index);
         if (!registered) continue;
         for (const candidate of registered) {
@@ -39,7 +48,7 @@ export async function loadRunInputs(
             if (!version) throw new Error("Input version is not registered");
             const raw = JSON.parse(line);
             if (candidateKey(adapt(raw, version, source, index, config.inputs.default_batch_id)) === candidateKey(candidate))
-              found[candidate.input_id] = raw;
+              register(candidate, byteOffset, byteLength);
           } catch { /* Reordered or missing records are resolved by business identity below. */ }
         }
         byLine.delete(index);
@@ -63,8 +72,8 @@ export async function loadRunInputs(
         const version = config.inputs.versions.find((version) => version.id === candidate.version);
         if (!version) throw new Error("Input version is not registered");
         if (!Object.hasOwn(found, candidate.input_id)) {
-          const { raw } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
-          found[candidate.input_id] = raw;
+          const { byteOffset, byteLength } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
+          register(candidate, byteOffset, byteLength);
         }
       } catch (error) {
         errors.push({
@@ -80,13 +89,18 @@ export async function loadRunInputs(
     if (await fileSourceReader.revision(source).catch(() => null) !== revision) {
       errors.push({ category: "file", code: "input_source_changed", path: source,
         message: "读取期间输入文件发生变化，请重试：" + source });
-    } else Object.assign(inputs, found);
+    } else Object.defineProperties(inputs, Object.getOwnPropertyDescriptors(found));
   }
   if (issues) issues.push(...errors);
   else if (errors.length) throw new ValidationError(errors);
   return inputs;
 }
 export async function reconcileRun(_run: string, state: RunState, current: unknown): Promise<TaskPlan> {
+  if (state.manifest.executionScope) {
+    const pending = new Set(state.manifest.executionScope.filter((id) => !state.receipts[id]));
+    return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
+      catalog: state.manifest.inputCatalog, summary: state.manifest.preflight };
+  }
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
   const selected: EvalConfig = {

@@ -15,6 +15,7 @@
         "final_message_index": 1,
         "final_answer": "2+2=4",
         "final_evidence": [],
+        "deferred_final_material": [],
         "initial_material": [],
         "catalog": [],
         "input_file": "inputs/answer.json",

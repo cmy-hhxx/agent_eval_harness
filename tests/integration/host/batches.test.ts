@@ -156,7 +156,11 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     for await (const row of readJsonl(path.join(run, "results", "comparison.jsonl")))
       comparisonIds.add((row as JsonObject).comparison_id);
     assert.equal(comparisonIds.size, 220);
-    assert.equal((await validateRun(run)).valid, true);
+    const validation = await validateRun(run);
+    assert.equal(validation.results.valid, true);
+    assert.equal(validation.evidence.valid, true);
+    assert.equal(validation.delivery.valid, true);
+    assert.equal(validation.valid, true);
     assert.deepEqual((await reportRun(run)).by_batch, daily);
     assert.equal((await validateRun(run)).valid, true);
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
@@ -339,7 +343,11 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
     for (const id of ["objective", "bad", "unknown", "failed", "pending"])
       assert(markdown.includes(`# ${secondDay} / ${id}`));
     assert(markdown.includes(`${secondDay} / missing`));
-    assert.equal((await validateRun(run)).valid, true);
+    const validation = await validateRun(run);
+    assert.equal(validation.results.valid, true);
+    assert.equal(validation.evidence.valid, true);
+    assert.equal(validation.delivery.valid, false, "pending and failed comparisons prevent full delivery");
+    assert.equal(validation.valid, false);
     assert.deepEqual((await reportRun(run)).by_batch, daily);
     const restored = await readRunState(run);
     assert.deepEqual(

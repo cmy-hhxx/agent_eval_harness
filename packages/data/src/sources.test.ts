@@ -11,7 +11,7 @@ test("streamed input lines preserve coordinates and reject a changed source revi
   try {
     await writeFile(file, '\uFEFF{"case_id":"first"}\r\n{"case_id":"second"}\r\n{"case_id":"third"}\r{"case_id":"fourth"}\n');
     const revision = await fileSourceReader.revision(file);
-    const lines = [];
+    const lines: { line: string; index: number; byteOffset: number; byteLength: number }[] = [];
     for await (const entry of readInputSourceLines(file, revision)) lines.push(entry);
     assert.deepEqual(lines.map(({ line, index }) => ({ line, index })), [
       { line: '{"case_id":"first"}', index: 1 },
@@ -19,9 +19,12 @@ test("streamed input lines preserve coordinates and reject a changed source revi
       { line: '{"case_id":"third"}\r{"case_id":"fourth"}', index: 3 },
     ]);
     const source = await readFile(file);
-    for (const { line, byteOffset, byteLength } of lines)
+    for (const { line, byteOffset, byteLength } of lines) {
       assert.equal(source.subarray(byteOffset, byteOffset + byteLength).toString("utf8"), line);
+      assert.equal(fileSourceReader.record(file, byteOffset, byteLength, revision), line);
+    }
     await writeFile(file, '{"case_id":"changed"}\n');
+    assert.throws(() => fileSourceReader.record(file, lines[0].byteOffset, lines[0].byteLength, revision), /输入文件发生变化/);
     await assert.rejects(async () => {
       for await (const _entry of readInputSourceLines(file, revision)) { /* read to completion */ }
     }, /输入文件发生变化/);

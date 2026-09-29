@@ -48,24 +48,45 @@ const attribution: AttributionResult = {
   findings: [],
 };
 
-test("comparison slots cover every assessment, the tradeoff and each pair", () => {
+test("comparison rewrites only the pair preference using its accepted match facts", () => {
   const items = comparisonSlots(comparison);
   assert.deepEqual(
     items.map((item) => item.id).sort(),
-    ["assessment.A.summary", "assessment.B.summary", "tradeoff", "comparison.0.A.summary", "comparison.0.B.summary", verdictSlotId("A", "B")].sort(),
+    [verdictSlotId("A", "B")],
   );
   assert.match(items.find((item) => item.id === verdictSlotId("B", "A"))!.text, /【候选A】完成核心要求/);
   const failed = structuredClone(comparison);
   failed.assessments.A!.meets_core = false;
   failed.ranking = [["A", "B"]];
-  assert.match(comparisonSlots(failed).find((item) => item.id === "tradeoff")!.label, /全部未达标，无整体胜者/);
-  assert.equal(comparisonSlots(failed).find((item) => item.id === "tradeoff")!.constraint, "no_winner");
+  assert.equal(comparisonSlots(failed)[0]!.preference, "双方都差");
+  const bothMet = structuredClone(comparison);
+  bothMet.assessments.B!.meets_core = true;
+  assert.equal(comparisonSlots(bothMet)[0]!.preference, "【候选A】更好");
+  assert.match(comparisonSlots(bothMet)[0]!.text, /计算结果.*正确给出4/);
+  bothMet.ranking = [["B", "A"]];
+  assert.equal(comparisonSlots(bothMet)[0]!.preference, "双方都好");
 });
 
 test("attribution slots include the correctness reason only when it exists", () => {
   assert.deepEqual(attributionSlots(attribution).map((item) => item.id), ["summary", "correctness_reason"]);
   const subjective = { ...attribution, is_correct: null, correctness_reason: "" };
   assert.deepEqual(attributionSlots(subjective).map((item) => item.id), ["summary"]);
+});
+
+test("item refresh selects only comparison cells with local advantages and separate counterpart context", () => {
+  const before = structuredClone(comparison);
+  const items = comparisonSlots(comparison, "items");
+  assert.deepEqual(items.map((item) => item.id), ["comparison.0.A.summary", "comparison.0.B.summary"]);
+  assert(items.every((item) => !item.preference));
+  assert.equal(items[0]!.text, "正确给出4。");
+  assert(items[0]!.forbiddenPrefixes!.includes("【候选B】："));
+  assert(!items[0]!.forbiddenPrefixes!.includes("【候选A】："));
+  assert.match(items[0]!.context!, /本项已确定的优势：【候选A】/);
+  assert.match(items[0]!.context!, /不能写成本格事实：候选B：未给出结果/);
+  assert.deepEqual(comparison, before);
+  const shared = structuredClone(comparison);
+  shared.decision_basis.comparisons[0]!.better_candidates = [];
+  assert.match(comparisonSlots(shared, "items")[0]!.context!, /没有已证实的单方优势/);
 });
 
 test("presentation view applies rewrites by slot and leaves unknown text alone", () => {

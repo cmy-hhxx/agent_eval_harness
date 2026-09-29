@@ -92,6 +92,128 @@ async function fixture(rows = [raw("q", null)]) {
   };
   return { directory, store, spec, value };
 }
+test("queued checkpoints share a pending write without retaining a snapshot per caller", async (t) => {
+  const { directory, store } = await fixture();
+  let enter = () => {}, release = () => {};
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const write = services.repository.writeRun;
+  const writes = t.mock.method(services.repository, "writeRun", async (...args: Parameters<typeof write>) => {
+    enter();
+    await blocked;
+    return write(...args);
+  });
+  const clones = t.mock.method(globalThis, "structuredClone");
+  const pending = [store.save()];
+  try {
+    await entered;
+    for (let concurrency = 1; concurrency <= 32; concurrency++) {
+      store.manifest.concurrency = concurrency;
+      pending.push(store.save());
+    }
+    assert.equal(clones.mock.callCount(), 1, "blocked IO must not retain one full state copy per caller");
+    release();
+    await Promise.all(pending);
+    assert.equal(writes.mock.callCount(), 2, "the pending checkpoint persists all queued changes together");
+    assert.equal((await readRunState(store.run)).manifest.concurrency, 32);
+  } finally {
+    release();
+    await Promise.allSettled(pending);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("checkpoints isolate changing progress without duplicating immutable accepted bodies", async (t) => {
+  const { directory, store, spec, value } = await fixture();
+  await store.activate(spec);
+  await store.accept(value);
+  store.manifest.concurrency = 1;
+  const receipt = store.state.receipts[spec.taskId]!;
+  const write = services.repository.writeRun;
+  let enter = () => {}, release = () => {};
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  t.mock.method(services.repository, "writeRun", async (...[run, snapshot]: Parameters<typeof write>) => {
+    assert.notEqual(snapshot.receipts, store.state.receipts);
+    assert.notEqual(snapshot.receipts[spec.taskId], receipt, "writer metadata must stay isolated");
+    assert.equal(snapshot.receipts[spec.taskId]!.evaluation, receipt.evaluation, "accepted bodies need no extra heap copy");
+    assert.equal(snapshot.receipts[spec.taskId]!.exported!.row, receipt.exported!.row);
+    enter();
+    await blocked;
+    assert.equal(snapshot.manifest.concurrency, 1, "later progress edits cannot change an in-flight checkpoint");
+    return write(run, snapshot);
+  });
+  const pending = store.save();
+  try {
+    await entered;
+    store.manifest.concurrency = 2;
+    release();
+    await pending;
+    const saved = await readRunState(store.run);
+    assert.equal(saved.manifest.concurrency, 1);
+    assert.deepEqual(saved.receipts[spec.taskId]!.evaluation, receipt.evaluation);
+    assert.deepEqual(saved.receipts[spec.taskId]!.exported, receipt.exported);
+  } finally {
+    release();
+    await pending.catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("receipt reads do not wait for unrelated checkpoint writes", async (t) => {
+  const { directory, store, spec, value } = await fixture();
+  await store.activate(spec);
+  const accepted = await store.accept(value);
+  let enter = () => {}, release = () => {};
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const write = services.repository.writeRun;
+  t.mock.method(services.repository, "writeRun", async (...args: Parameters<typeof write>) => {
+    enter();
+    await blocked;
+    return write(...args);
+  });
+  const pending = store.save();
+  try {
+    await entered;
+    const available = await Promise.race([
+      Promise.all([store.receipt(spec.taskId), store.receipt(store.manifest.tasks[1].id)]),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
+    ]);
+    assert.deepEqual(available, [accepted, undefined]);
+  } finally {
+    release();
+    await pending;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("independent task activations share a checkpoint instead of waiting for each other's disk writes", async (t) => {
+  const { directory, store, spec } = await fixture([raw("one", null), raw("two", null)]);
+  const tasks = store.manifest.tasks.filter((task) => task.stage === "attribution");
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const write = services.repository.writeRun;
+  const writes = t.mock.method(services.repository, "writeRun", async (...args: Parameters<typeof write>) => {
+    await blocked;
+    return write(...args);
+  });
+  const pending = tasks.map((task, index) => store.activate({ ...spec, taskId: task.id, attemptId: `attempt-${index}` }));
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(tasks.filter((task) => store.manifest.states[task.id].status === "running").length, tasks.length);
+    release();
+    await Promise.all(pending);
+    assert(writes.mock.callCount() <= 2, "independent activations must batch their durable checkpoint");
+    const restored = await readRunState(store.run);
+    assert(tasks.every((task) => restored.manifest.states[task.id].attempts === 1));
+  } finally {
+    release();
+    await Promise.allSettled(pending);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("duplicate submissions commit once and return the same receipt", async () => {
   const { directory, store, spec, value } = await fixture();
   try {
@@ -127,6 +249,20 @@ test("duplicate submissions commit once and return the same receipt", async () =
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("concurrent tasks cannot reserve the same submission ID", async () => {
+  const { directory, store, spec, value } = await fixture();
+  const tasks = store.manifest.tasks.filter((task) => task.stage === "attribution");
+  try {
+    await Promise.all(tasks.map((task, index) => store.activate({ ...spec, taskId: task.id, attemptId: `attempt-${index}` })));
+    const results = await Promise.allSettled(tasks.map((task, index) => store.accept({
+      ...value, taskId: task.id, attemptId: `attempt-${index}`,
+    })));
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(results.filter((r) => r.status === "rejected").length, 1);
+    assert.equal(Object.keys((await readRunState(store.run)).receipts).length, 1);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("business logs contain durable accepted rows once, recover omissions and ignore rejected submissions", async () => {
@@ -242,7 +378,9 @@ test("correctness receipts are durable references and preserve exact duplicate c
     assert.equal((summary.quality as { repeated_error_tasks: number }).repeated_error_tasks, 1);
     assert.equal(await readFile(file, "utf8"), text, "report rebuild retains formal correctness evidence");
     const validation = await validateRun(store.run);
-    assert.equal(validation.valid, true);
+    assert.equal(validation.results.valid, true);
+    assert.equal(validation.evidence.valid, true);
+    assert.equal(validation.delivery.valid, false, "accepted attribution alone is not a completed comparison delivery");
     assert.equal(validation.completed_comparisons, 0, "correctness rows are not comparisons");
     await writeJsonl(file, [{ ...row, evaluator_version: "wrong" }]);
     await assert.rejects(readRunState(store.run), /结果评测器版本与收据不一致/);

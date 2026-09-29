@@ -102,7 +102,7 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 
 Host 在接收提交、恢复和离线校验时要求核心不可用有归因中已证实、关联核心要求的问题；可用性按整份最终交付判断，不机械绑定标准对错或 importance，Comparison 仍不能改写归因。排名必须是候选的划分，全部不可用候选同层且在可用候选之后；双方可用时，仅一方有已确认的中高重要性优势则不能并列。都差仅用于双方关键交付均不可用，都好仅用于双方可用且没有实质差距；不设置数量配额。还检查 `assessments` 覆盖全部候选、决定性发现引用既有归因 finding。这些检查不代替事实和影响判断。离线校验按源文件流式读取登记记录，行号变化时按业务标识重定位，不将整份 JSONL 载入字符串；读取期间文件变化会拒绝该来源。
 
-提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 只写裁决与决定胜负的差异（裁判提交最多100字）；`decision_basis.comparisons` 按同一方面逐行对照，每行包含 `aspect`、`importance`、`better_candidates` 和全部候选的 `assessments`，各格用 `summary`（最多160字）说明表现，以 `finding_indices` 引用本候选既有归因。共同优点或无已证实优势时 `better_candidates=[]`。Host 校验每行候选完整、优势候选有效、引用存在，并要求全部待核对优点、中高重要性问题及决定性发现被比较行覆盖；导出与恢复按稳定版本 ID 转换行内候选，改写按比较行索引和候选槽位回填；Workflow 从全部既有 strength 生成双向 `strength_checks`（candidate/finding_index/counterparts）；每项优点核对其他候选在同一方面是否具备，确认缺失时明确写成其相对短板，共同优点合并，独立优势及反向优势不能漏掉。缺少同名 finding 不代表没有能力，材料不足保留未知；可选优势缺失不自动构成核心错误。体验点评围绕额外等待是否换来实际质量收益，只引用支撑判断的关键数据，不固定枚举耗时与 token，也不强制写资源段落。质量相当时明显等待差异可以影响排名，速度不能抵消核心错误。对比阶段不提交 evidence、不新增 finding。
+提交包含 `task_analysis`、`ranking`、`assessments` 与 `decision_basis`。`decisive_findings` 用 `candidate` + `finding_index` 引用归因 findings，只引用实际影响排名的发现；`tradeoff` 只写裁决与决定胜负的差异（裁判提交最多100字）；`decision_basis.comparisons` 按同一方面逐行对照，每行包含 `aspect`、`importance`、`better_candidates` 和全部候选的 `assessments`，各格用 `summary`（最多160字）说明表现，以 `finding_indices` 引用本候选既有归因。共同优点或无已证实优势时 `better_candidates=[]`。Host 校验每行候选完整、优势候选有效、引用存在，并要求全部待核对优点、中高重要性问题及决定性发现被比较行覆盖；导出与恢复按稳定版本 ID 转换行内候选，对局偏好改写按候选对槽位回填，已保存的其他槽位保持不变；Workflow 从全部既有 strength 生成双向 `strength_checks`（candidate/finding_index/counterparts）；每项优点核对其他候选在同一方面是否具备，确认缺失时明确写成其相对短板，共同优点合并，独立优势及反向优势不能漏掉。缺少同名 finding 不代表没有能力，材料不足保留未知；可选优势缺失不自动构成核心错误。体验点评围绕额外等待是否换来实际质量收益，只引用支撑判断的关键数据，不固定枚举耗时与 token，也不强制写资源段落。质量相当时明显等待差异可以影响排名，速度不能抵消核心错误。对比阶段不提交 evidence、不新增 finding。
 
 ## 问题库与聚类
 
@@ -123,15 +123,18 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 ## 改写
 
-改写阶段可选（配置 `rewrite.attribution` / `rewrite.comparison` / `rewrite.clustering`），把已接受的归因、对比或聚类结论润色为更简洁规整的表达。每个源结果对应一个改写任务：对比组写 `assessments[].summary`、`decision_basis.tradeoff` 和派生 `verdicts[].reason`；归因写 `summary`、非空的 `correctness_reason`、finding 的 `text/reason` 与 `assessment.observation/impact`；聚类写新类的 `definition/novelty` 和 `merges[].reason`，无新类和合并时返回空改写。
+改写阶段可选（配置 `rewrite.attribution` / `rewrite.comparison` / `rewrite.clustering`），把已接受的归因、对比或聚类结论润色为更简洁规整的表达。默认只开启对比改写，每个源结果对应一个改写任务：对比组只写派生 `verdicts[].reason`，以已确定的胜负和该对局的原裁决、逐项表现生成具体偏好理由；显式开启其他阶段时，归因写 `summary`、非空的 `correctness_reason`、finding 的 `text/reason` 与 `assessment.observation/impact`；聚类写新类的 `definition/novelty` 和 `merges[].reason`，无新类和合并时返回空改写。
 
 - 对比裁判继续盲测；Workflow 在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、AA组Fast），槽位 id 不变。
 - 输入是 Workflow 选定的文本槽位（`items[].id/label/text`）及 case 的批次/case ID 或聚类的批次/模型定位信息，不含原题、原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
 - 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；真实组别与模型称谓、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
+- 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。已有其他改写槽位原样保留，收据只索引本次更新的槽位，正文仍只存于JSONL。
+- 显式逐项改写只请求 `comparison.<行号>.<候选>.summary`；本格原文放在 `text`，同项对照和已确定的本项优势放在只读 `context`，不含证据；不把对照信息复制为点评前缀。Workflow 通过 `forbiddenPrefixes` 指定不可作为前缀的呈现标签，Rewrite 校验拒绝复制标签，避免将本项赢家名称贴到另一方事实前。每格先写具体得失，保留局部优势、各自约束与不确定性；仅更新这些槽位，已改写偏好、方面名、优势标记和引用保持不变。
+- 定向修复在任务数据中保存 `rewriteSlotIds`，请求必须与该非空、无重复的已知槽位集合完全对应；未知槽位在派发前拒绝。`executionScope` 保存本轮任务 UUID 清单，成功任务及范围外任务不会进入请求；同 run 冻结范围时不发现新增输入。准备修复保留既有源结果及文案，接受后只合并请求的槽位；旧成功任务的 attempts 和判决版本不随修复变化。CLI 选择与释放范围见[使用指南](usage.md#只补失败与同类故障熔断)。
 - 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本），不单独生成结果文件或业务日志。
 - 看板同时展示原始输出和改写后内容，聚类详情在运行总览。问题库的类身份、归属与原始定义不被改写覆盖。
 - `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。导出不沿用裁判提交的点评字数上限，避免名称展开或已接受的改写因长度再次失败。
-- 续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；已接受的评测结果不受影响。
+- 普通续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；显式固定范围内按已准备任务执行，不重新规划开关。已接受的评测结果不受影响。
 
 ## 证据与导出
 
@@ -143,7 +146,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 证据范围无效时仍拒绝提交；反馈的 `expected.suggested_evidence` 提供从同一来源生成的短引文和有效 ID，`expected.read_request` 给出继续读取的参数。模型必须先核对片段是否支持原判断，再选择对应 ID；片段不足时继续读取或搜索，不手算坐标、不将建议直接视为已接受证据。无效路径没有建议引文，需先重新读取消息定位字段。
 
-每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`；`verdicts[].reason` 是程序生成的规则概述，逐题的具体差异与反向事实在 `decision_basis.tradeoff`、候选评估和归因 findings 中。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
+每条对比行给出 `ranking`、`assessments` 与派生的 `verdicts`（键为组内稳定版本对）。派生判决使用 `win` / `both_good` / `both_bad`，后两种的赢家字段为 `null`；`verdicts[].reason` 原文是程序生成的规则概述，改写槽位则结合逐题事实直接解释偏好；具体差异与反向事实来自 `decision_basis.tradeoff`、候选评估和归因 findings 中。评语中的 `【候选A】`、`候选A` 等会按盲测映射替换为展示名称；A股、A+H、A浪、方案A等题目术语与证据原文保持不变。汇总分别统计各版本胜出数、都好数和都差数，三类互斥且相加等于有效比较数，失败不计入上述分类。
 
 归因任务使用单份 `answer`，对错证据必须来自其 `final_message_index` 对应的最终回答，不能引用问题、标准答案、工具结果或中间推理（findings 证据可引用该回答的调用链）。正式归因行包含 `task_id`、`submission_id`、`input_id`、`case`、稳定 `version` 和 `evaluation`（判对结论、理由、展开的原文证据）；评语不做盲测标签替换。结果文件位置与恢复规则见[运行产物](usage.md#运行产物)。
 
@@ -155,6 +158,8 @@ Agent 初始材料的 `original_answer_timing` 只提供 `finish_seconds`（完�
 
 数值核对使用归因的 `numeric_checks`：逐项保存标准原值 expected、回答原值 actual、单位转换 scale、mode、matches 和指向 correctness_evidence 的 evidence_index。程序使用十进制整数运算，对连续量按标准原有小数位四舍五入复算，对整数计数等离散结果精确比较，核验两端数值来自标准与最终回答，并拒绝核对失败却判全部正确；比较阶段读取同一张表，正式 comparison 的 evaluations 同步保留。日期、代码、显式容差/区间由原任务规则核验，不套连续量精度。抽取的对象、单位和覆盖完整性仍须语义复核，数值表通过不代表整份判断正确。
 
-全部核心未达标的裁决短评将 `no_winner` 文本约束传给改写，源点评和改写均拒绝常见整体胜出表述；责任定义明确根因未定位却列组件时退回修正。这些检查只拦截明确矛盾，不能取代真实题集的语义复核。聚类的未知编号或跨组件归类反馈使用本次请求的短编号，不自动更正或猜测归属。
+原文数字匹配保留数值边界与方向：识别明确的“跌”及下降表述、量词前的简单中文数量、完整公式中的减法右操作数；紧接半年、季度或月份标题的年份不并入前一小数。数值未出现在引用时，反馈附上实际解析的 quote，不把模型填写的 observation 当作原文。
 
-改写只硬校验槽位完整、唯一、文本非空，以及已明确没有整体胜者的裁决约束。数字保真和简洁长度由提示词引导、结果复核，不因数字集合变化或轻微超长触发结构修复；它们不是事实正确性的证明。
+偏好改写通过 `preference` 锁定既定对局结论，双方都差或双方都好的文案拒绝常见整体胜出表述；责任定义明确根因未定位却列组件时退回修正。这些检查只拦截明确矛盾，不能取代真实题集的语义复核。聚类的未知编号或跨组件归类反馈使用本次请求的短编号，不自动更正或猜测归属。
+
+改写硬校验槽位完整、唯一、文本非空、既定偏好及 Workflow 指定的禁止前缀。`validate --require-rewrite` 对所需范围的全部已保存槽位应用当前机械契约，不只检查最近一次改写收据中的子集；语义复核单列为 required。数字保真和简洁长度由提示词引导、结果复核，不因数字集合变化或轻微超长触发结构修复；它们不是事实正确性的证明。

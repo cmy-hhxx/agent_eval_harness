@@ -67,13 +67,14 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("numeric_rounding_mismatch", `${location}/matches`,
         `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
     if (!containsNumber(JSON.stringify(input.ground_truth.value), check.expected, true))
-      issue("numeric_reference_missing", `${location}/expected`, "expected 必须来自标准答案，保留原有小数位；不能自行换算标准或编造容差");
+      issue("numeric_reference_missing", `${location}/expected`, "expected 必须来自标准答案，保留原有小数位和科学计数法指数；例如1.13018E+12须原样填写，不能展开为整数、换算标准或编造容差。自算值不能放expected；分数或复合单位请在correctness_reason说明推导并移除此数值表项");
     const evidence = value.correctness_evidence[check.evidence_index];
     if (!evidence || (check.actual !== null && !containsNumber(evidence.quote, check.actual)))
       issue("numeric_answer_missing", `${location}/evidence_index`,
         `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；` +
         `选最终消息 ${input.answer.final_message_index} 的原文加入 correctness_evidence，并填写其零起始 evidence_index。` +
-        `有值时用 search_trace(candidate="answer", query="${check.actual}") 定位，单位换算放 scale；未提供值用 actual=null、matches=false，不能补0或自己拼证据ID。`);
+        `有值时用 search_trace(candidate="answer", query="${check.actual}") 定位。actual 必须照抄原文数值及正负号，不能先换算；例如原文2900万、标准以元计，则actual="2900"、scale="10000"，不能填29000000。未提供值用 actual=null、matches=false，不能补0或自己拼证据ID。复合单位、数名单或图表解码得到的派生值请在correctness_reason保留证据和计算过程，并移除此数值表项；不要把派生值伪装成原文字面值。请逐字核对 actual.quote 返回的真实原文，observation 中自行声称出现的数值不是原文证据。`,
+        { number: check.actual, quote: evidence?.quote ?? null });
     if (value.is_correct === true && !matches)
       issue("numeric_correctness_contradiction", "/is_correct", "存在未通过的标准数值核对，不能判全部正确；先核查数值、单位、口径是否选对");
   }

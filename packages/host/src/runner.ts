@@ -18,6 +18,8 @@ import {
   type Submission,
   type TaskPlan,
   type WorkerStatus,
+  type FailureGuardPolicy,
+  type StagePause,
 } from "@eval/contracts";
 import { HttpError, canonical, errorText, redact, safeId } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
@@ -26,6 +28,8 @@ import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
+import { scheduleTasks } from "./scheduling.js";
+import { FailureGuard } from "./failure-guard.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
 
 export interface RunOptions extends EvaluationServices {
@@ -42,6 +46,11 @@ export interface RunOptions extends EvaluationServices {
   modelForStage: (stage: string) => ModelConfig;
   concurrency: number;
   retries: number;
+  skipFailed?: boolean;
+  discoverInputs?: boolean;
+  resumeStages?: string[];
+  failureGuard?: FailureGuardPolicy;
+  taskIds?: string[];
   retryDelaySeconds: number;
   debug?: boolean;
   signal?: AbortSignal;
@@ -52,7 +61,9 @@ export interface RunOptions extends EvaluationServices {
   onProgress?: (message: string) => void;
   onEvent?: (event: unknown) => void;
 }
-export async function runEvaluation(options: RunOptions) {
+export async function runEvaluation(options: RunOptions): Promise<Record<string, unknown> & {
+  execution_task_statuses: Record<string, number>; paused_stages: StagePause[];
+}> {
   safeId(options.runId);
   if (typeof options.evaluatorVersion !== "string" || !options.evaluatorVersion.trim())
     throw new Error("evaluatorVersion must be a non-empty string");
@@ -85,7 +96,9 @@ export async function runEvaluation(options: RunOptions) {
     let saved: RunState;
     let inputs = options.plan.inputs;
     if (await exists(layout.stateFile)) {
+      if (options.taskIds) throw new Error("Use a prepared repair scope to select tasks in an existing run");
       saved = await options.repository.readRun(run);
+      if (options.discoverInputs) delete saved.manifest.executionScope;
       if (options.taskSource.reconcile)
         inputs = (await options.taskSource.reconcile(run, saved, options.config)).inputs;
       else inputs = options.plan.inputs;
@@ -119,6 +132,19 @@ export async function runEvaluation(options: RunOptions) {
       };
     }
     const manifest = saved.manifest;
+    if (options.taskIds) {
+      if (!options.taskIds.length) throw new Error("Task selection must not be empty");
+      manifest.executionScope = [...new Set(options.taskIds)];
+    }
+    const selected = manifest.executionScope && new Set(manifest.executionScope);
+    for (const id of selected ?? [])
+      if (!manifest.tasks.some((task) => task.id === id)) throw new Error("Unknown task in execution scope: " + id);
+    for (const stage of options.resumeStages ?? [])
+      if (!manifest.pausedStages?.some((pause) => pause.stage === stage)) throw new Error("Stage is not paused: " + stage);
+    manifest.pausedStages = (manifest.pausedStages ?? []).filter((pause) => !options.resumeStages?.includes(pause.stage));
+    const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
+    const inScope = (task: PlannedTask) => !selected || selected.has(task.id);
+    const dispatchable = (task: PlannedTask) => inScope(task) && !guard.paused(task.stage);
     manifest.concurrency = desiredConcurrency;
     for (const engine of new Set(manifest.tasks.map(engineForTask)))
       identities[engine] ??= await loadIdentity(engine, options.runtime.root);
@@ -133,10 +159,13 @@ export async function runEvaluation(options: RunOptions) {
     delete manifest.finishedAt;
     await localFiles.remove(layout.stats, { force: true });
     for (const task of manifest.tasks) {
+      if (!dispatchable(task)) continue;
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
       if (receipt) {
         state.status = "succeeded";
+      } else if (options.skipFailed && ["failed", "timed_out", "blocked"].includes(state.status)) {
+        continue;
       } else {
         state.status = "pending";
         delete state.attemptId;
@@ -145,6 +174,7 @@ export async function runEvaluation(options: RunOptions) {
     }
     await store.save();
     const current = store;
+    const snapshot = () => ({ ...progressSnapshot(saved), in_flight_tasks: busy.size });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
@@ -159,7 +189,7 @@ export async function runEvaluation(options: RunOptions) {
         manifest.concurrency = desiredConcurrency;
         await current.save();
         wake();
-        return json(res, progressSnapshot(saved));
+        return json(res, snapshot());
       }
       if (url.pathname === "/api/control/stop" && req.method === "POST") {
         if (req.headers["x-run-token"] !== lock.token) throw new HttpError(403, "Invalid run control token");
@@ -167,7 +197,7 @@ export async function runEvaluation(options: RunOptions) {
         wake();
         return json(res, { stopping: true });
       }
-      if (url.pathname === "/api/progress" && req.method === "GET") return json(res, progressSnapshot(saved));
+      if (url.pathname === "/api/progress" && req.method === "GET") return json(res, snapshot());
       if (req.method === "GET" && parts[0] === "api" && parts[1] === "inputs" && parts[2]) {
         const attempt = url.searchParams.get("attempt");
         const value = attempt && attemptSources.get(safeId(attempt))?.get(safeId(parts[2]));
@@ -188,11 +218,12 @@ export async function runEvaluation(options: RunOptions) {
     });
     await writeJson(layout.lockFile, { ...lock, url: http.url });
     progressTimer = setInterval(
-      () => options.onProgress?.("progress " + JSON.stringify(progressSnapshot(saved))),
+      () => options.onProgress?.("progress " + JSON.stringify(snapshot())),
       10000,
     );
     let workerUrls = options.workerUrls || [];
-    const pending = manifest.tasks.filter((t) => manifest.states[t.id].status === "pending");
+    const pending = manifest.tasks.filter((t) => dispatchable(t) && manifest.states[t.id].status === "pending" &&
+      Object.values(t.dependencies).every((id) => manifest.states[id]?.status === "succeeded"));
     if (!workerUrls.length && pending.length) {
       // Start incrementally so every successful child remains owned if a later launch fails.
       const engines = [...new Set(pending.map(engineForTask))];
@@ -223,10 +254,14 @@ export async function runEvaluation(options: RunOptions) {
     );
     const eligible = workers.filter(
       (w) =>
-        canonical(w.health.identity) === canonical(identities[w.health.identity.engine]) &&
-        !w.health.activeAttempt,
+        canonical(w.health.identity) === canonical(identities[w.health.identity.engine]),
     );
-    if (pending.length && !eligible.length) throw new Error("No idle worker matches the selected build");
+    if (pending.length && !eligible.length) throw new Error("No worker matches the selected build");
+    const unavailable = new Map<(typeof workers)[number], { since: number; checkAt: number }>();
+    const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
+      since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
+    });
+    for (const worker of eligible) if (worker.health.activeAttempt) deferWorker(worker);
     const hostUrl = http.url;
     async function copyArtifacts(
       workerUrl: string,
@@ -258,6 +293,7 @@ export async function runEvaluation(options: RunOptions) {
       let transportRetries = 0,
         contentRetries = 0;
       for (;;) {
+        if (guard.paused(task.stage)) return;
         if (controller.signal.aborted) {
           state.status = "cancelled";
           await current.save();
@@ -269,14 +305,20 @@ export async function runEvaluation(options: RunOptions) {
             `${workerUrl}/api/health`,
             "GET",
             undefined,
-            AbortSignal.timeout(1000),
+            AbortSignal.timeout(10000),
           );
           ready = !health.activeAttempt && canonical(health.identity) === canonical(identity);
         } catch {}
         if (!ready) {
           const previous = owned.find((w) => w.url === workerUrl);
-          if (!previous)
-            throw new Error("External worker unavailable or still busy; restart it and resume the run");
+          if (!previous) {
+            // Capacity loss is not an evaluation failure. Requeue before creating
+            // an attempt and keep this worker out of dispatch until health recovers.
+            deferWorker(worker);
+            state.status = "pending";
+            await current.save();
+            return;
+          }
           await previous.close();
           const replacement = await spawnWorker(
             identity.engine,
@@ -287,6 +329,7 @@ export async function runEvaluation(options: RunOptions) {
           workerUrl = replacement.url;
           worker.url = workerUrl;
         }
+        if (guard.paused(task.stage)) return;
         const spec: AttemptSpec = {
           runId: options.runId,
           taskId: task.id,
@@ -356,18 +399,29 @@ export async function runEvaluation(options: RunOptions) {
               await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
               break;
             }
-            status = await request<AttemptStatus>(
-              `${workerUrl}/api/attempts/${spec.attemptId}`,
-              "GET",
-              undefined,
-              AbortSignal.timeout(10000),
-            );
+            try {
+              status = await request<AttemptStatus>(
+                `${workerUrl}/api/attempts/${spec.attemptId}`,
+                "GET",
+                undefined,
+                AbortSignal.timeout(10000),
+              );
+            } catch (error) {
+              // Observation may fail transiently while the worker computes or submits.
+              // Keep this attempt; the loop still enforces cancellation and its deadline.
+              const code = error instanceof Error && error.cause && typeof error.cause === "object" && "code" in error.cause
+                ? error.cause.code : undefined;
+              if (!(error instanceof Error) || (error.name !== "TimeoutError" &&
+                  !["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(String(code)))) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              continue;
+            }
             if (status.lastSeq !== lastSeq) {
               state.lastProgressAt = Date.now();
               lastSeq = status.lastSeq;
             }
             if (status.state !== "running") break;
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         } catch (error) {
           status = {
@@ -476,6 +530,20 @@ export async function runEvaluation(options: RunOptions) {
           record.error = state.reason;
           if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
         }
+        const pause = guard.observe(task.stage, task.id, receipt ? [] :
+          (state.failure?.attemptId === spec.attemptId && state.failure.errors.length ? state.failure.errors : [{
+            category: status?.retryable ? "transport" : "interruption",
+            code: status?.retryable ? "transport_failed" : state.status === "timed_out" ? "attempt_timeout" : "attempt_failed",
+            path: "/",
+          }]));
+        if (pause) {
+          await current.save();
+          options.onProgress?.("stage_paused " + JSON.stringify(pause));
+          await options.logger?.error(`同类失败达到阈值，暂停 ${pause.stage}: ${pause.code} ${pause.path}`, {
+            component: "host", event: "stage_paused", run_id: options.runId, task_id: task.id,
+          });
+          wake();
+        }
         if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
         state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
         if (record.metrics) {
@@ -503,7 +571,7 @@ export async function runEvaluation(options: RunOptions) {
           options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
           return;
         }
-        if (controller.signal.aborted || state.failure?.stopped) return;
+        if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped) return;
         if (status?.retryable) {
           if (transportRetries++ >= options.retries) return;
         } else if (
@@ -531,9 +599,21 @@ export async function runEvaluation(options: RunOptions) {
       changed = new Promise<void>((resolve) => {
         wake = resolve;
       });
+      await Promise.all([...unavailable].filter(([, value]) => value.checkAt <= Date.now()).map(async ([worker]) => {
+        try {
+          const health = await request<WorkerStatus>(worker.url + "/api/health", "GET", undefined, AbortSignal.timeout(1000));
+          if (!health.activeAttempt && canonical(health.identity) === canonical(identities[health.identity.engine])) {
+            worker.health = health;
+            unavailable.delete(worker);
+            return;
+          }
+        } catch { /* Retry capacity observation without spending a task attempt. */ }
+        deferWorker(worker);
+      }));
       if (!options.workerUrls?.length) {
         const waiting = manifest.tasks.filter(
           (task) =>
+            dispatchable(task) &&
             manifest.states[task.id].status === "pending" &&
             Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded"),
         );
@@ -556,18 +636,23 @@ export async function runEvaluation(options: RunOptions) {
           slots -= target;
         }
       }
-      let scheduled = false;
-      for (const task of manifest.tasks) {
+      let scheduled = false, blocked = false;
+      for (const task of scheduleTasks(manifest.tasks, manifest.states)) {
+        if (controller.signal.aborted) break;
+        if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id)) continue;
-        const dependencies = Object.values(task.dependencies).map((id) => manifest.states[id]?.status);
-        if (dependencies.some((s) => s && !["pending", "running", "succeeded"].includes(s))) {
+        const dependencies = Object.values(task.dependencies);
+        if (dependencies.some((id) => !running.has(id) && manifest.states[id]?.status &&
+          !["pending", "running", "succeeded"].includes(manifest.states[id].status))) {
           manifest.states[task.id].status = "blocked";
           manifest.states[task.id].reason = "Dependency did not succeed";
-          await current.save();
+          blocked = true;
           continue;
         }
-        if (dependencies.some((s) => s !== "succeeded")) continue;
+        if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
+        if (running.size >= desiredConcurrency || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const binding = options.taskSource.bind(task, inputs, await current.dependencies(task));
+        if (guard.paused(task.stage)) continue;
         const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(
           (w) =>
@@ -575,14 +660,17 @@ export async function runEvaluation(options: RunOptions) {
             prepared.evaluation.toolNames.every((name) => w.health.tools.includes(name)),
         );
         if (!capable.length) throw new Error("Required engine or tools not available");
-        const worker = capable.find((w) => !busy.has(w));
-        if (!worker || running.size >= desiredConcurrency) continue;
+        const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
+        if (!worker) continue;
         busy.add(worker);
         scheduled = true;
         const promise = execute(task, worker, prepared, binding.request.sources)
           .catch(async (error) => {
+            if (await current.receipt(task.id)) return;
             manifest.states[task.id].status = "failed";
             manifest.states[task.id].reason = errorText(error);
+            const pause = guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
+            if (pause) options.onProgress?.("stage_paused " + JSON.stringify(pause));
             await current.save();
           })
           .then(async () => {
@@ -602,17 +690,31 @@ export async function runEvaluation(options: RunOptions) {
           });
         running.set(task.id, promise);
       }
-      if (running.size) await Promise.race([...running.values(), changed]);
+      if (blocked) await current.save();
+      if (running.size) await Promise.race([...running.values(), changed,
+        ...(unavailable.size ? [new Promise((resolve) => setTimeout(resolve, 1000))] : [])]);
+      else if (unavailable.size && manifest.tasks.some((task) => dispatchable(task) && manifest.states[task.id].status === "pending" &&
+        Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded"))) {
+        if ([...unavailable.values()].every(({ since }) => Date.now() - since >= options.policy.timeoutSeconds * 1000))
+          throw new Error("External workers remained unavailable; pending tasks were preserved for resume");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
       else if (!scheduled) break;
     }
     await Promise.all(running.values());
     if (controller.signal.aborted)
-      for (const state of Object.values(manifest.states))
-        if (state.status === "pending") state.status = "cancelled";
-    manifest.status = controller.signal.aborted ? "interrupted" : "finished";
+      for (const task of manifest.tasks)
+        if (inScope(task) && manifest.states[task.id].status === "pending") manifest.states[task.id].status = "cancelled";
+    manifest.status = controller.signal.aborted || manifest.pausedStages.length ? "interrupted" : "finished";
     manifest.finishedAt = Date.now();
     await current.save();
-    return options.report ? await options.report(run) : { run_id: manifest.runId, status: manifest.status };
+    const executionTaskStatuses: Record<string, number> = {};
+    for (const task of manifest.tasks.filter(inScope)) {
+      const status = manifest.states[task.id].status;
+      executionTaskStatuses[status] = (executionTaskStatuses[status] ?? 0) + 1;
+    }
+    return { ...(options.report ? await options.report(run) : { run_id: manifest.runId, status: manifest.status }),
+      execution_task_statuses: executionTaskStatuses, paused_stages: manifest.pausedStages };
   } finally {
     if (progressTimer) clearInterval(progressTimer);
     controller.abort();

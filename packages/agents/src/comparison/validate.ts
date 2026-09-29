@@ -27,17 +27,18 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     errors.push({ category: "decision", code, path, message, candidate, actual });
 
   const labels = Object.keys(input.candidates);
-  const findingHelp = (label: string) => `该候选合法索引：${(input.attributions?.[label]?.findings ?? [])
+  const labelHelp = `合法候选标识为 ${JSON.stringify(labels)}，所有候选键和引用必须原样使用这些标识。`;
+  const findingHelp = (label: string) => !labels.includes(label) ? labelHelp : `该候选合法索引：${(input.attributions?.[label]?.findings ?? [])
     .map((finding, index) => `${index}=${finding.text}`).join("；") || "无"}。只复制该候选现有索引；没有对应finding时填 []，不能填序号或其他候选的索引。`;
   const ranked = value.ranking.flat();
   if (new Set(ranked).size !== ranked.length)
     issue("ranking_duplicate", "/ranking", "排名包含重复候选", undefined, ranked);
   if (ranked.length !== labels.length || !labels.every((label) => ranked.includes(label)))
-    issue("ranking_incomplete", "/ranking", "排名必须恰好包含本组全部候选", undefined, ranked);
+    issue("ranking_incomplete", "/ranking", "排名必须恰好包含本组全部候选。" + labelHelp, undefined, ranked);
   if (ranked.length < 2) issue("ranking_too_small", "/ranking", "对比至少需要两个候选");
   const assessed = Object.keys(value.assessments);
   if (assessed.length !== labels.length || !labels.every((label) => assessed.includes(label)))
-    issue("assessment_incomplete", "/assessments", "必须为本组每个候选给出 meets_core 与 summary", undefined, assessed);
+    issue("assessment_incomplete", "/assessments", "必须为本组每个候选给出 meets_core 与 summary。" + labelHelp, undefined, assessed);
   const tierOf = (label: string) => value.ranking.findIndex((tier) => tier.includes(label));
   const failed = labels.filter((label) => value.assessments[label]?.meets_core === false);
   if (new Set(failed.map(tierOf)).size > 1)
@@ -52,9 +53,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const path = `/decision_basis/comparisons/${index}`;
     const compared = Object.keys(row.assessments);
     if (compared.length !== labels.length || !labels.every((label) => compared.includes(label)))
-      issue("comparison_incomplete", `${path}/assessments`, "每个比较点必须在同一行包含全部候选的表现", undefined, compared);
+      issue("comparison_incomplete", `${path}/assessments`, "每个比较点必须在同一行包含全部候选的表现。" + labelHelp, undefined, compared);
     if (row.better_candidates.some((label) => !labels.includes(label)) || row.better_candidates.length >= labels.length)
-      issue("comparison_advantage_invalid", `${path}/better_candidates`, "优势候选必须属于本组；共同优点或无已证实优势时填空数组", undefined, row.better_candidates);
+      issue("comparison_advantage_invalid", `${path}/better_candidates`, "优势候选必须属于本组；共同优点或无已证实优势时填空数组。" + labelHelp, undefined, row.better_candidates);
     for (const [label, assessment] of Object.entries(row.assessments))
       for (const findingIndex of assessment.finding_indices) {
         if (!input.attributions?.[label]?.findings[findingIndex])
@@ -94,7 +95,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       finding.assessment.requirement_index !== null);
     if (value.assessments[label]?.meets_core === false && !coreProblem)
       issue("core_failure_unproven", `/assessments/${label}/meets_core`,
-        "判核心不可用必须引用已证实、关联核心要求的问题，并说明哪项必要结果无法使用；不能只凭疑似问题", label);
+        "判核心不可用必须引用已证实、关联核心要求的问题，并说明哪项必要结果无法使用；不能只凭疑似问题。当前归因没有此类问题，请按该候选自己的 system/developer 约束复核 meets_core；权限限制下按要求拒答时，不能把另一方能够提供的结果当作该候选必须提供的结果。不得为支持判决改动既有归因。", label);
   }
   for (let i = 0; i < labels.length; i++)
     for (const second of labels.slice(i + 1)) {

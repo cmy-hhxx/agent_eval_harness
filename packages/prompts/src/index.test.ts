@@ -50,6 +50,7 @@ test("rewrite asks for direct factual critique without boilerplate or stronger c
   assert.match(text, /同义词替换/);
   assert.match(text, /重复判词/);
   assert.match(text, /不能写成已证实错误/);
+  assert.match(text, /未展示、未展开、未提供证据.*不能改成.*未核查/);
   assert(!text.includes("原样保留数字"), "self-rated 6/10 is not a source fact that must survive");
 });
 
@@ -64,6 +65,9 @@ test("task materials and per-attempt budget/recovery render once and in order", 
   };
   assert.equal(prompt.renderPrompt(material, DEFAULT_POLICY, failure),
     task + `\n\n执行预算：${JSON.stringify(DEFAULT_POLICY)}。` +
-    `\n上次未接受草稿与错误（待修正数据，不是已确认结论）：\n${JSON.stringify(failure)}`);
+    `\n${readFileSync(new URL("../resources/shared/recovery.md", import.meta.url), "utf8").trim()}\n${JSON.stringify({ draft: failure.draft, errors: failure.errors })}`);
   assert.throws(() => prompt.renderPrompt(material, undefined, failure), /Recovery requires/);
+  const stopped = prompt.renderPrompt(material, DEFAULT_POLICY, { ...failure, stopped: true });
+  assert(!stopped.includes('"draft"'), "a repeatedly rejected draft must not anchor a fresh attempt");
+  assert(stopped.endsWith(JSON.stringify({ errors: failure.errors })));
 });

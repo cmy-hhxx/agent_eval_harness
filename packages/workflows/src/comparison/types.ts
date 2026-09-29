@@ -5,6 +5,7 @@ import type {
   Policy,
   ProblemLibraryTarget,
   ProblemProjection,
+  FailureGuardPolicy,
 } from "@eval/contracts";
 import type { ClusteringBudget } from "@eval/agents/clustering";
 
@@ -34,6 +35,7 @@ export interface EvalConfig {
     retries: number;
     retryDelaySeconds: number;
     initialContextChars: number;
+    failureGuard?: FailureGuardPolicy;
   };
   output: OutputTarget;
   problemLibrary: ProblemLibraryTarget;
@@ -143,6 +145,10 @@ export interface TaskData {
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;
+  /** Select the presentation fields when explicitly refreshing comparison text. */
+  comparisonRewriteScope?: "verdicts" | "items";
+  /** Explicit subset of source slots for a presentation repair. */
+  rewriteSlotIds?: string[];
   rewriteScope?: { batch_id: string; model: string };
   /** Present on rewrite tasks, which carry no candidates. */
   case?: TaskCase;
