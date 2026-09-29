@@ -67,7 +67,7 @@
     "judge": {
       "provider": "evaluation-gateway",
       "baseUrlEnv": "EVAL_BASE_URL",
-      "api": "openai-completions",
+      "api": "openai-responses",
       "apiKeyEnv": "EVAL_API_KEY",
       "thinking": "xhigh",
       "contextWindow": 524288,

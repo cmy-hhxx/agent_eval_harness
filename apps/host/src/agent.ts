@@ -20,7 +20,7 @@ const sources = [path.join(ROOT, "configs/host.json")];
 if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(path.join(ROOT, "configs/local/models.json"));
 const config = await loadConfig(sources);
 const model = process.env.AGENT_MODEL ? {
-  provider: "evaluation-gateway", baseUrl: process.env.EVAL_BASE_URL!, api: "openai-completions" as const, apiKeyEnv: "EVAL_API_KEY", model: process.env.AGENT_MODEL,
+  provider: "evaluation-gateway", baseUrl: process.env.EVAL_BASE_URL!, api: "openai-responses" as const, apiKeyEnv: "EVAL_API_KEY", model: process.env.AGENT_MODEL,
   thinking: "medium" as const, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
 } : createModelResolver(config.models)("attribution");
 if (!model.baseUrl || !process.env[model.apiKeyEnv]) throw new Error("请在根目录 .env 中配置 EVAL_BASE_URL、EVAL_API_KEY 和 AGENT_MODEL（或 configs/local/models.json）");

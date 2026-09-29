@@ -1,38 +1,93 @@
-# 远程评测输入数据服务交接
+# 远程评测数据服务
 
-## 远端目录
+看板：<http://117.50.195.94:2256/>　·　文档：<http://117.50.195.94:2256/docs>
 
-服务器上的 `/mnt/fin_bench/A_AA_comparision_data` 已准备好：
+## 远端目录 {#remote-paths}
 
-```text
-0_process_code/                 处理程序、依赖、运行状态和日志
-1_raw_zip_data/YYYY-MM-DD/      原始 .7z 压缩包
-2_eval_data_input/<model>/      处理后的日期 JSONL
-```
-
-`1_raw_zip_data` 已建立 `2026-09-22` 至 `2026-10-07`（含）共 16 个日期目录；`2_eval_data_input` 下有 `a_fast`、`aa_fast`、`a_expert`、`aa_expert` 四个模型目录。输出直接使用 `<model>/<date>.jsonl`，不创建 `_daily`。
-
-## 输入与处理
-
-将完整压缩包放到对应日期目录，例如：
+服务器路径：`/mnt/fin_bench/A_AA_comparision_data`
 
 ```text
-/mnt/fin_bench/A_AA_comparision_data/1_raw_zip_data/2026-09-22/a8d6894058fa4b04.7z
+0_process_code/                 服务程序、页面、文档、依赖和状态
+*.7z                            新收到或持续增长的原始压缩包（只扫描根目录）
+1_raw_zip_data/YYYY-MM-DD/      日期占位目录；不再接收新压缩包
+2_eval_data_input/<model>/      按请求日期处理后的 JSONL
 ```
 
-每个压缩包需包含四类 JSONL 文件，文件名后缀分别为 `_A-fast.jsonl`、`_AA-fast.jsonl`、`_A-expert.jsonl`、`_AA-expert.jsonl`；压缩包内可有目录。处理程序约每 5 秒扫描一次，并等待压缩包大小和修改时间稳定后再处理。建议上传时先使用非 `.7z` 临时后缀，上传完成后再改为 `.7z`。
+日期范围为 `2026-09-22` 至 `2026-10-07`（含），共 16 天。四个模型目录为 `a_fast`、`aa_fast`、`a_expert`、`aa_expert`。每份输出为 `<model>/<date>.jsonl`，不使用 `_daily`。
 
-程序在 `0_process_code/app.py` 中用 `py7zr` 解压到临时目录，再逐行解析、转换并写入 JSONL；四份输出全部完成后才对外标记该日期可用。多个压缩包放在同一天时会按文件名顺序合并；已处理压缩包如需替换请使用新文件名，不要原名覆盖。程序只根据文件名、大小和修改时间发现变化，不计算内容哈希。记录保留原有内容，并补充/归一化 `request_time`、`batch_id`、`case_id`、模型 `version`、`has_standard_answer`、`trace_id` 和 `_source`；缺少 `batch_id` 时使用日期目录名。该日期压缩包缺任一模型文件或有无法解析的行时，不会发布为可取数据，原因写入 `0_process_code/service.log`。
+## 历史数据与新增输入 {#inputs}
 
-## 取数接口
+本地已有的 `2026-09-22` 至 `2026-09-25` 四模型 JSONL 已同步至 `2_eval_data_input`，约 7.85 GB。根目录中的每个 `.7z` 应含四类模型 JSONL，文件名后缀为 `_A-fast.jsonl`、`_AA-fast.jsonl`、`_A-expert.jsonl`、`_AA-expert.jsonl`；新压缩包直接放在服务根目录，不再放入 `1_raw_zip_data`。
 
-服务已启动，服务器内部监听 `8081`，外部端口映射为 `2256`，不需要鉴权：
+服务按记录内的 `request_time` 或 `meta.request_time` 的北京时间日期分组；缺少这两个字段时，用 `meta.ask_time`（Unix 毫秒）按北京时间兜底。无法确定日期、JSON 无效、采集失败、消息类型不支持、缺少问题/身份或最终回答为空的记录会跳过，不写入 `2_eval_data_input`；跳过数量汇总写入 `0_process_code/service.log`。每行开头固定输出 `request_time`、`has_standard_answer`、`versions` 三个顶层字段；扩展字段在 `app.py` 的 `TOP_LEVEL_FIELD_ORDER` 与 `top_level_fields()` 集中维护。`AA Fast` 在请求日期 `2026-09-29` 及之后使用 `versions: "0929-big-fast"`，其他模型/日期使用 `"default"`。
 
-- `GET http://117.50.195.94:2256/health`：服务状态。
-- `GET http://117.50.195.94:2256/` 或 `/dates`：列出已完整处理、可取数的日期和模型。
-- `GET http://117.50.195.94:2256/data/{date}/{model}.jsonl`：下载指定日期和模型的数据。模型名为 `a_fast`、`aa_fast`、`a_expert`、`aa_expert`。
+服务每 5 秒检查根目录 `.7z` 的文件名、大小和修改时间，变化后等待 30 秒稳定再处理。处理期间若源文件变化，会丢弃该快照；若同名压缩包数小时后继续增长，会重新读取根目录中的全部 `.7z`，按日期重建 JSONL 和索引，而不是追加旧输出，因此续跑不重复累加。打不开或缺少模型文件的压缩包会暂时跳过，其他完整压缩包仍可处理；该文件大小或修改时间变化后会重新尝试。保留所有历史压缩包；每个有效包都需包含四类模型文件。跨包重复业务记录不自动去重，评测预检仍可发现重复。`1_raw_zip_data` 内的旧压缩包不再扫描。`local_import` 日期（当前 2026-09-22 至 25）若与根目录归档按请求时间落入同一天，服务会拒绝覆盖并在日志中说明；迁移完成归档后才能混合处理。
 
-例如：
+## 看板 {#dashboard}
+
+访问 <http://117.50.195.94:2256/> 查看按日期排列的表格；每行分别列出 A Fast 对 AA Fast、A Expert 对 AA Expert 的数据条数和评测进度。点击模型条数进入问句列表；回答与可用的标准答案默认折叠，不返回或渲染中间消息。看板不提供下载入口；完整 JSONL 下载 API 保留。页面每 15 秒刷新，也可手动刷新。
+
+评测进度由独立脚本 `progress_bridge.py` 读取一个或多个本地运行的 `state.json` 并上报，不修改当前评测器流程。可传入不同日期的多个 run 文件以合并显示。每条日期/模型配对显示已完成、总数、运行中、排队和失败数；成功的 Comparison 任务计完成，失败、超时、取消、阻塞及预检中无法配对的样本计失败。样本按 `batch_id + case_id` 在日期和配对内去重；Rewrite 与 clustering 不计入。默认每 10 秒检查，运行状态文件超过 60 秒未更新时显示“进度停更”。
+
+## HTTP 接口 {#api}
+
+服务内部监听 `8081`，外部端口映射为 `2256`。不做鉴权。
+
+- `GET /health`：服务状态。
+- `GET /dashboard-data`：看板数据，包括每个日期/模型的 `ready`、`row_count` 和按日期及 Fast/Expert 配对汇总的当前评测进度。
+- `GET /dates`：已完整处理、可取数的日期与模型。
+- `GET /data/{date}/{model}.jsonl`：下载完整 JSONL，模型名为 `a_fast`、`aa_fast`、`a_expert`、`aa_expert`。
+- `GET /records?date=...&model=...`：样本查看页。
+- `GET /records/{date}/{model}?page=1&page_size=20`：分页读取问句、最终回答和标准答案（若有），响应不含中间消息。
+- `POST /evaluation-progress`：更新当前/最近一次评测标记。
+- `GET /docs`：浏览器版文档；`GET /docs/handoff.md`：原始 Markdown。
+
+进度 POST 使用 `application/json`，时间戳为毫秒。`dates` 按输入源文件名中的日期分组；每个日期包含 `fast`（A Fast 对 AA Fast）和 `expert`（A Expert 对 AA Expert）两组计数。样本在日期和配对内按 `batch_id + case_id` 去重；计数只基于 Comparison 任务，预检中无法配对的样本也计为失败。
+
+```json
+{
+  "run_id": "pi-2026-09-29",
+  "engine": "pi",
+  "status": "running",
+  "started_at": 1790683200000,
+  "updated_at": 1790683200000,
+  "dates": [
+    {
+      "date": "2026-09-22",
+      "pairs": {
+        "fast": {
+          "total_cases": 100,
+          "completed_cases": 12,
+          "running_cases": 4,
+          "queued_cases": 83,
+          "failed_cases": 1
+        },
+        "expert": {
+          "total_cases": 0,
+          "completed_cases": 0,
+          "running_cases": 0,
+          "queued_cases": 0,
+          "failed_cases": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+`status` 允许 `running`、`finished`、`interrupted`。只保留最近启动的运行；旧运行迟到的更新会被拒绝。可独立启动本地上报脚本：
+
+```bash
+python3 tmp/remote-eval-dashboard/progress_bridge.py \\
+  data/runs/comparison/daily-2026-09-22/state.json \\
+  data/runs/comparison/daily-2026-09-23/state.json \\
+  data/runs/comparison/daily-2026-09-24/state.json \\
+  data/runs/comparison/daily-2026-09-25/state.json --once
+```
+
+`GET /dates` 仍是 JSON 数据接口；根路径 `/` 用于看板。
+
+取数示例：
 
 ```bash
 curl -f http://117.50.195.94:2256/dates
@@ -40,11 +95,11 @@ curl -f -o 2026-09-22.jsonl \
   http://117.50.195.94:2256/data/2026-09-22/a_fast.jsonl
 ```
 
-数据接口按 1 MiB 分块读取文件并流式返回，不会将整份 JSONL 载入内存。日期尚未完成处理时不会出现在 `/dates`，请求数据返回 404。当前原始目录还没有压缩包，因此 `/dates` 返回空列表是预期状态。
+数据接口按 1 MiB 分块流式返回，不会将整份 JSONL 载入内存。日期未就绪时不会出现在 `/dates`，直接请求返回 404。
 
-## 运行维护
+## 运行维护 {#operations}
 
-程序、`py7zr` 依赖、处理状态、PID 和日志都在远端 `0_process_code/` 下。当前以 `nohup` 常驻运行，日志为 `service.log`；断开 SSH 不影响进程，但没有配置进程守护，服务器重启或进程退出后需手动重启。检查服务可访问 `/health`。如需重启，在服务器执行：
+服务在远端 `0_process_code/` 下以 `nohup` 常驻，SSH 断开后仍运行；日志为 `service.log`。服务器重启或进程退出后需手动启动：
 
 ```bash
 cd /mnt/fin_bench/A_AA_comparision_data/0_process_code
@@ -52,6 +107,6 @@ nohup python3 app.py >> service.log 2>&1 </dev/null &
 echo $! > service.pid
 ```
 
-## 验证记录
+## 安全与当前状态 {#status}
 
-已验证远端 16 个日期目录和 4 个模型目录；使用四模型测试压缩包验证了自动处理、输出字段、`/dates` 和 JSONL 下载接口；已从本地连通性验证公网 `117.50.195.94:2256`。测试文件和测试输出已清理，当前没有已处理数据。
+看板、文档、进度更新和数据接口均可通过公网访问，无鉴权。看板不展示下载入口，但完整 JSONL 下载 API 仍可公开访问并包含原始消息链路；样本查看页只渲染问句、最终回答和标准答案。当前已就绪日期为 `2026-09-22` 至 `2026-09-25` 及 `2026-09-29`；其余日期等待新输入。
