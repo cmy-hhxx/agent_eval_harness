@@ -303,6 +303,7 @@ export function createInputScanCache(): InputScanner {
 }
 
 export interface PlanOptions {
+  acceptedTaskIds?: ReadonlySet<string>;
   /** Skip raw input materialization when only task counts or summaries are needed. */
   materializeInputs?: boolean;
   /** Compact projections are for new read-only previews, never execution or reconciliation. */
@@ -313,6 +314,7 @@ export async function buildPlan(
   previous?: TaskPlan,
   options: PlanOptions = {},
 ): Promise<TaskPlan> {
+  const accepted = options.acceptedTaskIds ?? new Set<string>();
   assertComparableGroups(config);
   if (options.scanFile && (options.materializeInputs !== false || previous))
     throw new Error("输入扫描索引仅用于新运行的只读预检");
@@ -692,7 +694,12 @@ export async function buildPlan(
       cases: CasePlan[];
     }
     const grouped = new Map<string, { version: string; batch_id: string; cases: CasePlan[] }>();
-    for (const task of checks.values()) {
+    const acceptedClusters = (previous?.tasks ?? []).filter((task) => task.stage === "clustering" && accepted.has(task.id));
+    const covered = new Set(acceptedClusters.flatMap((task) => Object.values(task.dependencies)));
+    const retained = (previous?.tasks ?? []).filter((task) => task.stage === "attribution" && accepted.has(task.id));
+    const attributions = new Map([...checks.values(), ...retained].map((task) => [task.id, task]));
+    for (const task of attributions.values()) {
+      if (covered.has(task.id)) continue;
       const data = task.data as TaskData,
         candidate = data.candidates.A;
       const key = canonical([candidate.version, candidate.batch_id]);
@@ -719,11 +726,13 @@ export async function buildPlan(
         canonical([a.case_id, a.input_id]) < canonical([b.case_id, b.input_id]) ? -1 : 1,
       );
       const size = config.clustering.maxCasesPerTask;
+      const firstShard = 1 + Math.max(-1, ...acceptedClusters.map((task) => (task.data as TaskData).scope!)
+        .filter((scope) => scope.version === entry.version && scope.batch_id === entry.batch_id).map((scope) => scope.shard));
       for (let index = 0; index * size < entry.cases.length; index++)
         shards.push({
           version: entry.version,
           batch_id: entry.batch_id,
-          shard: index,
+          shard: firstShard + index,
           cases: entry.cases.slice(index * size, (index + 1) * size),
         });
     }

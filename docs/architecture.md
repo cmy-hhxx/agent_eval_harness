@@ -9,6 +9,8 @@
 ```mermaid
 flowchart LR
   CLI --> Host
+  Automations[自动取数流水线] --> Host
+  Automations --> Data
   CLI --> Agents[Comparison / Attribution / Rewrite / Clustering Profiles]
   CLI --> Workflow[Comparison Workflow]
   Assistant[独立分析助手] --> Host
@@ -28,7 +30,8 @@ flowchart LR
 | `agent` | 独立 Web 对话、分析工具及 Deepseek 客户端装配；能力通过 Contracts 注入 |
 | `packages/contracts` | 通用 JSON、Agent / Workflow / Repository 接口、跨进程协议 |
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
-| `packages/runtime` | 进程客户端、HTTP/SSE、会话和工作区、Pi / Prime Adapter |
+| `packages/automations` | 持续发现输入、下载/评测/四小时交付队列、日期级恢复与退避；通过应用注入取数、存储、评测和上传 |
+| `packages/runtime` | 进程客户端、HTTP/SSE、Mongo 增量写入、线上日志上传、会话和工作区、Pi / Prime Adapter |
 | `packages/agents/src/comparison` | 对比 Profile、业务校验；使用集中提示词与根目录 `schemas/comparison` |
 | `packages/agents/src/rewrite` | 改写 Profile、槽位校验；只润色文本，不接触证据；使用集中提示词与根目录 `schemas/rewrite` |
 | `packages/agents/src/attribution` | 归因 Profile、业务校验；只描述问题，不维护问题库；使用集中提示词与根目录 `schemas/attribution` |

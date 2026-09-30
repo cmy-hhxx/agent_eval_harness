@@ -15,6 +15,7 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "paths": {
+      "@eval/automations": ["./packages/automations/src/index.ts"],
       "#pi-sdk": [
         "./vendor/pi/packages/coding-agent/dist/index.d.ts"
       ],

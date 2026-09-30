@@ -21,6 +21,8 @@ for (const engine of ["pi", "prime"] as Engine[])
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
+      // This mock implements Chat Completions, independently of the production gateway protocol.
+      models.models.judge!.api = "openai-completions";
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       const gateway = await listen(async (req, res) => {

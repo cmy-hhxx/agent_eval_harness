@@ -14,8 +14,15 @@ import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
 import { display } from "./results.js";
 
 test("candidate display names do not replace business terms such as 全A", () => {
-  assert.equal(display("【候选A】采用同花顺全A（沪深京）及A股口径；B未注明。", { A: "A组Fast", B: "AA组Fast" }),
-    "A组Fast采用同花顺全A（沪深京）及A股口径；AA组Fast未注明。");
+  assert.equal(display("【候选A】采用同花顺全A（沪深京）及A股口径；B未注明。", { A: "A组Fast", B: "B组Fast" }),
+    "A组Fast采用同花顺全A（沪深京）及A股口径；B组Fast未注明。");
+});
+
+test("real group names survive reversed blind labels and repeated display", () => {
+  const names = { A: "B组Fast", B: "A组Fast" };
+  const text = display("候选A优于候选B；B组Fast核查完整，A组Fast遗漏。", names);
+  assert.equal(text, "B组Fast优于A组Fast；B组Fast核查完整，A组Fast遗漏。");
+  assert.equal(display(text, names), text);
 });
 
 const comparison: ComparisonResult = {

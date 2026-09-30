@@ -519,7 +519,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         } else if (state.status === "running")
           await current.endAttempt(
             spec,
-            status?.state === "timed_out"
+            controller.signal.aborted
+              ? "cancelled"
+              : status?.state === "timed_out"
               ? "timed_out"
               : status?.state === "cancelled"
                 ? "cancelled"
@@ -530,7 +532,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           record.error = state.reason;
           if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
         }
-        const pause = guard.observe(task.stage, task.id, receipt ? [] :
+        const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, receipt ? [] :
           (state.failure?.attemptId === spec.attemptId && state.failure.errors.length ? state.failure.errors : [{
             category: status?.retryable ? "transport" : "interruption",
             code: status?.retryable ? "transport_failed" : state.status === "timed_out" ? "attempt_timeout" : "attempt_failed",
@@ -667,9 +669,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const promise = execute(task, worker, prepared, binding.request.sources)
           .catch(async (error) => {
             if (await current.receipt(task.id)) return;
-            manifest.states[task.id].status = "failed";
+            manifest.states[task.id].status = controller.signal.aborted ? "cancelled" : "failed";
             manifest.states[task.id].reason = errorText(error);
-            const pause = guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
+            const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
             if (pause) options.onProgress?.("stage_paused " + JSON.stringify(pause));
             await current.save();
           })

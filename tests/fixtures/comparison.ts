@@ -67,7 +67,7 @@ export async function fixtureConfig(
     EVAL_BASE_URL: "http://127.0.0.1:1/v1",
   });
   const config = host.evaluation;
-  config.comparisons = [["a_fast", "aa_fast"]];
+  config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
   config.clustering = { ...config.clustering, enabled: clustering };
   config.output = { kind: "directory", path: path.join(directory, "runs") };

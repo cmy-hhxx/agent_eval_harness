@@ -92,7 +92,7 @@ test("resume plans the current fair groups within the original model selection",
       },
       receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
     };
-    config.comparisons = [["a_fast", "aa_fast"], ["a_expert", "aa_expert"]];
+    config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const resumed = await reconcileRun(directory, state, config);
     assert.deepEqual(resumed.summary.comparisons, config.comparisons);
     assert.equal(resumed.summary.comparison_tasks, 2);
@@ -106,8 +106,8 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
   const { directory, config } = await fixtureConfig();
   try {
     const overlay = path.join(directory, "comparison.json");
-    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "aa_fast"]] }));
-    await writeJsonl(config.inputs.versions.find((v) => v.id === "aa_fast")!.sources[0]!.path, [{
+    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "b_fast"]] }));
+    await writeJsonl(config.inputs.versions.find((v) => v.id === "b_fast")!.sources[0]!.path, [{
       ...raw(),
       messages: [
         { type: "user_question", role: "user", content: "计算2+2" },
@@ -120,7 +120,7 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
     const env = { ...process.env, EVAL_BASE_URL: "http://127.0.0.1:1/v1" };
     const { stdout } = await exec(process.execPath, [entry, directory, "index", ...args,
       "--dataset", "competitor", "--dataset-name", "竞品对比",
-      ...["a_fast", "aa_fast"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),
+      ...["a_fast", "b_fast"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),
     ], { env });
     assert.equal(JSON.parse(stdout).valid, 2);
     const { stdout: preflight } = await exec(process.execPath,

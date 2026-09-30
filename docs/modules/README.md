@@ -10,6 +10,7 @@
 | Eris | [完整定义](../../agent/src/core/profile.ts)、[核心工具](../../agent/src/core/tools.ts)、[产品接口](../../agent/src/server/index.ts)、[原界面装配](../../agent/src/client/main.js) | `@eval/assistant`、`@eval/assistant/server` | Contracts、Prompts、Tools、Runtime；具体业务由应用 Host 注入 | 会话、浏览器、原上游回归与性能 |
 | 应用 Worker | [底座与进程入口](../../apps/worker/src/cli.ts) | 根 `worker` | Runtime、Contracts | 双 SDK 集成、独立构建 |
 | Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
+| Automations | [流水线、恢复与退避](../../packages/automations/src/index.ts)、Mongo 增量同步与四小时日志交付、[只读监控](../../apps/host/src/automation-dashboard.ts)；[使用与状态](../automations.md) | `@eval/automations`；根 `automations`、[automation.sh](../../automation.sh) | Contracts；应用注入 Runtime / Data / Host / Workflow | 下载完整性、队列并行、历史接管、全阶段、上传续传与回执、时段统计与看板 |
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |
 | Comparison | [默认 Profile](../../packages/agents/src/comparison/index.ts)、业务校验与[根目录 schemas/comparison](../../schemas/comparison/)、validate | `@eval/agents/comparison` | Contracts、Tools、Prompts | 同目录单元测试、组合判决 |
 | Attribution | [归因 Profile](../../packages/agents/src/attribution/index.ts)、集中提示词与[根目录 schemas/attribution](../../schemas/attribution/)、resolve/validate | `@eval/agents/attribution` | Contracts、Tools、Prompts | 同目录单元测试、问题描述 |

@@ -1,5 +1,7 @@
 # 使用指南
 
+持续监控远程输入并自动完成所有评测阶段，见 [Automations 流水线](automations.md)。
+
 [返回首页](../README.md) · 输入和结果语义见[数据契约](contract.md)。
 
 ## 最短路径
@@ -36,13 +38,13 @@ EVAL_API_KEY=your-key
 | 配置 | 含义 |
 |---|---|
 | `evaluatorVersion` | 评测器标识，必填非空字符串；写入每条正式结果的 `evaluator_version`，影响判词的变更必须更新它，详见[契约](contract.md#评测器版本标识) |
-| `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`comparison_tier` 可声明模型规模档位（默认 A/AA 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
+| `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内统一排名，不能混用不同 `comparison_tier`；未标档位的第三方模型可加入任一组 |
 | `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；默认只开启comparison并只改写对局偏好理由；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前统一为 `openai-responses`）、`apiKeyEnv` 及默认 `thinking`（缺省 `xhigh`）、`contextWindow`、`maxOutputTokens` |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
-| `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认48并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
+| `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认32并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
 | `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
 | `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
@@ -85,8 +87,8 @@ data/
   sources/model-answers/
     a_fast/2026-09-22.jsonl      # 模型目录；文件名是该次评测的运行开始日
     a_expert/2026-09-22.jsonl
-    aa_fast/2026-09-22.jsonl
-    aa_expert/2026-09-22.jsonl
+    b_fast/2026-09-22.jsonl
+    b_expert/2026-09-22.jsonl
     _daily/2026-09-22.json       # 每日清单：批次与各模型行数/case 数
   input-catalog/
     competitor_comparison/
@@ -94,7 +96,7 @@ data/
       records-<uuid>.jsonl      # 行号、UTF-8 字节范围、批次/case 与错误码
   problems/
     a_fast.json                  # 每个模型一份问题库：组件 + 问题类 + 出现样本 + 血缘事件
-    aa_fast.json
+    b_fast.json
   runs/comparison/
     <run-id>/
       state.json                 # 输入引用、任务进度、收据索引和草稿
@@ -123,15 +125,15 @@ data/
 npm run eval -- index --dataset competitor_comparison --dataset-name 竞品对比 \
   --input a_fast=data/sources/model-answers/a_fast/竞品对比.jsonl \
   --input a_expert=data/sources/model-answers/a_expert/竞品对比.jsonl \
-  --input aa_fast=data/sources/model-answers/aa_fast/竞品对比.jsonl \
-  --input aa_expert=data/sources/model-answers/aa_expert/竞品对比.jsonl \
+  --input b_fast=data/sources/model-answers/b_fast/竞品对比.jsonl \
+  --input b_expert=data/sources/model-answers/b_expert/竞品对比.jsonl \
   --config configs/host.json
 npm run eval -- preflight --dataset competitor_comparison
 npm run eval -- run --dataset competitor_comparison --engine pi --run-id competitor-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 
-默认配置将四模型分为 `a_fast + aa_fast` 与 `a_expert + aa_expert` 两组，各生成独立任务；不能将 Fast 和 Expert 放进同一组。只想对比其中两款模型时，在运行配置中声明同档位的对比组。`index` 可按一次评测所需的模型文件多次传入 `--input`；路径可以是文件或明确限定的目录。相同方式可给某个日期命名评测集。`--catalog <目录>` 可改变默认索引根目录 `data/input-catalog/`，索引和后续 `--dataset` 选择需使用同一目录。未传 `--dataset` 时，CLI 仍按 `inputs.versions[].sources` 扫描全部配置来源；`--dataset` 与临时 `--input` 不可混用。
+默认配置将四模型分为 `a_fast + b_fast` 与 `a_expert + b_expert` 两组，各生成独立任务；不能将 Fast 和 Expert 放进同一组。只想对比其中两款模型时，在运行配置中声明同档位的对比组。`index` 可按一次评测所需的模型文件多次传入 `--input`；路径可以是文件或明确限定的目录。相同方式可给某个日期命名评测集。`--catalog <目录>` 可改变默认索引根目录 `data/input-catalog/`，索引和后续 `--dataset` 选择需使用同一目录。未传 `--dataset` 时，CLI 仍按 `inputs.versions[].sources` 扫描全部配置来源；`--dataset` 与临时 `--input` 不可混用。
 
 `index.json` 只记录 ID、名称、索引时采用的默认批次、模型/适配器/文件路径、文件字节数与行数、有效/无效数量；逐行 JSONL 只记录文件序号、行号、UTF-8 字节偏移/长度、有效记录的 `batch_id + case_id` 或无效记录的错误码。**不存** `messages`、问题、答案、标准答案或内容哈希。无效和重复输入也能产出诊断索引，但 `--dataset` 拒绝选择；启动新 run 前会逐行核对索引与原始文件的字节坐标、业务标识和缺行，并重新校验记录，默认批次变更也须重新索引。修正文件后重新 `index`。新索引完整写入后才切换 `index.json` 指向的记录文件；原始 JSONL 不变，索引不作为正式结果缓存。`preflight` 会重新读取原始文件并校验业务冲突，`run` 按选中的源文件读取原始记录。同 run ID 续跑使用 `state.json` 中登记的来源，不依赖索引文件，即便再次传入 `--dataset` 也不会切换已有运行的来源（CLI 会提示忽略该选项）；索引更新不改变已接受判决。文件原路径消失时，历史结果仍保留，但证据核对可能报告材料不可用。
 
@@ -219,6 +221,8 @@ npm run eval -- run --run-id daily-a --resume-stage rewrite \
 ```
 
 `--resume-stage` 可重复，只接受当前已暂停的阶段；它保留固定修复范围。日志统一写 `log/runtime.log`，进度输出 `stage_paused`；同错误签名是诊断线索，不证明所有样本同根因。暂停和失败会使 CLI 返回2。
+
+持续运行的 [Automations](automations.md#调度与状态) 会核对检查点，自动恢复中断任务，并对传输、超时及响应流中断退避续跑；结构、证据等持续校验错误仍保留保护性暂停。
 
 ### 小批验收再放量
 

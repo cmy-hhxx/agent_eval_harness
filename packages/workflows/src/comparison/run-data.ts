@@ -95,7 +95,7 @@ export async function loadRunInputs(
   else if (errors.length) throw new ValidationError(errors);
   return inputs;
 }
-export async function reconcileRun(_run: string, state: RunState, current: unknown): Promise<TaskPlan> {
+export async function reconcileRun(_run: string, state: RunState, current: unknown, options?: { extendVersions: boolean }): Promise<TaskPlan> {
   if (state.manifest.executionScope) {
     const pending = new Set(state.manifest.executionScope.filter((id) => !state.receipts[id]));
     return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
@@ -103,19 +103,21 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   }
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
+  const versions = [...config.inputs.versions, ...(options?.extendVersions ? supplied.inputs.versions.filter((version) =>
+    !config.inputs.versions.some((existing) => existing.id === version.id)) : [])];
   const selected: EvalConfig = {
     ...config,
     execution: supplied.execution,
-    // Replan within the original versions using today's fair groups; accepted older tasks remain immutable.
+    // Automation explicitly extends a daily run's model selection; normal resume retains its selection.
     comparisons: supplied.comparisons
-      .map((group) => group.filter((id) => config.inputs.versions.some((version) => version.id === id)))
+      .map((group) => group.filter((id) => versions.some((version) => version.id === id)))
       .filter((group) => group.length >= 2),
     // Presentation and library stages may be enabled or disabled on resume without touching evaluations.
     rewrite: supplied.rewrite,
     clustering: supplied.clustering,
     inputs: {
       ...config.inputs,
-      versions: config.inputs.versions.map((v) => ({
+      versions: versions.map((v) => ({
         ...v,
         sources: config.inputs.dataset_id && supplied.inputs.dataset_id !== config.inputs.dataset_id
           ? v.sources
@@ -129,7 +131,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     inputs: {},
     summary: state.manifest.preflight,
     catalog: state.manifest.inputCatalog,
-  });
+  }, { acceptedTaskIds: new Set(Object.keys(state.receipts)) });
   const tasks = new Map(plan.tasks.map((task) => [task.id, task]));
   // Accepted work is immutable within a run. Only unfinished/new tasks use the latest source records.
   for (const task of previous) {

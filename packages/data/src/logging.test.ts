@@ -107,3 +107,16 @@ test("log I/O failure is visible once and does not throw into evaluation commits
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("automation lifecycle events use the shared runtime journal and redact context", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-logs-"));
+  try {
+    const logger = createFileLogger({ ...options(directory), secrets: ["private-key"] });
+    await logger.event("input_updated", { component: "automations", automation_id: "test", date: "2026-09-29", run_id: "daily-2026-09-29", detail: "private-key" });
+    const records = await readRows(path.join(directory, "log/runtime.log"));
+    assert.equal(records[0].level, "info");
+    assert.equal(records[0].automation_id, "test");
+    assert(!JSON.stringify(records).includes("private-key"));
+    assert.deepEqual((await readdir(path.join(directory, "log"))).sort(), ["evaluation.log", "runtime.log"]);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

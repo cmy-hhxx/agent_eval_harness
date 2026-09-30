@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>自动化评测</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/automations.css">
+  <script src="/automations.js" defer></script>
+</head>
+<body class="automation-page">
+  <main>
+    <header class="page-header">
+      <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status">连接中</span></div>
+      <button id="refresh" class="button" type="button">刷新</button>
+    </header>
+    <div class="monitor-meta"><span id="sample-time">等待状态</span><span id="poll-time"></span><span>北京时间 · UTC+8</span></div>
+    <div id="connection-error" class="error-banner" role="alert" hidden></div>
+    <div id="pipeline-errors" class="error-banner" role="alert" hidden></div>
+    <nav class="monitor-nav" aria-label="看板区块"><a href="#dates">日期进度</a><a href="#activity">时段完成量</a><a href="#mongo-deliveries">MongoDB 交付</a><a href="#deliveries">日志交付</a></nav>
+    <div class="monitor-filters">
+      <label>数据日期 <select id="date-filter"><option value="">全部日期</option></select></label>
+      <label>完成 / 交付时间 <select id="time-filter"><option value="24">近 24 小时</option><option value="168">近 7 天</option><option value="all">全部时间</option></select></label>
+    </div>
+    <section id="dates" aria-labelledby="dates-title">
+      <div class="section-heading"><h2 id="dates-title">日期进度</h2><span id="date-total" class="muted"></span></div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="日期阶段进度">
+        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">聚类任务</th></tr></thead><tbody id="date-rows"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table>
+      </div>
+    </section>
+    <section id="activity" aria-labelledby="activity-title">
+      <div class="section-heading"><h2 id="activity-title">时段完成量</h2><span id="activity-total" class="muted"></span></div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="每小时完成数量">
+        <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">全阶段完成对比</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th><th scope="col">聚类任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
+      </div>
+    </section>
+    <section id="mongo-deliveries" aria-labelledby="mongo-title">
+      <div class="section-heading"><h2 id="mongo-title">MongoDB 增量交付</h2><span id="mongo-total" class="muted"></span></div>
+      <dl class="delivery-destinations"><div><dt>MongoDB 集合</dt><dd id="mongo-collection">—</dd></div></dl>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 已确认交付数量">
+        <table class="data-table"><thead><tr><th scope="col">数据日期</th><th scope="col">当前同步状态</th><th scope="col">已上传输入 · 条</th><th scope="col">已上传评测输出 · 条</th><th scope="col">最后确认时间</th></tr></thead><tbody id="mongo-progress-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
+      </div>
+      <div class="section-heading delivery-history-heading"><h3>同步记录</h3><span id="mongo-history-total" class="muted"></span></div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 增量交付记录">
+        <table class="data-table"><thead><tr><th scope="col">数据日期</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">已确认输入 · 条</th><th scope="col">已确认评测输出 · 条</th><th scope="col">本轮写入</th></tr></thead><tbody id="mongo-rows"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table>
+      </div>
+    </section>
+    <section id="deliveries" aria-labelledby="deliveries-title">
+      <div class="section-heading"><h2 id="deliveries-title">每四小时日志</h2><span id="delivery-total" class="muted"></span></div>
+      <dl class="delivery-destinations"><div><dt>本地日志</dt><dd id="log-path">—</dd></div></dl>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="日志交付记录">
+        <table class="data-table"><thead><tr><th scope="col">统计范围 / 日志周期</th><th scope="col">状态</th><th scope="col">题目 / 对比累计</th><th scope="col">日志落盘</th><th scope="col">线上日志</th></tr></thead><tbody id="delivery-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

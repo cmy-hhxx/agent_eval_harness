@@ -1,0 +1,60 @@
+.automation-page main { max-width: 1560px; margin: 0 auto; padding: 28px 32px 56px; }
+.automation-page { font-variant-numeric: tabular-nums; }
+.automation-page ::selection { background: var(--accent-soft); color: var(--text); }
+.automation-page .page-header { margin-bottom: 6px; }
+.monitor-title { display: flex; align-items: center; gap: 16px; }
+.monitor-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 20px; color: var(--muted); font-size: 12px; }
+.monitor-nav { display: flex; gap: 28px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.monitor-nav a { min-height: 44px; padding: 10px 0; text-decoration: none; color: var(--muted); }
+.monitor-nav a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 6px; }
+.monitor-filters { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-bottom: 24px; }
+.monitor-filters label { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.monitor-filters select, .automation-page .button { min-height: 40px; }
+.automation-page section { margin-top: 32px; scroll-margin-top: 20px; }
+.automation-page .section-heading { margin-bottom: 12px; }
+.automation-page h2 { font-size: 16px; }
+.automation-page h3 { font-size: 14px; margin: 0; }
+.automation-page .delivery-history-heading { margin-top: 24px; }
+.date-table { min-width: 1350px; }
+.date-table th { white-space: nowrap; }
+.automation-page .date-table .row-error { max-width: 220px; }
+.task-pool { min-width: 100px; }
+.automation-page .section-heading .muted { font-size: 12px; }
+.automation-page .table-scroll { padding: 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); scrollbar-color: var(--line) var(--surface); }
+.automation-page .data-table td { white-space: nowrap; padding-block: 16px; }
+.automation-page .data-table tr:last-child td { border-bottom: 0; }
+.automation-page .data-table tbody tr:hover { background: var(--soft); }
+.automation-page .empty { color: var(--muted); text-align: center; height: 84px; }
+.status-label { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.status-label::before { content: ""; width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
+.tone-active { color: var(--accent); }
+.tone-success { color: var(--success); }
+.tone-warning { color: var(--warning); }
+.tone-error { color: var(--danger); }
+.automation-page .table-sub { font-size: 12px; }
+.automation-page .row-error { white-space: pre-wrap; max-width: 400px; min-width: 160px; color: var(--danger); }
+.automation-page .error-banner { white-space: pre-wrap; overflow-wrap: anywhere; }
+.volume-cell { min-width: 190px; }
+.volume { display: flex; align-items: center; gap: 14px; }
+.volume strong { min-width: 32px; text-align: right; }
+.volume-track { flex: 1; height: 6px; background: var(--accent-soft); }
+.volume-track span { display: block; height: 100%; background: var(--accent); }
+.delivery-destinations { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 16px; font-size: 12px; }
+.delivery-destinations div { display: flex; gap: 10px; min-width: 0; }
+.delivery-destinations dt { flex-shrink: 0; color: var(--muted); }
+.delivery-destinations dd { margin: 0; overflow-wrap: anywhere; }
+.receipt { max-width: 220px; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .automation-page main { padding: 20px 16px 40px; }
+  .monitor-meta { gap: 4px 16px; }
+  .monitor-filters { display: grid; gap: 10px; }
+  .monitor-filters label { justify-content: space-between; }
+  .monitor-filters select { min-width: 144px; }
+  .monitor-filters select, .automation-page .button { min-height: 44px; }
+  .monitor-title { gap: 12px; }
+  .automation-page .section-heading { align-items: flex-start; gap: 12px; }
+  .automation-page .section-heading .muted { text-align: right; }
+  .delivery-destinations { display: grid; }
+  .delivery-destinations div { display: grid; gap: 2px; }
+  .automation-page .table-scroll { padding-inline: 12px; }
+}

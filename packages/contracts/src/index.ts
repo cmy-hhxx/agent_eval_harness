@@ -1,4 +1,6 @@
 export type Engine = "pi" | "prime";
+export * from "./automations.js";
+export type * from "./publication.js";
 export type JsonSchema = Record<string, unknown>;
 export type JsonObject = Record<string, unknown>;
 

@@ -3,7 +3,7 @@
     "name": "真实返工：未展示不能扩大为未核查",
     "origin": "0922，cmp_c868b521-284d-49e1-a76a-7010444d78e5；源槽位 comparison.2.B.summary；失败改写来自 style-repair 记录",
     "item": {
-      "id": "comparison.2.B.summary", "label": "AA组Fast · 产品到回款证据链",
+      "id": "comparison.2.B.summary", "label": "B组Fast · 产品到回款证据链",
       "text": "主要是财务指标和概括性风险标签，未逐公司展开验证、量产及四类风险证据。",
       "context": "本项已确定的优势：A组Fast；对照信息不属于本格原文。",
       "forbiddenPrefixes": ["A组Fast：", "本项已确定的优势："]
@@ -16,13 +16,13 @@
     "name": "真实问题的最小反例：优势标签串位",
     "origin": "0922—0925 返工中观察到的错误形式，缩短为最小回归样本",
     "item": {
-      "id": "comparison.0.B.summary", "label": "AA组Fast的逐项点评",
-      "text": "AA组Fast主要列财务指标和概括性风险标签。",
-      "context": "本项优势归A组Fast，但本格点评AA组Fast。",
+      "id": "comparison.0.B.summary", "label": "B组Fast的逐项点评",
+      "text": "B组Fast主要列财务指标和概括性风险标签。",
+      "context": "本项优势归A组Fast，但本格点评B组Fast。",
       "forbiddenPrefixes": ["A组Fast：", "没有已证实的单方优势："]
     },
     "approved": "主要列财务指标和概括性风险标签。",
-    "rejected": "A组Fast：AA组Fast主要列财务指标和概括性风险标签。",
+    "rejected": "A组Fast：B组Fast主要列财务指标和概括性风险标签。",
     "error_code": "rewrite_context_prefix",
     "review": "对照标签不得作为本格主语或结论前缀。"
   },
@@ -55,13 +55,13 @@
     "name": "边界变体：局部优势不能被整体胜负吞掉",
     "origin": "由本轮局部优势与整体偏好分离规则构造",
     "item": {
-      "id": "comparison.3.B.summary", "label": "AA组Fast · 耗时",
-      "text": "AA组Fast比A组Fast快1.782秒。",
-      "context": "本项优势是AA组Fast。整体A组Fast因关键结果正确而胜出。"
+      "id": "comparison.3.B.summary", "label": "B组Fast · 耗时",
+      "text": "B组Fast比A组Fast快1.782秒。",
+      "context": "本项优势是B组Fast。整体A组Fast因关键结果正确而胜出。"
     },
     "approved": "快约1.8秒，但这格只说明等待时间。",
     "rejected": "虽然更快，但没有任何优势。",
-    "review": "保留AA组Fast在本项的速度优势；整体失败不抹去局部事实。允许合理数值表达，不凭数字字符串差异退回。"
+    "review": "保留B组Fast在本项的速度优势；整体失败不抹去局部事实。允许合理数值表达，不凭数字字符串差异退回。"
   },
   {
     "name": "边界变体：双方都差不能改出整体赢家",
@@ -81,7 +81,7 @@
     "item": {
       "id": "comparison.0.A.summary", "label": "A组Fast · 指令遵循",
       "text": "按自己的系统要求将风险放在结论之后，未违反约束。",
-      "context": "AA组Fast的系统要求风险前置；另一方的要求不适用于本格。"
+      "context": "B组Fast的系统要求风险前置；另一方的要求不适用于本格。"
     },
     "approved": "风险放在结论之后，符合自身系统要求。",
     "rejected": "风险没有前置，违反系统要求。",
@@ -91,7 +91,7 @@
     "name": "真实原文：保留仓位数字和无法核验边界",
     "origin": "0922，cmp_c868b521-284d-49e1-a76a-7010444d78e5，最终选择与仓位约束行；拒绝示例为受控变体",
     "item": {
-      "id": "comparison.3.B.summary", "label": "AA组Fast · 最终选择与仓位约束",
+      "id": "comparison.3.B.summary", "label": "B组Fast · 最终选择与仓位约束",
       "text": "给出三家公司名单并说明规则，但明确不提供实际仓位，现金下限无法核验。",
       "context": "对照方给出35%、35%、20%、现金10%；这些数字不属于本格。"
     },

@@ -98,7 +98,7 @@ async function until(check: () => boolean | Promise<boolean>) {
 
 test("attribution reads identity while comparison worker sees only its blind prompt and trace", async () => {
   const first = raw("q", "4 来自 secret-model");
-  first.messages[0]!.content = "计算2+2；请核查 a_fast 和 aa_fast 的结果";
+  first.messages[0]!.content = "计算2+2；请核查 a_fast 和 b_fast 的结果";
   first.messages[1]!.model = "secret-model";
   first.meta!.usage = { type: "secret-model" };
   first.meta!.first_token_time_cost = "secret-model";
@@ -120,7 +120,7 @@ test("attribution reads identity while comparison worker sees only its blind pro
             assert.equal(options.spec.inputs[0]!.name, "answer");
             assert.equal(input.messages[1]!.model, options.spec.prompt.includes('"version_id":"a_fast"') ? "secret-model" : "other-model");
             const result = taskResult(options.spec) as { summary: string };
-            result.summary = "a_fast 或 aa_fast 的有效计算";
+            result.summary = "a_fast 或 b_fast 的有效计算";
             await options.execute("submit_evaluation", draftFor(options.spec, result));
           } else {
             assert.equal(stage, "comparison");
@@ -129,7 +129,7 @@ test("attribution reads identity while comparison worker sees only its blind pro
             assert.equal(unbound.status, 404, "the worker cannot bypass its bound blind view");
             assert.equal(input.meta, undefined);
             assert.equal(input.messages[1]!.model, undefined);
-            for (const identity of ["a_fast", "aa_fast", "secret-model", "other-model", "A组Fast", "AA组Fast"]) {
+            for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"]) {
               assert(!options.spec.prompt.includes(identity), `prompt leaks ${identity}`);
               assert(!JSON.stringify(input).includes(identity), `trace leaks ${identity}`);
             }
@@ -390,7 +390,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       raw("new", null),
       raw("done", "4", "changed completed answer"),
     ];
-    for (const version of config.inputs.versions.filter((v) => ["a_fast", "aa_fast"].includes(v.id)))
+    for (const version of config.inputs.versions.filter((v) => ["a_fast", "b_fast"].includes(v.id)))
       await writeJsonl(version.sources[0].path, changed);
     resumed = true;
     assert.equal((await runEvaluation(options)).completed_comparisons, 3);

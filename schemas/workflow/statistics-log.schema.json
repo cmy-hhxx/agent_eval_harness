@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Frozen uploaded statistics contract. Change values and array entries only; structural changes require explicit user approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["logtime", "level", "traceId", "threadName", "busi_instance_id", "module", "content", "stackTrace", "t-cluster", "t-comp", "t-release", "t-app", "data"],
+  "properties": {
+    "logtime": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}$" },
+    "level": { "const": "INFO" },
+    "traceId": { "type": "string", "minLength": 1 },
+    "threadName": { "const": "comparison-snapshot" },
+    "busi_instance_id": { "const": "agent-eval-bench" },
+    "module": { "const": "comparison-dashboard" },
+    "content": { "const": "COMPARISON_STATISTICS_SNAPSHOT" },
+    "stackTrace": { "const": "" },
+    "t-cluster": { "const": "prod" },
+    "t-comp": { "const": "aime-fin-eval" },
+    "t-release": { "const": "aime-fin-eval" },
+    "t-app": { "const": "aime-fin-eval-ops-prod" },
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "scope", "caseCount", "totalCaseCount", "models", "stats", "tasks", "progress", "difficultyLevels", "requestDates", "winRateTrend"],
+      "properties": {
+        "source": { "const": "/api/version-comparisons?matchup=same-mode" },
+        "scope": {
+          "type": "object", "additionalProperties": false,
+          "required": ["matchup"], "properties": { "matchup": { "const": "same-mode" } }
+        },
+        "caseCount": { "$ref": "#/$defs/count" },
+        "totalCaseCount": { "$ref": "#/$defs/count" },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+        "stats": { "type": "array", "items": { "$ref": "#/$defs/stats" } },
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } },
+        "progress": { "$ref": "#/$defs/progress" },
+        "difficultyLevels": { "type": "array", "items": { "$ref": "#/$defs/difficulty" } },
+        "requestDates": { "type": "array", "items": { "$ref": "#/$defs/day" } },
+        "winRateTrend": { "type": "array", "items": { "$ref": "#/$defs/trend" } }
+      }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": { "id": { "type": "string" }, "name": { "type": "string" } }
+    },
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["p50", "p90", "count"],
+      "properties": {
+        "p50": { "type": ["number", "null"], "minimum": 0 },
+        "p90": { "type": ["number", "null"], "minimum": 0 },
+        "count": { "$ref": "#/$defs/count" }
+      }
+    },
+    "stats": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "wins", "evaluated", "winRate", "accuracy", "first", "total", "input", "output"],
+      "properties": {
+        "id": { "type": "string" }, "name": { "type": "string" },
+        "wins": { "$ref": "#/$defs/count" },
+        "evaluated": { "$ref": "#/$defs/count" },
+        "winRate": { "type": "number", "minimum": 0, "maximum": 100 },
+        "accuracy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["correct", "count", "rate"],
+          "properties": {
+            "correct": { "$ref": "#/$defs/count" },
+            "count": { "$ref": "#/$defs/count" },
+            "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+          }
+        },
+        "first": { "$ref": "#/$defs/metric" },
+        "total": { "$ref": "#/$defs/metric" },
+        "input": { "$ref": "#/$defs/metric" },
+        "output": { "$ref": "#/$defs/metric" }
+      }
+    },
+    "progress": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expectedBattleCount", "completedBattleCount", "completedCaseCount"],
+      "properties": {
+        "expectedBattleCount": { "$ref": "#/$defs/count" },
+        "completedBattleCount": { "$ref": "#/$defs/count" },
+        "completedCaseCount": { "$ref": "#/$defs/count" }
+      }
+    },
+    "task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "count", "stats", "progress", "evaluatedCount"],
+      "properties": {
+        "id": { "type": "string" }, "name": { "type": "string" },
+        "count": { "$ref": "#/$defs/count" },
+        "stats": { "type": "array", "items": { "$ref": "#/$defs/stats" } },
+        "progress": { "$ref": "#/$defs/progress" },
+        "evaluatedCount": { "$ref": "#/$defs/count" }
+      }
+    },
+    "difficulty": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "name", "description", "count", "stats", "progress", "evaluatedCount", "tasks", "difficulty"],
+      "properties": {
+        "id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" },
+        "count": { "$ref": "#/$defs/count" },
+        "stats": { "type": "array", "items": { "$ref": "#/$defs/stats" } },
+        "progress": { "$ref": "#/$defs/progress" },
+        "evaluatedCount": { "$ref": "#/$defs/count" },
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } },
+        "difficulty": { "type": "string" }
+      }
+    },
+    "day": {
+      "type": "object", "additionalProperties": false,
+      "required": ["date", "count", "caseCount", "totalCaseCount", "models", "stats", "tasks", "progress", "difficultyLevels"],
+      "properties": {
+        "date": { "$ref": "#/$defs/date" },
+        "count": { "$ref": "#/$defs/count" },
+        "caseCount": { "$ref": "#/$defs/count" },
+        "totalCaseCount": { "$ref": "#/$defs/count" },
+        "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+        "stats": { "type": "array", "items": { "$ref": "#/$defs/stats" } },
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } },
+        "progress": { "$ref": "#/$defs/progress" },
+        "difficultyLevels": { "type": "array", "items": { "$ref": "#/$defs/difficulty" } }
+      }
+    },
+    "trend": {
+      "type": "object", "additionalProperties": false,
+      "required": ["date", "id", "wins", "evaluated"],
+      "properties": {
+        "date": { "$ref": "#/$defs/date" }, "id": { "type": "string" },
+        "wins": { "$ref": "#/$defs/count" },
+        "evaluated": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

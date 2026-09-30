@@ -252,7 +252,7 @@ test("dashboard case results include comparison evaluations and preserve attribu
       a_fast: { summary: "给出结果。", finding_indices: [0] },
     } }] },
     assessments: { a_fast: { meets_core: true, summary: "s" } },
-    verdicts: { a_fast__vs__aa_fast: { result: "win" } },
+    verdicts: { a_fast__vs__b_fast: { result: "win" } },
   })!;
   assert.deepEqual(comparison.evaluations, { a_fast: attributionResult() });
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
@@ -385,9 +385,9 @@ test("input inventory lists dates and cases from the configured sources", async 
     const day = inventory.dates[0]!;
     assert.equal(day.date, path.basename(directory));
     assert.deepEqual(day.batches, ["b1", "b2"]);
-    assert.deepEqual(day.versions, ["a_fast", "aa_fast"]);
+    assert.deepEqual(day.versions, ["a_fast", "b_fast"]);
     assert.deepEqual(day.cases.map((item) => item.id), ["q1", "q2"]);
-    assert.deepEqual(day.cases.find((item) => item.id === "q1")!.versions, ["a_fast", "aa_fast"]);
+    assert.deepEqual(day.cases.find((item) => item.id === "q1")!.versions, ["a_fast", "b_fast"]);
     assert.deepEqual(day.cases.find((item) => item.id === "q1")!.batches, ["b1"]);
     assert.deepEqual(day.cases.find((item) => item.id === "q2")!.batches, ["b2"]);
     assert.equal(inventory.issues, 0);
@@ -447,7 +447,7 @@ test("dashboard keeps rewrite progress but does not list separate rewrite output
     const detail = (await readCaseDetail(fixture.run, "b1", "q1"))!;
     const attributionIds = new Set(detail.tasks.filter((task) => task.stage === "attribution").map((task) => task.id));
     const comparison = detail.tasks.find((task) => task.stage === "comparison")!;
-    assert.deepEqual(comparison.versions, ["a_fast", "aa_fast"]);
+    assert.deepEqual(comparison.versions, ["a_fast", "b_fast"]);
     const rewrites = detail.tasks.filter((task) => task.stage === "rewrite");
     assert.equal(rewrites.length, 0);
     assert(attributionIds.has(fixture.task.id));
@@ -674,12 +674,12 @@ test("run-scoped settings are validated with the same model and execution config
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
     const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
-    assert.deepEqual(fairSettings.comparisons, [["a_fast", "aa_fast"], ["a_expert", "aa_expert"]]);
+    assert.deepEqual(fairSettings.comparisons, [["a_fast", "b_fast"], ["a_expert", "b_expert"]]);
     const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
-      versions: ["a_fast", "aa_fast"],
+      versions: ["a_fast", "b_fast"],
     });
-    assert.deepEqual(selected.evaluation.inputs.versions.map((version) => version.id), ["a_fast", "aa_fast"]);
-    assert.deepEqual(selected.evaluation.comparisons, [["a_fast", "aa_fast"]]);
+    assert.deepEqual(selected.evaluation.inputs.versions.map((version) => version.id), ["a_fast", "b_fast"]);
+    assert.deepEqual(selected.evaluation.comparisons, [["a_fast", "b_fast"]]);
     await assert.rejects(
       loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast"] }),
       /至少选择两个模型/,

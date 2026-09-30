@@ -140,6 +140,12 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
   };
   return {
     ...sink,
+    async event(event: string, context: JsonObject & { component: string }) {
+      return locked(() => runtime.append(clean({
+        ...context, time: new Date().toISOString(), level: "info", pid: process.pid,
+        event,
+      })));
+    },
     initialize: () => locked(async () => {}),
     addSecrets: (...values: string[]) => {
       for (const value of values) if (value) secrets.add(value);

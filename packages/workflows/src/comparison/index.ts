@@ -16,3 +16,4 @@ export * from "./validate.js";
 export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";
 export * from "./observations.js";
+export * from "./publication.js";

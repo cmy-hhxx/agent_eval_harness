@@ -17,11 +17,11 @@ import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixture
 
 for (const objective of [false, true])
   test(`report preserves identities, evidence and correctness across blind swaps (${objective ? "objective" : "subjective"})`, async () => {
-    const { directory } = await fixtureConfig();
+    const { directory, config } = await fixtureConfig();
     const validateOutput = new Ajv2020({ strict: false }).compile(outputSchema);
     try {
       for (const reverse of [false, true]) {
-        const labels = reverse ? { A: "aa_fast", B: "a_fast" } : { A: "a_fast", B: "aa_fast" };
+        const labels = reverse ? { A: "b_fast", B: "a_fast" } : { A: "a_fast", B: "b_fast" };
         const reference = objective ? "4" : null;
         const inputs = Object.fromEntries(
           Object.entries(labels).map(([label, version]) => [
@@ -44,7 +44,8 @@ for (const objective of [false, true])
             label,
             adapt(
               input,
-              { id: labels[label as "A" | "B"], name: labels[label as "A" | "B"], adapter: "a", sources: [{ kind: "file", path: "fixture.jsonl" }] },
+              { ...config.inputs.versions.find((version) => version.id === labels[label as "A" | "B"])!,
+                adapter: "a", sources: [{ kind: "file", path: "fixture.jsonl" }] },
               "fixture.jsonl",
               1,
             ),
@@ -54,7 +55,7 @@ for (const objective of [false, true])
           stage: "comparison",
           candidates,
           reference,
-          group: ["a_fast", "aa_fast"],
+          group: ["a_fast", "b_fast"],
           comparisonId: "cmp-fixture",
         };
         const task: PlannedTask = {
@@ -89,7 +90,7 @@ for (const objective of [false, true])
         }
         const labelOf = new Map(Object.entries(candidates).map(([label, c]) => [c.version, label]));
         const aFast = labelOf.get("a_fast")!;
-        const aaFast = labelOf.get("aa_fast")!;
+        const bFast = labelOf.get("b_fast")!;
         const result: ComparisonResult = {
           task_analysis: {
             task_type: "整数加法",
@@ -98,23 +99,23 @@ for (const objective of [false, true])
             scoring_points: ["比较候选A与候选B的交付质量。"],
             red_flags: ["擅自替换操作数"],
           },
-          ranking: [[aFast], [aaFast]],
+          ranking: [[aFast], [bFast]],
           assessments: {
-            [aFast]: { meets_core: true, summary: `候选${aFast}与候选${aaFast}相比，候选${aFast}更完整。` },
-            [aaFast]: {
+            [aFast]: { meets_core: true, summary: `候选${aFast}与候选${bFast}相比，候选${aFast}更完整。` },
+            [bFast]: {
               meets_core: false,
-              summary: `候选${aaFast}结果错误。`,
+              summary: `候选${bFast}结果错误。`,
             },
           },
           decision_basis: {
             tradeoff: "候选B的优点不能抵消候选A的优势。",
             comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [aFast], assessments: {
               [aFast]: { summary: `候选${aFast}给出正确结果。`, finding_indices: [0] },
-              [aaFast]: { summary: `候选${aaFast}结果错误。`, finding_indices: [0] },
+              [bFast]: { summary: `候选${bFast}结果错误。`, finding_indices: [0] },
             } }],
             decisive_findings: [
               { candidate: aFast, finding_index: 0 },
-              { candidate: aaFast, finding_index: 0 },
+              { candidate: bFast, finding_index: 0 },
             ],
           },
         };
@@ -130,14 +131,14 @@ for (const objective of [false, true])
         assert(validateRequest(binding.request.input), JSON.stringify(validateRequest.errors));
         const materials = (binding.request.input as { candidates: Record<string, { original_answer_usage: { total_tokens: number }; original_answer_timing: { finish_seconds: number } }> }).candidates;
         assert.equal(materials[aFast]!.original_answer_usage.total_tokens, 120);
-        assert.equal(materials[aaFast]!.original_answer_usage.total_tokens, 1020);
+        assert.equal(materials[bFast]!.original_answer_usage.total_tokens, 1020);
         assert.equal(materials[aFast]!.original_answer_timing.finish_seconds, 8);
         assert.deepEqual(Object.keys(materials[aFast]!.original_answer_timing), ["finish_seconds"]);
         assert.deepEqual(binding.request.input.strength_checks, [
-          { candidate: aFast, finding_index: 0, counterparts: [aaFast] },
+          { candidate: aFast, finding_index: 0, counterparts: [bFast] },
         ]);
         const mutual = structuredClone(dependencies);
-        for (const label of [aFast, aaFast]) {
+        for (const label of [aFast, bFast]) {
           const review = mutual[label]!.evaluation as ReturnType<typeof attributionResult>;
           review.findings = [
             { ...review.findings[0]!, type: "problem" },
@@ -150,41 +151,41 @@ for (const objective of [false, true])
         assert.deepEqual(mutualChecks, Object.keys(dependencies).flatMap((label) =>
           Array.from({ length: label === aFast ? 3 : 1 }, (_, index) => ({
             candidate: label, finding_index: index + 1,
-            counterparts: [label === aFast ? aaFast : aFast],
+            counterparts: [label === aFast ? bFast : aFast],
           })),
         ));
         const row = comparisonRow(snapshots, task, result, receipts, {
           a_fast: "A组Fast",
-          aa_fast: "AA组Fast",
+          b_fast: "B组Fast",
         }, fakeEvaluatorVersion);
         assert(validateOutput(row), JSON.stringify(validateOutput.errors));
         const aligned = (row.decision_basis as ComparisonResult["decision_basis"]).comparisons[0];
         assert.deepEqual(aligned.better_candidates, ["a_fast"]);
         assert.equal(aligned.assessments.a_fast.summary, "A组Fast给出正确结果。");
-        assert.deepEqual(aligned.assessments.aa_fast.finding_indices, [0]);
+        assert.deepEqual(aligned.assessments.b_fast.finding_indices, [0]);
         assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
         assert.equal(row.request_time, "2026-09-24 11:37:31");
         assert.equal(row.has_standard_answer, objective);
-        assert.deepEqual((row.verdicts as Record<string, { result: string; winner_version: string }>)["a_fast__vs__aa_fast"], {
+        assert.deepEqual((row.verdicts as Record<string, { result: string; winner_version: string }>)["a_fast__vs__b_fast"], {
           result: "win",
           winner_version: "a_fast",
           winner_name: "A组Fast",
-          reason: "A组Fast完成核心要求而AA组Fast未完成。",
+          reason: "A组Fast完成核心要求而B组Fast未完成。",
         });
         const reviews = row.evaluations as Record<string, { is_correct: boolean | null; correctness_reason: string }>;
         assert.equal(reviews.a_fast!.is_correct, objective ? true : null);
-        assert.equal(reviews.aa_fast!.is_correct, objective ? false : null);
-        const displayA = labels[aFast as "A" | "B"] === "a_fast" ? "A组Fast" : "AA组Fast";
-        const displayB = displayA === "A组Fast" ? "AA组Fast" : "A组Fast";
+        assert.equal(reviews.b_fast!.is_correct, objective ? false : null);
+        const displayA = labels[aFast as "A" | "B"] === "a_fast" ? "A组Fast" : "B组Fast";
+        const displayB = displayA === "A组Fast" ? "B组Fast" : "A组Fast";
         assert.equal(
           (row.assessments as Record<string, { summary: string }>).a_fast!.summary,
           `${displayA}与${displayB}相比，${displayA}更完整。`,
         );
         const nearLimit = structuredClone(result);
-        nearLimit.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${aaFast}结果错误。`.padEnd(100, "。");
+        nearLimit.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${bFast}结果错误。`.padEnd(100, "。");
         validateEvaluation(task, snapshots, nearLimit, emptyAudit(), dependencies);
         const expanded = comparisonRow(snapshots, task, nearLimit, receipts, {
-          a_fast: "A组Fast", aa_fast: "AA组Fast",
+          a_fast: "A组Fast", b_fast: "B组Fast",
         }, fakeEvaluatorVersion);
         assert(validateOutput(expanded), JSON.stringify(validateOutput.errors));
       }

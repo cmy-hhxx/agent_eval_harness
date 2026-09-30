@@ -179,7 +179,7 @@ test("pilot samples date/group strata and includes only their dependencies and r
   const records = [raw("q1"), raw("q2"), { ...raw("q3"), batch_id: "b2" }];
   const { directory, config } = await fixtureConfig([records, records, records, records], true);
   try {
-    config.comparisons = [["a_fast", "aa_fast"], ["a_expert", "aa_expert"]];
+    config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const plan = await buildPlan(config), selected = new Set(pilotTaskIds(plan, 4));
     const comparisons = plan.tasks.filter((task) => selected.has(task.id) && task.stage === "comparison");
     assert.equal(comparisons.length, 4);

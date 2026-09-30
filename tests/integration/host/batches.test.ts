@@ -150,8 +150,8 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     assert.equal(daily[secondDay].completed_comparisons, 120);
     assert.equal(daily[firstDay].planned.cases, 100);
     assert.equal(daily[secondDay].planned.cases, 120);
-    assert.equal(daily[firstDay].head_to_head.a_fast__vs__aa_fast.both_good, 100);
-    assert.equal(daily[secondDay].head_to_head.a_fast__vs__aa_fast.both_good, 120);
+    assert.equal(daily[firstDay].head_to_head.a_fast__vs__b_fast.both_good, 100);
+    assert.equal(daily[secondDay].head_to_head.a_fast__vs__b_fast.both_good, 120);
     const comparisonIds = new Set();
     for await (const row of readJsonl(path.join(run, "results", "comparison.jsonl")))
       comparisonIds.add((row as JsonObject).comparison_id);
@@ -334,11 +334,11 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
     assert.equal(daily[secondDay].planned.cases, 6);
     assert.equal(daily[firstDay].planned.skipped_groups, 0);
     assert.equal(daily[secondDay].planned.skipped_groups, 1);
-    assert.equal(daily[firstDay].head_to_head.a_fast__vs__aa_fast.both_good, 2);
-    assert.equal(daily[secondDay].head_to_head.a_fast__vs__aa_fast.both_bad, 1);
-    assert.equal(daily[secondDay].head_to_head.a_fast__vs__aa_fast.wins.a_fast, 1);
-    assert.equal(daily[firstDay].per_version!.aa_fast.correct, 1);
-    assert.equal(daily[secondDay].per_version!.aa_fast.incorrect, 1);
+    assert.equal(daily[firstDay].head_to_head.a_fast__vs__b_fast.both_good, 2);
+    assert.equal(daily[secondDay].head_to_head.a_fast__vs__b_fast.both_bad, 1);
+    assert.equal(daily[secondDay].head_to_head.a_fast__vs__b_fast.wins.a_fast, 1);
+    assert.equal(daily[firstDay].per_version!.b_fast.correct, 1);
+    assert.equal(daily[secondDay].per_version!.b_fast.incorrect, 1);
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     for (const id of ["objective", "bad", "unknown", "failed", "pending"])
       assert(markdown.includes(`# ${secondDay} / ${id}`));

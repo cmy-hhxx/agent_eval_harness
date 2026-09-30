@@ -101,7 +101,7 @@ test("two-way verdicts are derived from ranking and core classification", async 
       labels = Object.keys((task.data as TaskData).candidates),
       receipts = attributionReceipts(task),
       names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name])),
-      pairKey = "a_fast__vs__aa_fast";
+      pairKey = "a_fast__vs__b_fast";
 
     const oneSided = group(labels, { [labels[0]!]: true, [labels[1]!]: false });
     const win = comparisonRow(plan.inputs, task, oneSided, receipts, names, fakeEvaluatorVersion);
@@ -192,7 +192,7 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     assert.equal(summary.completed_comparisons, 1);
     const standings = summary.standings as Record<string, { entered: number; first_tier: number }>;
     assert.equal(standings.a_fast!.entered, 1);
-    assert.equal(standings.aa_fast!.entered, 1);
+    assert.equal(standings.b_fast!.entered, 1);
     assert.equal(standings.a_fast!.first_tier, 1);
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert.match(markdown, /## 同项对比/);

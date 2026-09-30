@@ -23,7 +23,7 @@ export function originalAnswerUsage(raw: RawInput) {
     total = null;
     totalBasis = null;
   }
-  // A records cached input in input_tokens_details; AA records cached_read_tokens.
+  // A records cached input in input_tokens_details; B records cached_read_tokens.
   const cachedField = usage && Object.hasOwn(usage, "input_tokens_details")
     ? "meta.usage.input_tokens_details.cached_tokens" : "meta.usage.cached_read_tokens";
   let cached = count(cachedField.endsWith(".cached_tokens")

@@ -33,7 +33,7 @@
 
 这里的“输入”有两层，不能与 Agent 的输出混为一个 Schema：
 
-1. **原始评测输入**：来源文件中的 JSONL。它允许由 `a` / `aa` 适配器接入不同结构，不维护一个覆盖所有来源的总 JSON Schema；[input.ts](../packages/workflows/src/comparison/input.ts) 和适配器负责预检、归一化与业务校验。
+1. **原始评测输入**：来源文件中的 JSONL。它允许由 `a` / `b` 适配器接入不同结构，不维护一个覆盖所有来源的总 JSON Schema；[input.ts](../packages/workflows/src/comparison/input.ts) 和适配器负责预检、归一化与业务校验。
 2. **Agent 请求材料**：Host 为某个阶段拼出的 `ground_truth`、`library`、`candidates` 和依赖结果。根目录 `schemas/<stage>/request.schema.json` 只是 Host 到 Agent 的内部装配护栏，不是数据源契约；如果请求字段变化，同步修改 `workflow.ts` 和对应 Profile。
 
 阶段输出则分为两种：
@@ -71,13 +71,13 @@ Attribution 展开证据引用、Clustering 解析请求内短编号，分别保
 
 `meta.ok=false`、无完整最终回答、无法解析或未知消息类型的记录不能参与比较。标准答案从 `meta.ground_truth` / `meta.std_answer` 获取；排除被显式忽略、缺失、null 和空字符串的值后，剩余值需要一致。同批次、同 case 的有效版本共享标准答案：只要其中一份提供了标准答案，所有参与对比的版本都会归因，并在共享标准答案存在时判对，包括本条 `has_standard_answer=false` 的版本；仅写 `true` 而不提供标准答案时归因仍会运行，只是 `is_correct=null`。
 
-输入结构通过适配器注册表声明。当前注册 `a`（OpenAI 风格 `messages`：`message` / `reasoning` / `function_call` / `function_call_output`）和 `aa`（显式轮次：`user_question` / `llm_turn` / `tool_call` / `tool_result` / `final_answer`），版本配置的 `adapter` 按 id 引用。新增结构只需实现 [InputAdapter](../packages/workflows/src/comparison/adapters.ts) 并在注册表登记，`adapt` 与配置校验不再分支。适配器保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的对比组失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使该样本失效；不同批次分别检查，允许标准答案不同。
+输入结构通过适配器注册表声明。当前注册 `a`（OpenAI 风格 `messages`：`message` / `reasoning` / `function_call` / `function_call_output`）和 `b`（显式轮次：`user_question` / `llm_turn` / `tool_call` / `tool_result` / `final_answer`），版本配置的 `adapter` 按 id 引用。新增结构只需实现 [InputAdapter](../packages/workflows/src/comparison/adapters.ts) 并在注册表登记，`adapt` 与配置校验不再分支。适配器保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的对比组失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使该样本失效；不同批次分别检查，允许标准答案不同。
 
 不按文件行号分组。本地评测集索引记录来源文件与行字节范围，只存业务标识和定位坐标，不存完整消息或问题/标准答案；预检和评测仍重新校验原始记录。登记、选择、索引存储及无效记录处理见[输入治理](usage.md#输入治理)。实际记录数、缺失版本、对比组数和跳过原因通过 `preflight` 获取。`by_batch` 按批次汇总样本数、有效回答数、归因任务数、对比任务数、跳过对比组数和输入异常数。样本数包含已识别身份但回答无效的样本；异常和跳过记录保留批次、case 及已定位输入的文件和行号，无法识别批次的异常只计入全局诊断。文档不保存随数据变化的批次统计。
 
 ## 对比组
 
-参与对比的版本组合由配置的 `comparisons` 声明，每项是一组已登记版本；组内所有版本在同一次判断中比较。版本的可选 `comparison_tier` 声明模型规模档位：同一组不能出现不同档位，不能让 A组Fast 与 A组Expert 排名。默认是 `[a_fast, aa_fast]`、`[a_expert, aa_expert]` 两个独立对比组。DeepSeek、Kimi 等可登记为未标档位的第三方基线，分别加入 Fast、Expert 组（如 `[a_fast, aa_fast, deepseek]` 与 `[a_expert, aa_expert, kimi]`）；若第三方也标档位，则必须与组内一致。档位按配置声明，不从版本名、适配器或真实模型 ID 猜测。每个批次内的 case 对每组生成一个对比任务；组内缺少任一有效版本则跳过该组。选多个组不会合并排名；续跑以当前对比组规划未完成任务，既有已接受结果仍保留。结果写入 `results/comparison.jsonl`。
+参与对比的版本组合由配置的 `comparisons` 声明，每项是一组已登记版本；组内所有版本在同一次判断中比较。版本的可选 `comparison_tier` 声明模型规模档位：同一组不能出现不同档位，不能让 A组Fast 与 A组Expert 排名。默认是 `[a_fast, b_fast]`、`[a_expert, b_expert]` 两个独立对比组。DeepSeek、Kimi 等可登记为未标档位的第三方基线，分别加入 Fast、Expert 组（如 `[a_fast, b_fast, deepseek]` 与 `[a_expert, b_expert, kimi]`）；若第三方也标档位，则必须与组内一致。档位按配置声明，不从版本名、适配器或真实模型 ID 猜测。每个批次内的 case 对每组生成一个对比任务；组内缺少任一有效版本则跳过该组。选多个组不会合并排名；续跑以当前对比组规划未完成任务，既有已接受结果仍保留。结果写入 `results/comparison.jsonl`。
 
 盲测标签 A、B、C… 仅属于 Comparison，按组首次随机分配并持久化，不代表实际版本或模型身份；导出时恢复稳定版本 ID。归因任务使用单数 `answer` 并可见真实版本身份。进入 Comparison 前，Workflow 对题目、标准答案、原始耗时字段、归因文本和工具可读取的 trace 使用同一份去身份视图；原始来源、归因正式结果和证据不因此改写。可区分的版本、展示名和回答模型标识在文本及结构化字段名中会遮蔽；图片字节保持原样供工具查看。单字符或与业务正文混淆的简称，以及仅隐含在正文中的身份，仍需人工检查盲测要求。组内候选的导出顺序与候选位置不影响派生判决。
 
@@ -125,7 +125,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 改写阶段可选（配置 `rewrite.attribution` / `rewrite.comparison` / `rewrite.clustering`），把已接受的归因、对比或聚类结论润色为更简洁规整的表达。默认只开启对比改写，每个源结果对应一个改写任务：对比组只写派生 `verdicts[].reason`，以已确定的胜负和该对局的原裁决、逐项表现生成具体偏好理由；显式开启其他阶段时，归因写 `summary`、非空的 `correctness_reason`、finding 的 `text/reason` 与 `assessment.observation/impact`；聚类写新类的 `definition/novelty` 和 `merges[].reason`，无新类和合并时返回空改写。
 
-- 对比裁判继续盲测；Workflow 在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、AA组Fast），槽位 id 不变。
+- 对比裁判继续盲测；Workflow 在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、B组Fast），槽位 id 不变。
 - 输入是 Workflow 选定的文本槽位（`items[].id/label/text`）及 case 的批次/case ID 或聚类的批次/模型定位信息，不含原题、原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
 - 提交必须与请求一一对应：相同 id、相同数量，不新增、不遗漏、不重复；真实组别与模型称谓、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
 - 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。已有其他改写槽位原样保留，收据只索引本次更新的槽位，正文仍只存于JSONL。
@@ -152,7 +152,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 `stage` 表示发现属于上下文回溯、推理、执行或最终回答；`stage_trace` 由程序从原始消息生成，包含工具、位置、置信度与来源。只回溯当前 finding 引用的证据；无法唯一定位时保留候选工具，不猜测确定来源。
 
-Agent 初始材料的 `original_answer_timing` 只提供 `finish_seconds`（完整回答完成耗时，秒）；登记信息仍保存原始首 token、首段与完成指标供追溯，但首段时刻不代表最终答案可用。`original_answer_usage` 从被评输入 `meta.usage` 提取输入、输出、总 token 和缓存输入，记录来源字段、总量依据及数据异常。A 的 `input_tokens_details.cached_tokens` 和 AA 的 `cached_read_tokens` 统一为 `cached_input_tokens`，它是输入子集，不重复累加；未记录总量且输入、输出都有效时才相加。缺失或无效指标为 `null`，总量冲突与缓存超出输入会标记异常，不使用裁判 SDK 消耗或累加 trace 快照。耗时和 token 分别用于等待与资源效率判断，正文只引用支撑实际得失的数值，不强制展示全部字段；报告沿用已接受结论，不重读来源来重评。
+Agent 初始材料的 `original_answer_timing` 只提供 `finish_seconds`（完整回答完成耗时，秒）；登记信息仍保存原始首 token、首段与完成指标供追溯，但首段时刻不代表最终答案可用。`original_answer_usage` 从被评输入 `meta.usage` 提取输入、输出、总 token 和缓存输入，记录来源字段、总量依据及数据异常。A 的 `input_tokens_details.cached_tokens` 和 B 的 `cached_read_tokens` 统一为 `cached_input_tokens`，它是输入子集，不重复累加；未记录总量且输入、输出都有效时才相加。缺失或无效指标为 `null`，总量冲突与缓存超出输入会标记异常，不使用裁判 SDK 消耗或累加 trace 快照。耗时和 token 分别用于等待与资源效率判断，正文只引用支撑实际得失的数值，不强制展示全部字段；报告沿用已接受结论，不重读来源来重评。
 
 逐题总结包含问题、要求、判决、同项对比理由、各方优缺点、得分点、red flags 和原始回答体验对照。逐项使用可比数据，未知指标不填零；token 量不等于价格，单次耗时不代表长期性能。
 

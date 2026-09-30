@@ -60,7 +60,7 @@ function inputsHtml() {
     + section("输入来源", sources)
     + section("对比组", `<ul class="plain-list">${state.data.comparisons.map((group) => `<li>${group.map(escapeHtml).join('<span class="list-separator"> / </span>')}</li>`).join("")}</ul>`)
     + `<details class="reference-disclosure"><summary>字段与适配规则</summary>${table(["字段", "读取规则"], fields.map((items) => row([`<code>${items[0]}</code>`, items[1]])))}
-      ${table(["适配器", "消息类型"], [row(["a", "message · reasoning · function_call · function_call_output"]), row(["aa", "user_question · llm_turn · tool_call · tool_result · final_answer"])])}
+      ${table(["适配器", "消息类型"], [row(["a", "message · reasoning · function_call · function_call_output"]), row(["b", "user_question · llm_turn · tool_call · tool_result · final_answer"])])}
       <ul class="rule-list"><li>样本身份：batch_id + case_id；回答身份再加 version。</li><li>标识重复、问题冲突、标准答案冲突会阻止对应比较。</li><li>meta.ok=false、最终回答缺失、消息类型无效的记录不参与比较。</li><li>对比组须集齐全部有效版本；原始输入只保留在数据源。</li></ul>
     </details>`;
 }

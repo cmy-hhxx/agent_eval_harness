@@ -147,7 +147,7 @@ test("dashboard maps blind comparison slots to model fields and actual verdict p
 test("dashboard aligns models by version, prioritizes impact, and keeps rewrites and finding links attached to their row", () => {
   const row = {
     ...comparisonResult(["left", "right"]),
-    models: { left: { version: "A组Fast" }, right: { version: "AA组Fast" } },
+    models: { left: { version: "A组Fast" }, right: { version: "B组Fast" } },
     verdicts: { left__vs__right: { result: "win", winner_name: "A组Fast", winner_version: "left", reason: "完成核心要求" } },
     evaluations: { left: attributionResult(), right: attributionResult() },
     decision_basis: { tradeoff: "A组Fast更好，方案比较更具体。", decisive_findings: [], comparisons: [

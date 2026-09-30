@@ -88,7 +88,7 @@ test("default comparisons plan separate Fast and Expert matches", async () => {
     config.comparisons = loaded.evaluation.comparisons;
     const plan = await buildPlan(config);
     assert.deepEqual(plan.summary.comparisons, [
-      ["a_fast", "aa_fast"], ["a_expert", "aa_expert"],
+      ["a_fast", "b_fast"], ["a_expert", "b_expert"],
     ]);
     assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
       .map((task) => (task.data as TaskData).group), plan.summary.comparisons);
@@ -115,7 +115,7 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
       await writeJsonl(source, [raw("q1")]);
       config.inputs.versions.push({ id, name, adapter: "a", sources: [{ kind: "file", path: source }] });
     }
-    config.comparisons = [["a_fast", "aa_fast", "deepseek"], ["a_expert", "aa_expert", "kimi"]];
+    config.comparisons = [["a_fast", "b_fast", "deepseek"], ["a_expert", "b_expert", "kimi"]];
     const root = path.join(ROOT, "configs/host.json");
     const loaded = await loadConfig(root, { EVAL_BASE_URL: "https://gateway.example/v1" });
     await writeFile(file, JSON.stringify({
@@ -191,7 +191,7 @@ test("comparison groups are configured, not fixed to built-in versions", async (
   }
 });
 test("input adapters are registered by declaration, not by branching", () => {
-  assert(inputAdapterIds.includes("a") && inputAdapterIds.includes("aa"));
+  assert.deepEqual(inputAdapterIds, ["a", "b"]);
   const record = {
     batch_id: "b1",
     case_id: "q1",
@@ -353,7 +353,7 @@ test("input scan cache shares in-flight reads, rechecks revisions and retries fa
     const rows = await collect(current);
     assert.equal(rows[0]!.record!.case_id, "changed");
     assert.equal(scans, 3, "a failed read is evicted and retried");
-    const reinterpreted = await collect(current, { ...version, adapter: "aa" });
+    const reinterpreted = await collect(current, { ...version, adapter: "b" });
     assert(reinterpreted[0]!.error, "adapter changes must revalidate the same source");
     assert.equal(scans, 4);
   } finally {

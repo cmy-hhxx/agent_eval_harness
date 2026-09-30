@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r46",
+  "evaluatorVersion": "r47",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -24,30 +24,30 @@
         ]
       },
       {
-        "id": "aa_fast",
-        "name": "AA Fast",
+        "id": "b_fast",
+        "name": "B Fast",
         "comparison_tier": "Fast",
-        "display_name": "AA组Fast",
-        "adapter": "aa",
+        "display_name": "B组Fast",
+        "adapter": "b",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/aa_fast" }
+          { "kind": "directory", "path": "../data/sources/model-answers/b_fast" }
         ]
       },
       {
-        "id": "aa_expert",
-        "name": "AA Expert",
+        "id": "b_expert",
+        "name": "B Expert",
         "comparison_tier": "Expert",
-        "display_name": "AA组Expert",
-        "adapter": "aa",
+        "display_name": "B组Expert",
+        "adapter": "b",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/aa_expert" }
+          { "kind": "directory", "path": "../data/sources/model-answers/b_expert" }
         ]
       }
     ]
   },
   "comparisons": [
-    ["a_fast", "aa_fast"],
-    ["a_expert", "aa_expert"]
+    ["a_fast", "b_fast"],
+    ["a_expert", "b_expert"]
   ],
   "rewrite": {
     "comparison": true,
@@ -89,7 +89,7 @@
     }
   },
   "execution": {
-    "concurrency": 48,
+    "concurrency": 32,
     "failureGuard": { "windowSize": 50, "threshold": 5 },
     "timeoutSeconds": 900,
     "idleTimeoutSeconds": 120,

@@ -21,6 +21,7 @@ const owner = (file: string) => file.startsWith("agent/") ? "agent/assistant" : 
 const allowed: Record<string, string[]> = {
   assistant: ["contracts", "prompts", "tools", "runtime"],
   contracts: [],
+  automations: ["contracts"],
   prompts: ["contracts"],
   data: ["contracts"],
   tools: ["contracts", "data"],

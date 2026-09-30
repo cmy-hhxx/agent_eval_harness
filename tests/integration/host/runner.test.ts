@@ -18,8 +18,8 @@ import type { TaskData } from "@eval/workflows/comparison";
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw()], [raw()], [raw()], [raw()]]);
   config.comparisons = [
-    ["a_fast", "aa_fast"],
-    ["a_expert", "aa_expert"],
+    ["a_fast", "b_fast"],
+    ["a_expert", "b_expert"],
   ];
   const plan = await buildPlan(config);
   let calls = 0;
@@ -360,8 +360,8 @@ for (const missingArtifact of [false, true])
 test("one host routes tasks to both engines without sharing sessions or workspaces", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   config.comparisons = [
-    ["a_fast", "aa_fast"],
-    ["a_expert", "aa_expert"],
+    ["a_fast", "b_fast"],
+    ["a_expert", "b_expert"],
   ];
   const calls = { pi: 0, prime: 0 },
     workdirs = new Set<string>();
@@ -432,6 +432,56 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("stopping concurrent attempts never trips the stage circuit and the same run resumes", async () => {
+  const rows = [raw("one"), raw("two")];
+  const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
+  const controller = new AbortController();
+  let started = 0, resume = false;
+  const backend: AgentBackend = {
+    identity: fakeIdentity,
+    async createSession(options) {
+      let release = () => {};
+      return {
+        async run() {
+          if (!resume) {
+            const stopped = new Promise<void>((resolve) => { release = resolve; });
+            if (++started === 2) controller.abort();
+            await stopped;
+          } else {
+            const submitted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
+          }
+        },
+        async abort() { release(); },
+        async dispose() {},
+      };
+    },
+  };
+  const workers = await Promise.all([0, 1].map((i) => startWorker(backend, path.join(directory, "worker-" + i))));
+  try {
+    const options = {
+      ...services, runId: "stop-concurrent", output: config.output, config, plan: await buildPlan(config),
+      modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 2, retries: 0, retryDelaySeconds: 0,
+      failureGuard: { windowSize: 4, threshold: 2 }, workerUrls: workers.map((worker) => worker.url),
+    };
+    const stopped = await runEvaluation({ ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) });
+    assert.equal(stopped.status, "interrupted");
+    assert.equal(started, 2);
+    assert.deepEqual(stopped.paused_stages, [], "normal shutdown must not persist a circuit pause");
+    const saved = await readRunState(path.join(config.output.path, options.runId));
+    assert.deepEqual(saved.manifest.pausedStages, []);
+    assert(Object.values(saved.manifest.states).every((state) => state.status === "cancelled"));
+    resume = true;
+    const result = await runEvaluation({ ...options, signal: AbortSignal.timeout(15_000) });
+    assert.equal(result.status, "finished");
+    assert.equal(result.completed_comparisons, 2);
+  } finally {
+    await Promise.all(workers.map((worker) => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 for (const debug of [false, true])
   test(`same run ID resumes with changed model, budget and build (debug: ${debug})`, async () => {
     const rows = ["2026-09-23", "2026-09-24"].map((batch_id) => ({
@@ -551,7 +601,7 @@ for (const debug of [false, true])
       for (const version of config.inputs.versions)
         await writeJsonl(
           version.sources[0].path,
-          ["a_fast", "aa_fast"].includes(version.id)
+          ["a_fast", "b_fast"].includes(version.id)
             ? [...rows, { ...raw("q1", null), batch_id: "2026-09-25" }]
             : [],
         );

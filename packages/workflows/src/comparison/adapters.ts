@@ -33,8 +33,8 @@ export const inputAdapters: Record<string, InputAdapter> = {
     answerModel: (raw) => metadataModel(raw),
   },
   /** Agent-turns trace: explicit user/llm/tool/final_answer markers. */
-  aa: {
-    id: "aa",
+  b: {
+    id: "b",
     accepts: accepts(["user_question", "llm_turn", "tool_call", "tool_result", "final_answer"]),
     answerModel: (raw, messages, finalIndex) => {
       const model = messages.slice(0, finalIndex).findLast((m) => m.type === "llm_turn" && m.model)?.model;

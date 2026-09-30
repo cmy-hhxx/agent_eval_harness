@@ -5,18 +5,18 @@ import type { RawInput } from "./types.js";
 
 const source = (usage?: unknown): RawInput => ({ messages: [], meta: { usage } });
 
-test("answer usage normalizes A/AA cache fields without adding cache twice", () => {
+test("answer usage normalizes A/B cache fields without adding cache twice", () => {
   const a = originalAnswerUsage(source({ input_tokens: 100, output_tokens: 20, total_tokens: 120,
     input_tokens_details: { cached_tokens: 80 }, model: "private-model" }));
-  const aa = originalAnswerUsage(source({ input_tokens: 100, output_tokens: 20, cached_read_tokens: 80 }));
-  for (const value of [a, aa]) {
+  const b = originalAnswerUsage(source({ input_tokens: 100, output_tokens: 20, cached_read_tokens: 80 }));
+  for (const value of [a, b]) {
     assert.equal(value.total_tokens, 120);
     assert.equal(value.cached_input_tokens, 80);
     assert.deepEqual(value.issues, []);
     assert(!JSON.stringify(value).includes("private-model"));
   }
   assert.equal(a.total_tokens_basis, "reported");
-  assert.equal(aa.total_tokens_basis, "input_plus_output");
+  assert.equal(b.total_tokens_basis, "input_plus_output");
 });
 
 test("missing answer usage stays unknown, while recorded zero stays zero", () => {

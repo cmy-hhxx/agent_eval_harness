@@ -172,7 +172,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       assert.equal(row.clustering_type, "problem_library");
       assert((row.result as { new_classes: unknown[] }).new_classes.length === 1);
     }
-    for (const model of ["a_fast", "aa_fast"]) {
+    for (const model of ["a_fast", "b_fast"]) {
       const library = await readJson<{
         model: string;
         components: Record<string, unknown>;
