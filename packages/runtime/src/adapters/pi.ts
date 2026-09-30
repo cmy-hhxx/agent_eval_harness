@@ -39,7 +39,7 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         systemPrompt: spec.evaluation.systemPrompt,
         extensionFactories: [
           (api) => {
-            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model));
+            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation));
           },
         ],
       });

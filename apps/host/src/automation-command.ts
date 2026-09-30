@@ -22,7 +22,7 @@ export async function automationCommand(args: string[]): Promise<void> {
   const command = positionals[0];
   if (values.help || !command) {
     console.log(`automations run|check|status|retry|publish-log|resolve-log [--config FILE]
-run: 持续监控、流式取数和全阶段评测；--dashboard 同进程启动只读看板（--port 4174）；--once 只发现一轮并执行每个日期一次
+run: 持续监控、流式取数、归因、对比及改写（聚类后置）；--dashboard 同进程启动只读看板（--port 4174）；--once 只发现一轮并执行每个日期一次
 publish-log: 停止流水线后立即生成并上传一条全看板累计日志，不调用模型
 check: 只读检查远端与历史 run，不下载、不调用模型
 status: 输出流水线状态、每阶段数量、错误和下次重试时间
@@ -51,8 +51,8 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     const days = (await remote.discover(AbortSignal.timeout(config.requestTimeoutMs))).filter((day) => selected(day.date));
     const entries = [];
     for (const day of days) entries.push({ ...day, ...await evaluationTargets(config, output, day) });
-    console.log(JSON.stringify({ source: config.sourceUrl, stages: ["attribution", "comparison", "rewrite", "clustering"],
-      rewrite: ["attribution", "comparison", "clustering"], dates: entries,
+    console.log(JSON.stringify({ source: config.sourceUrl, stages: ["attribution", "comparison", "rewrite"],
+      rewrite: ["attribution", "comparison"], dates: entries,
       publication: { logIntervalHours: 4, mongo: "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
     }, null, 2));
     return;
@@ -61,7 +61,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     if (!process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
     logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
     const resolve = createModelResolver(host.models);
-    for (const stage of ["attribution", "comparison", "rewrite", "clustering"]) resolve(stage);
+    for (const stage of ["attribution", "comparison", "rewrite"]) resolve(stage);
     for (const profile of boundProfiles(host.models)) {
       if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
       logger.addSecrets(process.env[profile.apiKeyEnv]!);
@@ -139,7 +139,8 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     releaseSources = await runLock(config.sourceDirectory);
     process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
     if (values.dashboard) {
-      dashboard = await startAutomationDashboard({ config, output, state: () => state, port });
+      dashboard = await startAutomationDashboard({ config, output, state: () => state, port,
+        settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
       console.log(`自动化看板：${dashboard.url}`);
     }
     const observe = async (current: AutomationState, signal: AbortSignal) => {
@@ -147,7 +148,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       for (const job of Object.values(current.jobs)) {
         const checkpoints = (await Promise.all(job.runIds.map((id) => checkpoint(output, id)))).filter((value) => value !== undefined);
         if (checkpoints.length) {
-          job.summary = summarize(checkpoints);
+          job.summary = summarize(checkpoints, !job.adopted);
           runs.set(job.date, checkpoints);
         }
       }

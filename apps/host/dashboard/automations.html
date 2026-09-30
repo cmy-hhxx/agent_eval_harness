@@ -12,45 +12,69 @@
   <main>
     <header class="page-header">
       <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status">连接中</span></div>
-      <button id="refresh" class="button" type="button">刷新</button>
+      <div class="monitor-actions"><a class="button" href="/errors">错误日志</a><button id="refresh" class="button" type="button">刷新</button></div>
     </header>
     <div class="monitor-meta"><span id="sample-time">等待状态</span><span id="poll-time"></span><span>北京时间 · UTC+8</span></div>
     <div id="connection-error" class="error-banner" role="alert" hidden></div>
     <div id="pipeline-errors" class="error-banner" role="alert" hidden></div>
-    <nav class="monitor-nav" aria-label="看板区块"><a href="#dates">日期进度</a><a href="#activity">时段完成量</a><a href="#mongo-deliveries">MongoDB 交付</a><a href="#deliveries">日志交付</a></nav>
-    <div class="monitor-filters">
-      <label>数据日期 <select id="date-filter"><option value="">全部日期</option></select></label>
-      <label>完成 / 交付时间 <select id="time-filter"><option value="24">近 24 小时</option><option value="168">近 7 天</option><option value="all">全部时间</option></select></label>
+    <dl id="execution-overview" class="execution-overview" aria-label="当前评测运行状态" hidden>
+      <div><dt>评测器</dt><dd id="evaluator-version"></dd></div>
+      <div><dt id="concurrency-label">实时并发</dt><dd id="live-concurrency"></dd><dd id="slot-utilization" class="metric-detail"></dd><dd id="live-stages" class="metric-detail"></dd></div>
+      <div><dt>评测待重试</dt><dd id="retry-count"></dd><dd id="paused-count" class="metric-detail" hidden></dd></div>
+      <div><dt>最近评测重试</dt><dd id="next-retry"></dd><dd id="next-retry-time" class="metric-detail"></dd></div>
+      <div><dt>累计缓存命中率</dt><dd id="cache-hit-rate"></dd><dd id="cache-tokens" class="metric-detail"></dd></div>
+    </dl>
+    <dl id="pipeline-flow" class="pipeline-flow" aria-label="流水线通道" hidden>
+      <div><dt>取数</dt><dd id="lane-download"></dd><dd id="lane-download-queue" class="metric-detail"></dd></div>
+      <div><dt>归因 → 对比 → 改写</dt><dd id="lane-evaluation"></dd><dd id="lane-evaluation-queue" class="metric-detail"></dd></div>
+      <div><dt>MongoDB 增量交付</dt><dd id="lane-mongo"></dd><dd id="lane-mongo-queue" class="metric-detail"></dd></div>
+      <div><dt>日志 · 每 4 小时</dt><dd id="lane-log"></dd><dd id="lane-log-receipt" class="metric-detail"></dd></div>
+    </dl>
+    <div class="monitor-nav" role="tablist" aria-label="看板区块">
+      <button type="button" id="tab-dates" role="tab" aria-controls="dates" aria-selected="true">日期进度</button>
+      <button type="button" id="tab-activity" role="tab" aria-controls="activity" aria-selected="false" tabindex="-1">时段完成量</button>
+      <button type="button" id="tab-mongo-deliveries" role="tab" aria-controls="mongo-deliveries" aria-selected="false" tabindex="-1">MongoDB 交付</button>
+      <button type="button" id="tab-deliveries" role="tab" aria-controls="deliveries" aria-selected="false" tabindex="-1">日志交付</button>
     </div>
-    <section id="dates" aria-labelledby="dates-title">
+    <div class="monitor-filters">
+      <label id="date-filter-label">数据日期 <select id="date-filter"><option value="">全部日期</option></select></label>
+      <label id="time-filter-label" hidden>记录时间 <select id="time-filter"><option value="24">近 24 小时</option><option value="168">近 7 天</option><option value="all">全部时间</option></select></label>
+      <button id="reset-filters" class="button" type="button" disabled>重置筛选</button>
+    </div>
+    <section id="dates" role="tabpanel" aria-labelledby="tab-dates" tabindex="0">
       <div class="section-heading"><h2 id="dates-title">日期进度</h2><span id="date-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日期阶段进度">
-        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">聚类任务</th></tr></thead><tbody id="date-rows"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">缓存命中率</th></tr></thead><tbody id="date-rows"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table>
       </div>
+      <nav id="date-pagination" class="table-pagination" aria-label="日期进度分页" hidden></nav>
     </section>
-    <section id="activity" aria-labelledby="activity-title">
+    <section id="activity" role="tabpanel" aria-labelledby="tab-activity" tabindex="0" hidden>
       <div class="section-heading"><h2 id="activity-title">时段完成量</h2><span id="activity-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="每小时完成数量">
-        <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">全阶段完成对比</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th><th scope="col">聚类任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">完成对比 · 含改写</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
       </div>
+      <nav id="activity-pagination" class="table-pagination" aria-label="时段完成量分页" hidden></nav>
     </section>
-    <section id="mongo-deliveries" aria-labelledby="mongo-title">
+    <section id="mongo-deliveries" role="tabpanel" aria-labelledby="tab-mongo-deliveries" tabindex="0" hidden>
       <div class="section-heading"><h2 id="mongo-title">MongoDB 增量交付</h2><span id="mongo-total" class="muted"></span></div>
       <dl class="delivery-destinations"><div><dt>MongoDB 集合</dt><dd id="mongo-collection">—</dd></div></dl>
       <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 已确认交付数量">
         <table class="data-table"><thead><tr><th scope="col">数据日期</th><th scope="col">当前同步状态</th><th scope="col">已上传输入 · 条</th><th scope="col">已上传评测输出 · 条</th><th scope="col">最后确认时间</th></tr></thead><tbody id="mongo-progress-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
       </div>
+      <nav id="mongo-progress-pagination" class="table-pagination" aria-label="MongoDB 日期进度分页" hidden></nav>
       <div class="section-heading delivery-history-heading"><h3>同步记录</h3><span id="mongo-history-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 增量交付记录">
         <table class="data-table"><thead><tr><th scope="col">数据日期</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">已确认输入 · 条</th><th scope="col">已确认评测输出 · 条</th><th scope="col">本轮写入</th></tr></thead><tbody id="mongo-rows"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table>
       </div>
+      <nav id="mongo-pagination" class="table-pagination" aria-label="MongoDB 同步记录分页" hidden></nav>
     </section>
-    <section id="deliveries" aria-labelledby="deliveries-title">
+    <section id="deliveries" role="tabpanel" aria-labelledby="tab-deliveries" tabindex="0" hidden>
       <div class="section-heading"><h2 id="deliveries-title">每四小时日志</h2><span id="delivery-total" class="muted"></span></div>
       <dl class="delivery-destinations"><div><dt>本地日志</dt><dd id="log-path">—</dd></div></dl>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日志交付记录">
         <table class="data-table"><thead><tr><th scope="col">统计范围 / 日志周期</th><th scope="col">状态</th><th scope="col">题目 / 对比累计</th><th scope="col">日志落盘</th><th scope="col">线上日志</th></tr></thead><tbody id="delivery-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
       </div>
+      <nav id="delivery-pagination" class="table-pagination" aria-label="日志交付记录分页" hidden></nav>
     </section>
   </main>
 </body>

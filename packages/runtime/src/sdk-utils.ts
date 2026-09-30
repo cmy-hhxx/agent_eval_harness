@@ -1,4 +1,4 @@
-import type { ModelConfig, ToolContent } from "@eval/contracts";
+import type { EvaluationSpec, ModelConfig, ToolContent } from "@eval/contracts";
 import { object } from "@eval/contracts";
 
 export function modelEventForLog(value: unknown): unknown {
@@ -49,13 +49,30 @@ export function providerConfig(config: ModelConfig) {
     ],
   };
 }
-export function transformPayload(value: unknown, config: ModelConfig): unknown {
+export function transformPayload(
+  value: unknown,
+  config: ModelConfig,
+  evaluation?: Pick<EvaluationSpec, "toolNames">,
+): unknown {
   const payload = object(value);
   if (config.api === "openai-completions") {
     delete payload.max_tokens;
     payload.max_completion_tokens = config.maxOutputTokens;
   } else payload.max_output_tokens = config.maxOutputTokens;
   payload.parallel_tool_calls = false;
+  if (evaluation && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
+    // Cache accounting belongs to the evaluation workload, not an ephemeral SDK session.
+    payload.prompt_cache_key = "evaluation";
+    const initialRequest = Array.isArray(payload.input) && payload.input.every((item) =>
+      ["system", "developer", "user"].includes(String(object(item).role)),
+    );
+    // Submission-only tasks rarely reuse their first request. Repairs still benefit from history caching.
+    payload.prompt_cache_options = {
+      mode: evaluation.toolNames.length === 0 && initialRequest ? "explicit" : "implicit",
+    };
+    // These models use prompt_cache_options; the SDK's legacy retention parameter does not apply.
+    delete payload.prompt_cache_retention;
+  }
   return payload;
 }
 export function sdkContent(content: ToolContent[]) {

@@ -1,4 +1,4 @@
-import { REMOTE_MODELS, type InputDownload, type RemoteDay, type RemoteModel } from "@eval/contracts";
+import { REMOTE_MODELS, RemoteInputNotReadyError, type InputDownload, type RemoteDay, type RemoteModel } from "@eval/contracts";
 
 export function validInputDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -9,9 +9,9 @@ export function validInputDate(value: string): boolean {
 export class RemoteInputs {
   constructor(readonly url: string, private readonly timeoutMs: number) {}
 
-  private async request(route: string, signal: AbortSignal, init?: RequestInit, timeoutMs = this.timeoutMs): Promise<Response> {
+  private async request(route: string, signal: AbortSignal, init?: RequestInit, timeoutMs: number | null = this.timeoutMs): Promise<Response> {
     const response = await fetch(this.url + route, {
-      ...init, signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+      ...init, signal: timeoutMs === null ? signal : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
     });
     if (!response.ok) {
       let detail = "";
@@ -32,7 +32,9 @@ export class RemoteInputs {
         }
       } catch { /* Preserve the HTTP status when the response body cannot be decoded. */ }
       finally { await reader?.cancel().catch(() => {}); }
-      throw new Error(`Remote ${route}: HTTP ${response.status}${detail ? ": " + detail : ""}`);
+      const message = `Remote ${route}: HTTP ${response.status}${detail ? ": " + detail : ""}`;
+      if (response.status === 404 && detail === "data not ready") throw new RemoteInputNotReadyError(message);
+      throw new Error(message);
     }
     return response;
   }
@@ -60,17 +62,31 @@ export class RemoteInputs {
   async download(day: RemoteDay, model: RemoteModel, signal: AbortSignal): Promise<InputDownload> {
     if (!validInputDate(day.date) || !REMOTE_MODELS.includes(model)) throw new Error("Invalid remote input location");
     const controller = new AbortController();
-    const response = await this.request(`/data/${day.date}/${model}.jsonl`,
-      AbortSignal.any([signal, controller.signal]));
+    const route = `/data/${day.date}/${model}.jsonl`, timeoutMs = this.timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(new Error(`Remote ${route}: no download progress for ${timeoutMs / 1000}s`)), timeoutMs);
+    };
+    touch();
+    let response: Response;
+    try { response = await this.request(route, AbortSignal.any([signal, controller.signal]), undefined, null); }
+    catch (error) { clearTimeout(timer); throw error; }
     const length = response.headers.get("content-length"), size = Number(length);
     if (!response.body || length === null || !Number.isSafeInteger(size) || size < 0) {
+      clearTimeout(timer);
       await response.body?.cancel();
       throw new Error("Remote JSONL requires a body and Content-Length");
     }
+    touch();
+    const body = response.body as unknown as AsyncIterable<Uint8Array>;
     return {
       name: model + ".jsonl", rows: day.rows[model], size,
-      chunks: response.body as unknown as AsyncIterable<Uint8Array>,
-      close: async () => { controller.abort(); },
+      chunks: (async function* () {
+        try { for await (const chunk of body) { touch(); yield chunk; } }
+        finally { clearTimeout(timer); }
+      })(),
+      close: async () => { clearTimeout(timer); controller.abort(); },
     };
   }
 

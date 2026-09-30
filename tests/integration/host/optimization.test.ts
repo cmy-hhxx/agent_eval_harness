@@ -514,6 +514,36 @@ test("an interrupted model stream receives one bounded transport retry", async (
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("retry backoff releases its worker slot for healthy tasks and preserves the retry budget", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  const plan = await buildPlan(config), order: string[] = [];
+  const errors: { message: string; context: import("@eval/contracts").LogContext }[] = [];
+  let first = "";
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      const id = options.spec.taskId;
+      order.push(id); first ||= id;
+      if (id === first) throw new Error("Stream ended without finish_reason");
+      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]),
+      retries: 1, retryDelaySeconds: 1, signal: AbortSignal.timeout(15_000),
+      logger: { evaluation: async () => true, error: async (message, context) => { errors.push({ message: String(message), context }); } } });
+    assert.notEqual(order[1], first, "healthy work must use the only slot while the failed task backs off");
+    assert.equal(order.filter(id => id === first).length, 2, "redispatch must not reset the retry budget");
+    const after = await readRunState(path.join(config.output.path, "test"));
+    assert.equal(after.manifest.states[first].status, "failed");
+    assert(Object.values(after.manifest.states).every(state => state.nextRetryAt === undefined));
+    const attempts = errors.filter(row => row.context.event === "attempt_failed");
+    assert.equal(attempts.length, 2, "record each failed attempt, including the one that will retry");
+    assert.equal(new Set(attempts.map(row => row.context.attempt_id)).size, 2);
+    assert(attempts.every(row => row.context.stage === "attribution" && row.context.errors?.[0].code === "transport_failed"));
+    assert(attempts.every(row => /Stream ended/.test(row.message)));
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("failed dependencies are checkpointed as one batch", async () => {
   const rows = Array.from({ length: 12 }, (_, i) => raw(String(i), null));
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);

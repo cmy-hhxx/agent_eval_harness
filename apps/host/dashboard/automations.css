@@ -3,19 +3,34 @@
 .automation-page ::selection { background: var(--accent-soft); color: var(--text); }
 .automation-page .page-header { margin-bottom: 6px; }
 .monitor-title { display: flex; align-items: center; gap: 16px; }
+.monitor-actions { display: flex; align-items: center; gap: 12px; }
+.monitor-actions a { display: inline-flex; align-items: center; text-decoration: none; }
 .monitor-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 20px; color: var(--muted); font-size: 12px; }
+.execution-overview { display: grid; grid-template-columns: minmax(80px, .6fr) minmax(235px, 1.5fr) repeat(3, minmax(150px, 1fr)); gap: 16px 28px; margin: 0 0 20px; padding: 16px 0; border-block: 1px solid var(--line); }
+.execution-overview dt { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.execution-overview dd { margin: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.execution-overview .metric-detail { margin-top: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.pipeline-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 28px; margin: 0 0 20px; }
+.pipeline-flow dt { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.pipeline-flow dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.pipeline-flow .metric-detail { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .monitor-nav { display: flex; gap: 28px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
-.monitor-nav a { min-height: 44px; padding: 10px 0; text-decoration: none; color: var(--muted); }
-.monitor-nav a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 6px; }
+.monitor-nav button { min-height: 44px; padding: 10px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer; white-space: nowrap; }
+.monitor-nav button:hover { color: var(--accent); }
+.monitor-nav button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.automation-page [hidden] { display: none; }
 .monitor-filters { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-bottom: 24px; }
 .monitor-filters label { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
 .monitor-filters select, .automation-page .button { min-height: 40px; }
+.table-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.page-controls { display: flex; align-items: center; gap: 12px; }
+.page-number { min-width: 54px; text-align: center; }
 .automation-page section { margin-top: 32px; scroll-margin-top: 20px; }
 .automation-page .section-heading { margin-bottom: 12px; }
 .automation-page h2 { font-size: 16px; }
 .automation-page h3 { font-size: 14px; margin: 0; }
 .automation-page .delivery-history-heading { margin-top: 24px; }
-.date-table { min-width: 1350px; }
+.date-table { min-width: 1380px; }
 .date-table th { white-space: nowrap; }
 .automation-page .date-table .row-error { max-width: 220px; }
 .task-pool { min-width: 100px; }
@@ -44,9 +59,21 @@
 .delivery-destinations dt { flex-shrink: 0; color: var(--muted); }
 .delivery-destinations dd { margin: 0; overflow-wrap: anywhere; }
 .receipt { max-width: 220px; white-space: normal; overflow-wrap: anywhere; }
+.error-table { min-width: 760px; table-layout: fixed; }
+.error-table th:first-child { width: 130px; }
+.error-table th:nth-child(2) { width: 190px; }
+.error-task { white-space: normal; overflow-wrap: anywhere; }
+.error-message { white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; max-height: 6em; overflow-y: auto; }
+.error-detail { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow-y: auto; margin: 12px 0 0; padding: 12px; background: var(--soft); font-size: 12px; }
+@media (max-width: 1000px) {
+  .execution-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 16px; }
+}
 @media (max-width: 760px) {
+  .pipeline-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   .automation-page main { padding: 20px 16px 40px; }
   .monitor-meta { gap: 4px 16px; }
+  .monitor-nav { gap: 20px; overflow-x: auto; scrollbar-color: var(--line) var(--surface); }
+  #reset-filters { justify-self: end; }
   .monitor-filters { display: grid; gap: 10px; }
   .monitor-filters label { justify-content: space-between; }
   .monitor-filters select { min-width: 144px; }

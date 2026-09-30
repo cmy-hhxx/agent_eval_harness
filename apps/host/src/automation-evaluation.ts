@@ -3,28 +3,46 @@ import { REMOTE_MODELS, type RemoteDay, type WorkflowDefinition } from "@eval/co
 import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
-import { comparisonWorkflow, publishableComparisons, completedComparisons, reconcileRun, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { comparisonWorkflow, publishableComparisons, reconcileRun, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { boundProfiles, createModelResolver, loadConfig } from "./config.js";
 import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
 
 export const automationWorkflow: WorkflowDefinition = {
   ...comparisonWorkflow,
-  reconcile: (run, state, current) => reconcileRun(run, state, current, { extendVersions: true }),
+  reconcile: async (run, state, current) => {
+    const plan = await reconcileRun(run, state, current, { extendVersions: true });
+    const active = new Set(plan.tasks.filter(isAutomationTask).map((task) => task.id));
+    state.manifest.pausedStages = (state.manifest.pausedStages ?? []).map((pause) => ({
+      ...pause, taskIds: pause.taskIds.filter((id) => active.has(id)),
+    })).filter((pause) => pause.taskIds.length);
+    return plan;
+  },
 };
+
+export function isAutomationTask(task: { stage: string; data: unknown }): boolean {
+  return task.stage !== "clustering" && (task.data as { rewriteOf?: { stage: string } }).rewriteOf?.stage !== "clustering";
+}
+
+function automationPauses(state: Checkpoint) {
+  return (state.pausedStages ?? []).map((pause) => ({ ...pause,
+    taskIds: pause.taskIds.filter((id) => state.tasks[id] && isAutomationTask(state.tasks[id])),
+  })).filter((pause) => pause.taskIds.length);
+}
 
 export async function checkpoint(output: string, runId: string): Promise<Checkpoint | undefined> {
   try { return await readJson<Checkpoint>(path.join(output, runId, "state.json")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 
-export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
+export function summarize(checkpoints: Checkpoint[], requireItems = true): EvaluationSummary {
   const summary: EvaluationSummary = { stages: {}, skipped: 0, issues: 0, readyComparisons: 0 };
   for (const state of checkpoints) {
-    summary.readyComparisons += publishableComparisons(state, true).size;
+    summary.readyComparisons += publishableComparisons(state, requireItems).size;
     summary.skipped += (state.preflight.skipped as unknown[]).length;
     summary.issues += (state.preflight.issues as unknown[]).length;
     for (const task of Object.values(state.tasks)) {
+      if (!isAutomationTask(task)) continue;
       const stage = summary.stages[task.stage] ??= { total: 0, completed: 0, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 };
       stage.total++;
       if (task.status === "succeeded" && task.receipt) stage.completed++;
@@ -40,23 +58,23 @@ export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
 
 const temporary = (category: string) => category === "transport" || category === "interruption";
 export function automaticResumeStages(state: Checkpoint): string[] {
-  return (state.pausedStages ?? []).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
+  return automationPauses(state).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
 }
 
 /** Authority comes from Host receipts and failure categories, never the dashboard's old error text. */
 export function checkpointRecovery(states: Checkpoint[]): "interrupted" | "transient" | undefined {
-  if (!states.length || states.some((state) => state.pausedStages?.some((pause) => !temporary(pause.category)))) return;
-  const tasks = states.flatMap((state) => Object.values(state.tasks));
+  if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
+  const tasks = states.flatMap((state) => Object.values(state.tasks).filter(isAutomationTask));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
   if (!failures.length && tasks.some((task) => ["cancelled", "running", "pending"].includes(task.status))) return "interrupted";
   if (failures.length && failures.every((task) => task.failure?.errors.length
     ? task.failure.errors.every((issue) => temporary(issue.category))
     : task.status === "timed_out")) return "transient";
-  if (!failures.length && states.some((state) => state.pausedStages?.length)) return "transient";
+  if (!failures.length && states.some((state) => automationPauses(state).length)) return "transient";
 }
 
 function incompleteReason(states: Checkpoint[], summary: EvaluationSummary): string {
-  const pauses = states.flatMap((state) => state.pausedStages ?? []);
+  const pauses = states.flatMap(automationPauses);
   if (pauses.length) return pauses.map((pause) => `${pause.stage}: ${pause.category}/${pause.code} ${pause.path}`).join("; ");
   return Object.entries(summary.stages).filter(([, stage]) => stage.completed !== stage.total)
     .map(([name, stage]) => `${name}: ${stage.completed}/${stage.total}, failed=${stage.failed}, interrupted=${stage.cancelled}, blocked=${stage.blocked}`).join("; ");
@@ -73,17 +91,17 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     delete job.mongo.synced;
   if (["completed", "waiting_inputs"].includes(job.evaluation) &&
       REMOTE_MODELS.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
-  const complete = completedComparisons(saved, true);
+  const complete = publishableComparisons(saved, true);
   if (job.summary.stages.comparison?.completed > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
-  if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !saved.pausedStages?.length) {
+  if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
     job.evaluation = job.summary.skipped || job.summary.issues || !job.summary.stages.comparison?.total ? "waiting_inputs" : "completed";
     job.evaluationAttempts = 0; job.nextEvaluationAt = 0;
     delete job.evaluationError;
     return;
   }
   const recovery = checkpointRecovery([saved]);
-  if (recovery === "transient" || saved.pausedStages?.length) job.evaluationError = incompleteReason([saved], job.summary);
+  if (recovery === "transient" || automationPauses(saved).length) job.evaluationError = incompleteReason([saved], job.summary);
   return recovery;
 }
 
@@ -102,7 +120,8 @@ export async function evaluationTargets(config: AutomationConfig, output: string
     const counts = Object.fromEntries(REMOTE_MODELS.map((model) =>
       [model, Object.values(saved.inputs).filter((input) => input.version === model).length]));
     // Do not hide newly arrived rows behind a historical completion marker.
-    return { runIds, adopted: REMOTE_MODELS.every((model) => counts[model] === day.rows[model]), summary: summarize([saved]) };
+    const matched = REMOTE_MODELS.every((model) => counts[model] === day.rows[model]);
+    return { runIds, adopted: matched, summary: summarize([saved], !matched) };
   }
   return { runIds, adopted: false };
 }
@@ -112,7 +131,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   delete job.resumePaused;
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   const modelForStage = createModelResolver(host.models);
-  for (const stage of ["attribution", "comparison", "rewrite", "clustering"]) modelForStage(stage);
+  for (const stage of ["attribution", "comparison", "rewrite"]) modelForStage(stage);
   for (const profile of boundProfiles(host.models)) {
     if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
     logger.addSecrets(process.env[profile.apiKeyEnv]!);
@@ -138,14 +157,14 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       concurrency: evaluation.execution.concurrency, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
       discoverInputs: true, signal,
-      resumeStages: previous ? (resumePaused ? previous.pausedStages?.map((pause) => pause.stage) ?? [] : automaticResumeStages(previous)) : [],
+      resumeStages: previous ? (resumePaused ? automationPauses(previous).map((pause) => pause.stage) : automaticResumeStages(previous)) : [],
     });
     signal.throwIfAborted();
     checkpoints.push((await checkpoint(output, runId))!);
   }
   const summary = summarize(checkpoints);
   summary.skipped += skipped; summary.issues += issues;
-  const pauses = checkpoints.flatMap((state) => state.pausedStages ?? []);
+  const pauses = checkpoints.flatMap(automationPauses);
   if (pauses.length) {
     const transient = pauses.every((pause) => temporary(pause.category));
     return { status: transient ? "retry" : "blocked", summary, transient,

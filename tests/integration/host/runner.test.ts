@@ -290,6 +290,9 @@ for (const missingArtifact of [false, true])
               (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
               true,
             );
+            throw new Error("Agent ended without an accepted submission", {
+              cause: new Error("Original worker failure with diagnostic detail"),
+            });
           },
           async abort() {},
           async dispose() {},
@@ -326,8 +329,13 @@ for (const missingArtifact of [false, true])
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
-      assert.equal(runtimeLog.filter((row) => row.event === "task_failed").length, 1);
-      assert.equal(runtimeLog.find((row) => row.event === "task_failed").task_id, plan.tasks[0].id);
+      const failures = runtimeLog.filter((row) => row.event === "attempt_failed");
+      assert.equal(failures.length, 4, "both attempts of both tasks are retained");
+      assert.deepEqual([...new Set(failures.map((row) => row.task_id))].sort(), plan.tasks.slice(0, 2).map((task) => task.id).sort());
+      assert.equal(new Set(failures.map((row) => row.attempt_id)).size, 4);
+      assert(failures.every((row) => row.errors.length > 0));
+      assert(failures.every((row) => row.detail.includes("Original worker failure with diagnostic detail")));
+      assert(failures.every((row) => row.detail.includes("at Object.run")));
       assert.equal(await readFile(path.join(directory, "log/evaluation.log"), "utf8"), "");
       assert.equal((summary.tokens as { totalTokens: number }).totalTokens, 76);
       const run = path.join(config.output.path, "failure");
@@ -480,6 +488,44 @@ test("stopping concurrent attempts never trips the stage circuit and the same ru
     await Promise.all(workers.map((worker) => worker.close()));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+for (const stop of [false, true]) test(`Host persists its actual retry deadline and clears it on ${stop ? "stop" : "retry"}`, async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  const controller = new AbortController();
+  let calls = 0, deadline = 0;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      if (++calls === 1) options.onEvent({ type: "message_end", message: {
+        role: "assistant", stopReason: "error", errorMessage: "Connection error.",
+      } });
+      else {
+        const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+      }
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    await runEvaluation({ ...services, runId: "retry-deadline", output: config.output, config,
+      plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 1, retryDelaySeconds: .05, workerUrls: [worker.url],
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+      repository: { ...services.repository, async writeRun(run, saved) {
+        await services.repository.writeRun(run, saved);
+        const retry = Object.values(saved.manifest.states).find((task) => task.nextRetryAt !== undefined);
+        if (retry && !deadline) {
+          deadline = retry.nextRetryAt!;
+          assert(deadline > Date.now() - 1000);
+          if (stop) controller.abort();
+        }
+      } },
+    });
+    assert(deadline, "the scheduled task retry must be visible on disk");
+    const saved = await readRunState(path.join(config.output.path, "retry-deadline"));
+    assert(Object.values(saved.manifest.states).every((task) => task.nextRetryAt === undefined));
+    assert.equal(saved.manifest.status, stop ? "interrupted" : "finished");
+    assert.equal(calls > 1, !stop);
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
 for (const debug of [false, true])

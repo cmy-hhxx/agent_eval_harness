@@ -284,6 +284,8 @@ bash run.sh
 
 `stats.json` 的 `tokens` 汇总所有已记录尝试，包含失败和重试；未取得最终用量的尝试计入 `attempts_without_final_metrics`，不能视作用量为零。`input` 为未命中缓存的输入，`cacheRead` / `cacheWrite` 为缓存读取/写入 Token，`output` 为输出，`totalTokens` 为总量。`cache.model_input.hit_rate` 是缓存读取 Token 占全部输入 Token（未缓存 + 读取 + 写入）的比例，无输入时为 `null`。不存在跨 run 结果缓存。
 
+Pi / Prime 的 GPT-5.6、GPT-6 系列 Responses 评测请求使用固定 `prompt_cache_key=evaluation`，会话历史仍逐 attempt 隔离。没有材料工具、仅可提交结果的任务在首次请求使用无断点的显式模式，避免将一次性材料写入缓存；出现助手回复或工具调用历史后恢复隐式缓存，读取材料的多轮任务始终使用隐式缓存。其他模型、Chat Completions 和 Eris 会话保留 SDK 的缓存策略。此策略只修改请求缓存参数，不改提示词、材料、工具或推理参数，不更新 `evaluatorVersion`；网关须支持对应模型的 `prompt_cache_options`，实际收益以新增费用、`cacheWrite` 和完成量核对，命中率下降不一定代表费用增加。
+
 `quality` 的首次通过率和修复次数按有内容提交计数的任务统计，包含归因、对比、改写和聚类阶段；无计数的任务不推算。`attempts_per_accepted_task` / `tokens_per_accepted_task` 是累计尝试数 / Token 除以已接受任务数。P50/P95 使用各任务已记录的累计 attempt 耗时，包含失败与重试，不是单次模型响应时间；`wall_seconds` 从首次启动计时，包含中途停机到续跑之间的间隔。
 
 加 `--debug` 才会额外保留 `_internal/`。该设置写入 `state.json`，后续同 ID 继续运行时沿用；可以给已有普通运行加 `--debug`，此前未保存的日志不会补回。

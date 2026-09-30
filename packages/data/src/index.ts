@@ -5,6 +5,7 @@ export * from "./repository.js";
 export * from "./sources.js";
 export * from "./input-catalog.js";
 export * from "./logging.js";
+export * from "./runtime-log-reader.js";
 export * from "./assistant-store.js";
 export * from "./input-snapshot.js";
 export * from "./statistics-log.js";

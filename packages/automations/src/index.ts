@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { errorText, REMOTE_MODELS, type PublicationCounts, type RemoteDay } from "@eval/contracts";
+import { errorText, REMOTE_MODELS, RemoteInputNotReadyError, type PublicationCounts, type RemoteDay } from "@eval/contracts";
 import { nextPublicationAt, PUBLICATION_INTERVAL_MS, type MongoPublicationState, type MongoReceipt, type PublicationState } from "./publication.js";
 export * from "./publication.js";
 
@@ -24,6 +24,8 @@ export interface AutomationJob {
   runIds: string[];
   observed: RemoteDay["rows"];
   downloaded?: RemoteDay["rows"];
+  /** Last successful catalog check; unknown until the first poll of this process. */
+  sourceReady?: boolean;
   /** Explicitly adopted historical delivery. No backfill while its counts are unchanged. */
   adopted: boolean;
   download: "pending" | "downloading" | "installing" | "ready" | "retry";
@@ -93,6 +95,7 @@ export async function runPipeline(
   };
   const backoff = (attempt: number) => Math.min(options.retryMs * 2 ** Math.min(attempt - 1, 10), 30 * 60_000);
   for (const job of Object.values(state.jobs)) {
+    delete job.sourceReady;
     if (!job.adopted && services.recover) {
       try {
         const recovery = await services.recover(job);
@@ -145,6 +148,8 @@ export async function runPipeline(
   async function poll() {
     try {
       const days = await services.discover(activeSignal);
+      const ready = new Set(days.map((day) => day.date));
+      for (const job of Object.values(state.jobs)) job.sourceReady = ready.has(job.date);
       const failures: string[] = [];
       for (const day of days) {
         let job = state.jobs[day.date];
@@ -156,7 +161,7 @@ export async function runPipeline(
             continue;
           }
           job = state.jobs[day.date] = {
-            ...initial, date: day.date, observed: day.rows,
+            ...initial, date: day.date, observed: day.rows, sourceReady: true,
             download: initial.adopted ? "ready" : "pending",
             evaluation: initial.adopted ? "completed" : "pending",
             ...(initial.adopted ? { downloaded: day.rows } : {}),
@@ -193,6 +198,8 @@ export async function runPipeline(
     let replacing = false;
     job.download = "downloading";
     job.downloadAttempts++;
+    delete job.downloadError;
+    job.nextDownloadAt = 0;
     await save();
     await services.event("download_started", job);
     try {
@@ -206,6 +213,7 @@ export async function runPipeline(
       job.checkedAt = Date.now();
       job.bytes = result.bytes;
       job.downloadAttempts = 0;
+      job.nextDownloadAt = 0;
       delete job.downloadError;
       if (result.changed) {
         job.inputsUpdatedAt = Date.now();
@@ -223,12 +231,18 @@ export async function runPipeline(
       if (activeSignal.aborted) {
         job.downloadAttempts = 0; job.nextDownloadAt = 0;
         delete job.downloadError;
+      } else if (error instanceof RemoteInputNotReadyError) {
+        job.sourceReady = false;
+        job.download = hadReadySnapshot ? "ready" : "pending";
+        job.downloadAttempts = 0;
+        job.nextDownloadAt = Date.now() + options.pollMs;
+        delete job.downloadError;
       } else {
         job.downloadError = errorText(error);
         job.nextDownloadAt = Date.now() + backoff(job.downloadAttempts);
       }
       await save();
-      if (!activeSignal.aborted) await services.event("download_failed", job, job.downloadError);
+      if (!activeSignal.aborted) await services.event(error instanceof RemoteInputNotReadyError ? "source_waiting" : "download_failed", job, job.downloadError);
     }
   }
 
@@ -354,20 +368,23 @@ export async function runPipeline(
       const now = Date.now();
       if (!polling && now >= nextPoll && (!options.once || polls === 0))
         polling = guarded(poll(), () => { polling = undefined; });
+      // Let the first catalog check settle before an upload can pin stale inputs.
+      if (polls === 0) { await polling; continue; }
       const jobs = Object.values(state.jobs).sort((a, b) => a.date.localeCompare(b.date));
       if (services.publish && !state.publication) {
         state.publication = { status: "pending", attempts: 0, nextAt: nextPublicationAt(now) };
         await save();
       }
       if (!downloading && state.publication?.status !== "running") {
-        const job = jobs.find((job) => job.mongo?.status !== "running" && job.evaluation !== "evaluating" && now >= job.nextDownloadAt &&
+        const job = [...jobs].sort((a, b) => Number(sameRows(a.downloaded, a.observed)) - Number(sameRows(b.downloaded, b.observed)))
+          .find((job) => job.sourceReady === true && job.mongo?.status !== "running" && job.evaluation !== "evaluating" && now >= job.nextDownloadAt &&
           ((!sameRows(job.downloaded, job.observed)) || job.download !== "ready" ||
             (!job.adopted && now - job.checkedAt >= options.refreshMs)) &&
           (!options.once || (job.download !== "retry" && !job.downloadError)));
         if (job) downloading = guarded(sync(job), () => { downloading = undefined; });
       }
       if (!evaluating) {
-        const job = jobs.find((job) => job.download === "ready" && sameRows(job.downloaded, job.observed) &&
+        const job = jobs.find((job) => job.download === "ready" &&
           (job.evaluation === "pending" || (!options.once && job.evaluation === "retry")) && now >= job.nextEvaluationAt);
         if (job) evaluating = guarded(evaluate(job), () => { evaluating = undefined; });
       }

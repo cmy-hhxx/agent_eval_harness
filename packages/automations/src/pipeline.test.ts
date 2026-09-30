@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { REMOTE_MODELS, type RemoteDay } from "@eval/contracts";
+import { REMOTE_MODELS, RemoteInputNotReadyError, type RemoteDay } from "@eval/contracts";
 import { runPipeline, nextPublicationAt, PUBLICATION_INTERVAL_MS, type AutomationState, type PipelineServices, type EvaluationSummary } from "./index.js";
 
 const day = (date: string, rows = 1): RemoteDay => ({ date, rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, rows])) as RemoteDay["rows"] });
@@ -207,6 +207,88 @@ test("refresh failures preserve usable inputs, but interrupted replacement requi
     assert.equal(job.downloadError, replacement ? "rename failed" : "connection lost");
     assert.equal(job.downloaded!.a_fast, 1);
   }
+});
+
+test("downloads require a fresh ready catalog and clear obsolete retry state when they start", async () => {
+  const state = fresh();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  const job = state.jobs["2026-09-29"];
+  job.checkedAt = 0;
+  let downloads = 0;
+  const deps = services({ sync: async (active) => {
+    downloads++;
+    assert.equal(active.downloadError, undefined);
+    assert.equal(active.nextDownloadAt, 0);
+    return { changed: false, bytes: 10 };
+  } });
+  await runPipeline(state, { ...options, once: true }, { ...deps, discover: async () => [] }, AbortSignal.timeout(3000));
+  assert.equal(downloads, 0, "an unready date must not download using yesterday's catalog state");
+  job.downloadError = "old timeout"; job.nextDownloadAt = 1;
+  const controller = new AbortController();
+  await runPipeline(state, options, { ...deps, save: async (snapshot) => {
+    if (downloads && snapshot.jobs[job.date].download === "ready") controller.abort();
+  } }, AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
+  assert.equal(downloads, 1);
+  assert.equal(job.downloadError, undefined);
+  assert.equal(job.nextDownloadAt, 0);
+});
+
+test("changed input dates download before routine checks, while other local backlogs keep evaluating", async () => {
+  const state = fresh(), first = "2026-09-28", second = "2026-09-29";
+  await runPipeline(state, { ...options, once: true }, services({
+    discover: async () => [day(first), day(second)],
+  }), AbortSignal.timeout(3000));
+  for (const job of Object.values(state.jobs)) job.checkedAt = 0;
+  const downloads: string[] = [];
+  await runPipeline(state, { ...options, once: true }, services({
+    discover: async () => [day(first), day(second, 2)],
+    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 20 }; },
+  }), AbortSignal.timeout(3000));
+  assert.equal(downloads[0], second, "new input must not wait behind a same-count routine check");
+
+  state.jobs[second].evaluation = "pending";
+  let release!: () => void, evaluated = false, downloading = false;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const controller = new AbortController();
+  const work = runPipeline(state, options, services({
+    discover: async () => [day(first, 3), day(second, 3)],
+    sync: async (job) => { assert.equal(job.date, first); downloading = true; await gate; return { changed: true, bytes: 30 }; },
+    evaluate: async (job) => {
+      assert.equal(job.date, second); assert(downloading);
+      assert.equal(job.downloaded!.a_fast, 2);
+      assert.equal(job.observed.a_fast, 3);
+      evaluated = true; controller.abort();
+      return { status: "completed", summary };
+    },
+  }), controller.signal);
+  try { await until(() => evaluated); }
+  finally { controller.abort(); release(); await work; }
+});
+
+test("a ready-to-unready source race waits for the next catalog and resumes without a stale error", async () => {
+  const state = fresh();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  const job = state.jobs["2026-09-29"];
+  job.checkedAt = 0;
+  let downloads = 0, waiting = false;
+  const controller = new AbortController();
+  await runPipeline(state, options, services({
+    sync: async () => {
+      if (downloads++ === 0) throw new RemoteInputNotReadyError("data not ready");
+      return { changed: false, bytes: 10 };
+    },
+    save: async (snapshot) => {
+      const saved = snapshot.jobs[job.date];
+      if (saved.sourceReady === false) {
+        waiting = true;
+        assert.equal(saved.download, "ready", "keep the installed snapshot usable");
+        assert.equal(saved.downloadError, undefined);
+        assert.equal(saved.downloadAttempts, 0);
+      }
+      if (downloads === 2 && saved.download === "ready") controller.abort();
+    },
+  }), AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
+  assert(waiting); assert.equal(downloads, 2); assert.equal(job.sourceReady, true);
 });
 
 for (const returnsIncomplete of [false, true])

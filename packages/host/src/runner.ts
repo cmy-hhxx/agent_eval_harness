@@ -1,6 +1,7 @@
 import { localFiles, atomicWrite } from "@eval/data";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { inspect } from "node:util";
 import {
   emptyUsage,
   type AttemptSpec,
@@ -82,6 +83,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   let changed = new Promise<void>((resolve) => {
     wake = resolve;
   });
+  controller.signal.addEventListener("abort", () => wake(), { once: true });
   let desiredConcurrency = options.concurrency;
   const busy = new Set<{ url: string }>();
   try {
@@ -159,6 +161,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     delete manifest.finishedAt;
     await localFiles.remove(layout.stats, { force: true });
     for (const task of manifest.tasks) {
+      delete manifest.states[task.id].nextRetryAt;
       if (!dispatchable(task)) continue;
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
@@ -222,8 +225,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       10000,
     );
     let workerUrls = options.workerUrls || [];
-    const pending = manifest.tasks.filter((t) => dispatchable(t) && manifest.states[t.id].status === "pending" &&
-      Object.values(t.dependencies).every((id) => manifest.states[id]?.status === "succeeded"));
+    const runnable = (task: PlannedTask) => dispatchable(task) && manifest.states[task.id].status === "pending" &&
+      (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
+      Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
+    const pending = manifest.tasks.filter(runnable);
     if (!workerUrls.length && pending.length) {
       // Start incrementally so every successful child remains owned if a later launch fails.
       const engines = [...new Set(pending.map(engineForTask))];
@@ -280,6 +285,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await atomicWrite(path.join(destination, artifact.id), bytes);
       }
     }
+    const retryBudgets = new Map<string, { transport: number; content: number }>();
     async function execute(
       task: PlannedTask,
       worker: (typeof workers)[number],
@@ -290,309 +296,315 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id];
       const model = options.modelForStage(task.stage);
-      let transportRetries = 0,
-        contentRetries = 0;
-      for (;;) {
-        if (guard.paused(task.stage)) return;
-        if (controller.signal.aborted) {
-          state.status = "cancelled";
+      const retries = retryBudgets.get(task.id) ?? { transport: 0, content: 0 };
+      retryBudgets.set(task.id, retries);
+      if (guard.paused(task.stage)) return;
+      if (controller.signal.aborted) {
+        state.status = "cancelled";
+        await current.save();
+        return;
+      }
+      let ready = false;
+      try {
+        const health = await request<WorkerStatus>(
+          `${workerUrl}/api/health`,
+          "GET",
+          undefined,
+          AbortSignal.timeout(10000),
+        );
+        ready = !health.activeAttempt && canonical(health.identity) === canonical(identity);
+      } catch {}
+      if (!ready) {
+        const previous = owned.find((w) => w.url === workerUrl);
+        if (!previous) {
+          // Capacity loss is not an evaluation failure. Requeue before creating
+          // an attempt and keep this worker out of dispatch until health recovers.
+          deferWorker(worker);
+          state.status = "pending";
           await current.save();
           return;
         }
-        let ready = false;
-        try {
-          const health = await request<WorkerStatus>(
-            `${workerUrl}/api/health`,
-            "GET",
-            undefined,
-            AbortSignal.timeout(10000),
-          );
-          ready = !health.activeAttempt && canonical(health.identity) === canonical(identity);
-        } catch {}
-        if (!ready) {
-          const previous = owned.find((w) => w.url === workerUrl);
-          if (!previous) {
-            // Capacity loss is not an evaluation failure. Requeue before creating
-            // an attempt and keep this worker out of dispatch until health recovers.
-            deferWorker(worker);
-            state.status = "pending";
-            await current.save();
-            return;
-          }
-          await previous.close();
-          const replacement = await spawnWorker(
-            identity.engine,
-            path.join(working, "workers", `${identity.engine}-${randomUUID()}`),
-            options.runtime,
-          );
-          owned.push(replacement);
-          workerUrl = replacement.url;
-          worker.url = workerUrl;
-        }
-        if (guard.paused(task.stage)) return;
-        const spec: AttemptSpec = {
-          runId: options.runId,
-          taskId: task.id,
-          attemptId: randomUUID(),
-          inputRevision: state.revision || 1,
-          engine: identity,
-          evaluation: prepared.evaluation,
-          model,
-          policy: options.policy,
-          prompt: prepared.renderAttempt(options.policy, state.failure),
-          recovery: state.failure,
-          inputs: Object.entries(task.inputIds).map(([name, id]) => ({
-            ...manifest.inputs[id],
-            name,
-          })),
-          hostUrl,
-          deadline: Date.now() + options.policy.timeoutSeconds * 1000,
-        };
-        const bound = new Map<string, unknown>();
-        for (const ref of spec.inputs) {
-          const source = sources[ref.name];
-          if (!source || source.id !== ref.id) throw new Error(`Task source mismatch: ${ref.name}`);
-          bound.set(ref.id, source.value);
-        }
-        attemptSources.set(spec.attemptId, bound);
-        try {
-        state.startedAt = state.lastProgressAt = Date.now();
-        let lastSeq = -1;
-        await current.activate(spec);
-        const attemptDir = internalPath(
-          run,
-          "tasks",
-          task.id,
-          `attempt-${state.attempts.toString().padStart(3, "0")}`,
+        await previous.close();
+        const replacement = await spawnWorker(
+          identity.engine,
+          path.join(working, "workers", `${identity.engine}-${randomUUID()}`),
+          options.runtime,
         );
-        const eventController = new AbortController();
-        let stream: Promise<boolean> | undefined, status: AttemptStatus | undefined;
-        let eventsSaved = false;
+        owned.push(replacement);
+        workerUrl = replacement.url;
+        worker.url = workerUrl;
+      }
+      if (guard.paused(task.stage)) return;
+      const spec: AttemptSpec = {
+        runId: options.runId,
+        taskId: task.id,
+        attemptId: randomUUID(),
+        inputRevision: state.revision || 1,
+        engine: identity,
+        evaluation: prepared.evaluation,
+        model,
+        policy: options.policy,
+        prompt: prepared.renderAttempt(options.policy, state.failure),
+        recovery: state.failure,
+        inputs: Object.entries(task.inputIds).map(([name, id]) => ({
+          ...manifest.inputs[id],
+          name,
+        })),
+        hostUrl,
+        deadline: Date.now() + options.policy.timeoutSeconds * 1000,
+      };
+      const bound = new Map<string, unknown>();
+      for (const ref of spec.inputs) {
+        const source = sources[ref.name];
+        if (!source || source.id !== ref.id) throw new Error(`Task source mismatch: ${ref.name}`);
+        bound.set(ref.id, source.value);
+      }
+      attemptSources.set(spec.attemptId, bound);
+      try {
+      state.startedAt = state.lastProgressAt = Date.now();
+      let lastSeq = -1;
+      await current.activate(spec);
+      const attemptDir = internalPath(
+        run,
+        "tasks",
+        task.id,
+        `attempt-${state.attempts.toString().padStart(3, "0")}`,
+      );
+      const eventController = new AbortController();
+      let stream: Promise<boolean> | undefined, status: AttemptStatus | undefined;
+      let eventsSaved = false;
+      try {
+        options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
         try {
-          options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
+          await request(`${workerUrl}/api/attempts`, "POST", spec, controller.signal);
+        } catch (error) {
           try {
-            await request(`${workerUrl}/api/attempts`, "POST", spec, controller.signal);
-          } catch (error) {
-            try {
-              await request(`${workerUrl}/api/attempts/${spec.attemptId}`);
-            } catch {
-              throw error;
-            }
-          }
-          if (manifest.debug || options.onEvent)
-            stream = consumeEvents(
-              workerUrl,
-              spec.attemptId,
-              manifest.debug ? path.join(attemptDir, "events.jsonl") : undefined,
-              eventController.signal,
-              options.onEvent,
-            );
-          while (true) {
-            if (controller.signal.aborted || Date.now() > spec.deadline) {
-              const receipt = await current.receipt(task.id);
-              if (!receipt)
-                await current.endAttempt(
-                  spec,
-                  controller.signal.aborted ? "cancelled" : "timed_out",
-                  controller.signal.aborted ? "Interrupted" : "Task deadline exceeded",
-                );
-              await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
-              break;
-            }
-            try {
-              status = await request<AttemptStatus>(
-                `${workerUrl}/api/attempts/${spec.attemptId}`,
-                "GET",
-                undefined,
-                AbortSignal.timeout(10000),
-              );
-            } catch (error) {
-              // Observation may fail transiently while the worker computes or submits.
-              // Keep this attempt; the loop still enforces cancellation and its deadline.
-              const code = error instanceof Error && error.cause && typeof error.cause === "object" && "code" in error.cause
-                ? error.cause.code : undefined;
-              if (!(error instanceof Error) || (error.name !== "TimeoutError" &&
-                  !["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(String(code)))) throw error;
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              continue;
-            }
-            if (status.lastSeq !== lastSeq) {
-              state.lastProgressAt = Date.now();
-              lastSeq = status.lastSeq;
-            }
-            if (status.state !== "running") break;
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          }
-        } catch (error) {
-          status = {
-            state: "failed",
-            lastSeq: 0,
-            error: redact(errorText(error), [process.env[model.apiKeyEnv] || ""]),
-            retryable: true,
-          };
-        }
-        const receipt = await current.receipt(task.id);
-        // A failed connection does not imply the old session has stopped. Settle it before reuse.
-        if (!status || status.state === "running" || status.retryable) {
-          if (!receipt)
-            await current.endAttempt(
-              spec,
-              controller.signal.aborted ? "cancelled" : state.status === "timed_out" ? "timed_out" : "failed",
-              state.reason || status?.error || "Worker disconnected",
-            );
-          await request(
-            `${workerUrl}/api/attempts/${spec.attemptId}/cancel`,
-            "POST",
-            {},
-            AbortSignal.timeout(5000),
-          ).catch(() => {});
-          const until = Date.now() + 10000;
-          while (Date.now() < until) {
-            try {
-              const health = await request<WorkerStatus>(
-                `${workerUrl}/api/health`,
-                "GET",
-                undefined,
-                AbortSignal.timeout(1000),
-              );
-              if (!health.activeAttempt) break;
-            } catch {
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await request(`${workerUrl}/api/attempts/${spec.attemptId}`);
+          } catch {
+            throw error;
           }
         }
-        // Wait for cancellation and cleanup before closing the terminal event stream.
-        if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
-        eventController.abort();
-        eventsSaved = (await stream) ?? false;
-        const eventsFile = path.join(attemptDir, "events.jsonl");
-        if (manifest.debug && (await exists(eventsFile))) await compressFile(eventsFile);
-        let record: AttemptRecord = { spec, status };
-        try {
-          const archived = await request<AttemptRecord>(
-            `${workerUrl}/api/attempts/${spec.attemptId}/record`,
-            "GET",
-            undefined,
-            AbortSignal.timeout(1000),
+        if (manifest.debug || options.onEvent)
+          stream = consumeEvents(
+            workerUrl,
+            spec.attemptId,
+            manifest.debug ? path.join(attemptDir, "events.jsonl") : undefined,
+            eventController.signal,
+            options.onEvent,
           );
-          if (canonical(archived.spec) !== canonical(spec))
-            throw new Error("Attempt record identity mismatch");
-          record = archived;
-        } catch {
-          /* A crashed worker may not have finalized its usage ledger. Events remain available. */
+        while (true) {
+          if (controller.signal.aborted || Date.now() > spec.deadline) {
+            const receipt = await current.receipt(task.id);
+            if (!receipt)
+              await current.endAttempt(
+                spec,
+                controller.signal.aborted ? "cancelled" : "timed_out",
+                controller.signal.aborted ? "Interrupted" : "Task deadline exceeded",
+              );
+            await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
+            break;
+          }
+          try {
+            status = await request<AttemptStatus>(
+              `${workerUrl}/api/attempts/${spec.attemptId}`,
+              "GET",
+              undefined,
+              AbortSignal.timeout(10000),
+            );
+          } catch (error) {
+            // Observation may fail transiently while the worker computes or submits.
+            // Keep this attempt; the loop still enforces cancellation and its deadline.
+            const code = error instanceof Error && error.cause && typeof error.cause === "object" && "code" in error.cause
+              ? error.cause.code : undefined;
+            if (!(error instanceof Error) || (error.name !== "TimeoutError" &&
+                !["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(String(code)))) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            continue;
+          }
+          if (status.lastSeq !== lastSeq) {
+            state.lastProgressAt = Date.now();
+            lastSeq = status.lastSeq;
+          }
+          if (status.state !== "running") break;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
-        let copied = false;
-        try {
-          const artifacts = [
-            ...new Map(
-              [...(record.metrics?.audit.artifacts || []), ...(receipt?.audit.artifacts || [])].map(
-                (artifact) => [artifact.id, artifact],
-              ),
-            ).values(),
-          ];
-          const retained = manifest.debug ? artifacts : [];
-          await copyArtifacts(workerUrl, spec, retained, path.join(working, "tasks", task.id, "artifacts"));
-          copied = true;
-          state.artifactStatus = {
-            status: manifest.debug ? "available" : "not_retained",
-            source: manifest.debug ? "run" : "worker-temporary",
-          };
-        } catch (error) {
-          record.artifactError = errorText(error);
+      } catch (error) {
+        status = {
+          state: "failed",
+          lastSeq: 0,
+          error: redact(errorText(error), [process.env[model.apiKeyEnv] || ""]),
+          errorDetail: redact(inspect(error, { depth: null, maxStringLength: null, maxArrayLength: null }),
+            [process.env[model.apiKeyEnv] || ""]),
+          retryable: true,
+        };
+      }
+      const receipt = await current.receipt(task.id);
+      // A failed connection does not imply the old session has stopped. Settle it before reuse.
+      if (!status || status.state === "running" || status.retryable) {
+        if (!receipt)
+          await current.endAttempt(
+            spec,
+            controller.signal.aborted ? "cancelled" : state.status === "timed_out" ? "timed_out" : "failed",
+            state.reason || status?.error || "Worker disconnected",
+          );
+        await request(
+          `${workerUrl}/api/attempts/${spec.attemptId}/cancel`,
+          "POST",
+          {},
+          AbortSignal.timeout(5000),
+        ).catch(() => {});
+        const until = Date.now() + 10000;
+        while (Date.now() < until) {
+          try {
+            const health = await request<WorkerStatus>(
+              `${workerUrl}/api/health`,
+              "GET",
+              undefined,
+              AbortSignal.timeout(1000),
+            );
+            if (!health.activeAttempt) break;
+          } catch {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      // Wait for cancellation and cleanup before closing the terminal event stream.
+      if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
+      eventController.abort();
+      eventsSaved = (await stream) ?? false;
+      const eventsFile = path.join(attemptDir, "events.jsonl");
+      if (manifest.debug && (await exists(eventsFile))) await compressFile(eventsFile);
+      let record: AttemptRecord = { spec, status };
+      try {
+        const archived = await request<AttemptRecord>(
+          `${workerUrl}/api/attempts/${spec.attemptId}/record`,
+          "GET",
+          undefined,
+          AbortSignal.timeout(1000),
+        );
+        if (canonical(archived.spec) !== canonical(spec))
+          throw new Error("Attempt record identity mismatch");
+        record = archived;
+      } catch {
+        /* A crashed worker may not have finalized its usage ledger. Events remain available. */
+      }
+      let copied = false;
+      try {
+        const artifacts = [
+          ...new Map(
+            [...(record.metrics?.audit.artifacts || []), ...(receipt?.audit.artifacts || [])].map(
+              (artifact) => [artifact.id, artifact],
+            ),
+          ).values(),
+        ];
+        const retained = manifest.debug ? artifacts : [];
+        await copyArtifacts(workerUrl, spec, retained, path.join(working, "tasks", task.id, "artifacts"));
+        copied = true;
+        state.artifactStatus = {
+          status: manifest.debug ? "available" : "not_retained",
+          source: manifest.debug ? "run" : "worker-temporary",
+        };
+      } catch (error) {
+        record.artifactError = errorText(error);
+        await options.logger?.error(error, {
+          component: "host",
+          event: "artifact_copy_failed",
+          run_id: options.runId,
+          task_id: task.id,
+          attempt_id: spec.attemptId,
+        });
+        state.artifactStatus = {
+          status: "missing",
+          source: workerUrl,
+          error: record.artifactError,
+        };
+      }
+      if (receipt) {
+        state.status = "succeeded";
+        await current.save();
+      } else if (state.status === "running")
+        await current.endAttempt(
+          spec,
+          controller.signal.aborted
+            ? "cancelled"
+            : status?.state === "timed_out"
+            ? "timed_out"
+            : status?.state === "cancelled"
+              ? "cancelled"
+              : "failed",
+          status?.error || "No committed receipt",
+        );
+      if (!receipt) {
+        record.error = state.reason;
+        if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
+      }
+      const errors: FailureContext["errors"] = receipt ? [] :
+        (state.failure?.attemptId === spec.attemptId && state.failure.errors.length ? state.failure.errors : [{
+          category: status?.retryable ? "transport" : "interruption",
+          code: status?.retryable ? "transport_failed" : state.status === "timed_out" ? "attempt_timeout" : "attempt_failed",
+          path: "/",
+          message: state.reason || "No committed receipt",
+        }]);
+      const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, errors);
+      if (!receipt && !controller.signal.aborted) await options.logger?.error(state.reason || "No committed receipt", {
+        component: "host", event: "attempt_failed", run_id: options.runId, task_id: task.id,
+        attempt_id: spec.attemptId, stage: task.stage, errors,
+        detail: status?.errorDetail ?? record.status?.errorDetail,
+      });
+      if (pause) {
+        await current.save();
+        options.onProgress?.("stage_paused " + JSON.stringify(pause));
+        await options.logger?.error(`同类失败达到阈值，暂停 ${pause.stage}: ${pause.code} ${pause.path}`, {
+          component: "host", event: "stage_paused", run_id: options.runId, task_id: task.id,
+        });
+        wake();
+      }
+      if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
+      state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
+      if (record.metrics) {
+        for (const key of Object.keys(saved.usage) as (keyof typeof saved.usage)[])
+          saved.usage[key] += record.metrics.usage[key] || 0;
+        saved.recordedAttempts++;
+      }
+      await current.save();
+      if (
+        (!manifest.debug || (copied && eventsSaved && record.metrics)) &&
+        record.status &&
+        record.status.state !== "running"
+      )
+        await request(`${workerUrl}/api/attempts/${spec.attemptId}`, "DELETE").catch(async (error) => {
           await options.logger?.error(error, {
             component: "host",
-            event: "artifact_copy_failed",
+            event: "worker_cleanup_failed",
             run_id: options.runId,
             task_id: task.id,
             attempt_id: spec.attemptId,
           });
-          state.artifactStatus = {
-            status: "missing",
-            source: workerUrl,
-            error: record.artifactError,
-          };
-        }
-        if (receipt) {
-          state.status = "succeeded";
-          await current.save();
-        } else if (state.status === "running")
-          await current.endAttempt(
-            spec,
-            controller.signal.aborted
-              ? "cancelled"
-              : status?.state === "timed_out"
-              ? "timed_out"
-              : status?.state === "cancelled"
-                ? "cancelled"
-                : "failed",
-            status?.error || "No committed receipt",
-          );
-        if (!receipt) {
-          record.error = state.reason;
-          if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
-        }
-        const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, receipt ? [] :
-          (state.failure?.attemptId === spec.attemptId && state.failure.errors.length ? state.failure.errors : [{
-            category: status?.retryable ? "transport" : "interruption",
-            code: status?.retryable ? "transport_failed" : state.status === "timed_out" ? "attempt_timeout" : "attempt_failed",
-            path: "/",
-          }]));
-        if (pause) {
-          await current.save();
-          options.onProgress?.("stage_paused " + JSON.stringify(pause));
-          await options.logger?.error(`同类失败达到阈值，暂停 ${pause.stage}: ${pause.code} ${pause.path}`, {
-            component: "host", event: "stage_paused", run_id: options.runId, task_id: task.id,
-          });
-          wake();
-        }
-        if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
-        state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
-        if (record.metrics) {
-          for (const key of Object.keys(saved.usage) as (keyof typeof saved.usage)[])
-            saved.usage[key] += record.metrics.usage[key] || 0;
-          saved.recordedAttempts++;
-        }
-        await current.save();
-        if (
-          (!manifest.debug || (copied && eventsSaved && record.metrics)) &&
-          record.status &&
-          record.status.state !== "running"
-        )
-          await request(`${workerUrl}/api/attempts/${spec.attemptId}`, "DELETE").catch(async (error) => {
-            await options.logger?.error(error, {
-              component: "host",
-              event: "worker_cleanup_failed",
-              run_id: options.runId,
-              task_id: task.id,
-              attempt_id: spec.attemptId,
-            });
-            options.onProgress?.(`Worker 副本未释放：${errorText(error)}`);
-          });
-        if (receipt) {
-          options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
-          return;
-        }
-        if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped) return;
-        if (status?.retryable) {
-          if (transportRetries++ >= options.retries) return;
-        } else if (
-          state.failure?.draft &&
-          state.failure.errors.some((e) => ["structure", "evidence", "decision"].includes(e.category))
-        ) {
-          if (contentRetries++ >= 1) return;
-        } else return;
-        // Cancel the old attempt before authorizing a replacement.
-        await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
-        await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, transportRetries - 1) : 0,
-          ),
-        );
-        } finally {
-          attemptSources.delete(spec.attemptId);
-        }
+          options.onProgress?.(`Worker 副本未释放：${errorText(error)}`);
+        });
+      if (receipt) {
+        options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
+        return;
+      }
+      if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped) return;
+      if (status?.retryable) {
+        if (retries.transport++ >= options.retries) return;
+      } else if (
+        state.failure?.draft &&
+        state.failure.errors.some((e) => ["structure", "evidence", "decision"].includes(e.category))
+      ) {
+        if (retries.content++ >= 1) return;
+      } else return;
+      // Cancel the old attempt before authorizing a replacement.
+      await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
+      const retryDelay = status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
+      state.status = "pending";
+      state.nextRetryAt = Date.now() + retryDelay;
+      await current.save();
+      // Return the worker and concurrency slot while this task backs off.
+      } finally {
+        attemptSources.delete(spec.attemptId);
       }
     }
     const running = new Map<string, Promise<void>>();
@@ -613,12 +625,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         deferWorker(worker);
       }));
       if (!options.workerUrls?.length) {
-        const waiting = manifest.tasks.filter(
-          (task) =>
-            dispatchable(task) &&
-            manifest.states[task.id].status === "pending" &&
-            Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded"),
-        );
+        const waiting = manifest.tasks.filter(runnable);
         let slots = Math.max(0, desiredConcurrency - running.size);
         for (const engine of new Set(waiting.map(engineForTask))) {
           const target = Math.min(slots, waiting.filter((task) => engineForTask(task) === engine).length);
@@ -642,7 +649,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       for (const task of scheduleTasks(manifest.tasks, manifest.states)) {
         if (controller.signal.aborted) break;
         if (!dispatchable(task)) continue;
-        if (manifest.states[task.id].status !== "pending" || running.has(task.id)) continue;
+        if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
+            (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
         const dependencies = Object.values(task.dependencies);
         if (dependencies.some((id) => !running.has(id) && manifest.states[id]?.status &&
           !["pending", "running", "succeeded"].includes(manifest.states[id].status))) {
@@ -664,6 +672,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (!capable.length) throw new Error("Required engine or tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
         if (!worker) continue;
+        delete manifest.states[task.id].nextRetryAt;
         busy.add(worker);
         scheduled = true;
         const promise = execute(task, worker, prepared, binding.request.sources)
@@ -674,16 +683,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
             if (pause) options.onProgress?.("stage_paused " + JSON.stringify(pause));
             await current.save();
-          })
-          .then(async () => {
-            const state = manifest.states[task.id];
-            if (["failed", "timed_out"].includes(state.status))
-              await options.logger?.error(state.reason || "Task failed without a committed result", {
+            if (!controller.signal.aborted)
+              await options.logger?.error(error, {
                 component: "host",
                 event: "task_failed",
                 run_id: options.runId,
                 task_id: task.id,
-                attempt_id: state.attemptId,
+                attempt_id: manifest.states[task.id].attemptId,
+                stage: task.stage,
               });
           })
           .finally(() => {
@@ -693,10 +700,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         running.set(task.id, promise);
       }
       if (blocked) await current.save();
-      if (running.size) await Promise.race([...running.values(), changed,
-        ...(unavailable.size ? [new Promise((resolve) => setTimeout(resolve, 1000))] : [])]);
-      else if (unavailable.size && manifest.tasks.some((task) => dispatchable(task) && manifest.states[task.id].status === "pending" &&
-        Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded"))) {
+      const retryDeadlines = manifest.tasks.filter(task => dispatchable(task) &&
+        manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())
+        .map(task => manifest.states[task.id].nextRetryAt!);
+      if (running.size || retryDeadlines.length) {
+        const waitMs = Math.min(unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([...running.values(), changed,
+          ...(Number.isFinite(waitMs) ? [new Promise(resolve => { timer = setTimeout(resolve, waitMs); })] : [])]); }
+        finally { clearTimeout(timer); }
+      }
+      else if (unavailable.size && manifest.tasks.some(runnable)) {
         if ([...unavailable.values()].every(({ since }) => Date.now() - since >= options.policy.timeoutSeconds * 1000))
           throw new Error("External workers remained unavailable; pending tasks were preserved for resume");
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -704,6 +718,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       else if (!scheduled) break;
     }
     await Promise.all(running.values());
+    for (const state of Object.values(manifest.states)) delete state.nextRetryAt;
     if (controller.signal.aborted)
       for (const task of manifest.tasks)
         if (inScope(task) && manifest.states[task.id].status === "pending") manifest.states[task.id].status = "cancelled";

@@ -39,7 +39,7 @@ test("logs serialize multiple processes, retain single JSON lines and deduplicat
     const rows = await readRows(path.join(directory, "log/evaluation.log"));
     assert.equal(rows.length, 28);
     assert(rows.every((r) => r.result.text === "中文🙂\n".repeat(20_000)));
-    assert.equal((await readRows(path.join(directory, "log/runtime.log"))).length, 1);
+    assert.equal((await readRows(path.join(directory, "log/runtime.log"))).length, 3);
     const restarted = createFileLogger(options(directory));
     assert(await restarted.evaluation(rows[0]));
     assert.equal((await readRows(path.join(directory, "log/evaluation.log"))).length, 28);
@@ -49,14 +49,14 @@ test("logs serialize multiple processes, retain single JSON lines and deduplicat
   }
 });
 
-test("errors are redacted and rate limited across instances; interrupted tails recover without losing complete records", async () => {
+test("errors retain all occurrences and full redacted details; interrupted tails recover without losing complete records", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-logs-"));
   try {
     const logger = createFileLogger({
       ...options(directory),
       secrets: [JSON.stringify({ credential: "private-key" })],
     });
-    const context = { component: "host", event: "failed", run_id: "run" };
+    const context = { component: "host", event: "failed", run_id: "run", attempt_id: "attempt" };
     await logger.error(
       new Error("failed: " + JSON.stringify({ credential: "private-key" }) + "\nnext line"),
       { ...context, task_id: "a" },
@@ -65,13 +65,17 @@ test("errors are redacted and rate limited across instances; interrupted tails r
       new Error("failed: " + JSON.stringify({ credential: "private-key" }) + "\nnext line"),
       { ...context, task_id: "b" },
     );
+    await logger.error(
+      new Error("failed: " + JSON.stringify({ credential: "private-key" }) + "\nnext line"),
+      { ...context, task_id: "a" },
+    );
     await logger.evaluation(row);
     const runtime = path.join(directory, "log/runtime.log"),
       evaluation = path.join(directory, "log/evaluation.log");
     const text = await readFile(runtime, "utf8");
     assert(!text.includes("private-key"));
-    assert.equal((await readRows(runtime)).length, 1);
-    const old = JSON.parse(text);
+    assert.equal((await readRows(runtime)).length, 3, "errors are not merged even with the same task and attempt");
+    const old = (await readRows(runtime))[0];
     old.time = new Date(Date.now() - 61_000).toISOString();
     await writeFile(runtime, JSON.stringify(old) + "\n");
     await appendFile(evaluation, '{"time":"interrupted');
@@ -84,6 +88,13 @@ test("errors are redacted and rate limited across instances; interrupted tails r
       context,
     );
     assert.equal((await readRows(runtime)).length, 2);
+    const longError = new Error("raw detail\n".repeat(1000), { cause: new Error("original " + JSON.stringify({ credential: "private-key" })) });
+    await restarted.error(longError, context);
+    const last = (await readRows(runtime)).at(-1);
+    assert.equal(last.message, longError.message);
+    assert.equal(last.stack, longError.stack);
+    assert.match(last.detail, /original \[REDACTED\]/);
+    assert(!last.detail.includes("private-key"));
     assert(await restarted.evaluation(row));
     assert.deepEqual(await readRows(evaluation), [row]);
     assert(await restarted.evaluation({ ...row, task_id: "next", submission_id: "next" }));
@@ -117,6 +128,9 @@ test("automation lifecycle events use the shared runtime journal and redact cont
     assert.equal(records[0].level, "info");
     assert.equal(records[0].automation_id, "test");
     assert(!JSON.stringify(records).includes("private-key"));
+    await logger.error("network unavailable", { component: "automations", event: "download_failed" });
+    await logger.error("network unavailable", { component: "automations", event: "download_failed" });
+    assert.equal((await readRows(path.join(directory, "log/runtime.log"))).length, 3, "distinct pipeline failures are retained without a task attempt id");
     assert.deepEqual((await readdir(path.join(directory, "log"))).sort(), ["evaluation.log", "runtime.log"]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

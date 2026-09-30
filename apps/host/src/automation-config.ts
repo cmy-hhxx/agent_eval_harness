@@ -82,7 +82,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   };
 }
 
-/** Automation is always a full-stage evaluation, including every source's rewrite. */
+/** Finish evaluations and their rewrites continuously; build the problem library separately. */
 export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: string, date: string): EvalConfig {
   for (const id of REMOTE_MODELS)
     if (!base.inputs.versions.some((version) => version.id === id)) throw new Error(`Missing automation model: ${id}`);
@@ -95,7 +95,7 @@ export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: st
       })),
     },
     comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]],
-    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: true },
-    clustering: { ...base.clustering, enabled: true },
+    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: false },
+    clustering: { ...base.clustering, enabled: false },
   };
 }

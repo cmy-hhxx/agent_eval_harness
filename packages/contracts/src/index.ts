@@ -272,6 +272,7 @@ export interface AttemptStatus {
   state: AttemptState;
   lastSeq: number;
   error?: string;
+  errorDetail?: string;
   retryable?: boolean;
   failure?: FailureContext;
 }
@@ -351,6 +352,9 @@ export interface LogContext {
   run_id?: string;
   task_id?: string;
   attempt_id?: string;
+  stage?: string;
+  errors?: FailureContext["errors"];
+  detail?: string;
 }
 export interface EvaluationLog {
   time: string;
@@ -378,6 +382,8 @@ export interface TaskState {
   durationMs?: number;
   startedAt?: number;
   lastProgressAt?: number;
+  /** Scheduled retry of this task within the current Host execution. */
+  nextRetryAt?: number;
   artifactStatus?: {
     status: "available" | "missing" | "not_retained";
     source: string;

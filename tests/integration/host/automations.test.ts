@@ -15,19 +15,21 @@ import { automaticResumeStages, automationWorkflow, checkpointRecovery, evaluati
 import { attributionResult, comparisonResult, draftFor, fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
-test("automation plans all four stages and rewrites for attribution, comparison and clustering", async () => {
+test("automation plans attribution, comparison and both rewrites while deferring clustering", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw()]);
     const evaluation = automationEvaluationConfig(config, source, date);
     const plan = await buildPlan(evaluation);
-    assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["attribution", "comparison", "rewrite", "clustering"]));
+    assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["attribution", "comparison", "rewrite"]));
+    assert.equal(evaluation.clustering.enabled, false);
+    assert.equal(evaluation.rewrite.clustering, false);
     const rewrites = plan.tasks.filter((task) => task.stage === "rewrite");
     assert.equal(evaluation.rewrite.comparisonItems, true);
     assert(rewrites.filter((task) => (task.data as TaskData).rewriteOf?.stage === "comparison")
       .every((task) => (task.data as TaskData).comparisonRewriteScope === "all"));
-    assert.deepEqual(new Set(rewrites.map((task) => (task.data as TaskData).rewriteOf!.stage)), new Set(["attribution", "comparison", "clustering"]));
+    assert.deepEqual(new Set(rewrites.map((task) => (task.data as TaskData).rewriteOf!.stage)), new Set(["attribution", "comparison"]));
     for (const task of plan.tasks.filter((task) => task.stage !== "rewrite"))
       assert.equal(rewrites.filter((rewrite) => (rewrite.data as TaskData).rewriteOf!.taskId === task.id).length, 1);
 
@@ -48,12 +50,14 @@ test("automation plans all four stages and rewrites for attribution, comparison 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("daily reconciliation covers retained and new attribution receipts with clustering and rewrite", async () => {
+test("automation defers unfinished clustering, retains accepted results and can cluster all attributions later", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old")]);
-    const evaluation = automationEvaluationConfig(config, source, date), plan = await buildPlan(evaluation);
+    const evaluation = automationEvaluationConfig(config, source, date);
+    const clustered = { ...evaluation, clustering: { ...evaluation.clustering, enabled: true }, rewrite: { ...evaluation.rewrite, clustering: true } };
+    const plan = await buildPlan(clustered);
     const state: RunState = { usage: emptyUsage(), recordedAttempts: 0,
       receipts: Object.fromEntries(plan.tasks.map(task => {
         const rewrites = comparisonSlots(comparisonResult(), "all").map(({ id, text }) => ({ id, text }));
@@ -64,25 +68,40 @@ test("daily reconciliation covers retained and new attribution receipts with clu
         }];
       })) as RunState["receipts"], manifest: {
         format: "evaluation-run", runId: "daily", debug: false, status: "finished", startedAt: 1,
-        evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: evaluation,
+        evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: clustered,
         tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary,
         states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "succeeded", attempts: 1 }])),
       } };
+    const deferred = plan.tasks.find((task) => task.stage === "clustering")!;
+    const polish = plan.tasks.find((task) => (task.data as TaskData).rewriteOf?.taskId === deferred.id)!;
+    for (const task of [deferred, polish]) {
+      delete state.receipts[task.id];
+      state.manifest.states[task.id].status = "failed";
+    }
+    state.manifest.pausedStages = [deferred, polish].map((task) => ({ stage: task.stage, category: "structure", code: "invalid",
+      path: "/", at: 1, taskIds: [task.id] }));
+    const accepted = new Map(Object.entries(state.receipts));
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old"), raw("new")]);
     await automationWorkflow.reconcile!(directory, state, evaluation);
-    const clusters = state.manifest.tasks.filter(task => task.stage === "clustering");
-    for (const task of state.manifest.tasks.filter(task => task.stage === "attribution"))
-      assert(clusters.some(cluster => Object.values(cluster.dependencies).includes(task.id)), "missing clustering for " + task.id);
-    for (const cluster of clusters)
-      assert(state.manifest.tasks.some(task => (task.data as TaskData).rewriteOf?.taskId === cluster.id));
-    for (const task of plan.tasks) assert.equal(state.manifest.tasks.find(current => current.id === task.id), task);
+    assert(!state.manifest.tasks.some((task) => task.id === deferred.id || task.id === polish.id));
+    assert.deepEqual(state.manifest.pausedStages, []);
+    for (const task of state.manifest.tasks.filter(task => task.stage === "clustering" || (task.data as TaskData).rewriteOf?.stage === "clustering"))
+      assert(accepted.has(task.id), "automation must not schedule new clustering work");
+    for (const [id, receipt] of accepted) assert.equal(state.receipts[id], receipt);
     const ids = state.manifest.tasks.map(task => task.id);
     await automationWorkflow.reconcile!(directory, state, evaluation);
     assert.deepEqual(state.manifest.tasks.map(task => task.id).sort(), ids.sort(), "reconciliation must not duplicate supplemental tasks");
+    await reconcileRun(directory, state, clustered);
+    const clusters = state.manifest.tasks.filter(task => task.stage === "clustering");
+    for (const task of state.manifest.tasks.filter(task => task.stage === "attribution"))
+      assert(clusters.some(cluster => Object.values(cluster.dependencies).includes(task.id)), "missing deferred clustering for " + task.id);
+    for (const cluster of clusters)
+      assert(state.manifest.tasks.some(task => (task.data as TaskData).rewriteOf?.taskId === cluster.id));
+    for (const [id, receipt] of accepted) assert.equal(state.receipts[id], receipt);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("all-stage automation resumes interrupted clustering and each rewrite without repeating accepted tasks", { timeout: 60_000 }, async (t) => {
+test("automation resumes each evaluation rewrite without running clustering or repeating accepted tasks", { timeout: 60_000 }, async (t) => {
   const { directory, config, modelForStage } = await fixtureConfig();
   let controller = new AbortController();
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
@@ -120,7 +139,7 @@ test("all-stage automation resumes interrupted clustering and each rewrite witho
   try {
     const runId = `daily-${date}`, run = path.join(evaluation.output.path, runId);
     const accepted = new Set<string>();
-    for (let restart = 0; restart < 5; restart++) {
+    for (let restart = 0; restart < 3; restart++) {
       controller = new AbortController();
       const previous = restart ? comparisonCodec.encode(await readRunState(run)) : undefined;
       const result = await runEvaluation({
@@ -134,7 +153,7 @@ test("all-stage automation resumes interrupted clustering and each rewrite witho
       for (const id of accepted) assert.equal(calls.get(id), interruptedTasks.has(id) ? 2 : 1);
       for (const id of Object.keys(saved.receipts)) accepted.add(id);
       assert(accepted.size > 0, "accepted work must survive interruption");
-      assert.equal(result.status, restart < 4 ? "interrupted" : "finished");
+      assert.equal(result.status, restart < 2 ? "interrupted" : "finished");
       if (restart === 0) {
         const paused = comparisonCodec.encode(saved);
         const cancelled = Object.entries(paused.tasks).find(([, task]) => task.status === "cancelled")!;
@@ -144,9 +163,9 @@ test("all-stage automation resumes interrupted clustering and each rewrite witho
         assert.equal(checkpointRecovery([paused]), "interrupted");
       }
     }
-    assert.deepEqual(interrupted, new Set(["clustering", "rewrite/attribution", "rewrite/comparison", "rewrite/clustering"]));
+    assert.deepEqual(interrupted, new Set(["rewrite/attribution", "rewrite/comparison"]));
     const saved = await readRunState(run), counts = summarize([comparisonCodec.encode(saved)]);
-    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "clustering", "comparison", "rewrite"]);
+    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "rewrite"]);
     for (const stage of Object.values(counts.stages)) {
       assert(stage.total > 0);
       assert.equal(stage.completed, stage.total);
@@ -184,10 +203,48 @@ test("automatic recovery distinguishes shutdown, temporary outages and persisten
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("deferred clustering failures and pauses cannot block completed evaluation or enter its retry pool", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const receipt = { acceptedAt: 100, exported: {} };
+    const saved = { config: { inputs: { versions: REMOTE_MODELS.map(id => ({ id })) },
+      rewrite: { comparison: true, comparisonItems: true, clustering: true }, clustering: { enabled: true } },
+      preflight: { skipped: [], issues: [] }, tasks: {
+        comparison: { stage: "comparison", status: "succeeded", receipt, dependencies: {}, data: { comparisonId: "c" } },
+        polish: { stage: "rewrite", status: "succeeded", receipt, dependencies: {}, data: {
+          rewriteOf: { taskId: "comparison", stage: "comparison" }, comparisonRewriteScope: "all" } },
+        cluster: { stage: "clustering", status: "failed", data: {}, dependencies: {} },
+        clusterPolish: { stage: "rewrite", status: "blocked", data: { rewriteOf: { taskId: "cluster", stage: "clustering" } } },
+      }, pausedStages: [
+        { stage: "clustering", category: "structure", code: "invalid", path: "/", taskIds: ["cluster"], at: 1 },
+        { stage: "rewrite", category: "transport", code: "unavailable", path: "/", taskIds: ["clusterPolish"], at: 1 },
+      ] } as unknown as Checkpoint;
+    const summary = summarize([saved]);
+    assert.equal(summary.readyComparisons, 1);
+    assert.equal(summary.stages.clustering, undefined);
+    assert.equal(summary.stages.rewrite.total, 1);
+    assert.equal(summary.stages.rewrite.blocked, 0);
+    assert.equal(checkpointRecovery([saved]), undefined);
+    assert.deepEqual(automaticResumeStages(saved), []);
+    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const date = "2026-09-29", current = { date, runIds: [], evaluation: "retry", evaluationError: "cluster: invalid" } as unknown as AutomationJob;
+    await writeJson(path.join(directory, `daily-${date}`, "state.json"), saved);
+    await recoverEvaluation(settings, directory, current);
+    assert.equal(current.evaluation, "completed");
+    assert.equal(current.evaluationError, undefined);
+    saved.tasks.polish.data.comparisonRewriteScope = "verdicts";
+    (saved.config as { rewrite: { comparisonItems: boolean } }).rewrite.comparisonItems = false;
+    assert.equal(summarize([saved]).readyComparisons, 0, "ordinary automation still requires complete comparison rewriting");
+    assert.equal(summarize([saved], false).readyComparisons, 1, "adopted history retains its declared completed scope");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("a daily Fast run expands to Expert with all rewrites in the same directory and retains accepted receipts", { timeout: 30_000 }, async () => {
   const { directory, config, modelForStage } = await fixtureConfig(undefined, true, true);
   const complete = structuredClone(config);
   complete.rewrite.comparisonItems = true;
+  complete.rewrite.clustering = false;
+  complete.clustering.enabled = false;
   complete.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
   config.inputs.versions = config.inputs.versions.filter((version) => ["a_fast", "b_fast"].includes(version.id));
   config.comparisons = [["a_fast", "b_fast"]];
@@ -267,7 +324,7 @@ test("an existing Fast run retains its date identity while Expert is added; hist
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("local all-stage counts preserve rewrite failure while the remote projection counts only comparisons", () => {
+test("local evaluation counts preserve rewrite failure while the remote projection counts only comparisons", () => {
   const state = { tasks: {
     comparison: { stage: "comparison", status: "succeeded", receipt: {}, dependencies: {}, data: { group: ["a_fast", "b_fast"] }, inputIds: { A: "a" } },
     rewrite: { stage: "rewrite", status: "failed", data: { rewriteOf: { taskId: "comparison", stage: "comparison" } } },

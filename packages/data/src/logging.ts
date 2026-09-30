@@ -1,14 +1,15 @@
 import { mkdir, open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
+import { inspect } from "node:util";
 import { errorText, redact, type JsonObject, type LogSink } from "@eval/contracts";
 import { runLock } from "./files.js";
 
-const ERROR_INTERVAL_MS = 60_000;
+const EVENT_INTERVAL_MS = 60_000;
 const evaluationKey = (record: JsonObject) =>
   JSON.stringify([record.workflow, record.run_id, record.task_id, record.submission_id]);
-const errorKey = (record: JsonObject) =>
-  JSON.stringify([record.component, record.event, record.run_id, record.message]);
+const eventKey = (record: JsonObject) =>
+  JSON.stringify([record.component, record.event, record.run_id, record.task_id, record.attempt_id, record.message]);
 
 /** Incremental indexes come only from the two logs, with no sidecar ledger or content fingerprints. */
 class Journal {
@@ -31,9 +32,9 @@ class Journal {
         this.seen.clear();
       }
       const now = Date.now();
-      const keyFor = this.runtime ? errorKey : evaluationKey;
+      const keyFor = this.runtime ? eventKey : evaluationKey;
       if (this.runtime)
-        for (const [key, time] of this.seen) if (now - time >= ERROR_INTERVAL_MS) this.seen.delete(key);
+        for (const [key, time] of this.seen) if (now - time >= EVENT_INTERVAL_MS) this.seen.delete(key);
       if (info.size > this.offset) {
         let pending = Buffer.alloc(0);
         const stream = createReadStream(this.file, { start: this.offset, end: info.size - 1 });
@@ -45,7 +46,7 @@ class Journal {
             if (!line.trim()) continue;
             const saved = JSON.parse(line) as JsonObject;
             const time = Date.parse(String(saved.time));
-            if (!this.runtime || now - time < ERROR_INTERVAL_MS) this.seen.set(keyFor(saved), time);
+            if (!this.runtime || saved.level !== "error" && now - time < EVENT_INTERVAL_MS) this.seen.set(keyFor(saved), time);
           }
           this.offset += end + 1;
           pending = pending.subarray(end + 1);
@@ -54,12 +55,13 @@ class Journal {
         if (pending.length) await handle.truncate(this.offset);
       }
       const key = keyFor(record);
-      if (this.seen.has(key)) return;
+      const deduplicate = !this.runtime || record.level !== "error";
+      if (deduplicate && this.seen.has(key)) return;
       const bytes = Buffer.from(JSON.stringify(record) + "\n");
       await handle.writeFile(bytes);
       await handle.sync();
       this.offset += bytes.length;
-      this.seen.set(key, Date.parse(String(record.time)));
+      if (deduplicate) this.seen.set(key, Date.parse(String(record.time)));
     } finally {
       await handle.close();
     }
@@ -118,7 +120,7 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
     );
   const sink: LogSink = {
     async error(error, context) {
-      const message = redact(errorText(error), [...secrets]).slice(0, 4096);
+      const message = redact(errorText(error), [...secrets]);
       await locked(() =>
         runtime.append(
           clean({
@@ -128,8 +130,9 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
             ...context,
             message,
             ...(error instanceof Error && error.stack
-              ? { stack: redact(error.stack, [...secrets]).slice(0, 8192) }
+              ? { stack: redact(error.stack, [...secrets]) }
               : {}),
+            ...(error instanceof Error ? { detail: inspect(error, { depth: null, maxStringLength: null, maxArrayLength: null }) } : {}),
           }),
         ),
       );

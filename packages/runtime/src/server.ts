@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import type { ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { inspect } from "node:util";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
@@ -421,10 +422,13 @@ export async function startWorker(
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running") {
         attempt.status.state = "failed";
+        const original = controller.signal.aborted ? controller.signal.reason : error;
         attempt.status.error = redact(
-          errorText(controller.signal.aborted ? controller.signal.reason : error),
+          errorText(original),
           [process.env[spec.model.apiKeyEnv] || ""],
         );
+        attempt.status.errorDetail = redact(inspect(original, { depth: null, maxStringLength: null, maxArrayLength: null }),
+          [process.env[spec.model.apiKeyEnv] || ""]);
         attempt.status.retryable =
           !controller.signal.aborted &&
           /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
@@ -561,7 +565,9 @@ export async function startWorker(
         attempt.status = {
           state: "failed",
           lastSeq: attempt.events.length,
-          error: errorText(error),
+          error: redact(errorText(error), [process.env[spec.model.apiKeyEnv] || ""]),
+          errorDetail: redact(inspect(error, { depth: null, maxStringLength: null, maxArrayLength: null }),
+            [process.env[spec.model.apiKeyEnv] || ""]),
         };
         attempt.settled = true;
         for (const client of attempt.clients.keys()) client.end();
