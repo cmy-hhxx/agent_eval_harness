@@ -2,7 +2,7 @@ import path from "node:path";
 import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
-import { PublicationStatistics, publishableComparisons, locateRecordStream, assertStatisticsLog } from "@eval/workflows/comparison";
+import { PublicationStatistics, publishableComparisons, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
@@ -50,13 +50,17 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
   async function* results(): AsyncGenerator<PublicationResult> {
     for (const { id, state } of runs) {
       if (!state) continue;
-      const ready = publishableComparisons(state);
+      const requireItems = !job.adopted || (state.config as EvalConfig).rewrite.comparisonItems === true;
+      const ready = publishableComparisons(state, requireItems);
       if (!ready.size) continue;
+      const labels = new Map(Object.values(state.tasks).filter((task) => task.stage === "comparison")
+        .map((task) => [task.data.comparisonId, Object.keys(task.inputIds)]));
       for await (const item of readJsonl(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"))) {
         signal.throwIfAborted();
         const row = object(item), key = String(row.comparison_id), evaluatedAt = ready.get(key);
         if (evaluatedAt === undefined) continue;
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
+        if (requireItems) assertCompleteComparisonRewrite(row, labels.get(key)!);
         ready.delete(key);
         yield { row, evaluatedAt };
       }

@@ -44,6 +44,8 @@ export interface EvalConfig {
   /** Language polish targets. Every accepted source result gets one rewrite task. */
   rewrite: {
     comparison: boolean;
+    /** Include every comparison cell as well as the verdict reasons. */
+    comparisonItems?: boolean;
     attribution: boolean;
     clustering: boolean;
   };
@@ -145,8 +147,8 @@ export interface TaskData {
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;
-  /** Select the presentation fields when explicitly refreshing comparison text. */
-  comparisonRewriteScope?: "verdicts" | "items";
+  /** Complete automatic polish or a selected presentation refresh. */
+  comparisonRewriteScope?: "verdicts" | "items" | "all";
   /** Explicit subset of source slots for a presentation repair. */
   rewriteSlotIds?: string[];
   rewriteScope?: { batch_id: string; model: string };

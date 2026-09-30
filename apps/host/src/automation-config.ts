@@ -95,7 +95,7 @@ export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: st
       })),
     },
     comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]],
-    rewrite: { comparison: true, attribution: true, clustering: true },
+    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: true },
     clustering: { ...base.clustering, enabled: true },
   };
 }

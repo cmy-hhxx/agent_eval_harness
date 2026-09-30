@@ -57,10 +57,12 @@
     },
     "stats": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "name", "wins", "evaluated", "winRate", "accuracy", "first", "total", "input", "output"],
+      "required": ["id", "name", "wins", "both_good", "both_bad", "evaluated", "winRate", "accuracy", "first", "total", "input", "output"],
       "properties": {
         "id": { "type": "string" }, "name": { "type": "string" },
         "wins": { "$ref": "#/$defs/count" },
+        "both_good": { "$ref": "#/$defs/count" },
+        "both_bad": { "$ref": "#/$defs/count" },
         "evaluated": { "$ref": "#/$defs/count" },
         "winRate": { "type": "number", "minimum": 0, "maximum": 100 },
         "accuracy": {
@@ -128,10 +130,12 @@
     },
     "trend": {
       "type": "object", "additionalProperties": false,
-      "required": ["date", "id", "wins", "evaluated"],
+      "required": ["date", "id", "wins", "both_good", "both_bad", "evaluated"],
       "properties": {
         "date": { "$ref": "#/$defs/date" }, "id": { "type": "string" },
         "wins": { "$ref": "#/$defs/count" },
+        "both_good": { "$ref": "#/$defs/count" },
+        "both_bad": { "$ref": "#/$defs/count" },
         "evaluated": { "$ref": "#/$defs/count" }
       }
     }

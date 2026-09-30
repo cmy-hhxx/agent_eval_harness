@@ -34,7 +34,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const preference = preferences.get(item.id);
     if (preference && (!item.text.startsWith(preference + "：") || !item.text.slice(preference.length + 1).trim()))
       issue("rewrite_preference_missing", `/rewrites/${index}/text`, `必须以“${preference}：”开头，随后给出本场对局的具体理由；不能丢掉或改变已确定偏好`, item.text);
-    if (preference?.startsWith("双方") && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选/u.test(item.text))
+    if (preference === "双方都好" && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选/u.test(item.text))
       issue("rewrite_winner_contradiction", `/rewrites/${index}/text`, "此槽位没有整体胜者，不能改写为偏好某一方", item.text);
   }
   for (const id of expected)

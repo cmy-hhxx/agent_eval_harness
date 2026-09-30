@@ -29,7 +29,8 @@ export function attributionSlots(result: AttributionResult): RewriteItem[] {
   });
   return items;
 }
-export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "items" = "verdicts"): RewriteItem[] {
+export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
+  if (scope === "all") return [...comparisonSlots(result, "verdicts"), ...comparisonSlots(result, "items")];
   if (scope === "items") return result.decision_basis.comparisons.flatMap((row, index) =>
     Object.entries(row.assessments).map(([candidate, assessment]) => ({
       id: `comparison.${index}.${candidate}.summary`,
@@ -91,7 +92,7 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
     })),
   ];
 }
-export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" = "verdicts"): RewriteItem[] {
+export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
   if (stage === "clustering") return clusteringSlots(result as ClusteringResult);
   return stage === "attribution"
     ? attributionSlots(result as AttributionResult)

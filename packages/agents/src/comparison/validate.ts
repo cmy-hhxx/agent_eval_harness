@@ -42,11 +42,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const tierOf = (label: string) => value.ranking.findIndex((tier) => tier.includes(label));
   const failed = labels.filter((label) => value.assessments[label]?.meets_core === false);
   if (new Set(failed.map(tierOf)).size > 1)
-    issue("failed_ranking_split", "/ranking", "未达标候选必须同层；局部优势写在逐项对比，不能产生整体胜者");
+    issue("failed_ranking_split", "/ranking", "未达标候选必须同层；相对优劣写在 tradeoff 并由逐项对比支持，不改变都差判决");
   if (labels.some((label) => value.assessments[label]?.meets_core && failed.some((other) => tierOf(label) >= tierOf(other))))
     issue("core_ranking_contradiction", "/ranking", "达标候选必须排在所有未达标候选之前，不能同层或倒置");
-  if (failed.length === labels.length && /更好|更优|更可用|更值得|更可靠|胜出|略胜|占优|居前|优于|优先选|排(?:在)?前|列(?:在)?前/u.test(value.decision_basis.tradeoff))
-    issue("failed_tradeoff_winner", "/decision_basis/tradeoff", "全部核心不可用时短评不能宣称某方更好、胜出或排前；写清共同失败，局部优势留在 comparisons");
 
   const covered = new Map(labels.map((label) => [label, new Set<number>()]));
   for (const [index, row] of value.decision_basis.comparisons.entries()) {

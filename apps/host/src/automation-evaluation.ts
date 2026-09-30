@@ -21,7 +21,7 @@ export async function checkpoint(output: string, runId: string): Promise<Checkpo
 export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
   const summary: EvaluationSummary = { stages: {}, skipped: 0, issues: 0, readyComparisons: 0 };
   for (const state of checkpoints) {
-    summary.readyComparisons += publishableComparisons(state).size;
+    summary.readyComparisons += publishableComparisons(state, true).size;
     summary.skipped += (state.preflight.skipped as unknown[]).length;
     summary.issues += (state.preflight.issues as unknown[]).length;
     for (const task of Object.values(state.tasks)) {
@@ -68,9 +68,13 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   if (!saved) return;
   job.summary = summarize([saved]);
   const selection = saved.config as EvalConfig;
+  if (job.mongo?.synced && Object.values(saved.tasks).some((task) =>
+    task.data.rewriteOf?.stage === "comparison" && task.data.comparisonRewriteScope !== "all"))
+    delete job.mongo.synced;
   if (["completed", "waiting_inputs"].includes(job.evaluation) &&
       REMOTE_MODELS.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
-  if (job.summary.stages.comparison?.completed > completedComparisons(saved).size &&
+  const complete = completedComparisons(saved, true);
+  if (job.summary.stages.comparison?.completed > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
   if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !saved.pausedStages?.length) {
     job.evaluation = job.summary.skipped || job.summary.issues || !job.summary.stages.comparison?.total ? "waiting_inputs" : "completed";

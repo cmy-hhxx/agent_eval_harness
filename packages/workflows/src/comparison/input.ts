@@ -525,6 +525,8 @@ export async function buildPlan(
           ? { comparisonRewriteScope: (old!.data as TaskData).comparisonRewriteScope } : {}),
         ...((old?.data as TaskData | undefined)?.rewriteSlotIds
           ? { rewriteSlotIds: (old!.data as TaskData).rewriteSlotIds } : {}),
+        ...(sourceStage === "comparison" && config.rewrite.comparisonItems && !accepted.has(old?.id ?? "")
+          ? { comparisonRewriteScope: "all" as const } : {}),
         ...context,
         revision,
       },

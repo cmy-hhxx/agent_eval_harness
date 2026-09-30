@@ -3,6 +3,7 @@ import type { Checkpoint } from "./codec.js";
 import type { EvalConfig } from "./types.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import statisticsLogSchema from "../../../../schemas/workflow/statistics-log.schema.json" with { type: "json" };
+import { verdictSlotId } from "./commentary.js";
 
 const logAjv = new Ajv2020({ allErrors: true });
 const validateStatisticsLog = logAjv.compile(statisticsLogSchema);
@@ -14,16 +15,27 @@ export function assertStatisticsLog(record: unknown): asserts record is JsonObje
 }
 
 /** Clustering writes a separate artifact; it cannot delay an already polished comparison.jsonl row. */
-export function publishableComparisons(state: Checkpoint): Map<string, number> {
-  return comparisonReceipts(state, false);
+export function publishableComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
+  return comparisonReceipts(state, false, requireItems);
 }
 
 /** Full-stage completion still includes clustering and its rewrite. */
-export function completedComparisons(state: Checkpoint): Map<string, number> {
-  return comparisonReceipts(state, true);
+export function completedComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
+  return comparisonReceipts(state, true, requireItems);
 }
 
-function comparisonReceipts(state: Checkpoint, includeClustering: boolean): Map<string, number> {
+/** Check the actual merged JSONL text before publishing a complete comparison rewrite. */
+export function assertCompleteComparisonRewrite(row: JsonObject, labels: string[]): void {
+  const comparisons = (row.decision_basis as { comparisons: unknown[] }).comparisons;
+  const required = labels.flatMap((first, index) => labels.slice(index + 1).map((second) => verdictSlotId(first, second)));
+  comparisons.forEach((_, index) => labels.forEach((label) => required.push(`comparison.${index}.${label}.summary`)));
+  const rewritten = row.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
+  const filled = new Set(rewritten?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
+  const missing = required.filter((id) => !filled.has(id));
+  if (missing.length) throw new Error(`Comparison rewrite incomplete: ${row.comparison_id}: ${missing.join(", ")}`);
+}
+
+function comparisonReceipts(state: Checkpoint, includeClustering: boolean, requireItems: boolean): Map<string, number> {
   const ready = new Map<string, number>();
   const entries = Object.entries(state.tasks);
   const rewrites = new Map<string, string[]>();
@@ -53,6 +65,8 @@ function comparisonReceipts(state: Checkpoint, includeClustering: boolean): Map<
       planned.forEach((rewrite) => required.add(rewrite));
     }
     if (missing || !rewrites.get(id)?.length) continue;
+    if ((requireItems || config.rewrite.comparisonItems) && !rewrites.get(id)!.some((rewrite) =>
+      state.tasks[rewrite].data.comparisonRewriteScope === "all")) continue;
     const tasks = [...required].map((taskId) => state.tasks[taskId]);
     if (tasks.some((item) => !item || item.status !== "succeeded" || !item.receipt?.exported)) continue;
     const at = Math.max(...tasks.map((item) => item.receipt!.acceptedAt));
@@ -63,7 +77,7 @@ function comparisonReceipts(state: Checkpoint, includeClustering: boolean): Map<
 
 const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 type InputSummary = { caseId: string; date: string | null; batchDate: string | null; id: string; name: string; task: string; difficulty: string; meta: JsonObject };
-type Pair = { caseId: string; a: string; b: string; winner: unknown; correct: Record<string, boolean | null> };
+type Pair = { caseId: string; a: string; b: string; winner: unknown; result: "win" | "both_good" | "both_bad"; correct: Record<string, boolean | null> };
 const pairKey = (caseId: string, a: string, b: string) => JSON.stringify([caseId, ...[a, b].sort()]);
 const modes = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
 const levels = [
@@ -121,13 +135,17 @@ export class PublicationStatistics {
     const ids = Object.keys(object(row.models)).sort(), caseId = JSON.stringify([object(row.case).batch_id, object(row.case).case_id]);
     if (ids.length !== 2 || !modes.some((pair) => pair.every((id) => ids.includes(id)))) throw new Error("Unexpected statistics pair");
     const verdict = object(object(row.verdicts)[ids.join("__vs__")]);
+    const result = verdict.result;
+    if (result !== "win" && result !== "both_good" && result !== "both_bad") throw new Error("Unexpected statistics verdict result");
+    if (result === "win" ? !ids.includes(String(verdict.winner_version)) : verdict.winner_version !== null)
+      throw new Error("Statistics verdict result and winner disagree");
     const correct = Object.fromEntries(ids.map((id) => {
       const value = object(object(row.evaluations)[id]).is_correct;
       return [id, row.has_standard_answer === true && typeof value === "boolean" ? value : null];
     }));
     const key = pairKey(caseId, ...ids as [string, string]);
     if (this.pairs.has(key)) throw new Error("Duplicate statistics comparison: " + key);
-    this.pairs.set(key, { caseId, a: ids[0], b: ids[1], winner: verdict.winner_version, correct });
+    this.pairs.set(key, { caseId, a: ids[0], b: ids[1], winner: verdict.winner_version, result, correct });
   }
   record(traceId: string, at: number, throughDate?: string): JsonObject {
     let rows = [...this.inputs.values()].map((row) => ({ ...row }));
@@ -169,7 +187,8 @@ export class PublicationStatistics {
         const answers = subset.filter((row) => row.id === model.id && cases.has(row.caseId));
         const correct = ps.map((pair) => pair.correct[model.id]).filter((value): value is boolean => typeof value === "boolean");
         const wins = ps.filter((pair) => pair.winner === model.id).length, right = correct.filter(Boolean).length;
-        return [{ ...model, wins, evaluated: ps.length, winRate: wins / ps.length * 100,
+        return [{ ...model, wins, both_good: ps.filter((pair) => pair.result === "both_good").length,
+          both_bad: ps.filter((pair) => pair.result === "both_bad").length, evaluated: ps.length, winRate: wins / ps.length * 100,
           accuracy: { correct: right, count: correct.length, rate: correct.length ? right / correct.length * 100 : null },
           first: metric(answers.map((row) => row.meta.first_token_time_cost)),
           total: metric(answers.map((row) => row.meta.finish_answer_time_cost)),
@@ -205,7 +224,7 @@ export class PublicationStatistics {
           return { date, count: caseCount(selected), ...overview(selected) };
         }),
         winRateTrend: days.flatMap((date) => stats(rows.filter((row) => row.date === date))
-          .map((row) => ({ date, id: row.id, wins: row.wins, evaluated: row.evaluated }))),
+          .map((row) => ({ date, id: row.id, wins: row.wins, both_good: row.both_good, both_bad: row.both_bad, evaluated: row.evaluated }))),
       },
     };
   }

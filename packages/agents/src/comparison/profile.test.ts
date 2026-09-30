@@ -70,13 +70,6 @@ test("core failures share the last tier, including in multi-candidate comparison
   assert.throws(() => comparisonProfile.validate!(request, result, audit), /未达标候选必须同层/);
   result.ranking = [["A", "B"]];
   comparisonProfile.validate!(request, result, audit);
-  for (const text of ["双方关键结果都错了，因此A居前。", "双方都差，B相对更可用。", "双方都差，A相对更好，但没有整体胜者。"]) {
-    result.decision_basis.tradeoff = text;
-    assert.throws(() => comparisonProfile.validate!(request, result, audit), /短评不能宣称/);
-  }
-  result.decision_basis.tradeoff = "双方都错了，但A耗时更少，故列前。";
-  assert.throws(() => comparisonProfile.validate!(request, result, audit), /短评不能宣称/);
-  result.decision_basis.tradeoff = "双方的关键结果都错了。";
   result.assessments.B.meets_core = true;
   request.input.attributions.B.findings[0]!.type = "strength";
   assert.throws(() => comparisonProfile.validate!(request, result, audit), /达标候选必须排在/);
@@ -91,6 +84,26 @@ test("core failures share the last tier, including in multi-candidate comparison
   result.ranking = [["B"], ["A", "C"]];
   comparisonProfile.validate!(request, result, audit);
   result.ranking = [["B"], ["A"], ["C"]];
+  assert.throws(() => comparisonProfile.validate!(request, result, audit), /未达标候选必须同层/);
+});
+
+test("both-bad tradeoff accepts relative preferences without splitting the ranking", () => {
+  const request = structuredClone(example.request);
+  const result = structuredClone(example.result);
+  for (const label of ["A", "B"] as const) {
+    request.input.attributions[label].findings[0]!.type = "problem";
+    result.assessments[label].meets_core = false;
+  }
+  result.ranking = [["A", "B"]];
+  for (const tradeoff of [
+    "双方都没给回测结果。A相对更好，提供了可执行代码，B只介绍方法，但仍未完成交付。",
+    "双方都没给回测结果。B相对更好，提供了可执行代码，A只介绍方法，但仍未完成交付。",
+    "双方都没给回测结果，且均只有方法介绍，未见有依据的相对优势。",
+  ]) {
+    result.decision_basis.tradeoff = tradeoff;
+    comparisonProfile.validate!(request, result, audit);
+  }
+  result.ranking = [["B"], ["A"]];
   assert.throws(() => comparisonProfile.validate!(request, result, audit), /未达标候选必须同层/);
 });
 

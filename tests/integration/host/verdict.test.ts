@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, type JsonObject, type PlannedTask, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
 import {
   buildPlan,
   comparisonRow,
@@ -119,15 +119,22 @@ test("two-way verdicts are derived from ranking and core classification", async 
       "win",
     );
 
+    const failed = group(labels, Object.fromEntries(labels.map((label) => [label, false])));
+    failed.decision_basis.tradeoff = `双方都没答对，但候选${labels[0]}保留了正确操作数，比另一方替换操作数相对更好。`;
     const allBad = comparisonRow(
       plan.inputs,
       task,
-      group(labels, Object.fromEntries(labels.map((label) => [label, false]))),
+      failed,
       receipts,
       names,
       fakeEvaluatorVersion,
     );
     assert.equal((allBad.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_bad");
+    const badVerdict = (allBad.verdicts as Record<string, JsonObject>)[pairKey]!;
+    assert.equal(badVerdict.winner_version, null);
+    assert.equal(badVerdict.winner_name, null);
+    assert.deepEqual(allBad.ranking, [["a_fast", "b_fast"]]);
+    assert.match((allBad.decision_basis as JsonObject).tradeoff as string, /相对更好/);
 
     const even = comparisonRow(plan.inputs, task, group(labels), receipts, names, fakeEvaluatorVersion);
     assert.equal((even.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_good");

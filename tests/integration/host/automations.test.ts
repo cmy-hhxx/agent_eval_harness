@@ -9,10 +9,10 @@ import { RemoteInputs } from "@eval/runtime/client";
 import type { AutomationJob } from "@eval/automations";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
-import { buildPlan, comparisonCodec, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
+import { buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
 import { automationEvaluationConfig, loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automaticResumeStages, automationWorkflow, checkpointRecovery, evaluationTargets, recoverEvaluation, summarize, remoteProgress } from "../../../apps/host/src/automation-evaluation.js";
-import { attributionResult, draftFor, fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, taskResult } from "../../fixtures/comparison.js";
+import { attributionResult, comparisonResult, draftFor, fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
 test("automation plans all four stages and rewrites for attribution, comparison and clustering", async () => {
@@ -24,6 +24,9 @@ test("automation plans all four stages and rewrites for attribution, comparison 
     const plan = await buildPlan(evaluation);
     assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["attribution", "comparison", "rewrite", "clustering"]));
     const rewrites = plan.tasks.filter((task) => task.stage === "rewrite");
+    assert.equal(evaluation.rewrite.comparisonItems, true);
+    assert(rewrites.filter((task) => (task.data as TaskData).rewriteOf?.stage === "comparison")
+      .every((task) => (task.data as TaskData).comparisonRewriteScope === "all"));
     assert.deepEqual(new Set(rewrites.map((task) => (task.data as TaskData).rewriteOf!.stage)), new Set(["attribution", "comparison", "clustering"]));
     for (const task of plan.tasks.filter((task) => task.stage !== "rewrite"))
       assert.equal(rewrites.filter((rewrite) => (rewrite.data as TaskData).rewriteOf!.taskId === task.id).length, 1);
@@ -52,7 +55,14 @@ test("daily reconciliation covers retained and new attribution receipts with clu
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old")]);
     const evaluation = automationEvaluationConfig(config, source, date), plan = await buildPlan(evaluation);
     const state: RunState = { usage: emptyUsage(), recordedAttempts: 0,
-      receipts: Object.fromEntries(plan.tasks.map(task => [task.id, { taskId: task.id }])) as RunState["receipts"], manifest: {
+      receipts: Object.fromEntries(plan.tasks.map(task => {
+        const rewrites = comparisonSlots(comparisonResult(), "all").map(({ id, text }) => ({ id, text }));
+        return [task.id, { taskId: task.id,
+          ...(task.stage === "comparison" ? { evaluation: comparisonResult(), exported: {
+            id: (task.data as TaskData).comparisonId!, row: { rewritten: { rewrites } },
+          } } : (task.data as TaskData).rewriteOf?.stage === "comparison" ? { evaluation: { rewrites } } : {}),
+        }];
+      })) as RunState["receipts"], manifest: {
         format: "evaluation-run", runId: "daily", debug: false, status: "finished", startedAt: 1,
         evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: evaluation,
         tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary,
@@ -142,6 +152,7 @@ test("all-stage automation resumes interrupted clustering and each rewrite witho
       assert.equal(stage.completed, stage.total);
       assert.equal(stage.failed + stage.pending + stage.running, 0);
     }
+    assert.equal(deliveryCoverage(saved, { rewriteScopes: ["verdicts", "items"] }).valid, true);
     for (const [id, count] of calls) assert.equal(count, interruptedTasks.has(id) ? 2 : 1);
     assert.equal((await validateRun(run)).valid, true);
   } finally {
@@ -176,13 +187,19 @@ test("automatic recovery distinguishes shutdown, temporary outages and persisten
 test("a daily Fast run expands to Expert with all rewrites in the same directory and retains accepted receipts", { timeout: 30_000 }, async () => {
   const { directory, config, modelForStage } = await fixtureConfig(undefined, true, true);
   const complete = structuredClone(config);
+  complete.rewrite.comparisonItems = true;
   complete.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
   config.inputs.versions = config.inputs.versions.filter((version) => ["a_fast", "b_fast"].includes(version.id));
   config.comparisons = [["a_fast", "b_fast"]];
   const calls = new Map<string, number>();
+  const requestedSlots = new Map<string, string[][]>();
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
       calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1);
+      if (options.spec.evaluation.id === "rewrite") {
+        const items = (parsedMaterial(options.spec) as { items: { id: string }[] }).items;
+        requestedSlots.set(options.spec.taskId, [...(requestedSlots.get(options.spec.taskId) ?? []), items.map((item) => item.id)]);
+      }
       const reply = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
       assert.equal(reply.isError, undefined, JSON.stringify(reply));
     }, async abort() {}, async dispose() {} };
@@ -195,6 +212,12 @@ test("a daily Fast run expands to Expert with all rewrites in the same directory
       policy: config.execution, concurrency: 4, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
     await runEvaluation(base);
     const accepted = await readRunState(run);
+    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const job = { date: "2026-09-29", runIds: [], evaluation: "completed",
+      mongo: { status: "completed", synced: { inputsUpdatedAt: 1, comparisons: 1 } },
+    } as unknown as AutomationJob;
+    assert.equal(await recoverEvaluation(settings, config.output.path, job), "interrupted");
+    assert.equal(job.mongo!.synced, undefined, "backfilled text must be uploaded even when the comparison count is unchanged");
     const result = await runEvaluation({ ...base, config: complete, plan: { tasks: [], inputs: {}, summary: {} }, discoverInputs: true,
       taskSource: automationWorkflow,
     });
@@ -204,10 +227,21 @@ test("a daily Fast run expands to Expert with all rewrites in the same directory
     assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison").length, 2);
     assert(after.manifest.tasks.some((task) => (task.data as TaskData).group?.includes("a_expert")));
     for (const [id, receipt] of Object.entries(accepted.receipts)) {
+      if ((accepted.manifest.tasks.find((task) => task.id === id)!.data as TaskData).rewriteOf?.stage === "comparison") {
+        assert.equal(calls.get(id), 2);
+        const [original, missing] = requestedSlots.get(id)!;
+        assert(original.every((slot) => slot.startsWith("verdict.")));
+        assert(missing.length > 0 && missing.every((slot) => slot.startsWith("comparison.")));
+        const saved = after.receipts[id].exported!.row.rewritten as { rewrites: { id: string; text: string }[] };
+        for (const item of (receipt.evaluation as { rewrites: { id: string; text: string }[] }).rewrites)
+          assert.deepEqual(saved.rewrites.find((entry) => entry.id === item.id), item);
+        continue;
+      }
       assert.equal(calls.get(id), 1);
       assert.equal(after.receipts[id].submissionId, receipt.submissionId);
     }
     assert(Object.values(after.manifest.states).every((state) => state.status === "succeeded"));
+    assert.equal(deliveryCoverage(after, { rewriteScopes: ["verdicts", "items"] }).valid, true);
     assert.equal((await validateRun(run)).valid, true);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

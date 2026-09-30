@@ -162,11 +162,12 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   }
   if (source.rewrite !== undefined) {
     if (!isObject(source.rewrite)) throw new Error("Invalid rewrite");
-    for (const key of ["comparison", "attribution", "clustering"] as const)
+    for (const key of ["comparison", "comparisonItems", "attribution", "clustering"] as const)
       if (source.rewrite[key] !== undefined && typeof source.rewrite[key] !== "boolean")
         throw new Error(`Invalid rewrite.${key}`);
     config.rewrite = {
       comparison: source.rewrite.comparison === true,
+      ...(source.rewrite.comparisonItems !== undefined ? { comparisonItems: source.rewrite.comparisonItems === true } : {}),
       attribution: source.rewrite.attribution === true,
       clustering: source.rewrite.clustering === true,
     };
@@ -412,7 +413,7 @@ export async function loadConfig(
   const evaluatorVersion = readEvaluatorVersion(source);
   const base = buildEvaluation(source), models = buildModels(source, env);
   const evaluation = versions ? selectVersions(base, versions) : base;
-  if (Object.values(evaluation.rewrite).some(Boolean) && !models.bindings.rewrite)
+  if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");

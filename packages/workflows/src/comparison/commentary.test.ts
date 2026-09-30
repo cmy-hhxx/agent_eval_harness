@@ -74,6 +74,28 @@ test("comparison rewrites only the pair preference using its accepted match fact
   assert.equal(comparisonSlots(bothMet)[0]!.preference, "双方都好");
 });
 
+test("both-bad slots carry the accepted relative tradeoff through reversed blind names", () => {
+  const result = structuredClone(comparison);
+  result.assessments.A.meets_core = false;
+  result.ranking = [["B", "A"]];
+  result.decision_basis.tradeoff = "双方都没给回测结果。候选B相对更好，给出了代码，候选A只有方法。";
+  result.decision_basis.comparisons[0] = {
+    aspect: "回测交付", importance: "high", better_candidates: ["B"], assessments: {
+      A: { summary: "只有方法。", finding_indices: [] }, B: { summary: "给出代码，未给结果。", finding_indices: [] },
+    },
+  };
+  const before = structuredClone(result);
+  const [item] = comparisonSlots(result);
+  assert.equal(item.id, verdictSlotId("A", "B"));
+  assert.equal(item.preference, "双方都差");
+  assert(item.text.includes(result.decision_basis.tradeoff));
+  const presented = display(item, { A: "B组Fast", B: "A组Fast" });
+  assert.match(presented.text, /A组Fast相对更好，给出了代码，B组Fast只有方法/);
+  assert.deepEqual(result, before);
+  result.decision_basis.tradeoff = "双方都没给结果，也没有其他有用内容，无法区分相对优劣。";
+  assert(comparisonSlots(result)[0].text.includes(result.decision_basis.tradeoff));
+});
+
 test("attribution slots include the correctness reason only when it exists", () => {
   assert.deepEqual(attributionSlots(attribution).map((item) => item.id), ["summary", "correctness_reason"]);
   const subjective = { ...attribution, is_correct: null, correctness_reason: "" };
@@ -94,6 +116,14 @@ test("item refresh selects only comparison cells with local advantages and separ
   const shared = structuredClone(comparison);
   shared.decision_basis.comparisons[0]!.better_candidates = [];
   assert.match(comparisonSlots(shared, "items")[0]!.context!, /没有已证实的单方优势/);
+});
+
+test("complete comparison rewrite includes the verdict and every cell with its own context", () => {
+  const slots = comparisonSlots(comparison, "all");
+  assert.deepEqual(slots, [...comparisonSlots(comparison, "verdicts"), ...comparisonSlots(comparison, "items")]);
+  assert.equal(new Set(slots.map((slot) => slot.id)).size, 3);
+  assert.equal(slots[0].preference, "【候选A】更好");
+  assert(slots.slice(1).every((slot) => slot.context && slot.forbiddenPrefixes?.length));
 });
 
 test("presentation view applies rewrites by slot and leaves unknown text alone", () => {

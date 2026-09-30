@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { PublicationStatistics, publishableComparisons, completedComparisons, comparisonCodec, buildPlan, assertStatisticsLog } from "@eval/workflows/comparison";
+import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
+import { PublicationStatistics, publishableComparisons, completedComparisons, comparisonCodec, buildPlan, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
@@ -13,7 +13,7 @@ import { ROOT } from "../../fixtures/services.js";
 test("comparison delivery waits for attribution and comparison rewrites while full completion also requires clustering", async () => {
   const { directory, config } = await fixtureConfig(undefined, true, true);
   try {
-    config.rewrite = { attribution: true, comparison: true, clustering: true };
+    config.rewrite = { attribution: true, comparison: true, comparisonItems: true, clustering: true };
     config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const plan = await buildPlan(config);
     const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
@@ -42,7 +42,31 @@ test("comparison delivery waits for attribution and comparison rewrites while fu
     const comparisonRewrite = Object.values(saved.tasks).find((task) => task.data.rewriteOf?.stage === "comparison")!;
     comparisonRewrite.status = "failed";
     assert.equal(publishableComparisons(saved).size, 1);
+    comparisonRewrite.status = "succeeded";
+    comparisonRewrite.data.comparisonRewriteScope = "verdicts";
+    assert.equal(publishableComparisons(saved).size, 1, "verdict-only polish is not a complete comparison rewrite");
+    (saved.config as typeof config).rewrite.comparisonItems = false;
+    assert.equal(publishableComparisons(saved, true).size, 1, "current automation requirements apply before the run is reconciled");
+    (saved.config as typeof config).rewrite.comparisonItems = true;
+    comparisonRewrite.data.comparisonRewriteScope = "all";
+    assert.equal(publishableComparisons(saved).size, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("publication requires nonempty text for the verdict and every comparison cell", () => {
+  const row: JsonObject = { comparison_id: "comparison", decision_basis: { comparisons: [{}, {}] }, rewritten: { rewrites: [
+    { id: "verdict.A__vs__B.reason", text: "双方都好：给出相同结果。" },
+    { id: "comparison.0.A.summary", text: "给出了结果。" },
+    { id: "comparison.0.B.summary", text: "给出了结果。" },
+    { id: "comparison.1.A.summary", text: "来源明确。" },
+    { id: "comparison.1.B.summary", text: "  " },
+  ] } };
+  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /comparison\.1\.B\.summary/);
+  const items = (row.rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
+  items[4].text = "来源明确。";
+  assertCompleteComparisonRewrite(row, ["B", "A"]);
+  items.shift();
+  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /verdict\.A__vs__B\.reason/);
 });
 
 const date = "2026-09-30";
@@ -52,10 +76,88 @@ const inputs: PublicationInput[] = ["a_fast", "b_fast"].map((versionId) => ({ ve
     usage: { input_tokens: 200, output_tokens: 20 } },
 } }));
 const result: PublicationResult = { evaluatedAt: 10, row: { case: { batch_id: date, case_id: "one" },
-  models: { a_fast: {}, b_fast: {} }, verdicts: { a_fast__vs__b_fast: { winner_version: "b_fast" } },
+  models: { a_fast: {}, b_fast: {} }, verdicts: { a_fast__vs__b_fast: { result: "win", winner_version: "b_fast" } },
   has_standard_answer: true, evaluations: { a_fast: { is_correct: false }, b_fast: { is_correct: true } },
 } };
 async function* rows<T>(data: T[]) { yield* data; }
+
+test("both outcome counts sit beside wins across totals, days, scenarios, difficulties and trends", () => {
+  const stats = new PublicationStatistics();
+  const battles = [
+    { date: "2026-09-29", caseId: "same", mode: "fast", task: "数据查询类", difficulty: "简单", result: "both_good", winner: null },
+    { date: "2026-09-29", caseId: "same", mode: "expert", task: "数据查询类", difficulty: "简单", result: "both_bad", winner: null },
+    { date, caseId: "same", mode: "fast", task: "客观题", difficulty: "中等", result: "win", winner: "b_fast" },
+    { date, caseId: "good", mode: "expert", task: "问答", difficulty: "复杂", result: "both_good", winner: null },
+    { date, caseId: "bad", mode: "fast", task: "未分类", difficulty: "未分层", result: "both_bad", winner: null },
+    { date, caseId: "win", mode: "expert", task: "客观题", difficulty: "长程任务", result: "win", winner: "a_expert" },
+  ];
+  for (const battle of battles) {
+    const ids = [`a_${battle.mode}`, `b_${battle.mode}`];
+    for (const id of ids) stats.addInput({ versionId: id, trace: { ...inputs[0].trace,
+      batch_id: battle.date, case_id: battle.caseId, version: id,
+      meta: { task: battle.task, difficulty: battle.difficulty } } });
+    stats.addResult({ evaluatedAt: 10, row: {
+      case: { batch_id: battle.date, case_id: battle.caseId }, models: Object.fromEntries(ids.map((id) => [id, {}])),
+      has_standard_answer: false, evaluations: Object.fromEntries(ids.map((id) => [id, { is_correct: null }])),
+      verdicts: { [ids.join("__vs__")]: { result: battle.result, winner_version: battle.winner } },
+    } });
+  }
+  for (const input of inputs) stats.addInput({ ...input, trace: { ...input.trace, case_id: "pending" } });
+  stats.addInput({ ...inputs[0], trace: { ...inputs[0].trace, case_id: "unpaired" } });
+  stats.addResult({ ...result, row: { ...result.row, case: { batch_id: date, case_id: "unpaired" },
+    verdicts: { a_fast__vs__b_fast: { result: "both_bad", winner_version: null } } } });
+  const record = stats.record("outcomes", Date.now());
+  assertStatisticsLog(record);
+  const data = record.data as Record<string, any>;
+  assert.equal(data.progress.expectedBattleCount, 7);
+  assert.equal(data.progress.completedBattleCount, 6, "pending and unpaired inputs cannot inflate outcome counts");
+  const counts = (value: Record<string, any>) => ({ id: value.id, wins: value.wins,
+    both_good: value.both_good, both_bad: value.both_bad, evaluated: value.evaluated });
+  const check = (scope: Record<string, any>, selected: typeof battles) => {
+    assert.equal(scope.progress.completedBattleCount, selected.length);
+    const ids = [...new Set(selected.flatMap((battle) => [`a_${battle.mode}`, `b_${battle.mode}`]))].sort();
+    assert.deepEqual(scope.stats.map(counts), ids.map((id) => {
+      const entered = selected.filter((battle) => id.endsWith(`_${battle.mode}`));
+      return { id, wins: entered.filter((battle) => battle.winner === id).length,
+        both_good: entered.filter((battle) => battle.result === "both_good").length,
+        both_bad: entered.filter((battle) => battle.result === "both_bad").length, evaluated: entered.length };
+    }));
+    for (const model of scope.stats) {
+      const keys = Object.keys(model), position = keys.indexOf("wins");
+      assert.deepEqual(keys.slice(position, position + 4), ["wins", "both_good", "both_bad", "evaluated"]);
+      const peer = scope.stats.find((row: any) => row.id === model.id.replace(/^[ab]_/, model.id.startsWith("a_") ? "b_" : "a_"));
+      assert.equal(model.wins + peer.wins + model.both_good + model.both_bad, model.evaluated);
+      assert.equal(model.winRate, model.wins / model.evaluated * 100, "win-rate denominator is unchanged");
+    }
+    for (const task of scope.tasks ?? []) check(task, selected.filter((battle) => battle.task === task.name));
+    for (const difficulty of scope.difficultyLevels ?? []) check(difficulty, selected.filter((battle) => battle.difficulty === difficulty.name));
+  };
+  check(data, battles);
+  for (const day of data.requestDates) {
+    check(day, battles.filter((battle) => battle.date === day.date));
+    assert.deepEqual(data.winRateTrend.filter((point: any) => point.date === day.date).map(counts), day.stats.map(counts));
+  }
+  for (const point of data.winRateTrend) assert.deepEqual(Object.keys(point), ["date", "id", "wins", "both_good", "both_bad", "evaluated"]);
+  for (const model of data.stats) for (const key of ["wins", "both_good", "both_bad", "evaluated"]) {
+    assert.equal(model[key], data.requestDates.reduce((sum: number, day: any) => sum + (day.stats.find((row: any) => row.id === model.id)?.[key] ?? 0), 0));
+  }
+  const historical = stats.record("history", Date.now(), "2026-09-29").data as Record<string, any>;
+  check(historical, battles.filter((battle) => battle.date === "2026-09-29"));
+});
+
+test("statistics read explicit verdict outcomes and reject unknown or inconsistent outcomes", () => {
+  for (const verdict of [
+    {}, { result: "tie", winner_version: null }, { result: "win", winner_version: null },
+    { result: "win", winner_version: "a_expert" }, { result: "both_bad", winner_version: "b_fast" },
+    { result: "both_good" },
+  ]) {
+    assert.throws(() => new PublicationStatistics().addResult({ ...result, row: { ...result.row,
+      verdicts: { a_fast__vs__b_fast: verdict } } }), /statistics verdict|Statistics verdict/);
+  }
+  const stats = new PublicationStatistics();
+  stats.addResult(result);
+  assert.throws(() => stats.addResult(result), /Duplicate statistics comparison/);
+});
 
 test("frozen statistics contract rejects added, missing and mistyped fields at every nested object", () => {
   const stats = new PublicationStatistics();
@@ -240,6 +342,9 @@ test("dashboard log snapshots use the complete inventory and resume without a du
       upload: async (_url, record) => {
         uploads++;
         assert.equal(persisted, "sending");
+        assertStatisticsLog(record);
+        assert.equal((record.data as Record<string, any>).stats[0].both_good, 0);
+        assert.equal((record.data as Record<string, any>).stats[0].both_bad, 0);
         assert.deepEqual(JSON.parse((await readFile(config.publication.logFile, "utf8")).trim()), record);
         if (uploads === 1) throw new Error("response lost");
         return "req-verified";

@@ -45,7 +45,8 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
     filledSlots += expected.length - missing.length;
     // A prepared refresh remains outstanding even if old text still fills the JSONL.
     const rewrite = rewritesBySource.get(task.id);
-    const outstanding = rewrite && scopes.has((rewrite.data as TaskData).comparisonRewriteScope ?? "verdicts") && !state.receipts[rewrite.id];
+    const rewriteScope = (rewrite?.data as TaskData | undefined)?.comparisonRewriteScope ?? "verdicts";
+    const outstanding = rewrite && (rewriteScope === "all" ? scopes.size > 0 : scopes.has(rewriteScope)) && !state.receipts[rewrite.id];
     if (missing.length) missingSlots.push({ task_id: task.id, result_id: data.comparisonId!, slot_ids: missing.map((item) => item.id) });
     if (outstanding) errors.push(`${task.id}: requested rewrite not completed`);
     if (!missing.length && !outstanding) counts.delivered++;

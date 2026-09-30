@@ -8,9 +8,10 @@ import {
 } from "@eval/contracts";
 import { createRunRepository, fileSourceReader } from "@eval/data";
 import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, taskCase, taskIdentity } from "./input.js";
-import type { BatchPreflight, Candidate, EvalConfig, TaskData } from "./types.js";
+import type { BatchPreflight, Candidate, ComparisonResult, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
-import { encodeResult } from "./results.js";
+import { encodeResult, stageResult } from "./results.js";
+import { comparisonSlots } from "./commentary.js";
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
@@ -204,6 +205,31 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   }
   state.manifest.config = selected;
   state.manifest.tasks = plan.tasks;
+  if (selected.rewrite.comparison && selected.rewrite.comparisonItems) {
+    for (const task of plan.tasks) {
+      const data = task.data as TaskData;
+      if (data.rewriteOf?.stage !== "comparison") continue;
+      const source = state.receipts[data.rewriteOf.taskId];
+      if (!source) continue;
+      const stored = source.exported && stageResult("comparison", source.exported.row).rewritten as
+        { rewrites: { id: string; text: string }[] } | undefined;
+      const filled = new Set(stored?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
+      const missing = comparisonSlots(source.evaluation as ComparisonResult, "all").filter((item) => !filled.has(item.id));
+      const accepted = state.receipts[task.id];
+      data.comparisonRewriteScope = "all";
+      if (!missing.length) {
+        // A targeted refresh may own only part of the complete, merged source row.
+        if (accepted) data.rewriteSlotIds = (accepted.evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id);
+        continue;
+      }
+      data.rewriteSlotIds = missing.map((item) => item.id);
+      if (accepted) {
+        // Preserve accepted evaluations and stored prose; request only missing presentation slots.
+        delete state.receipts[task.id];
+        state.manifest.states[task.id] = { status: "pending", attempts: state.manifest.states[task.id].attempts };
+      }
+    }
+  }
   state.manifest.inputCatalog = plan.catalog;
   state.manifest.inputs = Object.fromEntries(
     (plan.catalog as Candidate[]).map((c) => [c.input_id, { id: c.input_id, name: c.input_id }]),

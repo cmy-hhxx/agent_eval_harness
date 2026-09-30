@@ -41,7 +41,7 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内统一排名，不能混用不同 `comparison_tier`；未标档位的第三方模型可加入任一组 |
-| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；默认只开启comparison并只改写对局偏好理由；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；默认只开启comparison并改写对局偏好理由；`comparisonItems: true` 将逐项点评加入同一改写任务，自动化强制开启；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前统一为 `openai-responses`）、`apiKeyEnv` 及默认 `thinking`（缺省 `xhigh`）、`contextWindow`、`maxOutputTokens` |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认32并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
