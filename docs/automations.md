@@ -4,6 +4,8 @@
 
 `automations` 常驻监控远端，按日期流式下载四模型输入，驱动已有 Host 完成归因、对比和改写。归因与对比的改写均强制开启；对比改写在同一个任务中覆盖最终偏好理由和逐项对照的每个模型格（`rewrite.comparisonItems=true`）。聚类与聚类改写不在自动化中执行；只有归因、对比及其改写成功才算本轮评测完成，逐项点评缺失或失败不算完整交付。输入缺失或不合法显示 `waiting_inputs`，不会冒充完整交付。
 
+操作入口：[启动](#启动)（会取数、调用模型并上传）→ [历史接管与更新](#历史接管与更新) → [调度与状态](#调度与状态) → [MongoDB 与统计日志交付](#mongodb-增量交付与每四小时日志)。只读检查使用 `npm run automations -- check`；若只需处理不确定的线上回执，先看[上传恢复](#mongodb-增量交付与每四小时日志)，不要盲目重复发送。
+
 ## 启动
 
 先完成 README 的模型和依赖配置，并在 `.env` 设置 `AUTOMATIONS_MONGODB_URI`（已有集合的应用连接串）；TLS 连接需要 CA 时设置 `AUTOMATIONS_MONGODB_TLS_CA_FILE` 为证书绝对路径。使用 SSH 隧道时，由部署环境维护隧道并让连接串指向本地映射端口。默认[配置](../configs/automations.json)加载 `configs/host.json` 与 `configs/local/models.json`，复用其阶段模型、并发、预算、输出目录和问题库。密钥不进入 JSON 配置或状态文件。
@@ -85,7 +87,7 @@ npm run automations -- retry --date 2026-09-29
 
 ## 日志与进度
 
-运行日志沿用根目录 `runtime.log` 和 `evaluation.log`。`runtime.log` 记录发现、历史接管、下载开始/完成、输入更新、评测开始/结果、交付开始/完成/失败、重试、停机与错误，使用 `component=automations`、`automation_id`、`date`、`run_id` 关联。写入复用 Data 的跨进程锁、脱敏和完整行；错误逐条保留，不归并或截断正文、堆栈。重复正常状态在一分钟内合并，不为每次无变化轮询写日志。`evaluation.log` 继续由 Host 记录各阶段接受结果。
+运行与评测日志沿用根目录 `log/runtime.log` 和 `log/evaluation.log`；统计上传记录另写 `log/comparison-statistics-log.jsonl`，不参与运行日志去重。`runtime.log` 记录发现、历史接管、下载开始/完成、输入更新、评测开始/结果、交付开始/完成/失败、重试、停机与错误，使用 `component=automations`、`automation_id`、`date`、`run_id` 关联。写入复用 Data 的跨进程锁、脱敏和完整行；错误逐条保留，不归并或截断正文、堆栈。重复正常状态在一分钟内合并，不为每次无变化轮询写日志。`evaluation.log` 继续由 Host 记录各阶段接受结果。
 
 本地状态每 10 秒从各 run 的检查点更新活动评测的归因、对比及其改写数量。默认通过 `/evaluation-progress` 上报本流水线所有已登记日期的 Comparison 进度；每个 Fast/Expert 配对都有总数、完成、运行、排队、失败和预检跳过六项计数。未配对单列为 `skipped_cases`，中断与依赖阻塞计入排队，只有失败与超时计入失败；不将改写混进 Comparison 数量。远端看板的 Comparison 完成不代表本地已完成对应改写，以流水线状态为准。上报失败记录 `reportError` 并重试，不中断评测；错误包含 HTTP 状态和远端 JSON `error` 原因。远端只接受最近启动的上报者，旧上报者的 HTTP 409 会明确记录。关闭 `publishProgress` 可仅保留本地状态。
 

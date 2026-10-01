@@ -42,9 +42,9 @@ web
 - 配置以受限的本次运行草稿提交，密钥值和运行控制令牌不进入浏览器；原始输入正文不复制到 run，样本视图只读问题与最终回答，不渲染消息链路。
 - 默认只监听回环地址，适合可信单机操作；页面响应不设 CSP / X-Frame-Options，便于本机标注工具注入覆盖层。
 
-## Evidence on Hand
+## 界面实现与验证
 
-命令、运行状态、看板读取与控制见 `apps/host/src/cli.ts`、`apps/host/src/dashboard.ts`、`packages/workflows/src/comparison/dashboard-view.ts`、`docs/usage.md`。
+命令、运行状态、看板读取与控制见 `apps/host/src/cli.ts`、`apps/host/src/dashboard.ts`、`packages/workflows/src/comparison/dashboard-view.ts`、[使用指南](docs/usage.md#本机运行看板)。自动化监控与错误页的布局和状态规范见[看板设计说明](apps/host/.impeccable/DESIGN.md)，数据与交付语义见[自动化](docs/automations.md)。
 
 ## Accessibility & Inclusion
 

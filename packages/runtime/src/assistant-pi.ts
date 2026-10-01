@@ -103,7 +103,7 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
         await options.compact(compacted.summary, compacted.firstKeptEntryId, compacted.tokensBefore);
       }
       await session.prompt(text);
-    }, steer: (text) => session.steer(text), abort: () => session.abort(),
+    }, steer: async (text) => { await session.steer(text); }, abort: () => session.abort(),
     async dispose() { await session.abort(); unsubscribe(); session.dispose(); },
   };
 };

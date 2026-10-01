@@ -153,7 +153,7 @@ await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 
 直接修改对应 vendor，在 `upstream.json` 的 `local_changes` 记录说明后重建。两套上游 npm 包同名，必须保持独立依赖树。根 workspace 不包含 vendor。
 
-Pi 的本地 vendor 修改关闭内置模型与图片 Provider 登记。构建不生成或加载第三方模型数据；Worker 只注册应用从 `.env` 网关和运行配置解析出的模型，并关闭自动网络刷新。具体修改记录在 `vendor/upstream.json`。
+Pi 的本地 vendor 修改关闭内置 chat、image、classifier 模型目录与 Provider 登记。构建不生成或加载第三方模型数据；Worker 只注册应用从 `.env` 网关和运行配置解析出的模型，并关闭自动网络刷新。SDK 会话只启用应用显式登记的工具，不装配 CLI 内置的 MCP、codemode 或工具搜索扩展。具体修改记录在 `vendor/upstream.json`。
 
 构建记录位于 `.runtime/pi.json`、`.runtime/prime.json`，记录显式版本、上游提交和随机构建 UUID；启动及 doctor 检查版本、入口与运行能力。修改源码必须重建。更新上游属于显式升级，需要更新提交、锁文件、来源清单并重新验证，不在运行时自动升级；哈希与兼容约束见[开发指南](development.md#禁止项目哈希与兼容层)。
 

@@ -1,6 +1,6 @@
 ---
 name: Host 自动化监控
-description: 现有 Host 看板中自动化监控页的实现记录
+description: Host 自动化监控与错误页的界面规格
 colors:
   text: "#171a20"
   muted: "#5f6876"
@@ -19,7 +19,7 @@ rounded: {control: "6px", table: "8px"}
 
 ## Overview
 
-本记录仅适用于 `apps/host/dashboard/automations.html`，沿用 `dashboard.css`，页面差异由 `automations.css` 定义。浅色、紧凑、以数据和状态为中心。
+本规格适用于 [`automations.html`](../dashboard/automations.html) 与 [`automation-errors.html`](../dashboard/automation-errors.html)，沿用 `dashboard.css`，页面差异由 `automations.css` 定义。浅色、紧凑、以数据和状态为中心。操作与数据语义以[自动化指南](../../../docs/automations.md)为准，产品级约束见 [PRODUCT.md](../../../PRODUCT.md)。
 
 ## Colors
 
@@ -53,4 +53,4 @@ rounded: {control: "6px", table: "8px"}
 
 槽位利用率与空闲槽位同时呈现；运行概览下方用四列紧凑定义列表显示取数、评测、MongoDB 和日志通道，窄屏两列。错误日志使用独立 `/errors` 页：按记录顺序从新到旧逐条呈现原始错误，每页 10 条，不预分类或聚合；使用原生 details 展开完整 JSON。日期与时间范围是仅有的筛选；轮询保留展开与分页，断连保留最后内容。
 
-沿用现有字体、颜色和表格关系；只呈现数据、状态与错误，不增加说明式小字。页面不使用位图资产；验收截图仅为测试材料。
+沿用现有字体、颜色和表格关系；只呈现数据、状态与错误，不增加说明式小字。页面不使用位图资产。各页具体信息层级见[监控页](surfaces/apps-host-dashboard-automations-html.md)和[错误页](surfaces/apps-host-dashboard-automation-errors-html.md)；功能回归分别在 [`automation-dashboard.test.ts`](../../../tests/integration/host/automation-dashboard.test.ts) 和 [`automation-errors.test.ts`](../../../tests/integration/host/automation-errors.test.ts)。

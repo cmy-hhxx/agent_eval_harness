@@ -28,7 +28,7 @@
 - 原始输入只保留在数据源，不在每个 run 重复保存。`state.json` 只保存恢复所需索引、进度和草稿；正式结果引用 JSONL，不重复保存正文。
 - 问题库是跨 run 知识库，不是结果缓存：每个模型一份，类 ID 用持久化 UUID，出现样本与事件追加；合并会更新类状态和样本归属，保留 lineage；类数量由程序硬控（每模型上限 + 单次新增预算 + 合并整理），不复制正式结果正文。
 - 默认只保存 `state.json`；排查材料只有显式 `--debug` 才写入 `_internal/`。禁止交付压缩包。
-- 日志统一写入根 `log/runtime.log` 和 `log/evaluation.log`；Agent 不自行写日志、不新增日志文件或轮转文件，日志 IO 由 `packages/data` 维护。
+- 运行与评测日志统一写入根 `log/runtime.log` 和 `log/evaluation.log`；Agent 不自行写日志、不新增日志文件或轮转文件。自动化的统计交付记录另写 `log/comparison-statistics-log.jsonl`，不是运行日志；日志 IO 均由 `packages/data` 维护。
 
 ## 验证与维护
 

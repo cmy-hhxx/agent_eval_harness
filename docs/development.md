@@ -67,9 +67,13 @@ npm run build:pi
 npm run build:prime
 ```
 
-工具版本以 [mise.toml](../mise.toml) 为准。根 workspace、两个 vendor npm workspace 和 Prime Python runtime 使用各自锁文件；vendor 保持独立依赖树。修改 vendor 必须同步 `vendor/upstream.json` 的 `local_changes` 并重建，不在运行时自动升级。不要手改 `dist/`。
+工具版本以 [mise.toml](../mise.toml) 为准。根 workspace、两个 vendor npm workspace 和 Prime Python runtime 使用各自锁文件；vendor 保持独立依赖树。修改 vendor 必须同步 `vendor/upstream.json` 的 `local_changes` 并重建，不在运行时自动升级。不要手改 `dist/`。`build:app` 会移除并重建部分 `dist/`；在共享工作目录中构建前先停止活跃 Host / Worker，避免破坏在途任务加载的入口。
+
+Pi 仅保留应用显式注册的网关模型。`npm --prefix vendor/pi run check:sources` 使用 [源码检查配置](../vendor/pi/tsconfig.check-sources.json) 验证裁剪后的 TypeScript 实现和公开示例；功能回归使用根目录的 `npm test` 和 `npm run test:integration`。原上游 `check` 命令仍包含依赖内建模型目录的测试类型检查，这些测试依赖的模型数据已被裁剪；`check:sources` 不运行或验证这些测试。
 
 Python 只承担公共代码工具和 Prime SDK runtime；[bootstrap](../scripts/bootstrap.mjs) 创建不含第三方依赖的代码工具环境，Prime 使用独立项目和锁文件。
+
+Prime 的应用 SDK 构建不下载或生成模型 / MCP 目录资产，保留上游编译内置数据并使用应用显式注册的网关模型。Worker 设置 `PI_OFFLINE=1`，关闭上游目录自动刷新；直接 SDK 集成测试使用相同设置。
 
 ## 文档维护
 
@@ -78,7 +82,7 @@ README 是唯一入口；正文按使用、契约、架构、开发、质量和�
 - 一件事实只解释一次，其他页面链接唯一来源；Schema、配置和类型直接链接源码。
 - 先给结论和最短操作，再按需要展开细节；不要把实现历史、完成计划或重复字段表写进长期文档。
 - 行为变更与文档同步；校对提示词、工具描述、错误修复提示、测试名称和 Schema 字段。
-- 临时计划和验证日志放 `.artifacts/`；历史通过 Git 查阅，不建立 archive 文档树。
+- 临时计划和验证日志放 `.artifacts/`；长期文档不要链接未入库的本机文件或把某次测试数量当现状。历史通过 Git 查阅，不建立 archive 文档树。
 
 ## 独立分析 Agent 验证
 

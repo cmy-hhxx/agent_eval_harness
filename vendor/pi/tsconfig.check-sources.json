@@ -1,0 +1,10 @@
+{
+	"extends": "./tsconfig.json",
+	"include": [
+		"scripts/model-catalog-protocol.ts",
+		"packages/*/src/**/*",
+		"packages/session-backends/*/src/**/*",
+		"packages/coding-agent/examples/**/*",
+		"packages/agent/examples/**/*"
+	]
+}

@@ -17,7 +17,7 @@
 
 - `configs/host.json` 顶层 `evaluatorVersion` 必填非空字符串，`loadConfig` 校验；续跑时以本次配置为准，不因版本变化拒绝续跑。
 - `state.json` 的 manifest 保存当前 `evaluatorVersion`；每个已接受收据保留产出时的版本和解析后的判官模型 ID `judge`（不保存模型连接配置）。同 run 可以混合版本：已接受收据和已落盘行不变，未完成任务使用当前版本。读取正式结果时须核对行内版本与收据版本一致。
-- 四种正式结果行顶层都带 `evaluator_version`，取自该任务收据；`report` / `validate` 按收据重建，不重新解释版本。显式导出的逐题总结 JSONL 沿用对应对比行的版本。
+- 归因、对比、聚类三类正式 JSONL 行顶层带 `evaluator_version`，取自源任务收据；改写不单独成行，内嵌 `rewritten.evaluator_version` 取自改写收据。`report` / `validate` 按收据重建，不重新解释版本。显式导出的逐题总结 JSONL 沿用对应对比行的版本。
 - `stats.json` 的 `evaluator_versions` 汇总本 run 已接受版本，`judge_models` 按阶段列出实际使用的模型 ID。
 
 ## Agent 先记
@@ -83,7 +83,7 @@ Attribution 展开证据引用、Clustering 解析请求内短编号，分别保
 
 ## 归因与判决
 
-每条回答先经过归因 Agent：以 Workflow 的 `ground_truth.available` 为准，有标准答案时必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""` 和空对错证据；`has_standard_answer` 由 Host 从请求填入接受结果。无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。`scoring_points` / `red_flags` 没有实际内容时为空，finding 无对应核心要求时 `requirement_index=null`。有证据的优点用 strength；确定或疑似问题用 problem，并以 `assessment.evidence_status` 区分已确认与待核实，不能把疑似写成确定错误。每个问题只描述问题观察：`problem.component` 是去重的责任组件数组，每项为调用链确切工具名（`catalog.name`）或「模型自身推理」。`reason/definition` 逐个解释责任：工具正确执行错误参数、或模型误读正确返回时归模型；工具自身返回有缺陷且实际传入错误结论时归工具；双方均有独立证据才共同列入。工具参与调用不等于有责任，无返回也不等于提供了错误值；需要继续追查最终数字的真实来源。每个工具组件必须引用它自己的调用或返回证据，未知上游原因保留不确定性。材料目录按调用 ID 补全返回消息的工具名和 `call_message_index`，不按相邻位置猜测；`problem.label/definition` 给出可复用的现象及边界。同一问题跨多个组件仍是一条 finding；Workflow 按组件展开聚类 observation，各组件类分别关联同一个 finding_id，不增加回答缺点数。 责任未查明时 component=[]，definition 保留实际工具来源与待查原因，看板显示“待定位”；已确认的结果偏差仍可保持 established。被评模型不可见标准答案，不能以未核对标准值归责模型。未定位组件的 finding 保留在归因和对比中，暂不进入按组件组织的问题库。归因不读问题库、不指定分类、不建类。 对比漏项反馈给出具体候选、零起始 finding 索引和原文，修复时在对应候选的 finding_indices 中补齐关联。
+每条回答先经过归因 Agent：以 Workflow 的 `ground_truth.available` 为准，有标准答案时必须判 `is_correct`（true/false）并给出最终回答证据，无则输出 `is_correct=null`、`correctness_reason=""` 和空对错证据；`has_standard_answer` 由 Host 从请求填入接受结果。无论有无标准答案，都产出该回答的 `task_analysis`、`summary` 与 `findings`。`scoring_points` / `red_flags` 没有实际内容时为空，finding 无对应核心要求时 `requirement_index=null`。有证据的优点用 strength；确定或疑似问题用 problem，并以 `assessment.evidence_status` 区分已确认与待核实，不能把疑似写成确定错误。每个问题只描述问题观察：`problem.component` 是去重的责任组件数组，每项为调用链确切工具名（`catalog.name`）或「模型自身推理」。`reason/definition` 逐个解释责任：工具正确执行错误参数、或模型误读正确返回时归模型；工具自身返回有缺陷且实际传入错误结论时归工具；双方均有独立证据才共同列入。工具参与调用不等于有责任，无返回也不等于提供了错误值；需要继续追查最终数字的真实来源。每个工具组件必须引用它自己的调用或返回证据，未知上游原因保留不确定性。材料目录按调用 ID 补全返回消息的工具名和 `call_message_index`，不按相邻位置猜测；`problem.label/definition` 给出可复用的现象及边界。同一问题跨多个组件仍是一条 finding；Workflow 按组件展开聚类 observation，各组件类分别关联同一个 finding_id，不增加回答缺点数。责任未查明时 component=[]，definition 保留实际工具来源与待查原因，看板显示“待定位”；已确认的结果偏差仍可保持 established。被评模型不可见标准答案，不能以未核对标准值归责模型。未定位组件的 finding 保留在归因和对比中，暂不进入按组件组织的问题库。归因不读问题库、不指定分类、不建类。对比漏项反馈给出具体候选、零起始 finding 索引和原文，修复时在对应候选的 finding_indices 中补齐关联。
 
 对比 Agent 读取该组各候选的归因结果以及原始 trace/回复，对归因 findings 再做一次核验，输出统一 `task_analysis`、分层排名 `ranking` 和每个候选的 `meets_core`；默认归因结论正确，只做确认与核验，不新建 finding。
 

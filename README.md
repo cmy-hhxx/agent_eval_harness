@@ -14,12 +14,11 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 | 模块边界、Host / Worker、扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、验证、测试和文档 | [开发指南](docs/development.md) |
 | 评语和真实模型复核 | [评测质量](docs/quality.md) |
-| 批量评测经验、失败处置和优化优先级 | [0922—0925 评测复盘](docs/evaluation-lessons.md) |
 | 小批放量、失败补跑、逐格修复与交付核验 | [运行流程](docs/usage.md#运行与恢复) · [改写放量验收](docs/quality.md#改写放量验收) |
 | 远程输入数据服务交接 | [输入服务交接](docs/handoff.md) |
 | `bash automation.sh` 启动持续取数、评测改写与动态看板 | [Automations 流水线](docs/automations.md) |
 
-阅读顺序：先看本页和 `AGENTS.md`；定位任务后只打开对应文档和源码入口。规则只维护一份，其他页面通过链接引用。
+阅读顺序：先看本页和 [AGENTS.md](AGENTS.md)，再按任务进入上表对应文档。使用步骤、数据语义、质量复核与实现边界分别以使用指南、数据契约、评测质量、架构及模块地图为准；规则只维护一份，其他页面通过链接引用。
 
 ## Eris 评测助手
 

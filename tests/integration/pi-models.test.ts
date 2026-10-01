@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { ModelRuntime } from "#pi-sdk";
 
-test("Pi has no built-in models and registers only the explicit gateway model", async () => {
+test("Pi has no built-in chat, image or classifier models and registers only the explicit gateway model", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-pi-models-"));
   try {
     const runtime = await ModelRuntime.create({
@@ -15,6 +15,9 @@ test("Pi has no built-in models and registers only the explicit gateway model", 
       refreshOnCreate: false,
     });
     assert.deepEqual(runtime.getModels(), []);
+    assert.deepEqual(runtime.getAllModels(), []);
+    for (const type of ["chat", "image", "classifier"] as const)
+      assert.deepEqual(runtime.getModelsOfType(type), [], type);
     runtime.registerProvider("configured", {
       baseUrl: "http://127.0.0.1:1/v1",
       api: "openai-completions",
@@ -31,9 +34,15 @@ test("Pi has no built-in models and registers only the explicit gateway model", 
       ],
     });
     assert.deepEqual(
-      runtime.getModels().map((model) => [model.provider, model.id]),
+      runtime.getAllModels().map((model) => [model.provider, model.id]),
       [["configured", "explicit-model"]],
     );
+    assert.deepEqual(
+      runtime.getModelsOfType("chat").map((model) => [model.provider, model.id]),
+      [["configured", "explicit-model"]],
+    );
+    assert.deepEqual(runtime.getModelsOfType("image"), []);
+    assert.deepEqual(runtime.getModelsOfType("classifier"), []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

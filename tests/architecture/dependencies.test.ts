@@ -116,10 +116,10 @@ test("public package boundaries, independent Agents and acyclic implementation i
   }
 });
 
-test("documentation links and section anchors resolve; no replaced package paths remain", async () => {
+test("source documentation links and section anchors resolve; no replaced package paths remain", async () => {
   const docs = [
     "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "schemas/README.md",
-    "packages/prompts/README.md", ...(await files("docs")),
+    "packages/prompts/README.md", ...(await files("docs")), ...(await files("apps/host/.impeccable")),
   ].filter((file) => file.endsWith(".md"));
   const links = new Map<string, string[]>();
   const headings = (text: string) => new Set(

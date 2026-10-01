@@ -14,6 +14,7 @@ for (const engine of ["pi", "prime"] as const)
     const directory = await mkdtemp(path.join(tmpdir(), "eval-sdk-cache-"));
     const requests: Record<string, unknown>[] = [];
     const gateway = await listen(async (req, res) => {
+      assert.equal(req.headers.authorization, "Bearer local-fixture-secret");
       requests.push(object(await body(req)));
       const call = { type: "function_call", id: "fc_repair", call_id: "call_repair", name: "submit_evaluation", arguments: "{}" };
       const events: Record<string, unknown>[] = requests.length === 1 ? [
@@ -32,7 +33,9 @@ for (const engine of ["pi", "prime"] as const)
     });
     const keyName = "SDK_CACHE_TEST_KEY";
     const previous = process.env[keyName];
+    const previousOffline = process.env.PI_OFFLINE;
     process.env[keyName] = "local-fixture-secret";
+    process.env.PI_OFFLINE = "1";
     const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
     let executed = 0;
     try {
@@ -79,6 +82,7 @@ for (const engine of ["pi", "prime"] as const)
         assert.equal(object(payload.reasoning).effort, "high");
         assert(!Object.hasOwn(payload, "prompt_cache_retention"));
         assert(JSON.stringify(payload.input).includes("Preserve these exact rules."));
+        assert.deepEqual((payload.tools as { name: string }[]).map((tool) => tool.name), ["submit_evaluation"]);
         assert(JSON.stringify(payload.tools).includes("Preserve this description."));
       }
       const firstInput = requests[0].input as unknown[];
@@ -89,6 +93,8 @@ for (const engine of ["pi", "prime"] as const)
     } finally {
       if (previous === undefined) delete process.env[keyName];
       else process.env[keyName] = previous;
+      if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+      else process.env.PI_OFFLINE = previousOffline;
       await gateway.close();
       await rm(directory, { recursive: true, force: true });
     }
