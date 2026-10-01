@@ -51,11 +51,13 @@ async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntr
     if (event.type === "tool/result") {
       const message = structuredClone(object(data.message));
       const call = history.findLast((entry) => entry.type === "tool/call" && entry.data.callId === message.toolCallId);
+      const requested = history.findLast((entry) => entry.type === "assistant/message" && (object(entry.data.message).content as JsonObject[]).some(block => block.type === "tool-call" && block.id === message.toolCallId));
+      const block = (requested ? object(requested.data.message).content as JsonObject[] : []).find(block => block.type === "tool-call" && block.id === message.toolCallId);
       const sourceRead = object(data.meta ?? {}).sourceRead;
       if (sourceRead) {
         message.content = sdkContent((await readAssistantSource(options.tools, options.scope, String(message.toolCallId), sourceRead)).content);
       }
-      messages.push({ role: "toolResult", toolCallId: message.toolCallId, toolName: call?.data.name ?? "tool", content: message.content, isError: message.isError, timestamp: event.time });
+      messages.push({ role: "toolResult", toolCallId: message.toolCallId, toolName: call?.data.name ?? block?.name ?? "tool", content: message.content, isError: message.isError, timestamp: event.time });
     }
     for (const message of messages) {
       const id = String(data.entryId ?? (event.type === "user/message" ? data.id : object(data.message).id));

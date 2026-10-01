@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject, type ToolResult } from "@eval/contracts";
 import { AssistantJournal, assistantId, assistantOwner, assistantUser, ownAssistantSession, listAssistantSessions, readAssistantPreferences, updateAssistantPreferences, type AssistantOwner } from "@eval/data";
 import { createPiConversation, type ConversationDriver, type ConversationDriverFactory } from "./assistant-pi.js";
-import { assistantSettingsDescribe, assistantSettingsMutation, createAssistantMetrics, createAssistantMessage, createToolResultMessage, createUserMessage, AssistantStreamAccumulator, SessionAssistantStreamAccumulator, SESSION_FORMAT_VERSION, RemoteStreamMuxClient } from "./deepseek.js";
+import { assistantSettingsDescribe, assistantSettingsMutation, createAssistantMetrics, createAssistantMessage, createToolResultMessage, createUserMessage, AssistantStreamAccumulator, SessionAssistantStreamAccumulator, ToolCallRecovery, SESSION_FORMAT_VERSION, RemoteStreamMuxClient } from "./deepseek.js";
 
 import { assistantContent, AssistantContentStream } from "./assistant-content.js";
 import { readAssistantSource } from "./assistant-source.js";
@@ -35,6 +35,8 @@ interface Owned {
   release(): Promise<void>;
   feed: Feed;
   stream: SessionAssistantStreamAccumulator;
+  recovery: ToolCallRecovery;
+  rebuildDriver: boolean;
   driver?: ConversationDriver;
   driverSelection?: string;
   working?: Promise<void>;
@@ -110,21 +112,18 @@ export class AssistantSessions implements AssistantSessionRuntime {
       const release = await this.ownership.claim(scope, this.owner);
       try {
         const journal = await AssistantJournal.load(this.options.directory, scope);
-        const value: Owned = { journal, metrics: createAssistantMetrics(), release, feed: new Feed(), stream: new SessionAssistantStreamAccumulator(), mutation: Promise.resolve(), writes: Promise.resolve(), revision: 0,
+        const value: Owned = { journal, metrics: createAssistantMetrics(), release, feed: new Feed(), stream: new SessionAssistantStreamAccumulator(), recovery: new ToolCallRecovery(), rebuildDriver: false, mutation: Promise.resolve(), writes: Promise.resolve(), revision: 0,
           turn: Math.max(0, ...journal.events.filter((e) => e.type === "turn/start").map((e) => Number(e.data.turn))), step: 0, stopping: false, progress: new Map() };
-        for (const event of journal.events) value.metrics.accept(event);
+        for (const event of journal.events) { value.metrics.accept(event); value.recovery.observe(event); }
         if (journal.state.status === "running" || Object.values(journal.state.requests).includes("running")) {
           // Never replay a possibly completed external tool blindly. Accepted
           // specialist results are reconciled by the gateway on the next call.
-          const answered = new Set(journal.events.filter((e) => e.type === "tool/result").map((e) => object(e.data.message).toolCallId));
-          for (const call of journal.events.filter((e) => e.type === "tool/call" && !answered.has(e.data.callId)))
-            await this.append(value, "tool/result", { turn: call.data.turn, step: call.data.step, message: createToolResultMessage({ callId: call.data.callId, content: [{ type: "text", text: this.options.recoveryMessage ?? "INTERRUPTED_PENDING_TOOL" }], isError: true }) }, true);
-          if (journal.events.findLast((event) => ["turn/start", "turn/end"].includes(event.type))?.type === "turn/start")
-            await this.append(value, "turn/end", { turn: value.turn, reason: { kind: "interrupted" } });
+          await this.closeTurn(value, { kind: "interrupted" });
           for (const [requestId, status] of Object.entries(journal.state.requests))
             if (status === "running") await this.requestState(value, requestId, "interrupted");
           journal.state.status = "interrupted";
           await journal.save();
+          value.rebuildDriver = false;
         }
         return value;
       } catch (error) { await release(); throw error; }
@@ -147,16 +146,43 @@ export class AssistantSessions implements AssistantSessionRuntime {
       throw error;
     }
   }
-  private append(value: Owned, type: string, data: JsonObject, surface = false): Promise<AssistantEvent> {
+  private append(value: Owned, type: string, data: JsonObject, surface = false, sourceEventSeqs?: number[]): Promise<AssistantEvent> {
     const next = value.writes.then(async () => {
-      const event: AssistantEvent = { type, seq: value.journal.events.length, time: Date.now(), data, ...(surface ? { surfaceOp: "append" as const } : {}), ...(type.startsWith("assistant/") && !["assistant/message", "assistant/attempt"].includes(type) ? { ignorable: true as const } : {}) };
+      const event: AssistantEvent = { type, seq: value.journal.events.length, time: Date.now(), data, ...(surface ? { surfaceOp: "append" as const } : {}), ...(sourceEventSeqs ? { sourceEventSeqs } : {}), ...(type.startsWith("assistant/") && !["assistant/message", "assistant/attempt"].includes(type) ? { ignorable: true as const } : {}) };
       await value.journal.append({ kind: "event", event });
       value.metrics.accept(event);
+      value.recovery.observe(event);
       value.feed.publish({ type: "event", event: this.publicEvent(event) });
       return event;
     });
     value.writes = next.then(() => {});
     return next;
+  }
+  private async closeStep(value: Owned) {
+    await value.writes;
+    const boundary = value.journal.events.findLast((event) => event.type === "step/start" || event.type === "step/end");
+    if (boundary?.type !== "step/start") return;
+    for (const event of value.recovery.results()) {
+      const message = object(event.data.message);
+      const content = [...message.content as JsonObject[], ...(this.options.recoveryMessage ? [{ type: "text", text: this.options.recoveryMessage }] : [])];
+      await this.flushProgress(value, String(message.toolCallId), true);
+      await this.append(value, event.type, { ...event.data, message: { ...message, content } }, true, event.sourceEventSeqs);
+      // The SDK has not consumed synthetic results appended by the adapter.
+      // Rebuild its memory from the journal before another model request.
+      value.rebuildDriver = true;
+    }
+    await this.append(value, "step/end", { turn: boundary.data.turn, step: boundary.data.step });
+  }
+  private async closeTurn(value: Owned, reason: JsonObject) {
+    await value.writes;
+    const boundary = value.journal.events.findLast((event) => event.type === "turn/start" || event.type === "turn/end");
+    if (boundary?.type !== "turn/start") return;
+    await this.closeStep(value);
+    await this.append(value, "turn/end", { turn: boundary.data.turn, reason });
+    if (value.attempt) {
+      this.frame(value, { type: "end", attemptId: value.attempt.id, index: value.attempt.index, outcome: { kind: "abandoned" } });
+      value.attempt = undefined;
+    }
   }
   private publicEvent(event: AssistantEvent): AssistantEvent {
     if (!event.data.entryId && event.type !== "assistant/message") return event;
@@ -290,9 +316,9 @@ export class AssistantSessions implements AssistantSessionRuntime {
       }
       case "tool_execution_start":
         await this.append(value, "tool/call", { ...turnStep(), callId: event.toolCallId, name: event.toolName, arguments: JSON.stringify(event.args) }); break;
-      case "turn_end": await this.append(value, "step/end", turnStep()); break;
+      case "turn_end": await this.closeStep(value); break;
       case "agent_end":
-        await this.append(value, "turn/end", { turn: value.turn, reason: value.lastFailure ? { kind: "error", error: { code: "MODEL_ERROR", message: value.lastFailure } } : value.stopping ? { kind: "aborted", reason: { kind: "user" } } : { kind: "completed" } }); break;
+        await this.closeTurn(value, value.lastFailure ? { kind: "error", error: { code: "MODEL_ERROR", message: value.lastFailure } } : value.stopping ? { kind: "aborted", reason: { kind: "user" } } : { kind: "completed" }); break;
     }
   }
   private pump(value: Owned) {
@@ -338,20 +364,24 @@ export class AssistantSessions implements AssistantSessionRuntime {
           await this.requestState(value, prompt.requestId, value.stopping || value.lastFailure ? "interrupted" : "completed");
         } catch (error) {
           const stopped = value.stopping || this.disposed;
-          if (value.journal.events.findLast((event) => event.type === "turn/start" || event.type === "turn/end")?.type !== "turn/start") {
+          if (value.activeMessage && value.journal.events.findLast((event) => event.type === "turn/start" || event.type === "turn/end")?.type !== "turn/start") {
             value.turn++; await this.append(value, "turn/start", { turn: value.turn });
           }
           if (value.activeMessage) { await this.append(value, "user/message", value.activeMessage, true); value.activeMessage = undefined; }
-          await this.append(value, "turn/end", { turn: value.turn, reason: stopped
+          await this.closeTurn(value, stopped
             ? { kind: "aborted", reason: { kind: "user" } }
-            : { kind: "error", error: { code: "ASSISTANT_ERROR", message: errorText(error) } } });
+            : { kind: "error", error: { code: "ASSISTANT_ERROR", message: errorText(error) } });
           await this.requestState(value, prompt.requestId, "interrupted");
-          if (stopped) {
-            // A driver prepared before cancellation has not consumed the now-durable user message.
-            // Recreate it from the journal before the next request instead of reusing stale history.
-            await value.driver?.abort(); await value.driver?.dispose(); value.driver = undefined;
-          } else this.options.onError?.(error);
+          value.rebuildDriver = true;
+          if (!stopped) this.options.onError?.(error);
         } finally {
+          const cleanupErrors: unknown[] = [];
+          if (value.rebuildDriver) {
+            const driver = value.driver;
+            value.driver = undefined; value.rebuildDriver = false;
+            try { await driver?.abort(); } catch (error) { cleanupErrors.push(error); }
+            try { await driver?.dispose(); } catch (error) { cleanupErrors.push(error); }
+          }
           for (const callId of value.progress.keys()) await this.flushProgress(value, callId, true);
           for (const message of [...value.journal.inbox["next-step"]]) {
             await this.splice(value, "next-step", 0, 1, []);
@@ -360,6 +390,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
           }
           value.journal.state.status = "idle";
           await value.journal.save();
+          if (cleanupErrors.length) this.options.onError?.(new AggregateError(cleanupErrors, "Assistant driver cleanup failed"));
         }
       }
     })().catch((error) => this.options.onError?.(error)).finally(() => { value.working = undefined; if (!this.disposed && Object.values(value.journal.state.requests).includes("queued")) this.pump(value); });

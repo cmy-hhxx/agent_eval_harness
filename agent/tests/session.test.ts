@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { AssistantSessions, type ConversationDriverOptions } from "@eval/runtime/assistant";
-import { object, type ModelConfig } from "@eval/contracts";
+import { AssistantJournal } from "@eval/data";
+import { object, type AssistantEvent, type JsonObject, type ModelConfig } from "@eval/contracts";
+import { createAssistantMessage, createToolResultMessage } from "../../packages/runtime/src/deepseek.js";
 
 async function until(fn:()=>Promise<boolean>){for(let n=0;n<200;n++){if(await fn())return;await delay(10);}throw new Error("Timed out");}
 test("durable inbox supports edit, removal and steering; progress uses upstream tool events",async()=>{
@@ -73,4 +75,105 @@ test("specialist previews coalesce durably, retain the final transcript and reco
   const restored=await sessions.page(scope);
   assert.equal(JSON.stringify(restored),JSON.stringify(page),"restarting preserves the same final output and event sequence");
  }finally{await sessions.dispose();await rm(directory,{recursive:true,force:true});}
+});
+
+const recoveryCalls = ["accepted", "unknown", "not-started"];
+const recoveryContent = recoveryCalls.map(id => ({ type: "toolCall", id, name: "lookup", arguments: {} }));
+function assertRecovery(events: AssistantEvent[]) {
+  const results = events.filter(event => event.type === "tool/result");
+  assert.equal(results.length, 3, "preserve the accepted result and recover each unanswered request once");
+  const accepted = results.find(event => object(event.data.message).toolCallId === "accepted")!;
+  assert.equal(object(accepted.data.message).isError, false);
+  assert.deepEqual(object(accepted.data.message).content, [{ type: "text", text: "accepted result" }]);
+  for (const [callId, code] of [["unknown", "TOOL_OUTCOME_UNKNOWN"], ["not-started", "TOOL_NOT_STARTED"]]) {
+    const result = results.find(event => object(event.data.message).toolCallId === callId)!;
+    assert.equal(object(result.data.error).code, code);
+    assert.equal(object(result.data.message).isError, true);
+    assert(JSON.stringify(object(result.data.message).content).includes("按原 operationId 查询"));
+  }
+  const stepEnd = events.findIndex(event => event.type === "step/end");
+  const turnEnd = events.findIndex(event => event.type === "turn/end");
+  assert(results.every(result => result.seq < stepEnd), "settle tools before closing their step");
+  assert(stepEnd < turnEnd, "close an open step before its turn");
+  assert.deepEqual(events.map(event => event.seq), events.map((_, index) => index));
+}
+
+test("failed steps settle tools and save state even when driver cleanup fails", async () => {
+  const directory = await mkdtemp(tmpdir() + "/assistant-failed-step-");
+  const histories: AssistantEvent[][] = [], errors: unknown[] = [];
+  const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model: { provider: "test", model: "test" } as ModelConfig,
+    systemPrompt: "test", tools: [], recoveryMessage: "请按原 operationId 查询专业任务的正式结果后再决定继续。", onError: error => errors.push(error),
+    driver: async options => {
+      histories.push(structuredClone([...options.history]));
+      const first = histories.length === 1;
+      return {
+        async prompt(text) {
+          await options.event({ type: "agent_start" }); await options.event({ type: "turn_start" });
+          await options.event({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } });
+          if (text === "fail") {
+            await options.event({ type: "message_end", message: { role: "assistant", content: recoveryContent } });
+            await options.event({ type: "tool_execution_start", toolCallId: "accepted", toolName: "lookup", args: {} });
+            await options.event({ type: "message_end", message: { role: "toolResult", toolCallId: "accepted", content: [{ type: "text", text: "accepted result" }] } });
+            await options.event({ type: "tool_execution_start", toolCallId: "unknown", toolName: "lookup", args: {} });
+            await options.event({ type: "message_start", message: { role: "assistant" } });
+            throw new Error("dispatch failed");
+          }
+          await options.event({ type: "turn_end" }); await options.event({ type: "agent_end" });
+        }, async steer() {}, async abort() { if (first) throw new Error("abort cleanup failed"); }, async dispose() { if (first) throw new Error("dispose cleanup failed"); },
+      };
+    },
+  });
+  try {
+    const scope = await sessions.create("local"), failedId = randomUUID();
+    await sessions.prompt("local", { sessionId: scope.sessionId, requestId: failedId, mode: "queue", content: [{ type: "text", text: "fail" }] });
+    await until(async () => (await sessions.list("local"))[0].requests[failedId] === "interrupted");
+    const page = object(await sessions.page(scope));
+    const events = (page.records as {event: AssistantEvent}[]).map(record => record.event);
+    assertRecovery(events);
+    const control = new AbortController(), follow = sessions.events(scope, control.signal)[Symbol.asyncIterator]();
+    const snapshot = object((await follow.next()).value);
+    assert.equal(object(snapshot.assistantStream).activeAttempt, undefined, "failed partial streams do not survive as active attempts");
+    control.abort(); await follow.return?.();
+    const nextId = randomUUID();
+    await sessions.prompt("local", { sessionId: scope.sessionId, requestId: nextId, mode: "queue", content: [{ type: "text", text: "continue" }] });
+    await until(async () => (await sessions.list("local"))[0].requests[nextId] === "completed");
+    assert.equal(histories.length, 2, "a failed driver must be rebuilt before the next request");
+    assertRecovery(histories[1]);
+    assert.equal(errors.length, 2);
+    assert(errors[1] instanceof AggregateError);
+    assert.equal((errors[1] as AggregateError).errors.length, 2, "report both cleanup failures after preserving request state");
+  } finally { await sessions.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("crash recovery balances the open tail and never repairs tools from earlier closed steps", async () => {
+  const directory = await mkdtemp(tmpdir() + "/assistant-crash-step-");
+  const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model: { provider: "test", model: "test" } as ModelConfig,
+    systemPrompt: "test", tools: [], recoveryMessage: "请按原 operationId 查询专业任务的正式结果后再决定继续。",
+    driver: async () => { throw new Error("an interrupted request must not replay"); },
+  });
+  try {
+    const journal = await AssistantJournal.create(directory, "local"), requestId = randomUUID();
+    await journal.command({ sessionId: journal.state.sessionId, requestId, mode: "queue", content: [{ type: "text", text: "analyze" }] });
+    const append = (type: string, data: JsonObject, surface = false) => journal.append({ kind: "event", event: {
+      type, seq: journal.events.length, time: Date.now(), data, ...(surface ? { surfaceOp: "append" as const } : {}),
+    } });
+    await append("assistant/request", { requestId, status: "running" });
+    await append("turn/start", { turn: 1 }); await append("step/start", { turn: 1, step: 1 });
+    await append("assistant/message", { turn: 1, step: 1, message: createAssistantMessage({ content: [{ type: "tool-call", id: "earlier", name: "lookup", arguments: "{}" }] }), stream: [] }, true);
+    await append("step/end", { turn: 1, step: 1 });
+    await append("step/start", { turn: 1, step: 2 });
+    await append("assistant/message", { turn: 1, step: 2, message: createAssistantMessage({ content: recoveryCalls.map(id => ({ type: "tool-call", id, name: "lookup", arguments: "{}" })) }), stream: [] }, true);
+    await append("tool/call", { turn: 1, step: 2, callId: "accepted", name: "lookup", arguments: "{}" });
+    await append("tool/result", { turn: 1, step: 2, message: createToolResultMessage({ callId: "accepted", isError: false, content: [{ type: "text", text: "accepted result" }] }) }, true);
+    await append("tool/call", { turn: 1, step: 2, callId: "unknown", name: "lookup", arguments: "{}" });
+    const scope = journal.state;
+    const events = (object(await sessions.page(scope)).records as {event: AssistantEvent}[]).map(record => record.event);
+    const current = events.slice(events.findIndex(event => event.type === "step/start" && event.data.step === 2));
+    // Keep the original sequence positions while checking the recovered tail.
+    assertRecovery(current.map((event, index) => ({ ...event, seq: index })));
+    assert(!events.some(event => event.type === "tool/result" && object(event.data.message).toolCallId === "earlier"));
+    assert.equal(object(events.findLast(event => event.type === "turn/end")!.data.reason).kind, "interrupted");
+    assert.equal((await sessions.list("local"))[0].requests[requestId], "interrupted");
+    assert.deepEqual(object(await sessions.page(scope)).records, events.map(event => ({ type: "event", event })), "a second read does not repeat recovery");
+  } finally { await sessions.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

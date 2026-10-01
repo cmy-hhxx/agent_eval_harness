@@ -1,9 +1,10 @@
-import { createDashboardViews } from "./dashboard-view.js";
+import { createDashboardViews, groupCaseCandidates } from "./dashboard-view.js";
 
 const state = {
   runs: [], selectedRun: null, startingRun: null, run: null, cases: null, selectedCase: null,
   clusteringTasks: null, clusteringRun: null, clusteringRequest: 0,
-  caseDetail: null, selectedInput: null, inputView: null, config: null, page: 1,
+  caseDetail: null, selectedInputs: {}, inputViews: {}, inputsLoading: new Set(), config: null, page: 1,
+  deletingRun: null, pendingDelete: null,
   preview: null, runRequest: 0, caseRequest: 0, casePageRequest: 0, runId: "",
   inputs: null, inputsTimer: 0, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
@@ -72,7 +73,7 @@ function statusText(run) {
   return label(run.status);
 }
 function renderRuns() {
-  const signature = JSON.stringify([state.selectedRun, state.runs]);
+  const signature = JSON.stringify([state.selectedRun, state.deletingRun, state.runs]);
   if (signature === state.runsSignature) return;
   state.runsSignature = signature;
   const list = $("#run-list");
@@ -85,10 +86,11 @@ function renderRuns() {
     const failures = Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
     const total = (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + failures;
     const selected = state.selectedRun === run.run_id;
-    return `<button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
+    const canDelete = run.status !== "running" && state.startingRun?.id !== run.run_id && state.deletingRun !== run.run_id;
+    return `<div class="run-entry"><button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
       <span class="run-line"><span class="status-dot ${escapeHtml(run.status)}${failures ? " has-failure" : ""}"></span><span class="run-label">${escapeHtml(runLabel(run))}</span></span>
       <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 异常` : ""}</span>
-    </button>`;
+    </button><button class="run-delete" type="button" data-delete="${escapeHtml(run.run_id)}" aria-label="删除运行 ${escapeHtml(runLabel(run))}" title="${canDelete ? "删除运行" : run.status === "running" ? "停止后可删除" : "删除中"}" ${canDelete ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button></div>`;
   }).join("");
 }
 function renderOverview() {
@@ -111,7 +113,7 @@ function renderOverview() {
   $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
-    : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button>`;
+    : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button><button class="button button-danger" type="button" data-delete="${escapeHtml(run.run_id)}">删除运行</button>`;
   $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite", "clustering"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
@@ -297,20 +299,39 @@ async function loadTaskResult(taskId) {
   }
   renderTaskResult(taskId);
 }
-async function loadInput(inputId) {
-  state.selectedInput = inputId;
-  state.inputView = null;
-  renderDetail();
-  const runId = state.selectedRun;
-  try {
-    const input = await api(`${urlFor(runId)}/inputs/${encodeURIComponent(inputId)}`);
-    if (state.selectedRun !== runId || state.selectedInput !== inputId) return;
-    state.inputView = input;
-  } catch (error) {
-    if (state.selectedRun !== runId || state.selectedInput !== inputId) return;
-    state.inputView = { error: error.message };
+function resetInputs() {
+  state.selectedInputs = {};
+  state.inputViews = {};
+  state.inputsLoading = new Set();
+}
+async function loadInput(inputId, groupId) {
+  const changed = state.selectedInputs[groupId] !== inputId;
+  state.selectedInputs[groupId] = inputId;
+  // Rendering an open disclosure schedules another toggle; cached/pending selections must settle.
+  if (state.inputViews[inputId] || state.inputsLoading.has(inputId)) {
+    if (changed) renderDetail();
+    return;
   }
   renderDetail();
+  const runId = state.selectedRun;
+  const views = state.inputViews, loadingInputs = state.inputsLoading;
+  loadingInputs.add(inputId);
+  try {
+    const input = await api(`${urlFor(runId)}/inputs/${encodeURIComponent(inputId)}`);
+    if (state.selectedRun !== runId || state.inputViews !== views) return;
+    views[inputId] = input;
+  } catch (error) {
+    if (state.selectedRun !== runId || state.inputViews !== views) return;
+    views[inputId] = { error: error.message };
+  } finally { loadingInputs.delete(inputId); }
+  renderDetail();
+}
+async function loadCaseInputs() {
+  if (!state.inputOpen || !state.caseDetail) return;
+  await Promise.all(groupCaseCandidates(state.caseDetail.candidates || []).map((group) => {
+    const selected = group.candidates.find((item) => item.input_id === state.selectedInputs[group.id]) || group.candidates[0];
+    return selected ? loadInput(selected.input_id, group.id) : undefined;
+  }));
 }
 async function loadCase(batch, caseId) {
   const runId = state.selectedRun;
@@ -318,6 +339,7 @@ async function loadCase(batch, caseId) {
   const changed = state.selectedCase?.batch !== batch || state.selectedCase?.caseId !== caseId;
   state.selectedCase = { batch, caseId };
   if (changed) {
+    resetInputs();
     state.taskResults = {};
     state.taskResultsLoading = new Set();
     state.openTasks = new Set();
@@ -339,12 +361,14 @@ async function loadCase(batch, caseId) {
       if (["failed", "timed_out"].includes(task.status)) state.openTasks.add(task.id);
     }
     if (previous?.batch_id === batch && previous?.case_id === caseId && signature(previous) === signature(detail)) return;
-    const available = detail.candidates.some((item) => item.input_id === state.selectedInput);
-    if (!available) { state.selectedInput = null; state.inputView = null; }
+    for (const group of groupCaseCandidates(detail.candidates || [])) {
+      if (!group.candidates.some((item) => item.input_id === state.selectedInputs[group.id]))
+        state.selectedInputs[group.id] = group.candidates[0]?.input_id;
+    }
     renderDetail();
     for (const node of $("#case-detail").querySelectorAll("details.task-detail[open]"))
       void loadTaskResult(node.dataset.task);
-    if (!state.selectedInput && detail.candidates.length) await loadInput(detail.candidates[0].input_id);
+    await loadCaseInputs();
   } catch (error) {
     if (request !== state.caseRequest || runId !== state.selectedRun) return;
     state.caseDetail = null;
@@ -387,7 +411,8 @@ async function refresh(auto = false) {
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
     if (previousRun !== state.selectedRun) {
       ++state.caseRequest;
-      state.selectedCase = state.caseDetail = state.selectedInput = state.inputView = null;
+      state.selectedCase = state.caseDetail = null;
+      resetInputs();
       renderDetail();
     }
     renderRuns();
@@ -434,7 +459,8 @@ async function selectRun(runId) {
   if (runId === state.selectedRun) return;
   ++state.caseRequest;
   state.selectedRun = runId;
-  state.selectedCase = state.caseDetail = state.selectedInput = state.inputView = state.cases = null;
+  state.selectedCase = state.caseDetail = state.cases = null;
+  resetInputs();
   state.page = 1;
   renderRuns(); renderCases(); renderDetail();
   await refresh();
@@ -458,7 +484,9 @@ function renderDateOptions() {
     ? loading("正在读取日期")
     : dates.length ? dates.map((date) => {
     const on = state.selectedDates.has(date.date);
-    return `<button type="button" class="chip ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}>${escapeHtml(date.date)}<span class="chip-count">${date.cases === null ? "扫描中" : `${viableCount(date)}/${date.cases.length}`}</span></button>`;
+    const count = date.cases === null ? "扫描中" : `${viableCount(date)} / ${date.cases.length}`;
+    const accessible = date.cases === null ? `${date.date}，扫描中` : `${date.date}，可评测 ${viableCount(date)}，总数 ${date.cases.length}`;
+    return `<button type="button" class="date-option ${on ? "is-on" : ""}" data-date-option="${escapeHtml(date.date)}" title="${escapeHtml(date.batches.join(" "))}" aria-label="${escapeHtml(accessible)}" aria-pressed="${on}" ${state.rangeLocked ? "disabled" : ""}><span>${escapeHtml(date.date)}</span><span class="date-count">${count}</span></button>`;
   }).join("") : '<p class="empty-state">无可用日期</p>';
 }
 function renderModelOptions() {
@@ -699,14 +727,52 @@ async function startRun() {
   } finally { $("#launch-button").textContent = "启动"; }
 }
 
+function requestDelete(runId) {
+  const run = state.runs.find((item) => item.run_id === runId);
+  if (!run || run.status === "running" || state.deletingRun) return;
+  state.pendingDelete = runId;
+  $("#delete-run-label").textContent = `${runLabel(run)} · ${runId}`;
+  $("#delete-error").textContent = "";
+  $("#delete-error").hidden = true;
+  $("#delete-dialog").showModal();
+  $("#delete-cancel").focus();
+}
+async function deleteRun() {
+  const runId = state.pendingDelete;
+  if (!runId || state.deletingRun) return;
+  state.deletingRun = runId;
+  $("#delete-confirm").disabled = $("#delete-cancel").disabled = true;
+  renderRuns();
+  try {
+    await api(urlFor(runId), { method: "DELETE" });
+    $("#delete-dialog").close();
+    if (state.runId === runId) { state.runId = suggestedRunId(); invalidatePreview(); }
+    toast("已删除运行");
+    await refresh();
+  } catch (error) {
+    $("#delete-error").textContent = `删除失败：${error.message}`;
+    $("#delete-error").hidden = false;
+  } finally {
+    state.deletingRun = null;
+    $("#delete-confirm").disabled = $("#delete-cancel").disabled = false;
+    renderRuns();
+  }
+}
+$("#delete-form").addEventListener("submit", (event) => { event.preventDefault(); void deleteRun(); });
+$("#delete-cancel").addEventListener("click", () => $("#delete-dialog").close());
+$("#delete-dialog").addEventListener("close", () => { state.pendingDelete = null; });
+$("#delete-dialog").addEventListener("cancel", (event) => { if (state.deletingRun) event.preventDefault(); });
 $("#run-list").addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-delete]");
+  if (remove) { if (!remove.disabled) requestDelete(remove.dataset.delete); return; }
   const node = event.target.closest("[data-run]");
   if (node) void selectRun(node.dataset.run);
 });
 $("#run-actions").addEventListener("click", async (event) => {
-  const node = event.target.closest("[data-stop], [data-resume]");
+  const node = event.target.closest("[data-stop], [data-resume], [data-delete]");
   if (!node) return;
-  if (node.dataset.resume) {
+  if (node.dataset.delete) requestDelete(node.dataset.delete);
+  else if (node.dataset.resume) {
     state.runId = node.dataset.resume;
     $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
@@ -730,7 +796,8 @@ $("#run-actions").addEventListener("submit", async (event) => {
 $("#case-list").addEventListener("click", (event) => {
   const node = event.target.closest("[data-batch][data-case]");
   if (!node) return;
-  state.caseDetail = state.inputView = state.selectedInput = null;
+  state.caseDetail = null;
+  resetInputs();
   renderDetail();
   void loadCase(node.dataset.batch, node.dataset.case);
 });
@@ -795,7 +862,7 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const input = event.target.closest("[data-input]");
-  if (input) await loadInput(input.dataset.input);
+  if (input) await loadInput(input.dataset.input, input.dataset.inputGroup);
 });
 // `toggle` does not bubble; capture it so expanded tasks load their result once.
 document.addEventListener(
@@ -809,6 +876,7 @@ document.addEventListener(
     const inputDisclosure = event.target.matches?.(".input-disclosure") ? event.target : null;
     if (inputDisclosure) {
       state.inputOpen = inputDisclosure.open;
+      if (state.inputOpen) void loadCaseInputs();
       return;
     }
     const node = event.target.matches?.(".task-detail") ? event.target : null;
@@ -820,8 +888,8 @@ document.addEventListener(
   },
   true,
 );
-$("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
-$("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; renderDetail(); void loadCases(); });
+$("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; resetInputs(); renderDetail(); void loadCases(); });
+$("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; resetInputs(); renderDetail(); void loadCases(); });
 $("#date-options").addEventListener("click", (event) => {
   const chip = event.target.closest("[data-date-option]");
   if (!chip || chip.disabled) return;
@@ -872,7 +940,9 @@ $("#refresh-button").addEventListener("click", async () => {
   await refresh();
   if (state.selectedCase) {
     await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
-    if (state.selectedInput) await loadInput(state.selectedInput);
+    state.inputViews = {};
+    state.inputsLoading = new Set();
+    await loadCaseInputs();
   }
 });
 $("#start-form").addEventListener("input", invalidatePreview);

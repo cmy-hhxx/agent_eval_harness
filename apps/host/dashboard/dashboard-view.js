@@ -5,6 +5,24 @@
  * module owns the presentation seam for case inputs, task results, and the
  * structured result blocks so those concerns can evolve independently.
  */
+export function groupCaseCandidates(candidates) {
+  const groups = new Map();
+  for (const candidate of candidates) {
+    const side = /^([ab])_/i.exec(candidate.version)?.[1].toLowerCase()
+      || /^([ab])组/i.exec(candidate.name || "")?.[1].toLowerCase();
+    const id = side || `version:${candidate.version}`;
+    if (!groups.has(id)) groups.set(id, {
+      id, name: side ? `${side.toUpperCase()}组` : candidate.name || candidate.version, candidates: [],
+    });
+    groups.get(id).candidates.push(candidate);
+  }
+  const tier = (candidate) => /(?:_|组)fast$/i.test(candidate.version) || /fast$/i.test(candidate.name || "") ? 0
+    : /(?:_|组)expert$/i.test(candidate.version) || /expert$/i.test(candidate.name || "") ? 1 : 2;
+  const rank = (id) => id === "a" ? 0 : id === "b" ? 1 : 2;
+  return [...groups.values()].sort((left, right) => rank(left.id) - rank(right.id) || left.id.localeCompare(right.id))
+    .map((group) => ({ ...group, candidates: group.candidates.sort((left, right) => tier(left) - tier(right) || left.version.localeCompare(right.version)) }));
+}
+
 export function createDashboardViews({
   state,
   $, 
@@ -82,9 +100,9 @@ export function createDashboardViews({
     return blocks.join("");
   }
 
-  function renderInput() {
-    const input = state.inputView;
-    if (!state.selectedInput) return "";
+  function renderInput(inputId) {
+    const input = state.inputViews[inputId];
+    if (!inputId) return "";
     if (!input) return loading("正在读取问题与回答");
     if (input.error) return `<p class="inline-error">${escapeHtml(input.error)}</p>`;
     return `<div class="answer-block">${answerHtml(input.answer)}</div>`;
@@ -195,8 +213,9 @@ export function createDashboardViews({
   }
 
   function comparisonHtml(row, taskId, rewrites) {
-    const versions = Object.keys(row.assessments);
     const name = (version) => row.models?.[version]?.version || version;
+    const versions = groupCaseCandidates(Object.keys(row.assessments).map((version) => ({ version, name: name(version) })))
+      .flatMap((group) => group.candidates.map((candidate) => candidate.version));
     const priorities = { high: 0, medium: 1, low: 2 };
     const rows = row.decision_basis.comparisons.map((item, index) => ({ item, index }))
       .sort((a, b) => priorities[a.item.importance] - priorities[b.item.importance]);
@@ -225,10 +244,12 @@ export function createDashboardViews({
         .filter((key) => row[key] !== undefined)
         .map((key) => sectionHtml(key, valueHtml(row[key], `${task.id}.${key}`, key, rewrites))).join("")
         + sectionHtml("decisive_findings", valueHtml(row.decision_basis.decisive_findings, `${task.id}.decision_basis.decisive_findings`, "decisive_findings", rewrites)) + "</details>";
-      body += `<details class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><summary>归因明细</summary>` + Object.entries(row.evaluations).map(([version, value]) => {
-        const { rewritten, ...evaluation } = value;
-        return `<section class="model-evaluation"><h6>${escapeHtml(row.models?.[version]?.version || version)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
-      }).join("") + "</details>";
+      const evaluationGroups = groupCaseCandidates(Object.keys(row.evaluations).map((version) => ({ version, name: row.models?.[version]?.version || version })));
+      body += `<details class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><summary>归因明细</summary><div class="case-columns">` + evaluationGroups.map((group) =>
+        `<section class="case-column" data-version-group="${escapeHtml(group.id)}"><h4 class="case-column-heading">${escapeHtml(group.name)}</h4>${group.candidates.map(({ version, name }) => {
+          const { rewritten, ...evaluation } = row.evaluations[version];
+          return `<section class="model-evaluation"><h6>${escapeHtml(name)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
+        }).join("")}</section>`).join("") + "</div></details>";
     } else if (task.stage === "clustering") {
       body = fieldsHtml(row.result, task.id, rewrites);
     }
@@ -238,7 +259,10 @@ export function createDashboardViews({
 
   function taskHtml(task) {
     const open = state.openTasks.has(task.id);
-    const scope = [task.versions.join(" / "), task.batch_id, task.shard != null ? `分片 ${task.shard + 1}` : ""].filter(Boolean).join(" · ");
+    const versions = groupCaseCandidates(task.versions.map((version) => ({
+      version, name: state.caseDetail?.candidates.find((candidate) => candidate.version === version)?.name || version,
+    }))).flatMap((group) => group.candidates.map((candidate) => candidate.name));
+    const scope = [versions.join(" / "), task.stage === "clustering" ? task.batch_id : "", task.shard != null ? `分片 ${task.shard + 1}` : ""].filter(Boolean).join(" · ");
     const meta = [
       `${task.attempts} 次尝试`,
       task.duration_ms != null ? `${Math.round(task.duration_ms / 1000)} 秒` : "",
@@ -259,15 +283,24 @@ export function createDashboardViews({
       return;
     }
     const candidates = detail.candidates || [];
-    const inputs = candidates.map((candidate) => `<button type="button" class="candidate-tab ${state.selectedInput === candidate.input_id ? "selected" : ""}" aria-pressed="${state.selectedInput === candidate.input_id}" data-input="${escapeHtml(candidate.input_id)}">${escapeHtml(candidate.name || candidate.version)}</button>`).join("");
+    const inputGroups = groupCaseCandidates(candidates);
+    const inputs = inputGroups.map((group) => {
+      const selected = state.selectedInputs[group.id] || group.candidates[0].input_id;
+      const tabs = group.candidates.map((candidate) => `<button type="button" class="candidate-tab ${selected === candidate.input_id ? "selected" : ""}" aria-pressed="${selected === candidate.input_id}" data-input="${escapeHtml(candidate.input_id)}" data-input-group="${escapeHtml(group.id)}">${escapeHtml(candidate.name || candidate.version)}</button>`).join("");
+      return `<section class="case-column" data-version-group="${escapeHtml(group.id)}"><h4 class="case-column-heading">${escapeHtml(group.name)}</h4><div class="candidate-tabs" role="group" aria-label="${escapeHtml(group.name)}版本">${tabs}</div><div class="input-view">${renderInput(selected)}</div></section>`;
+    }).join("");
     const standardAnswer = detail.ground_truth?.available
       ? `<section class="standard-answer"><h3>标准答案</h3>${textHtml(typeof detail.ground_truth.value === "string" ? detail.ground_truth.value : JSON.stringify(detail.ground_truth.value, null, 2), "ground_truth")}</section>` : "";
     $("#case-detail").innerHTML = `<header class="detail-heading"><div class="section-heading"><h2>问题</h2><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span></div>${textHtml(detail.question, "question", true)}${standardAnswer}</header>
-      <details class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><summary><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></summary><div class="input-content"><div class="candidate-tabs" role="group" aria-label="选择版本">${inputs}</div><div class="input-view">${renderInput()}</div></div></details>
+      <details class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><summary><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></summary><div class="input-content case-columns">${inputs}</div></details>
       ${["attribution", "comparison"].map((stage) => {
         const tasks = detail.tasks.filter((task) => task.stage === stage);
         if (!tasks.length) return "";
-        return `<section class="detail-section task-group"><h3>${escapeHtml(stageLabel(stage))}</h3><div class="task-list">${tasks.map((task) => taskHtml(task)).join("")}</div></section>`;
+        const body = stage === "attribution" ? `<div class="case-columns">${groupCaseCandidates(tasks.map((task) => ({
+          version: task.versions[0], name: candidates.find((candidate) => candidate.version === task.versions[0])?.name || task.versions[0], task,
+        }))).map((group) => `<section class="case-column" data-version-group="${escapeHtml(group.id)}"><h4 class="case-column-heading">${escapeHtml(group.name)}</h4><div class="task-list">${group.candidates.map(({ task }) => taskHtml(task)).join("")}</div></section>`).join("")}</div>`
+          : `<div class="task-list">${tasks.map((task) => taskHtml(task)).join("")}</div>`;
+        return `<section class="detail-section task-group" data-stage="${stage}"><h3>${escapeHtml(stageLabel(stage))}</h3>${body}</section>`;
       }).join("")}`;
   }
 

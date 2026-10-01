@@ -5,6 +5,22 @@ import { inspect } from "node:util";
 import { errorText, redact, type JsonObject, type LogSink } from "@eval/contracts";
 import { runLock } from "./files.js";
 
+/** The shared writer lock also protects journal maintenance from other Host / Worker processes. */
+export async function withLogWriterLock<T>(directory: string, operation: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + 30_000;
+  let release: (() => Promise<void>) | undefined;
+  while (!release) {
+    try { release = await runLock(directory); }
+    catch (error) {
+      if (Date.now() >= deadline || !/^(Run (?:already owned|lock)|Could not acquire run lock)/.test(errorText(error)))
+        throw error;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  try { return await operation(); }
+  finally { await release(); }
+}
+
 const EVENT_INTERVAL_MS = 60_000;
 const evaluationKey = (record: JsonObject) =>
   JSON.stringify([record.workflow, record.run_id, record.task_id, record.submission_id]);
@@ -76,33 +92,15 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
   let lastFailure = "";
 
   async function locked(operation: () => Promise<void>): Promise<boolean> {
-    const next = queue.then(async () => {
-      const deadline = Date.now() + 30_000;
-      let release: (() => Promise<void>) | undefined;
-      while (!release) {
-        try {
-          release = await runLock(options.lockDirectory);
-        } catch (error) {
-          if (
-            Date.now() >= deadline ||
-            !/^(Run (?:already owned|lock)|Could not acquire run lock)/.test(errorText(error))
-          )
-            throw error;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+    const next = queue.then(() => withLogWriterLock(options.lockDirectory, async () => {
+      await mkdir(options.directory, { recursive: true });
+      for (const name of ["runtime.log", "evaluation.log"]) {
+        const handle = await open(path.join(options.directory, name), "a");
+        await handle.close();
       }
-      try {
-        await mkdir(options.directory, { recursive: true });
-        for (const name of ["runtime.log", "evaluation.log"]) {
-          const handle = await open(path.join(options.directory, name), "a");
-          await handle.close();
-        }
-        await operation();
-        lastFailure = "";
-      } finally {
-        await release();
-      }
-    });
+      await operation();
+      lastFailure = "";
+    }));
     queue = next.catch(() => {});
     try {
       await next;

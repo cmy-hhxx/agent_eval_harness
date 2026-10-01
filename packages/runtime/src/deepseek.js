@@ -1,9 +1,8 @@
 // Server-only bridge; no Pi or evaluation definitions enter the browser bundle.
 export { RemoteStreamMuxServer } from "../../../vendor/deepseek/packages/api/gateway/src/stream-server.ts";
-export { RemoteError, remoteErrorOf } from "@deepseek-ai/dsh-typert-protocol";
 export { Context } from "@deepseek-ai/cordis";
-export { Session, SessionId, SESSION_FORMAT_VERSION } from "@deepseek-ai/dsh-session";
-export { createUserMessage, createAssistantMessage, createToolResultMessage, createSystemMessage, ToolCallId } from "@deepseek-ai/dsh-llm";
+export { SESSION_FORMAT_VERSION, ToolCallRecovery } from "@deepseek-ai/dsh-session";
+export { createUserMessage, createAssistantMessage, createToolResultMessage } from "@deepseek-ai/dsh-llm";
 export { AssistantStreamAccumulator } from "@deepseek-ai/dsh-llm/assistant-stream";
 export { bootThemeInjections } from "../../../vendor/deepseek/packages/client/ui-theme/src/boot-theme.ts";
 
@@ -14,13 +13,13 @@ import { DeveloperToolsSettingsSchema } from "../../../vendor/deepseek/packages/
 import { LocaleSettingsSchema } from "../../../vendor/deepseek/packages/client/locale/src/locale-settings.ts";
 import { ThemeSettingsSchema } from "../../../vendor/deepseek/packages/client/ui-theme/src/theme-settings.ts";
 import { ConversationSettingsSchema } from "../../../vendor/deepseek/packages/client/ui-conversation/src/submission-settings.ts";
-import { ChatSettingsSchema, TRANSCRIPT_VIEW_MODES } from "../../../vendor/deepseek/packages/client/ui-chat/src/chat-settings.ts";
+import { ChatSettingsSchema, TRANSCRIPT_VIEW_MODES, DEFAULT_TRANSCRIPT_VIEW_MODE } from "../../../vendor/deepseek/packages/client/ui-chat/src/chat-settings.ts";
 const settingsSections = [
   {ns: "ui-settings", schema: DeveloperToolsSettingsSchema, base: {enabled: true}, fields: []},
   {ns: "locale", schema: LocaleSettingsSchema, base: {}, fields: ["preference"]},
   {ns: "ui-theme", schema: ThemeSettingsSchema, base: {preference: "light", fontSize: 14}, fields: ["fontSize"]},
   {ns: "ui-conversation", schema: ConversationSettingsSchema, base: {busyEnter: "queue"}, fields: ["busyEnter"]},
-  {ns: "ui-chat", schema: ChatSettingsSchema, base: {transcriptView: "standard", performanceUsage: "detailed", linkOpening: "new-tab"}, fields: ["transcriptView", "performanceUsage"]},
+  {ns: "ui-chat", schema: ChatSettingsSchema, base: {transcriptView: DEFAULT_TRANSCRIPT_VIEW_MODE, performanceUsage: "detailed", linkOpening: "new-tab"}, fields: ["transcriptView", "performanceUsage"]},
 ];
 export function assistantSettingsDescribe(document) {
   return { writable: true, hasDocument: false, namespaces: settingsSections.map(({ns, schema, base}) => ({

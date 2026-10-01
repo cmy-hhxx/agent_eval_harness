@@ -89,7 +89,7 @@
     }
   },
   "execution": {
-    "concurrency": 32,
+    "concurrency": 8,
     "failureGuard": { "windowSize": 50, "threshold": 5 },
     "timeoutSeconds": 900,
     "idleTimeoutSeconds": 120,

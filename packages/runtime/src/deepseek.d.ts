@@ -21,6 +21,10 @@ export class RemoteStreamMuxClient {
 export function rpcFetchHandler(channel: string, handler: (endpoint: string, payload: unknown, signal: AbortSignal, peer: Peer) => Promise<unknown>, peer: Peer): { fetch(request: Request): Promise<Response> };
 export function bootThemeInjections(preference: "light", fontSize?: number): { kind: string; text: string; placement?: string }[];
 export const SESSION_FORMAT_VERSION: number;
+export class ToolCallRecovery {
+  observe(event: import("@eval/contracts").AssistantEvent): void;
+  results(): (import("@eval/contracts").AssistantEvent & { sourceEventSeqs?: number[] })[];
+}
 export class AssistantStreamAccumulator {
   push(value: {time: number; chunk: JsonObject}): unknown;
   snapshot(): JsonObject[];
@@ -32,7 +36,6 @@ export class SessionAssistantStreamAccumulator {
 export function createUserMessage(input: JsonObject): JsonObject;
 export function createAssistantMessage(input: JsonObject): JsonObject;
 export function createToolResultMessage(input: JsonObject): JsonObject;
-export function createSystemMessage(text: string): JsonObject;
 
 export class RemoteStreamCarrierError extends Error {}
 export function assistantSettingsDescribe(document: import("@eval/contracts").AssistantPreferences): JsonObject;

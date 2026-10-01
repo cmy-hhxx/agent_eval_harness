@@ -23,20 +23,21 @@ export async function seedSession(scaffold, history, sessionId) {
  const state={...journal.state,title:'SYNTHETIC_BROWSER_HISTORY',lastSeq:events.at(-1).seq,requests:{fixture:'completed'}};
  await writeJson(path.join(journal.directory,'state.json'),state);
 }
-export async function launchWebScaffold({paceMs=16}) {
+export async function launchWebScaffold({paceMs=16,replayContextWindow}) {
  const directory=await mkdtemp(path.join(tmpdir(),'eval-browser-benchmark-'));
  let settle=()=>{},sessions;
- const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(sessions=new AssistantSessions({directory,url,model:{provider:'test',model:'test'},systemPrompt:'test',tools:[],driver:async({event})=>({
+ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(sessions=new AssistantSessions({directory,url,model:{provider:'test',model:'test',contextWindow:replayContextWindow},systemPrompt:'test',tools:[],driver:async({event})=>({
   async prompt(text){
    await event({type:'agent_start'});await event({type:'turn_start'});
    await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
    await event({type:'message_start',message:{role:'assistant'}});
-   let output='';
+   let output='',usage;
    for(const chunk of syntheticReply()){
     await delay(paceMs);
     if(chunk.type==='text-delta'){output+=chunk.text;await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:chunk.text}});}
+    if(chunk.type==='usage')usage=chunk.usage;
    }
-   await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'text',text:output}],stopReason:'stop'}});
+   await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'text',text:output}],usage:usage&&{input:usage.inputTokens,output:usage.outputTokens,cacheRead:usage.cacheReadTokens??0,cacheWrite:usage.cacheWriteTokens??0,totalTokens:usage.inputTokens+usage.outputTokens},stopReason:'stop'}});
    await event({type:'turn_end'});await event({type:'agent_end'});settle();
   },async steer(){},async abort(){},async dispose(){}
  })}))});

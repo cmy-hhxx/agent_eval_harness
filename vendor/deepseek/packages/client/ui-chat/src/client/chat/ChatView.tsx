@@ -18,6 +18,7 @@ import { ChatGroupSeat } from './ChatGroupSeat.tsx'
 import { chatRenderKey } from './render-entry.ts'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { TurnNavigator } from './TurnNavigator.tsx'
+import { RunningStatus } from './RunningStatus.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
 import { fileMediaUrl, resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
@@ -111,6 +112,13 @@ export function ChatView({
   // both the data and its change signal: the array identity moves only when a
   // Turn enters, leaves, or changes its preview.
   const turnNavigationItems = useChat(s => s.navigation.items())
+  const latestTurnAnchor = turnNavigationItems.at(-1)?.anchorKey
+  const runningStartTime = useChatNode(latestTurnAnchor ?? '', (node) => {
+    const location = node?.location
+    return location?.kind === 'turn' || location?.kind === 'step'
+      ? location.turn.status === 'open' ? location.turn.start?.time : undefined
+      : undefined
+  })
   // Host-computed whole-log outline; the merge is view-layer only (the
   // conversation snapshot never carries projection values).
   const turnOutline = useProjection('turnOutline')
@@ -203,6 +211,11 @@ export function ChatView({
     [loadImage, renderSlot],
   )
 
+  const renderRunningIcon = useCallback(
+    () => renderSlot('conversation.running.brand.mark', { size: '100%' }),
+    [renderSlot],
+  )
+
   const firstKey = order[0]
   const firstSeq = firstKey === undefined ? null : nodeStore.get(firstKey)?.anchorSeq ?? null
   const lastKey = order.at(-1) ?? null
@@ -269,6 +282,7 @@ export function ChatView({
                 t={t}
               />
             </MarkdownDelegateProvider>
+            {running && <RunningStatus startTime={runningStartTime} t={t} renderIcon={renderRunningIcon} />}
             {/* No pending placeholders: questions (ui-user-questions) and approvals
                 (ApprovalPanel) both take over the composer, so a flow card would
                 double-render the same wait. */}

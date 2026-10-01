@@ -10,7 +10,7 @@ import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { toDashboardModels } from "../../../apps/host/src/dashboard-models.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { exists, fileSourceReader, readJson, writeJson, writeJsonl } from "@eval/data";
+import { exists, fileSourceReader, readJson, runLock, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
   attributionRow, buildPlan, caseResultView, listInputInventory, listRunCases, readCaseDetail,
@@ -688,6 +688,91 @@ test("dashboard forwards controls to the locked Host without exposing its token"
   }
 });
 
+test("dashboard deletion requires same origin and an idle run, then removes only its output and journal rows", async () => {
+  const fixture = await setup(false, true);
+  const logs = { directory: path.join(fixture.directory, "log"), lockDirectory: path.join(fixture.directory, ".runtime/log-writer") };
+  const dashboard = await startDashboard({ configPaths: [fixture.configFile], port: 0, logs });
+  const remove = (runId: string, origin: string | undefined = dashboard.url) => fetch(`${dashboard.url}/api/dashboard/runs/${runId}`, {
+    method: "DELETE", headers: origin ? { origin } : {},
+  });
+  try {
+    const source = fixture.config.inputs.versions[0]!.sources[0]!.path;
+    const inputBefore = await readFile(source, "utf8");
+    const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
+    const libraryBefore = await readFile(libraryFile, "utf8");
+    const otherRun = path.join(fixture.config.output.path, "keep-me");
+    await writeJson(path.join(otherRun, "state.json"), { format: "evaluation-run", runId: "keep-me" });
+    await writeJson(path.join(fixture.run, "_internal/tasks/t/debug.json"), { debug: true });
+    for (const name of ["runtime.log", "evaluation.log"])
+      await writeJsonl(path.join(logs.directory, name), [{ run_id: "run-one", result: "remove" }, { run_id: "keep-me", result: "retain" }]);
+    const before = await readFile(path.join(fixture.run, "state.json"), "utf8");
+    assert.equal((await remove("run-one", "http://untrusted.example")).status, 403);
+    const noOrigin = await fetch(`${dashboard.url}/api/dashboard/runs/run-one`, { method: "DELETE" });
+    assert.equal(noOrigin.status, 403);
+    const release = await runLock(fixture.run);
+    try {
+      const busy = await remove("run-one");
+      assert.equal(busy.status, 409);
+      assert.match((await busy.json()).error, /停止运行/);
+      assert.equal(await readFile(path.join(fixture.run, "state.json"), "utf8"), before);
+    } finally { await release(); }
+    const deleted = await remove("run-one");
+    assert.equal(deleted.status, 200);
+    assert.deepEqual(await deleted.json(), { run_id: "run-one", deleted: true, logs: { runtime: 1, evaluation: 1 } });
+    assert.equal(await exists(fixture.run), false);
+    assert.equal((await remove("run-one")).status, 404);
+    assert.equal(await exists(fixture.run), false);
+    assert.equal(await readFile(source, "utf8"), inputBefore);
+    assert.equal(await readFile(libraryFile, "utf8"), libraryBefore);
+    assert.equal(await exists(otherRun), true);
+    for (const name of ["runtime.log", "evaluation.log"])
+      assert.equal(await readFile(path.join(logs.directory, name), "utf8"), '{"run_id":"keep-me","result":"retain"}\n');
+  } finally {
+    await dashboard.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard blocks deletion throughout launch preparation and releases the reservation when launch fails", async () => {
+  const fixture = await setup();
+  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
+  process.env.EVAL_BASE_URL = gateway;
+  process.env.EVAL_API_KEY = "fixture-key";
+  let modelRequestStarted!: () => void, finishModels!: () => void;
+  const requested = new Promise<void>((resolve) => { modelRequestStarted = resolve; });
+  const modelsReady = new Promise<void>((resolve) => { finishModels = resolve; });
+  const dashboard = await startDashboard({ configPaths: [fixture.configFile], port: 0,
+    logs: { directory: path.join(fixture.directory, "log"), lockDirectory: path.join(fixture.directory, "log-lock") },
+    modelCatalog: async () => { modelRequestStarted(); await modelsReady; return []; },
+  });
+  try {
+    const invalid = await fetch(`${dashboard.url}/api/dashboard/runs`, {
+      method: "POST", headers: { origin: dashboard.url, "content-type": "application/json" },
+      body: JSON.stringify({ runId: "../outside" }),
+    });
+    assert.equal(invalid.status, 400, "invalid identifiers are rejected before reserving a run");
+    const launching = fetch(`${dashboard.url}/api/dashboard/runs`, {
+      method: "POST", headers: { origin: dashboard.url, "content-type": "application/json" },
+      body: JSON.stringify({ runId: "run-one" }),
+    });
+    await Promise.race([requested, launching.then(() => { throw new Error("Launch returned before requesting models"); })]);
+    const busy = await fetch(`${dashboard.url}/api/dashboard/runs/run-one`, { method: "DELETE", headers: { origin: dashboard.url } });
+    assert.equal(busy.status, 409);
+    assert.match((await busy.json()).error, /启动/);
+    assert.equal(await exists(path.join(fixture.run, "state.json")), true);
+    finishModels();
+    assert.equal((await launching).status, 400, "an unavailable model fails before spawning a child");
+    const deleted = await fetch(`${dashboard.url}/api/dashboard/runs/run-one`, { method: "DELETE", headers: { origin: dashboard.url } });
+    assert.equal(deleted.status, 200);
+  } finally {
+    finishModels();
+    await dashboard.close();
+    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("run-scoped settings are validated with the same model and execution configuration as CLI", async () => {
   const fixture = await setup();
   try {
@@ -702,6 +787,13 @@ test("run-scoped settings are validated with the same model and execution config
     assert.equal(host.evaluation.rewrite.attribution, true);
     const original = await loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway });
     assert.equal(original.evaluation.execution.concurrency, 2);
+    const defaultConfigFile = path.join(fixture.directory, "default-config.json");
+    await writeJson(defaultConfigFile, {
+      ...await readJson<Record<string, unknown>>(fixture.configFile),
+      execution: {},
+    });
+    const defaultConfig = await loadConfig(defaultConfigFile, { EVAL_BASE_URL: gateway });
+    assert.equal(defaultConfig.evaluation.execution.concurrency, 8);
     const withClustering = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
       clustering: { enabled: false },
     });
@@ -720,6 +812,7 @@ test("run-scoped settings are validated with the same model and execution config
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
     assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
     const defaults = editableDashboardSettings({ bindings: { comparison: { profile: "judge" } }, models: { judge: {} } });
+    assert.equal(defaults.execution.concurrency, 8);
     assert.equal(defaults.bindings.comparison.thinking, "high");
     assert.equal(editableDashboardSettings({
       models: { judge: { thinking: "low" } },

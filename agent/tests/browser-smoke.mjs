@@ -26,6 +26,7 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark',locale:'zh-CN'}),errors=[];
  page.on('pageerror',e=>errors.push(String(e)));
  await page.goto(server.url);const input=page.locator('[contenteditable=true]');await input.waitFor();
+ assert.equal(await page.evaluate(()=>'dshDesktop' in globalThis),false,'the Web product does not expose a desktop bridge');
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
  assert.equal(await page.title(),'新对话 — Eris');
  const marks=page.locator('img[data-brand=eris]');

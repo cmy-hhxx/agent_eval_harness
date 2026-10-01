@@ -66,6 +66,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.comparison?.profile, "judge");
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.models.models.judge?.thinking, "high");
+  assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)

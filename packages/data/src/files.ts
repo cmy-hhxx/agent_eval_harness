@@ -159,8 +159,8 @@ export async function hasLiveRunOwner(directory: string): Promise<boolean> {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
 }
 
-export async function runLock(directory: string): Promise<() => Promise<void>> {
-  await mkdir(directory, { recursive: true });
+export async function runLock(directory: string, options: { createDirectory?: boolean } = {}): Promise<() => Promise<void>> {
+  if (options.createDirectory !== false) await mkdir(directory, { recursive: true });
   const file = path.join(directory, ".run-lock");
   const token = randomUUID();
   for (let attempt = 0; attempt < 2; attempt++) {

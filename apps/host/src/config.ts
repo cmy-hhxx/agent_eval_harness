@@ -17,7 +17,7 @@ export * from "./models.js";
 const API_KINDS: ModelProfile["api"][] = ["openai-completions", "openai-responses"];
 const EXECUTION_DEFAULTS = {
   ...DEFAULT_POLICY,
-  concurrency: 4,
+  concurrency: 8,
   retries: 1,
   retryDelaySeconds: 10,
   initialContextChars: 16000,

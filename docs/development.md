@@ -86,4 +86,6 @@ README 是唯一入口；正文按使用、契约、架构、开发、质量和�
 
 ## 独立分析 Agent 验证
 
-总 Agent 的上游回归、浏览器、视觉与性能命令见 [Agent 验证](../agent/README.md#验证)。`build:app` 同时编译 Runtime 的上游桥接与 Web 资源；不需要相邻的 Deepseek 仓库。源代码移植维护使用 `scripts/vendor-deepseek.mjs`，局部修改集中记录在 `vendor/deepseek/local.patch` 和 `vendor/upstream.json`。
+总 Agent 的上游回归、浏览器、视觉与性能命令见 [Agent 验证](../agent/README.md#验证)。`build:app` 同时编译 Runtime 的上游桥接与 Web 资源；不需要相邻的 Deepseek 仓库，也不运行上游桌面或客户端构建。源代码移植维护使用 `scripts/vendor-deepseek.mjs`，替换所选包的源码和测试，局部修改集中记录在 `vendor/deepseek/local.patch` 和 `vendor/upstream.json`。产品交付与运行环境见 [Agent 说明](../agent/README.md)。
+
+上游回归覆盖实际装配的 Web 组件和共享会话、传输协议；新增运行状态、模型选择、菜单或排队行为时同步更新测试入口。性能 adapter 只替换服务、存储和浏览器环境，保留上游负载、测量和预算。干净安装验证使用临时 checkout；上游、浏览器和性能检查通过独立命令运行。

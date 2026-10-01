@@ -10,15 +10,13 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="运行导航">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">E</span><strong>EVAL</strong></div>
         <nav class="workspace-nav" aria-label="工作台导航"><a href="/" aria-current="page">运行工作台</a><a href="/reference">数据与流程</a></nav>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
       </aside>
 
-      <main class="main-content">
+      <main class="main-content" aria-label="评测工作台">
         <header class="page-header">
-          <h1>评测工作台</h1>
           <div class="header-meta"><span id="refresh-time"></span><span class="service-badge">本机</span></div>
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
@@ -26,9 +24,8 @@
         <section class="panel launch-panel" id="config" aria-labelledby="config-title">
           <div class="panel-heading"><h2 id="config-title">新建评测</h2><div id="env-status" class="env-status" aria-label="网关配置状态"></div></div>
           <form id="start-form" class="start-form">
-            <div class="field-row">
-              <span class="field-label">日期</span>
-              <div id="date-options" class="chip-row" role="group" aria-label="日期"><span class="loading" role="status" aria-label="正在读取日期"><span class="spinner" aria-hidden="true"></span></span></div>
+            <div class="field-row date-field">
+              <div class="date-selection"><div class="date-columns" aria-hidden="true"><span>日期</span><span>可评测 / 总数</span></div><div id="date-options" class="date-options" role="group" aria-label="日期"><span class="loading" role="status" aria-label="正在读取日期"><span class="spinner" aria-hidden="true"></span></span></div></div>
               <div class="field-actions"><button id="date-all" type="button">全部</button><button id="date-none" type="button">清空</button></div>
             </div>
             <div class="field-row">
@@ -37,7 +34,7 @@
               <div class="field-actions"><button id="model-all" type="button">全部</button><button id="model-none" type="button">清空</button></div>
             </div>
             <div class="launch-row">
-              <div class="sample-field"><span class="inline-field-label">抽样数量</span><div class="sample-control" role="group" aria-label="抽样数量"><button id="sample-all" class="sample-mode selected" type="button" aria-pressed="true">全部</button><span class="sample-input"><input id="sample-size" type="number" min="1" inputmode="numeric" placeholder="指定数量" aria-label="指定抽样数量" aria-describedby="sample-hint" /><span aria-hidden="true">个</span></span></div><span id="sample-hint" class="field-hint">可选</span></div>
+              <div class="sample-field"><span class="inline-field-label">抽样数量</span><div class="sample-control" role="group" aria-label="抽样数量"><span class="sample-input"><input id="sample-size" type="number" min="1" inputmode="numeric" value="10" aria-label="指定抽样数量" /><span aria-hidden="true">个</span></span><button id="sample-all" class="sample-mode" type="button" aria-pressed="false">全部</button></div></div>
               <label class="inline-field"><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
               <button id="preview-button" class="button" type="button">预检</button>
               <button id="launch-button" class="button button-primary" type="submit" disabled>启动</button>
@@ -45,20 +42,23 @@
             <div id="preview-result" class="preview-result" role="status" aria-live="polite"></div>
             <details class="advanced-settings">
               <summary>高级设置</summary>
+              <div class="advanced-grid">
               <div class="settings-section"><h3>阶段模型</h3><div id="model-fields" class="model-fields"><span class="loading" role="status" aria-label="正在读取配置"><span class="spinner" aria-hidden="true"></span></span></div></div>
+              <div class="settings-controls">
               <div class="settings-section"><h3>执行预算</h3><div class="budget-grid">
                 <label><span>并发数</span><input id="setting-concurrency" type="number" min="1" required /></label>
                 <label><span>任务超时（秒）</span><input id="setting-timeout" type="number" min="1" required /></label>
                 <label><span>工具调用上限</span><input id="setting-tools" type="number" min="1" required /></label>
                 <label><span>传输重试次数</span><input id="setting-retries" type="number" min="0" required /></label>
               </div></div>
-              <div class="settings-checks">
+              <div class="settings-section"><h3>处理选项</h3><div class="settings-checks">
                 <label><input id="rewrite-attribution" type="checkbox" /> 改写归因评语</label>
                 <label><input id="rewrite-comparison" type="checkbox" /> 改写对比评语</label>
                 <label><input id="rewrite-clustering" type="checkbox" /> 改写聚类描述</label>
                 <label><input id="clustering-enabled" type="checkbox" /> 维护问题库（聚类）</label>
                 <label><input id="debug" type="checkbox" /> 保存 Debug 材料</label>
-              </div>
+              </div></div>
+              </div></div>
               <p id="config-path" class="config-path"></p>
             </details>
           </form>
@@ -95,6 +95,15 @@
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
       </main>
     </div>
+    <dialog id="delete-dialog" class="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-scope">
+      <form id="delete-form">
+        <h2 id="delete-title">删除运行</h2>
+        <p id="delete-run-label"></p>
+        <p id="delete-scope">删除该运行的评测输出、状态、Debug 材料和运行日志。此操作无法恢复。</p>
+        <p id="delete-error" class="inline-error" role="alert" hidden></p>
+        <div class="dialog-actions"><button id="delete-cancel" class="button" type="button">取消</button><button id="delete-confirm" class="button button-danger" type="submit">删除运行</button></div>
+      </form>
+    </dialog>
     <script type="module" src="/dashboard.js"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-import { readFile, readdir, stat, mkdir, cp, writeFile, rm } from "node:fs/promises";
+import { readFile, readdir, stat, mkdir, mkdtemp, cp, writeFile, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import ts from "typescript";
@@ -7,7 +7,14 @@ import { root } from "./lib.mjs";
 // Explicit maintenance command; normal builds only read the checked-in sources.
 if (!process.argv[2]) throw new Error("Usage: node scripts/vendor-deepseek.mjs <upstream checkout>");
 const source = path.resolve(process.argv[2]);
-const destination = path.join(root, "vendor/deepseek");
+const recordedDestination = path.join(root, "vendor/deepseek");
+const localPatch = await readFile(path.join(recordedDestination, "local.patch"), "utf8");
+for (const [, before, after] of [
+  ...localPatch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm),
+  ...localPatch.matchAll(/^--- a\/(\S+)\n\+\+\+ b\/(\S+)$/gm),
+]) {
+  if (before !== after) throw new Error(`Local patch must edit the same source path: ${before} -> ${after}`);
+}
 const exists = (file) => stat(file).then(() => true, () => false);
 const packages = new Map();
 async function manifests(directory, depth) {
@@ -49,6 +56,20 @@ const entries = [
   "packages/client/ui-model-selection/tests/model-select.client.spec.tsx",
   "packages/llm/token-meter/tests/token-usage-projection.spec.ts",
   "packages/session/session-stats/tests/projection.spec.ts",
+  "packages/client/ui-commands/tests/popup.client.spec.ts",
+  "packages/client/ui-commands/tests/popup-view.client.spec.tsx",
+  "packages/client/ui-primitives/tests/menu-group.client.spec.tsx",
+  "packages/client/ui-primitives/tests/text-shimmer.client.spec.tsx",
+  "packages/client/ui-primitives/tests/tooltip.client.spec.tsx",
+  "packages/client/ui-conversation/tests/input-reference-submit.client.spec.ts",
+  "packages/client/ui-conversation/tests/queue-dock.client.spec.tsx",
+  "packages/client/ui-conversation/tests/service-orchestration.client.spec.ts",
+  "packages/client/ui-chat/tests/running-status.client.spec.tsx",
+  "packages/client/ui-chat/tests/process-groups.client.spec.ts",
+  "packages/client/ui-chat/tests/reasoning-row.client.spec.tsx",
+  "packages/client/ui-chat/tests/chat-view.client.spec.tsx",
+  "packages/client/ui-chat/tests/transcript-view-policy.client.spec.ts",
+  "packages/client/ui-tool/tests/tool-row.client.spec.tsx",
 ];
 const aliases = {}, selected = new Set(), visited = new Set(), external = new Map();
 async function resolveFile(file) {
@@ -105,7 +126,11 @@ async function visit(file, owner) {
   }
 }
 for (const entry of entries) await visit(await resolveFile(path.join(source, entry)));
-await mkdir(destination, { recursive: true });
+// Prepare a complete source copy before replacing the recorded dependency graph.
+// Files removed upstream must not survive in the next build or test discovery.
+const destination = await mkdtemp(path.join(root, "vendor/.deepseek-"));
+try {
+await writeFile(path.join(destination, "local.patch"), localPatch);
 for (const name of [...selected].sort()) {
   const { directory, manifest } = packages.get(name);
   const target = path.join(destination, path.relative(source, directory));
@@ -122,6 +147,8 @@ for (const name of [...selected].sort()) {
   }
 }
 for (const name of ["active-stream-reconnect", "long-session-browser", "support"]) await cp(path.join(source, "benchmarks", name), path.join(destination, "benchmarks", name), { recursive: true });
+await mkdir(path.join(destination, "scripts"));
+await cp(path.join(source, "scripts/test-dom-environment.ts"), path.join(destination, "scripts/test-dom-environment.ts"));
 // Remove the upstream hero artwork before patching, so vector data is not
 // carried into either the vendored sources or the local patch.
 const heroFile = path.join(destination, "packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx");
@@ -133,9 +160,11 @@ hero = hero.replace("import { useState } from 'react'\n", "")
   .replace(/            onMouseEnter=\{[\s\S]*?            onMouseLeave=\{[^\n]*\n/, "")
   .replace("fallback: <HeroFish hovering={hovering} />", "fallback: null");
 await writeFile(heroFile, hero);
-if (await exists(path.join(destination, "local.patch"))) execFileSync("git", ["apply", "--directory=vendor/deepseek", path.join(destination, "local.patch")], { cwd: root });
+execFileSync("git", ["apply", `--directory=${path.relative(root, destination)}`, path.join(destination, "local.patch")], { cwd: root });
 for (const file of ["FishLogo.tsx", "BrandWordmark.tsx"])
   await rm(path.join(destination, "packages/client/ui-primitives/src", file), { force: true });
+for (const file of ["src/client/chat/RunningWhaleTail.tsx", "src/client/chat/running-whale@2x.png", "tests/running-whale-tail.client.spec.tsx"])
+  await rm(path.join(destination, "packages/client/ui-chat", file), { force: true });
 await cp(path.join(source, "LICENSE"), path.join(destination, "LICENSE"));
 await writeFile(path.join(destination, "sources.json"), JSON.stringify({ entries, aliases, packages: [...selected].sort(), dependencies: Object.fromEntries([...external].sort()) }, null, 2) + "\n");
 const upstreamFile = path.join(root, "vendor/upstream.json");
@@ -147,15 +176,23 @@ upstream.deepseek = {
   license: "MIT; component-specific licenses retained in copied package directories",
   local_changes: [
     "Original attachment MessageImages/ImageGallery and lightbox are reused for source-reference tool inspection; bytes are resolved by the application only on expansion. Attachment presentation and CSS are unchanged, and upstream image behavior tests are retained.",
-    "Source-only UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies; aliases and source exports are recorded in sources.json. No dependency on the adjacent repository at build or run time.",
-    "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold/render algorithms and all CSS are unchanged.",
-    "Official logo/wordmark artwork and their exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-owned Eris artwork and name occupy the existing brand slots; the hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",
+    "Web-only source composition: UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies. A staged refresh replaces the selected source graph without retaining deleted files. Aliases and source exports are recorded in sources.json; ordinary builds do not use the adjacent repository, Desktop carriers, native addons or Windows packaging.",
+    "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold/render algorithms are unchanged; CSS only removes the unused official running-whale animation rules.",
+    "Official logo/wordmark and running-whale artwork, exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-owned Eris artwork and name occupy the brand slots, including a running-status icon slot; upstream isolated clock, text shimmer and accessibility behavior are retained. The hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",
     "Server bundle substitutes the original llm package manifest version literal for createRequire relative lookup; no protocol version or algorithm change.",
     "ModelSelect's parameterized test uses the identical expected string with toBe, because the repository's Vitest runner does not allow inline snapshots inside it.each.",
-    "Settings reuse ui-settings-general with optional technical rows omitted and ui-theme with its appearance selector omitted. Chat progress copy is localized as analysis; matching upstream test expectations are updated. All settings CSS and interaction components remain upstream.",
-    "Gateway model selection reuses ui-input-trigger, ui-commands, ui-model-selection and ModelListEditor (selectionOnly skips manual model editing). Original token/session metric projections are reused. Original transport, conversation, Markdown, model selection and metric projection tests with their test-support dependencies and benchmark fixtures/budgets are retained. agent test adapters supply local Pi/session persistence and the installed Chrome binary."
+    "Settings reuse ui-settings-general with optional technical rows omitted and ui-theme with its appearance selector omitted. Web defaults show detailed work steps and support the upstream 10–22 px conversation font range. Running status copy is localized as analysis; matching upstream tests are updated. All settings CSS and interaction components remain upstream.",
+    "Gateway model selection reuses upstream fuzzy search, provider ordering, grouped menus, sticky headings, keyboard focus and ModelListEditor (selectionOnly skips manual model editing). Original token/session metric projections and ToolCallRecovery are reused. Original transport, conversation, Markdown, model selection, menu, queue, running-status, tool-row and metric projection tests with their test-support dependencies and benchmark fixtures/budgets are retained. Agent adapters supply local Pi/session persistence and the installed Chrome binary."
   ],
 };
+const previous = destination + "-previous";
+await rename(recordedDestination, previous);
+try { await rename(destination, recordedDestination); }
+catch (error) { await rename(previous, recordedDestination); throw error; }
+await rm(previous, { recursive: true });
 await writeFile(upstreamFile, JSON.stringify(upstream, null, 2) + "\n");
 console.log(`Vendored ${selected.size} packages (${visited.size} reachable source files).`);
 console.log(JSON.stringify(Object.fromEntries(external), null, 2));
+} finally {
+  await rm(destination, { recursive: true, force: true });
+}

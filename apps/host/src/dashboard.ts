@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
-import { exists, locateRun, readJson } from "@eval/data";
+import { deleteRun, exists, locateRun, readJson, RunDeletionError } from "@eval/data";
 import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
 import { dashboardReference } from "./dashboard-reference.js";
 import {
@@ -14,6 +14,7 @@ import {
 } from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { createDashboardInputs } from "./dashboard-inputs.js";
+import { ROOT } from "./paths.js";
 import { listClusteringTasks, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
@@ -21,6 +22,8 @@ interface DashboardOptions {
   port: number;
   /** Test seam; production discovery always uses the configured .env gateway. */
   modelCatalog?: DashboardModelLoader;
+  /** Test seam; production journals always use the shared project log directory. */
+  logs?: { directory: string; lockDirectory: string };
 }
 
 interface CheckpointTask {
@@ -158,7 +161,7 @@ async function allRuns(outputDir: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { runs: [], errors: [] };
     throw error;
   }
-  const inspected = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+  const inspected = await Promise.all(entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map(async (entry) => {
     try { return { run: await inspectRun(outputDir, entry.name) }; }
     catch (error) { return { error: { run_id: entry.name, message: errorText(error) } }; }
   }));
@@ -192,6 +195,18 @@ export async function startDashboard(options: DashboardOptions) {
   if (!isRecord(output) || typeof output.path !== "string")
     throw new Error("Invalid output target in dashboard config");
   const outputDir = path.resolve(output.path);
+  const logs = options.logs ?? { directory: path.join(ROOT, "log"), lockDirectory: path.join(ROOT, ".runtime/log-writer") };
+  // A spawned child has not acquired its run lock yet, and may write its final error after releasing it.
+  const changingRuns = new Map<string, number | undefined>();
+  const reserveRun = (runId: string) => {
+    if (changingRuns.has(runId)) {
+      const pid = changingRuns.get(runId);
+      if (pid === undefined) throw new HttpError(409, "运行正在启动或删除，请稍后重试");
+      try { process.kill(pid, 0); throw new HttpError(409, "运行进程尚未退出，请停止运行后重试"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+    changingRuns.set(runId, undefined);
+  };
   const inputs = createDashboardInputs();
   const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths));
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
@@ -210,7 +225,7 @@ export async function startDashboard(options: DashboardOptions) {
     const host = (req.headers.host || "").toLowerCase();
     if (!/^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host))
       throw new HttpError(403, "Only loopback requests are allowed");
-    if (req.method === "POST" && req.headers.origin !== `http://${host}`)
+    if (["POST", "DELETE"].includes(req.method || "") && req.headers.origin !== `http://${host}`)
       throw new HttpError(403, "Request origin does not match the dashboard");
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -260,13 +275,34 @@ export async function startDashboard(options: DashboardOptions) {
       return json(res, await allRuns(outputDir));
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
       return json(res, await previewRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, record(await body(req, 64 * 1024), "Expected JSON object")));
-    if (req.method === "POST" && url.pathname === "/api/dashboard/runs")
-      return json(res, await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, record(await body(req, 64 * 1024), "Expected JSON object")), 202);
+    if (req.method === "POST" && url.pathname === "/api/dashboard/runs") {
+      const value = record(await body(req, 64 * 1024), "Expected JSON object");
+      if (typeof value.runId !== "string") throw new HttpError(400, "runId is required");
+      let runId: string;
+      try { runId = safeId(value.runId); }
+      catch { throw new HttpError(400, "Invalid runId"); }
+      reserveRun(runId);
+      try {
+        const result = await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, value);
+        changingRuns.set(runId, result.pid);
+        return json(res, result, 202);
+      } catch (error) { changingRuns.delete(runId); throw error; }
+    }
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");
     const runId = safeId(parts[3]);
     const directory = path.join(outputDir, runId);
+    if (req.method === "DELETE" && parts.length === 4) {
+      reserveRun(runId);
+      try {
+        return json(res, await deleteRun({ outputDirectory: outputDir, runId,
+          logDirectory: logs.directory, logLockDirectory: logs.lockDirectory }));
+      } catch (error) {
+        if (error instanceof RunDeletionError) throw new HttpError(error.reason === "not_found" ? 404 : 409, error.message);
+        throw error;
+      } finally { changingRuns.delete(runId); }
+    }
     if (!(await exists(locateRun(directory).stateFile))) throw new HttpError(404, "Run not found");
     if (req.method === "GET" && parts[4] === "cases" && parts[5] === "detail" && parts.length === 6) {
       const batch = url.searchParams.get("batch") || "";

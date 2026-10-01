@@ -11,13 +11,16 @@ import { ROOT } from "../../fixtures/services.js";
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 const { createDashboardViews } = await import(pathToFileURL(path.join(ROOT, "apps/host/dashboard/dashboard-view.js")).href);
 
+type ViewCandidate = { input_id: string; version: string; name: string };
+
 function render(stage: string, result: JsonObject, id = "task-one") {
   const dom = new JSDOM('<div id="case-detail"></div><div id="clustering-tasks"></div>');
   const { document } = dom.window;
   const task = { id, stage, status: "succeeded", versions: ["model"], attempts: 1 };
   const state = {
-    caseDetail: { question: "问题", batch_id: "batch", case_id: "case", ground_truth: { available: false, value: null as unknown }, candidates: [], tasks: [task] },
+    caseDetail: { question: "问题", batch_id: "batch", case_id: "case", ground_truth: { available: false, value: null as unknown }, candidates: [] as ViewCandidate[], tasks: [task] },
     clusteringTasks: [task], openTasks: new Set([id]), openFindings: new Set<string>(), expandedTexts: new Set(),
+    selectedInputs: {} as Record<string, string>, inputViews: {} as Record<string, { answer?: string; error?: string }>, inputOpen: false,
     taskResults: { [id]: { result } },
   };
   const views = createDashboardViews({
@@ -47,6 +50,64 @@ test("case header shows available standard answers, including zero and structure
     state.caseDetail.ground_truth = { available: false, value: null };
     views.renderDetail();
     assert.equal(document.querySelector(".standard-answer"), null);
+  } finally { dom.window.close(); }
+});
+
+test("case inputs keep A and B side by side with independent version selection and additional models", () => {
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  try {
+    state.caseDetail.candidates = [
+      { input_id: "be", version: "b_expert", name: "B组Expert" },
+      { input_id: "ae", version: "a_expert", name: "A组Expert" },
+      { input_id: "kimi", version: "kimi", name: "Kimi" },
+      { input_id: "bf", version: "b_fast", name: "B组Fast" },
+      { input_id: "af", version: "a_fast", name: "A组Fast" },
+    ];
+    state.selectedInputs = { a: "ae", b: "bf" };
+    state.inputViews = { ae: { answer: "A专家回答" }, bf: { answer: "B快速回答<img src=x>" }, af: { answer: "A快速回答" } };
+    state.inputOpen = true;
+    const original = structuredClone(state.caseDetail);
+    views.renderDetail();
+    const columns = [...document.querySelectorAll(".input-content > .case-column")];
+    assert.deepEqual(columns.map((column: any) => column.dataset.versionGroup), ["a", "b", "version:kimi"]);
+    assert.deepEqual([...columns[0].querySelectorAll("[data-input]")].map((button: any) => button.dataset.input), ["af", "ae"]);
+    assert.deepEqual([...columns[1].querySelectorAll("[data-input]")].map((button: any) => button.dataset.input), ["bf", "be"]);
+    assert.equal(columns[0].querySelector('[aria-pressed="true"]').dataset.input, "ae");
+    assert.equal(columns[1].querySelector('[aria-pressed="true"]').dataset.input, "bf");
+    assert.equal(columns[2].querySelector('[aria-pressed="true"]').dataset.input, "kimi");
+    assert.equal(columns[0].querySelector(".input-view").textContent, "A专家回答");
+    assert.equal(columns[1].querySelector(".input-view").textContent, "B快速回答<img src=x>");
+    assert.equal(columns[1].querySelector("img"), null);
+    assert.equal(columns[2].querySelector(".input-view").textContent, "加载中");
+    assert.equal(document.querySelector(".input-disclosure").open, true);
+    assert.deepEqual(state.caseDetail, original, "grouping leaves source metadata intact");
+    state.selectedInputs.a = "af";
+    views.renderDetail();
+    assert.equal(document.querySelector('[data-version-group="a"] .input-view').textContent, "A快速回答");
+    assert.equal(document.querySelector('[data-version-group="b"] .input-view').textContent, "B快速回答<img src=x>");
+  } finally { dom.window.close(); }
+});
+
+test("attribution tasks follow their model columns in Fast and Expert order while comparison stays across the case", () => {
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  try {
+    const versions = ["b_expert", "a_expert", "kimi", "b_fast", "a_fast"];
+    state.caseDetail.candidates = versions.map((version) => ({
+      input_id: version, version, name: { a_fast: "A组Fast", a_expert: "A组Expert", b_fast: "B组Fast", b_expert: "B组Expert", kimi: "Kimi" }[version]!,
+    }));
+    state.caseDetail.tasks = versions.map((version, index) => ({ id: version, stage: "attribution", versions: [version], status: index % 2 ? "failed" : "succeeded", attempts: 1 }));
+    state.caseDetail.tasks.push({ id: "comparison", stage: "comparison", versions: ["b_fast", "a_fast", "kimi"], status: "blocked", attempts: 0 });
+    state.openTasks.add("a_expert");
+    views.renderDetail();
+    const columns = [...document.querySelectorAll('[data-stage="attribution"] .case-columns > .case-column')];
+    assert.deepEqual(columns.map((column: any) => column.dataset.versionGroup), ["a", "b", "version:kimi"]);
+    assert.deepEqual([...columns[0].querySelectorAll("[data-task]")].map((task: any) => task.dataset.task), ["a_fast", "a_expert"]);
+    assert.deepEqual([...columns[1].querySelectorAll("[data-task]")].map((task: any) => task.dataset.task), ["b_fast", "b_expert"]);
+    assert.equal(columns[0].querySelector(".task-name").textContent, "A组Fast");
+    assert.equal(columns[0].querySelector('[data-task="a_expert"]').open, true);
+    assert.equal(document.querySelector('[data-stage="comparison"] .case-columns'), null);
+    assert.equal(document.querySelector('[data-stage="comparison"] .task-name').textContent, "A组Fast / B组Fast / Kimi");
+    assert.equal(document.querySelectorAll("[data-task]").length, 6, "every task appears once");
   } finally { dom.window.close(); }
 });
 
@@ -113,6 +174,28 @@ test("comparison shows each model's attribution with its own rewrites, directory
     }
     const ids = [...document.querySelectorAll("[id]")].map((node: any) => node.id);
     assert.equal(new Set(ids).size, ids.length);
+  } finally { dom.window.close(); }
+});
+
+test("comparison orders A before B and preserves third-model cells and attribution finding links", () => {
+  const versions = ["b_fast", "kimi", "a_fast"];
+  const names = { a_fast: "A组Fast", b_fast: "B组Fast", kimi: "Kimi" };
+  const row = {
+    ...comparisonResult(versions),
+    models: Object.fromEntries(versions.map((version) => [version, { version: names[version as keyof typeof names] }])),
+    evaluations: Object.fromEntries(versions.map((version) => [version, attributionResult()])),
+  };
+  const { dom, document } = render("comparison", caseResultView("comparison", row)!);
+  try {
+    assert.deepEqual([...document.querySelectorAll(".comparison-table thead th")].map((node: any) => node.textContent), ["比较点", "A组Fast", "B组Fast", "Kimi"]);
+    const cells = [...document.querySelectorAll(".comparison-table tbody td")];
+    assert.deepEqual(cells.map((node: any) => node.dataset.candidate), ["a_fast", "b_fast", "kimi"]);
+    const columns = [...document.querySelectorAll(".comparison-attributions .case-columns > .case-column")];
+    assert.deepEqual(columns.map((node: any) => node.dataset.versionGroup), ["a", "b", "version:kimi"]);
+    for (const [index, cell] of cells.entries()) {
+      const target = document.getElementById(cell.querySelector("[data-finding-target]").dataset.findingTarget);
+      assert(columns[index].contains(target), "comparison links resolve within the same model column");
+    }
   } finally { dom.window.close(); }
 });
 
