@@ -3,7 +3,7 @@ import { mkdir, open, readFile, realpath, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult } from "@eval/contracts";
+import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult, TraceRead } from "@eval/contracts";
 import { fileURLToPath } from "node:url";
 import { canonical, errorText, object, schemaIssues, ValidationError } from "@eval/contracts";
 
@@ -253,6 +253,10 @@ export const builtinTools: ExecutableTool[] = [
       }
       if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
         throw new Error("maxOutputChars 太小，无法完整返回一条证据；请增大工具输出预算");
+      if (end > offset) ctx.audit.traceReads.push({
+        candidate: args.candidate, message_index: args.message_index,
+        kind: source.kind, path: source.path, start: offset, end,
+      });
       return result;
     },
   },
@@ -272,7 +276,7 @@ export const builtinTools: ExecutableTool[] = [
         query: string;
         offset?: number;
       };
-      const matches: unknown[] = [];
+      const matches: { path: string; evidence: ReturnType<typeof cite>; read: TraceRead }[] = [];
       record(ctx, args.candidate).messages.forEach((m, i) => {
         for (const source of evidenceSources(m)) {
           const { path: location, text } = source;
@@ -285,7 +289,10 @@ export const builtinTools: ExecutableTool[] = [
               Math.max(0, position - 100),
               Math.min(text.length, position + args.query.length + 200),
             );
-            if (!evidence.quote.includes("[图像数据")) matches.push({ path: location, evidence });
+            if (!evidence.quote.includes("[图像数据")) matches.push({ path: location, evidence, read: {
+              candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
+              start: Math.max(0, position - 100), end: Math.min(text.length, position + args.query.length + 200),
+            } });
             start = position + args.query.length;
             if (matches.length >= 10000) break;
           }
@@ -294,7 +301,7 @@ export const builtinTools: ExecutableTool[] = [
       const offset = args.offset || 0;
       const shown = matches.slice(offset, offset + 20);
       const page = () => textResult({
-        matches: shown,
+        matches: shown.map(({ path, evidence }) => ({ path, evidence })),
         total: matches.length,
         next_offset: offset + shown.length,
         has_more: offset + shown.length < matches.length,
@@ -306,6 +313,7 @@ export const builtinTools: ExecutableTool[] = [
       }
       if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
         throw new Error("maxOutputChars 太小，无法完整返回一条检索证据；请增大工具输出预算");
+      ctx.audit.traceReads.push(...shown.map((match) => match.read));
       return result;
     },
   },
@@ -530,3 +538,4 @@ export class ToolRuntime {
 
 export * from "./evidence.js";
 export * from "./validation.js";
+export * from "./trace-audit.js";

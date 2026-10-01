@@ -139,7 +139,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       if (!selected.rewrite[target]) continue;
     }
     if (task.stage === "clustering" && !state.receipts[task.id] && !selected.clustering.enabled) continue;
-    if (state.receipts[task.id] || !tasks.has(task.id)) tasks.set(task.id, task);
+    if (state.receipts[task.id] || !tasks.has(task.id) || (task.data as TaskData).reviewOf ||
+      (task.data as TaskData).supersededBy || Object.values(task.dependencies).some((id) =>
+        previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
   }
   const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));
   for (const [id, task] of tasks)
@@ -174,6 +176,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
+  plan.summary.criteria_tasks = plan.tasks.filter((task) => task.stage === "criteria").length;
   plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison").length;
   plan.summary.rewrite_tasks = plan.tasks.filter((task) => task.stage === "rewrite").length;
   plan.summary.clustering_tasks = plan.tasks.filter((task) => task.stage === "clustering").length;

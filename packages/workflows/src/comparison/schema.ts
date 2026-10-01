@@ -32,6 +32,7 @@ export const outputSchema: JsonSchema = {
   },
   $defs: {
     ...template.$defs,
+    criterion: object(comparisonProfile.resultSchema!.$defs).criterion,
     evaluation: {
       ...template.$defs.evaluation,
       properties: {
@@ -39,6 +40,8 @@ export const outputSchema: JsonSchema = {
         summary: attribution.summary,
         numeric_checks: attribution.numeric_checks,
         correctness_evidence: attribution.correctness_evidence,
+        criterion_assessments: attribution.criterion_assessments,
+        core_assessment: attribution.core_assessment,
         findings,
       },
     },

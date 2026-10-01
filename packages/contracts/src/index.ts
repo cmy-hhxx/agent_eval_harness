@@ -1,5 +1,6 @@
 export type Engine = "pi" | "prime";
 export * from "./automations.js";
+export type * from "./criteria.js";
 export type * from "./publication.js";
 export type JsonSchema = Record<string, unknown>;
 export type JsonObject = Record<string, unknown>;
@@ -93,9 +94,19 @@ export interface Artifact {
   name: string;
   bytes: number;
 }
+/** Characters actually returned from one trace source; ranges are half-open UTF-16 offsets. */
+export interface TraceRead {
+  candidate: string;
+  message_index: number;
+  kind: "text" | "json";
+  path: string;
+  start: number;
+  end: number;
+}
 export interface ToolAudit {
   calls: number;
   viewedImages: string[];
+  traceReads: TraceRead[];
   calculations: unknown[];
   artifacts: Artifact[];
 }
@@ -338,6 +349,14 @@ export interface WorkflowDefinition {
     inputs: Record<string, unknown>,
     dependencies: Record<string, SubmissionReceipt | undefined>,
   ): AgentBinding;
+  /** Synchronous, business-owned follow-up planning after a validated receipt. */
+  advance?(task: PlannedTask, receipt: SubmissionReceipt, state: RunState, inputs: Readonly<Record<string, unknown>>): {
+    tasks: PlannedTask[];
+    replace?: PlannedTask[];
+    blocked?: string[];
+  };
+  /** A business-owned admission gate, also evaluated when resuming accepted dependencies. */
+  blockedReason?(task: PlannedTask, dependencies: Record<string, SubmissionReceipt>): string | undefined;
 }
 export interface RunRepository {
   readRun(run: string): Promise<RunState>;

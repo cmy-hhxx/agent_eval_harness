@@ -8,12 +8,14 @@ import path from "node:path";
 import {
   DEFAULT_POLICY,
   emptyUsage,
+  HttpError,
   type AgentBackend,
   type AttemptSpec,
   type AttemptStatus,
   type FailureContext,
   type RunManifest,
   type Submission,
+  type SubmissionReceipt,
   type WorkerEvent,
 } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
@@ -25,10 +27,12 @@ import { RunStore } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import {
   fakeIdentity,
+  emptyAudit,
   fixtureConfig,
   invalidResult,
   raw,
   taskResult,
+  criteriaResult,
 } from "../../../tests/fixtures/comparison.js";
 
 async function harness(
@@ -38,7 +42,12 @@ async function harness(
 ) {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   const plan = await buildPlan(config),
-    task = plan.tasks[0];
+    task = plan.tasks.find((item) => item.stage === "attribution")!,
+    criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria)!;
+  const criteriaReceipt: SubmissionReceipt = {
+    taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
+    acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
+  };
   const manifest: RunManifest = {
     format: "evaluation-run",
     debug: false,
@@ -47,15 +56,15 @@ async function harness(
     engine: fakeIdentity,
     evaluatorVersion: "fixture",
     config,
-    tasks: plan.tasks,
+    tasks: [criteria, task],
     inputs: {},
-    states: { [task.id]: { status: "pending", attempts: 0 } },
+    states: { [criteria.id]: { status: "succeeded", attempts: 1 }, [task.id]: { status: "pending", attempts: 0 } },
     preflight: plan.summary,
     startedAt: Date.now(),
   };
   const store = new RunStore(
     path.join(directory, "run"),
-    { manifest, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 },
+    { manifest, receipts: { [criteria.id]: criteriaReceipt }, usage: emptyUsage(), recordedAttempts: 0 },
     plan.inputs,
     services,
   );
@@ -80,7 +89,7 @@ async function harness(
     { identity: fakeIdentity, createSession: create },
     path.join(directory, "worker"),
   );
-  const prepared = prepare(task, plan.inputs, {});
+  const prepared = prepare(task, plan.inputs, { criteria: criteriaReceipt });
   const attemptPolicy = { ...DEFAULT_POLICY, ...policy };
   const spec: AttemptSpec = {
     inputRevision: 1,
@@ -133,6 +142,25 @@ async function harness(
     },
   };
 }
+test("Host rejects malformed trace-read audits before accepting a submission", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }));
+  try {
+    await fixture.store.activate(fixture.spec);
+    const read = { candidate: "answer", message_index: 1, kind: "text", path: "/content", start: 0, end: 5 };
+    for (const traceReads of [
+      undefined,
+      [{ ...read, candidate: "unknown" }],
+      [{ ...read, message_index: -1 }],
+      [{ ...read, start: 5, end: 4 }],
+      [{ ...read, kind: "image" }],
+      [{ ...read, kind: "json" }],
+    ]) await assert.rejects(fixture.store.accept({
+      submissionId: "invalid-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+      evaluation: {}, audit: { ...emptyAudit(), traceReads } as Submission["audit"], usage: emptyUsage(),
+    }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
 test("a burst of model events is persisted in batches with complete ordered replay", async (t) => {
   const append = fs.appendFile;
   let writes = 0;
@@ -315,7 +343,12 @@ test("exhausted exploration budget still permits submission and two repairs", as
   try {
     await fixture.start();
     assert.equal((await fixture.done()).state, "succeeded");
-    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.audit.calls, 1);
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt?.audit.calls, 1);
+    assert.deepEqual(receipt?.audit.traceReads, [{
+      candidate: "answer", message_index: 1, kind: "json", path: "", start: 0,
+      end: JSON.stringify(raw("q", null).messages[1], null, 2).length,
+    }]);
   } finally {
     await fixture.close();
   }

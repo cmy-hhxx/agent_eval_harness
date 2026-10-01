@@ -2,43 +2,110 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ground_truth", "answer"],
+  "required": [
+    "ground_truth",
+    "answer",
+    "candidate_id",
+    "task_analysis"
+  ],
   "properties": {
     "ground_truth": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["available", "value"],
-      "properties": { "available": { "type": "boolean" }, "value": {} }
+      "required": [
+        "available",
+        "value"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "value": {}
+      }
     },
     "answer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["identity", "question", "final_message_index", "final_answer", "final_evidence", "deferred_final_material", "initial_material", "catalog", "input_file", "original_answer_timing", "note"],
+      "required": [
+        "identity",
+        "question",
+        "final_message_index",
+        "final_answer",
+        "final_evidence",
+        "deferred_final_material",
+        "initial_material",
+        "catalog",
+        "input_file",
+        "original_answer_timing",
+        "note"
+      ],
       "properties": {
         "identity": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["version_id", "display_name", "answer_model"],
+          "required": [
+            "version_id",
+            "display_name",
+            "answer_model"
+          ],
           "properties": {
-            "version_id": { "type": "string", "minLength": 1 },
-            "display_name": { "type": "string", "minLength": 1 },
-            "answer_model": { "type": ["string", "null"] }
+            "version_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "answer_model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
-        "question": { "type": "string", "minLength": 1 },
-        "final_message_index": { "type": "integer", "minimum": 0 },
-        "final_answer": { "type": "string", "minLength": 1 },
-        "final_evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final_message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "final_answer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
         "deferred_final_material": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["message_index", "path", "total_chars"],
+            "required": [
+              "message_index",
+              "path",
+              "total_chars"
+            ],
             "properties": {
-              "message_index": { "type": "integer", "minimum": 0 },
-              "path": { "type": "string", "minLength": 1 },
-              "total_chars": { "type": "integer", "minimum": 1 }
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "total_chars": {
+                "type": "integer",
+                "minimum": 1
+              }
             }
           }
         },
@@ -47,11 +114,23 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["message_index", "value", "evidence"],
+            "required": [
+              "message_index",
+              "value",
+              "evidence"
+            ],
             "properties": {
-              "message_index": { "type": "integer", "minimum": 0 },
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
               "value": {},
-              "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              }
             }
           }
         },
@@ -60,20 +139,125 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["message_index", "type", "chars"],
+            "required": [
+              "message_index",
+              "type",
+              "chars"
+            ],
             "properties": {
-              "message_index": { "type": "integer", "minimum": 0 },
-              "type": { "type": "string", "minLength": 1 },
-              "role": { "type": "string" },
-              "name": { "type": ["string", "null"] },
-              "call_message_index": { "type": "integer", "minimum": 0 },
-              "chars": { "type": "integer", "minimum": 0 }
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "call_message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "chars": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         },
-        "input_file": { "const": "inputs/answer.json" },
-        "original_answer_timing": { "type": "object", "required": ["finish_seconds"], "properties": { "finish_seconds": { "type": ["number", "null"] } } },
-        "note": { "type": "string", "minLength": 1 }
+        "input_file": {
+          "const": "inputs/answer.json"
+        },
+        "original_answer_timing": {
+          "type": "object",
+          "required": [
+            "finish_seconds"
+          ],
+          "properties": {
+            "finish_seconds": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "task_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_type",
+        "goal",
+        "requirements",
+        "scoring_points",
+        "red_flags"
+      ],
+      "properties": {
+        "task_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "scoring_points": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "red_flags": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        }
+      }
+    },
+    "review_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reasons"
+      ],
+      "properties": {
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     }
   },
@@ -81,11 +265,56 @@
     "evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["evidence_id", "message_index", "quote"],
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote"
+      ],
       "properties": {
-        "evidence_id": { "type": "string", "minLength": 1 },
-        "message_index": { "type": "integer", "minimum": 0 },
-        "quote": { "type": "string", "minLength": 1 }
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "applies_to",
+        "acceptance_rule"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applies_to": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          }
+        },
+        "acceptance_rule": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { caseResultView } from "@eval/workflows/comparison";
 import type { JsonObject } from "@eval/contracts";
-import { attributionResult, comparisonResult } from "../../fixtures/comparison.js";
+import { attributionResult, comparisonResult, criteriaResult } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
@@ -34,6 +34,49 @@ function render(stage: string, result: JsonObject, id = "task-one") {
   if (stage === "clustering") views.renderClustering(); else views.renderDetail();
   return { dom, document, views, state };
 }
+
+test("criteria tasks render criterion identity, scope and acceptance rules as structured fields", () => {
+  const criteria = criteriaResult();
+  const result = caseResultView("criteria", { result: criteria })!;
+  const { dom, document } = render("criteria", result);
+  try {
+    const group = document.querySelector('[data-stage="criteria"]');
+    assert(group);
+    assert.match(group.textContent, /验收规则/);
+    assert.match(group.textContent, new RegExp(criteria.requirements[0]!.id));
+    assert(group.textContent.includes(criteria.requirements[0]!.acceptance_rule));
+    assert(!group.textContent.includes("[object Object]"));
+  } finally { dom.window.close(); }
+});
+
+test("review projections resolve blind candidates and show uncertain cells without a formal tie", () => {
+  const review = comparisonResult(["A", "B"]);
+  review.status = "needs_review";
+  review.ranking = [];
+  review.review_requests = [{ candidate: "A", criterion_ids: [review.task_analysis.requirements[0]!.id], finding_indices: [], reason: "需要独立确认结果。" }];
+  review.assessments.A!.meets_core = null;
+  review.decision_basis.comparisons[0]!.better_candidates = [];
+  review.decision_basis.comparisons[0]!.assessments.A!.status = "unknown";
+  review.decision_basis.comparisons[0]!.assessments.A!.evidence_status = "uncertain";
+  const row = { evaluation_type: "comparison_review", result: review,
+    models: { a_fast: { version: "A组Fast" }, b_fast: { version: "B组Fast" } },
+    evaluations: { a_fast: attributionResult(), b_fast: attributionResult() },
+  };
+  const projected = caseResultView("comparison", row, { A: "a_fast", B: "b_fast" })!;
+  assert.deepEqual(projected.verdicts, {});
+  assert.equal((projected.review_requests as { candidate: string }[])[0]!.candidate, "a_fast");
+  assert.deepEqual(Object.keys(projected.assessments as object), ["a_fast", "b_fast"]);
+  assert.equal(review.review_requests[0]!.candidate, "A", "projection leaves the accepted review row unchanged");
+  const { dom, document } = render("comparison", projected);
+  try {
+    const verdicts = document.querySelector(".comparison-verdicts").textContent;
+    assert.equal(verdicts, "待复核");
+    assert(!/都好|都差/.test(verdicts));
+    const cell = document.querySelector('[data-candidate="a_fast"]');
+    assert.match(cell.textContent, /未确认.*不确定/);
+    assert(document.querySelector(".comparison-table th").closest("table").textContent.includes(review.task_analysis.requirements[0]!.id));
+  } finally { dom.window.close(); }
+});
 
 test("case header shows available standard answers, including zero and structured values, and hides absent answers", () => {
   const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
@@ -96,7 +139,7 @@ test("attribution tasks follow their model columns in Fast and Expert order whil
       input_id: version, version, name: { a_fast: "A组Fast", a_expert: "A组Expert", b_fast: "B组Fast", b_expert: "B组Expert", kimi: "Kimi" }[version]!,
     }));
     state.caseDetail.tasks = versions.map((version, index) => ({ id: version, stage: "attribution", versions: [version], status: index % 2 ? "failed" : "succeeded", attempts: 1 }));
-    state.caseDetail.tasks.push({ id: "comparison", stage: "comparison", versions: ["b_fast", "a_fast", "kimi"], status: "blocked", attempts: 0 });
+    state.caseDetail.tasks.push({ id: "comparison", stage: "comparison", versions: ["b_fast", "a_fast"], status: "blocked", attempts: 0 });
     state.openTasks.add("a_expert");
     views.renderDetail();
     const columns = [...document.querySelectorAll('[data-stage="attribution"] .case-columns > .case-column')];
@@ -106,7 +149,7 @@ test("attribution tasks follow their model columns in Fast and Expert order whil
     assert.equal(columns[0].querySelector(".task-name").textContent, "A组Fast");
     assert.equal(columns[0].querySelector('[data-task="a_expert"]').open, true);
     assert.equal(document.querySelector('[data-stage="comparison"] .case-columns'), null);
-    assert.equal(document.querySelector('[data-stage="comparison"] .task-name').textContent, "A组Fast / B组Fast / Kimi");
+    assert.equal(document.querySelector('[data-stage="comparison"] .task-name').textContent, "A组Fast / B组Fast");
     assert.equal(document.querySelectorAll("[data-task]").length, 6, "every task appears once");
   } finally { dom.window.close(); }
 });
@@ -177,9 +220,9 @@ test("comparison shows each model's attribution with its own rewrites, directory
   } finally { dom.window.close(); }
 });
 
-test("comparison orders A before B and preserves third-model cells and attribution finding links", () => {
-  const versions = ["b_fast", "kimi", "a_fast"];
-  const names = { a_fast: "A组Fast", b_fast: "B组Fast", kimi: "Kimi" };
+test("pairwise comparison orders A before B and preserves attribution finding links", () => {
+  const versions = ["b_fast", "a_fast"];
+  const names = { a_fast: "A组Fast", b_fast: "B组Fast" };
   const row = {
     ...comparisonResult(versions),
     models: Object.fromEntries(versions.map((version) => [version, { version: names[version as keyof typeof names] }])),
@@ -187,11 +230,11 @@ test("comparison orders A before B and preserves third-model cells and attributi
   };
   const { dom, document } = render("comparison", caseResultView("comparison", row)!);
   try {
-    assert.deepEqual([...document.querySelectorAll(".comparison-table thead th")].map((node: any) => node.textContent), ["比较点", "A组Fast", "B组Fast", "Kimi"]);
+    assert.deepEqual([...document.querySelectorAll(".comparison-table thead th")].map((node: any) => node.textContent), ["比较点", "A组Fast", "B组Fast"]);
     const cells = [...document.querySelectorAll(".comparison-table tbody td")];
-    assert.deepEqual(cells.map((node: any) => node.dataset.candidate), ["a_fast", "b_fast", "kimi"]);
+    assert.deepEqual(cells.map((node: any) => node.dataset.candidate), ["a_fast", "b_fast"]);
     const columns = [...document.querySelectorAll(".comparison-attributions .case-columns > .case-column")];
-    assert.deepEqual(columns.map((node: any) => node.dataset.versionGroup), ["a", "b", "version:kimi"]);
+    assert.deepEqual(columns.map((node: any) => node.dataset.versionGroup), ["a", "b"]);
     for (const [index, cell] of cells.entries()) {
       const target = document.getElementById(cell.querySelector("[data-finding-target]").dataset.findingTarget);
       assert(columns[index].contains(target), "comparison links resolve within the same model column");

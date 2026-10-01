@@ -2,13 +2,14 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { exists, readJson, readJsonl, writeJson, readInputSource } from "@eval/data";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { exists, readJson, readJsonl, writeJson, readInputSource, localFiles } from "@eval/data";
 import { canonical } from "@eval/contracts";
-import { readRunState, loadRunInputs } from "@eval/workflows/comparison";
+import { readRunState, loadRunInputs, outputSchema } from "@eval/workflows/comparison";
 import { services, agents } from "@eval/host-app/composition";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
-import { cite, evidenceSources } from "@eval/tools";
 import { runEvaluation } from "@eval/host";
+import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 
 const {
   values,
@@ -25,6 +26,8 @@ const {
     limit: { type: "string", default: "32" },
     execute: { type: "boolean" },
     swap: { type: "boolean" },
+    gold: { type: "string" },
+    "bootstrap-rounds": { type: "string", default: "2000" },
   },
 });
 const limit = Number(values.limit);
@@ -58,7 +61,7 @@ function restoreInput(lines, ref, source) {
 }
 async function loadFixtures(file) {
   const saved = await readJson(file);
-  if (saved.format !== "eval-offline-fixtures/2")
+  if (saved.format !== "eval-offline-fixtures")
     throw new Error("Regenerate the fixture index with benchmark collect");
   const sources = new Map(),
     inputs = {};
@@ -74,42 +77,10 @@ async function loadFixtures(file) {
   return saved;
 }
 
-// Convert only exact matches. Unresolvable evidence remains invalid; never repair judgments.
-// Comparison drafts carry no evidence (they reference findings by index); only attribution drafts are wired.
-function wireDraft(fixture) {
-  const draft = structuredClone(fixture.draft);
-  if (!draft || typeof draft !== "object" || fixture.task.stage !== "attribution") return draft;
-  const evidence = (refs) =>
-    Array.isArray(refs)
-      ? refs.map((ref) => {
-          if (ref.evidence_id) return ref;
-          const id = fixture.task.inputIds.A,
-            message = fixture.inputs[id]?.messages[ref.message_index];
-          if (typeof ref.quote !== "string" || !message) return { evidence_id: "unresolved" };
-          if (ref.quote.startsWith("[图像观察]")) return ref; // requires explicit viewing, never infer it
-          for (const source of evidenceSources(message)) {
-            const start = source.text.indexOf(ref.quote);
-            if (start >= 0 && ref.quote)
-              return {
-                evidence_id: cite(ref.message_index, source, start, start + ref.quote.length).evidence_id,
-              };
-          }
-          return {
-            evidence_id: "unresolved:" + ref.message_index + ":" + ref.quote,
-          };
-        })
-      : refs;
-  draft.correctness_evidence = evidence(draft.correctness_evidence);
-  for (const [index, finding] of (draft.findings || []).entries()) {
-    finding.finding_id ??= "finding-" + index;
-    finding.evidence = evidence(finding.evidence);
-  }
-  return draft;
-}
 function evaluate(fixture) {
   try {
     const binding = services.workflow.bind(fixture.task, fixture.inputs, fixture.dependencies);
-    const result = agents.resolve(binding, wireDraft(fixture), fixture.audit);
+    const result = agents.resolve(binding, structuredClone(fixture.draft), fixture.audit);
     agents.validate(binding, result, fixture.audit);
     return { accepted: true, codes: [] };
   } catch (error) {
@@ -119,6 +90,56 @@ function evaluate(fixture) {
     };
   }
 }
+
+const resultAjv = new Ajv2020({ allErrors: true, strict: false });
+const validateComparison = resultAjv.compile(outputSchema);
+const stamp = (info) => [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(":");
+async function loadComparisonSamples(run) {
+  const file = path.join(run, "results/comparison.jsonl"), rows = [];
+  const stateFile = path.join(run, "state.json");
+  const traces = new Map();
+  let stateStamp;
+  if (await exists(stateFile)) {
+    const before = stateStamp = stamp(await localFiles.stat(stateFile));
+    const checkpoint = await readJson(stateFile);
+    if (stamp(await localFiles.stat(stateFile)) !== before) throw new Error("State changed while reading: " + stateFile);
+    for (const [taskId, task] of Object.entries(checkpoint.tasks ?? {})) {
+      const receipt = task.receipt, comparisonId = receipt?.exported?.comparisonId;
+      if (task.stage !== "comparison" || !comparisonId || receipt.exported.file === "comparison-review.jsonl") continue;
+      if (traces.has(comparisonId)) throw new Error("Duplicate comparison receipt: " + comparisonId);
+      traces.set(comparisonId, {
+        evaluator_version: receipt.evaluatorVersion, judge: receipt.judge,
+        task_id: taskId, submission_id: receipt.submissionId,
+        trace_status: "receipt_linked",
+        criteria_task_id: task.dependencies.criteria ?? null,
+        criteria: task.dependencies.criteria ? {
+          task_id: task.dependencies.criteria,
+          evaluator_version: checkpoint.tasks[task.dependencies.criteria]?.receipt?.evaluatorVersion ?? null,
+          judge: checkpoint.tasks[task.dependencies.criteria]?.receipt?.judge ?? null,
+        } : null,
+        attributions: Object.values(task.dependencies).filter((dependencyId) => checkpoint.tasks[dependencyId]?.stage === "attribution").map((dependencyId) => {
+          const dependency = checkpoint.tasks[dependencyId], accepted = dependency?.receipt;
+          return {
+            task_id: dependencyId,
+            version: checkpoint.inputs?.[dependency?.inputIds?.answer]?.version ?? null,
+            evaluator_version: accepted?.evaluatorVersion ?? null, judge: accepted?.judge ?? null,
+          };
+        }).sort((a, b) => (a.version ?? "").localeCompare(b.version ?? "")),
+      });
+    }
+  }
+  if (await exists(file)) {
+    const before = stamp(await localFiles.stat(file));
+    for await (const row of readJsonl(file)) {
+      if (!validateComparison(row)) throw new Error("Invalid current comparison export: " + resultAjv.errorsText(validateComparison.errors));
+      rows.push(row);
+    }
+    if (stamp(await localFiles.stat(file)) !== before) throw new Error("Results changed while reading: " + file);
+  } else if (!(await exists(run))) throw new Error("Run does not exist: " + run);
+  if (stateStamp && stamp(await localFiles.stat(stateFile)) !== stateStamp) throw new Error("State changed while reading results: " + stateFile);
+  return pairSamples(rows, traces);
+}
+
 if (command === "collect") {
   if (!values.run?.length || !values.output)
     throw new Error("collect --run PATH [--run PATH] --output FIXTURES.json [--limit 32]");
@@ -167,6 +188,7 @@ if (command === "collect") {
                 viewedImages: [],
                 calculations: [],
                 artifacts: [],
+                traceReads: [],
               },
             dependencies: Object.fromEntries(
               Object.entries(task.dependencies).map(([label, id]) => [label, state.receipts[id]]),
@@ -196,7 +218,7 @@ if (command === "collect") {
           version: fixture.inputs[c.input_id]?.version ?? null,
         };
   await writeJson(values.output, {
-    format: "eval-offline-fixtures/2",
+    format: "eval-offline-fixtures",
     note: "固定草稿与源文件引用，不复制输入，也不代表全量首次通过率",
     observed_rejections: candidates.length,
     inputs,
@@ -337,39 +359,27 @@ if (command === "collect") {
 } else if (command === "compare") {
   if (values.run?.length !== 2)
     throw new Error("compare --run ORIGINAL --run SWAPPED [--output REPORT.json]");
-  async function rows(run) {
-    const output = new Map();
-    for (const file of await readdir(path.join(run, "results")))
-      if (file.endsWith(".jsonl"))
-        for await (const row of readJsonl(path.join(run, "results", file)))
-          output.set(canonical([row.case, Object.keys(row.evaluations).sort()]), row);
-    return output;
+  const [left, right] = await Promise.all(values.run.map(loadComparisonSamples));
+  const report = compareSamples(left, right);
+  if (values.output) await writeJson(values.output, report);
+  console.log(JSON.stringify(report, null, 2));
+} else if (["summarize", "calibrate", "gold-template"].includes(command)) {
+  if (values.run?.length !== 1) throw new Error(command + " --run PATH [--output REPORT.json]");
+  const samples = await loadComparisonSamples(values.run[0]);
+  let report;
+  if (command === "summarize") report = summarizeSamples(samples, { rounds: Number(values["bootstrap-rounds"]) });
+  if (command === "calibrate") {
+    if (!values.gold) throw new Error("calibrate --run PATH --gold EXPERT.json [--output REPORT.json]");
+    report = calibrateSamples(samples, await readJson(values.gold));
   }
-  const [left, right] = await Promise.all(values.run.map(rows));
-  const comparisons = [...new Set([...left.keys(), ...right.keys()])].map((key) => {
-    const a = left.get(key),
-      b = right.get(key);
-    return {
-      case: a?.case || b.case,
-      complete: !!a && !!b,
-      stable:
-        !!a &&
-        !!b &&
-        a.verdict.result === b.verdict.result &&
-        a.verdict.winner_version === b.verdict.winner_version,
-      verdicts: [a?.verdict, b?.verdict],
-      decision_basis: [a?.decision_basis, b?.decision_basis],
-    };
-  });
-  const report = {
-    comparisons: comparisons.length,
-    stable: comparisons.filter((c) => c.stable).length,
-    manual_review: "逐项抽查决定性发现、反向证据及判决；一致性不等于事实正确性",
-    samples: comparisons,
-  };
+  if (command === "gold-template") {
+    if (!values.output) throw new Error("gold-template --run PATH --output EXPERT.json");
+    if (await exists(values.output)) throw new Error("Expert annotation file already exists; choose a new path");
+    report = goldTemplate(samples);
+  }
   if (values.output) await writeJson(values.output, report);
   console.log(JSON.stringify(report, null, 2));
 } else {
-  console.log("benchmark collect|replay|run|compare; real models are called only by run --execute");
+  console.log("benchmark collect|replay|run|compare|summarize|gold-template|calibrate; real models are called only by run --execute");
   if (command) process.exitCode = 2;
 }

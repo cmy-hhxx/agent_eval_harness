@@ -4,9 +4,9 @@
 
 ## 评语标准
 
-归因与对比的初始材料完整保留每条回答各自的 system/developer 消息，不受历史材料长度预算裁剪。裁判据此按各自指令层级检查任务约束；候选特有要求不作为双方共同标准，相反但各自合规的要求不能单独决定胜负。原始提示属于约束证据，不改变裁判的流程与提交规则。已接受结果保留；新任务使用当前 evaluatorVersion，旧归因与本候选约束冲突时由新对比说明，不改写旧行。
+归因与对比的初始材料完整保留每条回答各自的 system/developer 消息，不受历史材料长度预算裁剪。裁判据此按各自指令层级检查任务约束；候选特有要求不作为双方共同标准，相反但各自合规的要求不能单独决定胜负。原始提示属于约束证据，不改变裁判的流程与提交规则。已接受结果保留；新任务使用当前 `evaluatorVersion`。旧归因与共同标准、标准答案或当前材料不一致时独立复核；Comparison 发现归因冲突时请求复核，不自行改判或改写旧行。
 
-模型可见的阶段规则、工具描述和材料边界只在[提示词模块](../packages/prompts/README.md)维护；公共片段只包含材料分隔、预算和恢复说明；阶段提示词按实际可见材料及可用工具写核验、提交规则。归因独立给出题目分析、条件性对错判定、总点评和有证据的优点及确定/疑似问题；不读写问题库，不携带对比判决。总点评概括主要正反事实，不逐条复制 findings；没有可核验的优点或缺陷时不凑数。Comparison 读取归因与 trace 的去身份视图，默认归因结论正确、只做确认与核验。纯结构修复不重复核验已确认事实；改变事实判断时重新核验相关材料。
+模型可见的阶段规则、工具描述和材料边界只在[提示词模块](../packages/prompts/README.md)维护；公共片段只包含材料分隔、预算和恢复说明；阶段提示词按实际可见材料及可用工具写核验、提交规则。Criteria 先固定共同验收条款；归因逐项核验并给出条件性对错判定、总点评和有证据的优点及确定/疑似问题；不读写问题库，不携带对比判决。总点评概括主要正反事实，不逐条复制 findings；没有可核验的优点或缺陷时不凑数。Comparison 读取归因与 trace 的去身份视图，默认归因结论正确、只做确认与核验。纯结构修复不重复核验已确认事实；改变事实判断时重新核验相关材料。
 
 `assessments[].summary` 一句说明各候选的主要表现；`decision_basis.comparisons` 按同一方面逐行对照全部候选，关联既有 findings 并标记重要性及本项优势。`tradeoff` 只写裁决和决定胜负或都差时相对取舍的一至两项具体事实，通常一至两句，上限100字，不凑字数或固定句型；比较格和候选 summary 上限160字，这些原评测字段保持原文，逐项点评的改写另存于 `rewritten`。细节与不改变排名的局部瑕疵留在对应比较行；真正影响取舍的反向事实必须保留，说明新增了哪项结果及其代价，不用“核验价值”“额外等待未换来同等价值”等抽象套话代替事实。`verdicts[].reason` 原文由核心要求判定和排名派生；其改写槽位必须以既定偏好开头，并根据同场原裁决和比较项补充具体理由。
 
@@ -72,7 +72,7 @@
 
 先运行 `npm run build:app`。`collect` 从 debug 运行的事件日志中收集 `submit_evaluation` 直接提交被拒绝时的草稿；普通运行中仅保存在状态里的草稿、`submit_evaluation_file` 的失败不会被收集。下面的 `pi-debug` 应是已通过 `--debug` 留存这类事件的运行。
 
-回归集保留原草稿；校验时仅将逐字可定位的旧引文转成证据 ID，并为缺少 ID 的发现补齐对应 ID。不可定位引用继续失败，不修改事实判断或重要性。回归集拒绝覆盖，使用新路径建立新版本。
+回归集严格保留当前原始草稿，不转换旧证据格式或补造 finding ID；使用 `eval-offline-fixtures` 格式，过期材料重新 collect。回归集拒绝覆盖，使用新路径建立。
 
 ```bash
 npm run benchmark -- collect --run data/runs/comparison/pi-debug --output .artifacts/regression/fixtures.json --limit 32
@@ -90,7 +90,7 @@ npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id
 npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi --run .artifacts/model-benchmarks/sample-pi-swapped --output .artifacts/regression/stability.json
 ```
 
-`compare` 按业务标识和版本派生判决，输出理由和决定性引用供人工抽查。离线通过只说明机械契约与证据定位行为一致，不能代替真实模型质量及交换稳定性复核。
+`compare` 按业务 case 与稳定模型对读取当前 `comparison.jsonl.verdicts`，比较缺失、outcome、winner、核心分类和决定依据，并关联 evaluator/judge 收据；文本变化单列，输出理由和决定性引用供人工抽查。离线通过只说明机械契约与证据定位行为一致，不能代替真实模型质量及交换稳定性复核。
 
 数值核对、偏好前缀和改写槽位的机械约束以[数据契约](contract.md#证据与导出)和[改写契约](contract.md#改写)为准。离线回放只验证当前规则是否一致，数值对象是否抽对、相对偏好是否保真、数字与语气是否扩大，仍需按上面的[真实模型复核](#真实模型复核)检查。
 
@@ -99,3 +99,17 @@ npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi --run .
 数值核对支持原文的科学计数法，expected 保留尾数小数位和指数。例如 `1.13018E+12` 的末位精度为千万位，不能展开为整数后改按个位判错；exact 模式仍要求数值完全相等。区间连接符不误当负号，日期标签后紧跟的负数（如 `2020年-0.09854252`）仍保留符号。带空格的正负号与明确“下降/净流出”的方向也纳入核验；显式负数不能当作正数。actual 照抄原文数值，单位换算只填 scale，不能先换算 actual 再声称它来自原文。复合单位、分数、列表计数、图表解码等派生量在 correctness_reason 中保留原文证据与计算过程，不伪装为逐字数值。已接受结果不因校验规则变化而重评。
 
 最终回答中超过首屏预算（最低 16000 字符）的单个文本块不在初始正文和证据中重复展开，而以 `deferred_final_material` 给出消息、路径和完整长度；块前后的短正文仍完整展示。原始输入与证据坐标保持不变，评审须用工具补读，图表编码数据可从输入文件解析。已接受结果不因材料呈现变化而重评。
+
+## 矩阵、区间与人工金标
+
+```bash
+npm run benchmark -- summarize --run data/runs/comparison/RUN --bootstrap-rounds 2000
+npm run benchmark -- gold-template --run data/runs/comparison/RUN --output .artifacts/expert.json
+npm run benchmark -- calibrate --run data/runs/comparison/RUN --gold .artifacts/expert.json
+```
+
+矩阵按实际模型对列出胜负、都好、都差；统计分数沿用 gate 口径（胜1、负0、都好/都差0.5），不解释为人类偏好或 Arena 的 BT 排名。区间按业务 case 成簇 bootstrap，保留同题多场对局的相关性；单 case、无观测变异或有效重采样不足不出伪确定区间。混合 evaluator/judge 与上游归因来源分别列 cohort，缺失和待复核不当平局。
+
+金标模板只提供业务定位，判定留空，`reviewed=false`。专家填写 reviewer、rationale、各模型核心分类、outcome 与 winner，再明确 `reviewed=true`；校准只统计这些人工确认条目，分别报告核心分类、outcome、winner 一致率、缺失和错判。模板与结构测试不是语义验收；实际模型与专家一致性须用人工审定样本验证。
+
+超长最终材料逐块要求实际 read/search 返回覆盖全部字符，按原始 UTF-16 半开坐标合并；检索范围、JSON 扫描或未返回页不算已阅读正文。最终图片必须实际 view_image。换位实验比较同一业务模型对，不能把不同 case 当位置偏差。

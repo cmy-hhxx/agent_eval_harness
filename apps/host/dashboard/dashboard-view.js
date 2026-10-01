@@ -124,6 +124,9 @@ export function createDashboardViews({
     has_standard_answer: "有标准答案", is_correct: "正确性", correctness_reason: "判定说明",
     correctness_evidence: "判定证据", task_analysis: "任务分析", summary: "总结", findings: "发现",
     task_type: "任务类型", goal: "目标", requirements: "要求", scoring_points: "得分点", red_flags: "红线",
+    id: "标识", applies_to: "适用候选", acceptance_rule: "验收规则", criterion_id: "标准标识", criterion_ids: "标准引用",
+    criterion_assessments: "逐条标准评估", core_assessment: "核心要求评估", core_failure_refs: "核心失败标准", status: "状态",
+    review_requests: "复核请求", candidate: "候选", finding_indices: "发现索引",
     text: "内容", reason: "依据", evidence: "证据", assessment: "要求评估", problem: "问题归因",
     requirement_index: "要求索引", observation: "观察", evidence_status: "证据状态", impact: "影响",
     component: "组件", label: "问题名称", definition: "定义", ranking: "排名", models: "候选信息", assessments: "候选评估", evaluations: "归因结果",
@@ -139,6 +142,7 @@ export function createDashboardViews({
       evidence_quality: "证据质量", reasoning: "推理", format: "格式", relevance: "相关性", efficiency: "效率" },
     importance: { high: "高", medium: "中", low: "低" },
     evidence_status: { established: "已建立", uncertain: "不确定" },
+    status: { decided: "已裁决", needs_review: "待复核", met: "满足", partial: "部分满足", unmet: "不满足", unknown: "未确认", not_applicable: "不适用" },
     stage: { context_recall: "上下文", reasoning: "推理", execution: "执行", final_answer: "最终回答" },
     result: { win: "胜出", both_good: "都好", both_bad: "都差" },
   };
@@ -147,7 +151,7 @@ export function createDashboardViews({
     : `<span>${escapeHtml(key.replaceAll("__vs__", " / "))}</span>`;
   function scalar(value, key) {
     if (value === "") return "空";
-    if (value === null) return key === "is_correct" ? "未判定" : "无";
+    if (value === null) return key === "is_correct" || key === "meets_core" ? "未判定" : "无";
     if (typeof value === "boolean") return key === "is_correct" ? (value ? "正确" : "错误") : (value ? "是" : "否");
     return valueLabels[key]?.[value] || value;
   }
@@ -219,15 +223,15 @@ export function createDashboardViews({
     const priorities = { high: 0, medium: 1, low: 2 };
     const rows = row.decision_basis.comparisons.map((item, index) => ({ item, index }))
       .sort((a, b) => priorities[a.item.importance] - priorities[b.item.importance]);
-    const verdicts = Object.entries(row.verdicts || {}).map(([pair, verdict]) => `<span>${escapeHtml(pair.split("__vs__").map(name).join(" / "))} · <strong>${escapeHtml(verdict.result === "win" ? `${verdict.winner_name}更好` : scalar(verdict.result, "result"))}</strong></span>`).join("");
+    const verdicts = row.status === "needs_review" ? "<strong>待复核</strong>" : Object.entries(row.verdicts || {}).map(([pair, verdict]) => `<span>${escapeHtml(pair.split("__vs__").map(name).join(" / "))} · <strong>${escapeHtml(verdict.result === "win" ? `${verdict.winner_name}更好` : scalar(verdict.result, "result"))}</strong></span>`).join("");
     return `<section class="comparison-decision"><h5>裁决</h5><div class="comparison-verdicts">${verdicts}</div>${comparisonText(row.decision_basis.tradeoff, `${taskId}.decision_basis.tradeoff`, rewrites)}</section>
-      <section class="schema-section"><h5>逐项对照</h5><div class="comparison-scroll" tabindex="0" role="region" aria-label="各模型逐项对照"><table class="comparison-table"><thead><tr><th scope="col">比较点</th>${versions.map((version) => `<th scope="col">${escapeHtml(name(version))}</th>`).join("")}</tr></thead><tbody>${rows.map(({ item, index }) => `<tr data-comparison-index="${index}"><th scope="row"><strong>${escapeHtml(item.aspect)}</strong><span class="comparison-importance">重要性 · ${escapeHtml(scalar(item.importance, "importance"))}</span></th>${versions.map((version) => {
+      <section class="schema-section"><h5>逐项对照</h5><div class="comparison-scroll" tabindex="0" role="region" aria-label="各模型逐项对照"><table class="comparison-table"><thead><tr><th scope="col">比较点</th>${versions.map((version) => `<th scope="col">${escapeHtml(name(version))}</th>`).join("")}</tr></thead><tbody>${rows.map(({ item, index }) => `<tr data-comparison-index="${index}"><th scope="row"><strong>${escapeHtml(item.aspect)}</strong><span class="comparison-importance">重要性 · ${escapeHtml(scalar(item.importance, "importance"))}</span>${item.criterion_ids ? `<span class="comparison-importance">标准 · ${escapeHtml(item.criterion_ids.join(" / "))}</span>` : ""}</th>${versions.map((version) => {
         const assessment = item.assessments[version];
         const links = assessment.finding_indices.map((findingIndex) => {
           const target = `finding-${taskId}.evaluations.${version}.findings.${findingIndex}`;
           return `<a data-finding-target="${escapeHtml(target)}" href="#${encodeURIComponent(target)}">归因 #${findingIndex}</a>`;
         }).join("");
-        return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">本项更好</strong>' : ""}${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">${links}</div></td>`;
+        return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">本项更好</strong>' : ""}${assessment.status !== undefined ? `<span class="comparison-importance">状态 · ${escapeHtml(scalar(assessment.status, "status"))} · 证据 · ${escapeHtml(scalar(assessment.evidence_status, "evidence_status"))}</span>` : ""}${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">${links}</div></td>`;
       }).join("")}</tr>`).join("")}</tbody></table></div></section>`;
   }
 
@@ -240,7 +244,7 @@ export function createDashboardViews({
       body = attributionHtml(row.evaluation, task.id, row.rewritten);
     } else if (task.stage === "comparison") {
       body = comparisonHtml(row, task.id, rewrites);
-      body += `<details class="comparison-details"><summary>裁决明细</summary>` + ["models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
+      body += `<details class="comparison-details"><summary>裁决明细</summary>` + ["status", "review_requests", "models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
         .filter((key) => row[key] !== undefined)
         .map((key) => sectionHtml(key, valueHtml(row[key], `${task.id}.${key}`, key, rewrites))).join("")
         + sectionHtml("decisive_findings", valueHtml(row.decision_basis.decisive_findings, `${task.id}.decision_basis.decisive_findings`, "decisive_findings", rewrites)) + "</details>";
@@ -250,7 +254,7 @@ export function createDashboardViews({
           const { rewritten, ...evaluation } = row.evaluations[version];
           return `<section class="model-evaluation"><h6>${escapeHtml(name)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
         }).join("")}</section>`).join("") + "</div></details>";
-    } else if (task.stage === "clustering") {
+    } else if (task.stage === "clustering" || task.stage === "criteria") {
       body = fieldsHtml(row.result, task.id, rewrites);
     }
     if (task.stage !== "comparison") body = `<h4 class="output-heading">${rewrites.size ? "原文与改写" : "原始输出"}</h4>${body}`;
@@ -293,7 +297,7 @@ export function createDashboardViews({
       ? `<section class="standard-answer"><h3>标准答案</h3>${textHtml(typeof detail.ground_truth.value === "string" ? detail.ground_truth.value : JSON.stringify(detail.ground_truth.value, null, 2), "ground_truth")}</section>` : "";
     $("#case-detail").innerHTML = `<header class="detail-heading"><div class="section-heading"><h2>问题</h2><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span></div>${textHtml(detail.question, "question", true)}${standardAnswer}</header>
       <details class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><summary><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></summary><div class="input-content case-columns">${inputs}</div></details>
-      ${["attribution", "comparison"].map((stage) => {
+      ${["criteria", "attribution", "comparison"].map((stage) => {
         const tasks = detail.tasks.filter((task) => task.stage === stage);
         if (!tasks.length) return "";
         const body = stage === "attribution" ? `<div class="case-columns">${groupCaseCandidates(tasks.map((task) => ({

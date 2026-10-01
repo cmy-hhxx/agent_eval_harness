@@ -10,7 +10,7 @@ import { runEvaluation } from "@eval/host";
 import { buildPlan, comparisonWorkflow, reportRun, readRunState, syncProblemLibrary } from "@eval/workflows/comparison";
 import type { AttributionResult, TaskData } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { attributionResult, draftFor, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult } from "../../fixtures/comparison.js";
+import { attributionResult, draftFor, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -19,11 +19,13 @@ async function rows(file: string): Promise<JsonObject[]> {
 }
 
 /** Attribution result carrying a problem proposal so clustering has observations to classify. */
-function problemAttribution(): AttributionResult {
-  const result = attributionResult(true);
+function problemAttribution(answer: string): AttributionResult {
+  const result = attributionResult(false, answer);
+  result.correctness_reason = "最终结果5与标准结果4不符。";
   result.findings[0] = {
     ...result.findings[0]!,
     type: "problem",
+    reason: "原文给出5，正确结果应为4。",
     problem: { component: ["模型自身推理"], label: "算术错误", definition: "计算与事实不符。" },
   };
   return result;
@@ -45,8 +47,12 @@ function backendWith(calls: { value: number }): AgentBackend {
         async run() {
           calls.value++;
           let result = taskResult(options.spec);
-          if (options.spec.evaluation.id === "attribution") result = problemAttribution();
-          await options.execute("submit_evaluation", draftFor(options.spec, result));
+          if (options.spec.evaluation.id === "attribution") {
+            const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
+            result = problemAttribution(material.answer.final_answer);
+          }
+          const submitted = await options.execute("submit_evaluation", draftFor(options.spec, result));
+          if (options.spec.evaluation.id !== "clustering") assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
         },
         async abort() {},
         async dispose() {},
@@ -126,9 +132,9 @@ test("clustering bind preserves each shard's reserved component headroom", async
 test("clustering builds a bounded per-model library and recalls classes across runs", async () => {
   const { directory, config, modelForStage } = await fixtureConfig(
     [
-      [raw("q1"), raw("q2")],
+      [raw("q1", "4", "2+2=5"), raw("q2", "4", "2+2=5")],
       [],
-      [raw("q1"), raw("q2")],
+      [raw("q1", "4", "2+2=5"), raw("q2", "4", "2+2=5")],
       [],
     ],
     false,
@@ -143,7 +149,9 @@ test("clustering builds a bounded per-model library and recalls classes across r
     assert.equal(plan.summary.clustering_tasks, 2);
     for (const task of plan.tasks.filter((item) => item.stage === "clustering")) {
       assert.deepEqual(task.inputIds, {}, "clustering must not fetch input material");
-      assert.equal(Object.keys(task.dependencies).length, 2, "one dependency per answer");
+      const keys = Object.keys(task.dependencies);
+      assert.equal(keys.filter((key) => !key.startsWith("comparison:")).length, 2, "one attribution dependency per answer");
+      assert.equal(keys.filter((key) => key.startsWith("comparison:")).length, 2, "both case comparisons must resolve before library admission");
     }
     const options = {
       runId: "cluster-first",
@@ -163,7 +171,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
     };
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls.value, 8, "4 attribution + 2 comparison + 2 clustering");
+    assert.equal(calls.value, 10, "2 criteria + 4 attribution + 2 comparison + 2 clustering");
     const run = path.join(config.output.path, "cluster-first");
 
     const clustering = await rows(path.join(run, "results", "clustering.jsonl"));
@@ -217,7 +225,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       config: { ...config, clustering: { ...config.clustering, enabled: false } },
       plan: { tasks: [], inputs: {}, summary: {} },
     });
-    assert.equal(calls.value, 8);
+    assert.equal(calls.value, 10);
     assert.equal((resumed.problem_library as Record<string, { occurrences: number }>).a_fast?.occurrences, 2);
 
     // A new run recalls the existing class instead of creating another one.
@@ -226,7 +234,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       runId: "cluster-second",
       plan: await buildPlan(config),
     });
-    assert.equal(calls.value, 16);
+    assert.equal(calls.value, 20);
     const recalled = await readJson<{ classes: Record<string, unknown>; occurrences: { classification: string }[] }>(
       path.join(config.problemLibrary.path, "a_fast.json"),
     );
@@ -345,7 +353,9 @@ test("a model over the library cap cannot partially commit another model", async
 });
 
 test("a clustering task over budget fails without growing the library", async () => {
-  const { directory, config, modelForStage } = await fixtureConfig(undefined, false, true);
+  const { directory, config, modelForStage } = await fixtureConfig(
+    Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]), false, true,
+  );
   config.clustering.maxNewClassesPerTask = 0;
   const calls = { value: 0 };
   const worker = await startWorker(backendWith(calls), path.join(directory, "worker"));

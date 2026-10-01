@@ -9,15 +9,17 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="工作台导航">
-      <nav class="workspace-nav" aria-label="工作台导航"><a href="/">运行工作台</a><a href="/reference" aria-current="page">数据与流程</a></nav>
+      <nav class="workspace-nav" aria-label="工作台导航"><a href="/">运行工作台</a><a href="/reference" aria-current="page">数据与流程</a><a href="/problems">问题库</a></nav>
     </aside>
     <main class="main-content reference-page" aria-label="数据与流程">
-      <header class="page-header"><span id="reference-version" class="muted"></span></header>
+      <header class="reference-header">
       <nav class="page-tabs" aria-label="内容分区">
         <button type="button" data-section="inputs" aria-pressed="true">输入数据</button>
         <button type="button" data-section="flow" aria-pressed="false">评测流程</button>
         <button type="button" data-section="contracts" aria-pressed="false">Schema 与提示词</button>
       </nav>
+      <span id="reference-version" class="definition-meta"></span>
+      </header>
       <div id="reference-error" class="error-banner" role="alert" hidden></div>
       <div id="reference-content"><span class="loading" role="status" aria-label="正在读取定义"><span class="spinner" aria-hidden="true"></span></span></div>
     </main>

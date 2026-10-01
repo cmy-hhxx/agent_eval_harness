@@ -26,8 +26,8 @@ function cacheUsage(runs: Checkpoint[]) {
 
 /** Counts attempts and distinct cases separately; a case can have several active stages. */
 function liveExecution(runs: Checkpoint[]) {
-  const cases = new Set<string>(), stages: Record<string, number> = { attribution: 0, comparison: 0, rewrite: 0 };
-  const retryingStages: Record<string, number> = { attribution: 0, comparison: 0, rewrite: 0 };
+  const cases = new Set<string>(), stages: Record<string, number> = { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 };
+  const retryingStages: Record<string, number> = { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 };
   let retryingTasks = 0, readyTasks = 0, waitingDependencies = 0, nextRetryAt: number | undefined;
   for (const run of runs) for (const task of Object.values(run.tasks)) {
     if (!isAutomationTask(task)) continue;

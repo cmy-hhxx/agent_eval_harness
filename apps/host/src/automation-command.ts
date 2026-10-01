@@ -51,7 +51,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     const days = (await remote.discover(AbortSignal.timeout(config.requestTimeoutMs))).filter((day) => selected(day.date));
     const entries = [];
     for (const day of days) entries.push({ ...day, ...await evaluationTargets(config, output, day) });
-    console.log(JSON.stringify({ source: config.sourceUrl, stages: ["attribution", "comparison", "rewrite"],
+    console.log(JSON.stringify({ source: config.sourceUrl, stages: ["criteria", "attribution", "comparison", "rewrite"],
       rewrite: ["attribution", "comparison"], dates: entries,
       publication: { logIntervalHours: 4, mongo: "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
     }, null, 2));
@@ -61,7 +61,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     if (!process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
     logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
     const resolve = createModelResolver(host.models);
-    for (const stage of ["attribution", "comparison", "rewrite"]) resolve(stage);
+    for (const stage of ["criteria", "attribution", "comparison", "rewrite"]) resolve(stage);
     for (const profile of boundProfiles(host.models)) {
       if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
       logger.addSecrets(process.env[profile.apiKeyEnv]!);

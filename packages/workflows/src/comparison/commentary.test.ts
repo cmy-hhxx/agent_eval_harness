@@ -26,25 +26,27 @@ test("real group names survive reversed blind labels and repeated display", () =
 });
 
 const comparison: ComparisonResult = {
+  status: "decided", review_requests: [],
   task_analysis: {
     task_type: "整数加法",
     goal: "计算2+2",
-    requirements: ["给出正确的加法结果"],
-    scoring_points: ["使用指定操作数"],
-    red_flags: ["擅自替换操作数"],
+    requirements: [{ id: "r1", text: "给出正确的加法结果", applies_to: [], acceptance_rule: "给出正确的加法结果" }],
+    scoring_points: [{ id: "s1", text: "使用指定操作数", applies_to: [], acceptance_rule: "使用指定操作数" }],
+    red_flags: [{ id: "f1", text: "擅自替换操作数", applies_to: [], acceptance_rule: "擅自替换操作数" }],
   },
   ranking: [["A"], ["B"]],
   assessments: {
-    A: { meets_core: true, summary: "A 结论" },
-    B: { meets_core: false, summary: "B 结论" },
+    A: { meets_core: true, core_failure_refs: [], summary: "A 结论" },
+    B: { meets_core: false, core_failure_refs: [], summary: "B 结论" },
   },
   decision_basis: { tradeoff: "A 完成核心要求，B 未完成。", decisive_findings: [], comparisons: [{
-    aspect: "计算结果", importance: "high", better_candidates: ["A"], assessments: {
-      A: { summary: "正确给出4。", finding_indices: [] }, B: { summary: "未给出结果。", finding_indices: [] },
+    aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: ["A"], assessments: {
+      A: { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [] }, B: { status: "met", evidence_status: "established", summary: "未给出结果。", finding_indices: [] },
     },
   }] },
 };
 const attribution: AttributionResult = {
+  criterion_assessments: [], core_assessment: { meets_core: true, reason: "已完成。", criterion_ids: ["r1"] },
   has_standard_answer: true,
   is_correct: true,
   correctness_reason: "与标准答案一致。",
@@ -80,8 +82,8 @@ test("both-bad slots carry the accepted relative tradeoff through reversed blind
   result.ranking = [["B", "A"]];
   result.decision_basis.tradeoff = "双方都没给回测结果。候选B相对更好，给出了代码，候选A只有方法。";
   result.decision_basis.comparisons[0] = {
-    aspect: "回测交付", importance: "high", better_candidates: ["B"], assessments: {
-      A: { summary: "只有方法。", finding_indices: [] }, B: { summary: "给出代码，未给结果。", finding_indices: [] },
+    aspect: "回测交付", criterion_ids: ["r1"], importance: "high", better_candidates: ["B"], assessments: {
+      A: { status: "met", evidence_status: "established", summary: "只有方法。", finding_indices: [] }, B: { status: "met", evidence_status: "established", summary: "给出代码，未给结果。", finding_indices: [] },
     },
   };
   const before = structuredClone(result);
@@ -138,14 +140,14 @@ test("presentation view applies rewrites by slot and leaves unknown text alone",
     } as unknown as TaskData,
   } as unknown as PlannedTask;
   const row: JsonObject = {
-    assessments: { a: { meets_core: true, summary: "原A" }, b: { meets_core: false, summary: "原B" } },
+    assessments: { a: { meets_core: true, core_failure_refs: [], summary: "原A" }, b: { meets_core: false, core_failure_refs: [], summary: "原B" } },
     evaluations: {
       a: { summary: "原归因A", correctness_reason: "原理由A" },
       b: { summary: "原归因B", correctness_reason: "原理由B" },
     },
     verdicts: { "a__vs__b": { reason: "原判决" } },
-    decision_basis: { tradeoff: "原权衡", comparisons: [{ aspect: "结果", importance: "high", better_candidates: ["a"], assessments: {
-      a: { summary: "原表现A", finding_indices: [] }, b: { summary: "原表现B", finding_indices: [] },
+    decision_basis: { tradeoff: "原权衡", comparisons: [{ aspect: "结果", criterion_ids: ["r1"], importance: "high", better_candidates: ["a"], assessments: {
+      a: { status: "met", evidence_status: "established", summary: "原表现A", finding_indices: [] }, b: { status: "met", evidence_status: "established", summary: "原表现B", finding_indices: [] },
     } }] },
   };
   const bySource: Record<string, Rewrites> = {
@@ -162,8 +164,8 @@ test("presentation view applies rewrites by slot and leaves unknown text alone",
   const assessments = view.assessments as Record<string, { meets_core: boolean; summary: string }>;
   const evaluations = view.evaluations as Record<string, { summary: string; correctness_reason: string }>;
   assert.deepEqual(assessments, {
-    a: { meets_core: true, summary: "A组 精简" },
-    b: { meets_core: false, summary: "原B" },
+    a: { meets_core: true, core_failure_refs: [], summary: "A组 精简" },
+    b: { meets_core: false, core_failure_refs: [], summary: "原B" },
   });
   assert.equal((view.decision_basis as { tradeoff: string }).tradeoff, "精简权衡");
   const rows = (view.decision_basis as unknown as ComparisonResult["decision_basis"]).comparisons;

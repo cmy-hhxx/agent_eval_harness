@@ -10,7 +10,7 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="运行导航">
-        <nav class="workspace-nav" aria-label="工作台导航"><a href="/" aria-current="page">运行工作台</a><a href="/reference">数据与流程</a></nav>
+        <nav class="workspace-nav" aria-label="工作台导航"><a href="/" aria-current="page">运行工作台</a><a href="/reference">数据与流程</a><a href="/problems">问题库</a></nav>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
       </aside>
@@ -75,10 +75,7 @@
             <summary>聚类详情</summary>
             <div id="clustering-tasks"></div>
           </details>
-          <details id="problem-library-panel" class="problem-library">
-            <summary>问题库</summary>
-            <div id="problem-library"></div>
-          </details>
+          <a class="library-workspace-link" href="/problems">问题库 <span aria-hidden="true">↗</span></a>
         </section>
 
         <section class="explorer" id="explorer" hidden>

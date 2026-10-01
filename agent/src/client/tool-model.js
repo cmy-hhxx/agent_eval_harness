@@ -6,7 +6,7 @@ const referenceText=value=>[value?.runId,value?.inputId,value?.taskId,value?.mes
 const specialistLabel={attribution:'归因评测',comparison:'对比评测'};
 const operationLabel={add:'加法',subtract:'减法',multiply:'乘法',divide:'除法'};
 const operationSymbol={add:' + ',subtract:' − ',multiply:' × ',divide:' ÷ '};
-const statusText=(model,output)=>output?.error==='missingAttributions'?'待补充归因':output?.error==='interrupted'?'已中断':({succeeded:'已完成',running:'进行中',cancelled:'已取消',failed:'未完成'}[output?.state]??{preparing:'准备中',running:'进行中',ok:'已完成',error:'未完成',stopped:'已停止'}[model.state]??'准备中');
+const statusText=(model,output)=>output?.error==='interrupted'?'已中断':({succeeded:'已完成',running:'进行中',cancelled:'已取消',failed:'未完成'}[output?.state]??{preparing:'准备中',running:'进行中',ok:'已完成',error:'未完成',stopped:'已停止'}[model.state]??'准备中');
 export function analysisToolModel(name,model){
  const args=parse(model.bodyRaw)??{},output=parse(model.output),reference=args.reference??args;
  const status=statusText(model,output);

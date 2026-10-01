@@ -25,6 +25,7 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
     if (task.stage !== "comparison") continue;
     if (selected && !selected.has(task.id) && !selected.has(rewritesBySource.get(task.id)?.id ?? "")) continue;
     const data = task.data as TaskData, batch = taskCase(data).batch_id;
+    if (data.supersededBy) continue;
     const counts = byBatch[batch] ??= { planned: 0, accepted: 0, delivered: 0 };
     counts.planned++;
     const key = canonical([batch, taskCase(data).case_id, [...data.group!].sort()]);
@@ -36,6 +37,10 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
       continue;
     }
     counts.accepted++;
+    if ((receipt.evaluation as ComparisonResult).status === "needs_review") {
+      errors.push(`${task.id}: independent review unresolved`);
+      continue;
+    }
     const expected = [...scopes].flatMap((scope) => comparisonSlots(receipt.evaluation as ComparisonResult, scope as "items" | "verdicts"));
     const saved = receipt.exported && stageResult("comparison", receipt.exported.row).rewritten as
       { rewrites: { id: string; text: string }[] } | undefined;

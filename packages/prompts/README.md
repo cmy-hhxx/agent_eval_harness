@@ -1,8 +1,8 @@
 # 评测提示词
 
-此模块是专业 Agent 的评测指令与工具描述、Eris 提示词与工具描述的唯一来源。四阶段系统/任务规则、任务材料/预算/恢复文案及内置评测工具描述在此装配；`packages/agents` 选择所需工具并组装 Profile，Tools 只负责执行，Host / Worker 不维护第二份规则正文。
+此模块是专业 Agent 的评测指令与工具描述、Eris 提示词与工具描述的唯一来源。五阶段系统/任务规则、任务材料/预算/恢复文案及内置评测工具描述在此装配；`packages/agents` 选择所需工具并组装 Profile，Tools 只负责执行，Host / Worker 不维护第二份规则正文。
 
-专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；Eris 的系统规则、恢复文案和工具描述集中在 `resources/eris/system.md`、`resources/eris/recovery.md` 和 `resources/eris/tools/<tool>.md`。组装顺序见 `src/index.ts`，`shared/` 只存共同的消息边界。
+专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；Eris 的系统规则、恢复文案和工具描述集中在 `resources/eris/system.md`、`resources/eris/recovery.md` 和 `resources/eris/tools/<tool>.md`。组装顺序见 `src/index.ts`；`shared/` 集中材料边界、预算、恢复及无提交时的补交提示，不包含阶段判定规则。
 
 ## 提示词写法
 

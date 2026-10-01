@@ -208,6 +208,8 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 }
 export function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
+  if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
+  if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);
   if (data.stage === "clustering")
     return canonical([data.scope!.batch_id, "clustering", data.scope!.version, data.scope!.shard]);
   if (data.rewriteScope)
@@ -216,8 +218,8 @@ export function taskKey(task: PlannedTask): string {
   const selector =
     data.stage === "rewrite"
       ? ["rewrite", data.rewriteOf!.taskId]
-      : data.group || [data.candidates.A.version];
-  return canonical([c.batch_id, c.case_id, task.stage, selector]);
+      : data.group ? [...data.group].sort() : [data.candidates.A.version];
+  return canonical([c.batch_id, c.case_id, task.stage, selector, ...(data.stage === "attribution" && data.criteriaScope ? [data.criteriaScope] : [])]);
 }
 /** Batch identity for every stage, including clustering tasks that span cases. */
 export function taskIdentity(data: TaskData): { batch_id: string; case_id: string | null } {
@@ -230,10 +232,27 @@ export function taskIdentity(data: TaskData): { batch_id: string; case_id: strin
 export function assertComparableGroups(config: Pick<EvalConfig, "inputs" | "comparisons">): void {
   const tiers = new Map(config.inputs.versions.map((version) => [version.id, version.comparison_tier]));
   for (const group of config.comparisons) {
+    if (group.length < 2 || group.length > 3 || new Set(group).size !== group.length)
+      throw new Error("对比组必须包含 2–3 个不同候选：" + group.join(" / "));
     const declared = new Set(group.map((id) => tiers.get(id)).filter((tier): tier is string => !!tier));
+    if ((group.length === 3 || declared.size) && group.some((id) => !tiers.get(id)))
+      throw new Error("对比组每个候选必须明确同档 comparison_tier：" + group.join(" / "));
     if (declared.size > 1)
       throw new Error(`对比组混合了不同模型规模（${[...declared].join(" / ")}）：${group.join(" / ")}`);
   }
+}
+/** Independent two-way tasks, deduplicated by the unordered business pair. */
+export function expandComparisonPairs(groups: readonly (readonly string[])[]): string[][] {
+  const pairs: string[][] = [], seen = new Set<string>();
+  for (const group of groups) {
+    if (group.length < 2 || group.length > 3 || new Set(group).size !== group.length)
+      throw new Error("对比组必须包含 2–3 个不同候选：" + group.join(" / "));
+    for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) {
+      const pair = [group[i]!, group[j]!], key = canonical([...pair].sort());
+      if (!seen.has(key)) { seen.add(key); pairs.push(pair); }
+    }
+  }
+  return pairs;
 }
 /** Narrow configured groups without scheduling the same remaining model set twice. */
 export function selectComparisonGroups(groups: readonly string[][], versionIds: readonly string[]): string[][] {
@@ -330,6 +349,13 @@ export async function buildPlan(
 ): Promise<TaskPlan> {
   const accepted = options.acceptedTaskIds ?? new Set<string>();
   assertComparableGroups(config);
+  const comparisonPairs = expandComparisonPairs(config.comparisons);
+  const acceptedPairs = new Set((previous?.tasks ?? []).filter((task) => task.stage === "comparison" && accepted.has(task.id))
+    .flatMap((task) => {
+      const data = task.data as TaskData, identity = taskCase(data), group = data.group!;
+      return group.flatMap((first, index) => group.slice(index + 1).map((second) =>
+        canonical([identity.batch_id, identity.case_id, [first, second].sort()])));
+    }));
   if (options.scanFile && (options.materializeInputs !== false || previous))
     throw new Error("输入扫描索引仅用于新运行的只读预检");
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
@@ -506,6 +532,7 @@ export async function buildPlan(
       libraries.set(version.id, (await readProblemLibrary(file)) ?? emptyLibrary(version.id));
     }
   const tasks: PlannedTask[] = [],
+    criteriaTasks = new Map<string, PlannedTask>(),
     checks = new Map<string, PlannedTask>(),
     rewrites = new Map<string, PlannedTask>(),
     groupCounts: Record<string, number> = {};
@@ -570,21 +597,25 @@ export async function buildPlan(
     stats.valid_inputs += available.length;
     const sources = (versions: string[]) =>
       versions.flatMap((version) => locations.get(canonical([batch, id, version])) || []);
-    const refs = new Map(
-      available.filter((r) => r.reference !== null).map((r) => [canonical(r.reference), r.reference]),
-    );
-    const reference = refs.values().next().value ?? null;
-    const conflict = new Set(available.map((r) => normalize(r.question))).size > 1 || refs.size > 1;
-    if (conflict)
-      issues.push({
-        batch_id: batch,
-        case_id: id,
-        reason: "question_or_reference_conflict",
-        sources: sources(available.map((record) => record.version)),
-      });
-    for (const group of config.comparisons) {
+    // A single known reference propagates across the same question. Conflicting
+    // references form separate scopes; an unreferenced answer never switches
+    // standards depending on which opponent happens to be in the pair.
+    const scopeOf = (record: Candidate) => {
+      const matching = available.filter((other) => normalize(other.question) === normalize(record.question));
+      const refs = new Map(matching.filter((other) => other.reference !== null)
+        .map((other) => [canonical(other.reference), other.reference]));
+      return { question: normalize(record.question), reference: refs.size === 1 ? refs.values().next().value : record.reference };
+    };
+    for (const group of comparisonPairs) {
       if (!group.every((v) => config.inputs.versions.some((item) => item.id === v))) continue;
+      if (acceptedPairs.has(canonical([batch, id, [...group].sort()]))) continue;
       const values = group.map((v) => records.get(canonical([batch, id, v])));
+      const present = values.filter((value): value is Candidate => !!value);
+      const refs = new Map(present.map(scopeOf).map((scope) => [canonical(scope.reference), scope.reference]));
+      const reference = refs.values().next().value ?? null;
+      const conflict = new Set(present.map((record) => normalize(record.question))).size > 1 || refs.size > 1;
+      if (conflict) issues.push({ batch_id: batch, case_id: id, versions: group,
+        reason: "question_or_reference_conflict", sources: sources(group) });
       if (conflict || values.some((v) => !v)) {
         stats.skipped_groups++;
         skipped.push({
@@ -597,7 +628,7 @@ export async function buildPlan(
         });
         continue;
       }
-      const groupKey = canonical([batch, id, "comparison", group]);
+      const groupKey = canonical([batch, id, "comparison", [...group].sort()]);
       const oldGroup = oldTasks.get(groupKey),
         oldData = oldGroup?.data as TaskData | undefined;
       let ordered: Candidate[] = [];
@@ -618,11 +649,44 @@ export async function buildPlan(
       if (ordered.length > LABELS.length) throw new Error("对比组候选数超过盲测标签容量");
       const candidates = Object.fromEntries(ordered.map((candidate, i) => [LABELS[i]!, candidate])),
         dependencies: Record<string, string> = {};
+      const rubricCandidates = available.filter((record) => {
+        const scope = scopeOf(record);
+        return scope.question === normalize(ordered[0]!.question) && isDeepStrictEqual(scope.reference, reference) &&
+          comparisonPairs.some((pair) => pair.includes(record.version));
+      }).sort((a, b) => a.version.localeCompare(b.version));
+      const criteriaScope = canonical([batch, id, rubricCandidates.map((c) => c.version)]);
+      let criteria = criteriaTasks.get(criteriaScope);
+      if (!criteria) {
+        const old = oldTasks.get(canonical(["criteria", criteriaScope]));
+        const changed = !!old && (!isDeepStrictEqual((old.data as TaskData).reference, reference) ||
+          rubricCandidates.some((candidate, i) => {
+            const prior = (old.data as TaskData).candidates[LABELS[i]!];
+            return candidate.input_id !== prior?.input_id || candidate.question !== prior.question ||
+              candidate.final_index !== prior.final_index;
+          }));
+        criteria = {
+          id: old && !(changed && accepted.has(old.id)) ? old.id : randomUUID(), stage: "criteria", dependencies: {},
+          inputIds: Object.fromEntries(rubricCandidates.map((c, i) => [LABELS[i]!, c.input_id])),
+          data: { stage: "criteria", candidates: Object.fromEntries(rubricCandidates.map((c, i) => [LABELS[i]!, c])),
+            reference, criteriaScope, revision: old && !accepted.has(old.id)
+              ? ((old.data as TaskData).revision ?? 1) + Number(changed) : 1 },
+        };
+        criteriaTasks.set(criteriaScope, criteria);
+      }
+      dependencies.criteria = criteria.id;
       for (const [label, record] of Object.entries(candidates)) {
-        const checkKey = canonical([batch, id, "attribution", [record.version]]);
+        const checkKey = canonical([batch, id, "attribution", [record.version], criteriaScope]);
         const existing = checks.get(checkKey);
         if (existing) {
           dependencies[label] = existing.id;
+          continue;
+        }
+        const acceptedCheck = previous?.tasks.find((task) => task.stage === "attribution" && accepted.has(task.id) &&
+          (task.data as TaskData).candidates.A.input_id === record.input_id);
+        if (acceptedCheck) {
+          checks.set(checkKey, acceptedCheck);
+          dependencies[label] = acceptedCheck.id;
+          stats.attribution_tasks++;
           continue;
         }
         const data: TaskData = {
@@ -630,6 +694,7 @@ export async function buildPlan(
           // Internal slot only; attribution materials and tools use `answer`.
           candidates: { A: record },
           reference,
+          criteriaScope,
           initialContextChars: config.execution.initialContextChars,
         };
         const old = oldTasks.get(checkKey);
@@ -646,7 +711,7 @@ export async function buildPlan(
         checks.set(checkKey, {
           id: checkId,
           stage: "attribution",
-          dependencies: {},
+          dependencies: { criteria: criteria.id },
           inputIds: { answer: record.input_id },
           data,
         });
@@ -664,6 +729,7 @@ export async function buildPlan(
         stage: "comparison",
         candidates,
         reference,
+        criteriaScope,
         group,
         initialContextChars: config.execution.initialContextChars,
         comparisonId: oldData?.comparisonId || "cmp_" + randomUUID(),
@@ -778,7 +844,11 @@ export async function buildPlan(
       clusteringTasks.push({
         id: old?.id || randomUUID(),
         stage: "clustering",
-        dependencies: Object.fromEntries(shard.cases.map((entry) => [entry.input_id, entry.task_id])),
+        dependencies: Object.fromEntries([
+          ...shard.cases.map((entry) => [entry.input_id, entry.task_id]),
+          ...tasks.filter((comparison) => shard.cases.some((entry) => Object.values(comparison.dependencies).includes(entry.task_id)))
+            .map((comparison) => ["comparison:" + comparison.id, comparison.id]),
+        ]),
         inputIds: {},
         data: {
           stage: "clustering",
@@ -861,12 +931,13 @@ export async function buildPlan(
   }
   for (const id of Object.keys(inputs)) if (!used.has(id)) delete inputs[id];
   return {
-    tasks: [...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
+    tasks: [...criteriaTasks.values(), ...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
     inputs,
     catalog,
     summary: {
       valid_inputs: validInputs,
       cases: selected.length,
+      criteria_tasks: criteriaTasks.size,
       attribution_tasks: checks.size,
       comparison_tasks: tasks.length,
       rewrite_tasks: rewrites.size,

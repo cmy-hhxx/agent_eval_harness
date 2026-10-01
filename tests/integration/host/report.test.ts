@@ -13,7 +13,7 @@ import { validateEvaluation } from "../../fixtures/services.js";
 import { comparisonRow, reportRun } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, criteriaResult, raw } from "../../fixtures/comparison.js";
 
 for (const objective of [false, true])
   test(`report preserves identities, evidence and correctness across blind swaps (${objective ? "objective" : "subjective"})`, async () => {
@@ -61,11 +61,15 @@ for (const objective of [false, true])
         const task: PlannedTask = {
           id: "comparison",
           stage: "comparison",
-          dependencies: { A: "check-A", B: "check-B" },
+          dependencies: { criteria: "criteria", A: "check-A", B: "check-B" },
           inputIds: Object.fromEntries(Object.entries(candidates).map(([label, c]) => [label, c.input_id])),
           data,
         };
-        const receipts = new Map<string, SubmissionReceipt>();
+        const receipts = new Map<string, SubmissionReceipt>([["criteria", {
+          taskId: "criteria", submissionId: "criteria", attemptId: "test", evaluation: criteriaResult(),
+          evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(),
+          status: "succeeded", acceptedAt: 0,
+        }]]);
         for (const label of ["A", "B"]) {
           const candidate = candidates[label]!;
           receipts.set("check-" + label, {
@@ -92,26 +96,21 @@ for (const objective of [false, true])
         const aFast = labelOf.get("a_fast")!;
         const bFast = labelOf.get("b_fast")!;
         const result: ComparisonResult = {
-          task_analysis: {
-            task_type: "整数加法",
-            goal: "计算2+2",
-            requirements: ["给出正确的加法结果"],
-            scoring_points: ["比较候选A与候选B的交付质量。"],
-            red_flags: ["擅自替换操作数"],
-          },
+          status: "decided", review_requests: [],
+          task_analysis: structuredClone(receipts.get("criteria")!.evaluation) as ComparisonResult["task_analysis"],
           ranking: [[aFast], [bFast]],
           assessments: {
-            [aFast]: { meets_core: true, summary: `候选${aFast}与候选${bFast}相比，候选${aFast}更完整。` },
+            [aFast]: { meets_core: true, core_failure_refs: [], summary: `候选${aFast}与候选${bFast}相比，候选${aFast}更完整。` },
             [bFast]: {
-              meets_core: false,
+              meets_core: false, core_failure_refs: ["r1"],
               summary: `候选${bFast}结果错误。`,
             },
           },
           decision_basis: {
             tradeoff: "候选B的优点不能抵消候选A的优势。",
-            comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [aFast], assessments: {
-              [aFast]: { summary: `候选${aFast}给出正确结果。`, finding_indices: [0] },
-              [bFast]: { summary: `候选${bFast}结果错误。`, finding_indices: [0] },
+            comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [aFast], assessments: {
+              [aFast]: { status: "met", evidence_status: "established", summary: `候选${aFast}给出正确结果。`, finding_indices: [0] },
+              [bFast]: { status: "unmet", evidence_status: "established", summary: `候选${bFast}结果错误。`, finding_indices: [0] },
             } }],
             decisive_findings: [
               { candidate: aFast, finding_index: 0 },
@@ -148,7 +147,7 @@ for (const objective of [false, true])
           ];
         }
         const mutualChecks = comparisonWorkflow.bind(task, snapshots, mutual).request.input.strength_checks;
-        assert.deepEqual(mutualChecks, Object.keys(dependencies).flatMap((label) =>
+        assert.deepEqual(mutualChecks, Object.keys(candidates).flatMap((label) =>
           Array.from({ length: label === aFast ? 3 : 1 }, (_, index) => ({
             candidate: label, finding_index: index + 1,
             counterparts: [label === aFast ? bFast : aFast],
@@ -166,6 +165,9 @@ for (const objective of [false, true])
         assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
         assert.equal(row.request_time, "2026-09-24 11:37:31");
         assert.equal(row.has_standard_answer, objective);
+        assert.deepEqual(row.task_analysis, criteriaResult());
+        assert.equal(row.criteria_task_id, "criteria");
+        assert.deepEqual(row.attribution_task_ids, Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [candidate.version, "check-" + label])));
         assert.deepEqual((row.verdicts as Record<string, { result: string; winner_version: string }>)["a_fast__vs__b_fast"], {
           result: "win",
           winner_version: "a_fast",
@@ -207,7 +209,7 @@ test("report and validate reject unsupported run formats without a compatibility
   }
 });
 
-test("report requires the run's own schema snapshot", async () => {
+test("debug report requires the run's own schema snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     await writeJson(path.join(directory, "state.json"), {

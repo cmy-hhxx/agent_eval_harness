@@ -18,7 +18,7 @@ async function controller(respond: (url: string, options?: RequestInit) => unkno
   // Exercise the real controller with an in-memory DOM and network; no browser or boot requests.
   const load = new Function("document", "createDashboardViews", "groupCaseCandidates", "fetch", "setTimeout", "clearTimeout",
     source.slice(source.indexOf("\n") + 1, source.lastIndexOf("\n(async () => {")) +
-    "\nreturn { state, loadConfig, loadInputs, refresh, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, deleteRun };",
+    "\nreturn { state, loadConfig, loadInputs, refresh, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, deleteRun, restoreRecall };",
   );
   const api = load(dom.window.document, createDashboardViews, groupCaseCandidates,
     async (url: string, options: RequestInit) => {
@@ -40,7 +40,7 @@ test("dashboard renders gateway models with eight-way concurrency, high thinking
     settings: editableDashboardSettings({
       ...source,
       models: { judge: { model: "claude-4" } },
-      bindings: Object.fromEntries(["attribution", "comparison", "rewrite", "clustering"]
+      bindings: Object.fromEntries(["criteria", "attribution", "comparison", "rewrite", "clustering"]
         .map((stage) => [stage, { profile: "judge" }])),
     }),
   }));
@@ -48,7 +48,7 @@ test("dashboard renders gateway models with eight-way concurrency, high thinking
     await page.loadConfig();
     assert.equal(page.document.querySelector("#setting-concurrency").value, "8");
     const selects = [...page.document.querySelectorAll("[data-model-stage]")];
-    assert.equal(selects.length, 4);
+    assert.equal(selects.length, 5);
     for (const select of selects) {
       assert.deepEqual([...select.options].map((option) => option.value), ["", "claude-4", "gpt-5.6"]);
       assert.equal(select.value, "claude-4");
@@ -68,6 +68,44 @@ test("comparison finding links reveal collapsed attribution details and preserve
     assert.equal(page.document.querySelector(".comparison-attributions").open, true);
     assert.equal(page.document.querySelector("#target").open, true);
     assert(page.state.openFindings.has("task.evaluations.left.findings.0"));
+  } finally { page.dom.window.close(); }
+});
+
+test("sample recall opens the requested run, model and persistent finding even outside the visible case page", async () => {
+  const task = { id: "attr-a", stage: "attribution", status: "succeeded", versions: ["a_expert"], attempts: 1 };
+  const run = { run_id: "recall-run", status: "finished", progress: {}, stages: {} };
+  const page = await controller((url) => {
+    if (url.endsWith("/runs")) return { runs: [run], errors: [] };
+    if (url.endsWith("/recall-run")) return run;
+    if (url.includes("/cases?")) return { cases: [], total: 80, page: 1, page_size: 40 };
+    if (url.includes("/cases/detail")) return { batch_id: "batch", case_id: "q80", question: "召回问题", tasks: [task], candidates: [
+      { version: "a_fast", name: "A组Fast", input_id: "af" }, { version: "a_expert", name: "A组Expert", input_id: "ae" },
+    ] };
+    if (url.includes("/tasks/attr-a/result")) return { result: { evaluation: { summary: "总结", findings: [
+      { finding_id: "f8", type: "problem", text: "目标问题", problem: { label: "问题" } },
+    ] } } };
+    throw new Error(`Unexpected request ${url}`);
+  });
+  try {
+    await page.refresh();
+    await page.restoreRecall(new URLSearchParams({ run: "recall-run", batch: "batch", case: "q80", model: "a_expert", task: "attr-a", finding: "f8" }));
+    assert.equal(page.state.selectedRun, "recall-run");
+    assert.equal(page.state.selectedCase.caseId, "q80");
+    assert.equal(page.document.querySelector('[data-input="ae"]').getAttribute("aria-pressed"), "true");
+    assert.equal(page.document.querySelector('[data-task="attr-a"]').open, true);
+    const finding = page.document.getElementById("finding-attr-a.findings.0");
+    assert.equal(finding.open, true);
+    assert.equal(page.document.activeElement, finding);
+  } finally { page.dom.window.close(); }
+});
+
+test("sample recall reports unavailable runs and never requests a stale result", async () => {
+  const calls: string[] = [];
+  const page = await controller((url) => { calls.push(url); return {}; });
+  try {
+    await page.restoreRecall(new URLSearchParams({ run: "deleted-run", batch: "batch", case: "q1", task: "attr-a" }));
+    assert.match(page.document.querySelector("#error-banner").textContent, /运行不可用/);
+    assert.equal(calls.length, 0);
   } finally { page.dom.window.close(); }
 });
 

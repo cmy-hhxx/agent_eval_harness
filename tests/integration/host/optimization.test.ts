@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { readFile, rm } from "node:fs/promises";
-import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan, type PlannedTask } from "@eval/contracts";
 import { fileSourceReader, readJson, writeJsonl } from "@eval/data";
 import { buildPlan, comparisonWorkflow } from "@eval/workflows/comparison";
 import { createResultWriter } from "@eval/workflows/comparison";
@@ -22,12 +22,15 @@ import {
   fakeIdentity,
   fakeJudge,
   comparisonResult,
+  criteriaResult,
   fixtureConfig,
   raw,
   taskResult,
 } from "../../fixtures/comparison.js";
 
 function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
+  const accepted = plan.tasks.filter((task) => ["criteria", "attribution", "comparison"].includes(task.stage));
+  const acceptedIds = new Set(accepted.map((task) => task.id));
   return {
     manifest: {
       format: "evaluation-run",
@@ -40,12 +43,15 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
       tasks: plan.tasks,
       inputCatalog: plan.catalog,
       inputs: Object.fromEntries(Object.keys(plan.inputs).map((id) => [id, { id, name: id }])),
-      states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "succeeded", attempts: 1 }])),
+      states: Object.fromEntries(plan.tasks.map((task) => [task.id, {
+        status: acceptedIds.has(task.id) ? "succeeded" : "pending",
+        attempts: acceptedIds.has(task.id) ? 1 : 0,
+      }])),
       preflight: plan.summary,
       startedAt: 1,
     },
     receipts: Object.fromEntries(
-      plan.tasks.map((task) => [
+      accepted.map((task) => [
         task.id,
         {
           taskId: task.id,
@@ -55,16 +61,21 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
           evaluatorVersion: fakeEvaluatorVersion,
           judge: fakeJudge,
           acceptedAt: 2,
-          evaluation: task.stage === "attribution" ? attributionResult() : comparisonResult(),
+          evaluation: task.stage === "criteria" ? criteriaResult() : task.stage === "attribution"
+            ? attributionResult(true, "2+2=4", (task.data as TaskData).reference !== null) : comparisonResult(),
           audit: emptyAudit(),
           usage: emptyUsage(),
         },
       ]),
     ),
     usage: { ...emptyUsage(), totalTokens: 123 },
-    recordedAttempts: plan.tasks.length,
+    recordedAttempts: accepted.length,
   };
 }
+function dependenciesFor(task: PlannedTask, state: RunState) {
+  return Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, state.receipts[id]]));
+}
+
 function optionsFor(
   config: EvalConfig,
   modelForStage: (stage: string) => ModelConfig,
@@ -115,7 +126,10 @@ test("attribution reads identity while comparison worker sees only its blind pro
           const stage = options.spec.evaluation.id;
           stages.push(stage);
           const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
-          if (stage === "attribution") {
+          if (stage === "criteria") {
+            assert(!options.spec.prompt.includes('"final_answer"'), "criteria are fixed before answers are exposed");
+            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          } else if (stage === "attribution") {
             assert.match(options.spec.prompt, /version_id/);
             assert.equal(options.spec.inputs[0]!.name, "answer");
             assert.equal(input.messages[1]!.model, options.spec.prompt.includes('"version_id":"a_fast"') ? "secret-model" : "other-model");
@@ -152,7 +166,7 @@ test("attribution reads identity while comparison worker sees only its blind pro
     };
     assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
     assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
-    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison"]);
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -226,13 +240,13 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
       moved.tasks.map((t) => t.id),
       plan.tasks.map((t) => t.id),
     );
-    assert.equal(Object.keys(restored.receipts).length, 6);
+    assert.equal(Object.keys(restored.receipts).length, plan.tasks.length);
     const changed = { ...rows[0], request_time: "2026-09-24" };
     await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [changed, rows[1]]);
     await writeJsonl(narrowed.inputs.versions[3].sources[0].path, [raw("q", null)]);
     const replacement = await reconcileRun(run, restored, narrowed);
-    assert.equal(replacement.tasks.length, 6);
-    assert.equal(Object.keys(restored.receipts).length, 6);
+    assert.equal(replacement.tasks.length, plan.tasks.length);
+    assert.equal(Object.keys(restored.receipts).length, plan.tasks.length);
     const affected = replacement.tasks.find(
       (t) =>
         t.id ===
@@ -249,7 +263,7 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
     assert.equal(restored.usage.totalTokens, 123);
     await writeRunState(run, restored); // crash after state replacement, before result rebuilding
     const recovered = await readRunState(run);
-    assert.equal(Object.keys(recovered.receipts).length, 6);
+    assert.equal(Object.keys(recovered.receipts).length, plan.tasks.length);
     await writeJsonl(narrowed.inputs.versions[0].sources[0].path, [{ ...changed, request_time: "" }, rows[1]]);
     const invalid = await reconcileRun(run, recovered, narrowed);
     assert.deepEqual(
@@ -288,8 +302,8 @@ test("each answer retains its own full system and developer constraints beyond t
   config.execution.initialContextChars = 1;
   try {
     const plan = await buildPlan(config);
-    for (const task of plan.tasks) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, {});
+    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage))) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, stateFor(config, plan)));
       const input = bound.request.input as { answer?: { initial_material: { message_index: number; value: unknown }[] }; candidates?: Record<string, { initial_material: { message_index: number; value: unknown }[] }> };
       const materials = input.answer ? { answer: input.answer } : input.candidates!;
       for (const [label, material] of Object.entries(materials)) {
@@ -313,8 +327,8 @@ test("oversized final-answer blocks are deferred without duplicating their paylo
   const { directory, config } = await fixtureConfig([[row], [], [row], []]);
   try {
     const plan = await buildPlan(config);
-    for (const task of plan.tasks) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, {});
+    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage))) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, stateFor(config, plan)));
       const input = bound.request.input as any;
       services.agents.prepare(bound);
       for (const [label, material] of Object.entries(input.answer ? { answer: input.answer } : input.candidates) as [string, any][]) {
@@ -344,7 +358,7 @@ test("planning a shared reference change increments dependent task revisions whi
     const first = await buildPlan(config);
     await writeJsonl(config.inputs.versions[0].sources[0].path, [raw("q1", "updated")]);
     const next = await buildPlan(config, first);
-    assert.equal(next.tasks.length, 3);
+    assert.equal(next.tasks.length, 4);
     assert.deepEqual(
       next.tasks.map((t) => t.id),
       first.tasks.map((t) => t.id),
@@ -367,8 +381,8 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
         return {
           async run() {
             const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
-            calls.push(input.case_id!);
-            if (input.case_id === "todo" && !resumed) throw new Error("stop before submission");
+            if (options.spec.evaluation.id === "attribution") calls.push(input.case_id!);
+            if (options.spec.evaluation.id === "attribution" && input.case_id === "todo" && !resumed) throw new Error("stop before submission");
             await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
@@ -383,7 +397,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
     assert.equal((await runEvaluation(options)).completed_comparisons, 1);
     const run = path.join(config.output.path, "test"),
       before = await readRunState(run);
-    const accepted = before.manifest.tasks.find((t) => before.receipts[t.id])!;
+    const accepted = before.manifest.tasks.find((t) => t.stage === "attribution" && before.receipts[t.id])!;
     const original = before.receipts[accepted.id];
     const changed = [
       { ...raw("todo", null), request_time: "new-time" },
@@ -517,12 +531,12 @@ test("an interrupted model stream receives one bounded transport retry", async (
 test("retry backoff releases its worker slot for healthy tasks and preserves the retry budget", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   const plan = await buildPlan(config), order: string[] = [];
+  const first = plan.tasks.find((task) => task.stage === "attribution")!.id;
   const errors: { message: string; context: import("@eval/contracts").LogContext }[] = [];
-  let first = "";
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     return { async run() {
       const id = options.spec.taskId;
-      order.push(id); first ||= id;
+      order.push(id);
       if (id === first) throw new Error("Stream ended without finish_reason");
       await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
     }, async abort() {}, async dispose() {} };
@@ -531,7 +545,7 @@ test("retry backoff releases its worker slot for healthy tasks and preserves the
     await runEvaluation({ ...optionsFor(config, modelForStage, plan, [worker.url]),
       retries: 1, retryDelaySeconds: 1, signal: AbortSignal.timeout(15_000),
       logger: { evaluation: async () => true, error: async (message, context) => { errors.push({ message: String(message), context }); } } });
-    assert.notEqual(order[1], first, "healthy work must use the only slot while the failed task backs off");
+    assert.notEqual(order[order.indexOf(first) + 1], first, "healthy work must use the only slot while the failed task backs off");
     assert.equal(order.filter(id => id === first).length, 2, "redispatch must not reset the retry budget");
     const after = await readRunState(path.join(config.output.path, "test"));
     assert.equal(after.manifest.states[first].status, "failed");
@@ -548,8 +562,9 @@ test("failed dependencies are checkpointed as one batch", async () => {
   const rows = Array.from({ length: 12 }, (_, i) => raw(String(i), null));
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
   const plan = await buildPlan(config), saved = stateFor(config, plan);
-  saved.receipts = {};
-  for (const task of plan.tasks) saved.manifest.states[task.id].status = task.stage === "attribution" ? "failed" : "pending";
+  saved.receipts = Object.fromEntries(plan.tasks.filter((task) => task.stage === "criteria").map((task) => [task.id, saved.receipts[task.id]]));
+  for (const task of plan.tasks) saved.manifest.states[task.id].status = task.stage === "criteria" ? "succeeded" : task.stage === "attribution" ? "failed" : "pending";
+  await createResultWriter(path.join(config.output.path, "test"), plan.inputs)(saved);
   await writeRunState(path.join(config.output.path, "test"), saved);
   let writes = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession() { throw new Error("no healthy task should dispatch"); } }, path.join(directory, "worker"));
@@ -650,15 +665,12 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
         return {
           async run() {
             calls++;
-            firstTask ??= options.spec.taskId;
+            if (options.spec.evaluation.id === "attribution") firstTask ??= options.spec.taskId;
             const attempt = (attempts.get(options.spec.taskId) || 0) + 1;
             attempts.set(options.spec.taskId, attempt);
             if (attempt === 1 && options.spec.taskId === firstTask) {
-              const invalid = taskResult(options.spec) as {
-                findings?: { evidence: { quote: string }[] }[];
-                evaluations?: { A: { findings: { evidence: { quote: string }[] }[] } };
-              };
-              (invalid.findings ?? invalid.evaluations!.A.findings)[0].evidence[0].quote = "wrong";
+              const invalid = taskResult(options.spec) as { findings: { evidence: { quote: string }[] }[] };
+              invalid.findings[0].evidence[0].quote = "wrong";
               await options.execute("submit_evaluation", draftFor(options.spec, invalid));
               const state = await readRunState(path.join(config.output.path, "test"));
               assert(state.manifest.states[options.spec.taskId].failure?.draft);
@@ -682,11 +694,11 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 4);
+    assert.equal(calls, 5);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
-    assert.equal(Object.values(state.manifest.states)[0].failure?.draft, undefined);
-    assert.equal(Object.values(state.receipts)[0].submissionStats?.contentSubmissions, 2);
+    assert.equal(state.manifest.states[firstTask!].failure?.draft, undefined);
+    assert.equal(state.receipts[firstTask!].submissionStats?.contentSubmissions, 2);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -896,7 +908,7 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     await runEvaluation({ ...options, debug: true });
     const run = path.join(config.output.path, "test"),
       validation = await validateRun(run);
-    assert.equal(calls, 3);
+    assert.equal(calls, options.plan.tasks.length);
     assert.equal(validation.valid, true);
     assert.equal(validation.artifacts.status, "missing");
     assert.equal(validation.completed_comparisons, 1);
@@ -906,7 +918,7 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     row.evaluation_type = "invalid";
     await writeJsonl(file, [row]);
     assert.equal((await validateRun(run)).valid, false);
-    assert.equal(Object.keys(before.receipts).length, 3);
+    assert.equal(Object.keys(before.receipts).length, options.plan.tasks.length);
     const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison")!;
     await writeJsonl(file, [before.receipts[comparisonTask.id].exported!.row]);
     const inputFile = (before.manifest.tasks[0].data as TaskData).candidates.A.source;

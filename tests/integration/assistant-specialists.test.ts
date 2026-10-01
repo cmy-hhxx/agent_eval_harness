@@ -3,22 +3,22 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { buildPlan } from "@eval/workflows/comparison";
-import { writeJson } from "@eval/data";
+import { buildPlan, readRunTasks } from "@eval/workflows/comparison";
+import { writeJson, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { LocalSpecialists } from "../../apps/host/src/assistant-specialists.js";
 import { LocalAnalysisData } from "../../apps/host/src/assistant-data.js";
 import { loadConfig } from "@eval/host-app/config";
 import { services, ROOT } from "../fixtures/services.js";
-import { fixtureConfig, fakeIdentity, taskResult, draftFor } from "../fixtures/comparison.js";
+import { fixtureConfig, fakeIdentity, taskResult, draftFor, parsedMaterial, raw } from "../fixtures/comparison.js";
 import { createEris } from "@eval/assistant";
-import type { AnalysisReference } from "@eval/contracts";
+import type { AnalysisReference, TaskAnalysis } from "@eval/contracts";
 
 test("standalone Attribution and Comparison share material, validation, accepted results and resume", {timeout:30000}, async()=>{
  const fixture=await fixtureConfig();
- let calls=0;
- const worker=await startWorker({identity:fakeIdentity,async createSession(options){return {async run(){calls++;const result=await options.execute("submit_evaluation",draftFor(options.spec,taskResult(options.spec)));assert.equal(result.isError,undefined,JSON.stringify(result));},async abort(){},async dispose(){}};}},path.join(fixture.directory,"worker"));
+ let calls=0, interruptComparison=false;
+ const worker=await startWorker({identity:fakeIdentity,async createSession(options){return {async run(){calls++;if(interruptComparison&&options.spec.evaluation.id==="comparison"){interruptComparison=false;throw new Error("fixture comparison interrupted");}const result=await options.execute("submit_evaluation",draftFor(options.spec,taskResult(options.spec)));assert.equal(result.isError,undefined,JSON.stringify(result));},async abort(){},async dispose(){}};}},path.join(fixture.directory,"worker"));
  try {
   const config=await loadConfig(path.join(ROOT,"configs/host.json"),{EVAL_BASE_URL:"http://127.0.0.1:1/v1"});
   config.evaluation=fixture.config;config.models=fixture.models;
@@ -32,8 +32,8 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const interruptedId=randomUUID();
   await writeJson(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",interruptedId,"request.json"),{operationId:interruptedId,kind:"attribution",inputs:[inputs[0]]});
   assert.equal((await gateway.read(scope,interruptedId)).error,"interrupted");
-  const missing=await gateway.invoke(scope,{kind:"comparison",operationId:randomUUID(),inputs},signal);
-  assert.equal(missing.error,"missingAttributions");assert.equal(calls,0);
+  const automatic=await gateway.invoke(scope,{kind:"comparison",operationId:randomUUID(),inputs},signal);
+  assert.equal(automatic.state,"succeeded",JSON.stringify(automatic));assert.equal(calls,4);
   const attributions=[];
   for(const reference of inputs){
    const operationId=randomUUID(),request={kind:"attribution" as const,operationId,inputs:[reference]};
@@ -42,8 +42,14 @@ test("standalone Attribution and Comparison share material, validation, accepted
    const before: number=calls;assert.deepEqual(await gateway.invoke(scope,request,signal),accepted);assert.equal(calls,before);
    attributions.push({inputId:reference.inputId!,operationId});
   }
-  const operationId=randomUUID(),result=await gateway.invoke(scope,{kind:"comparison",operationId,inputs,attributions},signal);
-  assert.equal(result.state,"succeeded",JSON.stringify(result));assert.equal(calls,3);
+  const operationId=randomUUID(),comparisonRequest={kind:"comparison" as const,operationId,inputs,attributions};
+  interruptComparison=true;
+  const failed=await gateway.invoke(scope,comparisonRequest,signal);
+  assert.equal(failed.state,"failed");assert.equal(calls,10);
+  const result=await gateway.invoke(scope,comparisonRequest,signal);
+  assert.equal(result.state,"succeeded",JSON.stringify(result));assert.equal(calls,11,"resume reuses accepted criteria and external attributions");
+  const acceptedState=await readRunTasks(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",operationId,"execution",operationId),[]);
+  assert.deepEqual(acceptedState.manifest.tasks.map(task=>task.stage),["criteria","comparison"],"matching accepted attributions are reused without duplicate execution");
   const formalData=new LocalAnalysisData(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",operationId,"execution"));
   const formal=await formalData.read({runId:operationId,taskId:operationId});
   assert.equal(formal.evaluatorVersion,config.evaluatorVersion);assert.deepEqual(formal.result,result.result);
@@ -74,4 +80,113 @@ test("standalone Attribution and Comparison share material, validation, accepted
   assert(!state.includes('"messages"'),"state keeps references, not original message bodies");
   assert(!JSON.stringify(read).includes("undefined"));
  }finally{await worker.close();await rm(fixture.directory,{recursive:true,force:true});}
+});
+
+test("three-model specialist runs share one criteria task and return all three real pair references", { timeout: 30000 }, async () => {
+ const fixture = await fixtureConfig();
+ const third = { ...fixture.config.inputs.versions.find(version => version.id === "a_fast")!,
+  id: "c_fast", name: "C组Fast", sources: [{ kind: "file" as const, path: path.join(fixture.directory, "c_fast.jsonl") }] };
+ fixture.config.inputs.versions.push(third);
+ fixture.config.comparisons = [["a_fast", "b_fast", "c_fast"]];
+ await writeJsonl(third.sources[0].path, [raw()]);
+ const stages: string[] = [], standards: TaskAnalysis[] = [];
+ const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
+  async run() {
+   const stage = options.spec.evaluation.id; stages.push(stage);
+   const material = parsedMaterial(options.spec) as { task_analysis?: TaskAnalysis; candidates?: { instructions: { role: string }[]; context: { role: string }[] }[] };
+   if (stage === "criteria") {
+    assert(!("task_analysis" in material));
+    assert(material.candidates!.every(candidate => candidate.context.every(message => message.role === "user")));
+   } else standards.push(material.task_analysis!);
+   const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+   assert.equal(result.isError, undefined, JSON.stringify(result));
+  }, async abort() {}, async dispose() {},
+ }; } }, path.join(fixture.directory, "worker"));
+ try {
+  const config = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" });
+  config.evaluation = fixture.config; config.models = fixture.models;
+  const plan = await buildPlan(fixture.config);
+  await runEvaluation({ ...services, plan: { ...plan, tasks: [] }, runId: "source", output: fixture.config.output,
+   engine: "pi", evaluatorVersion: config.evaluatorVersion, config: fixture.config, policy: fixture.config.execution,
+   modelForStage: fixture.modelForStage, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], concurrency: 1 });
+  const inputIds = Object.values(plan.tasks.find(task => task.stage === "criteria")!.inputIds);
+  assert.equal(inputIds.length, 3);
+  const gateway = new LocalSpecialists(path.join(fixture.directory, "assistant"), new LocalAnalysisData(fixture.config.output.path), config, false,
+   { workerUrls: [worker.url], identity: fakeIdentity });
+  const scope = { userId: "alice", sessionId: randomUUID() }, signal = new AbortController().signal;
+  const operationId = randomUUID(), request = { operationId, kind: "comparison" as const,
+   inputs: inputIds.map(inputId => ({ runId: "source", inputId })) };
+  const accepted = await gateway.invoke(scope, request, signal);
+  assert.equal(accepted.state, "succeeded", JSON.stringify(accepted));
+  assert.deepEqual(stages.sort(), ["attribution", "attribution", "attribution", "comparison", "comparison", "comparison", "criteria"]);
+  assert(standards.every(analysis => JSON.stringify(analysis) === JSON.stringify(standards[0])));
+  const comparisons = (accepted.result as { comparisons: { reference: AnalysisReference; result: { models: Record<string, unknown> } }[] }).comparisons;
+  assert.equal(comparisons.length, 3);
+  assert.equal(new Set(comparisons.map(item => item.reference.taskId)).size, 3);
+  const formal = new LocalAnalysisData(path.join(fixture.directory, "assistant/users/alice/sessions", scope.sessionId, "operations", operationId, "execution"));
+  const pairs: string[] = [];
+  for (const item of comparisons) {
+   assert.equal(item.reference.runId, operationId);
+   assert.deepEqual((await formal.read(item.reference)).result, item.result);
+   const versions = Object.keys(item.result.models).sort();
+   assert.equal(versions.length, 2);
+   pairs.push(versions.join("/"));
+  }
+  assert.deepEqual(pairs.sort(), ["a_fast/b_fast", "a_fast/c_fast", "b_fast/c_fast"]);
+  const before = stages.length;
+  assert.deepEqual(await gateway.read(scope, operationId), accepted);
+  assert.deepEqual(await gateway.invoke(scope, request, signal), accepted);
+  assert.equal(stages.length, before);
+  await assert.rejects(gateway.invoke(scope, { ...request, operationId: randomUUID(), inputs: [...request.inputs, request.inputs[0]] }, signal), /Invalid specialist inputs/);
+ } finally { await worker.close(); await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("incompatible accepted attributions are independently reassessed without changing their receipts", { timeout: 30000 }, async () => {
+ const fixture = await fixtureConfig();
+ let revised = false;
+ const stages: string[] = [];
+ const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
+  async run() {
+   stages.push(options.spec.evaluation.id);
+   const output = taskResult(options.spec);
+   if (revised && options.spec.evaluation.id === "criteria")
+    (output as TaskAnalysis).requirements[0]!.acceptance_rule = "明确给出题目2与2相加的完整结果4。";
+   if (revised && options.spec.evaluation.id === "attribution")
+    assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,
+     ["已有归因与本次共享判据、标准答案或当前验证要求不一致，按本次判据独立重新核验。"]);
+   const result = await options.execute("submit_evaluation", draftFor(options.spec, output));
+   assert.equal(result.isError, undefined, JSON.stringify(result));
+  }, async abort() {}, async dispose() {},
+ }; } }, path.join(fixture.directory, "worker"));
+ try {
+  const config = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" });
+  config.evaluation = fixture.config; config.models = fixture.models;
+  const plan = await buildPlan(fixture.config);
+  await runEvaluation({ ...services, plan: { ...plan, tasks: [] }, runId: "source", output: fixture.config.output,
+   engine: "pi", evaluatorVersion: config.evaluatorVersion, config: fixture.config, policy: fixture.config.execution,
+   modelForStage: fixture.modelForStage, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], concurrency: 1 });
+  const gateway = new LocalSpecialists(path.join(fixture.directory, "assistant"), new LocalAnalysisData(fixture.config.output.path), config, false,
+   { workerUrls: [worker.url], identity: fakeIdentity });
+  const inputs = Object.values(plan.tasks.find(task => task.stage === "comparison")!.inputIds).map(inputId => ({ runId: "source", inputId }));
+  const scope = { userId: "alice", sessionId: randomUUID() }, signal = new AbortController().signal;
+  const originals = [];
+  for (const input of inputs) {
+   const operationId = randomUUID();
+   const result = await gateway.invoke(scope, { kind: "attribution", operationId, inputs: [input] }, signal);
+   assert.equal(result.state, "succeeded", JSON.stringify(result));
+   originals.push({ inputId: input.inputId, operationId, result });
+  }
+  revised = true; stages.length = 0;
+  const operationId = randomUUID();
+  const result = await gateway.invoke(scope, { kind: "comparison", operationId, inputs,
+   attributions: originals.map(({ inputId, operationId }) => ({ inputId, operationId })) }, signal);
+  assert.equal(result.state, "succeeded", JSON.stringify(result));
+  assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
+  for (const original of originals) assert.deepEqual(await gateway.read(scope, original.operationId), original.result);
+  const before = stages.length;
+  await assert.rejects(gateway.invoke(scope, { kind: "comparison", operationId: randomUUID(), inputs,
+   attributions: [{ inputId: inputs[1].inputId, operationId: originals[0].operationId }] }, signal), /not an accepted result for this input/);
+  assert.equal(stages.length, before);
+  await assert.rejects(gateway.invoke(scope, { kind: "attribution", operationId: randomUUID(), inputs: [inputs[0]], attributions: [] }, signal), /does not accept attribution references/);
+ } finally { await worker.close(); await rm(fixture.directory, { recursive: true, force: true }); }
 });

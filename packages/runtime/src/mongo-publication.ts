@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { BSON, MongoClient, type Collection, type Document, type AnyBulkWriteOperation } from "mongodb";
-import { errorText, redact, REMOTE_MODELS, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
+import { errorText, redact, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
 
 export interface MongoPublicationConfig { uri: string; database: string; collection: string; tlsCAFile?: string; inputsUnchanged?: boolean }
 type Stored = Document & { _id: string };
@@ -133,7 +133,7 @@ export async function writeMongoPublication(
   }
   const inputTasks = new Map<string, unknown>();
   for await (const { versionId, trace } of inputs) {
-    if (!(REMOTE_MODELS as readonly string[]).includes(versionId) || trace.batch_id !== date ||
+    if (!/^[a-z][a-z0-9_]*$/.test(versionId) || trace.batch_id !== date ||
         typeof trace.case_id !== "string" || !trace.case_id || !Array.isArray(trace.messages) || !trace.messages.length)
       throw new Error("Invalid publication input");
     const caseId = cases.get(trace.case_id) ?? randomUUID();
@@ -147,7 +147,10 @@ export async function writeMongoPublication(
     counts.inputs++;
   }
   await flush();
+  const core = new Map<string, boolean>();
   for await (const { row, evaluatedAt } of results) {
+    if (row.status === "needs_review" || row.evaluation_type === "comparison_review" || row.supersededBy)
+      throw new Error("Only settled, unsuperseded comparisons can be published");
     const identity = row.case as { batch_id?: string; case_id?: string };
     const models = row.models as Record<string, Document>;
     const versions = Object.keys(models ?? {}).sort(), rawId = identity?.case_id;
@@ -158,8 +161,19 @@ export async function writeMongoPublication(
       throw new Error("Comparison is missing paired input or completed rewrite");
     const task = inputTasks.get(JSON.stringify([rawId, versions[0]]));
     if (task !== inputTasks.get(JSON.stringify([rawId, versions[1]]))) throw new Error("Comparison input tasks differ");
-    const verdict = (row.verdicts as Record<string, unknown>)[versions.join("__vs__")];
-    if (!verdict) throw new Error("Comparison verdict is missing");
+    for (const version of versions) {
+      const key = JSON.stringify([rawId, version]), value = (row.assessments as Document | undefined)?.[version]?.meets_core;
+      if (row.status === "decided" && typeof value !== "boolean") throw new Error("Settled comparison is missing a core assessment: " + key);
+      if (typeof value !== "boolean") continue;
+      if (core.has(key) && core.get(key) !== value) throw new Error("Conflicting answer core assessments across comparisons: " + key);
+      core.set(key, value);
+    }
+    const matching = Object.entries(row.verdicts as Record<string, unknown>).filter(([key]) => {
+      const pair = key.split("__vs__");
+      return pair.length === 2 && versions.every((id) => pair.includes(id));
+    });
+    if (matching.length !== 1) throw new Error("Comparison verdict is missing or duplicated");
+    const verdict = matching[0][1];
     const comparison = { ...row, case: { batch_id: date, case_id: caseId },
       models: Object.fromEntries(versions.map((id) => [id, { ...models[id], version: id, display_name: models[id].version }])), verdict };
     await queue({ _id: `comparison:${date}:${caseId}:${versions.join(":")}`, kind: "comparison", batchId: date, caseId,

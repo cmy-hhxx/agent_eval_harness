@@ -3,7 +3,7 @@ import { REMOTE_MODELS, type PlannedTask, type RemoteDay, type TaskPlan, type Wo
 import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
-import { comparisonWorkflow, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
+import { comparisonWorkflow, expandComparisonPairs, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { boundProfiles, createModelResolver, loadConfig } from "./config.js";
 import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
@@ -200,7 +200,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   const workflow = createAutomationWorkflow(config.dailyComparisonLimitPerTier);
   const modelForStage = createModelResolver(host.models);
-  for (const stage of ["attribution", "comparison", "rewrite"]) modelForStage(stage);
+  for (const stage of ["criteria", "attribution", "comparison", "rewrite"]) modelForStage(stage);
   for (const profile of boundProfiles(host.models)) {
     if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
     logger.addSecrets(process.env[profile.apiKeyEnv]!);
@@ -250,14 +250,19 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], runs: Map<string, Checkpoint[]>, limit: number) {
   const dates = Object.values(state.jobs).map((job) => {
-    const pairs = Object.fromEntries(["fast", "expert"].map((pair) => [pair, {
+    const planned = expandComparisonPairs((runs.get(job.date) ?? []).flatMap((run) => [
+      ...(run.config as EvalConfig).comparisons,
+      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && task.receipt && task.data.group ? [task.data.group] : []),
+    ]));
+    const pairName = (group: string[]) => [...group].sort().join("__vs__");
+    const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
       total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
     }]));
     const statuses = new Map<string, { pair: string; statuses: string[] }>();
     const add = (group: string[], batch: string, id: string, status: string) => {
-      const pair = group.length === 2 && group.includes("a_fast") && group.includes("b_fast") ? "fast" :
-        group.length === 2 && group.includes("a_expert") && group.includes("b_expert") ? "expert" : undefined;
-      if (!pair) return;
+      if (group.length !== 2) throw new Error("Remote progress requires two-candidate comparison tasks");
+      const pair = pairName(group);
+      if (!Object.hasOwn(pairs, pair)) throw new Error("Remote progress comparison pair is not configured: " + pair);
       const key = JSON.stringify([pair, batch, id]), value = statuses.get(key) ?? { pair, statuses: [] };
       value.statuses.push(status); statuses.set(key, value);
     };
@@ -265,9 +270,10 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
       // A queued date may still hold its unlimited plan until the evaluator reaches it.
       const run = limitedCheckpoint(saved, limit);
       for (const task of Object.values(run.tasks)) {
-        if (task.stage !== "comparison") continue;
+        if (task.stage !== "comparison" || task.data.supersededBy) continue;
         const input = run.inputs[Object.values(task.inputIds)[0]];
-        if (input) add(task.data.group!, input.batch_id, input.case_id, task.status);
+        if (input) add(task.data.group!, input.batch_id, input.case_id,
+          task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);
       }
       for (const skipped of run.preflight.skipped as { versions: string[]; batch_id: string; case_id: string }[])
         add(skipped.versions, skipped.batch_id, skipped.case_id, "skipped");

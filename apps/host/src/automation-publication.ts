@@ -14,19 +14,21 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
   async function* inputs(): AsyncGenerator<PublicationInput> {
     const seen = new Set<string>();
-    for (const id of REMOTE_MODELS) {
-      const version = host.evaluation.inputs.versions.find((item) => item.id === id)!;
-      if (!version) throw new Error("Missing publication version: " + id);
+    for (const version of host.evaluation.inputs.versions) {
+      const id = version.id;
+      const registered = [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
+        .filter((input) => input.version === id && input.batch_id === job.date).map((input) => input.source)))];
       const files = job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
-        .filter((input) => input.version === id).map((input) => input.source)))] : [path.join(config.sourceDirectory, job.date, id + ".jsonl")];
+        .filter((input) => input.version === id).map((input) => input.source)))] : (REMOTE_MODELS as readonly string[]).includes(id)
+          ? [path.join(config.sourceDirectory, job.date, id + ".jsonl")] : registered;
       for (const file of files) for await (const item of readJsonl(file)) {
         signal.throwIfAborted();
         const raw = object(item), meta = object(raw.meta ?? {});
         if (!Array.isArray(raw.messages)) throw new Error("Publication input messages must be an array");
         if (!raw.messages.length) continue;
         const batch = raw.batch_id ?? meta.batch_id ?? job.date, caseId = raw.case_id ?? meta.case_id;
-        if (job.adopted && batch !== job.date) continue;
-        if (batch !== job.date || typeof caseId !== "string" || !caseId ||
+        if (batch !== job.date) continue;
+        if (typeof caseId !== "string" || !caseId ||
             (raw.version !== undefined && raw.version !== version.name)) throw new Error("Publication input identity differs from source");
         if (seen.has(JSON.stringify([caseId, id]))) throw new Error("Duplicate publication input identity");
         seen.add(JSON.stringify([caseId, id]));
@@ -40,7 +42,8 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       for (const inputId of acceptedInputs) {
         const candidate = state.inputs[inputId], key = JSON.stringify([candidate.case_id, candidate.version]);
         if (seen.has(key)) continue;
-        const version = host.evaluation.inputs.versions.find((item) => item.id === candidate.version)!;
+        const version = (state.config as EvalConfig).inputs.versions.find((item) => item.id === candidate.version);
+        if (!version) throw new Error("Accepted publication input version is not registered: " + candidate.version);
         const { raw } = await locateRecordStream(candidate.source, { ...candidate, input_id: inputId }, version, job.date);
         seen.add(key);
         yield { versionId: candidate.version, trace: { ...raw, batch_id: candidate.batch_id, case_id: candidate.case_id, version: version.name } };
@@ -67,7 +70,11 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);
     }
   }
-  return { inputs, results };
+  const comparisons = runs.flatMap(({ state }) => state ? [
+    ...(state.config as EvalConfig).comparisons,
+    ...Object.values(state.tasks).flatMap((task) => task.stage === "comparison" && task.receipt && task.data.group ? [task.data.group] : []),
+  ] : []);
+  return { inputs, results, comparisons: runs.some(({ state }) => state) ? comparisons : host.evaluation.comparisons };
 }
 
 export async function syncMongoDay(
@@ -77,6 +84,10 @@ export async function syncMongoDay(
   const settings = config.publication, uri = process.env[settings.mongoUriEnv];
   if (!uri) throw new Error("Missing " + settings.mongoUriEnv);
   const snapshot = await dependencies.snapshot(config, job, signal);
+  // Validate the complete result set before any external writes, including cross-pair core consistency.
+  const validation = new PublicationStatistics(snapshot.comparisons);
+  for await (const input of snapshot.inputs()) validation.addInput(input);
+  for await (const result of snapshot.results()) validation.addResult(result);
   return dependencies.mongo({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection,
     inputsUnchanged: job.mongo?.synced?.inputsUpdatedAt === (job.inputsUpdatedAt ?? 0),
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, job.date, snapshot.inputs(), snapshot.results(), signal);
@@ -87,12 +98,12 @@ export async function statisticsSnapshot(
   config: AutomationConfig, state: AutomationState, signal: AbortSignal,
   dependencies = { snapshot: publicationSnapshot, labels: readMongoLabels },
 ) {
-  const statistics = new PublicationStatistics();
   const jobs = Object.values(state.jobs).sort((a, b) => a.date.localeCompare(b.date));
   const settings = config.publication, uri = process.env[settings.mongoUriEnv];
   if (!uri) throw new Error("Missing " + settings.mongoUriEnv);
   const labels = await dependencies.labels({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection,
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, jobs.map((job) => job.date), signal);
+  const statistics = new PublicationStatistics([]);
   for (const label of labels) statistics.addLabels(label);
   for (const job of jobs) {
     if (job.download !== "ready") {
@@ -100,6 +111,7 @@ export async function statisticsSnapshot(
       continue;
     }
     const snapshot = await dependencies.snapshot(config, job, signal);
+    statistics.addGroups(snapshot.comparisons, job.date);
     for await (const input of snapshot.inputs()) statistics.addInput(input);
     for await (const result of snapshot.results()) statistics.addResult(result);
   }

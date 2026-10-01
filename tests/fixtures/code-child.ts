@@ -10,7 +10,7 @@ const runtime = new ToolRuntime(
     workdir,
     inputs: new Map(),
     policy: DEFAULT_POLICY,
-    audit: { calls: 0, viewedImages: [], calculations: [], artifacts: [] },
+    audit: { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] },
     artifacts: new ArtifactStore(path.join(workdir, "artifacts")),
   },
   createRegistry().select(["execute_code"]),

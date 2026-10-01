@@ -7,6 +7,8 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
+import { criteriaProfile } from "@eval/agents/criteria";
+import { comparisonProfile } from "@eval/agents/comparison";
 import type { RewriteResult } from "@eval/agents/rewrite";
 import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
 import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, Stage, TaskData } from "./types.js";
@@ -38,6 +40,7 @@ function deriveVerdicts(
   group: string[],
   labels: Record<string, string>,
 ): Record<string, JsonObject> {
+  if (result.status !== "decided") throw new Error("待复核结果不能推导对战判决");
   const labelOf = new Map(Object.entries(candidates).map(([label, c]) => [c.version, label]));
   const tiers = tierOf(result.ranking);
   const verdicts: Record<string, JsonObject> = {};
@@ -48,8 +51,8 @@ function deriveVerdicts(
         la = labelOf.get(va)!,
         lb = labelOf.get(vb)!;
       const decision = decideVerdict(
-        result.assessments[la]!.meets_core,
-        result.assessments[lb]!.meets_core,
+        result.assessments[la]!.meets_core!,
+        result.assessments[lb]!.meets_core!,
         tiers.get(la) ?? 0,
         tiers.get(lb) ?? 0,
       );
@@ -95,6 +98,8 @@ export function comparisonRow(
       correctness_reason: attribution.correctness_reason,
       correctness_evidence: attribution.correctness_evidence,
       numeric_checks: attribution.numeric_checks,
+      criterion_assessments: attribution.criterion_assessments,
+      core_assessment: attribution.core_assessment,
       summary: attribution.summary,
       findings,
     };
@@ -105,6 +110,10 @@ export function comparisonRow(
     request_time: raw.request_time ?? null,
     has_standard_answer: data.reference !== null,
     evaluator_version: evaluatorVersion,
+    status: result.status,
+    criteria_task_id: task.dependencies.criteria,
+    attribution_task_ids: Object.fromEntries(Object.keys(data.candidates).map((label) => [data.candidates[label]!.version, task.dependencies[label]])),
+    ...(data.reviewOf ? { review_of: data.reviewOf.taskId } : {}),
 
     evaluation_type: "group_model_comparison",
     comparison_id: data.comparisonId || "cmp_" + task.id,
@@ -120,7 +129,7 @@ export function comparisonRow(
     assessments: Object.fromEntries(
       Object.entries(result.assessments).map(([label, assessment]) => [
         data.candidates[label]!.version,
-        { meets_core: assessment.meets_core, summary: display(assessment.summary, labels) },
+        { meets_core: assessment.meets_core, core_failure_refs: assessment.core_failure_refs, summary: display(assessment.summary, labels) },
       ]),
     ),
     evaluations,
@@ -131,10 +140,11 @@ export function comparisonRow(
       comparisons: result.decision_basis.comparisons.map((item) => ({
         aspect: display(item.aspect, labels),
         importance: item.importance,
+        criterion_ids: item.criterion_ids,
         better_candidates: item.better_candidates.map((label) => data.candidates[label]!.version),
         assessments: Object.fromEntries(Object.entries(item.assessments).map(([label, assessment]) => [
           data.candidates[label]!.version,
-          { summary: display(assessment.summary, labels), finding_indices: assessment.finding_indices },
+          { ...assessment, summary: display(assessment.summary, labels) },
         ])),
       })),
       decisive_findings: result.decision_basis.decisive_findings.map((ref) => ({
@@ -159,6 +169,7 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
 }
 /** Result file per stage; the single place that maps stages to JSONL artifacts. */
 export function resultFile(stage: Stage): string {
+  if (stage === "criteria") return "criteria.jsonl";
   if (stage === "attribution") return "attribution.jsonl";
   if (stage === "comparison") return "comparison.jsonl";
   if (stage === "rewrite") throw new Error("改写结果必须引用源结果文件");
@@ -166,7 +177,8 @@ export function resultFile(stage: Stage): string {
 }
 /** The stage output inside its exported identity envelope. */
 export function stageResult(stage: string, row: JsonObject): JsonObject {
-  return stage === "attribution" ? row.evaluation as JsonObject
+  return stage === "criteria" || row.evaluation_type === "comparison_review" ? row.result as JsonObject
+    : stage === "attribution" ? row.evaluation as JsonObject
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
@@ -205,11 +217,21 @@ export function clusteringRow(
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
+  validateCriteria = ajv.compile(criteriaProfile.resultSchema!),
+  validateComparison = ajv.compile(comparisonProfile.resultSchema!),
   validateAttribution = ajv.compile(attributionProfile.resultSchema!),
   validateRewritten = ajv.compile(rewrittenSchema),
   validateClustering = ajv.compile(clusteringSchema);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): ResultReference & { row: JsonObject; auxiliary?: boolean } {
   const receipt = state.receipts[task.id];
+  if (task.stage === "criteria") {
+    if (!validateCriteria(receipt.evaluation)) throw new Error("共同验收基准 schema 无效：" + ajv.errorsText(validateCriteria.errors));
+    return { id: task.id, file: "criteria.jsonl", row: receipt.exported?.row ?? {
+      evaluation_type: "criteria", evaluator_version: receipt.evaluatorVersion,
+      task_id: task.id, case: { batch_id: Object.values((task.data as TaskData).candidates)[0]!.batch_id,
+        case_id: Object.values((task.data as TaskData).candidates)[0]!.case_id }, result: receipt.evaluation,
+    } };
+  }
   if (task.stage === "attribution") {
     const row = receipt.exported?.row || attributionRow(task, receipt);
     if (!validateAttribution(row.evaluation))
@@ -245,6 +267,13 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   const config = state.manifest.config as EvalConfig;
   const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const result = receipt.evaluation as ComparisonResult;
+  if (result.status === "needs_review") {
+    if (!validateComparison(result)) throw new Error("复核结果 schema 无效：" + ajv.errorsText(validateComparison.errors));
+    return { id: task.id, file: "comparison-review.jsonl", row: receipt.exported?.row ?? {
+    evaluation_type: "comparison_review", evaluator_version: receipt.evaluatorVersion, task_id: task.id,
+    comparison_id: (task.data as TaskData).comparisonId, result: receipt.evaluation,
+    } };
+  }
   const row =
     receipt.exported?.row ||
     comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names, receipt.evaluatorVersion);

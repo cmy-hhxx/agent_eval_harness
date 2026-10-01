@@ -23,11 +23,40 @@
           "finish_seconds": null
         },
         "note": "完整回答已展示；其余材料可在 inputs/ 查看。"
+      },
+      "candidate_id": "11111111-1111-4111-8111-111111111111",
+      "task_analysis": {
+        "task_type": "整数加法",
+        "goal": "计算2+2",
+        "requirements": [
+          {
+            "id": "r1",
+            "text": "给出正确的加法结果",
+            "applies_to": [],
+            "acceptance_rule": "最终回答给出2与2相加的结果4。"
+          }
+        ],
+        "scoring_points": [
+          {
+            "id": "s1",
+            "text": "使用指定操作数",
+            "applies_to": [],
+            "acceptance_rule": "计算对象为用户指定的2和2。"
+          }
+        ],
+        "red_flags": [
+          {
+            "id": "f1",
+            "text": "擅自替换操作数",
+            "applies_to": [],
+            "acceptance_rule": "未将任一操作数替换成其他值。"
+          }
+        ]
       }
     },
     "sources": {
       "answer": {
-        "id": "input-A",
+        "id": "11111111-1111-4111-8111-111111111111",
         "value": {
           "batch_id": "b1",
           "case_id": "q",
@@ -66,13 +95,28 @@
       "task_type": "整数加法",
       "goal": "计算2+2",
       "requirements": [
-        "给出正确的加法结果"
+        {
+          "id": "r1",
+          "text": "给出正确的加法结果",
+          "applies_to": [],
+          "acceptance_rule": "最终回答给出2与2相加的结果4。"
+        }
       ],
       "scoring_points": [
-        "使用指定操作数"
+        {
+          "id": "s1",
+          "text": "使用指定操作数",
+          "applies_to": [],
+          "acceptance_rule": "计算对象为用户指定的2和2。"
+        }
       ],
       "red_flags": [
-        "擅自替换操作数"
+        {
+          "id": "f1",
+          "text": "擅自替换操作数",
+          "applies_to": [],
+          "acceptance_rule": "未将任一操作数替换成其他值。"
+        }
       ]
     },
     "summary": "直接给出正确结果。",
@@ -100,6 +144,51 @@
         "problem": null
       }
     ],
-    "numeric_checks": []
+    "numeric_checks": [],
+    "criterion_assessments": [
+      {
+        "criterion_id": "r1",
+        "status": "met",
+        "evidence_status": "established",
+        "summary": "使用指定操作数给出正确结果。",
+        "evidence": [
+          {
+            "message_index": 1,
+            "quote": "2+2=4"
+          }
+        ]
+      },
+      {
+        "criterion_id": "s1",
+        "status": "met",
+        "evidence_status": "established",
+        "summary": "使用指定操作数给出正确结果。",
+        "evidence": [
+          {
+            "message_index": 1,
+            "quote": "2+2=4"
+          }
+        ]
+      },
+      {
+        "criterion_id": "f1",
+        "status": "met",
+        "evidence_status": "established",
+        "summary": "使用指定操作数给出正确结果。",
+        "evidence": [
+          {
+            "message_index": 1,
+            "quote": "2+2=4"
+          }
+        ]
+      }
+    ],
+    "core_assessment": {
+      "meets_core": true,
+      "reason": "唯一所求的加法结果正确，可直接使用。",
+      "criterion_ids": [
+        "r1"
+      ]
+    }
   }
 }

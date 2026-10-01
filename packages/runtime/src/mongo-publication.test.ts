@@ -11,8 +11,9 @@ const inputs: PublicationInput[] = ["a_fast", "b_fast"].map((versionId) => ({ ve
     versions: "0930", task: "专题", messages: [{ role: "user", content: "问题" }], meta: { task: "分类" } },
 }));
 const result: PublicationResult = { evaluatedAt: 10000, row: {
+  status: "decided", assessments: { a_fast: { meets_core: true }, b_fast: { meets_core: true } },
   case: { batch_id: date, case_id: "中文业务题号" }, comparison_id: "cmp-case", models: { a_fast: { version: "A组Fast" }, b_fast: { version: "B组Fast" } },
-  verdicts: { a_fast__vs__b_fast: { result: "better", winner_version: "b_fast" } },
+  verdicts: { a_fast__vs__b_fast: { result: "win", winner_version: "b_fast" } },
   rewritten: { rewrites: [{ id: "tradeoff", text: "改写后" }] },
 } };
 function fakeCollection(seed: Document[] = []) {
@@ -67,6 +68,38 @@ test("Mongo publication rejects missing rewrites and conflicting existing case i
   const conflict = fakeCollection(inputs.map((input, i) => ({ _id: String(i), kind: "input", batchId: date, caseId: "case-" + i, trace: input.trace })));
   await assert.rejects(writeMongoPublication(conflict.collection, date, rows(inputs), rows([result]), AbortSignal.timeout(5000)), /Conflicting/);
   assert.equal(conflict.writes(), 0);
+});
+
+test("Mongo publication accepts a registered baseline input and keeps paired external documents", async () => {
+  const db = fakeCollection();
+  const baseline = { ...inputs[1], versionId: "baseline", trace: { ...inputs[1].trace, version: "Baseline" } };
+  const paired = { ...result, row: { ...result.row, models: { a_fast: { version: "A Fast" }, baseline: { version: "Baseline" } },
+    assessments: { a_fast: { meets_core: true }, baseline: { meets_core: true } },
+    verdicts: { a_fast__vs__baseline: { result: "win", winner_version: "baseline" } } } };
+  const counts = await writeMongoPublication(db.collection, date, rows([inputs[0], baseline]), rows([paired]), AbortSignal.timeout(5000));
+  assert.equal(counts.inputs, 2); assert.equal(counts.comparisons, 1);
+  const stored = [...db.docs.values()].find((doc) => doc.kind === "comparison")!;
+  assert.equal(stored.versionA, "a_fast"); assert.equal(stored.versionB, "baseline");
+  assert.equal(stored.result.comparison.models.baseline.display_name, "Baseline");
+  const missing = fakeCollection();
+  await assert.rejects(writeMongoPublication(missing.collection, date, rows([inputs[0]]), rows([paired]), AbortSignal.timeout(5000)), /paired input/);
+});
+
+test("Mongo publication rejects review rows and conflicting core assessments for a repeated answer", async () => {
+  for (const row of [{ ...result.row, status: "needs_review" }, { ...result.row, supersededBy: "reviewed" },
+    { ...result.row, evaluation_type: "comparison_review" }]) {
+    const db = fakeCollection();
+    await assert.rejects(writeMongoPublication(db.collection, date, rows(inputs), rows([{ ...result, row }]), AbortSignal.timeout(5000)), /settled, unsuperseded/);
+    assert([...db.docs.values()].every((doc) => doc.kind === "input"));
+  }
+  const db = fakeCollection(), baseline = { ...inputs[1], versionId: "baseline", trace: { ...inputs[1].trace, version: "Baseline" } };
+  const first = { ...result, row: { ...result.row, status: "decided", assessments: { a_fast: { meets_core: true }, b_fast: { meets_core: true } } } };
+  const second = { ...result, row: { ...result.row, status: "decided", models: { a_fast: {}, baseline: {} },
+    assessments: { a_fast: { meets_core: false }, baseline: { meets_core: true } },
+    verdicts: { a_fast__vs__baseline: { result: "win", winner_version: "baseline" } },
+  } };
+  await assert.rejects(writeMongoPublication(db.collection, date, rows([...inputs, baseline]), rows([first, second]), AbortSignal.timeout(5000)), /Conflicting answer core/);
+  assert([...db.docs.values()].every((doc) => doc.kind === "input"));
 });
 
 test("large traces are read and written in bounded batches instead of timing out on 100 documents", async () => {

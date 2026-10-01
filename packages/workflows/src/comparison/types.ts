@@ -13,7 +13,7 @@ export interface VersionConfig {
   id: string;
   name: string;
   display_name?: string;
-  /** Declared size class for fair comparisons; unclassified external baselines may join either class. */
+  /** Declared size class; every member of a classified comparison must declare the same class. */
   comparison_tier?: string;
   sources: InputSource[];
   adapter: string;
@@ -39,7 +39,7 @@ export interface EvalConfig {
   };
   output: OutputTarget;
   problemLibrary: ProblemLibraryTarget;
-  /** Comparison groups; every version inside a group is compared in one task. */
+  /** Two or three selected models, expanded into independent two-candidate comparisons. */
   comparisons: string[][];
   /** Language polish targets. Every accepted source result gets one rewrite task. */
   rewrite: {
@@ -108,7 +108,7 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
-export type Stage = "attribution" | "comparison" | "rewrite" | "clustering";
+export type Stage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering";
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
   stage: "attribution" | "comparison" | "clustering";
@@ -144,6 +144,12 @@ export interface TaskData {
   /** Compared group version IDs, in declaration order. */
   group?: string[];
   comparisonId?: string;
+  /** Business scope of the shared criteria, including its candidate set. */
+  criteriaScope?: string;
+  /** Independent reassessment lineage; the accepted source remains immutable. */
+  reviewOf?: { taskId: string; round: number; reasons: string[] };
+  /** Follow-up comparison that resolves this review request. */
+  supersededBy?: string;
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;

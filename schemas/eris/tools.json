@@ -281,7 +281,7 @@
           ]
         },
         "minItems": 1,
-        "maxItems": 26
+        "maxItems": 3
       },
       "attributions": {
         "type": "array",
@@ -312,21 +312,76 @@
           ],
           "oneOf": [
             {
-              "required": ["operationId"],
-              "not": { "anyOf": [{ "required": ["runId"] }, { "required": ["taskId"] }] }
+              "required": [
+                "operationId"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "runId"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "taskId"
+                    ]
+                  }
+                ]
+              }
             },
             {
-              "required": ["runId", "taskId"],
-              "not": { "required": ["operationId"] }
+              "required": [
+                "runId",
+                "taskId"
+              ],
+              "not": {
+                "required": [
+                  "operationId"
+                ]
+              }
             }
           ]
-        }
+        },
+        "maxItems": 3
       }
     },
     "required": [
       "operationId",
       "kind",
       "inputs"
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "attribution"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "inputs": {
+              "minItems": 1,
+              "maxItems": 1
+            }
+          },
+          "not": {
+            "required": [
+              "attributions"
+            ]
+          }
+        },
+        "else": {
+          "properties": {
+            "inputs": {
+              "minItems": 2,
+              "maxItems": 3
+            }
+          }
+        }
+      }
     ]
   },
   "read_specialist": {
@@ -383,8 +438,26 @@
             }
           },
           "oneOf": [
-            { "required": ["operationId"], "not": { "required": ["reference"] } },
-            { "required": ["reference"], "not": { "required": ["operationId"] } }
+            {
+              "required": [
+                "operationId"
+              ],
+              "not": {
+                "required": [
+                  "reference"
+                ]
+              }
+            },
+            {
+              "required": [
+                "reference"
+              ],
+              "not": {
+                "required": [
+                  "operationId"
+                ]
+              }
+            }
           ]
         },
         "minItems": 1

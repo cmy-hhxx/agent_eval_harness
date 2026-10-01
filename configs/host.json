@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r52",
+  "evaluatorVersion": "r53",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -75,6 +75,9 @@
     }
   },
   "bindings": {
+    "criteria": {
+      "profile": "judge"
+    },
     "attribution": {
       "profile": "judge"
     },

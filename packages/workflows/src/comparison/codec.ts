@@ -132,6 +132,8 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
   );
   const basis = row.decision_basis as ComparisonResult["decision_basis"];
   return {
+    status: "decided",
+    review_requests: [],
     task_analysis: row.task_analysis as ComparisonResult["task_analysis"],
     ranking: (row.ranking as string[][]).map((tier) => tier.map((version) => labels.get(version)!)),
     assessments: Object.fromEntries(
@@ -166,6 +168,7 @@ function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]
   }
   row = originalResultRow(data.stage, row);
   if (data.stage === "attribution") return row.evaluation;
+  if (data.stage === "criteria" || row.evaluation_type === "comparison_review") return row.result;
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
 }
@@ -242,6 +245,17 @@ function decodeState(
       continue;
     }
     const data = task.data as TaskData;
+    if (data.stage === "criteria" || receipt.exported.file === "comparison-review.jsonl") {
+      const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
+      const row = resultRow(receipt, { id: resultId, file: receipt.exported.file ?? resultFile(data.stage) });
+      if (row.task_id !== task.id || row.evaluation_type !== (data.stage === "criteria" ? "criteria" : "comparison_review"))
+        throw new Error("阶段结果身份不一致：" + task.id);
+      const evaluation = restore(row.result, evaluationPatch || []);
+      state.receipts[task.id] = { ...value, evaluation,
+        ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
+        exported: { id: resultId, file: receipt.exported.file ?? resultFile(data.stage), row } };
+      continue;
+    }
     if (data.stage === "clustering") {
       const scope = data.scope!;
       if (receipt.exported.taskId !== task.id)

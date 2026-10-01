@@ -11,6 +11,7 @@ import type {
   SubmissionReceipt,
   FailureContext,
   LogSink,
+  TaskState,
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
@@ -19,7 +20,7 @@ import { checkpointSnapshot } from "./checkpoint.js";
 export interface EvaluationServices {
   logger?: LogSink;
   repository: RunRepository;
-  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile">;
+  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason">;
   agents: AgentRegistry;
 }
 
@@ -33,6 +34,7 @@ export class RunStore {
   private writes = Promise.resolve();
   private queuedWrite?: Promise<void>;
   private readonly submissions = new Map<string, Promise<void>>();
+  private commits = Promise.resolve();
   private committedReceipts: Record<string, SubmissionReceipt>;
   private readonly writeResults: (state: RunState) => Promise<void>;
   private readonly logged = new Set<string>();
@@ -159,7 +161,11 @@ export class RunStore {
     });
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
-    return this.exclusive(value.taskId, () => this.acceptExclusive(value));
+    return this.exclusive(value.taskId, () => {
+      const commit = this.commits.then(() => this.acceptExclusive(value));
+      this.commits = commit.then(() => {}, () => {});
+      return commit;
+    });
   }
   async checkpoint(taskId: string, failure: FailureContext): Promise<void> {
     return this.exclusive(taskId, async () => {
@@ -203,6 +209,14 @@ export class RunStore {
       value.audit.calls < 0 ||
       value.audit.calls > spec.policy.maxToolCalls + spec.policy.repairAttempts ||
       !Array.isArray(value.audit.viewedImages) ||
+      !Array.isArray(value.audit.traceReads) ||
+      value.audit.traceReads.some((read) => !read ||
+        typeof read.candidate !== "string" || !spec.inputs.some((input) => input.name === read.candidate) ||
+        !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
+        (read.kind !== "text" && read.kind !== "json") || typeof read.path !== "string" ||
+        (read.kind === "json" && read.path !== "") ||
+        !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
+      !Array.isArray(value.audit.calculations) ||
       !Array.isArray(value.audit.artifacts)
     )
       throw new HttpError(400, "Invalid tool audit");
@@ -235,13 +249,42 @@ export class RunStore {
     state.reason = undefined;
     state.repeatedErrors = failure?.repeatedErrors || undefined;
     state.failure = undefined;
+    const previousTasks = [...this.manifest.tasks];
+    const previousScope = this.manifest.executionScope && [...this.manifest.executionScope];
+    const changedStates = new Map<string, TaskState>();
+    const addedIds: string[] = [];
     try {
+      const advance = this.services.taskSource.advance?.(task, receipt, this.state, this.inputs);
+      for (const replacement of advance?.replace ?? []) {
+        const index = this.manifest.tasks.findIndex((item) => item.id === replacement.id);
+        if (index < 0 || this.manifest.states[replacement.id].status === "running")
+          throw new Error("Cannot replace an unknown or running task");
+        this.manifest.tasks[index] = replacement;
+      }
+      for (const next of advance?.tasks ?? []) {
+        if (this.manifest.states[next.id]) throw new Error("Duplicate follow-up task");
+        this.manifest.tasks.push(next);
+        addedIds.push(next.id);
+        this.manifest.states[next.id] = { status: "pending", attempts: 0, revision: 1 };
+        if (this.manifest.executionScope?.includes(task.id)) this.manifest.executionScope.push(next.id);
+      }
+      for (const id of advance?.blocked ?? []) {
+        const current = this.manifest.states[id];
+        if (!current || current.status === "running" || this.state.receipts[id]) continue;
+        changedStates.set(id, { ...current });
+        current.status = "blocked";
+        current.reason = "Independent review is unresolved";
+      }
       await this.save();
     } catch (error) {
       delete this.state.receipts[task.id];
       state.status = "running";
       state.failure = failure;
       state.repeatedErrors = repeatedErrors;
+      this.manifest.tasks = previousTasks;
+      this.manifest.executionScope = previousScope;
+      for (const id of addedIds) delete this.manifest.states[id];
+      for (const [id, previous] of changedStates) this.manifest.states[id] = previous;
       throw error;
     }
     this.attempts.delete(value.attemptId);

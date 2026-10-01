@@ -6,7 +6,9 @@
     "task_analysis",
     "ranking",
     "assessments",
-    "decision_basis"
+    "decision_basis",
+    "status",
+    "review_requests"
   ],
   "properties": {
     "task_analysis": {
@@ -31,35 +33,30 @@
         "requirements": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 6,
+          "maxItems": 24,
           "items": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/$defs/criterion"
           }
         },
         "scoring_points": {
           "type": "array",
-          "minItems": 0,
-          "maxItems": 6,
+          "maxItems": 24,
           "items": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/$defs/criterion"
           }
         },
         "red_flags": {
           "type": "array",
-          "minItems": 0,
-          "maxItems": 6,
+          "maxItems": 24,
           "items": {
-            "type": "string",
-            "minLength": 1
+            "$ref": "#/$defs/criterion"
           }
         }
       }
     },
     "ranking": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "items": {
         "type": "array",
         "minItems": 1,
@@ -76,17 +73,29 @@
         "additionalProperties": false,
         "required": [
           "meets_core",
-          "summary"
+          "summary",
+          "core_failure_refs"
         ],
         "properties": {
           "meets_core": {
-            "type": "boolean",
-            "description": "关键交付是否可用，须看整份最终回答；不直接复制 is_correct 或 importance。false 须引用已证实的问题，说明哪项必要结果缺失或错误到无法使用。"
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "照录来源core_assessment；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
           },
           "summary": {
             "type": "string",
             "minLength": 1,
             "maxLength": 160
+          },
+          "core_failure_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -111,26 +120,83 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["aspect", "importance", "better_candidates", "assessments"],
+            "required": [
+              "aspect",
+              "importance",
+              "better_candidates",
+              "assessments",
+              "criterion_ids"
+            ],
             "properties": {
-              "aspect": { "type": "string", "minLength": 1, "maxLength": 60 },
-              "importance": { "enum": ["high", "medium", "low"] },
+              "aspect": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "importance": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
               "better_candidates": {
-                "type": "array", "uniqueItems": true,
-                "items": { "type": "string", "minLength": 1 }
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "assessments": {
                 "type": "object",
                 "additionalProperties": {
-                  "type": "object", "additionalProperties": false,
-                  "required": ["summary", "finding_indices"],
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "summary",
+                    "finding_indices",
+                    "status",
+                    "evidence_status"
+                  ],
                   "properties": {
-                    "summary": { "type": "string", "minLength": 1, "maxLength": 160 },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
                     "finding_indices": {
-                      "type": "array", "uniqueItems": true,
-                      "items": { "type": "integer", "minimum": 0 }
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "status": {
+                      "enum": [
+                        "met",
+                        "partial",
+                        "unmet",
+                        "unknown",
+                        "not_applicable"
+                      ]
+                    },
+                    "evidence_status": {
+                      "enum": [
+                        "established",
+                        "uncertain"
+                      ]
                     }
                   }
+                }
+              },
+              "criterion_ids": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }
@@ -197,6 +263,132 @@
           }
         }
       }
+    },
+    "status": {
+      "enum": [
+        "decided",
+        "needs_review"
+      ]
+    },
+    "review_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate",
+          "criterion_ids",
+          "finding_indices",
+          "reason"
+        ],
+        "properties": {
+          "candidate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "criterion_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "finding_indices": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
-  }
+  },
+  "$defs": {
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "applies_to",
+        "acceptance_rule"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applies_to": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          }
+        },
+        "acceptance_rule": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "decided"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ranking": {
+            "minItems": 1
+          },
+          "review_requests": {
+            "maxItems": 0
+          },
+          "assessments": {
+            "additionalProperties": {
+              "properties": {
+                "meets_core": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "ranking": {
+            "maxItems": 0
+          },
+          "review_requests": {
+            "minItems": 1
+          },
+          "decision_basis": {
+            "properties": {
+              "decisive_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

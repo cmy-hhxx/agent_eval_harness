@@ -1,6 +1,6 @@
 # 可编排评测 Host
 
-TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
+TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Criteria、Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
 
 **当前契约优先：**项目快速迭代，不设置未确定的版本号；结果只记录显式声明的 `evaluatorVersion`，用于区分不同评测器产出的判词，不是 Schema 版本。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
 
@@ -45,6 +45,6 @@ npm run eval -- run --engine pi --run-id pi-001 \
 
 默认结果写入 `data/runs/comparison/<run-id>/`，日志写入 `log/runtime.log` 和 `log/evaluation.log`。同一个 `run-id` 会续跑未完成和新增任务，并保留已接受任务；输入、选择、模型和恢复细节见[使用指南](docs/usage.md#运行与恢复)。需要按样本查看输入、正式输出和 Agent 状态，或在页面预检并启动运行，在项目根目录执行 `bash run.sh`；详情见[本机看板](docs/usage.md#本机运行看板)。
 
-输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；默认分为 A组Fast vs B组Fast、A组Expert vs B组Expert 两组；`comparisons` 可为任一组增加 DeepSeek、Kimi 等第三方模型，但不能混排 Fast 与 Expert（由 `comparison_tier` 校验）。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。按日期或名称组织的多模型文件可用 `eval index --dataset ...` 登记为评测集，再用 `preflight/run --dataset ...` 选择；索引只保存定位信息，完整消息仍留在源文件，详见[输入治理](docs/usage.md#输入治理)。不要修改入库的原始输入、评测结果或 `dist/`。
+输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；默认分为 A组Fast vs B组Fast、A组Expert vs B组Expert 两组；`comparisons` 每组选择二至三个模型，三模型执行三场两两比较；第三方基线须显式声明与组内一致的 `comparison_tier`，不能混排 Fast 与 Expert。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。按日期或名称组织的多模型文件可用 `eval index --dataset ...` 登记为评测集，再用 `preflight/run --dataset ...` 选择；索引只保存定位信息，完整消息仍留在源文件，详见[输入治理](docs/usage.md#输入治理)。不要修改入库的原始输入、评测结果或 `dist/`。
 
 固定工具版本见 [mise.toml](mise.toml)，底座版本与来源见 [vendor/upstream.json](vendor/upstream.json)。

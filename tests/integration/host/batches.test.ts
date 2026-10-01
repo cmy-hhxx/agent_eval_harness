@@ -10,7 +10,7 @@ import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
 import type { BatchPreflight, EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { comparisonResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
+import { comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 
 const firstDay = "2026-09-23",
   secondDay = "2026-09-24";
@@ -90,8 +90,8 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     const plan = await buildPlan(config);
     assert.equal(plan.summary.cases, 220);
     assert.equal(plan.summary.valid_inputs, 880);
-    assert.equal(plan.tasks.length, 660);
-    assert.equal(new Set(plan.tasks.map((task) => task.id)).size, 660);
+    assert.equal(plan.tasks.length, 880);
+    assert.equal(new Set(plan.tasks.map((task) => task.id)).size, 880);
     assert.equal(plan.summary.attribution_tasks, 440);
     assert.deepEqual(plan.summary.issues, []);
     assert.deepEqual(plan.summary.skipped, []);
@@ -113,7 +113,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       input_issues: 0,
     });
     for (const task of plan.tasks) {
-      if (task.stage === "attribution") continue;
+      if (task.stage !== "comparison") continue;
       const data = task.data as TaskData;
       assert.equal(data.candidates.A.batch_id, data.candidates.B.batch_id);
     }
@@ -139,7 +139,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       accept(
         state,
         task.id,
-        task.stage === "attribution" ? attributionResult(true, "2+2=4", false) : comparisonResult(),
+        task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult(true, "2+2=4", false) : comparisonResult(),
       );
     await writeRunState(run, state);
     const stats = await reportRun(run);
@@ -167,8 +167,8 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     assert(markdown.includes(`# ${firstDay} / q000`));
     assert(markdown.includes(`# ${secondDay} / q000`));
     const overview = await readFile(path.join(run, "report.md"), "utf8");
-    assert(overview.includes(`| ${firstDay} | 100 | 300 | 100 |`));
-    assert(overview.includes(`| ${secondDay} | 120 | 360 | 120 |`));
+    assert(overview.includes(`| ${firstDay} | 100 | 400 | 100 |`));
+    assert(overview.includes(`| ${secondDay} | 120 | 480 | 120 |`));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -182,16 +182,16 @@ test("batch and case selection preserve batch identities and apply one global ca
   try {
     config.inputs.batches = [secondDay];
     let plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 3);
+    assert.equal(plan.tasks.length, 4);
     assert.deepEqual(Object.keys(plan.summary.by_batch as object), [secondDay]);
     config.inputs.batches = [firstDay, secondDay];
     config.inputs.case_ids = ["q1"];
     plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 6);
+    assert.equal(plan.tasks.length, 8);
     assert.equal(plan.summary.cases, 2);
     config.inputs.limit = 1;
     plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 3);
+    assert.equal(plan.tasks.length, 4);
     assert.deepEqual(Object.keys(plan.summary.by_batch as object), [firstDay]);
     assert.equal((plan.tasks[0].data as TaskData).candidates.A.batch_id, firstDay);
   } finally {
@@ -221,7 +221,7 @@ test("references, invalid answers and identity conflicts stay within their input
   try {
     await appendFile(config.inputs.versions[0].sources[0].path, "not-json\n");
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 6);
+    assert.equal(plan.tasks.length, 8);
     assert.equal(plan.summary.cases, 6);
     const groups = plan.tasks.filter((task) => task.stage === "comparison");
     assert.deepEqual(
@@ -290,6 +290,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         };
         continue;
       }
+      if (task.stage === "criteria") { accept(state, task.id, criteriaResult()); continue; }
       if (task.stage === "attribution") {
         accept(
           state,
@@ -306,16 +307,28 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         labelOf = new Map(labels.map((label) => [data.candidates[label]!.version, label])),
         result = comparisonResult();
       if (candidate.case_id === "bad") {
-        for (const label of labels)
-          result.assessments[label] = { meets_core: false, summary: "核心结果错误。" };
+        for (const label of labels) {
+          result.assessments[label] = { meets_core: false, core_failure_refs: ["r1"], summary: "核心结果错误。" };
+          for (const comparison of result.decision_basis.comparisons) {
+            comparison.assessments[label]!.status = "unmet";
+            comparison.assessments[label]!.summary = "结果错误。";
+          }
+        }
         result.ranking = [labels];
+        result.decision_basis.tradeoff = "双方均未满足核心计算要求。";
       }
       if (candidate.case_id === "objective" && candidate.batch_id === secondDay) {
         const winner = labelOf.get("a_fast")!,
           loser = labels.find((label) => label !== winner)!;
         result.ranking = [[winner], [loser]];
-        result.assessments[winner] = { meets_core: true, summary: "完成核心要求。" };
-        result.assessments[loser] = { meets_core: false, summary: "答对一题。" };
+        result.assessments[winner] = { meets_core: true, core_failure_refs: [], summary: "完成核心要求。" };
+        result.assessments[loser] = { meets_core: false, core_failure_refs: ["r1"], summary: "关键计算结果错误。" };
+        for (const comparison of result.decision_basis.comparisons) {
+          comparison.assessments[loser]!.status = "unmet";
+          comparison.assessments[loser]!.summary = "结果错误。";
+          comparison.better_candidates = [winner];
+        }
+        result.decision_basis.tradeoff = "完成核心计算要求的回答胜出。";
       }
       accept(state, task.id, result);
     }
@@ -324,11 +337,11 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
       daily = stats.by_batch as Record<string, BatchStats>;
     assert.equal((stats.planned as JsonObject).cases, 8);
     assert.equal(stats.completed_comparisons, 5);
-    assert.deepEqual(daily[firstDay].task_statuses, { succeeded: 6 });
+    assert.deepEqual(daily[firstDay].task_statuses, { succeeded: 8 });
     assert.deepEqual(daily[secondDay].task_statuses, {
-      succeeded: 9,
-      failed: 3,
-      pending: 3,
+      succeeded: 12,
+      failed: 4,
+      pending: 4,
     });
     assert.equal(daily[firstDay].planned.cases, 2);
     assert.equal(daily[secondDay].planned.cases, 6);

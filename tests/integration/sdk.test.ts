@@ -9,15 +9,16 @@ import { object } from "@eval/contracts";
 import { createModelResolver } from "@eval/host-app/config";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
+import { criteriaProfile } from "@eval/agents/criteria";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
-import { fakeEvaluatorVersion, fixtureConfig, raw } from "../fixtures/comparison.js";
+import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult } from "../fixtures/comparison.js";
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
-    `${engine}: real vendored SDK over HTTP worker, code tool, two stages and resume`,
+    `${engine}: real vendored SDK over HTTP worker, code tool, three stages and resume`,
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -25,6 +26,8 @@ for (const engine of ["pi", "prime"] as Engine[])
       models.models.judge!.api = "openai-completions";
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
+      const stageRequests = { criteria: 0, attribution: 0, comparison: 0 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 2 };
       const gateway = await listen(async (req, res) => {
         try {
           assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
@@ -44,7 +47,12 @@ for (const engine of ["pi", "prime"] as Engine[])
           }[];
           const ranCode = messages.some((m) => m.role === "tool");
           const attribution = "is_correct" in submit.function.parameters.properties;
-          const descriptions = attribution ? attributionProfile.toolDescriptions : comparisonProfile.toolDescriptions;
+          const criteria = "requirements" in submit.function.parameters.properties;
+          const stage = criteria ? "criteria" : attribution ? "attribution" : "comparison";
+          assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
+          const profile = criteria ? criteriaProfile : attribution ? attributionProfile : comparisonProfile;
+          const descriptions = profile.toolDescriptions;
+          if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name).sort(), ["submit_evaluation", "submit_evaluation_file"]);
           for (const tool of tools)
             assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
           const prompt = messages
@@ -65,63 +73,13 @@ for (const engine of ["pi", "prime"] as Engine[])
           const evidenceFor = () => ({
             evidence_id: material.answer!.final_evidence[0]!.evidence_id,
           });
-          const evaluation = attribution
-            ? {
-                is_correct: true,
-                correctness_reason: "计算结果与标准答案一致。",
-                numeric_checks: [],
-                correctness_evidence: [evidenceFor()],
-                task_analysis: {
-                  task_type: "整数加法",
-                  goal: "计算2+2",
-                  requirements: ["给出正确的加法结果"],
-                  scoring_points: ["使用指定操作数"],
-                  red_flags: ["擅自替换操作数"],
-                },
-                summary: "正确给出结果。",
-                findings: [
-                  {
-                    type: "strength",
-                    dimension: "correctness",
-                    stage: "final_answer",
-                    importance: "high",
-                    text: "加法结果正确",
-                    reason: "与题目要求一致。",
-                    evidence: [evidenceFor()],
-                    assessment: {
-                      requirement_index: 0,
-                      observation: "2+2=4",
-                      evidence_status: "established",
-                      impact: "完成核心要求。",
-                    },
-                    finding_id: "f0",
-                    problem: null,
-                  },
-                ],
-              }
-            : (() => {
-                const labels = Object.keys(material.candidates!);
-                return {
-                  task_analysis: {
-                    task_type: "整数加法",
-                    goal: "计算2+2",
-                    requirements: ["给出正确的加法结果"],
-                    scoring_points: ["使用指定操作数"],
-                    red_flags: ["擅自替换操作数"],
-                  },
-                  ranking: [labels],
-                  assessments: Object.fromEntries(
-                    labels.map((label) => [label, { meets_core: true, summary: "正确给出结果。" }]),
-                  ),
-                  decision_basis: {
-                    tradeoff: "并列。",
-                    comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [], assessments: Object.fromEntries(
-                      labels.map((label) => [label, { summary: "正确给出4。", finding_indices: [0] }]),
-                    ) }],
-                    decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
-                  },
-                };
-              })();
+          const spec = {
+            prompt, inputs: [], evaluation: { id: stage, profile: profile.id,
+              systemPrompt: profile.systemPrompt, outputSchema: profile.submissionSchema,
+              toolNames: profile.toolNames, toolDescriptions: profile.toolDescriptions,
+              submissionNudge: profile.submissionNudge },
+          };
+          const evaluation = draftFor(spec, taskResult(spec));
           const rejected = messages.some(
             (m) => m.role === "tool" && String(m.content).includes("evidence_id_invalid"),
           );
@@ -129,7 +87,10 @@ for (const engine of ["pi", "prime"] as Engine[])
             (m) => m.role === "tool" && String(m.content).includes("fixed-evaluation-file"),
           );
           let name: string, args: unknown;
-          if (!ranCode) {
+          if (criteria) {
+            name = "submit_evaluation";
+            args = evaluation;
+          } else if (!ranCode) {
             name = "execute_code";
             args = {
               language: "python",
@@ -240,14 +201,15 @@ for (const engine of ["pi", "prime"] as Engine[])
         );
         const failures = (await exists(failureFile)) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
-        const expectedRequests = engine === "pi" ? 10 : 6;
+        assert.deepEqual(stageRequests, expectedStageRequests);
+        const expectedRequests = engine === "pi" ? 11 : 7;
         assert.equal(
           requests.length,
           expectedRequests,
           "submit must terminate without another model request",
         );
         if (engine === "pi") {
-          const task = options.plan.tasks[0];
+          const task = options.plan.tasks.find((task) => task.stage === "attribution")!;
           const events: WorkerEvent[] = [];
           for await (const event of readJsonl(
             path.join(

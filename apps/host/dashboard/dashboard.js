@@ -9,13 +9,11 @@ const state = {
   inputs: null, inputsTimer: 0, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
   sampledCases: null, sampleInfo: null, rangeLocked: false,
-  library: null, libraryDetail: null, libraryRequest: 0, libraryDetailRequest: 0,
-  libraryRun: null, libraryShownRun: null, libraryStatus: null, libraryOpen: new Set(),
   inputOpen: false, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), openFindings: new Set(), expandedTexts: new Set(),
   refreshTimer: 0, runsSignature: "", overviewSignature: "", casesSignature: "", datesSignature: "", modelsSignature: "",
 };
 const $ = (selector) => document.querySelector(selector);
-const stageLabels = { attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类" };
+const stageLabels = { criteria: "共同标准", attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类" };
 const statusLabels = {
   running: "运行中", finished: "已结束", interrupted: "已中断", pending: "排队",
   succeeded: "已接受", failed: "失败", timed_out: "超时", blocked: "阻塞", cancelled: "取消",
@@ -114,97 +112,49 @@ function renderOverview() {
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button><button class="button button-danger" type="button" data-delete="${escapeHtml(run.run_id)}">删除运行</button>`;
-  $("#stage-summary").innerHTML = ["attribution", "comparison", "rewrite", "clustering"].map((stage) => {
+  $("#stage-summary").innerHTML = ["criteria", "attribution", "comparison", "rewrite", "clustering"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? `${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常` : "未启用"}</span></div>`;
   }).join("");
-  // The library loads only when its panel is open; a run change drops stale data.
-  if (state.libraryShownRun !== run.run_id) {
-    state.libraryShownRun = run.run_id;
-    state.libraryRun = null;
-    state.libraryStatus = run.status;
-    state.library = state.libraryDetail = null;
-    ++state.libraryDetailRequest;
-    state.libraryOpen = new Set();
-    renderLibrary();
-    if ($("#problem-library-panel")?.open) void loadLibrary(run.run_id);
-  } else {
-    if (state.libraryStatus === "running" && run.status !== "running" && state.libraryRun === run.run_id)
-      void loadLibrary(run.run_id);
-    state.libraryStatus = run.status;
-  }
 }
-function libraryDetailHtml() {
-  const detail = state.libraryDetail;
-  if (!detail) return "";
-  const pages = Math.max(1, Math.ceil(detail.total / detail.page_size));
-  return `<div class="library-detail-card" id="library-detail">
-    <h4>${escapeHtml(detail.class.label)} <span class="muted">${escapeHtml(detail.class.aliases.length ? `别名：${detail.class.aliases.join("、")}` : detail.class.id)}</span></h4>
-    <p>${escapeHtml(detail.class.definition || "—")}</p>
-    <p class="muted">${escapeHtml(detail.component?.label || "—")} · 出现 ${detail.total} 次${detail.class.status === "merged" ? " · 已合并" : ""}</p>
-    ${detail.class.first_seen ? `<p class="muted">首次 ${escapeHtml(detail.class.first_seen.batch_id)} / ${escapeHtml(detail.class.first_seen.case_id)} · 评测器 ${escapeHtml(detail.class.first_seen.evaluator_version)} · ${dateText(detail.class.first_seen.at)}</p>` : ""}
-    ${detail.occurrences.length ? detail.occurrences.map((item) => `<div class="library-occurrence">
-      <p><strong>${escapeHtml(item.batch_id)} / ${escapeHtml(item.case_id)}</strong> · ${escapeHtml(item.version)} · 评测器 ${escapeHtml(item.evaluator_version)} · ${item.classification === "created" ? "新建" : "归入"} · ${item.evidence_status === "uncertain" ? "待核实" : item.evidence_status === "established" ? "已确认" : "状态缺失"}${item.previous_class_id ? "（由合并迁入）" : ""}</p>
-      ${item.quote ? `<blockquote>${clipped(item.quote, 2000)}</blockquote>` : ""}
-      <p class="muted">finding ${escapeHtml(item.finding_id)} · 消息 #${item.message_index} · ${escapeHtml(item.source.file)}:${item.source.line} · ${dateText(item.at)}</p>
-    </div>`).join("") : '<p class="empty-state">暂无出现样本</p>'}
-    ${pages > 1 ? `<div class="library-pager"><button type="button" class="button" data-library-page="${detail.page - 1}" ${detail.page <= 1 ? "disabled" : ""}>上一页</button><span class="muted">${detail.page} / ${pages}</span><button type="button" class="button" data-library-page="${detail.page + 1}" ${detail.page >= pages ? "disabled" : ""}>下一页</button></div>` : ""}
-  </div>`;
+function scrollBehavior() {
+  return document.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
 }
-function renderLibrary() {
-  if (state.library === null) {
-    $("#problem-library").innerHTML = state.libraryRun === state.selectedRun
-      ? loading("正在读取问题库")
-      : '<p class="empty-state">暂无问题类</p>';
-    return;
+async function restoreRecall(params = new URLSearchParams(document.defaultView.location.search)) {
+  const runId = params.get("run"), batch = params.get("batch"), caseId = params.get("case");
+  if (!runId) return;
+  if (!state.runs.some((run) => run.run_id === runId)) { showError("样本召回失败：运行不可用"); return; }
+  await selectRun(runId);
+  if (!batch || !caseId || state.selectedRun !== runId) return;
+  await loadCase(batch, caseId);
+  if (state.selectedRun !== runId || state.caseDetail?.batch_id !== batch || state.caseDetail?.case_id !== caseId) return;
+  const model = params.get("model");
+  for (const group of groupCaseCandidates(state.caseDetail.candidates || [])) {
+    const candidate = group.candidates.find((item) => item.version === model);
+    if (candidate) state.selectedInputs[group.id] = candidate.input_id;
   }
-  const models = state.library;
-  if (!models.length) {
-    $("#problem-library").innerHTML = '<p class="empty-state">暂无问题类</p>';
-    return;
+  const taskId = params.get("task"), findingId = params.get("finding");
+  const task = state.caseDetail.tasks.find((item) => item.id === taskId && item.stage === "attribution");
+  if (taskId && (!task || task.status !== "succeeded")) { showError("样本召回失败：归因结果不可用"); return; }
+  if (!task) { $("#case-detail").scrollIntoView?.({ behavior: scrollBehavior(), block: "start" }); return; }
+  state.openTasks.add(task.id);
+  renderDetail();
+  await loadTaskResult(task.id);
+  if (state.selectedRun !== runId || state.selectedCase?.batch !== batch || state.selectedCase?.caseId !== caseId) return;
+  const result = state.taskResults[task.id];
+  if (result?.error) { showError(`样本召回失败：${result.error}`); return; }
+  const index = result?.result?.evaluation?.findings?.findIndex((finding) => finding.finding_id === findingId) ?? -1;
+  if (findingId && index < 0) { showError("样本召回失败：归因 finding 不可用"); return; }
+  if (index >= 0) {
+    const path = `${task.id}.findings.${index}`;
+    state.openFindings.add(path);
+    renderTaskResult(task.id);
+    const target = document.getElementById(`finding-${path}`);
+    target?.setAttribute("tabindex", "-1");
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ behavior: scrollBehavior(), block: "start" });
   }
-  $("#problem-library").innerHTML = models.map((model) => `
-    <details class="library-model" data-library-model="${escapeHtml(model.model)}" ${state.libraryOpen.has(model.model) ? "open" : ""}>
-      <summary><strong>${escapeHtml(model.model)}</strong><span class="muted">活跃类 ${model.totals.classes} · 组件 ${model.totals.components} · 出现样本 ${model.totals.occurrences}</span></summary>
-      ${model.components.filter((component) => component.classes.length).map((component) => `
-        <div class="library-component">
-          <p class="library-component-label">${escapeHtml(component.label)}</p>
-          ${component.classes.map((item) => `<button type="button" class="library-class ${state.libraryDetail?.class.id === item.id ? "selected" : ""}" data-library-model="${escapeHtml(model.model)}" data-library-class="${escapeHtml(item.id)}">
-            <span class="library-class-label">${escapeHtml(item.label)}</span>
-            <span class="library-class-count">${item.occurrences} 次${item.aliases.length ? ` · 别名 ${escapeHtml(item.aliases.join("、"))}` : ""}</span>
-          </button>`).join("")}
-        </div>`).join("") || '<p class="empty-state">暂无活跃类</p>'}
-      ${model.merged.length ? `<details class="library-merged"><summary>已合并 ${model.merged.length} 个类</summary><ul>${model.merged.map((item) => `<li>${escapeHtml(item.label)} → ${escapeHtml(item.into_label || item.into)}${item.reason ? `（${escapeHtml(item.reason)}）` : ""}</li>`).join("")}</ul></details>` : ""}
-    </details>`).join("") + libraryDetailHtml();
-}
-async function loadLibrary(runId) {
-  const request = ++state.libraryRequest;
-  state.libraryRun = runId;
-  renderLibrary();
-  try {
-    const models = await api(`${urlFor(runId)}/library`);
-    if (request !== state.libraryRequest) return;
-    state.library = models;
-    if (models.length === 1) state.libraryOpen.add(models[0].model);
-    renderLibrary();
-  } catch (error) {
-    if (request === state.libraryRequest) {
-      state.libraryRun = null;
-      $("#problem-library").innerHTML = `<p class="empty-state">问题库读取失败：${escapeHtml(error.message)}</p>`;
-    }
-  }
-}
-async function loadLibraryClass(model, classId, page) {
-  const request = ++state.libraryDetailRequest;
-  const runId = state.selectedRun;
-  try {
-    const detail = await api(`${urlFor(runId)}/library/${encodeURIComponent(model)}/classes/${encodeURIComponent(classId)}?page=${page}`);
-    if (request !== state.libraryDetailRequest || runId !== state.selectedRun) return;
-    state.libraryDetail = detail;
-    renderLibrary();
-    $("#library-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } catch (error) { toast(`问题库读取失败：${error.message}`, true); }
 }
 function caseQuery() {
   return new URLSearchParams({ page: String(state.page) }).toString();
@@ -240,10 +190,6 @@ function renderCases() {
     </button>`;
   }).join("") : '<p class="empty-state">无匹配样本</p>';
 }
-const clipped = (value, limit) => {
-  const text = String(value ?? "");
-  return escapeHtml(text.length > limit ? `${text.slice(0, limit)}…` : text);
-};
 const compactJson = (value) => escapeHtml(JSON.stringify(value, null, 2) ?? "—");
 const { renderDetail, renderTaskResult, renderClustering } = createDashboardViews({
   state,
@@ -473,7 +419,7 @@ function selectedGroups() {
 }
 function viableCount(date) {
   const groups = selectedGroups();
-  return (date.cases || []).filter((item) => groups.some((group) => group.every((id) => item.versions.includes(id)))).length;
+  return (date.cases || []).filter((item) => groups.some((group) => group.filter((id) => item.versions.includes(id)).length >= 2)).length;
 }
 function renderDateOptions() {
   const signature = JSON.stringify([state.rangeLocked, [...state.selectedDates], [...state.selectedModels], state.inputs]);
@@ -776,7 +722,7 @@ $("#run-actions").addEventListener("click", async (event) => {
     state.runId = node.dataset.resume;
     $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
-    $("#config").scrollIntoView({ behavior: "smooth" });
+    $("#config").scrollIntoView({ behavior: scrollBehavior() });
     $("#preview-button").focus();
   } else if (node.dataset.stop && confirm(`确定停止 ${node.dataset.stop}？已接受结果会保留。`)) {
     try { await api(`${urlFor(node.dataset.stop)}/stop`, { method: "POST" }); toast("已发送停止请求"); await refresh(); }
@@ -801,39 +747,8 @@ $("#case-list").addEventListener("click", (event) => {
   renderDetail();
   void loadCase(node.dataset.batch, node.dataset.case);
 });
-$("#problem-library").addEventListener("click", (event) => {
-  const classNode = event.target.closest("[data-library-class]");
-  if (classNode) {
-    state.libraryOpen.add(classNode.dataset.libraryModel);
-    void loadLibraryClass(classNode.dataset.libraryModel, classNode.dataset.libraryClass, 1);
-    return;
-  }
-  const pageNode = event.target.closest("[data-library-page]");
-  if (pageNode && !pageNode.disabled && state.libraryDetail)
-    void loadLibraryClass(
-      state.libraryDetail.model,
-      state.libraryDetail.class.id,
-      Number(pageNode.dataset.libraryPage),
-    );
-});
-// `toggle` does not bubble; capture it so re-renders keep user-opened models.
-$("#problem-library").addEventListener(
-  "toggle",
-  (event) => {
-    const node = event.target.closest?.(".library-model");
-    if (!node) return;
-    if (node.open) state.libraryOpen.add(node.dataset.libraryModel);
-    else state.libraryOpen.delete(node.dataset.libraryModel);
-  },
-  true,
-);
 $("#clustering-panel").addEventListener("toggle", (event) => {
   if (event.target.open) void loadClustering();
-});
-// The library fetch happens only when the operator opens its panel.
-$("#problem-library-panel").addEventListener("toggle", (event) => {
-  if (event.target.open && state.selectedRun && state.libraryRun !== state.selectedRun)
-    void loadLibrary(state.selectedRun);
 });
 document.addEventListener("click", async (event) => {
   const findingLink = event.target.closest("[data-finding-target]");
@@ -959,5 +874,5 @@ $("#start-form").addEventListener("submit", (event) => { event.preventDefault();
 
 (async () => {
   state.runId = suggestedRunId();
-  await Promise.all([loadConfig(), loadInputs(), refresh()]);
+  await Promise.all([loadConfig(), loadInputs(), refresh().then(() => restoreRecall())]);
 })();

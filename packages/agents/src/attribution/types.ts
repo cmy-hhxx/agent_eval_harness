@@ -1,4 +1,5 @@
-import type { RewrittenResult } from "@eval/contracts";
+import type { RewrittenResult, TaskAnalysis } from "@eval/contracts";
+export type { TaskAnalysis, TaskCriterion } from "@eval/contracts";
 export interface Evidence {
   message_index: number;
   quote: string;
@@ -26,12 +27,19 @@ export interface Finding {
     impact: string;
   };
 }
-export interface TaskAnalysis {
-  task_type: string;
-  goal: string;
-  requirements: string[];
-  scoring_points: string[];
-  red_flags: string[];
+export interface CriterionAssessment {
+  criterion_id: string;
+  status: "met" | "partial" | "unmet" | "unknown" | "not_applicable";
+  evidence_status: "established" | "uncertain";
+  summary: string;
+  evidence: Evidence[];
+}
+export interface CoreAssessment {
+  /** Null when the evidence does not establish whether the core result is usable. */
+  meets_core: boolean | null;
+  reason: string;
+  /** References applicable shared requirements, never scoring points or red flags. */
+  criterion_ids: string[];
 }
 /**
  * Raw problem description proposed by attribution. The clustering stage owns library classes
@@ -68,6 +76,8 @@ export interface AttributionResult {
     evidence_index: number;
   }[];
   task_analysis: TaskAnalysis;
+  criterion_assessments: CriterionAssessment[];
+  core_assessment: CoreAssessment;
   summary: string;
   findings: AttributionFinding[];
 }

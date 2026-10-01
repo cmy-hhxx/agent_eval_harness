@@ -1,20 +1,25 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
+  canonical,
   schemaIssues,
   ValidationError,
   type AgentRequest,
   type ToolAudit,
+  type TaskAnalysis,
   type ValidationIssue,
 } from "@eval/contracts";
-import { images, validateTraceEvidence } from "@eval/tools";
+import { images, traceReadCoverage, validateTraceEvidence } from "@eval/tools";
 import type { AttributionResult } from "./types.js";
 import { containsNumber, matchesReference } from "./numeric.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 
 interface Input {
+  candidate_id: string;
+  task_analysis: TaskAnalysis;
   ground_truth: { available: boolean; value: unknown };
   answer: {
     final_message_index: number;
+    deferred_final_material: { message_index: number; path: string; total_chars: number }[];
     catalog: { message_index: number; type: string; role?: string; name?: string | null }[];
   };
 }
@@ -27,6 +32,60 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const repairErrors: ValidationIssue[] = [];
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
     repairErrors.push({ category: "decision", code, path, message, actual, expected });
+
+  if (canonical(value.task_analysis) !== canonical(input.task_analysis))
+    issue("task_analysis_mismatch", "/task_analysis", "task_analysis 必须镜像请求中的共享判据，不能按回答改写", value.task_analysis, input.task_analysis);
+  const applicable = (criterion: TaskAnalysis["requirements"][number]) =>
+    !criterion.applies_to.length || criterion.applies_to.includes(input.candidate_id);
+  const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
+  const criterionMap = new Map(criteria.map((criterion) => [criterion.id, criterion]));
+  const assessmentMap = new Map(value.criterion_assessments.map((assessment) => [assessment.criterion_id, assessment]));
+  const assessmentIds = new Set<string>();
+  value.criterion_assessments.forEach((assessment, index) => {
+    const location = `/criterion_assessments/${index}`;
+    const criterion = criterionMap.get(assessment.criterion_id);
+    if (assessmentIds.has(assessment.criterion_id))
+      issue("criterion_assessment_duplicate", `${location}/criterion_id`, "每条共享判据必须且只能评审一次", assessment.criterion_id);
+    assessmentIds.add(assessment.criterion_id);
+    if (!criterion) {
+      issue("criterion_assessment_unknown", `${location}/criterion_id`, "criterion_id 必须引用共享判据", assessment.criterion_id);
+      return;
+    }
+    if ((assessment.status === "not_applicable") !== !applicable(criterion))
+      issue("criterion_applicability_mismatch", `${location}/status`, "只有 applies_to 不包含当前候选时才能且必须填 not_applicable；[] 适用于全部候选", assessment.status, applicable(criterion));
+    if (assessment.status === "unknown" && assessment.evidence_status !== "uncertain")
+      issue("criterion_unknown_established", `${location}/evidence_status`, "unknown 表示证据不足，evidence_status 必须为 uncertain");
+    if (assessment.status === "not_applicable" && assessment.evidence.length)
+      issue("criterion_not_applicable_evidence", `${location}/evidence`, "不适用由共享 scope 确定，不填写回答证据");
+    if (["met", "partial", "unmet"].includes(assessment.status) && assessment.evidence_status === "established" && !assessment.evidence.length)
+      issue("criterion_evidence_required", `${location}/evidence`, "已确认的适用判据结论必须引用支持判断的原文或已查看图片");
+    if (!assessment.summary.trim())
+      issue("criterion_summary_empty", `${location}/summary`, "逐项评审说明不能为空");
+  });
+  for (const criterion of criteria) if (!assessmentIds.has(criterion.id))
+    issue("criterion_assessment_missing", "/criterion_assessments", "共享判据必须全部覆盖，含不适用判据", criterion.id);
+
+  const requirements = new Map(input.task_analysis.requirements.map((criterion) => [criterion.id, criterion]));
+  const coreEvidence = value.core_assessment.criterion_ids.flatMap((id, index) => {
+    const criterion = requirements.get(id);
+    if (!criterion || !applicable(criterion)) {
+      issue("core_criterion_invalid", `/core_assessment/criterion_ids/${index}`, "核心可用性只能引用适用于当前候选的 requirements", id);
+      return [];
+    }
+    const assessment = assessmentMap.get(id);
+    return assessment ? [assessment] : [];
+  });
+  if (!value.core_assessment.reason.trim())
+    issue("core_reason_empty", "/core_assessment/reason", "必须说明核心结果的独立用途、缺口和影响");
+  if (value.core_assessment.meets_core === false && !coreEvidence.some((assessment) =>
+    assessment.evidence_status === "established" && ["unmet", "partial"].includes(assessment.status)))
+    issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");
+  if (value.core_assessment.meets_core === null && !coreEvidence.some((assessment) =>
+    assessment.status === "unknown" || assessment.evidence_status === "uncertain"))
+    issue("core_unknown_unsupported", "/core_assessment", "核心可用性为 null 时必须引用证据不足的适用 requirement");
+  if (value.core_assessment.meets_core === true && !coreEvidence.some((assessment) =>
+    assessment.evidence_status === "established" && ["met", "partial"].includes(assessment.status)))
+    issue("core_success_unsupported", "/core_assessment", "判核心可用必须引用适用 requirement 已确认的 met 或 partial，并说明仍可用的独立结果");
 
   if (value.has_standard_answer !== input.ground_truth.available)
     issue(
@@ -96,14 +155,19 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       );
     findingIds.add(finding.finding_id);
     if (finding.assessment.requirement_index !== null &&
-      finding.assessment.requirement_index >= value.task_analysis.requirements.length)
+      finding.assessment.requirement_index >= input.task_analysis.requirements.length)
       issue(
         "requirement_index_invalid",
         `/findings/${index}/assessment/requirement_index`,
         "发现关联了不存在的任务要求",
         finding.assessment.requirement_index,
-        value.task_analysis.requirements.length,
+        input.task_analysis.requirements.length,
       );
+    const requirement = finding.assessment.requirement_index === null ? undefined :
+      input.task_analysis.requirements[finding.assessment.requirement_index];
+    if (requirement && !applicable(requirement))
+      issue("finding_requirement_not_applicable", `/findings/${index}/assessment/requirement_index`,
+        "finding 不能关联不适用于当前候选的共享 requirement", finding.assessment.requirement_index);
     if (finding.type === "strength" && finding.problem !== null)
       issue(
         "strength_problem_forbidden",
@@ -143,6 +207,17 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
 
   const candidate = input.answer;
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
+  input.answer.deferred_final_material.forEach((material, index) => {
+    const coverage = traceReadCoverage(audit, {
+      candidate: "answer", message_index: material.message_index, kind: "text", path: material.path,
+      start: 0, end: material.total_chars,
+    });
+    if (!coverage.covered) repairErrors.push({
+      category: "evidence", code: "deferred_final_material_not_read", path: `/answer/deferred_final_material/${index}`,
+      candidate: "answer", message: "未完整读取延后展示的最终材料；按缺口用 read_trace 补读并继续 next_offset。展示缺失不能推定没有交付。",
+      actual: coverage.missing, expected: { message_index: material.message_index, path: material.path, start: 0, end: material.total_chars },
+    });
+  });
   if (images(raw.messages[candidate.final_message_index]).length &&
       !audit.viewedImages.includes(`answer:${candidate.final_message_index}`))
     issue("final_image_not_viewed", "/findings",
@@ -167,5 +242,10 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       ),
     ),
   );
+  value.criterion_assessments.forEach((assessment, i) => repairErrors.push(
+    ...validateTraceEvidence(raw, assessment.evidence.map((item, j) => ({
+      item, location: `criterion_assessments[${i}].evidence[${j}]`,
+    })), "answer", audit),
+  ));
   if (repairErrors.length) throw new ValidationError(repairErrors);
 }

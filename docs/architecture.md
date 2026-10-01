@@ -11,7 +11,7 @@ flowchart LR
   CLI --> Host
   Automations[自动取数流水线] --> Host
   Automations --> Data
-  CLI --> Agents[Comparison / Attribution / Rewrite / Clustering Profiles]
+  CLI --> Agents[Criteria / Attribution / Comparison / Rewrite / Clustering Profiles]
   CLI --> Workflow[Comparison Workflow]
   Assistant[独立分析助手] --> Host
   Assistant --> Data[Data Repository]
@@ -32,6 +32,7 @@ flowchart LR
 | `packages/host` | 编排、调度、提交有效性、重试、恢复、进度 |
 | `packages/automations` | 持续发现输入、下载/评测/四小时交付队列、日期级恢复与退避；通过应用注入取数、存储、评测和上传 |
 | `packages/runtime` | 进程客户端、HTTP/SSE、Mongo 增量写入、线上日志上传、会话和工作区、Pi / Prime Adapter |
+| `packages/agents/src/criteria` | 只按问题、标准答案及候选约束制定共同验收基准，不读取回答 |
 | `packages/agents/src/comparison` | 对比 Profile、业务校验；使用集中提示词与根目录 `schemas/comparison` |
 | `packages/agents/src/rewrite` | 改写 Profile、槽位校验；只润色文本，不接触证据；使用集中提示词与根目录 `schemas/rewrite` |
 | `packages/agents/src/attribution` | 归因 Profile、业务校验；只描述问题，不维护问题库；使用集中提示词与根目录 `schemas/attribution` |
@@ -39,8 +40,8 @@ flowchart LR
 | `packages/workflows/src/comparison` | 适配器注册表、评测集元信息抽取、配置化分组对比、盲测、依赖与材料映射、改写组合、状态编解码、报告 |
 | `packages/data` | 本地源读取与输入索引存储、原子状态保存、结果及会话记录追加、锁 |
 | `packages/tools` | 材料、检索、图片、计算、代码执行和产物；执行逻辑不保存模型可见描述 |
-| `packages/prompts` | 集中维护四阶段评测规则、总分析助手提示词、任务材料/预算/恢复文案及工具描述；专家示例尚未启用 |
-| `schemas` | 集中维护四阶段、Workflow 导出及分析助手工具输入的 JSON Schema |
+| `packages/prompts` | 集中维护五阶段评测规则、总分析助手提示词、任务材料/预算/恢复文案及工具描述；专家示例尚未启用 |
+| `schemas` | 集中维护五阶段、Workflow 导出及分析助手工具输入的 JSON Schema |
 | `vendor/pi`、`vendor/prime-agent` | 可直接开发的固定源码和锁文件 |
 | `vendor/deepseek` | 分析助手移植的 Deepseek 客户端、传输及会话投影源码；来源与局部修改见 [Agent 说明](../agent/README.md#模块与上游) |
 
@@ -78,7 +79,7 @@ Worker 状态查询超时或连接临时重置只表示本次观察未完成，H
 | Worker `GET /api/attempts/:id/artifacts/:id` | 产物字节 |
 | Worker `GET /api/attempts/:id/record` | 已结束尝试的完整记录，包括最终用量、工具审计及未接受提交 |
 | Worker `DELETE /api/attempts/:id` | Host 归档后释放已结束 attempt 的副本 |
-| Host `GET /api/inputs/:id` | 本次读取的原始输入 |
+| Host `GET /api/inputs/:id?attempt=<attempt-id>` | 所属活跃 attempt 的材料视图 |
 | Host `POST /api/submissions` | 校验、原子提交 |
 | Host `GET /api/submissions/:id` | 确认已保存收据 |
 | Host `POST /api/tasks/:id/checkpoint` | 持久化最后草稿、结构化错误和修复计数 |
@@ -95,7 +96,7 @@ Worker 状态查询超时或连接临时重置只表示本次观察未完成，H
 [通用契约](../packages/contracts/src/index.ts)区分以下接口：
 
 - `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、模型提交 Schema、接受结果 Schema、引用展开及业务校验。Worker 收到的 `EvaluationSpec.outputSchema` 是提交 Schema 的运行时副本。
-- `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`。
+- `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`；可选同步 `advance` 规划已验证收据的后续任务，Host 串行提交收据、任务变更和结果，持久化失败时回滚此次任务变更。`blockedReason` 在依赖已接受后检查下游是否仍需等待，未决复核不能进入改写或问题库。
 - `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
 - `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
@@ -110,11 +111,11 @@ Worker 状态查询超时或连接临时重置只表示本次观察未完成，H
 
 一个 Host 管理一个 run，多个 Worker 并行执行；多个 Host 使用不同 run 目录。每个 attempt 独立会话、工具上下文与工作区，取消只作用于所属任务；默认端口由系统分配。应用传入 Worker 入口、仓库路径和 Python 配置，没有全局共享会话。
 
-调度按每个任务的依赖就绪情况推进，归因、对比、改写可同时运行，不等待整批上一阶段结束。空闲槽位优先补给运行中任务较少的就绪阶段，同额时优先计划中靠后的阶段；没有就绪任务的阶段不占用配额。总并发上限仍由 Host 控制，运行中的任务不抢占，失败依赖只阻塞所属后续任务。
+调度按每个任务的依赖就绪情况推进，基准、归因、对比、改写可同时运行，不等待整批上一阶段结束。空闲槽位优先补给运行中任务较少的就绪阶段，同额时优先计划中靠后的阶段；没有就绪任务的阶段不占用配额。总并发上限仍由 Host 控制，运行中的任务不抢占，失败依赖只阻塞所属后续任务。
 
 [失败熔断](../packages/host/src/failure-guard.ts)只消费通用阶段与 ValidationIssue 签名，不识别评测业务。它按不同任务维护有界窗口，将暂停原因写进 manifest；调度和 attempt 重试都检查该状态，健康阶段继续，显式恢复才清除暂停。初始托管 Worker 只按实际就绪任务启动，避免在所有剩余任务被依赖或熔断阻塞时空建进程。
 
-[定向修复](../packages/workflows/src/comparison/repair.ts)属于 Workflow：在运行锁内计算依赖范围及文本槽位，预览与应用共用选择逻辑；应用只改变选中进度并保存通用 `executionScope`，不另存输入或正式正文。聚类分片只有其余依赖均已接受或已选中时才自动随局部补跑推进，不能反向拉入整批未完成样本。Host 只按 UUID 范围调度；Workflow 在固定范围下跳过输入发现，并只加载所需记录。分层试跑、交付覆盖和文案审阅在[交付模块](../packages/workflows/src/comparison/delivery.ts)，不进入通用调度器。
+[定向修复](../packages/workflows/src/comparison/repair.ts)属于 Workflow：在运行锁内计算依赖范围及文本槽位，预览与应用共用选择逻辑；应用只改变选中进度并保存通用 `executionScope`，不另存输入或正式正文。聚类分片只有其余依赖均已接受或已选中时才自动随局部补跑推进，不能反向拉入整批未完成样本。Host 只按 UUID 范围调度，必要的独立复核后续任务随源任务加入范围；Workflow 在固定范围下跳过输入发现，并只加载所需记录。分层试跑、交付覆盖和文案审阅在[交付模块](../packages/workflows/src/comparison/delivery.ts)，不进入通用调度器。
 
 `AttemptSpec` 包含任务标识、引擎版本与构建 UUID、模型、输入引用、预算、截止时间和评测契约。Host 不依赖上游 SDK 类型；底座公共接口只覆盖创建、运行、事件、取消和释放。
 
@@ -161,6 +162,6 @@ Pi 的本地 vendor 修改关闭内置 chat、image、classifier 模型目录与
 
 [agent/](../agent/README.md) 为用户提供独立 Web 对话。总 Agent 通过 Contracts 中的数据源、专业任务网关与 Session 接口访问能力；应用 Host 注入具体实现。专业 Agent 互不导入，也不依赖总 Agent。
 
-Host 的 `taskSource` 只需要 `id`、`bind` 和可选 `reconcile`，既接收 Workflow 定义，也接受已经准备好材料的独立专业任务；Worker、业务校验、正式结果提交与同 run ID 恢复共享同一生命周期。原有 Workflow 组合职责不变。
+Host 的 `taskSource` 需要 `id`、`bind`，可选 `reconcile`、`advance` 和 `blockedReason`，既接收批量 Workflow，也接受专业网关构造的任务小计划；Worker、业务校验、正式结果提交与同 run ID 恢复共享同一生命周期。
 
 Runtime 将 Pi 的事件转换为 Deepseek Session 事件和 Assistant 流，前端只接收上游模型。HTTP RPC、WebSocket 多路流、连接代次、完整 baseline、增量组装及渲染来自记录基线源码。Data 维护权威追加记录和持锁执行者；本机其他副本转发至该执行者，确认 PID 退出后接管。原始材料通过业务定位引用重读，Pi 内存历史从追加记录恢复。

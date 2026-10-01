@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { PublicationStatistics, publishableComparisons, completedComparisons, comparisonCodec, buildPlan, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
+import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
-test("comparison delivery waits for attribution and comparison rewrites while full completion also requires clustering", async () => {
+test("comparison delivery waits for shared criteria and evaluation rewrites, never clustering", async () => {
   const { directory, config } = await fixtureConfig(undefined, true, true);
   try {
     config.rewrite = { attribution: true, comparison: true, comparisonItems: true, clustering: true };
@@ -29,16 +29,15 @@ test("comparison delivery waits for attribution and comparison rewrites while fu
       task.receipt = { acceptedAt: time++, exported: {} } as NonNullable<typeof task.receipt>;
     }
     assert.equal(publishableComparisons(saved).size, 2);
-    const cluster = Object.values(saved.tasks).find((task) => task.stage === "clustering")!;
-    const [inputId, sourceTask] = Object.entries(cluster.dependencies)[0];
-    cluster.dependencies = { movedInput: sourceTask };
-    cluster.data.scope!.cases = { movedInput: cluster.data.scope!.cases[inputId] };
-    assert.equal(completedComparisons(saved).size, 2, "clustering joins by accepted attribution task, not a moved source input ID");
-    const rewrite = Object.values(saved.tasks).find((task) => task.data.rewriteOf?.stage === "clustering")!;
-    rewrite.status = "pending";
-    assert.equal(publishableComparisons(saved).size, 2);
-    assert.equal(completedComparisons(saved).size, 1);
-    rewrite.status = "succeeded";
+    const criteria = Object.values(saved.tasks).find((task) => task.stage === "criteria")!;
+    criteria.status = "pending";
+    assert.equal(publishableComparisons(saved).size, 0, "both pairs depend on the accepted shared rubric");
+    criteria.status = "succeeded";
+    for (const task of Object.values(saved.tasks)) {
+      if (task.stage === "clustering") task.status = "failed";
+      if (task.data.rewriteOf?.stage === "clustering") task.status = "pending";
+    }
+    assert.equal(publishableComparisons(saved).size, 2, "clustering and its rewrite never gate comparison delivery");
     const comparisonRewrite = Object.values(saved.tasks).find((task) => task.data.rewriteOf?.stage === "comparison")!;
     comparisonRewrite.status = "failed";
     assert.equal(publishableComparisons(saved).size, 1);
@@ -50,6 +49,12 @@ test("comparison delivery waits for attribution and comparison rewrites while fu
     (saved.config as typeof config).rewrite.comparisonItems = true;
     comparisonRewrite.data.comparisonRewriteScope = "all";
     assert.equal(publishableComparisons(saved).size, 2);
+    const comparison = Object.values(saved.tasks).find((task) => task.stage === "comparison")!;
+    comparison.data.supersededBy = "independent-review";
+    assert.equal(publishableComparisons(saved).size, 1, "a superseded comparison cannot be published again");
+    delete comparison.data.supersededBy;
+    comparison.receipt!.exported!.file = "comparison-review.jsonl";
+    assert.equal(publishableComparisons(saved).size, 1, "review requests are not official comparison rows");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -70,19 +75,87 @@ test("publication requires nonempty text for the verdict and every comparison ce
 });
 
 const date = "2026-09-30";
+const configuredGroups = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
 const inputs: PublicationInput[] = ["a_fast", "b_fast"].map((versionId) => ({ versionId, trace: {
   batch_id: date, case_id: "one", version: versionId, versions: "release", messages: [{}],
   meta: { task: "客观题", difficulty: "简单", first_token_time_cost: 0, finish_answer_time_cost: 100,
     usage: { input_tokens: 200, output_tokens: 20 } },
 } }));
 const result: PublicationResult = { evaluatedAt: 10, row: { case: { batch_id: date, case_id: "one" },
+  status: "decided", assessments: { a_fast: { meets_core: false }, b_fast: { meets_core: true } },
   models: { a_fast: {}, b_fast: {} }, verdicts: { a_fast__vs__b_fast: { result: "win", winner_version: "b_fast" } },
   has_standard_answer: true, evaluations: { a_fast: { is_correct: false }, b_fast: { is_correct: true } },
 } };
 async function* rows<T>(data: T[]) { yield* data; }
 
+test("three-model statistics use configured battles and count each answer's correctness once", () => {
+  const ids = ["a_fast", "b_fast", "baseline"];
+  const stats = new PublicationStatistics([ids]);
+  for (const versionId of ids) stats.addInput({ ...inputs[0], versionId, trace: { ...inputs[0].trace, version: versionId } });
+  const outcomes = ["both_good", "win", "win"];
+  let index = 0;
+  for (let first = 0; first < ids.length; first++) for (let second = first + 1; second < ids.length; second++) {
+    const pair = [ids[first], ids[second]], outcome = outcomes[index++];
+    stats.addResult({ evaluatedAt: 10, row: { ...result.row,
+      models: Object.fromEntries(pair.map((id) => [id, {}])),
+      evaluations: Object.fromEntries(pair.map((id) => [id, { is_correct: id !== "b_fast" }])),
+      assessments: Object.fromEntries(pair.map((id) => [id, { meets_core: id !== "baseline" }])),
+      verdicts: { [pair.join("__vs__")]: { result: outcome, winner_version: outcome === "win" ? pair[0] : null } },
+    } });
+  }
+  const record = stats.record("three", Date.now()); assertStatisticsLog(record);
+  const data = record.data as Record<string, any>;
+  assert.deepEqual(data.progress, { expectedBattleCount: 3, completedBattleCount: 3, completedCaseCount: 1 });
+  assert.equal(data.caseCount, 1);
+  for (const model of data.stats) {
+    assert.equal(model.evaluated, 2);
+    assert.equal(model.accuracy.count, 1);
+    assert.equal(model.accuracy.correct, model.id === "b_fast" ? 0 : 1);
+    assert.equal(model.total.count, 1);
+    assert.equal(model.winRate, model.wins / 2 * 100);
+  }
+  assert.throws(() => new PublicationStatistics([ids]).addResult({ ...result, row: { ...result.row,
+    models: Object.fromEntries(ids.map((id) => [id, {}])) } }), /two-candidate/);
+  assert.throws(() => new PublicationStatistics([["a_fast", "baseline"]]).addResult(result), /configured/);
+});
+
+test("statistics reject review requests and contradictory absolute core assessments across pairs", () => {
+  const groups = [["a_fast", "b_fast", "baseline"]];
+  for (const row of [{ ...result.row, status: "needs_review" }, { ...result.row, supersededBy: "reviewed" },
+    { ...result.row, evaluation_type: "comparison_review" }])
+    assert.throws(() => new PublicationStatistics(groups).addResult({ ...result, row }), /settled, unsuperseded/);
+  const stats = new PublicationStatistics(groups);
+  stats.addResult({ ...result, row: { ...result.row, status: "decided", assessments: {
+    a_fast: { meets_core: false }, b_fast: { meets_core: true },
+  } } });
+  const reassessed = { ...result, row: { ...result.row, status: "decided", models: { a_fast: {}, baseline: {} },
+    evaluations: { a_fast: { is_correct: false }, baseline: { is_correct: true } },
+    assessments: { a_fast: { meets_core: true }, baseline: { meets_core: true } },
+    verdicts: { a_fast__vs__baseline: { result: "win", winner_version: "baseline" } },
+  } };
+  assert.throws(() => stats.addResult(reassessed), /Conflicting answer core/);
+  reassessed.row.assessments.a_fast.meets_core = false;
+  stats.addResult(reassessed);
+  assert.throws(() => new PublicationStatistics(groups).addResult({ ...result, row: { ...result.row, assessments: {} } }), /missing a core/);
+});
+
+test("configured pairs retain their date scope when a later date adds a baseline", () => {
+  const stats = new PublicationStatistics([]), earlier = "2026-09-29", ids = ["a_fast", "b_fast", "baseline"];
+  stats.addGroups([["a_fast", "b_fast"]], earlier);
+  stats.addGroups([ids], date);
+  for (const batchId of [earlier, date]) for (const versionId of ids)
+    stats.addInput({ ...inputs[0], versionId, trace: { ...inputs[0].trace, batch_id: batchId, version: versionId } });
+  for (const batch_id of [earlier, date]) stats.addResult({ ...result, row: { ...result.row, case: { batch_id, case_id: "one" } } });
+  const data = stats.record("scoped", Date.now()).data as Record<string, any>;
+  assert.equal(data.progress.expectedBattleCount, 4);
+  assert.deepEqual(data.requestDates.map((day: any) => [day.date, day.progress.expectedBattleCount]), [[date, 3], [earlier, 1]]);
+  assert.throws(() => stats.addResult({ ...result, row: { ...result.row, case: { batch_id: earlier, case_id: "one" },
+    models: { a_fast: {}, baseline: {} },
+  } }), /configured/);
+});
+
 test("both outcome counts sit beside wins across totals, days, scenarios, difficulties and trends", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   const battles = [
     { date: "2026-09-29", caseId: "same", mode: "fast", task: "数据查询类", difficulty: "简单", result: "both_good", winner: null },
     { date: "2026-09-29", caseId: "same", mode: "expert", task: "数据查询类", difficulty: "简单", result: "both_bad", winner: null },
@@ -97,6 +170,7 @@ test("both outcome counts sit beside wins across totals, days, scenarios, diffic
       batch_id: battle.date, case_id: battle.caseId, version: id,
       meta: { task: battle.task, difficulty: battle.difficulty } } });
     stats.addResult({ evaluatedAt: 10, row: {
+      status: "decided", assessments: Object.fromEntries(ids.map((id) => [id, { meets_core: battle.result !== "both_bad" }])),
       case: { batch_id: battle.date, case_id: battle.caseId }, models: Object.fromEntries(ids.map((id) => [id, {}])),
       has_standard_answer: false, evaluations: Object.fromEntries(ids.map((id) => [id, { is_correct: null }])),
       verdicts: { [ids.join("__vs__")]: { result: battle.result, winner_version: battle.winner } },
@@ -151,16 +225,16 @@ test("statistics read explicit verdict outcomes and reject unknown or inconsiste
     { result: "win", winner_version: "a_expert" }, { result: "both_bad", winner_version: "b_fast" },
     { result: "both_good" },
   ]) {
-    assert.throws(() => new PublicationStatistics().addResult({ ...result, row: { ...result.row,
+    assert.throws(() => new PublicationStatistics(configuredGroups).addResult({ ...result, row: { ...result.row,
       verdicts: { a_fast__vs__b_fast: verdict } } }), /statistics verdict|Statistics verdict/);
   }
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   stats.addResult(result);
   assert.throws(() => stats.addResult(result), /Duplicate statistics comparison/);
 });
 
 test("frozen statistics contract rejects added, missing and mistyped fields at every nested object", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   inputs.forEach((row) => stats.addInput(row));
   stats.addResult(result);
   const record = stats.record("frozen", Date.now());
@@ -192,7 +266,7 @@ test("frozen statistics contract rejects added, missing and mistyped fields at e
 });
 
 test("frozen statistics contract allows evolving values, new dates, empty arrays and nullable metrics", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   assertStatisticsLog(stats.record("empty", Date.now()));
   for (const day of ["2026-09-29", "2026-09-30"]) {
     inputs.forEach((row) => stats.addInput({ ...row, trace: { ...row.trace, batch_id: day, meta: {} } }));
@@ -207,7 +281,7 @@ test("frozen statistics contract allows evolving values, new dates, empty arrays
 });
 
 test("four-hour statistics use paired denominators and preserve the existing log structure", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   inputs.forEach((row) => stats.addInput(row));
   stats.addInput({ versionId: "a_fast", trace: { ...inputs[0].trace, case_id: "unpaired" } });
   stats.addInput({ versionId: "a_fast", trace: { ...inputs[0].trace, case_id: "pending" } });
@@ -226,7 +300,7 @@ test("four-hour statistics use paired denominators and preserve the existing log
 });
 
 test("dashboard snapshot retains history, separates identical case IDs across dates and uses request dates", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   for (const day of ["2026-09-24", "2026-09-29"]) {
     inputs.forEach((input) => stats.addInput({ ...input, trace: { ...input.trace, batch_id: day, request_time: `${day} 12:00:00` } }));
     stats.addResult({ ...result, row: { ...result.row, case: { batch_id: day, case_id: "one" } } });
@@ -250,7 +324,7 @@ test("dashboard snapshot retains history, separates identical case IDs across da
 });
 
 test("latest snapshot refreshes existing dates and includes new dates without double counting", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   const add = (day: string, caseId: string, finish: number) => {
     for (const input of inputs) stats.addInput({ ...input, trace: { ...input.trace, batch_id: day, case_id: caseId,
       request_time: `${day} 12:00:00`, meta: { ...input.trace.meta as object, finish_answer_time_cost: finish } } });
@@ -277,7 +351,7 @@ test("latest snapshot refreshes existing dates and includes new dates without do
 });
 
 test("case annotations fill unlabelled models without conflating dates or silently accepting conflicting labels", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   stats.addInput(inputs[0]);
   stats.addInput({ ...inputs[1], trace: { ...inputs[1].trace, meta: {} } });
   stats.addResult(result);
@@ -290,7 +364,7 @@ test("case annotations fill unlabelled models without conflating dates or silent
 });
 
 test("daily statistics use a paired request date or the batch date when all request timestamps are absent", () => {
-  const stats = new PublicationStatistics();
+  const stats = new PublicationStatistics(configuredGroups);
   for (const input of inputs) stats.addInput(input);
   stats.addResult(result);
   for (const [i, input] of inputs.entries()) stats.addInput({ ...input, trace: { ...input.trace, case_id: "dated",
@@ -313,6 +387,7 @@ test("statistics load case labels from Mongo and retain them across models and d
       return [{ batchId: days[0], caseId: "one", task: "数据查询类", difficulty: "简单" }];
     },
     snapshot: async (_config, job) => ({
+      comparisons: configuredGroups,
       inputs: () => rows(inputs.map((input) => ({ ...input, trace: { ...input.trace, batch_id: job.date,
         request_time: `${job.date} 12:00:00`, meta: job.date === days[0] ? {} : input.trace.meta } }))),
       results: () => rows([{ ...result, row: { ...result.row, case: { batch_id: job.date, case_id: "one" } } }]),
@@ -338,7 +413,7 @@ test("dashboard log snapshots use the complete inventory and resume without a du
     const state = { publication: { traceId: "trace-window", status: "running", attempts: 1, nextAt: 0 } } as AutomationState;
     let uploads = 0, persisted = "";
     const dependencies: Parameters<typeof publishSnapshot>[4] = {
-      snapshot: async () => { const stats = new PublicationStatistics(); inputs.forEach(input => stats.addInput(input)); stats.addResult(result); return stats; },
+      snapshot: async () => { const stats = new PublicationStatistics(configuredGroups); inputs.forEach(input => stats.addInput(input)); stats.addResult(result); return stats; },
       upload: async (_url, record) => {
         uploads++;
         assert.equal(persisted, "sending");
@@ -376,7 +451,7 @@ test("publication blocks structural drift before appending or uploading a recove
   const { directory } = await fixtureConfig();
   try {
     const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
-    const stats = new PublicationStatistics();
+    const stats = new PublicationStatistics(configuredGroups);
     inputs.forEach((row) => stats.addInput(row));
     stats.addResult(result);
     const record = stats.record("invalid", Date.now());
@@ -412,7 +487,7 @@ test("Mongo delivery streams ready inputs and results independently of the log s
     let ready: PublicationResult[] = [];
     const delivered: { inputs: PublicationInput[]; results: PublicationResult[] }[] = [];
     const dependencies: Parameters<typeof syncMongoDay>[3] = {
-      snapshot: async () => ({ inputs: () => rows(inputs), results: () => rows(ready) }),
+      snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows(ready) }),
       mongo: async (settings, batch, inputRows, resultRows) => {
         assert.equal(batch, date);
         assert.equal(settings.inputsUnchanged, delivered.length === 1);
@@ -431,6 +506,9 @@ test("Mongo delivery streams ready inputs and results independently of the log s
     job.inputsUpdatedAt = 10;
     await syncMongoDay(config, job, AbortSignal.timeout(3000), dependencies);
     assert.deepEqual(delivered, [{ inputs, results: [] }, { inputs, results: [result] }, { inputs, results: [result] }]);
+    ready = [{ ...result, row: { ...result.row, status: "needs_review" } }];
+    await assert.rejects(syncMongoDay(config, job, AbortSignal.timeout(3000), dependencies), /settled, unsuperseded/);
+    assert.equal(delivered.length, 3, "invalid results are rejected before the Mongo writer is invoked");
     await assert.rejects(readFile(config.publication.logFile), { code: "ENOENT" });
   } finally {
     if (previous === undefined) delete process.env[key]; else process.env[key] = previous;

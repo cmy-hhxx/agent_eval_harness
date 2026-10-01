@@ -29,7 +29,7 @@ interface Standing {
   both_bad: number;
 }
 
-function summarizeResults(
+export function summarizeResults(
   tasks: PlannedTask[],
   outcomes: JsonObject[],
   attribution: JsonObject[],
@@ -52,7 +52,12 @@ function summarizeResults(
     statuses[status] = (statuses[status] || 0) + 1;
   }
   const headToHead: Record<string, HeadToHeadStats> = {};
-  const standings: Record<string, Standing> = {};
+  const standings: Record<string, Standing & {
+    core_case_count: number; core_decidable_count: number; core_undetermined: number; core_conflicted_count: number;
+  }> = {};
+  const diagnostics: JsonObject[] = [];
+  const coreCases = new Map<string, { batch_id: string; case_id: string; version: string; rows: { comparison_id: unknown; value: boolean | null }[] }>();
+  const answerKey = (batch: unknown, caseId: unknown, version: string) => canonical([batch, caseId, version]);
   const standing = (version: string) =>
     (standings[version] ??= {
       entered: 0,
@@ -62,6 +67,10 @@ function summarizeResults(
       wins: 0,
       both_good: 0,
       both_bad: 0,
+      core_case_count: 0,
+      core_decidable_count: 0,
+      core_undetermined: 0,
+      core_conflicted_count: 0,
     });
   for (const row of comparisons) {
     for (const version of Object.keys((row.models as JsonObject) || {})) {
@@ -70,8 +79,11 @@ function summarizeResults(
       const assessment = (row.assessments as Record<string, { meets_core: boolean } | undefined>)[
         version
       ];
+      const identity = row.case as { batch_id: string; case_id: string }, key = answerKey(identity.batch_id, identity.case_id, version);
+      let core = coreCases.get(key);
+      if (!core) coreCases.set(key, core = { ...identity, version, rows: [] });
+      core.rows.push({ comparison_id: row.comparison_id, value: typeof assessment?.meets_core === "boolean" ? assessment.meets_core : null });
       if (assessment) {
-        if (assessment.meets_core) stats.meets_core++;
         stats.first_tier += Number(
           (row.ranking as string[][]).some((tier, index) => index === 0 && tier.includes(version)),
         );
@@ -100,24 +112,96 @@ function summarizeResults(
       }
     }
   }
+  for (const core of coreCases.values()) {
+    const stats = standing(core.version), values = new Set(core.rows.map((row) => row.value));
+    stats.core_case_count++;
+    if (values.size > 1) {
+      stats.core_conflicted_count++;
+      stats.core_undetermined++;
+      diagnostics.push({ metric: "core", code: "conflicting_core_assessments", batch_id: core.batch_id,
+        case_id: core.case_id, version: core.version, comparison_ids: core.rows.map((row) => row.comparison_id),
+        values: [...values] });
+    } else if (values.has(null)) stats.core_undetermined++;
+    else {
+      stats.core_decidable_count++;
+      if (values.has(true)) stats.meets_core++;
+    }
+  }
   const perVersion: Record<
     string,
     {
       correct: number;
       incorrect: number;
       undetermined: number;
+      conflicted_count: number;
       evaluated?: number;
       decidable_coverage?: number | null;
       accuracy_among_decidable?: number | null;
     }
   > = {};
+  const answers = new Map<string, { batch_id: string; case_id: string; version: string; rows: JsonObject[]; references: Set<string> }>();
+  const answer = (batch: string, caseId: string, version: string) => {
+    const key = answerKey(batch, caseId, version);
+    let value = answers.get(key);
+    if (!value) answers.set(key, value = { batch_id: batch, case_id: caseId, version, rows: [], references: new Set() });
+    return value;
+  };
   for (const row of attribution) {
-    const stats = (perVersion[String(row.version)] ??= {
+    answer(String(row.batch_id), String(row.case_id), String(row.version)).rows.push(row);
+  }
+  for (const row of comparisons) {
+    const identity = row.case as { batch_id: string; case_id: string };
+    for (const [version, source] of Object.entries((row.attribution_task_ids ?? {}) as Record<string, string>))
+      answer(identity.batch_id, identity.case_id, version).references.add(source);
+  }
+  const currentSources = new Map<string, { tasks: Set<string>; inputs: Set<string> }>();
+  for (const task of tasks) if (task.stage === "attribution") {
+    const candidate = (task.data as TaskData).candidates.A;
+    const key = answerKey(candidate.batch_id, candidate.case_id, candidate.version);
+    let source = currentSources.get(key);
+    if (!source) currentSources.set(key, source = { tasks: new Set(), inputs: new Set() });
+    source.tasks.add(task.id);
+    source.inputs.add(task.inputIds.answer!);
+  }
+  for (const [key, value] of answers) {
+    const stats = (perVersion[value.version] ??= {
       correct: 0,
       incorrect: 0,
       undetermined: 0,
+      conflicted_count: 0,
     });
-    stats[row.is_correct === true ? "correct" : row.is_correct === false ? "incorrect" : "undetermined"]++;
+    let selected = value.rows, incomplete = false, ambiguous = false;
+    if (value.references.size) {
+      selected = selected.filter((row) => value.references.has(String(row.task_id)));
+      const found = new Set(selected.map((row) => String(row.task_id)));
+      const missing = [...value.references].filter((id) => !found.has(id));
+      if (missing.length) {
+        incomplete = true;
+        diagnostics.push({ metric: "correctness", code: "missing_attribution_source", batch_id: value.batch_id,
+          case_id: value.case_id, version: value.version, task_ids: missing });
+      }
+    } else {
+      const current = currentSources.get(key);
+      if (current) selected = selected.filter((row) => current.tasks.has(String(row.task_id)) && current.inputs.has(String(row.input_id)));
+      const inputs = new Set(selected.map((row) => String(row.input_id)));
+      ambiguous = inputs.size > 1 || (current?.inputs.size ?? 0) > 1;
+      if (ambiguous) diagnostics.push({ metric: "correctness", code: "ambiguous_input_source", batch_id: value.batch_id,
+        case_id: value.case_id, version: value.version, task_ids: selected.map((row) => row.task_id), input_ids: [...(current?.inputs ?? inputs)] });
+      if (!selected.length) {
+        incomplete = true;
+        diagnostics.push({ metric: "correctness", code: "missing_current_attribution_source", batch_id: value.batch_id,
+          case_id: value.case_id, version: value.version, task_ids: [...(current?.tasks ?? [])] });
+      }
+    }
+    const conclusions = new Set(selected.map((row) => typeof row.is_correct === "boolean" ? row.is_correct : null));
+    const conflicted = conclusions.size > 1;
+    if (conflicted) {
+      stats.conflicted_count++;
+      diagnostics.push({ metric: "correctness", code: "conflicting_attribution_conclusions", batch_id: value.batch_id,
+        case_id: value.case_id, version: value.version, task_ids: selected.map((row) => row.task_id), values: [...conclusions] });
+    }
+    const result = conclusions.values().next().value;
+    stats[incomplete || ambiguous || conflicted || result === null || result === undefined ? "undetermined" : result ? "correct" : "incorrect"]++;
   }
   for (const stats of Object.values(perVersion)) {
     const total = stats.correct + stats.incorrect + stats.undetermined,
@@ -131,7 +215,8 @@ function summarizeResults(
       version,
       {
         ...stats,
-        meets_core_rate: stats.entered ? stats.meets_core / stats.entered : null,
+        meets_core_rate: stats.core_decidable_count ? stats.meets_core / stats.core_decidable_count : null,
+        core_decidable_coverage: stats.core_case_count ? stats.core_decidable_count / stats.core_case_count : null,
         average_tier: stats.entered ? Math.round((stats.tier_sum / stats.entered) * 1e6) / 1e6 : null,
       },
     ]),
@@ -147,6 +232,7 @@ function summarizeResults(
     completed_comparisons: comparisons.length,
     head_to_head: headToHead,
     standings: rounded,
+    ...(diagnostics.length ? { statistical_diagnostics: diagnostics } : {}),
     ...(Object.values(perVersion).some((stats) => stats.evaluated) ? { per_version: perVersion } : {}),
   };
 }
@@ -160,7 +246,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
   const needsInputs = manifest.tasks.some(
-    (task) => task.stage === "comparison" && state.receipts[task.id] && !state.receipts[task.id].exported,
+    (task) => task.stage === "comparison" && state.receipts[task.id] &&
+      (state.receipts[task.id].evaluation as ComparisonResult).status === "decided" && !state.receipts[task.id].exported,
   );
   const inputs = needsInputs ? await loadRunInputs(manifest) : {};
   for (const task of manifest.tasks) {
@@ -184,7 +271,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       commentaryBySource.set(source.taskId, toRewrites({ rewrites: [...(stored?.rewrites ?? []), ...(evaluation?.rewrites ?? [])] }));
   }
   const commentary: CommentaryLookup = { of: (sourceTaskId) => commentaryBySource.get(sourceTaskId || "") };
-  // Persist both stages before compacting the ledger, including checkpoint-only recovery.
+  // Persist accepted stages before compacting the ledger, including checkpoint-only recovery.
   await createResultWriter(run, inputs)(state);
   const problemLibrary = await syncProblemLibrary(state);
   const comparisons: JsonObject[] = [],
@@ -208,7 +295,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       reason: manifest.states[task.id]?.reason || null,
     });
     // Rewrite and clustering receipts feed the report view, not the per-case result sections.
-    if (task.stage === "rewrite" || task.stage === "clustering") continue;
+    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria") continue;
     if (!receipt) {
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
@@ -233,7 +320,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       continue;
     }
     const result = receipt.evaluation as ComparisonResult,
-      row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names, receipt.evaluatorVersion);
+      review = result.status === "needs_review";
+    if (review) {
+      markdown.push(`## ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`, "", "**状态**：待复核", "",
+        ...result.review_requests.map((item) => `- ${names[data.candidates[item.candidate]!.version]}：${item.reason}`), "");
+      continue;
+    }
+    const row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names, receipt.evaluatorVersion);
     if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
     comparisons.push(row);
     receipt.exported = { id: String(row.comparison_id), row };
@@ -299,7 +392,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       "",
       "## 要求",
       "",
-      ...analysis.requirements.map((v) => `- ${v}`),
+      ...analysis.requirements.map((v) => `- ${v.id}：${v.text}；验收：${v.acceptance_rule}`),
       "",
     );
     const basis = view.decision_basis as ComparisonResult["decision_basis"];
@@ -341,11 +434,11 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     markdown.push(
       "## 得分点",
       "",
-      ...analysis.scoring_points.map((v) => `- ${v}`),
+      ...analysis.scoring_points.map((v) => `- ${v.id}：${v.text}；验收：${v.acceptance_rule}`),
       "",
       "## Red flags",
       "",
-      ...analysis.red_flags.map((v) => `- ${v}`),
+      ...analysis.red_flags.map((v) => `- ${v.id}：${v.text}；验收：${v.acceptance_rule}`),
       "",
       "---",
       "",
@@ -353,14 +446,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   }
   const results = layout.results;
   await localFiles.mkdir(results, { recursive: true });
-  for (const old of await localFiles.list(results))
-    if (
-      old.endsWith(".jsonl") &&
-      !["attribution.jsonl", "comparison.jsonl", "clustering.jsonl"].includes(
-        old,
-      )
-    )
-      await localFiles.remove(path.join(results, old));
   if (comparisons.length) await writeJsonl(path.join(results, "comparison.jsonl"), comparisons);
   else await localFiles.remove(path.join(results, "comparison.jsonl"), { force: true });
   const exports = internalPath(run, "exports");
@@ -463,6 +548,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     }),
   );
   const resultArtifacts = ["results/attribution.jsonl"];
+  if (manifest.tasks.some((task) => task.stage === "criteria" && receipts.has(task.id))) resultArtifacts.push("results/criteria.jsonl");
+  if (manifest.tasks.some((task) => task.stage === "comparison" &&
+    (receipts.get(task.id)?.evaluation as ComparisonResult | undefined)?.status === "needs_review")) resultArtifacts.push("results/comparison-review.jsonl");
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
   if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
     resultArtifacts.push("results/clustering.jsonl");

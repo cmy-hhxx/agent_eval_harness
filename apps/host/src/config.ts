@@ -197,11 +197,12 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     if (
       !Array.isArray(group) ||
       group.length < 2 ||
+      group.length > 3 ||
       group.some((id) => typeof id !== "string") ||
       new Set(group).size !== group.length ||
       group.some((id) => !versions.some((version) => version.id === id))
     )
-      throw new Error("Invalid comparisons; each group needs >=2 distinct registered version IDs");
+      throw new Error("Invalid comparisons; each group needs 2–3 distinct registered version IDs");
     const key = [...group].sort().join("\u0000");
     if (seenGroups.has(key)) throw new Error("Duplicate comparison group: " + group.join(" / "));
     seenGroups.add(key);
@@ -289,7 +290,7 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
   return { models, bindings };
 }
 
-const DASHBOARD_STAGES = ["attribution", "comparison", "rewrite", "clustering"] as const;
+const DASHBOARD_STAGES = ["criteria", "attribution", "comparison", "rewrite", "clustering"] as const;
 const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
 const DASHBOARD_BINDING = ["model", "thinking"] as const;
 
@@ -298,7 +299,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
   const rewrite = isObject(source.rewrite) ? source.rewrite : {};
   const clustering = isObject(source.clustering) ? source.clustering : {};
   const models = isObject(source.models) ? source.models : {};
-  const bindings = isObject(source.bindings) ? source.bindings : {};
+  const bindings = isObject(source.bindings) ? { ...source.bindings } : {};
   const inputs = isObject(source.inputs) ? source.inputs : {};
   return {
     execution: {

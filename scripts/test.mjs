@@ -16,4 +16,4 @@ const files = (
 )
   .flat()
   .sort();
-await run("node", ["--test", ...files]);
+await run("node", ["--test", ...files, "scripts/benchmark.test.mjs"]);

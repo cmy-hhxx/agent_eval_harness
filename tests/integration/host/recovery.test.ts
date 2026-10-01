@@ -9,9 +9,10 @@ import {
   type AttemptSpec,
   type RunManifest,
   type Submission,
+  type PlannedTask,
 } from "@eval/contracts";
 import { createFileLogger, exists, readJson, runLock, writeJsonl } from "@eval/data";
-import { readRunState, type Checkpoint } from "@eval/workflows/comparison";
+import { readRunState, writeRunState, createResultWriter, type Checkpoint } from "@eval/workflows/comparison";
 import { services, prepare } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
 import { buildPlan } from "@eval/workflows/comparison";
@@ -27,12 +28,14 @@ import {
   fixtureConfig,
   raw,
   taskResult,
+  criteriaResult,
+  fakeJudge,
 } from "../../fixtures/comparison.js";
 
 async function fixture(rows = [raw("q", null)]) {
   const { directory, config } = await fixtureConfig([rows, [], rows, []]);
   const plan = await buildPlan(config),
-    task = plan.tasks[0];
+    task = plan.tasks.find((task) => task.stage === "attribution")!;
   const run = path.join(directory, "run");
   const manifest: RunManifest = {
     format: "evaluation-run",
@@ -48,13 +51,22 @@ async function fixture(rows = [raw("q", null)]) {
     preflight: plan.summary,
     startedAt: Date.now(),
   };
+  const criteriaReceipts = Object.fromEntries(plan.tasks.filter((item) => item.stage === "criteria").map((criteria) => {
+    manifest.states[criteria.id].status = "succeeded";
+    return [criteria.id, { taskId: criteria.id, attemptId: "criteria", submissionId: randomUUID(),
+      evaluation: criteriaResult(), evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge,
+      audit: emptyAudit(), usage: emptyUsage(), status: "succeeded" as const, acceptedAt: 0 }];
+  }));
+  const initial = { manifest, receipts: criteriaReceipts, usage: emptyUsage(), recordedAttempts: 0 };
+  await createResultWriter(run, plan.inputs)(initial);
+  await writeRunState(run, initial);
   const store = new RunStore(
       run,
-      { manifest, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 },
+      initial,
       plan.inputs,
       services,
     ),
-    prepared = prepare(task, plan.inputs, {});
+    prepared = prepare(task, plan.inputs, { criteria: criteriaReceipts[task.dependencies.criteria] });
   const spec: AttemptSpec = {
     inputRevision: 1,
     runId: "test",
@@ -196,7 +208,7 @@ test("receipt reads do not wait for unrelated checkpoint writes", async (t) => {
   try {
     await entered;
     const available = await Promise.race([
-      Promise.all([store.receipt(spec.taskId), store.receipt(store.manifest.tasks[1].id)]),
+      Promise.all([store.receipt(spec.taskId), store.receipt(store.manifest.tasks.find((task) => task.stage === "attribution" && task.id !== spec.taskId)!.id)]),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
     ]);
     assert.deepEqual(available, [accepted, undefined]);
@@ -280,8 +292,66 @@ test("concurrent tasks cannot reserve the same submission ID", async () => {
     })));
     assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
     assert.equal(results.filter((r) => r.status === "rejected").length, 1);
-    assert.equal(Object.keys((await readRunState(store.run)).receipts).length, 1);
+    assert.equal(Object.keys((await readRunState(store.run)).receipts).length, 2);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("failed follow-up commits roll back task changes and preserve a queued independent receipt", async () => {
+  const setup = await fixture();
+  const { directory, spec, value } = setup;
+  const original = setup.store.manifest.tasks.find((task) => task.stage === "comparison")!;
+  const other = setup.store.manifest.tasks.find((task) => task.stage === "attribution" && task.id !== spec.taskId)!;
+  const added: PlannedTask = { ...original, id: randomUUID(), dependencies: { source: spec.taskId } };
+  let enter = () => {}, release = () => {}, fail = true;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const store = new RunStore(setup.store.run, setup.store.state, setup.store.inputs, {
+    ...services,
+    repository: { ...services.repository, async writeRun(run, snapshot) {
+      if (fail && snapshot.receipts[spec.taskId]) {
+        enter();
+        await blocked;
+        fail = false;
+        throw new Error("follow-up checkpoint unavailable");
+      }
+      await services.repository.writeRun(run, snapshot);
+    } },
+    taskSource: { ...services.taskSource, advance(task) {
+      return task.id === spec.taskId ? { tasks: [added], blocked: [original.id],
+        replace: [{ ...original, dependencies: { ...original.dependencies, A: added.id } }] } : { tasks: [] };
+    } },
+  });
+  store.manifest.executionScope = [spec.taskId];
+  const secondSpec = { ...spec, taskId: other.id, attemptId: "independent", inputs: Object.entries(other.inputIds).map(([name, id]) => ({ name, id })) };
+  let first: Promise<unknown> | undefined, second: Promise<unknown> | undefined;
+  try {
+    await store.activate(spec);
+    await store.activate(secondSpec);
+    first = store.accept(value);
+    // Attach the rejection observer before releasing the deliberate IO failure.
+    const firstOutcome = first.then(() => "accepted", (error: Error) => error.message);
+    await entered;
+    second = store.accept({ ...value, taskId: other.id, attemptId: secondSpec.attemptId, submissionId: randomUUID() });
+    release();
+    assert.equal(await firstOutcome, "follow-up checkpoint unavailable");
+    const accepted = await second;
+    assert.equal(store.state.receipts[spec.taskId], undefined);
+    assert.equal(store.manifest.states[spec.taskId].status, "running");
+    assert.equal(store.manifest.states[original.id].status, "pending");
+    assert.deepEqual(store.manifest.tasks.find((task) => task.id === original.id), original);
+    assert.equal(store.manifest.tasks.some((task) => task.id === added.id), false);
+    assert.equal(store.manifest.states[added.id], undefined);
+    assert.deepEqual(store.manifest.executionScope, [spec.taskId]);
+    assert.deepEqual(store.state.receipts[other.id], accepted);
+    const restored = await readRunState(store.run);
+    assert.deepEqual(restored.receipts[other.id], accepted);
+    assert.equal(restored.receipts[spec.taskId], undefined);
+    assert.equal(restored.manifest.tasks.some((task) => task.id === added.id), false);
+  } finally {
+    release();
+    await Promise.allSettled([first, second]);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("business logs contain durable accepted rows once, recover omissions and ignore rejected submissions", async () => {
@@ -299,20 +369,21 @@ test("business logs contain durable accepted rows once, recover omissions and ig
   try {
     await logger.initialize();
     await store.activate(spec);
+    const baseline = await readFile(file, "utf8");
     await assert.rejects(store.accept({ ...value, evaluation: {} }));
-    assert.equal(await readFile(file, "utf8"), "");
+    assert.equal(await readFile(file, "utf8"), baseline);
     await store.accept(value);
     await store.accept(value);
     const rows = (await readFile(file, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].run_id, "test");
-    assert.equal(rows[0].stage, "attribution");
-    assert.equal(rows[0].submission_id, value.submissionId);
+    assert.equal(rows.length, 2);
+    const attribution = rows.find((row) => row.stage === "attribution")!;
+    assert.equal(attribution.run_id, "test");
+    assert.equal(attribution.submission_id, value.submissionId);
     assert.deepEqual(
-      rows[0].result,
+      attribution.result,
       JSON.parse(await readFile(path.join(store.run, "results/attribution.jsonl"), "utf8")),
     );
     const restored = new RunStore(store.run, await readRunState(store.run), store.inputs, {
@@ -320,7 +391,7 @@ test("business logs contain durable accepted rows once, recover omissions and ig
       logger,
     });
     await restored.save();
-    assert.equal((await readFile(file, "utf8")).trim().split("\n").length, 1);
+    assert.equal((await readFile(file, "utf8")).trim().split("\n").length, 2);
     await rm(file);
     const replay = new RunStore(store.run, await readRunState(store.run), store.inputs, {
       ...services,
@@ -330,7 +401,7 @@ test("business logs contain durable accepted rows once, recover omissions and ig
       }),
     });
     await replay.save();
-    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), rows[0]);
+    assert.deepEqual((await readFile(file, "utf8")).trim().split("\n").map((line) => JSON.parse(line)), rows);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

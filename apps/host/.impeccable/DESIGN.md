@@ -2,19 +2,19 @@
 name: Host 自动化监控
 description: Host 自动化监控与错误页的界面规格
 colors:
-  text: "#171a20"
-  muted: "#5f6876"
-  canvas: "#f5f6f8"
+  text: "#192a35"
+  muted: "#596c79"
+  canvas: "#f3f6f7"
   surface: "#ffffff"
-  soft: "#f3f5f7"
-  line: "#e2e6ea"
-  accent: "#205ec8"
-  accent-soft: "#eaf1fd"
+  soft: "#f2f6f7"
+  line: "#dfe7eb"
+  accent: "#087f83"
+  accent-soft: "#e6f3f2"
   success: "#0b6b41"
   warning: "#8a5108"
   danger: "#b42318"
-typography: {body: {fontFamily: 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif', fontSize: "14px", lineHeight: 1.55}}
-rounded: {control: "6px", table: "8px"}
+typography: {body: {fontFamily: '"Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif', fontSize: "14px", lineHeight: 1.55}}
+rounded: {control: "8px", table: "8px"}
 ---
 
 ## Overview
@@ -23,11 +23,11 @@ rounded: {control: "6px", table: "8px"}
 
 ## Colors
 
-灰色画布承托白色表格，细灰线分隔行与区块。蓝色用于交互、运行状态和完成量条；绿色表示成功，棕色表示待重试或待核实，红色表示错误。状态同时显示文字。
+灰色画布承托白色表格，细灰线分隔行与区块。青绿色用于交互、运行状态和完成量条；绿色表示成功，棕色表示待重试或待核实，红色表示错误。状态同时显示文字。颜色与控件形状取自工作台共用的 `dashboard.css`。
 
 ## Typography
 
-沿用系统中文字体。页面标题 18px，区块标题 16px，表格正文 13px，表头和辅助状态 12px；数字使用等宽数字字形。
+英文字体优先 Avenir Next，中文沿用系统字体。页面标题 18px，区块标题 16px，表格正文 13px，表头和辅助状态 12px；数字使用等宽数字字形，代码与紧凑数值使用 SF Mono / 系统等宽字体。
 
 ## Layout
 
@@ -39,11 +39,11 @@ rounded: {control: "6px", table: "8px"}
 
 ## Shapes
 
-表格容器为 8px 圆角、1px 边框，控件为 6px 圆角；状态文字前有 6px 圆点，完成量以 6px 高的水平条辅助比较。
+表格容器与控件均为 8px 圆角、1px 边框；状态文字前有 6px 圆点，完成量以 6px 高的水平条辅助比较。
 
 ## Components
 
-刷新、筛选和分页按钮桌面最小高度 40px，窄屏为 44px；键盘焦点使用蓝色轮廓。页签支持方向键、Home 和 End，以及 URL 锚点直达。日期进度只显示数据日期筛选，日志交付只显示记录时间筛选，其他视图同时显示二者；时间范围为近 24 小时、近 7 天和全部时间。一键重置仅重置当前视图适用的筛选。
+刷新、筛选和分页按钮桌面最小高度 40px，窄屏为 44px；键盘焦点使用青绿色轮廓。页签支持方向键、Home 和 End，以及 URL 锚点直达。日期进度只显示数据日期筛选，日志交付只显示记录时间筛选，其他视图同时显示二者；时间范围为近 24 小时、近 7 天和全部时间。一键重置仅重置当前视图适用的筛选。
 
 各表显示记录范围、总条数、当前页及前后翻页按钮；汇总值覆盖所有筛选结果。切换页签或每 5 秒自动刷新均保留分页，筛选改变时回到第一页。完成量按北京时间整点分桶，对比必须完成归因及对比改写；聚类和聚类改写后置，不计入自动化进度。已确认完成的历史日期按原评测范围统计。断连保留最后数据并显示错误横幅，筛选不会清除断连状态，重连后恢复。页面只读，不提供调度控制。
 

@@ -4,7 +4,7 @@ import { ValidationError } from "@eval/contracts";
 import { rewriteProfile } from "./index.js";
 import cases from "./fixtures/quality.json" with { type: "json" };
 
-const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
+const audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 for (const sample of cases) test(`rewrite quality regression: ${sample.name}`, () => {
   const request = { input: { kind: "comparison", items: [sample.item] }, sources: {} };
   rewriteProfile.validate!(request, { rewrites: [{ id: sample.item.id, text: sample.approved }] }, audit);

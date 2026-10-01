@@ -12,7 +12,7 @@ import { adapt, candidateKey, taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
-import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow } from "./results.js";
+import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult } from "./results.js";
 import { taskObservations } from "./observations.js";
 import { deliveryCoverage, type DeliveryRequirements } from "./delivery.js";
 
@@ -145,6 +145,12 @@ export async function validateRun(
     if (receipts.has(task.id)) {
       try {
         const receipt = receipts.get(task.id)!;
+        if (task.stage === "criteria" || (receipt.evaluation as ComparisonResult).status === "needs_review") {
+          const exported = encodeResult(task, state, inputs);
+          if (!expected.has(exported.file!)) expected.set(exported.file!, []);
+          expected.get(exported.file!)!.push(canonical(exported.row));
+          continue;
+        }
         if (task.stage === "attribution") {
           const row = receipt.exported?.row || attributionRow(task, receipt);
           if (

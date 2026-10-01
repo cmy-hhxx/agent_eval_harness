@@ -56,7 +56,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
     }
     const resume = { ...options, plan: { tasks: [], inputs: {}, summary: {} } };
     await runEvaluation(resume);
-    assert.equal(calls, 7, "six original judgments plus one selected rewrite");
+    assert.equal(calls, 9, "eight original judgments including shared criteria plus one selected rewrite");
     let after = await readRunState(run);
     assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison").length, 2);
     for (const task of baseline.manifest.tasks) {

@@ -40,6 +40,9 @@
       "@eval/agents/comparison": [
         "./packages/agents/src/comparison/index.ts"
       ],
+      "@eval/agents/criteria": [
+        "./packages/agents/src/criteria/index.ts"
+      ],
       "@eval/agents/attribution": [
         "./packages/agents/src/attribution/index.ts"
       ],

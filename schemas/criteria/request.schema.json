@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question", "ground_truth", "candidates"],
+  "properties": {
+    "question": { "type": "string", "minLength": 1 },
+    "ground_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "value"],
+      "properties": { "available": { "type": "boolean" }, "value": {} }
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "instructions", "context"],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "instructions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message_index", "role", "content"],
+              "properties": {
+                "message_index": { "type": "integer", "minimum": 0 },
+                "role": { "enum": ["system", "developer"] },
+                "content": {}
+              }
+            }
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["message_index", "role", "content"],
+              "properties": {
+                "message_index": { "type": "integer", "minimum": 0 },
+                "role": { "const": "user" },
+                "content": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

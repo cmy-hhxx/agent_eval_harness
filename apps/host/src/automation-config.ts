@@ -92,11 +92,13 @@ export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: st
     ...base,
     inputs: {
       timing_unit: base.inputs.timing_unit, default_batch_id: date,
-      versions: base.inputs.versions.filter((version) => (REMOTE_MODELS as readonly string[]).includes(version.id)).map((version) => ({
-        ...version, sources: [{ kind: "file", path: path.join(sourceDirectory, date, version.id + ".jsonl") }],
+      versions: base.inputs.versions.map((version) => ({
+        ...version, sources: (REMOTE_MODELS as readonly string[]).includes(version.id)
+          ? [{ kind: "file", path: path.join(sourceDirectory, date, version.id + ".jsonl") }] : version.sources,
       })),
+      batches: [date],
     },
-    comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]],
+    comparisons: base.comparisons,
     rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: false },
     clustering: { ...base.clustering, enabled: false },
   };

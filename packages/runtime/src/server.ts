@@ -90,6 +90,7 @@ export async function startWorker(
       audit: ToolAudit = {
         calls: 0,
         viewedImages: [],
+        traceReads: [],
         calculations: [],
         artifacts: [],
       },

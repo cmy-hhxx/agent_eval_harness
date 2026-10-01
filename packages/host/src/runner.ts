@@ -145,7 +145,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (!manifest.pausedStages?.some((pause) => pause.stage === stage)) throw new Error("Stage is not paused: " + stage);
     manifest.pausedStages = (manifest.pausedStages ?? []).filter((pause) => !options.resumeStages?.includes(pause.stage));
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
-    const inScope = (task: PlannedTask) => !selected || selected.has(task.id);
+    const inScope = (task: PlannedTask) => !manifest.executionScope || manifest.executionScope.includes(task.id);
     const dispatchable = (task: PlannedTask) => inScope(task) && !guard.paused(task.stage);
     manifest.concurrency = desiredConcurrency;
     for (const engine of new Set(manifest.tasks.map(engineForTask)))
@@ -661,7 +661,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         }
         if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
         if (running.size >= desiredConcurrency || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
-        const binding = options.taskSource.bind(task, inputs, await current.dependencies(task));
+        const acceptedDependencies = await current.dependencies(task);
+        const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
+        if (reason) {
+          manifest.states[task.id].status = "blocked";
+          manifest.states[task.id].reason = reason;
+          blocked = true;
+          continue;
+        }
+        const binding = options.taskSource.bind(task, inputs, acceptedDependencies);
         if (guard.paused(task.stage)) continue;
         const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(

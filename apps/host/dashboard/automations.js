@@ -4,7 +4,7 @@ const number = (value) => Number(value ?? 0).toLocaleString("zh-CN");
 const percent = (value) => value == null ? "暂无用量" : value.toLocaleString("zh-CN", { style: "percent", maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
 const time = (value) => value ? dateFormat.format(value) : "—";
-const stages = ["attribution", "comparison", "rewrite"];
+const stages = ["criteria", "attribution", "comparison", "rewrite"];
 const labels = { running: "运行中", stopped: "已停止", pending: "等待中", downloading: "下载中", ready: "已就绪", retry: "等待重试", evaluating: "评测中", completed: "已完成", waiting_inputs: "已完成，等待新增输入", blocked: "已暂停", uncertain: "待核实", sending: "上传中", uploaded: "已上传" };
 const tones = { running: "active", evaluating: "active", downloading: "active", completed: "success", uploaded: "success", ready: "success", retry: "warning", uncertain: "warning", blocked: "error" };
 const status = (value, label = labels[value] ?? value) => `<span class="status-label tone-${tones[value] ?? "neutral"}">${escape(label)}</span>`;
@@ -37,7 +37,7 @@ function renderExecution() {
   $("concurrency-label").textContent = connected ? "实时并发" : "并发快照";
   $("live-concurrency").textContent = `${number(execution.runningTasks)} / ${number(execution.concurrency)} 任务`;
   $("slot-utilization").textContent = `槽位利用率 ${percent(execution.concurrency ? execution.runningTasks / execution.concurrency : null)} · 空闲 ${number(Math.max(0, execution.concurrency - execution.runningTasks))}`;
-  $("live-stages").textContent = `${number(execution.runningCases)} 题 · 归因 ${number(execution.stages.attribution)} · 对比 ${number(execution.stages.comparison)} · 改写 ${number(execution.stages.rewrite)}`;
+  $("live-stages").textContent = `${number(execution.runningCases)} 题 · 标准 ${number(execution.stages.criteria)} · 归因 ${number(execution.stages.attribution)} · 对比 ${number(execution.stages.comparison)} · 改写 ${number(execution.stages.rewrite)}`;
   const retryJobs = data.jobs.filter((job) => job.evaluation === "retry");
   const retries = retryJobs.reduce((sum, job) => sum + stages.reduce((n, stage) => n + (job.summary?.stages[stage]?.failed ?? 0) +
     (job.summary?.stages[stage]?.cancelled ?? 0), 0), execution.retryingTasks);
@@ -171,7 +171,7 @@ function render() {
   $("date-total").textContent = `${number(jobs.length)} 个日期`;
   $("date-rows").innerHTML = pageRows("date", jobs).map((job) => {
     const error = [["retry", "blocked"].includes(job.evaluation) ? job.evaluationError : undefined, job.monitorError].filter(Boolean).join("\n");
-    const cells = ["attribution", "rewrite"].map((name) => {
+    const cells = ["criteria", "attribution", "rewrite"].map((name) => {
       const stage = job.summary?.stages[name];
       if (!stage) return "<td>—</td>";
       const retrying = job.execution?.retryingStages?.[name] ?? 0, pending = Math.max(0, (stage.pending ?? 0) - retrying);
@@ -187,7 +187,7 @@ function render() {
       <td>${status(job.evaluation)}${job.evaluation === "retry" ? retrySchedule(job.nextEvaluationAt) + sub(`连续失败 ${number(job.evaluationAttempts)} 轮`) : ""}${job.execution?.retryingTasks ? sub(`任务重试 ${number(job.execution.retryingTasks)} 个`, "tone-warning") + retrySchedule(job.execution.nextRetryAt) : ""}${error ? sub(error, "row-error") : ""}</td>
       <td class="completed-comparisons">${comparison ? `${number(job.summary.readyComparisons)} / ${number(comparison.total)}` : "—"}</td>
       <td class="task-pool">${pool}</td>${cells}<td class="cache-rate">${percent(job.cache?.hitRate)}</td></tr>`;
-  }).join("") || empty(10, "暂无日期");
+  }).join("") || empty(11, "暂无日期");
 
   const hours = new Map();
   for (const job of jobs) for (const hour of job.hours) {
@@ -202,7 +202,7 @@ function render() {
   $("activity-total").textContent = `${cutoff ? time(cutoff) + " 起 · " : ""}${number(sorted.reduce((total, hour) => total + hour.completed, 0))} 条对比 · 含改写`;
   $("activity-rows").innerHTML = pageRows("activity", sorted).map((hour) => `<tr><td>${time(hour.start)} — ${time(Math.min(hour.start + 3600000, data.sampledAt))}</td>
     <td class="volume-cell"><div class="volume"><strong>${number(hour.completed)}</strong><span class="volume-track" aria-hidden="true"><span style="width:${hour.completed / maximum * 100}%"></span></span></div></td>
-    ${stages.map((name) => `<td>${number(hour.stages[name])}</td>`).join("")}</tr>`).join("") || empty(5, "此时段暂无完成记录");
+    ${stages.map((name) => `<td>${number(hour.stages[name])}</td>`).join("")}</tr>`).join("") || empty(6, "此时段暂无完成记录");
 
   const deliveries = [...(data.publicationHistory ?? []), ...(data.publication?.traceId ? [data.publication] : [])];
   const visible = deliveries.filter((delivery) => Math.max(delivery.startedAt ?? 0, delivery.completedAt ?? 0, delivery.log?.uploadedAt ?? 0, delivery.log?.confirmedAt ?? 0, delivery.window ?? 0) >= cutoff || ["running", "retry", "uncertain"].includes(delivery.status)).sort((a, b) => (b.window ?? 0) - (a.window ?? 0));

@@ -17,7 +17,7 @@ test("named datasets index only business coordinates and select exact model file
   try {
     const catalog = path.join(directory, "catalog");
     const first = config.inputs.versions[0]!;
-    const second = { id: "new_model", name: "New Model", adapter: "a", sources: [{ kind: "file" as const, path: path.join(directory, "new_model.jsonl") }] };
+    const second = { id: "new_model", name: "New Model", comparison_tier: "Fast", adapter: "a", sources: [{ kind: "file" as const, path: path.join(directory, "new_model.jsonl") }] };
     config.inputs.versions = [first, second];
     config.comparisons = [[first.id, second.id]];
     const selected = [first, second];

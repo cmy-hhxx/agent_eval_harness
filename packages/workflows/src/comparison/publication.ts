@@ -4,6 +4,7 @@ import type { EvalConfig } from "./types.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import statisticsLogSchema from "../../../../schemas/workflow/statistics-log.schema.json" with { type: "json" };
 import { verdictSlotId } from "./commentary.js";
+import { expandComparisonPairs } from "./input.js";
 
 const logAjv = new Ajv2020({ allErrors: true });
 const validateStatisticsLog = logAjv.compile(statisticsLogSchema);
@@ -12,16 +13,6 @@ const validateStatisticsLog = logAjv.compile(statisticsLogSchema);
 export function assertStatisticsLog(record: unknown): asserts record is JsonObject {
   if (!validateStatisticsLog(record))
     throw new Error("Statistics log violates frozen contract: " + logAjv.errorsText(validateStatisticsLog.errors));
-}
-
-/** Clustering writes a separate artifact; it cannot delay an already polished comparison.jsonl row. */
-export function publishableComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
-  return comparisonReceipts(state, false, requireItems);
-}
-
-/** Full-stage completion still includes clustering and its rewrite. */
-export function completedComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
-  return comparisonReceipts(state, true, requireItems);
 }
 
 /** Check the actual merged JSONL text before publishing a complete comparison rewrite. */
@@ -35,28 +26,20 @@ export function assertCompleteComparisonRewrite(row: JsonObject, labels: string[
   if (missing.length) throw new Error(`Comparison rewrite incomplete: ${row.comparison_id}: ${missing.join(", ")}`);
 }
 
-function comparisonReceipts(state: Checkpoint, includeClustering: boolean, requireItems: boolean): Map<string, number> {
+/** Clustering writes a separate artifact; it cannot delay an already polished comparison.jsonl row. */
+export function publishableComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
   const ready = new Map<string, number>();
   const entries = Object.entries(state.tasks);
   const rewrites = new Map<string, string[]>();
-  const clustering = new Map<string, string[]>();
-  for (const [id, task] of entries) if (task.stage === "clustering")
-    for (const attribution of Object.values(task.dependencies))
-      clustering.set(attribution, [...(clustering.get(attribution) ?? []), id]);
   for (const [id, task] of entries) if (task.data.rewriteOf) {
     const source = task.data.rewriteOf.taskId;
     rewrites.set(source, [...(rewrites.get(source) ?? []), id]);
   }
   const config = state.config as EvalConfig;
   for (const [id, task] of entries) {
-    if (task.stage !== "comparison") continue;
+    if (task.stage !== "comparison" || task.data.supersededBy || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
     const required = new Set([id, ...Object.values(task.dependencies)]);
     let missing = false;
-    for (const attribution of includeClustering ? Object.values(task.dependencies) : []) {
-      const planned = clustering.get(attribution) ?? [];
-      if (config.clustering.enabled && !planned.length) missing = true;
-      planned.forEach((cluster) => required.add(cluster));
-    }
     for (const sourceId of [...required]) {
       const source = state.tasks[sourceId];
       if (!source) { missing = true; continue; }
@@ -79,7 +62,6 @@ const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 type InputSummary = { caseId: string; date: string | null; batchDate: string | null; id: string; name: string; task: string; difficulty: string; meta: JsonObject };
 type Pair = { caseId: string; a: string; b: string; winner: unknown; result: "win" | "both_good" | "both_bad"; correct: Record<string, boolean | null> };
 const pairKey = (caseId: string, a: string, b: string) => JSON.stringify([caseId, ...[a, b].sort()]);
-const modes = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
 const levels = [
   ["L1", "简单", "事实查询与直接计算"], ["L2", "中等", "多条件组合与研判"],
   ["L3", "复杂", "深度分析与开放推理"], ["L4", "长程任务", "多步骤长链任务"],
@@ -111,6 +93,23 @@ export class PublicationStatistics {
   private readonly inputs = new Map<string, InputSummary>();
   private readonly pairs = new Map<string, Pair>();
   private readonly labels = new Map<string, Pick<PublicationLabels, "task" | "difficulty">>();
+  private readonly matchups: string[][] = [];
+  private readonly batchMatchups = new Map<string, string[][]>();
+  private readonly correctness = new Map<string, boolean | null>();
+  private readonly core = new Map<string, boolean>();
+  constructor(groups: readonly (readonly string[])[]) {
+    this.addGroups(groups);
+  }
+  addGroups(groups: readonly (readonly string[])[], batchId?: string): void {
+    if (batchId !== undefined) {
+      this.batchMatchups.set(batchId, expandComparisonPairs([...(this.batchMatchups.get(batchId) ?? []), ...groups]));
+      return;
+    }
+    this.matchups.splice(0, this.matchups.length, ...expandComparisonPairs([...this.matchups, ...groups]));
+  }
+  private pairsForBatch(batchId: unknown): string[][] {
+    return this.batchMatchups.get(String(batchId)) ?? this.matchups;
+  }
   addLabels({ batchId, caseId, task, difficulty }: PublicationLabels) {
     const key = JSON.stringify([batchId, caseId]), existing = this.labels.get(key) ?? {};
     const values = { task: text(task), difficulty: text(difficulty) };
@@ -132,9 +131,17 @@ export class PublicationStatistics {
     });
   }
   addResult({ row }: PublicationResult) {
+    if (row.status === "needs_review" || row.evaluation_type === "comparison_review" || row.supersededBy)
+      throw new Error("Only settled, unsuperseded comparisons can enter publication statistics");
     const ids = Object.keys(object(row.models)).sort(), caseId = JSON.stringify([object(row.case).batch_id, object(row.case).case_id]);
-    if (ids.length !== 2 || !modes.some((pair) => pair.every((id) => ids.includes(id)))) throw new Error("Unexpected statistics pair");
-    const verdict = object(object(row.verdicts)[ids.join("__vs__")]);
+    if (ids.length !== 2 || !this.pairsForBatch(object(row.case).batch_id).some((pair) => pair.every((id) => ids.includes(id))))
+      throw new Error("Unexpected statistics pair; publication requires a configured two-candidate result");
+    const matching = Object.entries(object(row.verdicts)).filter(([key]) => {
+      const pair = key.split("__vs__");
+      return pair.length === 2 && ids.every((id) => pair.includes(id));
+    });
+    if (matching.length !== 1) throw new Error("Unexpected statistics verdict; exactly one configured pair is required");
+    const verdict = object(matching[0][1]);
     const result = verdict.result;
     if (result !== "win" && result !== "both_good" && result !== "both_bad") throw new Error("Unexpected statistics verdict result");
     if (result === "win" ? !ids.includes(String(verdict.winner_version)) : verdict.winner_version !== null)
@@ -145,6 +152,22 @@ export class PublicationStatistics {
     }));
     const key = pairKey(caseId, ...ids as [string, string]);
     if (this.pairs.has(key)) throw new Error("Duplicate statistics comparison: " + key);
+    for (const id of ids) {
+      const answerKey = JSON.stringify([caseId, id]);
+      if (this.correctness.has(answerKey) && this.correctness.get(answerKey) !== correct[id])
+        throw new Error("Conflicting answer correctness across comparisons: " + answerKey);
+      const meetsCore = object(object(row.assessments ?? {})[id] ?? {}).meets_core;
+      if (row.status === "decided" && typeof meetsCore !== "boolean")
+        throw new Error("Settled comparison is missing a core assessment: " + answerKey);
+      if (typeof meetsCore === "boolean" && this.core.has(answerKey) && this.core.get(answerKey) !== meetsCore)
+        throw new Error("Conflicting answer core assessments across comparisons: " + answerKey);
+    }
+    for (const id of ids) {
+      const answerKey = JSON.stringify([caseId, id]);
+      this.correctness.set(answerKey, correct[id]);
+      const meetsCore = object(object(row.assessments ?? {})[id] ?? {}).meets_core;
+      if (typeof meetsCore === "boolean") this.core.set(answerKey, meetsCore);
+    }
     this.pairs.set(key, { caseId, a: ids[0], b: ids[1], winner: verdict.winner_version, result, correct });
   }
   record(traceId: string, at: number, throughDate?: string): JsonObject {
@@ -171,7 +194,7 @@ export class PublicationStatistics {
       subset.forEach((row) => { if (!versions.has(row.caseId)) versions.set(row.caseId, new Set()); versions.get(row.caseId)!.add(row.id); });
       let expectedBattleCount = 0, completedBattleCount = 0, completedCaseCount = 0;
       for (const [caseId, ids] of versions) {
-        const expected = modes.filter((pair) => pair.every((id) => ids.has(id)));
+        const expected = this.pairsForBatch((JSON.parse(caseId) as unknown[])[0]).filter((pair) => pair.every((id) => ids.has(id)));
         const completed = expected.filter(([a, b]) => this.pairs.has(pairKey(caseId, a, b))).length;
         expectedBattleCount += expected.length; completedBattleCount += completed;
         if (expected.length && expected.length === completed) completedCaseCount++;
@@ -185,7 +208,8 @@ export class PublicationStatistics {
         if (!ps.length) return [];
         const cases = new Set(ps.map((pair) => pair.caseId));
         const answers = subset.filter((row) => row.id === model.id && cases.has(row.caseId));
-        const correct = ps.map((pair) => pair.correct[model.id]).filter((value): value is boolean => typeof value === "boolean");
+        const correct = [...new Map(ps.map((pair) => [pair.caseId, pair.correct[model.id]])).values()]
+          .filter((value): value is boolean => typeof value === "boolean");
         const wins = ps.filter((pair) => pair.winner === model.id).length, right = correct.filter(Boolean).length;
         return [{ ...model, wins, both_good: ps.filter((pair) => pair.result === "both_good").length,
           both_bad: ps.filter((pair) => pair.result === "both_bad").length, evaluated: ps.length, winRate: wins / ps.length * 100,

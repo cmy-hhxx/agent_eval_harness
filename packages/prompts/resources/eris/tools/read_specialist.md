@@ -1,1 +1,1 @@
-只查询当前用户、当前会话内由 call_specialist 创建的 operationId，返回任务状态、正式结果与 evaluatorVersion。operationId 必须来自那次调用，不是 list_data 返回的 taskId。已有评测运行的结果应使用 read_data({reference:{runId,taskId}})。找不到 operationId 表示当前会话没有该独立任务，不能据此断言已有运行没有正式结果。
+只查询当前用户、当前会话内由call_specialist创建的operationId，返回任务状态、正式结果与evaluatorVersion；3模型Comparison聚合全部3对结果，每对附真实runId/taskId引用。operationId必须来自那次调用，不是list_data返回的taskId。已有评测运行的结果应使用read_data({reference:{runId,taskId}})。找不到operationId表示当前会话没有该独立任务，不能据此断言已有运行没有正式结果。

@@ -1,5 +1,9 @@
-import type { RewrittenResult } from "@eval/contracts";
+import type { RewrittenResult, TaskAnalysis } from "@eval/contracts";
 import type { JsonObject } from "@eval/contracts";
+export type { TaskAnalysis } from "@eval/contracts";
+
+export type CriterionStatus = "met" | "partial" | "unmet" | "unknown" | "not_applicable";
+export type EvidenceStatus = "established" | "uncertain";
 
 export interface Evidence {
   message_index: number;
@@ -29,12 +33,11 @@ export interface Finding {
   };
   stage_trace?: JsonObject;
 }
-export interface TaskAnalysis {
-  task_type: string;
-  goal: string;
-  requirements: string[];
-  scoring_points: string[];
-  red_flags: string[];
+export interface CriterionAssessment {
+  criterion_id: string;
+  status: CriterionStatus;
+  evidence_status: EvidenceStatus;
+  summary: string;
 }
 /** Reference to a finding owned by the attribution stage. */
 export interface FindingRef {
@@ -43,22 +46,25 @@ export interface FindingRef {
 }
 export interface ComparisonAssessment {
   /** Whether the essential deliverable is usable; not an exact-reference-match flag. */
-  meets_core: boolean;
+  meets_core: boolean | null;
+  core_failure_refs: string[];
   summary: string;
 }
 export interface AlignedComparison {
   aspect: string;
+  criterion_ids: string[];
   importance: "high" | "medium" | "low";
   /** Empty when no candidate has a verified advantage on this aspect. */
   better_candidates: string[];
-  assessments: Record<string, { summary: string; finding_indices: number[] }>;
+  assessments: Record<string, { summary: string; finding_indices: number[]; status: CriterionStatus; evidence_status: EvidenceStatus }>;
 }
 /**
- * One comparison over a whole group: a tiered ranking plus per-candidate core
- * classification. Two-way verdicts are derived from these two, never judged in isolation.
+ * One independently judged pair. The workflow derives a verdict only after a decided result.
  */
 export interface ComparisonResult {
   rewritten?: RewrittenResult;
+  status: "decided" | "needs_review";
+  review_requests: { candidate: string; criterion_ids: string[]; finding_indices: number[]; reason: string }[];
   task_analysis: TaskAnalysis;
   /** Blind labels grouped by tier, best first; every candidate appears exactly once. */
   ranking: string[][];

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./criteria": {
+      "types": "./criteria.d.ts",
+      "import": "./criteria.js"
+    },
     "./comparison": {
       "types": "./comparison.d.ts",
       "import": "./comparison.js"

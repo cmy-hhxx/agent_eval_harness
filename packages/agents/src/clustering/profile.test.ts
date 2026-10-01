@@ -5,7 +5,7 @@ import { clusteringAgent, clusteringProfile } from "./index.js";
 import type { ClusteringRequest, ClusteringResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
-const audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
+const audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 const request = () => structuredClone(example.request) as unknown as AgentRequest;
 const requestInput = (value: AgentRequest) => value.input as unknown as ClusteringRequest;
 const result = () => structuredClone(example.result) as unknown as ClusteringResult;

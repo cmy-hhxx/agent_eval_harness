@@ -114,7 +114,7 @@ test("Host accepts generic JSON and profiles replace prompt and schema together"
     },
   ]);
   const binding = workflow.bind(plan.tasks[0], plan.inputs, {}),
-    audit = { calls: 0, viewedImages: [], calculations: [], artifacts: [] };
+    audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
   assert(registry.prepare(binding).prompt.startsWith("Return the value as score."));
   assert.throws(() => registry.resolve(binding, { summary: "wrong profile" }, audit), /score/);
   const alternate = { ...binding, agent: "text" };

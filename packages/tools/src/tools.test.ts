@@ -7,7 +7,7 @@ import path from "node:path";
 import { DEFAULT_POLICY, type ToolContext } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
 import { ROOT } from "../../../tests/fixtures/services.js";
-import { createRegistry, resolveEvidence, ToolRuntime } from "@eval/tools";
+import { createRegistry, resolveEvidence, traceReadCoverage, ToolRuntime } from "@eval/tools";
 import { emptyAudit, raw } from "../../../tests/fixtures/comparison.js";
 
 async function context() {
@@ -43,6 +43,10 @@ test("trace search finds numeric tool fields and returns an exact structured quo
     assert.equal(details.total, 1);
     assert.equal(details.matches[0].evidence.message_index, 0);
     assert(JSON.stringify(source, null, 2).includes(details.matches[0].evidence.quote));
+    assert.deepEqual(ctx.audit.traceReads, [{
+      candidate: "A", message_index: 0, kind: "json", path: "", start: 0,
+      end: JSON.stringify(source, null, 2).length,
+    }]);
   } finally {
     await rm(ctx.workdir, { recursive: true, force: true });
   }
@@ -77,6 +81,10 @@ test("trace pages keep evidence intact within the output budget", async () => {
     const page = JSON.parse(text);
     assert(page.evidence.length);
     assert(page.has_more);
+    assert.deepEqual(ctx.audit.traceReads, [{
+      candidate: "A", message_index: 0, kind: "json", path: "", start: 0, end: page.next_offset,
+    }]);
+    assert(page.next_offset < page.total_chars, "a shrunken page must not credit unseen characters");
     for (const evidence of page.evidence)
       assert.equal(resolveEvidence(ctx.inputs.get("A") as { messages: unknown[] }, evidence, "A", [], "/evidence").quote, evidence.quote);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
@@ -91,6 +99,8 @@ test("trace text-path pagination uses field coordinates and returns copyable evi
     ctx.policy.maxOutputChars = 4096;
     ctx.policy.maxToolCalls = 30;
     const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const target = { candidate: "A", message_index: 0, kind: "text" as const,
+      path: "/content/0/text", start: 0, end: text.length };
     let offset = 0, recovered = "";
     do {
       const result = await runtime.execute("read_trace", {
@@ -103,12 +113,14 @@ test("trace text-path pagination uses field coordinates and returns copyable evi
       assert.equal(page.evidence.length, 1);
       const evidence = page.evidence[0];
       assert.equal(resolveEvidence(input, evidence, "A", [], "/evidence").quote, text.slice(offset, page.next_offset));
+      assert.deepEqual(ctx.audit.traceReads.at(-1), { ...target, start: offset, end: page.next_offset });
       recovered += evidence.quote;
       assert(page.next_offset > offset);
       offset = page.next_offset;
       if (!page.has_more) break;
     } while (offset < text.length);
     assert.equal(recovered, text);
+    assert.deepEqual(traceReadCoverage(ctx.audit, target), { covered: true, missing: [] });
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 test("search pages preserve complete evidence and paginate without skipping matches", async () => {
@@ -130,6 +142,8 @@ test("search pages preserve complete evidence and paginate without skipping matc
       const page = JSON.parse(result.content[0]!.text!);
       total = page.total;
       assert(page.matches.length);
+      assert.equal(ctx.audit.traceReads.length, offset + page.matches.length,
+        "only emitted search matches count as reads, including after the output budget removes later matches");
       for (const { evidence } of page.matches) {
         assert.equal(resolveEvidence(input, evidence, "A", [], "/evidence").quote, evidence.quote);
         assert(evidence.quote.includes("目标"));
@@ -143,6 +157,67 @@ test("search pages preserve complete evidence and paginate without skipping matc
     assert.equal(ids.size, total);
     assert.equal(total, 24);
     assert.equal(ctx.audit.artifacts.length, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("trace reads credit only successful returned ranges and do not repeat cached audit entries", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 8;
+    ctx.inputs.set("A", { messages: [{ role: "assistant", content: "最终结果" }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const signal = new AbortController().signal;
+    for (const args of [
+      { candidate: "B", message_index: 0 },
+      { candidate: "A", message_index: 1 },
+      { candidate: "A", message_index: 0, path: "/missing" },
+      { candidate: "A", message_index: 0, path: "/content", offset: 5 },
+    ]) assert.equal((await runtime.execute("read_trace", args, signal)).isError, true);
+    assert.deepEqual(ctx.audit.traceReads, []);
+    const args = { candidate: "A", message_index: 0, path: "/content", offset: 1, max_chars: 2 };
+    assert.equal((await runtime.execute("read_trace", args, signal)).isError, undefined);
+    assert.deepEqual(ctx.audit.traceReads, [{
+      candidate: "A", message_index: 0, kind: "text", path: "/content", start: 1, end: 3,
+    }]);
+    await runtime.execute("read_trace", args, signal);
+    assert.equal(ctx.audit.traceReads.length, 1);
+    assert.deepEqual(traceReadCoverage(ctx.audit, {
+      candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: 4,
+    }), { covered: false, missing: [{ start: 0, end: 1 }, { start: 3, end: 4 }] });
+    ctx.policy.maxOutputChars = 1;
+    assert.equal((await runtime.execute("read_trace", { ...args, offset: 0 }, signal)).isError, true);
+    assert.equal(ctx.audit.traceReads.length, 1, "a rejected oversized response must not mark new characters as read");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("searching a whole trace only credits the visible excerpt of the requested source", async () => {
+  const ctx = await context();
+  try {
+    const text = "左".repeat(500) + "关键词" + "右".repeat(500);
+    ctx.inputs.set("A", { messages: [{ role: "assistant", content: text }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "关键词" }, new AbortController().signal);
+    assert(!result.isError);
+    assert.deepEqual(ctx.audit.traceReads.filter((read) => read.kind === "text"), [{
+      candidate: "A", message_index: 0, kind: "text", path: "/content", start: 400, end: 703,
+    }]);
+    assert.deepEqual(traceReadCoverage(ctx.audit, {
+      candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: text.length,
+    }), { covered: false, missing: [{ start: 0, end: 400 }, { start: 703, end: 1003 }] });
+    assert.equal(ctx.audit.artifacts.length, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("image viewing remains separate from text coverage and records the complete message image set", async () => {
+  const ctx = await context();
+  try {
+    ctx.inputs.set("A", { messages: [{ role: "assistant", content: [
+      { type: "image", mimeType: "image/png", data: "AA==" },
+      { type: "image", mimeType: "image/png", data: "AQ==" },
+    ] }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["view_image"]));
+    const result = await runtime.execute("view_image", { candidate: "A", message_index: 0 }, new AbortController().signal);
+    assert(!result.isError);
+    assert.equal(result.content.filter((item) => item.type === "image").length, 2);
+    assert.deepEqual(ctx.audit.viewedImages, ["A:0"]);
+    assert.deepEqual(ctx.audit.traceReads, []);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 test("registered tools are available without engine-specific changes and budgets are enforced", async () => {

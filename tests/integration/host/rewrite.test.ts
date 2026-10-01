@@ -9,7 +9,7 @@ import { runEvaluation } from "@eval/host";
 import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult, prepareComparisonRewrites, writeRunState, createResultWriter } from "@eval/workflows/comparison";
 import type { TaskData, AttributionResult } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
+import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial, raw } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -18,8 +18,10 @@ async function rows(file: string): Promise<JsonObject[]> {
 }
 
 for (const clustering of [false, true]) test(`rewrite embeds named text in stage outputs (clustering: ${clustering})`, async () => {
-  const { directory, config, modelForStage } = await fixtureConfig(undefined, true, clustering);
-  const expectedCalls = clustering ? 10 : 6;
+  const { directory, config, modelForStage } = await fixtureConfig(
+    clustering ? Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]) : undefined, true, clustering,
+  );
+  const expectedCalls = clustering ? 11 : 7;
   const expectedRewrites = clustering ? 5 : 3;
   let calls = 0;
   const logged: EvaluationLog[] = [];
@@ -36,8 +38,23 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
           }
           const evaluation = taskResult(options.spec);
           if (clustering && options.spec.evaluation.id === "attribution") {
-            const finding = (evaluation as AttributionResult).findings[0]!;
+            const attribution = evaluation as AttributionResult;
+            const material = parsedMaterial(options.spec) as { answer: { final_message_index: number; final_answer: string } };
+            const evidence = [{ message_index: material.answer.final_message_index, quote: material.answer.final_answer }];
+            attribution.is_correct = false;
+            attribution.correctness_reason = "最终结果5与标准结果4不符。";
+            attribution.correctness_evidence = evidence;
+            attribution.criterion_assessments.forEach((item) => { item.status = "unmet"; item.summary = "关键计算结果错误。"; });
+            attribution.core_assessment.meets_core = false;
+            attribution.core_assessment.reason = "唯一所求计算结果错误，不能直接使用。";
+            attribution.summary = "最终加法结果错误。";
+            const finding = attribution.findings[0]!;
             finding.type = "problem";
+            finding.evidence = evidence;
+            finding.text = "加法结果错误";
+            finding.reason = "原文给出5，正确结果应为4。";
+            finding.assessment.observation = material.answer.final_answer;
+            finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
             finding.problem = { component: ["模型自身推理"], label: "计算错误", definition: "计算与事实不符。" };
           }
           const result = await options.execute(
@@ -57,7 +74,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(plan.summary.rewrite_tasks, expectedRewrites);
     assert.deepEqual(
       plan.tasks.map((task) => task.stage).sort(),
-      ["attribution", "attribution", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
+      ["criteria", "attribution", "attribution", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
     );
     for (const task of plan.tasks.filter((task) => task.stage === "rewrite")) {
       assert.deepEqual(task.inputIds, {}, "rewrite tasks must not fetch input material");
@@ -130,7 +147,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     const taskSummaries = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert(taskSummaries.includes(clustering ? "关键结果错误。" : "正确给出了结果。"));
     assert.deepEqual((summary.artifacts as { results: string[] }).results, [
-      "results/attribution.jsonl", "results/comparison.jsonl", ...(clustering ? ["results/clustering.jsonl"] : []),
+      "results/attribution.jsonl", "results/criteria.jsonl", "results/comparison.jsonl", ...(clustering ? ["results/clustering.jsonl"] : []),
     ]);
 
     // State and offline validation round-trip the rewrite receipts.

@@ -15,7 +15,7 @@ import {
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { createDashboardInputs } from "./dashboard-inputs.js";
 import { ROOT } from "./paths.js";
-import { listClusteringTasks, listRunCases, readCaseDetail, readProblemClass, listProblemLibrary, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
+import { listClusteringTasks, listConfiguredProblemLibrary, listRunCases, readCaseDetail, readConfiguredProblemClass, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
 interface DashboardOptions {
   configPaths: string[];
@@ -232,9 +232,9 @@ export async function startDashboard(options: DashboardOptions) {
       res.end(await asset("index.html"));
       return;
     }
-    if (req.method === "GET" && url.pathname === "/reference") {
+    if (req.method === "GET" && ["/reference", "/problems"].includes(url.pathname)) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(await asset("reference.html"));
+      res.end(await asset(`${url.pathname.slice(1)}.html`));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/reference") {
@@ -243,12 +243,12 @@ export async function startDashboard(options: DashboardOptions) {
       ]);
       return json(res, dashboardReference(evaluation, current.evaluatorVersion));
     }
-    if (req.method === "GET" && url.pathname === "/dashboard.css") {
+    if (req.method === "GET" && ["/dashboard.css", "/problems.css"].includes(url.pathname)) {
       res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
-      res.end(await asset("dashboard.css"));
+      res.end(await asset(url.pathname.slice(1)));
       return;
     }
-    if (req.method === "GET" && ["/dashboard.js", "/dashboard-view.js", "/reference.js"].includes(url.pathname)) {
+    if (req.method === "GET" && ["/dashboard.js", "/dashboard-view.js", "/reference.js", "/problems.js"].includes(url.pathname)) {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       res.end(await asset(url.pathname.slice(1)));
       return;
@@ -289,6 +289,21 @@ export async function startDashboard(options: DashboardOptions) {
       } catch (error) { changingRuns.delete(runId); throw error; }
     }
     const parts = url.pathname.split("/").filter(Boolean);
+    if (req.method === "GET" && parts[0] === "api" && parts[1] === "dashboard" && parts[2] === "library") {
+      const evaluation = await loadEvaluation(options.configPaths);
+      if (parts.length === 3) return json(res, await listConfiguredProblemLibrary(evaluation));
+      if (parts.length === 6 && parts[3] && parts[4] === "classes" && parts[5]) {
+        const page = Number(url.searchParams.get("page") || "1");
+        if (!Number.isSafeInteger(page) || page < 1) throw new HttpError(400, "Invalid page");
+        let model: string, classId: string;
+        try { model = safeId(decodeURIComponent(parts[3])); classId = safeId(decodeURIComponent(parts[5])); }
+        catch { throw new HttpError(400, "Invalid problem library identity"); }
+        const detail = await readConfiguredProblemClass(evaluation, model, classId, page);
+        if (!detail) throw new HttpError(404, "Problem class not found");
+        return json(res, detail);
+      }
+      throw new HttpError(404, "Not found");
+    }
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");
     const runId = safeId(parts[3]);
@@ -329,15 +344,6 @@ export async function startDashboard(options: DashboardOptions) {
     }
     if (req.method === "GET" && parts[4] === "clustering" && parts.length === 5)
       return json(res, await listClusteringTasks(directory));
-    if (req.method === "GET" && parts[4] === "library" && parts.length === 5)
-      return json(res, await listProblemLibrary(directory));
-    if (req.method === "GET" && parts[4] === "library" && parts.length === 8 && parts[5] && parts[6] === "classes" && parts[7]) {
-      const page = Number(url.searchParams.get("page") || "1");
-      if (!Number.isSafeInteger(page) || page < 1) throw new HttpError(400, "Invalid page");
-      const detail = await readProblemClass(directory, safeId(parts[5]), safeId(parts[7]), page);
-      if (!detail) throw new HttpError(404, "Problem class not found");
-      return json(res, detail);
-    }
     if (req.method === "GET" && parts[4] === "inputs" && parts[5] && parts.length === 6) {
       try {
         const input = await readRegisteredInput(directory, safeId(parts[5]));

@@ -1,0 +1,115 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import type { JsonObject, PlannedTask } from "@eval/contracts";
+import type { Candidate, TaskData } from "./types.js";
+import { summarizeResults } from "./report.js";
+
+const answer = (id: string, version: string, correct: boolean | null, batch = "day", caseId = "case", inputId = `${batch}:${caseId}:${version}`): JsonObject => ({
+  task_id: id, version, input_id: inputId, batch_id: batch, case_id: caseId, is_correct: correct,
+});
+function source(row: JsonObject): PlannedTask {
+  const candidate: Candidate = { batch_id: String(row.batch_id), case_id: String(row.case_id), version: String(row.version),
+    name: String(row.version), input_id: String(row.input_id), trace_id: null, source: "/fixture/input.jsonl", line: 1,
+    question: "问题", final_index: 1, reference: "答案", llm: null,
+    answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null, source_unit: "ms", source_values: {}, source_fields: {} },
+  };
+  return { id: String(row.task_id), stage: "attribution", inputIds: { answer: candidate.input_id }, dependencies: {},
+    data: { stage: "attribution", candidates: { A: candidate }, reference: "答案" } satisfies TaskData };
+}
+function pair(first: string, second: string, core: [boolean, boolean], refs: [string, string],
+  batch = "day", caseId = "case", winner: string | null = null): JsonObject {
+  return { comparison_id: `${batch}:${caseId}:${first}:${second}`, case: { batch_id: batch, case_id: caseId },
+    models: { [first]: {}, [second]: {} }, ranking: winner ? [[winner], [[first, second].find((id) => id !== winner)!]] : [[first, second]],
+    assessments: { [first]: { meets_core: core[0] }, [second]: { meets_core: core[1] } },
+    attribution_task_ids: { [first]: refs[0], [second]: refs[1] },
+    verdicts: { [`${first}__vs__${second}`]: { result: winner ? "win" : core[0] ? "both_good" : "both_bad", winner_version: winner } },
+  };
+}
+const summarize = (answers: JsonObject[], pairs: JsonObject[]) =>
+  summarizeResults(answers.map(source), [], answers, pairs, [], []);
+
+test("two-model statistics preserve battle counts while separating answer identity across batches", () => {
+  const answers = [answer("a1", "a", true, "first"), answer("b1", "b", true, "first"),
+    answer("a2", "a", false, "second"), answer("b2", "b", false, "second")];
+  const result = summarize(answers, [pair("a", "b", [true, true], ["a1", "b1"], "first"),
+    pair("a", "b", [false, false], ["a2", "b2"], "second")]);
+  assert.equal(result.planned.cases, 2);
+  assert.deepEqual(result.head_to_head.a__vs__b, { evaluated: 2, wins: { a: 0, b: 0 }, both_good: 1, both_bad: 1 });
+  for (const version of ["a", "b"]) {
+    assert.deepEqual(result.per_version![version], { correct: 1, incorrect: 1, undetermined: 0, conflicted_count: 0,
+      evaluated: 2, decidable_coverage: 1, accuracy_among_decidable: .5 });
+    assert.equal(result.standings[version]!.entered, 2);
+    assert.equal(result.standings[version]!.meets_core, 1);
+    assert.equal(result.standings[version]!.meets_core_rate, .5);
+  }
+});
+
+test("three independent pairs count two battles but one absolute core assessment for each answer", () => {
+  const answers = [answer("a", "a", true), answer("b", "b", true), answer("c", "c", false)];
+  const result = summarize(answers, [pair("a", "b", [true, true], ["a", "b"]),
+    pair("a", "c", [true, false], ["a", "c"], "day", "case", "a"),
+    pair("b", "c", [true, false], ["b", "c"], "day", "case", "b")]);
+  assert.equal(result.completed_comparisons, 3);
+  assert.deepEqual(Object.values(result.head_to_head).map((pair) => pair.evaluated), [1, 1, 1]);
+  for (const version of ["a", "b", "c"]) {
+    const standing = result.standings[version]!;
+    assert.equal(standing.entered, 2);
+    assert.equal(standing.core_case_count, 1);
+    assert.equal(standing.core_decidable_count, 1);
+    assert.equal(standing.meets_core, version === "c" ? 0 : 1);
+    assert.equal(standing.meets_core_rate, version === "c" ? 0 : 1);
+    assert.equal(result.per_version![version]!.evaluated, 1);
+  }
+});
+
+test("formal attribution references select the accepted independent review without double-counting its source", () => {
+  const answers = [answer("original", "a", false), answer("review", "a", true), answer("b", "b", true)];
+  const result = summarize(answers, [pair("a", "b", [true, true], ["review", "b"])]);
+  assert.deepEqual(result.per_version!.a, { correct: 1, incorrect: 0, undetermined: 0, conflicted_count: 0,
+    evaluated: 1, decidable_coverage: 1, accuracy_among_decidable: 1 });
+  assert.equal(result.statistical_diagnostics, undefined);
+});
+
+test("without a formal verdict, conflicting reviews stay undetermined instead of choosing one source", () => {
+  const answers = [answer("original", "a", false), answer("review", "a", true)];
+  const result = summarize(answers, []);
+  assert.equal(result.per_version!.a!.evaluated, 1);
+  assert.equal(result.per_version!.a!.undetermined, 1);
+  assert.equal(result.per_version!.a!.conflicted_count, 1);
+  assert.equal(result.per_version!.a!.accuracy_among_decidable, null);
+  assert.deepEqual(result.statistical_diagnostics![0]!.task_ids, ["original", "review"]);
+  const consistent = summarize([answer("original", "a", true), answer("review", "a", true)], []);
+  assert.equal(consistent.per_version!.a!.correct, 1);
+  assert.equal(consistent.per_version!.a!.conflicted_count, 0);
+});
+
+test("conflicting official pairs produce explicit correctness and core diagnostics for one case", () => {
+  const answers = [answer("original", "a", false), answer("review", "a", true), answer("b", "b", true), answer("c", "c", true)];
+  const result = summarize(answers, [pair("a", "b", [true, true], ["original", "b"]),
+    pair("a", "c", [false, true], ["review", "c"], "day", "case", "c")]);
+  assert.equal(result.per_version!.a!.conflicted_count, 1);
+  assert.equal(result.per_version!.a!.undetermined, 1);
+  const standing = result.standings.a!;
+  assert.equal(standing.entered, 2);
+  assert.equal(standing.core_case_count, 1);
+  assert.equal(standing.core_undetermined, 1);
+  assert.equal(standing.core_conflicted_count, 1);
+  assert.equal(standing.meets_core, 0);
+  assert.equal(standing.meets_core_rate, null);
+  assert.equal(standing.core_decidable_coverage, 0);
+  assert.deepEqual(new Set(result.statistical_diagnostics!.map((row) => row.metric)), new Set(["core", "correctness"]));
+});
+
+test("missing formal references and multiple input identities do not borrow an unrelated accepted answer", () => {
+  const missing = summarize([answer("old", "a", true), answer("b", "b", true)],
+    [pair("a", "b", [true, true], ["missing", "b"])]);
+  assert.equal(missing.per_version!.a!.undetermined, 1);
+  assert.equal(missing.per_version!.a!.correct, 0);
+  assert.equal(missing.statistical_diagnostics![0]!.code, "missing_attribution_source");
+  const differentInputs = summarize([answer("old", "a", true, "day", "case", "old-input"),
+    answer("new", "a", true, "day", "case", "new-input")], []);
+  assert.equal(differentInputs.per_version!.a!.evaluated, 1);
+  assert.equal(differentInputs.per_version!.a!.undetermined, 1);
+  assert.equal(differentInputs.per_version!.a!.conflicted_count, 0);
+  assert.equal(differentInputs.statistical_diagnostics![0]!.code, "ambiguous_input_source");
+});

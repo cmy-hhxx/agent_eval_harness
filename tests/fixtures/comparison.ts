@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AttemptSpec, EngineIdentity, ToolAudit } from "@eval/contracts";
+import type { AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis } from "@eval/contracts";
 import { evidenceId } from "@eval/tools";
 import { ROOT } from "./services.js";
 import { writeJsonl } from "@eval/data";
@@ -21,6 +21,7 @@ export const fakeJudge = "fixture";
 export const emptyAudit = (): ToolAudit => ({
   calls: 0,
   viewedImages: [],
+  traceReads: [],
   calculations: [],
   artifacts: [],
 });
@@ -37,25 +38,25 @@ export function raw(caseId = "q1", reference: unknown = "4", answer = "2+2=4"): 
 }
 export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResult {
   return {
-    task_analysis: {
-      task_type: "整数加法",
-      goal: "计算2+2",
-      requirements: ["给出正确的加法结果"],
-      scoring_points: ["使用指定操作数"],
-      red_flags: ["擅自替换操作数"],
-    },
+    status: "decided", review_requests: [],
+    task_analysis: criteriaResult(),
     ranking: [labels],
     assessments: Object.fromEntries(
-      labels.map((label) => [label, { meets_core: true, summary: "正确给出了结果。" }]),
+      labels.map((label) => [label, { meets_core: true, core_failure_refs: [], summary: "正确给出了结果。" }]),
     ),
     decision_basis: {
       tradeoff: "双方均满足同一要求，没有结果差异。",
-      comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { summary: "正确给出4。", finding_indices: [0] }]),
+      comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [0] }]),
       ) }],
       decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
     },
   };
+}
+export function criteriaResult(): TaskAnalysis {
+  return { task_type: "整数加法", goal: "计算2+2",
+    requirements: [{ id: "r1", text: "给出正确的加法结果", applies_to: [], acceptance_rule: "使用题目中的2和2相加，结果为4。" }],
+    scoring_points: [], red_flags: [] };
 }
 export async function fixtureConfig(
   rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]],
@@ -100,13 +101,10 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
     correctness_reason: available ? "与标准答案一致。" : "",
     numeric_checks: [],
     correctness_evidence: available ? [{ message_index: 1, quote: answer }] : [],
-    task_analysis: {
-      task_type: "整数加法",
-      goal: "计算2+2",
-      requirements: ["给出正确的加法结果"],
-      scoring_points: ["使用指定操作数"],
-      red_flags: ["擅自替换操作数"],
-    },
+    task_analysis: criteriaResult(),
+    criterion_assessments: [{ criterion_id: "r1", status: correct ? "met" : "unmet", evidence_status: "established",
+      summary: correct ? "正确给出4。" : "结果错误。", evidence: [{ message_index: 1, quote: answer }] }],
+    core_assessment: { meets_core: correct, reason: correct ? "核心计算交付完成。" : "关键计算结果错误。", criterion_ids: ["r1"] },
     summary: correct ? "正确给出结果。" : "结果错误。",
     findings: [
       {
@@ -169,15 +167,26 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
       merges: [],
     };
   }
+  if ("requirements" in properties && !("task_analysis" in properties)) return criteriaResult();
   if (!("answer" in materialOf(spec))) {
     const material = materialOf(spec), labels = Object.keys(material.candidates);
     const result = comparisonResult(labels);
+    result.task_analysis = material.task_analysis;
     for (const label of labels) {
       const failed = material.attributions?.[label]?.findings.some((finding) => finding.type === "problem" &&
         finding.importance === "high" && finding.assessment.evidence_status === "established" &&
         finding.assessment.requirement_index !== null);
-      result.assessments[label] = { meets_core: !failed, summary: failed ? "关键结果错误。" : "正确给出了结果。" };
+      const core = material.attributions?.[label]?.core_assessment;
+      result.assessments[label] = { meets_core: core?.meets_core ?? !failed,
+        core_failure_refs: core?.meets_core === false ? core.criterion_ids : [], summary: failed ? "关键结果错误。" : "正确给出了结果。" };
     }
+    result.decision_basis.comparisons = material.task_analysis.requirements.concat(material.task_analysis.scoring_points, material.task_analysis.red_flags)
+      .map((criterion) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high" as const, better_candidates: [],
+        assessments: Object.fromEntries(labels.map((label) => {
+          const source = material.attributions?.[label]?.criterion_assessments.find((item) => item.criterion_id === criterion.id);
+          return [label, { status: source?.status ?? "met", evidence_status: source?.evidence_status ?? "established",
+            summary: source?.summary ?? "已完成。", finding_indices: [0] }];
+        })) }));
     result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
       labels.filter((label) => !result.assessments[label]!.meets_core)].filter((tier) => tier.length);
     result.decision_basis.tradeoff = labels.every((label) => !result.assessments[label]!.meets_core)
@@ -186,6 +195,11 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
   }
   const result = attributionResult();
   const material = materialOf(spec);
+  result.task_analysis = material.task_analysis;
+  result.criterion_assessments = [...material.task_analysis.requirements, ...material.task_analysis.scoring_points, ...material.task_analysis.red_flags].map((criterion) => ({
+    criterion_id: criterion.id, status: criterion.applies_to.length && !criterion.applies_to.includes(material.candidate_id!) ? "not_applicable" : "met",
+    evidence_status: "established", summary: "已按要求完成。", evidence: criterion.applies_to.length && !criterion.applies_to.includes(material.candidate_id!) ? [] : [{ message_index: material.answer!.final_message_index, quote: material.answer!.final_answer }] }));
+  result.core_assessment.criterion_ids = material.task_analysis.requirements.filter((criterion) => !criterion.applies_to.length || criterion.applies_to.includes(material.candidate_id!)).map((criterion) => criterion.id);
   result.has_standard_answer = material.ground_truth.available;
   if (!material.ground_truth.available) {
     result.is_correct = null;
@@ -210,6 +224,8 @@ export const parsedMaterial = (spec: { prompt: string }): unknown =>
 const materialOf = (spec: { prompt: string }) =>
   parsedMaterial(spec) as {
     ground_truth: { available: boolean; value: unknown };
+    task_analysis: TaskAnalysis;
+    candidate_id?: string;
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
     attributions?: Record<string, AttributionResult>;
     answer?: { question: string; final_answer: string; final_message_index: number };
@@ -237,12 +253,14 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
   if (material.answer && "findings" in result) {
     // The Host, not the model, supplies the standard-answer flag on the accepted result.
     delete result.has_standard_answer;
+    delete result.task_analysis;
     if (!material.ground_truth.available) {
       result.is_correct = null;
       result.correctness_reason = "";
       result.correctness_evidence = [];
     } else if (typeof result.is_correct !== "boolean") result.is_correct = true;
     result.correctness_evidence = evidence(result.correctness_evidence, "answer");
+    (result.criterion_assessments as Record<string, unknown>[]).forEach((item) => { item.evidence = evidence(item.evidence, "answer"); });
     (result.findings as Record<string, unknown>[]).forEach((finding, i) => {
       finding.finding_id = "f" + i;
       finding.evidence = evidence(finding.evidence, "answer");
@@ -250,5 +268,6 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
     return result;
   }
   // Comparison references attribution findings directly; no evidence to resolve.
+  if ("decision_basis" in result) delete result.task_analysis;
   return result;
 }

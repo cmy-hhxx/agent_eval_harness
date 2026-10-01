@@ -120,10 +120,10 @@ test("automation plans attribution, comparison and both rewrites while deferring
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
-    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw()]);
+    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw()].map((record) => ({ ...record, batch_id: date })));
     const evaluation = automationEvaluationConfig(config, source, date);
     const plan = await automationWorkflow.plan(evaluation);
-    assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["attribution", "comparison", "rewrite"]));
+    assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["criteria", "attribution", "comparison", "rewrite"]));
     assert.equal(evaluation.clustering.enabled, false);
     assert.equal(evaluation.rewrite.clustering, false);
     const rewrites = plan.tasks.filter((task) => task.stage === "rewrite");
@@ -131,7 +131,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
     assert(rewrites.filter((task) => (task.data as TaskData).rewriteOf?.stage === "comparison")
       .every((task) => (task.data as TaskData).comparisonRewriteScope === "all"));
     assert.deepEqual(new Set(rewrites.map((task) => (task.data as TaskData).rewriteOf!.stage)), new Set(["attribution", "comparison"]));
-    for (const task of plan.tasks.filter((task) => task.stage !== "rewrite"))
+    for (const task of plan.tasks.filter((task) => task.stage === "attribution" || task.stage === "comparison"))
       assert.equal(rewrites.filter((rewrite) => (rewrite.data as TaskData).rewriteOf!.taskId === task.id).length, 1);
 
     const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
@@ -143,7 +143,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
     const accepted = plan.tasks.find((task) => task.stage === "attribution")!;
     state.receipts[accepted.id] = { taskId: accepted.id } as RunState["receipts"][string];
     state.manifest.states[accepted.id].status = "succeeded";
-    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw(), raw("new-case")]);
+    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw(), raw("new-case")].map((record) => ({ ...record, batch_id: date })));
     await automationWorkflow.reconcile!(directory, state, evaluation);
     assert.equal(state.manifest.tasks.find((task) => task.id === accepted.id), accepted);
     assert(state.manifest.tasks.some((task) => task.stage === "comparison" && Object.values((task.data as TaskData).candidates)[0].case_id === "new-case"));
@@ -151,11 +151,29 @@ test("automation plans attribution, comparison and both rewrites while deferring
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("automation keeps an explicitly same-tier local baseline without requesting another remote source", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const date = "2026-09-29", source = path.join(directory, "source"), local = path.join(directory, "baseline.jsonl");
+    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [{ ...raw(), batch_id: date }]);
+    await writeJsonl(local, [{ ...raw(), batch_id: date }, { ...raw("other-date"), batch_id: "2026-09-28" }]);
+    config.inputs.versions.push({ id: "baseline", name: "Baseline", adapter: "a", comparison_tier: "Fast", sources: [{ kind: "file", path: local }] });
+    config.comparisons = [["a_fast", "b_fast", "baseline"]];
+    const evaluation = automationEvaluationConfig(config, source, date);
+    assert.deepEqual(evaluation.inputs.versions.find((version) => version.id === "baseline")!.sources, [{ kind: "file", path: local }]);
+    assert.deepEqual(evaluation.comparisons, config.comparisons);
+    const plan = await buildPlan(evaluation);
+    assert.equal(plan.tasks.filter((task) => task.stage === "comparison").length, 3);
+    assert.equal(plan.tasks.filter((task) => task.stage === "attribution").length, 3);
+    assert(plan.tasks.filter((task) => task.stage === "comparison").every((task) => Object.values((task.data as TaskData).candidates).every((candidate) => candidate.batch_id === date)));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("automation defers unfinished clustering, retains accepted results and can cluster all attributions later", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
-    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old")]);
+    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old")].map((record) => ({ ...record, batch_id: date })));
     const evaluation = automationEvaluationConfig(config, source, date);
     const clustered = { ...evaluation, clustering: { ...evaluation.clustering, enabled: true }, rewrite: { ...evaluation.rewrite, clustering: true } };
     const plan = await buildPlan(clustered);
@@ -182,7 +200,7 @@ test("automation defers unfinished clustering, retains accepted results and can 
     state.manifest.pausedStages = [deferred, polish].map((task) => ({ stage: task.stage, category: "structure", code: "invalid",
       path: "/", at: 1, taskIds: [task.id] }));
     const accepted = new Map(Object.entries(state.receipts));
-    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old"), raw("new")]);
+    for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old"), raw("new")].map((record) => ({ ...record, batch_id: date })));
     await automationWorkflow.reconcile!(directory, state, evaluation);
     assert(!state.manifest.tasks.some((task) => task.id === deferred.id || task.id === polish.id));
     assert.deepEqual(state.manifest.pausedStages, []);
@@ -208,7 +226,7 @@ test("automation resumes each evaluation rewrite without running clustering or r
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
   const date = "2026-09-29", source = path.join(directory, "source");
   for (const model of REMOTE_MODELS)
-    await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("q1", "4", "2+2=5")]);
+    await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("q1", "4", "2+2=5")].map((record) => ({ ...record, batch_id: date })));
   const evaluation = automationEvaluationConfig(config, source, date);
   const plan = await buildPlan(evaluation);
   const backend: AgentBackend = {
@@ -266,7 +284,7 @@ test("automation resumes each evaluation rewrite without running clustering or r
     }
     assert.deepEqual(interrupted, new Set(["rewrite/attribution", "rewrite/comparison"]));
     const saved = await readRunState(run), counts = summarize([comparisonCodec.encode(saved)]);
-    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "rewrite"]);
+    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "criteria", "rewrite"]);
     for (const stage of Object.values(counts.stages)) {
       assert(stage.total > 0);
       assert.equal(stage.completed, stage.total);
@@ -429,7 +447,7 @@ test("local evaluation counts preserve rewrite failure while the remote projecti
   const state = { tasks: {
     comparison: { stage: "comparison", status: "succeeded", receipt: {}, dependencies: {}, data: { group: ["a_fast", "b_fast"] }, inputIds: { A: "a" } },
     rewrite: { stage: "rewrite", status: "failed", data: { rewriteOf: { taskId: "comparison", stage: "comparison" } } },
-  }, config: { clustering: { enabled: false }, rewrite: { comparison: true } },
+  }, config: { comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]], clustering: { enabled: false }, rewrite: { comparison: true } },
     inputs: { a: { batch_id: "date", case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
   const summary = summarize([state]);
   assert.equal(summary.stages.comparison.completed, 1);
@@ -440,7 +458,7 @@ test("local evaluation counts preserve rewrite failure while the remote projecti
       observed: { a_fast: 1, b_fast: 1, a_expert: 0, b_expert: 0 }, adopted: false, download: "ready", checkedAt: 1,
       downloadAttempts: 0, evaluationAttempts: 3, nextDownloadAt: 0, nextEvaluationAt: 0 } } }, "pi", new Map([["2026-09-29", [state]]]), 600);
   assert.equal(progress.status, "interrupted");
-  assert.equal(progress.dates[0].pairs.fast.completed_cases, 1);
+  assert.equal(progress.dates[0].pairs.a_fast__vs__b_fast.completed_cases, 1);
 });
 
 test("interrupted and dependency-blocked tasks are not reported as evaluation failures", () => {
@@ -457,7 +475,7 @@ test("remote progress satisfies the required six-count contract and separates sk
   const tasks = Object.fromEntries(["succeeded", "failed", "running", "pending", "cancelled", "blocked"].map((status) => [status, {
     stage: "comparison", status, data: { group }, inputIds: { A: status },
   }]));
-  const run = { tasks, inputs: Object.fromEntries(Object.keys(tasks).map((id) => [id, { batch_id: date, case_id: id }])),
+  const run = { config: { comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]] }, tasks, inputs: Object.fromEntries(Object.keys(tasks).map((id) => [id, { batch_id: date, case_id: id }])),
     preflight: { skipped: ["unpaired", "unpaired", "succeeded", "failed"].map((id) => ({ versions: group, batch_id: date, case_id: id })), issues: [] },
   } as unknown as Checkpoint;
   const progress = remoteProgress({ id: "test", sourceUrl: "http://test", status: "running", startedAt: 1, updatedAt: 2,
@@ -478,10 +496,10 @@ test("remote progress satisfies the required six-count contract and separates sk
   });
   try {
     await new RemoteInputs(server.url, 1000).publish(progress, AbortSignal.timeout(3000));
-    assert.deepEqual(progress.dates[0].pairs.fast, {
+    assert.deepEqual(progress.dates[0].pairs.a_fast__vs__b_fast, {
       total_cases: 7, completed_cases: 1, running_cases: 1, queued_cases: 3, failed_cases: 1, skipped_cases: 1,
     });
-    assert.deepEqual(progress.dates[0].pairs.expert, {
+    assert.deepEqual(progress.dates[0].pairs.a_expert__vs__b_expert, {
       total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
     });
   } finally { await server.close(); }
@@ -497,7 +515,8 @@ test("remote progress excludes excess queued battles before the daily run is rec
     stage: "comparison", status, ...(status === "succeeded" ? { receipt: {} } : {}),
     dependencies: {}, data: { group: [`a_${tier}`, `b_${tier}`] }, inputIds: { A: String(index) },
   }]));
-  const run = { tasks, inputs: Object.fromEntries(Object.keys(tasks).map(id => [id, { batch_id: date, case_id: id }])),
+  const run = { config: { comparisons: [["a_fast", "b_fast"], ["a_expert", "b_expert"]] }, tasks,
+    inputs: Object.fromEntries(Object.keys(tasks).map(id => [id, { batch_id: date, case_id: id }])),
     preflight: { skipped: [{ versions: ["a_fast", "b_fast"], batch_id: date, case_id: "unpaired" }], issues: [] },
   } as unknown as Checkpoint;
   const before = structuredClone(run);
@@ -512,6 +531,30 @@ test("remote progress excludes excess queued battles before the daily run is rec
     total_cases: 2, completed_cases: 1, running_cases: 0, queued_cases: 0, failed_cases: 1, skipped_cases: 0,
   });
   assert.deepEqual(run, before, "progress projection must not mutate saved tasks or results");
+});
+
+test("remote progress includes every configured baseline pair", () => {
+  const date = "2026-09-30", ids = ["a_fast", "b_fast", "baseline"];
+  const run = { config: { comparisons: [ids] }, tasks: {
+    one: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" } },
+  }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
+  const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
+  const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 600);
+  assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), ["a_fast__vs__b_fast", "a_fast__vs__baseline", "b_fast__vs__baseline"].sort());
+  assert.equal(progress.dates[0].pairs.a_fast__vs__baseline.completed_cases, 1);
+});
+
+test("remote progress retains accepted pairs after selection changes and keeps review requests queued", () => {
+  const date = "2026-09-30";
+  const run = { config: { comparisons: [["a_fast", "baseline"]] }, tasks: {
+    accepted: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "b_fast"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison.jsonl" } } },
+    review: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison-review.jsonl" } } },
+  }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
+  const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
+  const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 600).dates[0].pairs;
+  assert.equal(progress.a_fast__vs__b_fast.completed_cases, 1);
+  assert.equal(progress.a_fast__vs__baseline.completed_cases, 0);
+  assert.equal(progress.a_fast__vs__baseline.queued_cases, 1);
 });
 
 test("an unpaired input date persists its preflight for progress without making model calls", async () => {

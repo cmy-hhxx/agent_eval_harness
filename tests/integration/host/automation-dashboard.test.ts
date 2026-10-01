@@ -19,7 +19,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 const hour = 3600000, at = Date.parse("2026-09-30T01:00:00Z");
 const settings = { evaluatorVersion: "current-fixture", concurrency: 32 };
 const execution = () => ({ ...settings, runningTasks: 0, runningCases: 0,
-  stages: { attribution: 0, comparison: 0, rewrite: 0 }, retryingStages: { attribution: 0, comparison: 0, rewrite: 0 },
+  stages: { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 }, retryingStages: { attribution: 0, comparison: 0, rewrite: 0 },
   readyTasks: 0, waitingDependencies: 0, retryingTasks: 0, nextRetryAt: undefined as number | undefined });
 const state = (): AutomationState => ({ id: "fixture", sourceUrl: "http://fixture", status: "stopped", startedAt: at, updatedAt: at, jobs: {} });
 const job = (date: string): AutomationJob => ({ date, runIds: ["fixture"], observed: { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 },
@@ -86,10 +86,10 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     assert.equal(live.concurrency, 16);
     assert.equal(live.runningTasks, 3);
     assert.equal(live.runningCases, 1, "parallel stages/versions of one question count as one case");
-    assert.deepEqual(live.stages, { attribution: 2, comparison: 1, rewrite: 0 });
+    assert.deepEqual(live.stages, { criteria: 0, attribution: 2, comparison: 1, rewrite: 0 });
     assert.equal(live.retryingTasks, 1);
-    assert.deepEqual(live.retryingStages, { attribution: 0, comparison: 0, rewrite: 1 });
-    assert.equal(live.readyTasks, 2);
+    assert.deepEqual(live.retryingStages, { criteria: 0, attribution: 0, comparison: 0, rewrite: 1 });
+    assert.equal(live.readyTasks, 1, "only the shared criteria is ready before its downstream dependencies");
     assert(live.waitingDependencies > 0);
     assert.equal(live.nextRetryAt, at + hour, "deferred clustering must not set the next retry");
     current.status = "stopped";
@@ -360,7 +360,7 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
     assert.equal(text("lane-mongo"), "等待重试");
     assert.equal(text("lane-log"), "等待重试");
     assert.match(doc.querySelector(".task-pool").textContent, /待执行 12.*待重试 2/);
-    assert.match(text("live-stages"), /^2 题 · 归因 2 · 对比 1 · 改写 2$/);
+    assert.match(text("live-stages"), /^2 题 · 标准 0 · 归因 2 · 对比 1 · 改写 2$/);
     assert.equal(text("retry-count"), "5 任务 · 2 日期");
     assert.equal(text("paused-count"), "已暂停 1 日期");
     assert.equal(text("next-retry"), "45 秒后");

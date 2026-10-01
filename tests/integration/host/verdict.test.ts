@@ -13,19 +13,19 @@ import {
 } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateEvaluation } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, criteriaResult, raw } from "../../fixtures/comparison.js";
 
 function comparisonTask(plan: TaskPlan): PlannedTask {
   return plan.tasks.find((task) => task.stage === "comparison")!;
 }
-function attributionReceipts(task: PlannedTask, correct = true): Map<string, SubmissionReceipt> {
+function attributionReceipts(task: PlannedTask, correct: boolean | Record<string, boolean> = true): Map<string, SubmissionReceipt> {
   const receipts = new Map<string, SubmissionReceipt>();
   for (const [label, id] of Object.entries(task.dependencies))
     receipts.set(id, {
       taskId: id,
       attemptId: `a-${label}`,
       submissionId: randomUUID(),
-      evaluation: attributionResult(correct, "2+2=4", false),
+      evaluation: label === "criteria" ? criteriaResult() : attributionResult(typeof correct === "boolean" ? correct : correct[label] ?? true, "2+2=4", (task.data as TaskData).reference !== null),
       evaluatorVersion: fakeEvaluatorVersion,
       judge: fakeJudge,
       audit: emptyAudit(),
@@ -37,21 +37,16 @@ function attributionReceipts(task: PlannedTask, correct = true): Map<string, Sub
 }
 function group(labels: string[], meets: Record<string, boolean> = {}): ComparisonResult {
   return {
-    task_analysis: {
-      task_type: "整数加法",
-      goal: "计算2+2",
-      requirements: ["给出正确的加法结果"],
-      scoring_points: ["使用指定操作数"],
-      red_flags: ["擅自替换操作数"],
-    },
-    ranking: [labels],
+    status: "decided", review_requests: [],
+    task_analysis: criteriaResult(),
+    ranking: [labels.filter((label) => meets[label] ?? true), labels.filter((label) => meets[label] === false)].filter((tier) => tier.length),
     assessments: Object.fromEntries(
-      labels.map((label) => [label, { meets_core: meets[label] ?? true, summary: "结论。" }]),
+      labels.map((label) => [label, { meets_core: meets[label] ?? true, core_failure_refs: meets[label] === false ? ["r1"] : [], summary: "结论。" }]),
     ),
     decision_basis: {
       tradeoff: "并列。",
-      comparisons: [{ aspect: "计算结果", importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { summary: "正确给出4。", finding_indices: [0] }]),
+      comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { status: meets[label] === false ? "unmet" : "met", evidence_status: "established", summary: "给出计算结果。", finding_indices: [0] }]),
       ) }],
       decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
     },
@@ -105,7 +100,9 @@ test("two-way verdicts are derived from ranking and core classification", async 
       pairKey = "a_fast__vs__b_fast";
 
     const oneSided = group(labels, { [labels[0]!]: true, [labels[1]!]: false });
-    const win = comparisonRow(plan.inputs, task, oneSided, receipts, names, fakeEvaluatorVersion);
+    const oneSidedReceipts = attributionReceipts(task, { [labels[0]!]: true, [labels[1]!]: false });
+    validateEvaluation(task, plan.inputs, oneSided, emptyAudit(), Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, oneSidedReceipts.get(id)])));
+    const win = comparisonRow(plan.inputs, task, oneSided, oneSidedReceipts, names, fakeEvaluatorVersion);
     const winVerdict = (win.verdicts as Record<string, { result: string; winner_version: string }>)[
       pairKey
     ]!;
@@ -125,7 +122,7 @@ test("two-way verdicts are derived from ranking and core classification", async 
       plan.inputs,
       task,
       failed,
-      receipts,
+      attributionReceipts(task, false),
       names,
       fakeEvaluatorVersion,
     );
@@ -205,7 +202,7 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert.match(markdown, /## 同项对比/);
     assert.match(markdown, /\| 比较点 \| 重要性 \|/);
-    assert.match(markdown, /\| 计算结果 \| 高 \| 正确给出4。 \| 正确给出4。 \|/);
+    assert.match(markdown, /\| 计算结果 \| 高 \| 给出计算结果。 \| 给出计算结果。 \|/);
     assert.match(markdown, /内容质量：.*都正确给出4/);
     assert.match(markdown, /完成耗时：.*1.2秒.*40秒/);
     assert.match(markdown, /总token：.*120.*1200/);

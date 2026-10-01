@@ -26,7 +26,7 @@
     </dl>
     <dl id="pipeline-flow" class="pipeline-flow" aria-label="流水线通道" hidden>
       <div><dt>取数</dt><dd id="lane-download"></dd><dd id="lane-download-queue" class="metric-detail"></dd></div>
-      <div><dt>归因 → 对比 → 改写</dt><dd id="lane-evaluation"></dd><dd id="lane-evaluation-queue" class="metric-detail"></dd></div>
+      <div><dt>标准 → 归因 → 对比 → 改写</dt><dd id="lane-evaluation"></dd><dd id="lane-evaluation-queue" class="metric-detail"></dd></div>
       <div><dt>MongoDB 增量交付</dt><dd id="lane-mongo"></dd><dd id="lane-mongo-queue" class="metric-detail"></dd></div>
       <div><dt>日志 · 每 4 小时</dt><dd id="lane-log"></dd><dd id="lane-log-receipt" class="metric-detail"></dd></div>
     </dl>
@@ -44,14 +44,14 @@
     <section id="dates" role="tabpanel" aria-labelledby="tab-dates" tabindex="0">
       <div class="section-heading"><h2 id="dates-title">日期进度</h2><span id="date-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日期阶段进度">
-        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">缓存命中率</th></tr></thead><tbody id="date-rows"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">标准任务</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">缓存命中率</th></tr></thead><tbody id="date-rows"><tr><td colspan="11" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="date-pagination" class="table-pagination" aria-label="日期进度分页" hidden></nav>
     </section>
     <section id="activity" role="tabpanel" aria-labelledby="tab-activity" tabindex="0" hidden>
       <div class="section-heading"><h2 id="activity-title">时段完成量</h2><span id="activity-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="每小时完成数量">
-        <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">完成对比 · 含改写</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">完成对比 · 含改写</th><th scope="col">标准任务</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="activity-pagination" class="table-pagination" aria-label="时段完成量分页" hidden></nav>
     </section>
