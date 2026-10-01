@@ -235,6 +235,20 @@ export function assertComparableGroups(config: Pick<EvalConfig, "inputs" | "comp
       throw new Error(`对比组混合了不同模型规模（${[...declared].join(" / ")}）：${group.join(" / ")}`);
   }
 }
+/** Narrow configured groups without scheduling the same remaining model set twice. */
+export function selectComparisonGroups(groups: readonly string[][], versionIds: readonly string[]): string[][] {
+  const allowed = new Set(versionIds), seen = new Set<string>();
+  const selected: string[][] = [];
+  for (const group of groups) {
+    const remaining = group.filter((id) => allowed.has(id));
+    if (remaining.length < 2) continue;
+    const key = canonical([...remaining].sort());
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(remaining);
+  }
+  return selected;
+}
 interface ScannedInput {
   index: number;
   batchId: string | null;
@@ -586,9 +600,9 @@ export async function buildPlan(
       const groupKey = canonical([batch, id, "comparison", group]);
       const oldGroup = oldTasks.get(groupKey),
         oldData = oldGroup?.data as TaskData | undefined;
-      let ordered = values as Candidate[];
+      let ordered: Candidate[] = [];
       if (oldData) {
-        const byVersion = new Map(ordered.map((candidate) => [candidate.version, candidate]));
+        const byVersion = new Map((values as Candidate[]).map((candidate) => [candidate.version, candidate]));
         ordered = Object.keys(oldData.candidates)
           .sort()
           .map((label) => byVersion.get(oldData.candidates[label]!.version)!)
@@ -605,6 +619,12 @@ export async function buildPlan(
       const candidates = Object.fromEntries(ordered.map((candidate, i) => [LABELS[i]!, candidate])),
         dependencies: Record<string, string> = {};
       for (const [label, record] of Object.entries(candidates)) {
+        const checkKey = canonical([batch, id, "attribution", [record.version]]);
+        const existing = checks.get(checkKey);
+        if (existing) {
+          dependencies[label] = existing.id;
+          continue;
+        }
         const data: TaskData = {
           stage: "attribution",
           // Internal slot only; attribution materials and tools use `answer`.
@@ -612,7 +632,7 @@ export async function buildPlan(
           reference,
           initialContextChars: config.execution.initialContextChars,
         };
-        const old = oldTasks.get(canonical([batch, id, "attribution", [record.version]]));
+        const old = oldTasks.get(checkKey);
         const checkId = old?.id || randomUUID();
         const oldCheck = old?.data as TaskData | undefined;
         data.revision =
@@ -622,8 +642,8 @@ export async function buildPlan(
               (!isDeepStrictEqual(oldCheck.reference, reference) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
-        if (!checks.has(checkId)) stats.attribution_tasks++;
-        checks.set(checkId, {
+        stats.attribution_tasks++;
+        checks.set(checkKey, {
           id: checkId,
           stage: "attribution",
           dependencies: {},

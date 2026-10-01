@@ -5,7 +5,7 @@ import { exists, assistantUser, writeAssistantArtifact, readAssistantArtifact } 
 import { AssistantSessions, serveAssistant } from "@eval/runtime/assistant";
 import { assistantEndpoints } from "@eval/assistant/server";
 import { createEris } from "@eval/assistant";
-import { loadConfig, createModelResolver } from "./config.js";
+import { loadConfig, createModelResolver, DEFAULT_THINKING } from "./config.js";
 import { ROOT } from "./paths.js";
 import { logger } from "./composition.js";
 import { GatewayAssistantModels } from "./assistant-models.js";
@@ -21,7 +21,7 @@ if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(pat
 const config = await loadConfig(sources);
 const model = process.env.AGENT_MODEL ? {
   provider: "evaluation-gateway", baseUrl: process.env.EVAL_BASE_URL!, api: "openai-responses" as const, apiKeyEnv: "EVAL_API_KEY", model: process.env.AGENT_MODEL,
-  thinking: "medium" as const, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
+  thinking: DEFAULT_THINKING, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
 } : createModelResolver(config.models)("attribution");
 if (!model.baseUrl || !process.env[model.apiKeyEnv]) throw new Error("请在根目录 .env 中配置 EVAL_BASE_URL、EVAL_API_KEY 和 AGENT_MODEL（或 configs/local/models.json）");
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({

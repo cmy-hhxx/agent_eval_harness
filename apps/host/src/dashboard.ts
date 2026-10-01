@@ -11,7 +11,6 @@ import {
   discoverDashboardModels,
   type DashboardModel,
   type DashboardModelLoader,
-  filterGptModels,
 } from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { createDashboardInputs } from "./dashboard-inputs.js";
@@ -57,27 +56,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function modelReadiness(source: Record<string, unknown>) {
   const profiles = isRecord(source.models) ? source.models : {};
   const bindings = Object.values(isRecord(source.bindings) ? source.bindings : {});
-  if (!bindings.length)
-    return { base_url_configured: false, api_key_configured: false, model_configured: false };
-  let baseUrl = true,
-    apiKey = true,
-    model = true;
+  if (!bindings.length) return { base_url_configured: false, api_key_configured: false };
+  let baseUrl = true, apiKey = true;
   for (const binding of bindings) {
     if (!isRecord(binding) || typeof binding.profile !== "string") {
-      baseUrl = apiKey = model = false;
+      baseUrl = apiKey = false;
       continue;
     }
     const profile = profiles[binding.profile];
     if (!isRecord(profile)) {
-      baseUrl = apiKey = model = false;
+      baseUrl = apiKey = false;
       continue;
     }
     if (!(typeof profile.baseUrlEnv === "string" && process.env[profile.baseUrlEnv])) baseUrl = false;
     if (!(typeof profile.apiKeyEnv === "string" && process.env[profile.apiKeyEnv])) apiKey = false;
-    const id = binding.model ?? profile.model;
-    if (typeof id !== "string" || !id) model = false;
   }
-  return { base_url_configured: baseUrl, api_key_configured: apiKey, model_configured: model };
+  return { base_url_configured: baseUrl, api_key_configured: apiKey };
 }
 
 function fallbackProgress(checkpoint: DashboardCheckpoint) {
@@ -202,7 +196,7 @@ export async function startDashboard(options: DashboardOptions) {
   const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths));
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
   const readModels = async () => {
-    modelCatalogPromise ??= loadModels().then(filterGptModels).catch((error) => {
+    modelCatalogPromise ??= loadModels().catch((error) => {
       modelCatalogPromise = undefined;
       throw error;
     });

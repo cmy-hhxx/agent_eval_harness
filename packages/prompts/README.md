@@ -20,6 +20,6 @@
 
 改动规则、工具描述、材料组装或启用专家示例等可能影响判词的内容时，人工更新配置中的 `evaluatorVersion`。纯文件搬迁且模型实际接收的文本不变不需要更新标识；禁止用摘要代替人工声明。调试时使用 `--debug` 的契约与 attempt 快照，当前看板也只显示运行应用的公开 Profile 定义。
 
-Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，再由 Host 注入数据源和专业网关。Eris 通过引用请求专业结论，不取代专业 Agent 的判词规则。具体修改位置见 [Eris 定义](../../agent/README.md#修改-eris)。
+Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，再由 Host 注入数据源和专业网关。Eris 通过引用请求专业结论，不取代专业 Agent 的判词规则；面向用户的表达与引用存储规则见 [Eris 能力与数据](../../agent/README.md#能力与数据)，具体修改位置见 [Eris 定义](../../agent/README.md#修改-eris)。
 
 对比文案可按偏好或逐项点评分别改写；自动化在一次请求中同时改写两者，每个槽位继续遵守各自的事实和对照边界。都差时由 Comparison 在原裁决中确定有依据的相对优劣，Rewrite 保留其主体、理由与限定；原裁决未作取舍时不自行选优，正式判决与统计仍为都差。逐项点评以本格原文为边界，同项其他候选放在只读context中，仅作对照，不能复制为点评前缀；写法直接、具体，保留本项优势与不确定性，不为了整场胜者改动局部结论。

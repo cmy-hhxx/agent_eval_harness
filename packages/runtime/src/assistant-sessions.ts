@@ -312,30 +312,45 @@ export class AssistantSessions implements AssistantSessionRuntime {
         await this.splice(value, "next-turn", index, 1, []);
         value.journal.state.status = "running";
         await this.requestState(value, prompt.requestId, "running");
+        const checkStopped = () => {
+          if (value.stopping || this.disposed) throw new Error("Assistant request stopped");
+        };
         try {
+          checkStopped();
           const defaultSelection = this.options.models ? (await this.options.models.list(value.journal.state.userId)).default : {provider:this.options.model.provider,model:this.options.model.model,reasoningEffort:this.options.model.thinking};
+          checkStopped();
           const selection = value.journal.state.modelSelection ?? value.journal.state.modelUsed ?? defaultSelection;
           const model = this.options.models ? await this.options.models.resolve(selection) : this.options.model;
+          checkStopped();
           const key = JSON.stringify(selection);
           if (value.driver && value.driverSelection !== key) { await value.driver.dispose(); value.driver = undefined; }
           value.driverSelection = key;
           await this.append(value, "assistant/model-used", { selection });
           await this.append(value, "request/context", { contextWindow: model.contextWindow });
+          checkStopped();
           value.driver ??= await (this.options.driver ?? createPiConversation)({ ...this.options, model, scope: value.journal.state, workdir: value.journal.directory, history: value.journal.events, records: value.journal.records,
             compact: (summary, firstKeptEntryId, tokensBefore) => value.journal.append({ kind: "compaction", summary, firstKeptEntryId, tokensBefore }),
             event: (event) => this.modelEvent(value, event), checkpoint: async () => { await value.writes; await value.journal.flush(); },
             progress: (callId, result) => this.progress(value, callId, result),
           });
+          checkStopped();
           await value.driver.prompt((value.activeMessage!.content as { text: string }[]).map((part) => part.text).join("\n"));
           await this.requestState(value, prompt.requestId, value.stopping || value.lastFailure ? "interrupted" : "completed");
         } catch (error) {
+          const stopped = value.stopping || this.disposed;
           if (value.journal.events.findLast((event) => event.type === "turn/start" || event.type === "turn/end")?.type !== "turn/start") {
             value.turn++; await this.append(value, "turn/start", { turn: value.turn });
           }
           if (value.activeMessage) { await this.append(value, "user/message", value.activeMessage, true); value.activeMessage = undefined; }
-          await this.append(value, "turn/end", { turn: value.turn, reason: { kind: "error", error: { code: "ASSISTANT_ERROR", message: errorText(error) } } });
+          await this.append(value, "turn/end", { turn: value.turn, reason: stopped
+            ? { kind: "aborted", reason: { kind: "user" } }
+            : { kind: "error", error: { code: "ASSISTANT_ERROR", message: errorText(error) } } });
           await this.requestState(value, prompt.requestId, "interrupted");
-          this.options.onError?.(error);
+          if (stopped) {
+            // A driver prepared before cancellation has not consumed the now-durable user message.
+            // Recreate it from the journal before the next request instead of reusing stale history.
+            await value.driver?.abort(); await value.driver?.dispose(); value.driver = undefined;
+          } else this.options.onError?.(error);
         } finally {
           for (const callId of value.progress.keys()) await this.flushProgress(value, callId, true);
           for (const message of [...value.journal.inbox["next-step"]]) {

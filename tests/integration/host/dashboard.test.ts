@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
-import { filterGptModels, assertGptModelSelections } from "../../../apps/host/src/dashboard-models.js";
+import { toDashboardModels } from "../../../apps/host/src/dashboard-models.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { exists, fileSourceReader, readJson, writeJson, writeJsonl } from "@eval/data";
@@ -184,17 +184,56 @@ async function setup(rewrite = false, clustering = false) {
   return { directory, config, configFile, task, run, row };
 }
 
-test("dashboard model catalog keeps only GPT-family gateway models", () => {
-  assert.deepEqual(filterGptModels([
+test("dashboard exposes every gateway model's public identity", () => {
+  const catalog = [
     { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
     { id: "claude-4", name: "Claude 4" },
     { id: "GEMINI-3", name: "Gemini 3" },
     { id: "gpt4o", name: "GPT-4o" },
-  ]), [
-    { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
-    { id: "gpt4o", name: "GPT-4o" },
-  ]);
-  assert.throws(() => assertGptModelSelections({ bindings: { comparison: { model: "claude-4" } } }), /GPT/);
+  ];
+  assert.deepEqual(toDashboardModels(catalog), catalog);
+  assert.deepEqual(toDashboardModels([{ id: "claude-4", name: "Claude 4", contextWindow: 64000, maxTokens: 4096 }]),
+    [{ id: "claude-4", name: "Claude 4" }]);
+});
+
+test("dashboard discovers all models from the .env gateway without leaking credentials", async () => {
+  const fixture = await setup();
+  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
+  const gatewayServer = await listen(async (req, res, url) => {
+    assert.equal(url.pathname, "/v1/models");
+    assert.equal(req.headers.authorization, "Bearer private-gateway-key");
+    return json(res, { data: [{ id: "claude-4", name: "Claude 4" }, { id: "gemini-3" }] });
+  });
+  process.env.EVAL_BASE_URL = gatewayServer.url + "/v1";
+  process.env.EVAL_API_KEY = "private-gateway-key";
+  const dashboard = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  const launch = (model: string) => fetch(dashboard.url + "/api/dashboard/runs", {
+    method: "POST", headers: { "content-type": "application/json", origin: dashboard.url },
+    body: JSON.stringify({ runId: "new", batch: ["absent"], settings: { bindings: Object.fromEntries(
+      ["attribution", "comparison", "rewrite", "clustering"].map((stage) => [stage, { model }]),
+    ) } }),
+  });
+  try {
+    const config = await (await fetch(dashboard.url + "/api/dashboard/config")).text();
+    assert(!config.includes("private-gateway-key"));
+    assert(!config.includes(gatewayServer.url));
+    assert.deepEqual(JSON.parse(config).model_catalog, [
+      { id: "claude-4", name: "Claude 4" }, { id: "gemini-3", name: "gemini-3" },
+    ]);
+    assert.deepEqual(JSON.parse(config).environment, { base_url_configured: true, api_key_configured: true });
+    const unavailable = await launch("unlisted");
+    assert.equal(unavailable.status, 400);
+    assert.match((await unavailable.json()).error, /不在 \.env 网关模型列表/);
+    const available = await launch("claude-4");
+    assert.equal(available.status, 400);
+    assert.match((await available.json()).error, /没有可评对比组/);
+  } finally {
+    await dashboard.close();
+    await gatewayServer.close();
+    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
 });
 
 test("dashboard workflow view pages cases, resolves moved inputs, and reads authoritative results", async () => {
@@ -447,7 +486,7 @@ test("dashboard keeps rewrite progress but does not list separate rewrite output
     const detail = (await readCaseDetail(fixture.run, "b1", "q1"))!;
     const attributionIds = new Set(detail.tasks.filter((task) => task.stage === "attribution").map((task) => task.id));
     const comparison = detail.tasks.find((task) => task.stage === "comparison")!;
-    assert.deepEqual(comparison.versions, ["a_fast", "b_fast"]);
+    assert.deepEqual(new Set(comparison.versions), new Set(["a_fast", "b_fast"]));
     const rewrites = detail.tasks.filter((task) => task.stage === "rewrite");
     assert.equal(rewrites.length, 0);
     assert(attributionIds.has(fixture.task.id));
@@ -538,7 +577,9 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert(!text.includes("private-key-do-not-expose"));
     assert(!text.includes(gateway));
     const dashboardConfig = JSON.parse(text);
-    assert.deepEqual(dashboardConfig.model_catalog, [{ id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }]);
+    assert.deepEqual(dashboardConfig.model_catalog, [
+      { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, { id: "claude-4", name: "Claude 4" },
+    ]);
     assert.equal(dashboardConfig.settings.bindings.attribution.model, "");
     const referencePage = await get("/reference");
     assert.equal(referencePage.status, 200);
@@ -579,10 +620,14 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal((await get("/api/dashboard/runs/run-one/inputs/unknown")).status, 404);
     assert.equal((await post("/api/dashboard/preview", { runId: "new-run" }, "http://untrusted.example")).status, 403);
     const preview = await post("/api/dashboard/preview", {
-      runId: "new-run", batch: ["b1"], settings: { execution: { concurrency: 1 }, bindings: { comparison: { model: "other-model" } } },
+      runId: "new-run", batch: ["b1"], settings: { execution: { concurrency: 1 }, bindings: { comparison: { model: "claude-4" } } },
     });
-    assert.equal(preview.status, 400);
-    assert.match((await preview.json()).error, /GPT/);
+    assert.equal(preview.status, 200);
+    const unavailable = await post("/api/dashboard/runs", {
+      runId: "new-run", batch: ["absent"], settings: { bindings: { comparison: { model: "unlisted" } } },
+    });
+    assert.equal(unavailable.status, 400);
+    assert.match((await unavailable.json()).error, /不在 \.env 网关模型列表/);
     assert.equal(await exists(path.join(fixture.config.output.path, "new-run")), false);
     const checkpoint = await readFile(path.join(fixture.run, "state.json"), "utf8");
     const resumed = await (await post("/api/dashboard/preview", { runId: "run-one", batch: ["unrelated"] })).json();
@@ -673,6 +718,14 @@ test("run-scoped settings are validated with the same model and execution config
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
+    assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
+    const defaults = editableDashboardSettings({ bindings: { comparison: { profile: "judge" } }, models: { judge: {} } });
+    assert.equal(defaults.bindings.comparison.thinking, "high");
+    assert.equal(editableDashboardSettings({
+      models: { judge: { thinking: "low" } },
+      bindings: { comparison: { profile: "judge", thinking: "medium" } },
+    }).bindings.comparison.thinking, "medium", "explicit stage reasoning is preserved");
+    assert.equal(editableDashboardSettings({ rewrite: { comparison: false } }).rewrite.comparison, false);
     const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
     assert.deepEqual(fairSettings.comparisons, [["a_fast", "b_fast"], ["a_expert", "b_expert"]]);
     const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {

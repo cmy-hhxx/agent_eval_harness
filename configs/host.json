@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r49",
+  "evaluatorVersion": "r52",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -51,8 +51,8 @@
   ],
   "rewrite": {
     "comparison": true,
-    "attribution": false,
-    "clustering": false
+    "attribution": true,
+    "clustering": true
   },
   "clustering": {
     "enabled": true,
@@ -69,7 +69,7 @@
       "baseUrlEnv": "EVAL_BASE_URL",
       "api": "openai-responses",
       "apiKeyEnv": "EVAL_API_KEY",
-      "thinking": "xhigh",
+      "thinking": "high",
       "contextWindow": 524288,
       "maxOutputTokens": 8192
     }

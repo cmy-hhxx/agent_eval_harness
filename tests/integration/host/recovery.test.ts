@@ -92,6 +92,25 @@ async function fixture(rows = [raw("q", null)]) {
   };
   return { directory, store, spec, value };
 }
+test("only the current active attempt retains its spec and accepted submissions stay idempotent", async () => {
+  const { directory, store, spec, value } = await fixture();
+  try {
+    await store.activate(spec);
+    assert.deepEqual([...store.attempts.keys()], [spec.attemptId]);
+    await store.endAttempt(spec, "failed", "retry required");
+    assert.equal(store.attempts.size, 0, "ended attempts must release their prompt and recovery materials");
+    const next = { ...spec, attemptId: "next" }, current = { ...spec, attemptId: "current" };
+    await store.activate(next);
+    await store.activate(current);
+    assert.deepEqual([...store.attempts.keys()], [current.attemptId], "superseded attempts are not active");
+    await assert.rejects(store.accept({ ...value, attemptId: next.attemptId }), /superseded/);
+    const submission = { ...value, attemptId: current.attemptId };
+    const receipt = await store.accept(submission);
+    assert.equal(store.attempts.size, 0, "committed receipts no longer need an active attempt spec");
+    assert.deepEqual(await store.accept(submission), receipt, "resends are verified from the receipt, not a retained spec");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("queued checkpoints share a pending write without retaining a snapshot per caller", async (t) => {
   const { directory, store } = await fixture();
   let enter = () => {}, release = () => {};

@@ -3,9 +3,10 @@ import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@e
 import { readJson } from "@eval/data";
 import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
-import { assertComparableGroups, inputAdapterIds } from "@eval/workflows/comparison";
+import { assertComparableGroups, inputAdapterIds, selectComparisonGroups } from "@eval/workflows/comparison";
 import {
   THINKING_LEVELS,
+  DEFAULT_THINKING,
   type ModelCatalog,
   type ModelProfile,
   type StageBinding,
@@ -126,7 +127,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     output: source.output as OutputTarget,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
-    rewrite: { comparison: false, attribution: false, clustering: false },
+    rewrite: { comparison: true, attribution: true, clustering: true },
     clustering: { ...CLUSTERING_DEFAULTS },
   };
   if (source.clustering !== undefined) {
@@ -166,10 +167,10 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       if (source.rewrite[key] !== undefined && typeof source.rewrite[key] !== "boolean")
         throw new Error(`Invalid rewrite.${key}`);
     config.rewrite = {
-      comparison: source.rewrite.comparison === true,
+      comparison: source.rewrite.comparison !== false,
       ...(source.rewrite.comparisonItems !== undefined ? { comparisonItems: source.rewrite.comparisonItems === true } : {}),
-      attribution: source.rewrite.attribution === true,
-      clustering: source.rewrite.clustering === true,
+      attribution: source.rewrite.attribution !== false,
+      clustering: source.rewrite.clustering !== false,
     };
   }
   const versions = config.inputs?.versions;
@@ -306,7 +307,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
     },
-    rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true, clustering: rewrite.clustering === true },
+    rewrite: { attribution: rewrite.attribution !== false, comparison: rewrite.comparison !== false, clustering: rewrite.clustering !== false },
     clustering: { enabled: clustering.enabled === true },
     comparisons: Array.isArray(source.comparisons) ? source.comparisons : [],
     models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
@@ -323,7 +324,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
         const defaults = isObject(profile) ? profile : {};
         return [stage, {
           model: binding.model ?? defaults.model ?? "",
-          thinking: binding.thinking ?? defaults.thinking ?? "xhigh",
+          thinking: binding.thinking ?? defaults.thinking ?? DEFAULT_THINKING,
         }];
       })),
   };
@@ -389,9 +390,7 @@ function selectVersions(evaluation: EvalConfig, ids: string[]): EvalConfig {
   if (ids.length < 2) throw new Error("至少选择两个模型");
   const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
   if (versions.length !== ids.length) throw new Error("运行设置包含未登记的模型");
-  const comparisons = evaluation.comparisons
-    .map((group) => group.filter((id) => ids.includes(id)))
-    .filter((group) => group.length >= 2);
+  const comparisons = selectComparisonGroups(evaluation.comparisons, ids);
   if (!comparisons.length) throw new Error("所选模型没有可比较的组合");
   return { ...evaluation, inputs: { ...evaluation.inputs, versions }, comparisons };
 }

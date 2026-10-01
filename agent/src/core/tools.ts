@@ -38,8 +38,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
           citations.push({ reference: item.reference, evaluatorVersion: result.evaluatorVersion });
         } else throw new Error("总结缺少正式结果引用");
       }
-      const markdown = `${args.markdown}\n\n## 结果引用\n\n${citations.map((entry) => `- \`${JSON.stringify(entry)}\``).join("\n")}\n`;
-      return textResult(await options.save(context.scope, markdown));
+      return { ...textResult(await options.save(context.scope, args.markdown)), details: { references: citations } };
     },
   };
   const ajv = new Ajv2020({ allErrors: true, strict: false });

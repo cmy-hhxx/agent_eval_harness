@@ -1,16 +1,18 @@
 import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { loadConfig, createModelResolver } from "@eval/host-app/config";
-import { adapt, buildPlan, createInputScanCache, inputAdapterIds, inputAdapters } from "@eval/workflows/comparison";
+import { loadConfig, loadEvaluation, createModelResolver } from "@eval/host-app/config";
+import { adapt, buildPlan, createInputScanCache, inputAdapterIds, inputAdapters, reconcileRun } from "@eval/workflows/comparison";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData, RawInput } from "@eval/workflows/comparison";
-import { emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
+import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, emptyUsage } from "@eval/contracts";
+import { canonical, emptyUsage, type RunState } from "@eval/contracts";
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -63,6 +65,8 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.attribution?.profile, "judge");
   assert.equal(host.models.bindings.comparison?.profile, "judge");
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
+  assert.equal(host.models.models.judge?.thinking, "high");
+  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
@@ -71,14 +75,43 @@ test("configuration composes layered files and resolves bound models", async () 
     EVAL_BASE_URL: "https://gateway.example/v1",
   });
   const modelForStage = createModelResolver(resolved.models);
-  assert.equal(modelForStage("attribution").model, "your-gateway-model-id");
-  assert.equal(modelForStage("attribution").maxOutputTokens, 8192);
-  assert.equal(modelForStage("attribution").thinking, "medium");
-  assert.equal(modelForStage("comparison").maxOutputTokens, 8192);
-  assert.equal(modelForStage("comparison").thinking, "medium");
-  assert.equal(modelForStage("rewrite").model, "your-gateway-model-id");
+  const unconfigured = createModelResolver({
+    ...resolved.models,
+    models: { ...resolved.models.models, judge: { ...resolved.models.models.judge!, thinking: undefined } },
+  });
+  for (const stage of ["attribution", "comparison", "rewrite", "clustering"]) {
+    assert.equal(modelForStage(stage).model, "your-gateway-model-id");
+    assert.equal(modelForStage(stage).maxOutputTokens, 8192);
+    assert.equal(modelForStage(stage).thinking, "high");
+    assert.equal(unconfigured(stage).thinking, "high", "unconfigured profiles use high reasoning");
+  }
+  const overridden = createModelResolver({
+    ...resolved.models,
+    models: { ...resolved.models.models, judge: { ...resolved.models.models.judge!, thinking: "medium" } },
+    bindings: { ...resolved.models.bindings, comparison: { ...resolved.models.bindings.comparison, thinking: "low" } },
+  });
+  assert.equal(overridden("attribution").thinking, "medium", "explicit profile reasoning is preserved");
+  assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
+});
+
+test("omitted rewrite settings enable each stage while explicit opt-outs remain effective", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
+    delete source.rewrite;
+    const file = path.join(directory, "defaults.json");
+    await writeFile(file, JSON.stringify(source));
+    const defaults = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
+    assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, attribution: true, clustering: true });
+    source.rewrite = { attribution: false };
+    await writeFile(file, JSON.stringify(source));
+    const partial = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
+    assert.deepEqual(partial.evaluation.rewrite, { comparison: true, attribution: false, clustering: true });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("default comparisons plan separate Fast and Expert matches", async () => {
@@ -128,6 +161,84 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
     assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
       .map((task) => (task.data as TaskData).group), config.comparisons);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("overlapping comparison groups share one attribution and rewrite per answer", async () => {
+  const { directory, config } = await fixtureConfig(undefined, true, true);
+  try {
+    delete config.inputs.versions[1].comparison_tier;
+    config.comparisons = [["a_fast", "b_fast"], ["a_fast", "b_fast", "a_expert"]];
+    const plan = await buildPlan(config);
+    const attributions = plan.tasks.filter((task) => task.stage === "attribution");
+    assert.equal(attributions.length, 3, "each answer is attributed once, regardless of group overlap");
+    assert.equal(new Set(attributions.map((task) => task.inputIds.answer)).size, 3);
+    const comparisons = plan.tasks.filter((task) => task.stage === "comparison");
+    for (const task of comparisons)
+      for (const [label, inputId] of Object.entries(task.inputIds))
+        assert.equal(task.dependencies[label], attributions.find((task) => task.inputIds.answer === inputId)!.id);
+    assert.equal(plan.summary.attribution_tasks, 3);
+    assert.equal((plan.summary.by_batch as Record<string, { attribution_tasks: number }>).b1.attribution_tasks, 3);
+    assert.equal(plan.summary.rewrite_tasks, 8, "three attributions, two comparisons and three clusters");
+    const clustered = plan.tasks.filter((task) => task.stage === "clustering").flatMap((task) => Object.values(task.dependencies));
+    assert.deepEqual(new Set(clustered), new Set(attributions.map((task) => task.id)));
+    assert.equal(clustered.length, 3);
+    const resumed = await buildPlan(config, plan);
+    assert.deepEqual(resumed.tasks.map((task) => task.id), plan.tasks.map((task) => task.id));
+    assert.deepEqual(resumed.tasks.filter((task) => task.stage === "comparison").map((task) => task.dependencies),
+      comparisons.map((task) => task.dependencies));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("model selection and resume collapse equivalent narrowed comparison groups", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    delete config.inputs.versions[1].comparison_tier;
+    const file = path.join(directory, "groups.json");
+    await writeFile(file, JSON.stringify({
+      inputs: config.inputs,
+      comparisons: [["a_fast", "b_fast"], ["b_fast", "a_fast", "a_expert"]],
+      output: config.output, problemLibrary: config.problemLibrary,
+      rewrite: config.rewrite, clustering: config.clustering,
+    }));
+    const sources = [path.join(ROOT, "configs/host.json"), file];
+    const env = { EVAL_BASE_URL: "https://gateway.example/v1" };
+    const settings = { versions: ["a_fast", "b_fast"] };
+    const selected = (await loadConfig(sources, env, settings)).evaluation;
+    assert.deepEqual(selected.comparisons, [["a_fast", "b_fast"]], "keep the first group's declared order");
+    assert.deepEqual((await loadEvaluation(sources, settings)).comparisons, selected.comparisons);
+    const plan = await buildPlan(selected);
+    assert.equal(plan.summary.comparison_tasks, 1);
+    const state: RunState = {
+      manifest: { format: "evaluation-run", runId: "selected", status: "finished", debug: false,
+        engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config: selected,
+        tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary, startedAt: Date.now(),
+        states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "pending", attempts: 0 }])),
+      }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
+    };
+    const resumed = await reconcileRun(directory, state, (await loadConfig(sources, env)).evaluation);
+    assert.deepEqual(resumed.summary.comparisons, selected.comparisons);
+    assert.equal(resumed.summary.comparison_tasks, 1);
+    assert.deepEqual(resumed.tasks.map((task) => task.id), plan.tasks.map((task) => task.id));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("new comparisons shuffle blind labels once and preserve the assignment on resume", async (t) => {
+  const { directory, config } = await fixtureConfig();
+  const random = t.mock.method(crypto, "randomInt", () => 0);
+  syncBuiltinESMExports();
+  try {
+    const plan = await buildPlan(config);
+    assert.equal(random.mock.callCount(), 1, "new two-answer comparisons must run the shuffle");
+    const comparison = plan.tasks.find((task) => task.stage === "comparison")!;
+    assert.equal((comparison.data as TaskData).candidates.A.version, "b_fast");
+    const resumed = await buildPlan(config, plan);
+    assert.equal(random.mock.callCount(), 1, "resuming must not reshuffle registered labels");
+    assert.deepEqual(resumed.tasks.find((task) => task.stage === "comparison")!.data, comparison.data);
+  } finally {
+    random.mock.restore();
+    syncBuiltinESMExports();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -125,6 +125,7 @@ export class RunStore {
     const state = this.manifest.states[spec.taskId];
     if (!state || (await this.receipt(spec.taskId))) throw new Error("Task already completed or unknown");
     if (spec.inputRevision !== (state.revision || 1)) throw new HttpError(409, "Input revision superseded");
+    if (state.attemptId) this.attempts.delete(state.attemptId);
     state.status = "running";
     state.attemptId = spec.attemptId;
     state.attempts++;
@@ -154,6 +155,7 @@ export class RunStore {
       state.status = status;
       state.reason = reason;
       await this.save();
+      this.attempts.delete(spec.attemptId);
     });
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
@@ -242,6 +244,7 @@ export class RunStore {
       state.repeatedErrors = repeatedErrors;
       throw error;
     }
+    this.attempts.delete(value.attemptId);
     return receipt;
   }
 }

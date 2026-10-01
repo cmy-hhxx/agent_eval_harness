@@ -7,7 +7,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { createRunRepository, fileSourceReader } from "@eval/data";
-import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, taskCase, taskIdentity } from "./input.js";
+import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, selectComparisonGroups, taskCase, taskIdentity } from "./input.js";
 import type { BatchPreflight, Candidate, ComparisonResult, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
 import { encodeResult, stageResult } from "./results.js";
@@ -110,9 +110,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     ...config,
     execution: supplied.execution,
     // Automation explicitly extends a daily run's model selection; normal resume retains its selection.
-    comparisons: supplied.comparisons
-      .map((group) => group.filter((id) => versions.some((version) => version.id === id)))
-      .filter((group) => group.length >= 2),
+    comparisons: selectComparisonGroups(supplied.comparisons, versions.map((version) => version.id)),
     // Presentation and library stages may be enabled or disabled on resume without touching evaluations.
     rewrite: supplied.rewrite,
     clustering: supplied.clustering,

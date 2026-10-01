@@ -14,10 +14,17 @@ const selected=[];
 let sourceReads=0;let sourceAvailable=true;
 const sourceArgs={reference:{runId:'run-alpha',inputId:'input-one',messageIndex:0}};
 const sourceText='原始问题：请核对这条回答的证据。';
+const formalReference={runId:'run-alpha',taskId:'task-internal-alpha'};
+const operationId='6a1b4a17-1039-4ead-ac32-9a37b0bf4ada';
+const evaluatorVersion='fixture-evaluator-private';
+const summaryName=operationId+'.md';
+const directoryQuery='run-private-prefix';
+const failedInputId='input-private-missing';
+const rawReadError='读取失败：taskId task-private-missing，路径 /private/eris/runs/run-alpha/result.jsonl';
 const sourceTool={name:'read_data',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>{sourceReads++;if(!sourceAvailable)throw new Error('原始材料暂时不可用');return {content:[{type:'text',text:JSON.stringify({reference:sourceArgs.reference,text:sourceText,evidence:[{evidence_id:'ev_0_text_0_4_/content',quote:'原始问题'}],total:sourceText.length,hasMore:false,nextOffset:null})}]};}};
 const thinkingGate=Promise.withResolvers();
 const imageTool={name:'view_image',readOnly:true,description:'Read image',inputSchema:{type:'object'},execute:async()=>({content:[{type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6G2YAAAAASUVORK5CYII='}]})};
-const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool],driver:async({event,model})=>({
+const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool],driver:async({event,model,scope})=>({
  async prompt(text){
   selected.push(model);const callId="lookup-"+selected.length;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
@@ -27,13 +34,25 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});await delay(40);
   }
   if (selected.length === 1) await thinkingGate.promise;
-  await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5}}],stopReason:'toolUse'}});
-  await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5}});await delay(150);
+  await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
+  await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5,query:directoryQuery}});await delay(150);
   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:'{"items":[{"runId":"run-alpha","accepted":12}],"total":1}'}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'source-'+selected.length,toolName:'read_data',args:sourceArgs});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'source-'+selected.length,content:[{type:'text',text:sourceText}],details:{sourceRead:{tool:'read_data',args:sourceArgs}},isError:false}});
   await event({type:'tool_execution_start',toolCallId:'image-'+selected.length,toolName:'view_image',args:sourceArgs});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'image-'+selected.length,content:[],details:{sourceRead:{tool:'view_image',args:sourceArgs}},isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'formal-'+selected.length,toolName:'read_data',args:{reference:formalReference}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'formal-'+selected.length,content:[{type:'text',text:JSON.stringify({kind:'accepted-result',reference:formalReference,evaluatorVersion,result:{conclusion:'已有正式结论'}})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'specialist-'+selected.length,toolName:'call_specialist',args:{operationId,kind:'comparison',inputs:[{runId:'run-alpha',inputId:'input-one'},{runId:'run-alpha',inputId:'input-two'}]}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'specialist-'+selected.length,content:[{type:'text',text:JSON.stringify({operationId,state:'succeeded',evaluatorVersion,result:{conclusion:'对比完成'}})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'read-specialist-'+selected.length,toolName:'read_specialist',args:{operationId}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'read-specialist-'+selected.length,content:[{type:'text',text:JSON.stringify({operationId,state:'succeeded',evaluatorVersion,result:{conclusion:'对比完成'}})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'calculate-'+selected.length,toolName:'calculate',args:{operation:'add',operands:['1','2']}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'calculate-'+selected.length,content:[{type:'text',text:JSON.stringify({operation:'add',operands:['1','2'],result:'3'})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'summary-'+selected.length,toolName:'save_summary',args:{markdown:'评测总结',references:[{operationId}]}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'summary-'+selected.length,content:[{type:'text',text:JSON.stringify({id:operationId,name:summaryName,bytes:Buffer.byteLength('评测总结'),url:`${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${summaryName}`})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'failed-source-'+selected.length,toolName:'read_data',args:{reference:{runId:'run-alpha',inputId:failedInputId}}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-source-'+selected.length,content:[{type:'text',text:rawReadError}],isError:true}});
   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
   await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'## 查询完成\n\n共有 12 条正式结果。'}});
   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:'## 查询完成\n\n共有 12 条正式结果。'}],stopReason:'stop'}});
@@ -58,6 +77,13 @@ try{
  // The upstream Turn process owns both the thought and the business tool.
  await page.locator('[data-turn-process]').click();
  await page.locator('[data-process-activity][aria-expanded=false]').first().click();
+ await page.getByRole('button',{name:/读取材料.*读取原始对话/}).first().waitFor();
+ const collapsedSteps=await page.locator('body').innerText();
+ for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,summaryName,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
+ assert(!/runId|inputId|taskId|operationId|evaluatorVersion/.test(collapsedSteps),'collapsed tool steps expose internal field names');
+ for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ const failedRead=page.locator('[data-tool=read_data][data-state=error]').getByRole('button').first();
+ await failedRead.click();await page.getByText(rawReadError,{exact:true}).waitFor();await failedRead.click();
  const thinking=page.locator('[data-variant=think]');await thinking.waitFor({state:'visible'});
  await thinking.getByRole('button').first().click();
  await thinking.getByText('先核对引用，再查询正式结果。',{exact:true}).last().waitFor();
@@ -65,6 +91,16 @@ try{
  await page.getByRole('button',{name:/查询评测数据/}).first().click();
  await page.getByText('run-alpha',{exact:true}).first().waitFor();
  assert.equal(sourceReads,0,'collapsed source tools do not fetch materials');
+ const professional=page.getByRole('button',{name:/专业评测.*对比评测/}).first();
+ await professional.click();
+ await page.getByText(operationId,{exact:true}).first().waitFor();
+ await page.getByText(evaluatorVersion,{exact:true}).first().waitFor();
+ await professional.click();
+ const summary=page.getByRole('button',{name:/保存总结/}).first();
+ await summary.click();await page.getByText(summaryName,{exact:true}).first().waitFor();
+ const download=page.getByRole('link',{name:'下载总结',exact:true});await download.waitFor();
+ const downloadUrl=new URL(await download.getAttribute('href'));
+ assert.equal(downloadUrl.origin,new URL(server.url).origin);assert(downloadUrl.pathname.startsWith('/u/local/artifacts/'));assert(downloadUrl.pathname.endsWith('/'+summaryName));await summary.click();
  await page.getByRole('button',{name:/读取材料/}).first().click();
  await page.getByText(sourceText,{exact:true}).waitFor();
  await page.getByText('证据',{exact:true}).first().click();

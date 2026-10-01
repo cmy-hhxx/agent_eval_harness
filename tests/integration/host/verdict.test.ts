@@ -98,7 +98,8 @@ test("two-way verdicts are derived from ranking and core classification", async 
   try {
     const plan = await buildPlan(config),
       task = comparisonTask(plan),
-      labels = Object.keys((task.data as TaskData).candidates),
+      candidates = (task.data as TaskData).candidates,
+      labels = Object.keys(candidates),
       receipts = attributionReceipts(task),
       names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name])),
       pairKey = "a_fast__vs__b_fast";
@@ -109,15 +110,14 @@ test("two-way verdicts are derived from ranking and core classification", async 
       pairKey
     ]!;
     assert.equal(winVerdict.result, "win");
-    assert.equal(winVerdict.winner_version, "a_fast");
+    assert.equal(winVerdict.winner_version, candidates[labels[0]!].version);
 
     const nearMiss = group(labels);
     nearMiss.ranking = [[labels[0]!], [labels[1]!]];
     const tiered = comparisonRow(plan.inputs, task, nearMiss, receipts, names, fakeEvaluatorVersion);
-    assert.equal(
-      (tiered.verdicts as Record<string, { result: string; winner_version: string }>)[pairKey]!.result,
-      "win",
-    );
+    const tieredVerdict = (tiered.verdicts as Record<string, { result: string; winner_version: string }>)[pairKey]!;
+    assert.equal(tieredVerdict.result, "win");
+    assert.equal(tieredVerdict.winner_version, candidates[labels[0]!].version);
 
     const failed = group(labels, Object.fromEntries(labels.map((label) => [label, false])));
     failed.decision_basis.tradeoff = `双方都没答对，但候选${labels[0]}保留了正确操作数，比另一方替换操作数相对更好。`;
@@ -133,7 +133,7 @@ test("two-way verdicts are derived from ranking and core classification", async 
     const badVerdict = (allBad.verdicts as Record<string, JsonObject>)[pairKey]!;
     assert.equal(badVerdict.winner_version, null);
     assert.equal(badVerdict.winner_name, null);
-    assert.deepEqual(allBad.ranking, [["a_fast", "b_fast"]]);
+    assert.deepEqual(allBad.ranking, [labels.map((label) => candidates[label].version)]);
     assert.match((allBad.decision_basis as JsonObject).tradeoff as string, /相对更好/);
 
     const even = comparisonRow(plan.inputs, task, group(labels), receipts, names, fakeEvaluatorVersion);
@@ -178,7 +178,8 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
       recordedAttempts: plan.tasks.length,
     };
     const evaluation = group(labels);
-    evaluation.decision_basis.tradeoff = "内容质量：A与B都正确给出4。完成耗时：A为1.2秒，B为40秒；总token：A为120，B为1200。";
+    const labelOf = new Map(Object.entries((task.data as TaskData).candidates).map(([label, candidate]) => [candidate.version, label]));
+    evaluation.decision_basis.tradeoff = `内容质量：双方都正确给出4。完成耗时：候选${labelOf.get("a_fast")}为1.2秒，候选${labelOf.get("b_fast")}为40秒；总token：候选${labelOf.get("a_fast")}为120，候选${labelOf.get("b_fast")}为1200。`;
     state.receipts[task.id] = {
       taskId: task.id,
       attemptId: "cmp",

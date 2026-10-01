@@ -41,8 +41,8 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 对比组，每项是一组已登记版本；组内统一排名，不能混用不同 `comparison_tier`；未标档位的第三方模型可加入任一组 |
-| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`；默认只开启comparison并改写对局偏好理由；`comparisonItems: true` 将逐项点评加入同一改写任务，自动化强制开启；开启后每个归因/对比/聚类任务对应一个改写任务，源结果接受后执行，结果写回各阶段自身的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
-| `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前统一为 `openai-responses`）、`apiKeyEnv` 及默认 `thinking`（缺省 `xhigh`）、`contextWindow`、`maxOutputTokens` |
+| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`，三项默认均开启，可显式关闭；对比默认改写对局偏好理由，`comparisonItems: true` 另将逐项点评加入同一任务（自动化强制开启）；各阶段源结果接受后改写，文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前配置为 `openai-responses`）、`apiKeyEnv` 及默认 `thinking`（缺省 `high`，即高）、`contextWindow`、`maxOutputTokens` |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认32并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
 | `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
@@ -275,7 +275,7 @@ bash run.sh
 「开始评测」按以下步骤操作：
 
 1. 选择日期、模型（至少两个同组模型）和抽样数量；留空表示全部。全选模型仍按配置的 Fast / Expert 对比组分别规划。日期筛选转成已登记的 `batch_id` + case 选择，批次契约不变；run ID 由看板生成。
-2. 在「高级设置」按需调整网关列出的 `gpt` 系列阶段模型、推理等级、并发、预算、改写、聚类和 Debug。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不向浏览器返回密钥。
+2. 在「高级设置」按需调整阶段模型、推理等级、并发、预算、改写、聚类和 Debug。模型选项来自 `.env` 配置的网关 `/models` 返回的**完整列表**，不按 GPT 等名称筛选；不在列表中的模型不能启动。推理默认高（`high`），归因/对比/聚类改写默认全开；显式配置或本次选择仍可覆盖。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不向浏览器返回密钥。
 3. 先预检再确认启动。预检不调用模型、不创建 run；启动时重新核验来源、模型、密钥和运行锁。可选择 Pi / Prime、停止或调整并发，并从运行详情续跑未完成任务。续跑沿用原批次、被评模型范围和抽样范围，保留已接受结果；停止和并发控制仍由持锁 Host 执行，看板只转发。
 
 ## 运行产物

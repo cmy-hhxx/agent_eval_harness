@@ -19,6 +19,63 @@ async function settled(sessions: AssistantSessions, id: string, requestId: strin
   throw new Error("Assistant did not settle");
 }
 
+test("stopping during conversation preparation never starts a model turn", { timeout: 10000 }, async (t) => {
+  for (const phase of ["models", "driver"] as const) for (const stop of ["cancel", "dispose"] as const)
+    await t.test(`${stop} while preparing ${phase}`, async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), "assistant-stop-"));
+      const scope = { userId: "alice", sessionId: randomUUID() };
+      const model: ModelConfig = { provider: "fixture", model: "fixture", api: "openai-completions",
+        baseUrl: "http://127.0.0.1:1", apiKeyEnv: "UNUSED_KEY", thinking: "off", contextWindow: 4096, maxOutputTokens: 1024 };
+      let enter = () => {}, release = () => {};
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const waiting = new Promise<void>((resolve) => { release = resolve; });
+      const prompts: string[] = [], errors: unknown[] = [], histories: JsonObject[][] = [];
+      const wait = async () => { enter(); await waiting; };
+      const selection = { provider: model.provider, model: model.model };
+      const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model, systemPrompt: "test", tools: [],
+        models: {
+          async list() { if (phase === "models") await wait(); return { models: [], favorites: [], default: selection }; },
+          async resolve() { return model; }, async favorites() {}, async readFavorites() { return []; },
+        },
+        driver: async ({ event, history }) => {
+          histories.push(history.filter((entry) => entry.type === "user/message").map((entry) => entry.data));
+          if (phase === "driver") await wait();
+          return { async prompt(text) {
+            prompts.push(text);
+            await event({ type: "agent_start" }); await event({ type: "turn_start" });
+            await event({ type: "message_end", message: { role: "user", content: [{ type: "text", text }] } });
+            await event({ type: "turn_end" }); await event({ type: "agent_end" });
+          }, async steer() {}, async abort() {}, async dispose() {} };
+        }, onError: (error) => errors.push(error),
+      });
+      let disposing: Promise<void> | undefined;
+      try {
+        await sessions.create(scope.userId, scope.sessionId);
+        const requestId = randomUUID();
+        await sessions.prompt(scope.userId, { sessionId: scope.sessionId, requestId, mode: "queue", content: [{ type: "text", text: "stop this turn" }] });
+        await entered;
+        const stopping = stop === "cancel" ? sessions.cancel(scope) : (disposing = sessions.dispose());
+        if (stop === "cancel") await stopping;
+        release();
+        await stopping;
+        assert.equal((await settled(sessions, scope.sessionId, requestId)).requests[requestId], "interrupted");
+        assert.deepEqual(prompts, [], "a stopped request must not reach the model or its tools");
+        assert.deepEqual(errors, [], "user cancellation is not an execution error");
+        if (stop === "cancel") {
+          const page = await sessions.page(scope) as { records: { event: { type: string; data: JsonObject } }[] };
+          assert.equal(page.records.filter((row) => row.event.type === "user/message").length, 1, "keep the interrupted user's message");
+          assert(page.records.some((row) => row.event.type === "turn/end" && object(row.event.data.reason).kind === "aborted"));
+          const nextId = randomUUID();
+          await sessions.prompt(scope.userId, { sessionId: scope.sessionId, requestId: nextId, mode: "queue", content: [{ type: "text", text: "continue" }] });
+          assert.equal((await settled(sessions, scope.sessionId, nextId)).requests[nextId], "completed");
+          assert.deepEqual(prompts, ["continue"], "cancellation must not poison the next request");
+          assert.equal(histories.length, phase === "models" ? 1 : 2);
+          assert(JSON.stringify(histories.at(-1)).includes("stop this turn"), "recreate a prepared driver from the interrupted history");
+        }
+      } finally { release(); await (disposing ?? sessions.dispose()); await rm(directory, { recursive: true, force: true }); }
+    });
+});
+
 test("Pi conversation checkpoints before requests, deduplicates, invokes tools, and restores one authoritative history", { timeout: 30000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "assistant-pi-"));
   const scope = { userId: "alice", sessionId: randomUUID() };

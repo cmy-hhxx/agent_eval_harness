@@ -556,12 +556,12 @@ function renderConfig() {
   $("#config-path").textContent = `配置来源：${(config.paths || []).join("、")}`;
   const env = config.environment || {};
   $("#env-status").innerHTML = [
-    ["URL", env.base_url_configured], ["Key", env.api_key_configured], ["基础模型", env.model_configured],
+    ["URL", env.base_url_configured], ["Key", env.api_key_configured],
   ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
-  const gatewayModels = (config.model_catalog || []).filter((model) => typeof model.id === "string" && model.id.toLowerCase().startsWith("gpt"));
+  const gatewayModels = config.model_catalog || [];
   const modelOptions = (selected) => gatewayModels.length
-    ? `<option value="" ${selected ? "" : "selected"}>请选择 GPT 模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`
-    : `<option value="" selected>${config.model_catalog_error || "无可用 GPT 模型"}</option>`;
+    ? `<option value="" ${selected ? "" : "selected"}>未选模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`
+    : `<option value="" selected>${escapeHtml(config.model_catalog_error || "网关未返回可用模型")}</option>`;
   $("#model-fields").innerHTML = `<div class="model-fields-head" aria-hidden="true"><span>阶段</span><span>模型</span><span>推理</span></div>${Object.entries(settings.bindings || {}).map(([stage, binding]) => {
     const selected = gatewayModels.some((model) => model.id === binding.model) ? binding.model : "";
     return `

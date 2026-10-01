@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "../../fixtures/services.js";
+import { editableDashboardSettings } from "@eval/host-app/config";
 
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 const { createDashboardViews } = await import(pathToFileURL(path.join(ROOT, "apps/host/dashboard/dashboard-view.js")).href);
@@ -17,7 +18,7 @@ async function controller(respond: (url: string) => unknown) {
   // Exercise the real controller with an in-memory DOM and network; no browser or boot requests.
   const load = new Function("document", "createDashboardViews", "fetch", "setTimeout", "clearTimeout",
     source.slice(source.indexOf("\n") + 1, source.lastIndexOf("\n(async () => {")) +
-    "\nreturn { state, loadInputs, refresh };",
+    "\nreturn { state, loadConfig, loadInputs, refresh };",
   );
   const api = load(dom.window.document, createDashboardViews,
     async (url: string) => new Response(JSON.stringify(respond(url))),
@@ -26,6 +27,33 @@ async function controller(respond: (url: string) => unknown) {
   );
   return { ...api, dom, document: dom.window.document, timers };
 }
+
+test("dashboard renders all configured gateway models and high thinking with every rewrite enabled", async () => {
+  const page = await controller(() => ({
+    paths: ["configs/host.json"], environment: {},
+    model_catalog: [{ id: "claude-4", name: "Claude 4" }, { id: "gpt-5.6", name: "GPT 5.6" }],
+    settings: editableDashboardSettings({
+      models: { judge: { model: "claude-4" } },
+      bindings: Object.fromEntries(["attribution", "comparison", "rewrite", "clustering"]
+        .map((stage) => [stage, { profile: "judge" }])),
+      execution: { concurrency: 4, timeoutSeconds: 900, maxToolCalls: 12, retries: 1 },
+      clustering: { enabled: true },
+    }),
+  }));
+  try {
+    await page.loadConfig();
+    const selects = [...page.document.querySelectorAll("[data-model-stage]")];
+    assert.equal(selects.length, 4);
+    for (const select of selects) {
+      assert.deepEqual([...select.options].map((option) => option.value), ["", "claude-4", "gpt-5.6"]);
+      assert.equal(select.value, "claude-4");
+    }
+    for (const select of page.document.querySelectorAll("[data-thinking-stage]"))
+      assert.equal(select.value, "high");
+    for (const stage of ["attribution", "comparison", "clustering"])
+      assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, true);
+  } finally { page.dom.window.close(); }
+});
 
 test("comparison finding links reveal collapsed attribution details and preserve the opened finding", async () => {
   const page = await controller(() => ({}));

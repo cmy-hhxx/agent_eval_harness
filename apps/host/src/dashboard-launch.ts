@@ -9,8 +9,6 @@ import type { EvalConfig } from "@eval/workflows/comparison";
 import { dashboardSettings, loadConfig } from "./config.js";
 import { createModelResolver } from "./models.js";
 import {
-  assertAvailableDashboardModels,
-  assertGptModelSelections,
   discoverDashboardModels,
   type DashboardModelLoader,
 } from "./dashboard-models.js";
@@ -78,7 +76,6 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
   let host: Awaited<ReturnType<typeof loadConfig>>;
   try {
     settings = dashboardSettings(value.settings ?? {});
-    assertGptModelSelections(settings);
     host = await loadConfig(options.configPaths, process.env, settings);
   } catch (error) {
     throw new HttpError(400, errorText(error));
@@ -86,12 +83,11 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
   if (launch) {
     try {
       const models = await (options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths)))();
-      assertAvailableDashboardModels(models.map((model) => model.id), settings);
       const modelForStage = createModelResolver(host.models);
       const available = new Set(models.map((model) => model.id));
       for (const stage of Object.keys(host.models.bindings)) {
         const model = modelForStage(stage);
-        if (!available.has(model.model)) throw new Error(`阶段 ${stage} 的模型不在 .env 网关 GPT 模型列表中`);
+        if (!available.has(model.model)) throw new Error(`阶段 ${stage} 的模型不在 .env 网关模型列表中`);
       }
       for (const binding of Object.values(host.models.bindings)) {
         const profile = host.models.models[binding.profile]!;

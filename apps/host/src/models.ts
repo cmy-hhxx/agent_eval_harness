@@ -2,6 +2,7 @@ import type { ModelConfig } from "@eval/contracts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
+export const DEFAULT_THINKING: Thinking = "high";
 
 /** A reusable model profile: gateway identity plus default parameters. */
 export interface ModelProfile {
@@ -45,7 +46,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       throw new Error(
         `Missing model id for profile "${binding.profile}"; set models.${binding.profile}.model in a local config`,
       );
-    const thinking = binding.thinking ?? profile.thinking ?? "xhigh";
+    const thinking = binding.thinking ?? profile.thinking ?? DEFAULT_THINKING;
     if (!THINKING_LEVELS.includes(thinking)) throw new Error(`Invalid thinking for stage "${stage}"`);
     const contextWindow = binding.contextWindow ?? profile.contextWindow;
     if (contextWindow === undefined || !Number.isInteger(contextWindow) || contextWindow <= 0)

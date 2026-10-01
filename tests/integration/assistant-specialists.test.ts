@@ -53,8 +53,9 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const {tools}=createEris({data:source,specialists:gateway,save:async(_,text)=>{saved=text;return {id:"summary"};}});
   const save=tools.find(tool=>tool.name==="save_summary")!;
   const context={scope,signal,callId:"summary",progress(){}};
-  await save.execute({markdown:"评测总结",references:[{operationId}]},context);
-  assert(saved.includes(config.evaluatorVersion));assert(saved.includes(operationId));
+  const summary=await save.execute({markdown:"评测总结",references:[{operationId}]},context);
+  assert.equal(saved,"评测总结");
+  assert.deepEqual(summary.details,{references:[{operationId,evaluatorVersion:config.evaluatorVersion,reference:result.reference}]});
   await assert.rejects(save.execute({markdown:"伪造",references:[{reference:{runId:"source",taskId:"missing"}}]},context));
   const read=await source.read({...inputs[0],messageIndex:1},{offset:2,limit:2});assert.equal(read.text,"ss");assert.equal((read.evidence as {quote:string}[])[0].quote,"ss");
   await assert.rejects(source.read({...inputs[0],taskId:"wrong"}),/读取目标不明确/);

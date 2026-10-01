@@ -1,7 +1,7 @@
 import {object, type ModelConfig, type AssistantModelEntry} from '@eval/contracts';
 
 /** Discover only the configured gateway. Credentials never cross the browser boundary. */
-export async function discoverAssistantModels(config: ModelConfig): Promise<AssistantModelEntry[]> {
+export async function discoverAssistantModels(config: Pick<ModelConfig, 'baseUrl' | 'apiKeyEnv'>): Promise<AssistantModelEntry[]> {
   const key = process.env[config.apiKeyEnv];
   if (!key) throw new Error(`Missing ${config.apiKeyEnv}`);
   const response = await fetch(config.baseUrl.replace(/\/$/, '') + '/models', {
