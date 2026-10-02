@@ -227,15 +227,16 @@ test("startup wait ends visibly if no checkpoint appears", async () => {
   } finally { page.dom.window.close(); }
 });
 
-test("new evaluations sample ten viable cases by default and still allow all cases", async () => {
+test("new evaluations sample ten viable cases with seed 41 by default and still allow all cases", async () => {
   const page = await controller(() => ({}));
   try {
     samplingScope(page);
-    assert.equal(page.document.querySelector("#sample-seed").value, "");
+    assert.equal(page.document.querySelector("#sample-seed").value, "41");
     const sampled = page.pickSample();
     assert.equal(sampled.size, 10);
     assert.equal(sampled.cases.length, 10);
     assert.equal(new Set(sampled.cases).size, 10);
+    assert.deepEqual(page.pickSample(), sampled, "the default seed reproduces the selection");
     assert.equal(page.document.querySelector("#sample-all").getAttribute("aria-pressed"), "false");
     const seed = page.document.querySelector("#sample-seed");
     seed.value = "-1";
