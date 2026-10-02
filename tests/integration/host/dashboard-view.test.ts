@@ -78,7 +78,7 @@ test("review projections resolve blind candidates and show uncertain cells witho
   } finally { dom.window.close(); }
 });
 
-test("case header shows available standard answers, including zero and structured values, and hides absent answers", () => {
+test("case header shows a standard answer row below the question, including zero and structured values, and hides absent answers", () => {
   const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
   try {
     assert.equal(document.querySelector(".standard-answer"), null);
@@ -86,6 +86,8 @@ test("case header shows available standard answers, including zero and structure
       state.caseDetail.ground_truth = { available: true, value };
       views.renderDetail();
       assert.equal(document.querySelector(".detail-heading .standard-answer h3").textContent, "标准答案");
+      assert.equal(document.querySelector(".question-text").nextElementSibling, document.querySelector(".standard-answer"));
+      assert.equal(document.querySelector(".standard-answer").closest("details"), null, "standard answers are visible without opening inputs or tasks");
       assert.equal(document.querySelector(".standard-answer .text-content").textContent,
         typeof value === "string" ? value : JSON.stringify(value, null, 2));
       assert.equal(document.querySelector(".standard-answer img"), null);

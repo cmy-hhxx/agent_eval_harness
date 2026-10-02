@@ -14,21 +14,60 @@ async function controller(respond: (url: string, options?: RequestInit) => unkno
   const dom = new JSDOM(await readFile(path.join(ROOT, "apps/host/dashboard/index.html"), "utf8"));
   const source = await readFile(path.join(ROOT, "apps/host/dashboard/dashboard.js"), "utf8");
   const timers = new Map<number, number>();
+  const timerCallbacks = new Map<number, () => void>();
   let nextTimer = 0;
   // Exercise the real controller with an in-memory DOM and network; no browser or boot requests.
   const load = new Function("document", "createDashboardViews", "groupCaseCandidates", "fetch", "setTimeout", "clearTimeout",
     source.slice(source.indexOf("\n") + 1, source.lastIndexOf("\n(async () => {")) +
-    "\nreturn { state, loadConfig, loadInputs, refresh, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, deleteRun, restoreRecall };",
+    "\nreturn { state, loadConfig, loadInputs, refresh, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, preview, startRun, deleteRun, restoreRecall };",
   );
   const api = load(dom.window.document, createDashboardViews, groupCaseCandidates,
     async (url: string, options: RequestInit) => {
       const value = await respond(url, options);
       return value instanceof Response ? value : new Response(JSON.stringify(value));
     },
-    (_callback: unknown, delay: number) => { timers.set(++nextTimer, delay); return nextTimer; },
-    (id: number) => timers.delete(id),
+    (callback: () => void, delay: number) => {
+      timers.set(++nextTimer, delay);
+      timerCallbacks.set(nextTimer, callback);
+      return nextTimer;
+    },
+    (id: number) => { timers.delete(id); timerCallbacks.delete(id); },
   );
-  return { ...api, dom, document: dom.window.document, timers };
+  return { ...api, dom, document: dom.window.document, timers, fireTimer(delay: number) {
+    const pending = [...timers].find(([, value]) => value === delay);
+    assert(pending, `No pending ${delay} ms timer`);
+    const [id] = pending;
+    const callback = timerCallbacks.get(id)!;
+    timers.delete(id);
+    timerCallbacks.delete(id);
+    callback();
+  } };
+}
+
+function samplingScope(page: Awaited<ReturnType<typeof controller>>, reversed = false) {
+  const groups = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
+  const dates = [0, 1, 2].map((day) => ({
+    date: `2026-10-0${day + 1}`, batches: [`batch-${day}`],
+    cases: Array.from({ length: 12 }, (_, index) => ({
+      id: `q${day * 10 + index}`, versions: [...groups[index % groups.length]],
+    })).concat([{ id: `incomplete-${day}`, versions: ["a_fast"] }]),
+  }));
+  if (reversed) {
+    dates.reverse();
+    for (const date of dates) {
+      date.cases.reverse();
+      for (const item of date.cases) item.versions.reverse();
+    }
+    groups.reverse();
+    for (const group of groups) group.reverse();
+  }
+  const models = groups.flat();
+  page.state.config = { settings: { comparisons: groups, models: models.map((id) => ({ id, name: id })) } };
+  page.state.selectedModels = new Set(models);
+  page.state.selectedDates = new Set(reversed ? ["2026-10-02", "2026-10-01"] : ["2026-10-01", "2026-10-02"]);
+  page.state.inputs = { status: "ready", dates };
+  for (const [id, value] of Object.entries({ concurrency: 1, timeout: 60, tools: 100, retries: 0 }))
+    page.document.querySelector(`#setting-${id}`).value = String(value);
 }
 
 test("dashboard renders gateway models with eight-way concurrency, high thinking and all rewrites", async () => {
@@ -169,19 +208,138 @@ test("startup wait ends visibly if no checkpoint appears", async () => {
 test("new evaluations sample ten viable cases by default and still allow all cases", async () => {
   const page = await controller(() => ({}));
   try {
-    page.state.config = { settings: { comparisons: [["a_fast", "b_fast"]] } };
-    page.state.selectedModels = new Set(["a_fast", "b_fast"]);
-    page.state.selectedDates = new Set(["2026-10-01"]);
-    page.state.inputs = { dates: [{ date: "2026-10-01", batches: ["batch"],
-      cases: Array.from({ length: 12 }, (_, index) => ({ id: `q${index}`, versions: ["a_fast", "b_fast"] })) }] };
+    samplingScope(page);
+    assert.equal(page.document.querySelector("#sample-seed").value, "");
     const sampled = page.pickSample();
     assert.equal(sampled.size, 10);
     assert.equal(sampled.cases.length, 10);
     assert.equal(new Set(sampled.cases).size, 10);
     assert.equal(page.document.querySelector("#sample-all").getAttribute("aria-pressed"), "false");
+    const seed = page.document.querySelector("#sample-seed");
+    seed.value = "-1";
+    assert.equal(seed.checkValidity(), false);
     page.document.querySelector("#sample-all").click();
-    assert.equal(page.pickSample().size, null);
+    assert.equal(seed.disabled, true);
+    assert.equal(seed.checkValidity(), true, "all cases ignore an invalid sampling seed");
+    assert.deepEqual(page.pickSample(), { cases: null, size: null, available: 22 });
     assert.equal(page.document.querySelector("#sample-all").getAttribute("aria-pressed"), "true");
+    page.document.querySelector("#sample-size").value = "5";
+    page.document.querySelector("#sample-size").dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    assert.equal(seed.disabled, false);
+    assert.equal(seed.checkValidity(), false, "sample mode restores seed validation");
+  } finally { page.dom.window.close(); }
+});
+
+test("seeded samples repeat across date, model and case ordering and stay inside the viable selection", async () => {
+  const page = await controller(() => ({}));
+  try {
+    const samples = new Map<number, string[]>();
+    for (const seed of [0, 42, 4294967295]) {
+      samplingScope(page);
+      page.document.querySelector("#sample-seed").value = String(seed);
+      const sampled = page.pickSample();
+      assert.equal(sampled.available, 22);
+      assert.equal(sampled.cases.length, 10);
+      assert.equal(new Set(sampled.cases).size, 10);
+      assert(sampled.cases.every((id: string) => /^q\d+$/.test(id) && Number(id.slice(1)) < 22), "exclude unselected dates and incomplete model groups");
+      assert.deepEqual(page.pickSample(), sampled, `seed ${seed} restarts its random stream on each sample`);
+      samplingScope(page, true);
+      assert.deepEqual(page.pickSample(), sampled, `seed ${seed} ignores inventory and selection ordering`);
+      samples.set(seed, sampled.cases);
+    }
+    assert.notDeepEqual(samples.get(0), samples.get(42));
+    assert.notDeepEqual(samples.get(42), samples.get(4294967295));
+  } finally { page.dom.window.close(); }
+});
+
+test("sample seed is optional and accepts only unsigned 32-bit integers before preview", async () => {
+  let requests = 0;
+  const page = await controller(() => { requests++; return {}; });
+  try {
+    samplingScope(page);
+    const input = page.document.querySelector("#sample-seed");
+    assert.equal(input.type, "number");
+    assert.equal(input.required, false);
+    for (const value of ["", "0", "42", "4294967295"]) {
+      input.value = value;
+      assert.equal(input.checkValidity(), true, `${value || "empty seed"} is valid`);
+    }
+    for (const value of ["-1", "1.5", "4294967296"]) {
+      input.value = value;
+      assert.equal(input.checkValidity(), false, `${value} is invalid`);
+      await page.preview();
+      assert.equal(page.state.sampledCases, null);
+    }
+    assert.equal(requests, 0, "invalid seeds never request a preview");
+  } finally { page.dom.window.close(); }
+});
+
+test("editing the seed invalidates the preview and successful starts reuse its explicit case IDs", async () => {
+  const launches: { url: string; case: string[] }[] = [];
+  const run = { run_id: "seeded-run", status: "finished", progress: {}, stages: {} };
+  const page = await controller((url, options) => {
+    if (options?.method === "POST") {
+      launches.push({ url, case: JSON.parse(String(options.body)).case });
+      return url.endsWith("/preview") ? { tasks: 10, summary: { cases: 10 } } : { run_id: run.run_id };
+    }
+    if (url.endsWith("/runs")) return { runs: [run], errors: [] };
+    if (url.endsWith("/seeded-run")) return run;
+    if (url.includes("/cases?")) return { cases: [], total: 0, page: 1, page_size: 20 };
+    throw new Error(`Unexpected request ${url}`);
+  });
+  try {
+    samplingScope(page);
+    const seed = page.document.querySelector("#sample-seed");
+    seed.value = "42";
+    for (const event of ["input", "change"]) {
+      await page.preview();
+      assert(page.state.preview);
+      assert.equal(page.document.querySelector("#launch-button").disabled, false);
+      seed.value = String(Number(seed.value) + 1);
+      seed.dispatchEvent(new page.dom.window.Event(event, { bubbles: true }));
+      assert.equal(page.state.preview, null);
+      assert.equal(page.state.sampledCases, null);
+      assert.equal(page.state.sampleInfo, null);
+      assert.equal(page.document.querySelector("#launch-button").disabled, true);
+      assert.match(page.document.querySelector("#preview-result").textContent, /重新预检/);
+      await page.startRun();
+      assert.equal(launches.filter(({ url }) => url.endsWith("/runs")).length, 0);
+    }
+    await page.preview();
+    const previewCases = [...page.state.sampledCases];
+    // Inventory changes after preview must not replace the accepted explicit selection.
+    for (const date of page.state.inputs.dates)
+      for (const item of date.cases) item.id = `new-${item.id}`;
+    const starting = page.startRun();
+    await new Promise(setImmediate);
+    page.fireTimer(700);
+    await starting;
+    assert.deepEqual(launches.at(-1), { url: "/api/dashboard/runs", case: previewCases });
+    assert.deepEqual(launches.at(-2), { url: "/api/dashboard/preview", case: previewCases });
+    assert.equal(page.state.selectedRun, run.run_id);
+  } finally { page.dom.window.close(); }
+});
+
+test("a pending preview cannot enable launch after the seed changes", async () => {
+  let finishPreview!: (value: unknown) => void;
+  const page = await controller(() => new Promise((resolve) => { finishPreview = resolve; }));
+  try {
+    samplingScope(page);
+    const seed = page.document.querySelector("#sample-seed");
+    seed.value = "42";
+    const pending = page.preview();
+    assert(page.state.sampledCases);
+    assert.equal(page.document.querySelector("#preview-button").disabled, true);
+    seed.value = "43";
+    seed.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    finishPreview({ tasks: 10, summary: { cases: 10 } });
+    await pending;
+    assert.equal(page.state.preview, null);
+    assert.equal(page.state.sampledCases, null);
+    assert.equal(page.state.sampleInfo, null);
+    assert.equal(page.document.querySelector("#launch-button").disabled, true);
+    assert.equal(page.document.querySelector("#preview-button").disabled, false);
+    assert.match(page.document.querySelector("#preview-result").textContent, /重新预检/);
   } finally { page.dom.window.close(); }
 });
 

@@ -56,7 +56,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const serialized=JSON.stringify(result.result);assert(serialized.includes("正确"));assert(serialized.includes("evaluator_version"));
   await assert.rejects(gateway.read({userId:"bob",sessionId:scope.sessionId},operationId),/当前会话没有这个 operationId/);
   let saved="";
-  const {tools}=createEris({data:source,specialists:gateway,save:async(_,text)=>{saved=text;return {id:"summary"};}});
+  const {tools}=createEris({data:source,specialists:gateway,search:{async search(){throw new Error("Unexpected search");}},web:{async read(){throw new Error("Unexpected web read");}},save:async(_,text)=>{saved=text;return {id:"summary"};}});
   const save=tools.find(tool=>tool.name==="save_summary")!;
   const context={scope,signal,callId:"summary",progress(){}};
   const summary=await save.execute({markdown:"评测总结",references:[{operationId}]},context);

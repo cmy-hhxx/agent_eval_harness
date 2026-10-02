@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { createEris, type ErisDependencies } from "@eval/assistant";
 import { erisPrompt } from "@eval/prompts";
+import type { WebSearchRequest, WebReadResult } from "@eval/contracts";
 
 test("Eris's public definition includes every tool resource and validates before invoking dependencies", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const received: unknown[] = [];
   const dependencies: ErisDependencies = {
     data: { list: async (query) => { received.push(query); return { items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, save: unexpected,
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
   };
   const eris = createEris(dependencies);
   const resources = new URL("../../packages/prompts/resources/eris/", import.meta.url);
@@ -43,6 +44,39 @@ test("Eris's public definition includes every tool resource and validates before
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });
 
+test("external search validates financial filters and forwards cancellation without source rehydration", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const calls: { request: WebSearchRequest; signal: AbortSignal }[] = [];
+  const result = {
+    provider: "serper" as const, category: "web" as const, searchedAt: "2026-10-02T00:00:00.000Z", elapsedMs: 100,
+    attempts: [], results: [{ title: "利率公告", url: "https://www.pbc.gov.cn/", domain: "www.pbc.gov.cn", snippet: "公告原文入口。", rank: 1, matches: [{ queryIndex: 0, position: 1, page: 1 }], dateAssessment: { status: "not_requested" as const, basis: "none" as const } }],
+    excludedResults: [], totalUnique: 1, hasMore: false, credits: 1, creditsComplete: true,
+  };
+  const eris = createEris({
+    data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, save: unexpected,
+    search: { async search(request, signal) { calls.push({ request, signal }); return result; } }, web: { read: unexpected },
+  });
+  const tool = eris.tools.find(tool => tool.name === "search_web")!;
+  const context = { scope: { userId: "alice", sessionId: "session" }, callId: "search", signal: new AbortController().signal, progress() {} };
+  const query = { query: "人民银行 利率公告", domains: ["pbc.gov.cn"] };
+  for (const value of [
+    { queries: [] }, { queries: [{ query: " " }] }, { queries: [query], limit: 21 }, { queries: [query], category: "finance" },
+    { queries: [{ query: "利率", domains: ["https://pbc.gov.cn"] }] }, { queries: [{ query: "利率", domains: ["localhost"] }] },
+    { queries: [{ query: "利率", domains: ["pbc.gov.cn", "pbc.gov.cn"] }] }, { queries: [query], timeRange: "all" },
+    { queries: [{ query: "利率", country: "China" }] }, { queries: [{ query: "利率", language: "Chinese" }] },
+    { queries: [query], dateTo: "2024-07-31", timeRange: "month" }, { queries: [query], dateTo: "yesterday" },
+    { queries: [{ ...query, page: 4 }] }, { queries: [query], apiKey: "must-not-come-from-the-model" },
+  ]) await assert.rejects(tool.execute(value, context));
+  assert.deepEqual(calls, []);
+  const request = { queries: [query], category: "web" as const, dateTo: "2024-07-31", limit: 3 };
+  const response = await tool.execute(request, context);
+  assert.equal(tool.readOnly, true);
+  assert.deepEqual(calls, [{ request, signal: context.signal }]);
+  assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify(result) }]);
+  assert.equal(response.details, undefined, "search results are durable once; inspection and recovery must not issue a fresh paid search");
+});
+
 test("summaries keep verified source locators in metadata instead of the delivered Markdown", async () => {
   const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
   const reference = { runId: "evaluation-internal", taskId: "comparison-internal" };
@@ -57,6 +91,7 @@ test("summaries keep verified source locators in metadata instead of the deliver
       invoke: unexpected,
       read: async (_, id) => ({ operationId: id, kind: "comparison", state: id === operationId ? "succeeded" : "running", evaluatorVersion: "fixture", reference }),
     },
+    search: { search: unexpected }, web: { read: unexpected },
     save: async (_, markdown) => { saved.push(markdown); return { name: "summary.md", url: "/summary.md" }; },
   });
   const summary = eris.tools.find(tool => tool.name === "save_summary")!;
@@ -72,4 +107,20 @@ test("summaries keep verified source locators in metadata instead of the deliver
   await assert.rejects(summary.execute({ markdown, references: [{ operationId: "51b9dc2a-1292-4c4c-a71d-2db0b3f64d96" }] }, context), /已接受/);
   await assert.rejects(summary.execute({ markdown, references: [{ operationId }, { reference: { ...reference, taskId: "missing" } }] }, context), /正式结果不存在/);
   assert.deepEqual(saved, [markdown], "every reference is verified before writing an artifact");
+});
+
+ test("web reading validates coordinates and stores extracted evidence without a live source reader", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const result: WebReadResult = { url: "https://www.apple.com/report.pdf", requestedUrl: "https://www.apple.com/report.pdf", title: "Annual report", format: "pdf", retrievedAt: "2026-10-02T00:00:00.000Z", elapsedMs: 10, dateAssessment: { status: "unknown", basis: "none" }, lines: [{ number: 12, page: 2, text: "Total net sales 391,035" }], matches: [{ line: 12, page: 2 }], totalLines: 100, totalPages: 3, readPages: 3, nextStartLine: 13, truncated: false, limitations: ["pdf_layout_flattened"] };
+  const received: unknown[] = [];
+  const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { async read(args, signal) { received.push({ args, signal }); return result; } }, save: unexpected });
+  const tool = eris.tools.find(tool => tool.name === "read_web")!;
+  const context = { scope: { userId: "alice", sessionId: "session" }, callId: "read", signal: new AbortController().signal, progress() {} };
+  for (const args of [{ url: "file:///tmp/report" }, { url: result.url, startLine: 0 }, { url: result.url, lineCount: 201 }, { url: result.url, find: " " }, { url: result.url, apiKey: "secret" }]) await assert.rejects(tool.execute(args, context));
+  const args = { url: result.url, find: "Total net sales", dateTo: "2024-10-31" };
+  const response = await tool.execute(args, context);
+  assert(tool.readOnly);
+  assert.deepEqual(received, [{ args, signal: context.signal }]);
+  assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify(result) }]);
+  assert.equal(response.details, undefined, "restoring or inspecting web evidence must not refetch it");
 });

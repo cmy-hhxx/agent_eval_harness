@@ -455,6 +455,7 @@ function syncSampleMode() {
   const selected = !input.value.trim();
   all.classList.toggle("selected", selected);
   all.setAttribute("aria-pressed", String(selected));
+  $("#sample-seed").disabled = selected;
 }
 function viableCases() {
   const groups = selectedGroups();
@@ -483,8 +484,21 @@ function pickSample() {
   const size = sampleSize(),
     viable = viableCases();
   if (!size) return { cases: null, size: null, available: viable.length };
+  const seedValue = $("#sample-seed").value.trim();
+  let random = Math.random;
+  if (seedValue) {
+    // Stable case order and a fresh Mulberry32 stream make each seeded preview reproducible.
+    viable.sort();
+    let seed = Number(seedValue);
+    random = () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let value = Math.imul(seed ^ (seed >>> 15), seed | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+  }
   for (let i = viable.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [viable[i], viable[j]] = [viable[j], viable[i]];
   }
   return { cases: viable.slice(0, size), size, available: viable.length };
@@ -609,8 +623,9 @@ async function preview() {
     status.textContent = "至少选择两个模型";
     return;
   }
-  state.sampleInfo = pickSample();
-  state.sampledCases = state.sampleInfo.cases;
+  const sampleInfo = pickSample();
+  state.sampleInfo = sampleInfo;
+  state.sampledCases = sampleInfo.cases;
   if (state.sampleInfo.size && !state.sampledCases.length) {
     state.sampleInfo = null;
     state.sampledCases = null;
@@ -625,6 +640,7 @@ async function preview() {
   status.innerHTML = loading("正在预检");
   try {
     const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
+    if (state.sampleInfo !== sampleInfo) return;
     state.preview = value;
     state.rangeLocked = Boolean(value.resuming);
     renderDateOptions();
@@ -644,6 +660,7 @@ async function preview() {
     status.innerHTML = `<div class="preview-stats">${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
       ${issues.length ? `<details><summary>输入异常 ${issues.length}</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
   } catch (error) {
+    if (state.sampleInfo !== sampleInfo) return;
     state.preview = null;
     state.rangeLocked = false;
     renderDateOptions();

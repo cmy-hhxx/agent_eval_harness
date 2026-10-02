@@ -5,6 +5,7 @@ import { exists, assistantUser, writeAssistantArtifact, readAssistantArtifact } 
 import { AssistantSessions, serveAssistant } from "@eval/runtime/assistant";
 import { assistantEndpoints } from "@eval/assistant/server";
 import { createEris } from "@eval/assistant";
+import { createSerperSearch, createWebReader } from "@eval/tools";
 import { loadConfig, createModelResolver, DEFAULT_THINKING } from "./config.js";
 import { ROOT } from "./paths.js";
 import { logger } from "./composition.js";
@@ -26,7 +27,7 @@ const model = process.env.AGENT_MODEL ? {
 if (!model.baseUrl || !process.env[model.apiKeyEnv]) throw new Error("请在根目录 .env 中配置 EVAL_BASE_URL、EVAL_API_KEY 和 AGENT_MODEL（或 configs/local/models.json）");
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
   directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model),
-  ...createEris({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
+  ...createEris({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader(), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
   onError: (error) => { void logger.error(error, { component: "assistant", event: "error" }); },
 }), (userId, sessionId, id) => readAssistantArtifact(path.join(ROOT, "data/assistant"), { userId, sessionId }, id)), onError: (error) => { void logger.error(error, { component: "assistant-http", event: "error" }); } });
 const url = `${server.url}/u/${userId}/`;

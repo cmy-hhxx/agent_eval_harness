@@ -9,6 +9,8 @@ import { AssistantSessions } from "@eval/runtime/assistant";
 import { body, listen } from "@eval/runtime/http";
 import { assistantDirectory } from "@eval/data";
 import { object, type AssistantPrompt, type JsonObject, type ModelConfig } from "@eval/contracts";
+import { createEris } from "@eval/assistant";
+import { createSerperSearch } from "@eval/tools";
 
 async function settled(sessions: AssistantSessions, id: string, requestId: string) {
   for (let attempt = 0; attempt < 300; attempt++) {
@@ -74,6 +76,103 @@ test("stopping during conversation preparation never starts a model turn", { tim
         }
       } finally { release(); await (disposing ?? sessions.dispose()); await rm(directory, { recursive: true, force: true }); }
     });
+});
+
+test("Eris cross-checks financial sources, saves cited summaries and restores search and raw evidence without re-querying", { timeout: 30000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "assistant-search-"));
+  const scope = { userId: "alice", sessionId: randomUUID() };
+  const reference = { runId: "finance-run", taskId: "finance-comparison" };
+  const sourceUrl = "https://www.pbc.gov.cn/announcement.html";
+  const query = "人民银行 2026年9月 利率 公告";
+  const markdown = `正式结果：模型 A 缺少利率口径。\n\n外部核对：[央行公告](${sourceUrl})，发布日期 2026-09-20。`;
+  const accepted = { conclusion: "模型 A 缺少利率口径。" };
+  const saved: string[] = [], errors: unknown[] = [];
+  let searches = 0, readings = 0;
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const previousSecret = process.env.ASSISTANT_TEST_KEY;
+  process.env.ASSISTANT_TEST_KEY = "fixture-model-secret";
+  const eris = createEris({
+    data: {
+      list: unexpected, search: unexpected, image: unexpected,
+      async read(ref) { assert.deepEqual(ref, reference); return { result: accepted, evaluatorVersion: "fixture" }; },
+    },
+    specialists: { invoke: unexpected, read: unexpected },
+    search: createSerperSearch({ apiKey: "fixture-serper-secret", async fetch(endpoint, init) {
+      searches++;
+      assert.equal(endpoint, "https://google.serper.dev/search");
+      assert.equal(new Headers(init?.headers).get("X-API-KEY"), "fixture-serper-secret");
+      assert.deepEqual(JSON.parse(String(init?.body)), { q: `${query} (site:pbc.gov.cn)`, gl: "cn", hl: "zh-cn", num: 10, page: 1 });
+      return Response.json({ organic: [{ title: "央行公告", link: sourceUrl, snippet: "央行发布利率公告。", date: "2026-09-20", position: 1 }], credits: 1 });
+    } }),
+    web: { async read(args, signal) {
+      readings++;
+      assert.deepEqual(args, { url: sourceUrl, find: "利率" }); assert(!signal.aborted);
+      return { requestedUrl: sourceUrl, url: sourceUrl, title: "央行公告", format: "html", retrievedAt: "2026-10-02T00:00:00.000Z", elapsedMs: 10, publicationDate: "2026-09-20", dateAssessment: { status: "not_requested", basis: "page_metadata", date: "2026-09-20" }, lines: [{ number: 1, text: "2026年9月20日 利率公告" }, { number: 2, text: "央行发布利率口径。" }], matches: [{ line: 1 }, { line: 2 }], totalLines: 2, truncated: false, limitations: [] };
+    } },
+    async save(_, text) { saved.push(text); return { name: "summary.md", url: "/summary.md" }; },
+  });
+  const gateway = await listen(async (req, res) => {
+    const request = object(await body(req));
+    assert(!JSON.stringify(request).includes("fixture-serper-secret"));
+    const tools = request.tools as { function: { name: string } }[];
+    assert(tools.some(tool => tool.function.name === "search_web"));
+    const messages = request.messages as JsonObject[];
+    const results = messages.filter(message => message.role === "tool");
+    const next = results.length === 0 ? { name: "read_data", arguments: { reference } }
+      : results.length === 1 ? { name: "search_web", arguments: { queries: [{ query, domains: ["pbc.gov.cn"] }] } }
+      : results.length === 2 ? { name: "read_web", arguments: { url: sourceUrl, find: "利率" } }
+      : results.length === 3 ? { name: "save_summary", arguments: { markdown, references: [{ reference }] } } : undefined;
+    if (results.length >= 2) {
+      const search = JSON.parse(String(results[1].content));
+      assert.equal(search.results[0].url, sourceUrl);
+      assert.equal(search.results[0].date, "2026-09-20");
+      assert(!Number.isNaN(Date.parse(search.searchedAt)));
+      assert.deepEqual(JSON.parse(String(results[0].content)).result, accepted, "external facts leave accepted conclusions intact");
+    }
+    if (results.length >= 3) {
+      const raw = JSON.parse(String(results[2].content));
+      assert.equal(raw.lines[1].number, 2); assert.equal(raw.lines[1].text, "央行发布利率口径。");
+    }
+    const delta = next ? { role: "assistant", tool_calls: [{ index: 0, id: `financial-call-${results.length}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.arguments) } }] }
+      : { role: "assistant", content: `已结合正式结果与[央行公告](${sourceUrl})保存总结。` };
+    const chunk = { id: "financial-fixture", object: "chat.completion.chunk", created: 1, model: "fixture" };
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: next ? "tool_calls" : "stop" }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\n`);
+    res.end("data: [DONE]\n\n");
+  });
+  const model: ModelConfig = { provider: "test-gateway", baseUrl: gateway.url + "/v1", api: "openai-completions", apiKeyEnv: "ASSISTANT_TEST_KEY", model: "fixture", thinking: "off", contextWindow: 65536, maxOutputTokens: 4096 };
+  const options = { directory, url: "http://127.0.0.1:1", model, ...eris, onError: (error: unknown) => errors.push(error) };
+  let sessions = new AssistantSessions(options);
+  try {
+    await sessions.create(scope.userId, scope.sessionId);
+    const prompt: AssistantPrompt = { ...scope, requestId: randomUUID(), mode: "queue", content: [{ type: "text", text: "用央行公告交叉核对这份点评，保存总结。" }] };
+    await sessions.prompt(scope.userId, prompt);
+    assert.equal((await settled(sessions, scope.sessionId, prompt.requestId)).requests[prompt.requestId], "completed", JSON.stringify(errors));
+    assert.equal(searches, 1); assert.equal(readings, 1);
+    assert.deepEqual(saved, [markdown]);
+    const journal = await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8");
+    assert(!journal.includes("fixture-serper-secret"));
+    const rows = journal.trim().split("\n").map(line => JSON.parse(line));
+    const searchRecord = rows.find(row => row.event?.type === "tool/result" && row.event.data.message?.toolCallId === "financial-call-1");
+    assert(searchRecord, "search result is recorded for later conversation and inspection");
+    assert(!searchRecord.event.data.meta?.sourceRead, "external search must not be re-executed as a local source reader");
+    const rawRecord = rows.find(row => row.event?.type === "tool/result" && row.event.data.message?.toolCallId === "financial-call-2");
+    assert(rawRecord, "raw evidence and exact coordinates are retained");
+    assert(!rawRecord.event.data.meta?.sourceRead, "web reading must not be rerun during restore");
+    await sessions.dispose();
+    sessions = new AssistantSessions(options);
+    const next = { ...prompt, requestId: randomUUID(), content: [{ type: "text" as const, text: "继续解释刚才的核对结果。" }] };
+    await sessions.prompt(scope.userId, next);
+    assert.equal((await settled(sessions, scope.sessionId, next.requestId)).requests[next.requestId], "completed", JSON.stringify(errors));
+    assert.equal(searches, 1, "resume uses the persisted retrieval timestamp and sources without another paid request");
+    assert.equal(readings, 1, "resume uses persisted raw evidence without another network read");
+    assert.deepEqual(saved, [markdown]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });
+    if (previousSecret === undefined) delete process.env.ASSISTANT_TEST_KEY; else process.env.ASSISTANT_TEST_KEY = previousSecret;
+  }
 });
 
 test("Pi conversation checkpoints before requests, deduplicates, invokes tools, and restores one authoritative history", { timeout: 30000 }, async () => {

@@ -186,6 +186,107 @@
       "query"
     ]
   },
+  "search_web": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "queries"
+    ],
+    "properties": {
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "maxLength": 500
+            },
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 253,
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+              },
+              "uniqueItems": true,
+              "minItems": 1,
+              "maxItems": 5
+            },
+            "country": {
+              "type": "string",
+              "pattern": "^[a-z]{2}$"
+            },
+            "language": {
+              "type": "string",
+              "pattern": "^[a-z]{2}(-[a-z]{2})?$"
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            }
+          }
+        },
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true
+      },
+      "category": {
+        "type": "string",
+        "enum": [
+          "web",
+          "news"
+        ]
+      },
+      "timeRange": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year"
+        ]
+      },
+      "dateFrom": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "dateTo": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      }
+    },
+    "allOf": [
+      {
+        "not": {
+          "required": [
+            "timeRange",
+            "dateFrom"
+          ]
+        }
+      },
+      {
+        "not": {
+          "required": [
+            "timeRange",
+            "dateTo"
+          ]
+        }
+      }
+    ]
+  },
   "view_image": {
     "type": "object",
     "additionalProperties": false,
@@ -467,5 +568,49 @@
       "markdown",
       "references"
     ]
+  },
+  "read_web": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "url"
+    ],
+    "properties": {
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^https?://",
+        "maxLength": 2048
+      },
+      "find": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S",
+        "maxLength": 200
+      },
+      "startLine": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000
+      },
+      "lineCount": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000
+      },
+      "dateFrom": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      },
+      "dateTo": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      }
+    }
   }
 }

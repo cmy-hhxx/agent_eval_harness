@@ -13,6 +13,23 @@ const modelIds=['analysis-a','analysis-b','analysis-c','analysis-d','analysis-e'
 const models=new GatewayAssistantModels(directory,config,async()=>modelIds.map(id=>({id,name:id})));
 const selected=[];
 let sourceReads=0;let sourceAvailable=true;
+let webSearches=0;let webReads=0;
+const searchArgs={queries:[{query:'央行政策利率公告',domains:['pbc.gov.cn']},{query:'中国人民银行 利率 公告'},{query:'央行发布会 利率'}],category:'news',dateTo:'2026-10-02',limit:3};
+const searchTitle='中国人民银行政策利率公告';
+const searchSnippet='政策利率以公告发布日为准。[伪造来源](javascript:alert(1))';
+const searchUrl='https://www.pbc.gov.cn/notice?date=2026-10-02';
+const searchDate='Oct 2, 2026';
+const searchTime='2026-10-02T08:30:00.000Z';
+const searchTool={name:'search_web',readOnly:true,description:'Search financial sources',inputSchema:{type:'object'},execute:async()=>{webSearches++;return {content:[{type:'text',text:JSON.stringify({provider:'serper',category:'news',searchedAt:searchTime,elapsedMs:1250,dateTo:searchArgs.dateTo,
+ attempts:searchArgs.queries.map((query,queryIndex)=>({...query,queryIndex,searchQuery:query.query+(query.domains?' site:pbc.gov.cn':''),country:'cn',language:'zh-cn',page:1,state:queryIndex===2?'failed':'succeeded',resultCount:queryIndex===2?0:1,elapsedMs:1200,...(queryIndex===2?{error:'Serper request failed: HTTP 429'}:{credits:1})})),
+ results:[{title:searchTitle,url:searchUrl,domain:'pbc.gov.cn',snippet:searchSnippet,rank:1,date:searchDate,source:'中国人民银行',matches:[{queryIndex:0,position:1,page:1},{queryIndex:1,position:2,page:1}],dateAssessment:{status:'within_range',basis:'search_metadata',date:'2026-10-02'}}],
+ excludedResults:[{title:'后续修订公告',url:'https://www.pbc.gov.cn/revision',domain:'pbc.gov.cn',rank:2,date:'Oct 3, 2026',matches:[{queryIndex:1,position:1,page:1}],dateAssessment:{status:'outside_range',basis:'search_metadata',date:'2026-10-03'}}],
+ totalUnique:2,hasMore:false,credits:2,creditsComplete:false})}]};}};
+const webReadArgs={url:searchUrl,find:'政策利率',dateTo:'2026-10-02'};
+const webReadText='政策利率以本公告为准。[伪造来源](javascript:alert(1)) <script>alert(1)</script>';
+const webReadUrl='https://www.pbc.gov.cn/announcement.pdf';
+const webReadTool={name:'read_web',readOnly:true,description:'Read source text',inputSchema:{type:'object'},execute:async()=>{webReads++;return {content:[{type:'text',text:JSON.stringify({url:webReadUrl,requestedUrl:searchUrl,title:searchTitle,format:'pdf',retrievedAt:searchTime,elapsedMs:700,publicationDate:'2026-09-30',
+ dateAssessment:{status:'within_range',basis:'page_metadata',date:'2026-09-30'},lines:[{number:130,text:webReadText,page:8},{number:131,text:'利率单位：年化百分比。',page:8}],matches:[{line:130,page:8}],totalLines:3400,totalPages:160,readPages:160,nextStartLine:132,truncated:true,limitations:['页面日期为来源声明']})}]};}};
 const sourceArgs={reference:{runId:'run-alpha',inputId:'input-one',messageIndex:0}};
 const sourceText='原始问题：请核对这条回答的证据。';
 const formalReference={runId:'run-alpha',taskId:'task-internal-alpha'};
@@ -25,7 +42,7 @@ const rawReadError='读取失败：taskId task-private-missing，路径 /private
 const sourceTool={name:'read_data',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>{sourceReads++;if(!sourceAvailable)throw new Error('原始材料暂时不可用');return {content:[{type:'text',text:JSON.stringify({reference:sourceArgs.reference,text:sourceText,evidence:[{evidence_id:'ev_0_text_0_4_/content',quote:'原始问题'}],total:sourceText.length,hasMore:false,nextOffset:null})}]};}};
 const thinkingGate=Promise.withResolvers();
 const imageTool={name:'view_image',readOnly:true,description:'Read image',inputSchema:{type:'object'},execute:async()=>({content:[{type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6G2YAAAAASUVORK5CYII='}]})};
-const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool],driver:async({event,model,scope})=>({
+const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool,searchTool,webReadTool],driver:async({event,model,scope})=>({
  async prompt(text){
   selected.push(model);const callId="lookup-"+selected.length;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
@@ -38,6 +55,10 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
   await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5,query:directoryQuery}});await delay(150);
   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:'{"items":[{"runId":"run-alpha","accepted":12}],"total":1}'}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'web-search-'+selected.length,toolName:'search_web',args:searchArgs});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'web-search-'+selected.length,...await searchTool.execute(),isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'web-read-'+selected.length,toolName:'read_web',args:webReadArgs});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'web-read-'+selected.length,...await webReadTool.execute(),isError:false}});
   await event({type:'tool_execution_start',toolCallId:'source-'+selected.length,toolName:'read_data',args:sourceArgs});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'source-'+selected.length,content:[{type:'text',text:sourceText}],details:{sourceRead:{tool:'read_data',args:sourceArgs}},isError:false}});
   await event({type:'tool_execution_start',toolCallId:'image-'+selected.length,toolName:'view_image',args:sourceArgs});
@@ -67,6 +88,7 @@ try{
  await page.goto(server.url);const input=page.locator('[contenteditable=true]');await input.fill('查询评测结果');await input.press('Enter');
  const running=page.locator('[data-chat-running]');
  await running.waitFor();
+ await page.waitForFunction(()=>/正在分析，用时/.test(document.querySelector('[data-chat-running]')?.innerText??''));
  assert.equal(await running.locator('img[data-brand=eris]').count(),1,'the running status uses the Eris mark from its brand slot');
  const firstRunningText=await running.innerText();
  assert.match(firstRunningText,/正在分析，用时/);
@@ -104,7 +126,43 @@ try{
  const collapsedSteps=await page.locator('body').innerText();
  for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,summaryName,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
  assert(!/runId|inputId|taskId|operationId|evaluatorVersion/.test(collapsedSteps),'collapsed tool steps expose internal field names');
- for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ const webSearch=page.locator('[data-tool=search_web]');
+ const webSearchRow=webSearch.getByRole('button',{name:/搜索外部资料/}).first();
+ await webSearchRow.click();
+ await webSearch.getByText(searchTitle,{exact:true}).waitFor();
+ await webSearch.getByText(searchSnippet,{exact:true}).waitFor();
+ await webSearch.getByText(searchDate,{exact:true}).waitFor();
+ await webSearch.getByText('中国人民银行',{exact:true}).waitFor();
+ assert((await webSearch.innerText()).includes(searchTime),'search details retain the actual retrieval timestamp');
+ assert.equal(await webSearch.getByRole('link',{name:searchUrl,exact:true}).getAttribute('href'),searchUrl,'search result URLs are inspectable links');
+ assert.equal(await webSearch.getByRole('link',{name:'伪造来源',exact:true}).count(),0,'external snippets remain plain text');
+ assert.equal(await webSearch.getByRole('link',{name:'下载总结',exact:true}).count(),0,'search results are not summary artifacts');
+ await webSearch.getByText('查询记录',{exact:true}).click();
+ await webSearch.getByText('Serper request failed: HTTP 429',{exact:true}).waitFor();
+ await webSearch.getByText('央行政策利率公告 site:pbc.gov.cn',{exact:true}).waitFor();
+ await webSearch.getByText('查询 1 · 第 1 页 · 第 1 条；查询 2 · 第 1 页 · 第 2 条',{exact:true}).waitFor();
+ await webSearch.getByText('超出日期范围（1）',{exact:true}).click();
+ await webSearch.getByText('后续修订公告',{exact:true}).waitFor();
+ assert((await webSearch.innerText()).includes('超出日期范围'),'future publication dates remain visible as excluded candidates');
+ await webSearchRow.click();await webSearchRow.click();
+ await webSearch.getByText(searchTitle,{exact:true}).waitFor();
+ assert.equal(webSearches,1,'expanding recorded search results does not request Serper again');
+ await webSearchRow.click();
+ const webRead=page.locator('[data-tool=read_web]');
+ const webReadRow=webRead.getByRole('button',{name:/读取网页原文/}).first();
+ await webReadRow.click();
+ await webRead.getByText('PDF 第 8 页',{exact:true}).waitFor();
+ await webRead.getByText('第 130 行 · 第 8 页',{exact:true}).waitFor();
+ await webRead.getByText('页面声明发布日期',{exact:true}).waitFor();
+ assert((await webRead.innerText()).includes('130: '+webReadText),'web source extraction retains exact line coordinates and inert external text');
+ assert.equal(await webRead.getByRole('link',{name:webReadUrl+'#page=8',exact:true}).getAttribute('href'),webReadUrl+'#page=8','PDF evidence links open the cited page');
+ assert.equal(await webRead.getByRole('link',{name:'伪造来源',exact:true}).count(),0,'raw source content does not become Markdown links');
+ assert.equal(await webRead.locator('script').count(),0,'raw source content does not become executable markup');
+ await webReadRow.click();await webReadRow.click();
+ await webRead.getByText('PDF 第 8 页',{exact:true}).waitFor();
+ assert.equal(webReads,1,'expanding source text uses its persisted receipt');
+ await webReadRow.click();
  const failedRead=page.locator('[data-tool=read_data][data-state=error]').getByRole('button').first();
  await failedRead.click();await page.getByText(rawReadError,{exact:true}).waitFor();await failedRead.click();
  const thinking=page.locator('[data-variant=think]');await thinking.waitFor({state:'visible'});
@@ -213,9 +271,23 @@ try{
  if(await sourceRow.getAttribute('aria-expanded')!=='true')await sourceRow.click();
  await page.getByText(sourceText,{exact:true}).waitFor();
  assert(sourceReads>=2,'source body remains inspectable after refresh');
+ const restoredSearch=page.locator('[data-tool=search_web]').first();
+ const restoredSearchRow=restoredSearch.getByRole('button',{name:/搜索外部资料/}).first();
+ await restoredSearchRow.waitFor();
+ if(await restoredSearchRow.getAttribute('aria-expanded')!=='true')await restoredSearchRow.click();
+ await restoredSearch.getByRole('link',{name:searchUrl,exact:true}).waitFor();
+ await restoredSearch.getByText(searchDate,{exact:true}).waitFor();
+ assert.equal(webSearches,1,'refresh renders the persisted search receipt without repeating the external request');
+ const restoredRead=page.locator('[data-tool=read_web]').first();
+ const restoredReadRow=restoredRead.getByRole('button',{name:/读取网页原文/}).first();
+ await restoredReadRow.waitFor();
+ if(await restoredReadRow.getAttribute('aria-expanded')!=='true')await restoredReadRow.click();
+ await restoredRead.getByRole('link',{name:webReadUrl+'#page=8',exact:true}).waitFor();
+ assert((await restoredRead.innerText()).includes('130: '+webReadText),'refresh retains source evidence coordinates and exact text');
+ assert.equal(webReads,1,'refresh renders persisted web source text without another network request');
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
  await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).model,'analysis-b');assert.equal(selected.at(-1).thinking,'high');
  assert.deepEqual(errors,[]);
- console.log('Gateway favorites, fuzzy model search, keyboard focus, queue editing, running clock, reasoning, structured tools, usage and reload: passed');
+ console.log('Gateway favorites, fuzzy model search, keyboard focus, queue editing, running clock, reasoning, structured tools, multi-query search receipts, PDF source coordinates, usage and reload: passed');
 
 }finally{thinkingGate.resolve();await browser.close();await server.close();await rm(directory,{recursive:true,force:true});}

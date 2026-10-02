@@ -14,6 +14,101 @@ export interface AnalysisDataSource {
   search(reference: AnalysisReference, query: string, options?: { offset?: number; limit?: number }): Promise<JsonObject>;
   image(reference: AnalysisReference): Promise<ToolResult>;
 }
+export interface WebSearchQuery {
+  query: string;
+  domains?: string[];
+  country?: string;
+  language?: string;
+  page?: number;
+}
+export interface WebSearchRequest {
+  queries: WebSearchQuery[];
+  category?: "web" | "news";
+  timeRange?: "day" | "week" | "month" | "year";
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+}
+export interface WebDateAssessment {
+  status: "not_requested" | "unknown" | "within_range" | "outside_range";
+  basis: "search_metadata" | "page_metadata" | "none";
+  date?: string;
+}
+export interface WebSearchItem {
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+  date?: string;
+  source?: string;
+  truncatedFields?: string[];
+  rank: number;
+  matches: { queryIndex: number; position: number; page: number }[];
+  dateAssessment: WebDateAssessment;
+}
+export interface WebSearchAttempt extends WebSearchQuery {
+  queryIndex: number;
+  searchQuery: string;
+  country: string;
+  language: string;
+  page: number;
+  state: "succeeded" | "failed";
+  resultCount: number;
+  elapsedMs: number;
+  credits?: number;
+  error?: string;
+}
+export interface WebSearchResult {
+  provider: "serper";
+  category: "web" | "news";
+  searchedAt: string;
+  elapsedMs: number;
+  timeRange?: "day" | "week" | "month" | "year";
+  dateFrom?: string;
+  dateTo?: string;
+  attempts: WebSearchAttempt[];
+  results: WebSearchItem[];
+  excludedResults: WebSearchItem[];
+  totalUnique: number;
+  hasMore: boolean;
+  credits?: number;
+  creditsComplete: boolean;
+}
+export interface WebSearchProvider {
+  search(request: WebSearchRequest, signal: AbortSignal): Promise<WebSearchResult>;
+}
+export interface WebReadRequest {
+  url: string;
+  find?: string;
+  startLine?: number;
+  lineCount?: number;
+  page?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}
+export interface WebReadResult {
+  url: string;
+  requestedUrl: string;
+  title: string;
+  format: "html" | "pdf" | "text";
+  retrievedAt: string;
+  elapsedMs: number;
+  publicationDate?: string;
+  modifiedDate?: string;
+  links?: { text: string; url: string }[];
+  dateAssessment: WebDateAssessment;
+  lines: { number: number; text: string; page?: number }[];
+  matches: { line: number; page?: number; preview?: string }[];
+  totalLines: number;
+  totalPages?: number;
+  readPages?: number;
+  nextStartLine?: number;
+  truncated: boolean;
+  limitations: string[];
+}
+export interface WebReader {
+  read(request: WebReadRequest, signal: AbortSignal): Promise<WebReadResult>;
+}
 export interface SpecialistRequest {
   operationId: string;
   kind: "attribution" | "comparison";

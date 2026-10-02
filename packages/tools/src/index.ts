@@ -539,3 +539,5 @@ export class ToolRuntime {
 export * from "./evidence.js";
 export * from "./validation.js";
 export * from "./trace-audit.js";
+export * from "./serper.js";
+export * from "./web-reader.js";

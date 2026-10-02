@@ -94,6 +94,7 @@ pre { max-width: 100%; max-height: 260px; margin: 4px 0 0; padding: 8px 10px; ov
 .launch-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .inline-field input { width: 84px; }
+.seed-field input { width: 116px; }
 .inline-field select { min-width: 74px; }
 .sample-field { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .sample-control { display: inline-flex; align-items: center; gap: 4px; }
@@ -245,8 +246,8 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .task-result .loading { justify-content: flex-start; min-height: 28px; }
 .result-body { min-width: 0; container-type: inline-size; }
 .output-heading { margin: 16px 0 12px; color: var(--text); font-size: 13px; font-weight: 600; }
-.standard-answer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
-.standard-answer h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.standard-answer { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 12px; margin-top: 12px; font-size: 13px; }
+.standard-answer h3 { margin: 0; color: var(--muted); font-size: inherit; font-weight: 600; line-height: 1.65; }
 .schema-section { margin-top: 24px; }
 .schema-section h5 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; }
 .schema-section h5 code, .schema-field dt code { color: var(--muted); font: 10px/1.5 var(--mono); overflow-wrap: anywhere; }

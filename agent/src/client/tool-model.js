@@ -7,9 +7,62 @@ const specialistLabel={attribution:'归因评测',comparison:'对比评测'};
 const operationLabel={add:'加法',subtract:'减法',multiply:'乘法',divide:'除法'};
 const operationSymbol={add:' + ',subtract:' − ',multiply:' × ',divide:' ÷ '};
 const statusText=(model,output)=>output?.error==='interrupted'?'已中断':({succeeded:'已完成',running:'进行中',cancelled:'已取消',failed:'未完成'}[output?.state]??{preparing:'准备中',running:'进行中',ok:'已完成',error:'未完成',stopped:'已停止'}[model.state]??'准备中');
+const string=value=>typeof value==='string'&&value?value:undefined;
+const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
+const rows=value=>Array.isArray(value)?value.filter(object):[];
+const webUrl=value=>{try{if(typeof value!=='string')return undefined;const url=new URL(value);return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password?url.href.replace(/[<>\s\\]/g,char=>encodeURIComponent(char)):undefined;}catch{return undefined;}};
+const searchFields=value=>Object.entries(value).filter(([,entry])=>['string','number','boolean'].includes(typeof entry)).map(([label,value])=>({label,value:String(value)}));
+const dateAssessment=value=>({not_requested:'未限定日期',unknown:'发布日期未确认',within_range:'在日期范围内',outside_range:'超出日期范围'}[value?.status]);
+const dateBasis=value=>({search_metadata:'搜索日期',page_metadata:'页面声明',none:'无日期依据'}[value?.basis]);
+const caption=value=>searchFields(value).map(({label,value})=>`${label}：${value}`).join(' · ');
+function searchItem(row){
+ const url=webUrl(row.url);
+ const matches=rows(row.matches).filter(match=>Number.isInteger(match.queryIndex)&&Number.isInteger(match.position)&&Number.isInteger(match.page)).map(match=>`查询 ${match.queryIndex+1} · 第 ${match.page} 页 · 第 ${match.position} 条`).join('；');
+ return {title:string(row.title),description:string(row.snippet),fields:searchFields({'域名':row.domain,'来源':row.source,'搜索日期':row.date,'日期判断':dateAssessment(row.dateAssessment),'日期依据':dateBasis(row.dateAssessment),'判断日期':row.dateAssessment?.date,'合并排序':row.rank,'缩短字段':Array.isArray(row.truncatedFields)?row.truncatedFields.filter(value=>typeof value==='string').join('、')||undefined:undefined,'命中查询':matches||undefined,...(!url?{'网址':string(row.url)}:{})}),...(url?{markdown:`<${url}>`}:{})};
+}
+function webSearchModel(model,args,output,status){
+ const category=(output?.category??args.category)==='news'?'新闻':'网页';
+ const queries=rows(args.queries),attempts=rows(output?.attempts),results=Array.isArray(output?.results)?rows(output.results):null;
+ const query=queries.length===1?string(queries[0].query):attempts.length===1?string(attempts[0].query):undefined;
+ const queryCount=queries.length||attempts.length;
+ const completed=attempts.filter(attempt=>attempt.state==='succeeded').length;
+ const failed=attempts.filter(attempt=>attempt.state==='failed').length;
+ const receiptStatus=model.state==='ok'&&failed?(completed?`部分完成（${completed}/${attempts.length}）`:`未完成（0/${attempts.length}）`):status;
+ const summary=[query?`搜索“${query}”`:'搜索外部资料',queryCount>1?`${queryCount} 种查询`:null,category,model.state==='ok'&&results?`${results.length} 条结果`:null,receiptStatus].filter(Boolean).join(' · ');
+ if(model.state==='error'||!results)return {summary};
+ const items=results.map(searchItem);
+ const groups=[];
+ if(attempts.length)groups.push({label:'查询记录',items:attempts.map((attempt,index)=>({title:`查询 ${Number.isInteger(attempt.queryIndex)?attempt.queryIndex+1:index+1}`,description:string(attempt.query),badge:{label:attempt.state==='succeeded'?'已完成':attempt.state==='failed'?'未完成':'状态未知',tone:attempt.state==='succeeded'?'success':attempt.state==='failed'?'error':'neutral'},fields:searchFields({'实际查询':attempt.searchQuery,'域名限制':Array.isArray(attempt.domains)?attempt.domains.filter(value=>typeof value==='string').join('、')||undefined:undefined,'地区':attempt.country,'语言':attempt.language,'页':attempt.page,'结果数':attempt.resultCount,'耗时（毫秒）':attempt.elapsedMs,'用量':attempt.credits,'错误':attempt.error})}))});
+ const excluded=rows(output.excludedResults);
+ if(excluded.length)groups.push({label:`超出日期范围（${excluded.length}）`,items:excluded.map(searchItem)});
+ if(groups.length)items.push({title:'检索记录',...(!results.length?{description:'没有搜索结果'}:{}),fields:[],groups});
+ return {summary,details:{items,caption:caption({'服务':output.provider,'检索时间':output.searchedAt,'耗时（毫秒）':output.elapsedMs,'时间范围':output.timeRange,'起始日期':output.dateFrom,'截至日期':output.dateTo,'去重候选':output.totalUnique,'还有结果':output.hasMore,'用量':output.credits,'用量完整':output.creditsComplete}),empty:'没有搜索结果'}};
+}
+function webReadModel(model,args,output,status){
+ const lines=Array.isArray(output?.lines)?rows(output.lines).filter(line=>Number.isInteger(line.number)&&typeof line.text==='string'):null;
+ const format=output?.format==='pdf'?'PDF':output?.format==='html'?'网页':'原文';
+ const summary=['读取外部原文',format,model.state==='ok'&&lines?`${lines.length} 行`:null,status].filter(Boolean).join(' · ');
+ if(model.state==='error'||!lines)return {summary};
+ const url=webUrl(output.url),items=[{title:string(output.title),fields:searchFields({'格式':output.format,'页面声明发布日期':output.publicationDate,'页面声明修改日期':output.modifiedDate,'日期判断':dateAssessment(output.dateAssessment),'日期依据':dateBasis(output.dateAssessment),'判断日期':output.dateAssessment?.date,'总行数':output.totalLines,'总页数':output.totalPages,'已读取页数':output.readPages,'下一行':output.nextStartLine,'截断':output.truncated,...(!url?{'网址':string(output.url)}:{})}),...(url?{markdown:`<${url}>`}:{}),...(Array.isArray(output.limitations)?{lines:output.limitations.filter(value=>typeof value==='string')}:{})}];
+ const links=rows(output.links).map(link=>({link,url:webUrl(link.url)})).filter(value=>value.url);
+ if(links.length)items.push({title:'原文链接与附件',fields:[],groups:[{label:'链接',items:links.map(({link,url})=>({title:string(link.text),fields:[],markdown:`<${url}>`}))}]});
+ const matches=rows(output.matches).filter(match=>Number.isInteger(match.line)).map(match=>`第 ${match.line} 行${Number.isInteger(match.page)?` · 第 ${match.page} 页`:''}${string(match.preview)?` · ${match.preview}`:''}`);
+ if(matches.length)items.push({title:'匹配位置',fields:searchFields({'查找词':string(args.find)}),lines:matches});
+ const pages=new Map();
+ for(const line of lines){const page=Number.isInteger(line.page)?line.page:undefined;const values=pages.get(page)??[];values.push(line);pages.set(page,values);}
+ for(const [page,values]of pages){
+  const pageUrl=url&&page!==undefined?new URL(url):undefined;
+  if(pageUrl)pageUrl.hash=`page=${page}`;
+  items.push({title:page===undefined?'原文行':'PDF 第 '+page+' 页',fields:[],code:{text:values.map(line=>`${line.number}: ${line.text}`).join('\n'),language:'text'},...(pageUrl?{markdown:`<${webUrl(pageUrl.href)}>`}:{})});
+ }
+ if(!lines.length)items.push({description:'没有可读取的原文行',fields:[]});
+ return {summary,details:{items,caption:caption({'读取时间':output.retrievedAt,'耗时（毫秒）':output.elapsedMs,'请求网址':string(output.requestedUrl)}),empty:'没有可读取的原文行'}};
+}
 export function analysisToolModel(name,model){
  const args=parse(model.bodyRaw)??{},output=parse(model.output),reference=args.reference??args;
  const status=statusText(model,output);
+ if(name==='search_web')return webSearchModel(model,args,output,status);
+ if(name==='read_web')return webReadModel(model,args,output,status);
  let summary=`评测分析 · ${status}`;
  if(name==='list_data')summary=output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'批评测':output.kind==='inputs'?'条评测样本':'项结果'}`;
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
