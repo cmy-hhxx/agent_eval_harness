@@ -2,7 +2,7 @@ import type { ValidationIssue } from "@eval/contracts";
 import { ValidationError } from "@eval/contracts";
 
 export const imagePlaceholder = "[图像数据，请使用 view_image]";
-export function renderMessage(value: unknown): string {
+function renderMessage(value: unknown): string {
   return JSON.stringify(
     value,
     (key, child: unknown) =>
@@ -13,7 +13,7 @@ export function renderMessage(value: unknown): string {
     2,
   );
 }
-export function textLeaves(value: unknown, prefix = ""): [string, string][] {
+function textLeaves(value: unknown, prefix = ""): [string, string][] {
   if (typeof value === "string") return value.startsWith("data:image/") ? [] : [[prefix, value]];
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, child]) =>

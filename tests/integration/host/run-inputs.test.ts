@@ -12,8 +12,9 @@ test("validation streams registered records and still resolves reordered and mis
     const plan = await buildPlan(config);
     const expected = Object.fromEntries(Object.entries(plan.inputs));
     const manifest = { config, inputCatalog: plan.catalog } as unknown as RunManifest;
-    t.mock.method(fileSourceReader, "read", async () => { throw new Error("File size is greater than 2 GiB"); });
+    const streamed = t.mock.method(fileSourceReader, "lines");
     assert.deepEqual(await loadRunInputs(manifest), expected);
+    assert(streamed.mock.calls.length > 0, "validation reads registered sources through the streaming interface");
     const source = config.inputs.versions[0]!.sources[0]!.path;
     await writeJsonl(source, [raw("unselected"), raw("q2"), raw("q1")]);
     assert.deepEqual(await loadRunInputs(manifest), expected);

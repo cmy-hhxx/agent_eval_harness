@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
@@ -149,11 +149,26 @@ export class ArtifactStore {
   }
 }
 
+interface RunOwner { pid: number; token: string }
+const incompleteLock = "Run lock is incomplete; verify no host is running before removing it.";
+
+async function readRunOwner(file: string): Promise<RunOwner> {
+  let owner: RunOwner;
+  try { owner = await readJson<RunOwner>(file); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new Error(incompleteLock, { cause: error });
+    throw error;
+  }
+  if (!owner || !Number.isInteger(owner.pid) || owner.pid <= 0 || owner.pid > 2147483647 ||
+      typeof owner.token !== "string" || !owner.token.trim()) throw new Error(incompleteLock);
+  return owner;
+}
+
 /** Read-only liveness check; never steals a lock from a living process. */
 export async function hasLiveRunOwner(directory: string): Promise<boolean> {
   const file = path.join(directory, ".run-lock");
-  let owner: { pid: number };
-  try { owner = await readJson<{ pid: number }>(file); }
+  let owner: RunOwner;
+  try { owner = await readRunOwner(file); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
   try { process.kill(owner.pid, 0); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
@@ -161,9 +176,13 @@ export async function hasLiveRunOwner(directory: string): Promise<boolean> {
 
 export async function runLock(directory: string, options: { createDirectory?: boolean } = {}): Promise<() => Promise<void>> {
   if (options.createDirectory !== false) await mkdir(directory, { recursive: true });
-  const file = path.join(directory, ".run-lock");
+  const file = path.join(directory, ".run-lock"), guard = file + ".reclaim";
   const token = randomUUID();
   for (let attempt = 0; attempt < 2; attempt++) {
+    await lstat(guard).then(
+      () => { throw new Error("Run lock recovery in progress; retry after verifying the host state."); },
+      (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; },
+    );
     try {
       const handle = await open(file, "wx");
       try {
@@ -177,25 +196,27 @@ export async function runLock(directory: string, options: { createDirectory?: bo
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let previous: { pid: number; token: string };
-      try {
-        previous = await readJson(file);
-      } catch {
-        throw new Error("Run lock is incomplete; verify no host is running before removing it.");
+      let previous: RunOwner;
+      try { previous = await readRunOwner(file); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
       }
       try {
         process.kill(previous.pid, 0);
       } catch (probe) {
         if ((probe as NodeJS.ErrnoException).code === "ESRCH") {
           // Serialize reclamation so a competing host cannot unlink a newly acquired lock.
-          const guard = file + ".reclaim";
           try {
             await mkdir(guard);
           } catch {
             throw new Error("Run lock recovery in progress; retry after verifying the host state.");
           }
           try {
-            const current = await readJson<{ pid: number; token: string }>(file).catch(() => null);
+            const current = await readRunOwner(file).catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return undefined;
+              throw error;
+            });
             if (current?.token === previous.token && current.pid === previous.pid) await rm(file);
           } finally {
             await rm(guard, { recursive: true });

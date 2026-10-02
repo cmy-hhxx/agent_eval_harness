@@ -48,7 +48,12 @@ export async function listen(
   port = 0,
 ): Promise<{ server: Server; url: string; close(): Promise<void> }> {
   const server = createServer((req, res) => {
-    void handler(req, res, new URL(req.url || "/", "http://127.0.0.1")).catch((error) => {
+    void (async () => {
+      let url: URL;
+      try { url = new URL(req.url || "/", "http://127.0.0.1"); }
+      catch { throw new HttpError(400, "Invalid request URL"); }
+      await handler(req, res, url);
+    })().catch((error) => {
       if (res.headersSent) res.destroy();
       else
         json(

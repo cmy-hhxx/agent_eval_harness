@@ -60,7 +60,7 @@ export interface AssistantRuntimeOptions extends AssistantModelOptions {
   ownership?: AssistantOwnership;
   onError?(error: unknown): void;
 }
-export function sessionProjections(state: AssistantSessionState, journal?: AssistantJournal, metrics?: ReturnType<typeof createAssistantMetrics>) {
+function sessionProjections(state: AssistantSessionState, journal?: AssistantJournal, metrics?: ReturnType<typeof createAssistantMetrics>) {
   const turn = journal?.events.findLast((event) => event.type === "turn/start");
   const boundary = journal?.events.findLast((event) => event.type === "step/start" || event.type === "step/end");
   const step = journal?.events.findLast((event) => event.type === "step/start");

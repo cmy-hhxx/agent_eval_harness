@@ -7,12 +7,15 @@ import { runLock } from "./files.js";
 
 /** The shared writer lock also protects journal maintenance from other Host / Worker processes. */
 export async function withLogWriterLock<T>(directory: string, operation: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 30_000;
+  const started = Date.now(), deadline = started + 30_000;
   let release: (() => Promise<void>) | undefined;
   while (!release) {
     try { release = await runLock(directory); }
     catch (error) {
-      if (Date.now() >= deadline || !/^(Run (?:already owned|lock)|Could not acquire run lock)/.test(errorText(error)))
+      const now = Date.now();
+      // A competing writer can be between exclusive creation and its first write.
+      const initializing = error instanceof Error && error.cause instanceof SyntaxError && now - started < 1000;
+      if (now >= deadline || !initializing && !/^(Run already owned by host PID |Could not acquire run lock$)/.test(errorText(error)))
         throw error;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }

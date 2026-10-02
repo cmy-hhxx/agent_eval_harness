@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { emptyUsage, type RunState } from "@eval/contracts";
-import { writeJson } from "@eval/data";
+import { runLock, writeJson } from "@eval/data";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { comparisonCodec, buildPlan } from "@eval/workflows/comparison";
 import { completionTimeline, automationSnapshot, startAutomationDashboard } from "../../../apps/host/src/automation-dashboard.js";
@@ -80,7 +80,7 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     lastRewrite.status = "running"; lastRewrite.nextRetryAt = at;
     saved.concurrency = 16;
     await writeJson(path.join(directory, "fixture/state.json"), saved);
-    await writeJson(path.join(directory, "fixture/.run-lock"), { pid: process.pid });
+    const release = await runLock(path.join(directory, "fixture"));
     const live = (await automationSnapshot(automation, directory, current, settings)).execution;
     assert.equal(live.evaluatorVersion, fakeEvaluatorVersion, "use the active Host version, not old receipts or newly edited config");
     assert.equal(live.concurrency, 16);
@@ -95,7 +95,7 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     current.status = "stopped";
     assert.equal((await automationSnapshot(automation, directory, current, settings)).execution.runningTasks, 0);
     current.status = "running";
-    await rm(path.join(directory, "fixture/.run-lock"));
+    await release();
     const stale = (await automationSnapshot(automation, directory, current, settings)).execution;
     assert.equal(stale.runningTasks, 0, "stale running tasks without a live owner are not real concurrency");
     assert.equal(stale.evaluatorVersion, settings.evaluatorVersion);

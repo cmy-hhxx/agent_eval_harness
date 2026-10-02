@@ -535,7 +535,7 @@ export async function startWorker(
         safeId(ref.name);
       });
       if (!/^https?:\/\/127\.0\.0\.1(?::\d+)?$/.test(spec.hostUrl))
-        throw new HttpError(400, "V1 requires a loopback host URL");
+        throw new HttpError(400, "Worker requires a loopback host URL");
       if (!spec.model || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(spec.model.apiKeyEnv))
         throw new HttpError(400, "Invalid model credential reference");
       const previous = attempts.get(spec.attemptId);

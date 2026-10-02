@@ -201,12 +201,12 @@ export async function locateRecordStream(
   if (found) return found;
   throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
 }
-export const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 /** Business identity for any task, including rewrite tasks that own no input. */
 export function taskCase(data: TaskData): { batch_id: string; case_id: string } {
   return data.case ?? { batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id };
 }
-export function taskKey(task: PlannedTask): string {
+function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
   if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
   if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);

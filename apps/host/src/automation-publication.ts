@@ -9,7 +9,7 @@ import { checkpoint } from "./automation-evaluation.js";
 import { loadConfig } from "./config.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
-export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
+async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
   const host = await loadConfig(config.hostConfigs);
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
   async function* inputs(): AsyncGenerator<PublicationInput> {

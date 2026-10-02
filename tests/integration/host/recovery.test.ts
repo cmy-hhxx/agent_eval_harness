@@ -11,7 +11,7 @@ import {
   type Submission,
   type PlannedTask,
 } from "@eval/contracts";
-import { createFileLogger, exists, readJson, runLock, writeJsonl } from "@eval/data";
+import { createFileLogger, exists, readJson, writeJsonl } from "@eval/data";
 import { readRunState, writeRunState, createResultWriter, type Checkpoint } from "@eval/workflows/comparison";
 import { services, prepare } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
@@ -700,17 +700,6 @@ test("invalid evidence is rejected without producing a formal receipt", async ()
     );
     assert.equal(await store.receipt(spec.taskId), undefined);
     assert.equal(store.manifest.states[spec.taskId].status, "running");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-test("run lock excludes a second host and is released by its owner", async () => {
-  const { directory } = await fixtureConfig();
-  try {
-    const release = await runLock(directory);
-    await assert.rejects(runLock(directory), /owned/);
-    await release();
-    await (await runLock(directory))();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

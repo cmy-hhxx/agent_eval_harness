@@ -6,7 +6,6 @@ import type { InputSource } from "@eval/contracts";
 /** File-system reads used to resolve configured input sources. */
 export interface SourceReader {
   files(sources: InputSource[]): Promise<string[]>;
-  read(file: string): Promise<string>;
   revision(file: string): Promise<string>;
   lines(file: string, revision?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }>;
   record(file: string, byteOffset: number, byteLength: number, revision: string): string;
@@ -27,7 +26,7 @@ export async function readInputSource(source: string): Promise<string> {
 }
 
 /** Read one already indexed record without retaining the source file in memory. */
-export function readInputSourceRecord(source: string, byteOffset: number, byteLength: number, expected: string): string {
+function readInputSourceRecord(source: string, byteOffset: number, byteLength: number, expected: string): string {
   const descriptor = openSync(source, "r");
   const revision = (info: BigIntStats) => [info.dev, info.ino, info.size, info.mtimeNs].join(":");
   try {
@@ -50,7 +49,7 @@ export function readInputSourceRecord(source: string, byteOffset: number, byteLe
 }
 
 /** Stream large JSONL inputs without retaining whole files; reject concurrent source edits. */
-export async function* readInputSourceLines(source: string, expected?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }> {
+async function* readInputSourceLines(source: string, expected?: string): AsyncIterable<{ line: string; index: number; byteOffset: number; byteLength: number }> {
   const revision = await fileRevision(source);
   if (expected !== undefined && revision !== expected)
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
@@ -104,7 +103,7 @@ async function walk(directory: string): Promise<string[]> {
 }
 
 /** Resolve source descriptors into deterministically ordered files. */
-export async function sourceFiles(sources: InputSource[]): Promise<string[]> {
+async function sourceFiles(sources: InputSource[]): Promise<string[]> {
   const files: string[] = [];
   for (const source of sources) {
     if (source.kind === "file") {
@@ -120,5 +119,5 @@ export async function sourceFiles(sources: InputSource[]): Promise<string[]> {
 }
 
 export const fileSourceReader: SourceReader = {
-  files: sourceFiles, read: readInputSource, revision: fileRevision, lines: readInputSourceLines, record: readInputSourceRecord,
+  files: sourceFiles, revision: fileRevision, lines: readInputSourceLines, record: readInputSourceRecord,
 };

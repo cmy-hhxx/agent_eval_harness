@@ -1,12 +1,50 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createFileLogger } from "./logging.js";
+import { createFileLogger, withLogWriterLock } from "./logging.js";
+
+test("shared log locking refuses incomplete owners and recovery markers without retrying them", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-logs-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const lock = path.join(directory, ".run-lock"), guard = lock + ".reclaim";
+  for (const recovery of [false, true]) {
+    if (recovery) await mkdir(guard);
+    else await writeFile(lock, "{}");
+    let entered = false, timer: ReturnType<typeof setTimeout> | undefined;
+    const operation = withLogWriterLock(directory, async () => { entered = true; });
+    try {
+      await assert.rejects(Promise.race([operation, new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Invalid lock was retried")), 1000);
+      })]), recovery ? /recovery in progress/ : /lock is incomplete/);
+      assert.equal(entered, false);
+    } finally {
+      clearTimeout(timer);
+      await rm(recovery ? guard : lock, { recursive: true, force: true });
+      await operation.catch(() => {});
+    }
+  }
+});
+
+test("shared log locking allows a bounded initialization window for a competing writer", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-logs-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const lock = path.join(directory, ".run-lock");
+  await writeFile(lock, "");
+  const initialized = new Promise<void>((resolve, reject) => {
+    setTimeout(() => {
+      writeFile(lock, JSON.stringify({ pid: 2147483647, token: "initialized-owner" })).then(resolve, reject);
+    }, 10);
+  });
+  let entered = false;
+  try { await withLogWriterLock(directory, async () => { entered = true; }); }
+  finally { await initialized; }
+  assert.equal(entered, true);
+});
 
 const row = {
   time: new Date().toISOString(),

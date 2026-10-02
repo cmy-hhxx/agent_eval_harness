@@ -2,7 +2,7 @@ import { mkdir, open, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { canonical, type AssistantPreferences, type AssistantEvent, type AssistantPrompt, type AssistantRecord, type AssistantScope, type AssistantSessionState } from "@eval/contracts";
-import { exists, readJson, runLock, writeJson } from "./files.js";
+import { exists, hasLiveRunOwner, readJson, runLock, writeJson } from "./files.js";
 
 export function assistantUser(value: string): string {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(value)) throw new Error("Invalid user identifier");
@@ -23,8 +23,7 @@ export async function assistantOwner(root: string, scope: AssistantScope): Promi
   if (!owner) return;
   const lock = await readJson<{ pid: number; token: string }>(path.join(directory, ".run-lock")).catch(() => undefined);
   if (!lock || lock.pid !== owner.pid || lock.token !== owner.lockToken) return;
-  try { process.kill(owner.pid, 0); return owner; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  return await hasLiveRunOwner(directory) ? owner : undefined;
 }
 export async function ownAssistantSession(root: string, scope: AssistantScope, owner: AssistantOwner): Promise<() => Promise<void>> {
   const directory = assistantDirectory(root, scope);
