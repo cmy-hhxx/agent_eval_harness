@@ -55,7 +55,7 @@ function inputsHtml() {
     ["version", "由来源配置决定；记录值若存在，须与配置 name 一致"],
     ["messages", "问题、回答与调用链；保留原始消息序号"],
     ["meta.ground_truth / std_answer", "同批次、同 case 的同问题范围共享有效标准答案；冲突时跳过受影响模型对"],
-    ["has_standard_answer", "false 忽略本条标准答案；最终判对口径取样本共享值"],
+    ["has_standard_answer", "false 忽略本条标准答案；最终对错核验取样本共享值"],
     ["request_time", "原样保留；缺失为 null"],
     ["meta / trace_id", "采集状态、模型、耗时与追踪标识"],
   ];
@@ -115,14 +115,13 @@ function contractHtml() {
   if (!Object.hasOwn(documents, state.document)) state.document = isExport ? "comparison" : "result";
   const value = documents[state.document];
   const prompt = typeof value === "string";
-  const derivedSubmission = !isExport && state.document === "submission" && stage.id === "comparison";
   const schemaFile = isExport ? { comparison: "export", clustering: "clustering" }[state.document]
-    : derivedSubmission ? "result" : state.document;
+    : state.document;
   const source = prompt ? (state.document === "submissionNudge" ? "packages/prompts/resources/shared/nudge.md" : `packages/prompts/resources/${stage.id}/default/${state.document === "system" ? "system" : "instructions"}.md`)
-    : `schemas/${isExport ? "workflow" : stage.id}/${schemaFile}.schema.json${derivedSubmission ? "（去掉 rewritten/task_analysis 字段后派生）" : ""}`;
+    : `schemas/${isExport ? "workflow" : stage.id}/${schemaFile}.schema.json`;
   return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${Object.entries(stageNames).map(([id, name]) => `<button data-stage="${id}" aria-pressed="${id === state.stage}">${name}</button>`).join("")}</nav><section class="contract-content">
     <header class="section-heading"><h2>${stageNames[state.stage]}</h2>${stage ? `<span class="muted">${stage.unit}</span>` : ""}</header>
-    <nav class="document-tabs" aria-label="定义类型">${Object.keys(documents).map((key) => `<button data-document="${key}" aria-pressed="${key === state.document}">${!isExport && key === "result" && ["criteria", "rewrite"].includes(stage.id) ? "提交 / 结果 Schema" : documentNames[key]}</button>`).join("")}</nav>
+    <nav class="document-tabs" aria-label="定义类型">${Object.keys(documents).map((key) => `<button data-document="${key}" aria-pressed="${key === state.document}">${!isExport && key === "result" && stage.id === "rewrite" ? "提交 / 结果 Schema" : documentNames[key]}</button>`).join("")}</nav>
     <p class="definition-source"><code>${source}</code></p>
     ${prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<div class="schema-tree">${schemaHtml(value)}</div>`}
     ${!prompt ? `<details class="reference-disclosure"><summary>JSON 定义</summary><pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>` : ""}

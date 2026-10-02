@@ -83,7 +83,7 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
   const running = tasks.filter((task) => task.status === "running");
   const failures: Record<string, number> = {};
   for (const task of tasks)
-    if (["failed", "timed_out", "cancelled", "blocked"].includes(task.status || "")) {
+    if (["failed", "timed_out"].includes(task.status || "")) {
       const category = task.failure?.errors?.[0]?.category || "interruption";
       failures[category] = (failures[category] || 0) + 1;
     }
@@ -93,6 +93,8 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
     accepted,
     repairing: running.filter((task) => task.failure?.draft !== undefined).length,
     failures,
+    blocked: tasks.filter((task) => task.status === "blocked").length,
+    cancelled: tasks.filter((task) => task.status === "cancelled").length,
     concurrency: checkpoint.concurrency || 1,
     recent_completed_per_minute: 0,
     longest_without_progress: null,

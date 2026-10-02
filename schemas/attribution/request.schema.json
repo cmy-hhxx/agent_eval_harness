@@ -37,6 +37,7 @@
         "catalog",
         "input_file",
         "original_answer_timing",
+        "table_check_results",
         "note"
       ],
       "properties": {
@@ -193,6 +194,12 @@
         "note": {
           "type": "string",
           "minLength": 1
+        },
+        "table_check_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tableCheckResult"
+          }
         }
       }
     },
@@ -314,6 +321,133 @@
         "acceptance_rule": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "tableCheckResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "answer_table_id",
+        "rows",
+        "summary"
+      ],
+      "properties": {
+        "answer_table_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "row_index",
+              "status",
+              "answer",
+              "sources"
+            ],
+            "properties": {
+              "row_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "status": {
+                "enum": [
+                  "conflict",
+                  "unverified",
+                  "ambiguous"
+                ]
+              },
+              "answer": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cells",
+                  "evidence"
+                ],
+                "properties": {
+                  "cells": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "row_index",
+                    "cells",
+                    "evidence",
+                    "table_id",
+                    "matched_by"
+                  ],
+                  "properties": {
+                    "row_index": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "cells": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "evidence": {
+                      "$ref": "#/$defs/evidence"
+                    },
+                    "table_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "matched_by": {
+                      "enum": [
+                        "key",
+                        "value"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "matched",
+            "conflict",
+            "unverified",
+            "ambiguous"
+          ],
+          "properties": {
+            "matched": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "conflict": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unverified": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ambiguous": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         }
       }
     }

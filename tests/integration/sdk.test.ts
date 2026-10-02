@@ -38,7 +38,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           }[];
           const submit = tools.find((t) => t.function.name === "submit_evaluation")!;
           assert(submit);
-          assert(tools.some((t) => t.function.name === "submit_evaluation_file"));
+          assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(submit.function.parameters)), "model-visible parameters must contain inline schemas");
           assert(!tools.some((t) => t.function.name === "set_task_contract"));
           const messages = payload.messages as {
             role: string;
@@ -48,11 +48,23 @@ for (const engine of ["pi", "prime"] as Engine[])
           const ranCode = messages.some((m) => m.role === "tool");
           const attribution = "is_correct" in submit.function.parameters.properties;
           const criteria = "requirements" in submit.function.parameters.properties;
+          if (criteria) {
+            const requirements = object(object(submit.function.parameters.properties).requirements);
+            const criterion = object(requirements.items), properties = object(criterion.properties);
+            const sourceIds = object(properties.source_ids);
+            assert.equal(criterion.additionalProperties, false);
+            assert.deepEqual(criterion.required, ["id", "source_ids"]);
+            assert.equal(sourceIds.type, "array");
+            assert.equal(object(sourceIds.items).type, "string");
+            assert.equal(sourceIds.uniqueItems, true);
+            assert.equal(properties.acceptance_rule, undefined);
+          }
           const stage = criteria ? "criteria" : attribution ? "attribution" : "comparison";
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
           const profile = criteria ? criteriaProfile : attribution ? attributionProfile : comparisonProfile;
           const descriptions = profile.toolDescriptions;
-          if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name).sort(), ["submit_evaluation", "submit_evaluation_file"]);
+          assert.equal(tools.some((t) => t.function.name === "submit_evaluation_file"), !criteria);
+          if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
           for (const tool of tools)
             assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
           const prompt = messages
@@ -76,7 +88,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           const spec = {
             prompt, inputs: [], evaluation: { id: stage, profile: profile.id,
               systemPrompt: profile.systemPrompt, outputSchema: profile.submissionSchema,
-              toolNames: profile.toolNames, toolDescriptions: profile.toolDescriptions,
+              toolNames: profile.toolNames, fileSubmission: profile.fileSubmission, toolDescriptions: profile.toolDescriptions,
               submissionNudge: profile.submissionNudge },
           };
           const evaluation = draftFor(spec, taskResult(spec));

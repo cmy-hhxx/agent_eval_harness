@@ -10,7 +10,7 @@ import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData, RawInput } from "@eval/workflows/comparison";
-import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResult, raw } from "../../fixtures/comparison.js";
+import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
 import { canonical, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
@@ -549,7 +549,7 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       systems[stage] = system;
       instructions[stage] = instruction;
       const task = plan.tasks.find((item) => item.stage === stage)!;
-      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResult() : attributionResult())]));
+      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult())]));
       const prepared = prepare(task, plan.inputs, dependencies);
       assert.equal(prepared.evaluation.systemPrompt, system);
       assert.equal(prepared.evaluation.submissionNudge, nudge);
@@ -562,12 +562,12 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       assert(rules.includes("submit_evaluation"));
       if (stage === "criteria") {
         assert(rules.includes("requirements"));
-        assert(prepared.prompt.includes('"candidate_id"'));
+        assert(prepared.prompt.includes('"candidate_ids"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
         assert(rules.includes("evidence_id"));
         assert(instruction.includes("final_message_index"));
-        assert(rules.includes("优点的 `problem=null`"));
+        assert(rules.includes("优点 finding 的 problem 填 JSON null"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
@@ -717,7 +717,7 @@ test("submission feedback locates invalid comparison references", async () => {
           taskId: id,
           attemptId: `a-${label}`,
           submissionId: id,
-          evaluation: label === "criteria" ? criteriaResult() : attributionResult(true, "2+2=4", false),
+          evaluation: label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", false),
           evaluatorVersion: fakeEvaluatorVersion,
           judge: fakeJudge,
           audit: emptyAudit(),
@@ -728,6 +728,7 @@ test("submission feedback locates invalid comparison references", async () => {
       ]),
     );
     const result = comparisonResult(labels);
+    result.task_analysis = criteriaResultForTask(task, plan.inputs);
     result.decision_basis.decisive_findings = [{ candidate: labels[0]!, finding_index: 9 }];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions),

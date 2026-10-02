@@ -257,6 +257,129 @@ test("registered tools are available without engine-specific changes and budgets
     await rm(ctx.workdir, { recursive: true, force: true });
   }
 });
+test("artifact pages preserve escaped text and complete JSON without creating new artifacts", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxOutputChars = 4096; ctx.policy.maxToolCalls = 30;
+    const text = '\"\\\n🙂'.repeat(1500);
+    const artifact = await ctx.artifacts.put("escaped.txt", text);
+    ctx.audit.artifacts.push(artifact);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_artifact"]));
+    let offset = 0, recovered = "";
+    do {
+      const result = await runtime.execute("read_artifact", { id: artifact.id, offset, max_chars: 16000 }, new AbortController().signal);
+      assert(!result.isError, JSON.stringify(result));
+      assert(result.content.map(item => item.text ?? "").join("\n").length <= ctx.policy.maxOutputChars);
+      const page = JSON.parse(result.content[0].text!);
+      recovered += page.text;
+      assert(page.next_offset <= text.length);
+      assert(page.next_offset > offset);
+      offset = page.next_offset;
+      if (!page.has_more) break;
+    } while (offset < text.length);
+    assert.equal(recovered, text);
+    assert.equal(ctx.audit.artifacts.length, 1);
+    assert.equal((await runtime.execute("read_artifact", { id: artifact.id, offset: text.length + 1 }, new AbortController().signal)).isError, true);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("text source directories have independent pagination and expose every path", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 10;
+    const content = Array.from({ length: 40 }, (_, i) => ({ text: `正文${i}` }));
+    ctx.inputs.set("A", { messages: [{ content }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    let source_offset = 0;
+    const paths: string[] = [];
+    for (;;) {
+      const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0, source_offset }, new AbortController().signal);
+      assert(!result.isError);
+      const page = JSON.parse(result.content[0].text!);
+      paths.push(...page.text_sources.map((item: { path: string }) => item.path));
+      if (!page.text_sources_has_more) break;
+      assert(page.text_sources_next_offset > source_offset);
+      source_offset = page.text_sources_next_offset;
+    }
+    assert.deepEqual(paths, content.map((_, i) => `/content/${i}/text`));
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("search counts and paginates matches beyond ten thousand without retaining every hit", async () => {
+  const ctx = await context();
+  try {
+    ctx.inputs.set("A", { messages: [{ content: "目标".repeat(15000) }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "目标", offset: 29999 }, new AbortController().signal);
+    assert(!result.isError);
+    const page = JSON.parse(result.content[0].text!);
+    assert.equal(page.total, 30000);
+    assert.equal(page.matches.length, 1);
+    assert.equal(page.next_offset, 30000);
+    assert.equal(page.has_more, false);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("cached reads return the live budget and still consume exploration calls", async () => {
+  const ctx = await context();
+  try {
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const args = { candidate: "A", message_index: 0 };
+    for (let used = 1; used <= 2; used++) {
+      const result = await runtime.execute("read_trace", args, new AbortController().signal);
+      const budget = JSON.parse(result.content.at(-1)!.text!).budget;
+      assert.equal(budget.exploration.used, used);
+      assert.equal(budget.exploration.remaining, 3 - used);
+      assert.deepEqual((result.details as { budget: unknown }).budget, budget);
+    }
+    assert.equal(ctx.audit.traceReads.length, 1);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("an oversized text-path entry fails instead of returning a directory that cannot advance", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxOutputChars = 700;
+    ctx.inputs.set("A", { messages: [{ ["路径".repeat(500)]: "内容" }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0 }, new AbortController().signal);
+    assert.equal(result.isError, true);
+    assert.match(JSON.parse(result.content[0].text!).message, /增大工具输出预算/);
+    assert.deepEqual(ctx.audit.traceReads, []);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("an image withheld by the output budget cannot be claimed as viewed", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxOutputChars = 200;
+    ctx.inputs.set("A", { messages: [{ content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }] }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["view_image"]));
+    const result = await runtime.execute("view_image", { candidate: "A", message_index: 0 }, new AbortController().signal);
+    assert.equal(result.isError, true);
+    assert(!result.content.some(item => item.type === "image"));
+    assert.deepEqual(ctx.audit.viewedImages, []);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("mandatory long-text pages finish after exploration is exhausted without freeing duplicate reads", async () => {
+  const ctx = await context();
+  try {
+    const text = "核".repeat(300000);
+    ctx.inputs.set("A", { messages: [{ content: text }] });
+    ctx.policy.maxToolCalls = 1;
+    ctx.requiredReads = [{ candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: text.length }];
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace", "calculate"]));
+    await runtime.execute("calculate", { operation: "add", operands: ["1", "1"] }, new AbortController().signal);
+    let offset = 0, pages = 0;
+    do {
+      const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content", offset }, new AbortController().signal);
+      assert(!result.isError, JSON.stringify(result));
+      const page = JSON.parse(result.content[0].text!);
+      offset = page.next_offset; pages++;
+      assert(result.content.map(item => item.text ?? "").join("\n").length <= ctx.policy.maxOutputChars);
+    } while (offset < text.length);
+    assert(pages > 14);
+    assert.equal(ctx.audit.requiredReadCalls, pages);
+    assert.equal(ctx.audit.calls, pages + 1);
+    assert(traceReadCoverage(ctx.audit, ctx.requiredReads[0]).covered);
+    assert.equal((await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content" }, new AbortController().signal)).isError, true);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("code executes with persistent task files and paged artifact output", async () => {
   const ctx = await context();
   try {

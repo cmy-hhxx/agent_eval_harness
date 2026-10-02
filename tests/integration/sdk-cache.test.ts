@@ -44,7 +44,7 @@ for (const engine of ["pi", "prime"] as const)
           runId: "cache-test", taskId: `task-${index}`, attemptId: `attempt-${index}`, inputRevision: 1,
           engine: backend.identity,
           evaluation: { id: "fixture", profile: "default", systemPrompt: "Preserve these exact rules.",
-            outputSchema: { type: "object" }, toolNames, toolDescriptions: {}, submissionNudge: "Submit." },
+            outputSchema: { type: "object" }, toolNames, fileSubmission: false, toolDescriptions: {}, submissionNudge: "Submit." },
           model: { provider: "fixture", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,
             model: "gpt-6-luna", thinking: "high", contextWindow: 200000, maxOutputTokens: 8192 },
           policy: DEFAULT_POLICY, prompt: `Exact material ${index}`, inputs: [], hostUrl: gateway.url,

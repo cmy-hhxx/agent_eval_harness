@@ -206,6 +206,31 @@ test("dashboard exposes every gateway model's public identity", () => {
     [{ id: "claude-4", name: "Claude 4" }]);
 });
 
+test("dashboard fallback separates execution failures, dependency blocks and cancellations", async () => {
+  const fixture = await setup();
+  const file = path.join(fixture.run, "state.json");
+  const checkpoint = await readJson<{ tasks: Record<string, { status: string; attempts: number }> }>(file);
+  const tasks = Object.values(checkpoint.tasks).filter(task => task.status !== "succeeded");
+  for (const [index, status] of ["failed", "timed_out", "blocked", "cancelled"].entries())
+    Object.assign(tasks[index], { status, attempts: status === "blocked" ? 0 : 1 });
+  await writeJson(file, checkpoint);
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    const listing = await (await fetch(`${server.url}/api/dashboard/runs`)).json();
+    const run = listing.runs[0];
+    assert.equal(run.live, false);
+    assert.deepEqual(run.progress.failures, { interruption: 2 });
+    assert.equal(run.progress.blocked, 1);
+    assert.equal(run.progress.cancelled, 1);
+    assert.equal(run.progress.accepted, 1);
+    assert.equal(run.progress.queued, tasks.length - 4);
+    assert.deepEqual(await readJson(file), checkpoint);
+  } finally {
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("dashboard discovers all models from the .env gateway without leaking credentials", async () => {
   const fixture = await setup();
   const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
@@ -784,7 +809,7 @@ test("dashboard forwards controls to the locked Host without exposing its token"
   const calls: unknown[] = [];
   const host = await listen(async (req, res, url) => {
     if (url.pathname === "/api/progress") return json(res, {
-      queued: 2, running: 1, accepted: 1, repairing: 0, failures: {}, concurrency: 3,
+      queued: 2, running: 1, accepted: 1, repairing: 0, failures: {}, blocked: 0, cancelled: 0, concurrency: 3,
       recent_completed_per_minute: 1, longest_without_progress: null, eta: null, eta_status: "insufficient_samples",
     });
     calls.push({ path: url.pathname, token: req.headers["x-run-token"] });

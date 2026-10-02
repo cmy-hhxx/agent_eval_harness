@@ -6,7 +6,8 @@
     "directory": "vendor/pi",
     "local_changes": [
       "Evaluation-only gateway models: the offline generator emits empty chat, image and classifier catalogs without hydration or bundled model data; builtin provider registration is disabled. ModelRuntime registers only explicit application models, with network catalog refresh disabled.",
-      "check:sources typechecks implementation sources and public examples for the gateway-only vendor using the current upstream package graph. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites."
+      "check:sources typechecks implementation sources and public examples for the gateway-only vendor using the current upstream package graph. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites.",
+      "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities, item.added/item.done identity changes and malformed JSON objects are rejected before toolcall_end or execution, while interleaved calls, reasoning, text, usage and completed item.done arguments are preserved."
     ]
   },
   "prime": {
@@ -15,7 +16,8 @@
     "commit": "7d442aafa985f9342134fac16c2ef41f03fb45c1",
     "directory": "vendor/prime-agent",
     "local_changes": [
-      "Application SDK builds skip bundled model/MCP catalog asset download and fixture generation in copy-assets. Official compiled fallbacks remain; the evaluation adapter explicitly registers gateway models and Worker PI_OFFLINE disables runtime catalog refresh."
+      "Application SDK builds skip bundled model/MCP catalog asset download and fixture generation in copy-assets. Official compiled fallbacks remain; the evaluation adapter explicitly registers gateway models and Worker PI_OFFLINE disables runtime catalog refresh.",
+      "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities and malformed, empty, mismatched or unfinished calls cannot execute, while usage and completed item.done arguments are preserved."
     ]
   },
   "deepseek": {

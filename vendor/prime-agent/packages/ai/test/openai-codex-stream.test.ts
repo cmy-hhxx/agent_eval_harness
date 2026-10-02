@@ -1529,7 +1529,7 @@ describe("openai-responses shared conversions", () => {
 		return { role: "toolResult", toolCallId: "tool-1", toolName, content, isError: false, timestamp: 3 };
 	}
 
-	it("removes partialJson from persisted tool-call blocks at output_item.done", async () => {
+	it("removes partialJson from persisted tool-call blocks after the completed response", async () => {
 		const argumentsJson = '{"path":"README.md","content":"updated"}';
 		async function* events(): AsyncIterable<ResponseStreamEvent> {
 			const item = { type: "function_call", id: "fc_test", call_id: "call_test", name: "edit" };
@@ -1544,6 +1544,7 @@ describe("openai-responses shared conversions", () => {
 				type: "response.output_item.done",
 				item: { ...item, arguments: argumentsJson },
 			} as ResponseStreamEvent;
+			yield { type: "response.completed", response: { status: "completed", output: [] } } as ResponseStreamEvent;
 		}
 
 		const output: AssistantMessage = {

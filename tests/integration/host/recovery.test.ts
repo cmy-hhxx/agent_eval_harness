@@ -28,7 +28,7 @@ import {
   fixtureConfig,
   raw,
   taskResult,
-  criteriaResult,
+  criteriaResultForTask,
   fakeJudge,
 } from "../../fixtures/comparison.js";
 
@@ -54,7 +54,7 @@ async function fixture(rows = [raw("q", null)]) {
   const criteriaReceipts = Object.fromEntries(plan.tasks.filter((item) => item.stage === "criteria").map((criteria) => {
     manifest.states[criteria.id].status = "succeeded";
     return [criteria.id, { taskId: criteria.id, attemptId: "criteria", submissionId: randomUUID(),
-      evaluation: criteriaResult(), evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge,
+      evaluation: criteriaResultForTask(criteria, plan.inputs), evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge,
       audit: emptyAudit(), usage: emptyUsage(), status: "succeeded" as const, acceptedAt: 0 }];
   }));
   const initial = { manifest, receipts: criteriaReceipts, usage: emptyUsage(), recordedAttempts: 0 };

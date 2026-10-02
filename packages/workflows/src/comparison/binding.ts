@@ -7,7 +7,7 @@ import { sourceSlots } from "./commentary.js";
 import { observationsFor, requestItems } from "./observations.js";
 import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
-import type { AttributionResult } from "@eval/agents/attribution";
+import { attributionTableChecks, attributionTableReview, type AttributionResult } from "@eval/agents/attribution";
 import { originalAnswerUsage } from "./experience.js";
 import { traceCatalog } from "./catalog.js";
 
@@ -201,6 +201,16 @@ export function bindTask(
         return [label, { ...result, findings: result.findings.map((finding, index) => ({ ...finding, finding_index: index })) }];
       }),
   );
+  const sourceReview = attribution ? {} : Object.fromEntries(Object.entries(data.candidates).flatMap(([label, candidate]) => {
+    const receipt = dependencies[label];
+    if (!receipt) return [];
+    const review = attributionTableReview({ input: { answer: { final_message_index: candidate.final_index,
+      table_check_results: attributionTableChecks(inputs[candidate.input_id] as RawInput, candidate.final_index) } },
+      sources: { answer: { id: candidate.input_id, value: inputs[candidate.input_id] } } },
+    receipt.evaluation as AttributionResult, { accepted: true });
+    const reasons = [...review.errors.map(issue => issue.message), ...review.reasons];
+    return reasons.length ? [[label, blind!.value(reasons)]] : [];
+  }));
   return {
     agent: attribution ? "attribution" : "comparison",
     profile: "default",
@@ -213,6 +223,7 @@ export function bindTask(
             ground_truth: { available: data.reference !== null, value: reference },
             answer: {
               ...materials.answer,
+              table_check_results: attributionTableChecks(inputs[data.candidates.A.input_id] as RawInput, data.candidates.A.final_index),
               identity: {
                 version_id: data.candidates.A.version,
                 display_name: data.candidates.A.name,
@@ -225,6 +236,7 @@ export function bindTask(
             ground_truth: { available: data.reference !== null, value: reference },
             candidates: materials,
             attributions,
+            source_review: sourceReview,
             strength_checks: Object.entries(attributions).flatMap(([label, result]) =>
               result.findings.flatMap((finding, index) => finding.type === "strength" ? [{
                 candidate: label,

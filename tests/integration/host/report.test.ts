@@ -13,7 +13,7 @@ import { validateEvaluation } from "../../fixtures/services.js";
 import { comparisonRow, reportRun } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, criteriaResult, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 
 for (const objective of [false, true])
   test(`report preserves identities, evidence and correctness across blind swaps (${objective ? "objective" : "subjective"})`, async () => {
@@ -65,8 +65,12 @@ for (const objective of [false, true])
           inputIds: Object.fromEntries(Object.entries(candidates).map(([label, c]) => [label, c.input_id])),
           data,
         };
+        const snapshots = Object.fromEntries(
+          Object.entries(candidates).map(([label, c]) => [c.input_id, inputs[label]]),
+        );
+        const rubric = criteriaResultForTask(task, snapshots);
         const receipts = new Map<string, SubmissionReceipt>([["criteria", {
-          taskId: "criteria", submissionId: "criteria", attemptId: "test", evaluation: criteriaResult(),
+          taskId: "criteria", submissionId: "criteria", attemptId: "test", evaluation: rubric,
           evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(),
           status: "succeeded", acceptedAt: 0,
         }]]);
@@ -118,9 +122,6 @@ for (const objective of [false, true])
             ],
           },
         };
-        const snapshots = Object.fromEntries(
-          Object.entries(candidates).map(([label, c]) => [c.input_id, inputs[label]]),
-        );
         const dependencies = Object.fromEntries(
           Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
         );
@@ -165,7 +166,7 @@ for (const objective of [false, true])
         assert.deepEqual(Object.keys(row).slice(0, 2), ["request_time", "has_standard_answer"]);
         assert.equal(row.request_time, "2026-09-24 11:37:31");
         assert.equal(row.has_standard_answer, objective);
-        assert.deepEqual(row.task_analysis, criteriaResult());
+        assert.deepEqual(row.task_analysis, rubric);
         assert.equal(row.criteria_task_id, "criteria");
         assert.deepEqual(row.attribution_task_ids, Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [candidate.version, "check-" + label])));
         assert.deepEqual((row.verdicts as Record<string, { result: string; winner_version: string }>)["a_fast__vs__b_fast"], {

@@ -37,7 +37,8 @@ const profile: AgentProfile = {
   instructions: "Return the value as score.",
   submissionNudge: "Submit the score.",
   toolNames: [],
-  toolDescriptions: { submit_evaluation: "Submit JSON", submit_evaluation_file: "Submit JSON file" },
+  fileSubmission: false,
+  toolDescriptions: { submit_evaluation: "Submit JSON" },
   renderPrompt(input) { return this.instructions + "\n" + JSON.stringify(input); },
   requestSchema: {
     type: "object",
@@ -114,7 +115,7 @@ test("Host accepts generic JSON and profiles replace prompt and schema together"
     },
   ]);
   const binding = workflow.bind(plan.tasks[0], plan.inputs, {}),
-    audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
+    audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
   assert(registry.prepare(binding).prompt.startsWith("Return the value as score."));
   assert.throws(() => registry.resolve(binding, { summary: "wrong profile" }, audit), /score/);
   const alternate = { ...binding, agent: "text" };

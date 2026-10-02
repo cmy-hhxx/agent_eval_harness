@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "assessments",
+    "review_requests"
+  ],
+  "properties": {
+    "ranking": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "assessments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      }
+    },
+    "decision_basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tradeoff",
+        "comparisons",
+        "decisive_findings"
+      ],
+      "properties": {
+        "tradeoff": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "comparisons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "aspect",
+              "importance",
+              "better_candidates",
+              "assessments",
+              "criterion_ids"
+            ],
+            "properties": {
+              "aspect": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "importance": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              "better_candidates": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assessments": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "summary",
+                    "finding_indices"
+                  ],
+                  "properties": {
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "finding_indices": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                }
+              },
+              "criterion_ids": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "decisive_findings": {
+          "type": "array",
+          "maxItems": 24,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "candidate",
+              "finding_index"
+            ],
+            "properties": {
+              "candidate": {
+                "type": "string",
+                "minLength": 1
+              },
+              "finding_index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "decided",
+        "needs_review"
+      ]
+    },
+    "review_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate",
+          "criterion_ids",
+          "finding_indices",
+          "reason"
+        ],
+        "properties": {
+          "candidate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "criterion_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "finding_indices": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "ranking",
+        "decision_basis"
+      ],
+      "properties": {
+        "status": {
+          "const": "decided"
+        },
+        "ranking": {
+          "minItems": 1
+        },
+        "review_requests": {
+          "maxItems": 0
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "needs_review"
+        },
+        "review_requests": {
+          "minItems": 1
+        },
+        "ranking": false,
+        "decision_basis": false
+      }
+    }
+  ]
+}

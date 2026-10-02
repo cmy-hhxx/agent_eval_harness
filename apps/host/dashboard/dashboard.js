@@ -64,9 +64,17 @@ function showError(message) {
   node.textContent = message || "";
   node.hidden = !message;
 }
+function progressCounts(progress = {}) {
+  const failures = Object.values(progress.failures || {}).reduce((total, n) => total + n, 0);
+  const blocked = progress.blocked || 0, cancelled = progress.cancelled || 0;
+  return { failures, blocked, cancelled,
+    total: (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + failures + blocked + cancelled };
+}
 function statusText(run) {
-  const failures = Object.values(run.progress?.failures || {}).reduce((total, n) => total + n, 0);
-  if (run.status === "finished" && failures) return "已结束（有失败）";
+  const counts = progressCounts(run.progress);
+  const stopped = [[counts.failures, "失败"], [counts.blocked, "阻塞"], [counts.cancelled, "取消"]]
+    .filter(([count]) => count).map(([, status]) => status);
+  if (run.status === "finished" && stopped.length) return `已结束（有${stopped.join("、")}）`;
   if (run.status === "running" && !run.live) return "运行中（Host 接口未就绪）";
   return label(run.status);
 }
@@ -81,13 +89,12 @@ function renderRuns() {
   }
   list.innerHTML = state.runs.map((run) => {
     const progress = run.progress || {};
-    const failures = Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
-    const total = (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + failures;
+    const { failures, blocked, cancelled, total } = progressCounts(progress);
     const selected = state.selectedRun === run.run_id;
     const canDelete = run.status !== "running" && state.startingRun?.id !== run.run_id && state.deletingRun !== run.run_id;
     return `<div class="run-entry"><button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
       <span class="run-line"><span class="status-dot ${escapeHtml(run.status)}${failures ? " has-failure" : ""}"></span><span class="run-label">${escapeHtml(runLabel(run))}</span></span>
-      <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 异常` : ""}</span>
+      <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 失败` : ""}${blocked ? ` · ${blocked} 阻塞` : ""}${cancelled ? ` · ${cancelled} 取消` : ""}</span>
     </button><button class="run-delete" type="button" data-delete="${escapeHtml(run.run_id)}" aria-label="删除运行 ${escapeHtml(runLabel(run))}" title="${canDelete ? "删除运行" : run.status === "running" ? "停止后可删除" : "删除中"}" ${canDelete ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button></div>`;
   }).join("");
 }
@@ -105,7 +112,7 @@ function renderOverview() {
   status.textContent = statusText(run);
   status.className = `status-chip ${run.status}${Object.values(run.progress?.failures || {}).some(Boolean) ? " has-failure" : ""}`;
   const progress = run.progress || {};
-  const totalTasks = (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
+  const totalTasks = progressCounts(progress).total;
   const libraryModels = Object.keys(run.problem_library || {}).length;
   const engineLabel = run.engine === "prime" ? "Prime" : "Pi";
   $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}`;
@@ -115,7 +122,9 @@ function renderOverview() {
   $("#stage-summary").innerHTML = ["criteria", "attribution", "comparison", "rewrite", "clustering"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? `${counts.running || 0} 执行 · ${(counts.failed || 0) + (counts.timed_out || 0) + (counts.blocked || 0)} 异常` : "未启用"}</span></div>`;
+    const failures = (counts.failed || 0) + (counts.timed_out || 0);
+    const note = `${counts.running || 0} 执行${failures ? ` · ${failures} 失败` : ""}${counts.blocked ? ` · ${counts.blocked} 阻塞` : ""}${counts.cancelled ? ` · ${counts.cancelled} 取消` : ""}`;
+    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
   }).join("");
 }
 function scrollBehavior() {

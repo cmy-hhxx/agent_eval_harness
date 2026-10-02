@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
@@ -178,54 +178,62 @@ export async function runLock(directory: string, options: { createDirectory?: bo
   if (options.createDirectory !== false) await mkdir(directory, { recursive: true });
   const file = path.join(directory, ".run-lock"), guard = file + ".reclaim";
   const token = randomUUID();
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await lstat(guard).then(
-      () => { throw new Error("Run lock recovery in progress; retry after verifying the host state."); },
-      (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; },
-    );
+  const pending = file + "-" + token;
+  try {
+    const handle = await open(pending, "wx");
     try {
-      const handle = await open(file, "wx");
-      try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, token }));
-      } finally {
-        await handle.close();
-      }
-      return async () => {
-        const value = await readJson<{ token: string }>(file);
-        if (value.token === token) await rm(file);
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let previous: RunOwner;
-      try { previous = await readRunOwner(file); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-      try {
-        process.kill(previous.pid, 0);
-      } catch (probe) {
-        if ((probe as NodeJS.ErrnoException).code === "ESRCH") {
-          // Serialize reclamation so a competing host cannot unlink a newly acquired lock.
-          try {
-            await mkdir(guard);
-          } catch {
-            throw new Error("Run lock recovery in progress; retry after verifying the host state.");
-          }
-          try {
-            const current = await readRunOwner(file).catch((error: NodeJS.ErrnoException) => {
-              if (error.code === "ENOENT") return undefined;
-              throw error;
-            });
-            if (current?.token === previous.token && current.pid === previous.pid) await rm(file);
-          } finally {
-            await rm(guard, { recursive: true });
-          }
-          continue;
-        }
-      }
-      throw new Error(`Run already owned by host PID ${previous.pid}`);
+      await handle.writeFile(JSON.stringify({ pid: process.pid, token }));
+    } finally {
+      await handle.close();
     }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await lstat(guard).then(
+        () => { throw new Error("Run lock recovery in progress; retry after verifying the host state."); },
+        (error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; },
+      );
+      try {
+        // Publish an already complete owner atomically without replacing another owner.
+        // Opening the public file before writing would expose transient invalid JSON.
+        await link(pending, file);
+        return async () => {
+          const value = await readJson<{ token: string }>(file);
+          if (value.token === token) await rm(file);
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        let previous: RunOwner;
+        try { previous = await readRunOwner(file); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw error;
+        }
+        try {
+          process.kill(previous.pid, 0);
+        } catch (probe) {
+          if ((probe as NodeJS.ErrnoException).code === "ESRCH") {
+            // Serialize reclamation so a competing host cannot unlink a newly acquired lock.
+            try {
+              await mkdir(guard);
+            } catch {
+              throw new Error("Run lock recovery in progress; retry after verifying the host state.");
+            }
+            try {
+              const current = await readRunOwner(file).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === "ENOENT") return undefined;
+                throw error;
+              });
+              if (current?.token === previous.token && current.pid === previous.pid) await rm(file);
+            } finally {
+              await rm(guard, { recursive: true });
+            }
+            continue;
+          }
+        }
+        throw new Error(`Run already owned by host PID ${previous.pid}`);
+      }
+    }
+    throw new Error("Could not acquire run lock");
+  } finally {
+    await rm(pending, { force: true });
   }
-  throw new Error("Could not acquire run lock");
 }

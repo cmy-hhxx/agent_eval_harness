@@ -1,4 +1,4 @@
-import { HttpError, canonical, safeId } from "@eval/contracts";
+import { HttpError, canonical, safeId, requiredReadCallLimit, mergeRequiredReadRanges } from "@eval/contracts";
 import { internalPath, writeJson } from "@eval/data";
 import type {
   AttemptSpec,
@@ -12,10 +12,97 @@ import type {
   FailureContext,
   LogSink,
   TaskState,
+  TraceRead,
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
 import { checkpointSnapshot } from "./checkpoint.js";
+
+/** Mandatory calls must be backed by distinct pages advancing declared material. */
+function availableRequiredReadCalls(reads: TraceRead[], required: { target: TraceRead; text: string }[]): number {
+  if (!Array.isArray(reads)) return 0;
+  const previous: TraceRead[] = [];
+  let available = 0;
+  for (const read of reads) {
+    if (!read || read.kind !== "text" || !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) continue;
+    const advances = required.some(({ target, text }) => {
+      if (read.candidate !== target.candidate || read.message_index !== target.message_index || read.path !== target.path) return false;
+      if (read.end > text.length || read.end - read.start > 16000) return false;
+      let cursor = target.start;
+      const ranges = previous.filter(item => item.candidate === target.candidate && item.message_index === target.message_index && item.path === target.path)
+        .sort((a, b) => a.start - b.start);
+      for (const range of ranges) {
+        if (range.start > cursor || cursor >= target.end) break;
+        cursor = Math.max(cursor, range.end);
+      }
+      return read.start === cursor && cursor < target.end;
+    });
+    if (advances) available++;
+    previous.push(read);
+  }
+  return available;
+}
+
+function requiredReadRanges(spec: AttemptSpec, inputs: Record<string, unknown>) {
+  return mergeRequiredReadRanges((spec.evaluation.requiredReads ?? []).map(target => {
+    const id = spec.inputs.find(input => input.name === target.candidate)?.id;
+    const raw = id === undefined ? undefined : inputs[id] as { messages?: unknown[] } | undefined;
+    let text: unknown = raw?.messages?.[target.message_index];
+    if (target.path !== "") {
+      if (!target.path.startsWith("/")) throw new Error("Invalid required trace path");
+      for (const part of target.path.slice(1).split("/")) {
+        const key = part.replaceAll("~1", "/").replaceAll("~0", "~");
+        text = text && typeof text === "object" && Object.hasOwn(text, key)
+          ? (text as Record<string, unknown>)[key] : undefined;
+      }
+    }
+    if (typeof text !== "string") throw new Error("Required trace source is unavailable");
+    return { target, text };
+  }));
+}
+
+function recordWithKeys(value: unknown, keys: string[]): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+function validTableChecks(value: unknown, inputs: AttemptSpec["inputs"]): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value)) return false;
+  const nonempty = (value: unknown): value is string => typeof value === "string" && !!value.trim();
+  const mapping = (value: unknown): value is { answer: number; source: number }[] => {
+    if (!Array.isArray(value) || !value.length) return false;
+    const answers = new Set<number>(), sources = new Set<number>();
+    for (const item of value) {
+      if (!recordWithKeys(item, ["answer", "source"]) ||
+        !Number.isSafeInteger(item.answer) || (item.answer as number) < 0 ||
+        !Number.isSafeInteger(item.source) || (item.source as number) < 0 ||
+        answers.has(item.answer as number) || sources.has(item.source as number)) return false;
+      answers.add(item.answer as number);
+      sources.add(item.source as number);
+    }
+    return true;
+  };
+  return value.every((check) => {
+    if (!recordWithKeys(check, ["candidate", "answer_table_id", "sources"]) ||
+      !inputs.some((input) => input.name === check.candidate) || !nonempty(check.answer_table_id) ||
+      !Array.isArray(check.sources) || !check.sources.length) return false;
+    const ids = new Set<string>();
+    let columns: string | undefined;
+    return check.sources.every((source: unknown) => {
+      if (!recordWithKeys(source, ["table_id", "key_columns", "value_columns"]) || !nonempty(source.table_id) ||
+        source.table_id === check.answer_table_id || ids.has(source.table_id) ||
+        !mapping(source.key_columns) || !mapping(source.value_columns)) return false;
+      ids.add(source.table_id);
+      const keys = source.key_columns, values = source.value_columns;
+      if (keys.some((key) => values.some((value) => value.answer === key.answer || value.source === key.source))) return false;
+      const signature = JSON.stringify([keys.map((item) => item.answer).sort((a, b) => a - b),
+        values.map((item) => item.answer).sort((a, b) => a - b)]);
+      if (columns !== undefined && columns !== signature) return false;
+      columns = signature;
+      return true;
+    });
+  });
+}
 
 export interface EvaluationServices {
   logger?: LogSink;
@@ -203,11 +290,16 @@ export class RunStore {
       spec.deadline < Date.now()
     )
       throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
+    const required = requiredReadRanges(spec, this.inputs);
     if (
       !value.audit ||
-      !Number.isInteger(value.audit.calls) ||
+      !Number.isSafeInteger(value.audit.calls) ||
       value.audit.calls < 0 ||
-      value.audit.calls > spec.policy.maxToolCalls + spec.policy.repairAttempts ||
+      !Number.isSafeInteger(value.audit.requiredReadCalls) || value.audit.requiredReadCalls < 0 ||
+      value.audit.requiredReadCalls > value.audit.calls ||
+      value.audit.requiredReadCalls > availableRequiredReadCalls(value.audit.traceReads, required) ||
+      value.audit.requiredReadCalls > requiredReadCallLimit(required, spec.policy.maxOutputChars) ||
+      value.audit.calls - value.audit.requiredReadCalls > spec.policy.maxToolCalls + spec.policy.repairAttempts ||
       !Array.isArray(value.audit.viewedImages) ||
       !Array.isArray(value.audit.traceReads) ||
       value.audit.traceReads.some((read) => !read ||
@@ -217,7 +309,8 @@ export class RunStore {
         (read.kind === "json" && read.path !== "") ||
         !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
       !Array.isArray(value.audit.calculations) ||
-      !Array.isArray(value.audit.artifacts)
+      !Array.isArray(value.audit.artifacts) ||
+      !validTableChecks(value.audit.tableChecks, spec.inputs)
     )
       throw new HttpError(400, "Invalid tool audit");
     let evaluation: unknown;

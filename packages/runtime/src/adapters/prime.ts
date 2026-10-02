@@ -1,7 +1,7 @@
 import path from "node:path";
 import * as sdk from "#prime-sdk";
 import type { AgentBackend, EngineIdentity } from "@eval/contracts";
-import { providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+import { inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
 
 export function primeBackend(identity: EngineIdentity): AgentBackend {
   return {
@@ -47,7 +47,7 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
         name: tool.name,
         label: tool.name,
         description: tool.description,
-        parameters: tool.inputSchema as sdk.ToolDefinition["parameters"],
+        parameters: inlineToolSchema(tool.inputSchema) as sdk.ToolDefinition["parameters"],
         async execute(_id, args, signal) {
           const result = await options.execute(tool.name, args, signal);
           return {

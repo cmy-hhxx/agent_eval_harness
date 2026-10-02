@@ -2,40 +2,17 @@ import { isDeepStrictEqual } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   schemaIssues, ValidationError, type AgentRequest, type ToolAudit,
-  type ValidationIssue, type TaskAnalysis, type TaskCriterion,
+  type ValidationIssue, type TaskCriterion,
 } from "@eval/contracts";
 import { images, traceReadCoverage } from "@eval/tools";
-import type { ComparisonResult, Finding, CriterionAssessment, CriterionStatus } from "./types.js";
+import type { ComparisonInput, ComparisonResult, CriterionAssessment } from "./types.js";
+import { comparisonCellState } from "./resolve.js";
 import schema from "../../../../schemas/comparison/result.schema.json" with { type: "json" };
 
-interface Candidate {
-  candidate_id: string;
-  final_message_index: number;
-  deferred_final_material: { message_index: number; path: string; total_chars: number }[];
-  original_answer_timing: { finish_seconds: number | null };
-  original_answer_usage: { total_tokens: number | null; issues: string[] };
-}
-interface Input {
-  task_analysis: TaskAnalysis;
-  candidates: Record<string, Candidate>;
-  attributions: Record<string, {
-    task_analysis: TaskAnalysis;
-    findings: Finding[];
-    criterion_assessments: CriterionAssessment[];
-    core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
-  }>;
-  strength_checks: { candidate: string; finding_index: number }[];
-}
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
-const aggregateStatus = (facts: CriterionAssessment[]): CriterionStatus => {
-  if (!facts.length) return "not_applicable";
-  for (const status of ["unknown", "unmet", "partial"] as const)
-    if (facts.some((fact) => fact.status === status)) return status;
-  return "met";
-};
 export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
-  const input = request.input as unknown as Input;
+  const input = request.input as unknown as ComparisonInput;
   const value = result as ComparisonResult;
   const errors: ValidationIssue[] = [];
   const issue = (code: string, path: string, message: string, candidate?: string, actual?: unknown) =>
@@ -59,6 +36,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const sourceFacts = new Map<string, Map<string, CriterionAssessment>>();
   const hasReview = (label: string, id?: string) => value.status === "needs_review" && value.review_requests.some((review) =>
     review.candidate === label && (!id || review.criterion_ids.includes(id)));
+  for (const [label, reasons] of Object.entries(input.source_review ?? {}))
+    if (reasons.length && !hasReview(label))
+      issue("source_review_required", "/review_requests", "来源核验存在未解决冲突或缺项，必须 needs_review 并请求该候选独立归因复核，不能直接排名。", label, reasons);
   const findingHelp = (label: string) => !labels.includes(label) ? labelHelp : `该候选合法索引：${(input.attributions[label]?.findings ?? [])
     .map((finding, index) => `${index}=${finding.text}`).join("；") || "无"}。只复制该候选现有索引；没有对应 finding 时填 []。`;
   const assessed = Object.keys(value.assessments);
@@ -83,6 +63,10 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const assessment = value.assessments[label];
     if (assessment) {
       const sourceCore = attribution.core_assessment;
+      if (assessment.meets_core === null && !hasReview(label))
+        issue("assessment_review_required", "/review_requests", "核心状态未决，必须请求该候选独立复核，不能只复核另一方。", label);
+      if (sourceCore.meets_core === null && (!hasReview(label) || sourceCore.criterion_ids.some(id => !hasReview(label, id))))
+        issue("core_review_required", "/review_requests", "来源核心状态未决，必须请求该候选及其核心判据的独立复核，不能只复核另一方。", label, sourceCore.criterion_ids);
       if (assessment.meets_core !== sourceCore.meets_core && !(value.status === "needs_review" && assessment.meets_core === null))
         issue("core_assessment_changed", `/assessments/${label}/meets_core`, "核心通过状态只能照录来源 core_assessment；发现冲突须 needs_review，不能自行改判。", label);
       if (assessment.meets_core === false) {
@@ -128,6 +112,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
   for (const [index, review] of value.review_requests.entries()) {
     const path = `/review_requests/${index}`;
+    if (!review.reason.trim()) issue("review_reason_empty", `${path}/reason`, "复核原因不能为空，须说明需要核实的具体问题。", review.candidate);
     if (!labels.includes(review.candidate)) issue("review_candidate_invalid", path, "复核请求须引用本组候选。" + labelHelp);
     if (!review.criterion_ids.length && !review.finding_indices.length)
       issue("review_reference_missing", path, "复核请求须定位至少一个标准或既有 finding；疑似漏项引用相关 criterion_id。");
@@ -152,10 +137,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       });
       if (row.criterion_ids.length) {
         const missing = row.criterion_ids.some((id) => applicable(label, id) && !sourceFacts.get(label)?.has(id));
-        const inconsistent = facts.some((fact) => fact.status === "not_applicable" ||
-          input.attributions[label].criterion_assessments.filter((item) => item.criterion_id === fact.criterion_id).length !== 1);
-        const status = missing || inconsistent ? "unknown" : aggregateStatus(facts);
-        const evidence = missing || inconsistent || facts.some((fact) => fact.evidence_status === "uncertain") ? "uncertain" : "established";
+        const derived = comparisonCellState(input, label, row.criterion_ids, cell.finding_indices);
+        const { status, evidence_status: evidence } = derived;
         const downgraded = (facts.length > 0 || missing) && cell.status === "unknown" && cell.evidence_status === "uncertain";
         if (cell.status !== status && !downgraded)
           issue("criterion_status_changed", `${path}/assessments/${label}/status`, "比较格只能照录来源标准状态；多标准按 unknown、unmet、partial、met 聚合，疑似冲突只能降为 unknown/uncertain 并请求复核。", label, { expected: status, actual: cell.status });
@@ -192,12 +175,12 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         issue("comparison_advantage_uncertain_finding", `${path}/better_candidates`, "含 uncertain finding 的比较行不能用于确证优势；需先请求归因复核。");
     }
   }
-  for (const label of labels) for (const criterion of criteria)
+  for (const label of value.status === "decided" ? labels : []) for (const criterion of criteria)
     if (applicable(label, criterion.id) && !criteriaCovered.get(label)?.has(criterion.id))
       issue("comparison_criterion_uncovered", "/decision_basis/comparisons", "逐项对照必须覆盖每个候选的全部适用标准，不能只列有 finding 的方面。", label, criterion.id);
   const materialProblems = Object.entries(input.attributions).flatMap(([candidate, attribution]) =>
     attribution.findings.flatMap((finding, finding_index) => finding.type === "problem" && finding.importance !== "low" ? [{ candidate, finding_index }] : []));
-  for (const ref of [...input.strength_checks, ...materialProblems, ...value.decision_basis.decisive_findings])
+  for (const ref of value.status === "decided" ? [...input.strength_checks, ...materialProblems, ...value.decision_basis.decisive_findings] : [])
     if (input.attributions[ref.candidate]?.findings[ref.finding_index] && !covered.get(ref.candidate)?.has(ref.finding_index))
       issue("comparison_finding_uncovered", "/decision_basis/comparisons",
         `逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现。漏项为 ${ref.candidate}.findings[${ref.finding_index}]。将索引加入对应行 assessments.${ref.candidate}.finding_indices；索引从0开始。`, ref.candidate, ref.finding_index);

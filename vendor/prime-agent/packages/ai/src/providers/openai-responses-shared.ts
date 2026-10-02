@@ -285,6 +285,15 @@ export async function processResponsesStream<TApi extends Api>(
 			contentIndex: number;
 		}
 	>();
+	const functionCalls = new Map<
+		string,
+		{
+			item: ResponseFunctionToolCall;
+			block: ToolCall & { partialJson?: string };
+			contentIndex: number;
+			doneArguments?: string;
+		}
+	>();
 	const blockIndex = () => currentContentIndex;
 
 	for await (const event of openaiStream) {
@@ -310,6 +319,9 @@ export async function processResponsesStream<TApi extends Api>(
 				output.content.push(currentBlock);
 				stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 			} else if (item.type === "function_call") {
+				if ([...functionCalls.values()].some((call) => call.item.id === item.id || call.item.call_id === item.call_id)) {
+					throw new Error(`Duplicate OpenAI Responses function call identity: ${item.id}`);
+				}
 				currentItem = item;
 				currentBlock = {
 					type: "toolCall",
@@ -320,6 +332,7 @@ export async function processResponsesStream<TApi extends Api>(
 				};
 				output.content.push(currentBlock);
 				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+				functionCalls.set(currentBlock.id, { item, block: currentBlock, contentIndex: currentContentIndex });
 			}
 			if (currentItem && currentBlock) {
 				slots.set(event.output_index, {
@@ -444,8 +457,8 @@ export async function processResponsesStream<TApi extends Api>(
 				}
 			}
 		} else if (event.type === "response.output_item.done") {
-			slots.delete(event.output_index);
 			const item = event.item;
+			if (item.type !== "function_call") slots.delete(event.output_index);
 
 			if (item.type === "reasoning" && currentBlock?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
@@ -470,28 +483,12 @@ export async function processResponsesStream<TApi extends Api>(
 				});
 				currentBlock = null;
 			} else if (item.type === "function_call") {
-				const args = parseStreamingJson(
-					item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "") || "{}",
-				);
-
-				let toolCall: ToolCall;
-				if (currentBlock?.type === "toolCall") {
-					// Finalize in-place and strip the scratch buffer so replay only
-					// carries parsed arguments.
-					currentBlock.arguments = args;
-					delete (currentBlock as { partialJson?: string }).partialJson;
-					toolCall = currentBlock;
-				} else {
-					toolCall = {
-						type: "toolCall",
-						id: `${item.call_id}|${item.id}`,
-						name: item.name,
-						arguments: args,
-					};
+				const call = functionCalls.get(`${item.call_id}|${item.id}`);
+				if (call && call.block === currentBlock) {
+					if (call.item.name !== item.name) throw new Error(`OpenAI Responses tool identity mismatch: ${item.id}`);
+					call.doneArguments = item.arguments;
 				}
-
 				currentBlock = null;
-				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			sawTerminalResponse = true;
@@ -531,6 +528,61 @@ export async function processResponsesStream<TApi extends Api>(
 				options.applyServiceTierPricing(output.usage, serviceTier);
 			}
 			output.stopReason = mapStopReason(response?.status);
+			// Some gateways end an empty item before its arguments arrive. Only
+			// finalize from the matching terminal item or a complete item.done.
+			const completedCalls: { block: ToolCall; contentIndex: number; arguments: Record<string, unknown> }[] = [];
+			for (const call of functionCalls.values()) {
+				if (output.stopReason !== "stop") {
+					output.content = output.content.filter((block) => block !== call.block);
+					continue;
+				}
+				if (call.doneArguments === undefined) {
+					throw new Error(`OpenAI Responses function call was not finalized: ${call.item.id}`);
+				}
+				const terminalCalls = (response.output ?? []).filter(
+					(item): item is ResponseFunctionToolCall =>
+						item.type === "function_call" && (item.id === call.item.id || item.call_id === call.item.call_id),
+				);
+				const terminalCall = terminalCalls[0];
+				if (
+					terminalCalls.length > 1 ||
+					(terminalCall &&
+						(terminalCall.id !== call.item.id ||
+							terminalCall.call_id !== call.item.call_id ||
+							terminalCall.name !== call.item.name))
+				) {
+					throw new Error(`OpenAI Responses tool identity mismatch: ${call.item.id}`);
+				}
+				const rawArguments = terminalCall?.arguments ?? call.doneArguments;
+				let args: unknown;
+				try {
+					args = JSON.parse(rawArguments);
+				} catch {
+					throw new Error(
+						`Invalid OpenAI Responses tool arguments: ${call.item.id}; expected complete JSON object`,
+					);
+				}
+				if (args === null || typeof args !== "object" || Array.isArray(args)) {
+					throw new Error(`Invalid OpenAI Responses tool arguments: ${call.item.id}; expected JSON object`);
+				}
+				completedCalls.push({
+					block: call.block,
+					contentIndex: call.contentIndex,
+					arguments: args as Record<string, unknown>,
+				});
+			}
+			for (const call of completedCalls) {
+				call.block.arguments = call.arguments;
+				delete (call.block as { partialJson?: string }).partialJson;
+				stream.push({
+					type: "toolcall_end",
+					contentIndex: call.contentIndex,
+					toolCall: call.block,
+					partial: output,
+				});
+			}
+			functionCalls.clear();
+			slots.clear();
 			if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 				output.stopReason = "toolUse";
 			}
@@ -556,6 +608,9 @@ export async function processResponsesStream<TApi extends Api>(
 				providerErrorType,
 			});
 		}
+	}
+	if (functionCalls.size && !sawTerminalResponse) {
+		throw new StreamFailureError("Responses stream ended before function calls were finalized", { kind: "unknown" });
 	}
 	if (model.provider === "xai" && !sawTerminalResponse) {
 		throw new StreamFailureError("xAI Responses stream ended before a terminal response event", { kind: "unknown" });

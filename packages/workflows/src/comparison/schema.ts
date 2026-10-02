@@ -39,6 +39,7 @@ export const outputSchema: JsonSchema = {
         ...template.$defs.evaluation.properties,
         summary: attribution.summary,
         numeric_checks: attribution.numeric_checks,
+        table_resolutions: attribution.table_resolutions,
         correctness_evidence: attribution.correctness_evidence,
         criterion_assessments: attribution.criterion_assessments,
         core_assessment: attribution.core_assessment,

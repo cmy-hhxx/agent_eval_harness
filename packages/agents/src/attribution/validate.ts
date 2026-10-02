@@ -11,6 +11,8 @@ import {
 import { images, traceReadCoverage, validateTraceEvidence } from "@eval/tools";
 import type { AttributionResult } from "./types.js";
 import { containsNumber, matchesReference } from "./numeric.js";
+import { numericUnitIssue, scalarReference } from "./units.js";
+import { attributionTableReview } from "./table-review.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 
 interface Input {
@@ -30,6 +32,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const input = request.input as unknown as Input;
   const value = result as AttributionResult;
   const repairErrors: ValidationIssue[] = [];
+  repairErrors.push(...attributionTableReview(request, value).errors);
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
     repairErrors.push({ category: "decision", code, path, message, actual, expected });
 
@@ -95,10 +98,13 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       value.has_standard_answer,
       input.ground_truth.available,
     );
+  const correctnessPendingReview = input.ground_truth.available && value.is_correct === null &&
+    value.core_assessment.meets_core === null && coreEvidence.some((assessment) =>
+      assessment.status === "unknown" || assessment.evidence_status === "uncertain");
   if (input.ground_truth.available) {
-    if (typeof value.is_correct !== "boolean")
-      issue("correctness_required", "/is_correct", "有标准答案时必须判定 is_correct", value.is_correct);
-    if (!value.correctness_reason)
+    if (typeof value.is_correct !== "boolean" && !correctnessPendingReview)
+      issue("correctness_required", "/is_correct", "有标准答案时须判定is_correct；无法核实时仅可保留null，并同时将核心状态设为null、引用unknown/uncertain的适用requirement以请求独立复核。", value.is_correct);
+    if (!value.correctness_reason.trim())
       issue("correctness_reason_required", "/correctness_reason", "有标准答案时必须给出核对理由");
     if (!value.correctness_evidence.length)
       issue("correctness_evidence_required", "/correctness_evidence", "有标准答案时必须给出最终回答证据");
@@ -114,20 +120,36 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const toolMessages = new Set(["function_call", "function_call_output", "tool_call", "tool_result"]);
   if (!input.ground_truth.available && value.numeric_checks.length)
     issue("numeric_checks_without_reference", "/numeric_checks", "没有标准答案时数值核对表必须为空");
+  const scalar = input.ground_truth.available ? scalarReference(input.ground_truth.value) : null;
+  if (scalar !== null && !correctnessPendingReview && !value.numeric_checks.some((check) => containsNumber(scalar, check.expected, true)))
+    issue("numeric_reference_unchecked", "/numeric_checks",
+      `标准答案含可明确识别的单一目标数值${scalar}，必须核对并保留原精度；不能通过空表跳过。回答未提供值时填actual=null、matches=false。`, scalar);
   for (const [index, check] of value.numeric_checks.entries()) {
     const location = `/numeric_checks/${index}`;
+    const evidence = value.correctness_evidence[check.evidence_index];
     let matches: boolean;
-    try { matches = check.actual !== null && matchesReference(check.actual, check.expected, check.scale, check.mode); }
+    let unitIssue: ReturnType<typeof numericUnitIssue>;
+    try {
+      unitIssue = numericUnitIssue(input.ground_truth.value, evidence?.quote ?? "", check,
+        (request.sources.answer.value as { messages: unknown[] }).messages[input.answer.final_message_index]);
+      matches = check.actual !== null && matchesReference(check.actual, check.expected, check.scale, check.mode);
+      if (unitIssue?.code === "numeric_unit_mismatch") {
+        matches = false;
+        if (!matchesReference(check.scale, "1", "1", "exact"))
+          issue("numeric_scale_mismatch", `${location}/scale`, "不同维度没有单位等价倍率；保留scale=1、matches=false，并在correctness_reason说明差异。");
+      }
+    }
     catch (error) {
       issue("numeric_invalid", location, (error as Error).message);
       continue;
     }
     if (check.matches !== matches)
-      issue("numeric_rounding_mismatch", `${location}/matches`,
+      issue(unitIssue?.code === "numeric_unit_mismatch" ? unitIssue.code : "numeric_rounding_mismatch", `${location}/matches`,
+        unitIssue?.code === "numeric_unit_mismatch" ? `${unitIssue.message} matches 必须为false。` :
         `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
     if (!containsNumber(JSON.stringify(input.ground_truth.value), check.expected, true))
       issue("numeric_reference_missing", `${location}/expected`, "expected 必须来自标准答案，保留原有小数位和科学计数法指数；例如1.13018E+12须原样填写，不能展开为整数、换算标准或编造容差。自算值不能放expected；分数或复合单位请在correctness_reason说明推导并移除此数值表项");
-    const evidence = value.correctness_evidence[check.evidence_index];
+    if (unitIssue && unitIssue.code !== "numeric_unit_mismatch") issue(unitIssue.code, `${location}/scale`, unitIssue.message);
     if (!evidence || (check.actual !== null && !containsNumber(evidence.quote, check.actual)))
       issue("numeric_answer_missing", `${location}/evidence_index`,
         `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；` +
@@ -136,6 +158,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         { number: check.actual, quote: evidence?.quote ?? null });
     if (value.is_correct === true && !matches)
       issue("numeric_correctness_contradiction", "/is_correct", "存在未通过的标准数值核对，不能判全部正确；先核查数值、单位、口径是否选对");
+    if (value.is_correct === null && !matches)
+      issue("numeric_uncertainty_contradiction", "/is_correct", "数值核对已确认缺失、不等价或不同量纲时必须明确判false，不能把已知错误改写成待核实。");
   }
   const tools = new Set(input.answer.catalog.flatMap((message) =>
     message.name && (toolMessages.has(message.type) || message.role === "tool") ? [message.name] : [],
@@ -245,6 +269,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   value.criterion_assessments.forEach((assessment, i) => repairErrors.push(
     ...validateTraceEvidence(raw, assessment.evidence.map((item, j) => ({
       item, location: `criterion_assessments[${i}].evidence[${j}]`,
+    })), "answer", audit),
+  ));
+  value.table_resolutions?.forEach((resolution, i) => repairErrors.push(
+    ...validateTraceEvidence(raw, resolution.evidence.map((item, j) => ({
+      item, location: `table_resolutions[${i}].evidence[${j}]`,
     })), "answer", audit),
   ));
   if (repairErrors.length) throw new ValidationError(repairErrors);

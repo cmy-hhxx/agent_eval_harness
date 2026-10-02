@@ -39,6 +39,24 @@ export interface CriterionAssessment {
   evidence_status: EvidenceStatus;
   summary: string;
 }
+export interface ComparisonInput {
+  source_review?: Record<string, string[]>;
+  task_analysis: TaskAnalysis;
+  candidates: Record<string, {
+    candidate_id: string;
+    final_message_index: number;
+    deferred_final_material: { message_index: number; path: string; total_chars: number }[];
+    original_answer_timing: { finish_seconds: number | null };
+    original_answer_usage: { total_tokens: number | null; issues: string[] };
+  }>;
+  attributions: Record<string, {
+    task_analysis: TaskAnalysis;
+    findings: Finding[];
+    criterion_assessments: CriterionAssessment[];
+    core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
+  }>;
+  strength_checks: FindingRef[];
+}
 /** Reference to a finding owned by the attribution stage. */
 export interface FindingRef {
   candidate: string;
@@ -75,3 +93,19 @@ export interface ComparisonResult {
     decisive_findings: FindingRef[];
   };
 }
+
+export interface SubmittedComparison extends Omit<AlignedComparison, "assessments"> {
+  assessments: Record<string, { summary: string; finding_indices: number[] }>;
+}
+/** The model supplies prose and decision references; source states are resolved by the profile. */
+export type ComparisonSubmission = {
+  status: "needs_review";
+  assessments: Record<string, { summary: string }>;
+  review_requests: ComparisonResult["review_requests"];
+} | {
+  status: "decided";
+  assessments: Record<string, { summary: string }>;
+  review_requests: ComparisonResult["review_requests"];
+  ranking: string[][];
+  decision_basis: Omit<ComparisonResult["decision_basis"], "comparisons"> & { comparisons: SubmittedComparison[] };
+};

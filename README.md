@@ -24,6 +24,14 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 配置根目录 `.env` 后运行 `bash agent/run.sh`，浏览器会打开浅色 Eris 评测助手。支持 `--port`、`--user`、`--no-open`；对话、独立 Attribution / Comparison 调用、原始数据引用与多副本恢复见 [Agent 使用说明](agent/README.md)。看板仍使用根目录 `bash run.sh`。
 
+## 离线评测汇报
+
+开发预览打开 [evaluation-report/index.html](evaluation-report/index.html)。流程、判决规则、提示词、实验各为一个主题页，页内重点直接展开，无嵌套切换或折叠。流程以真实的银河证券利率题贯穿共同标准、两条证据材料泳道、匿名比较与判决，支持关联高亮、局部放大和 A/B 换位；换位只改变代号，获胜来源仍是回答②（B组Expert）。本条结果来自 `eval-20261002-r68-quality`，实际评测器为 r69；与报告原有 r65 提示词快照、实验页 r64 聚合数据分别标明来源。复核、归类与润色呈现通用流程，不虚构本例执行记录。案例内容、图形、样式和交互在 [evaluation-report](evaluation-report/README.md) 内分开维护，不接入业务运行时。
+
+执行 `node evaluation-report/build.mjs` 合并为 [evaluation-report/report.html](evaluation-report/report.html)，可单文件离线展示，页面不提供 HTML 导出按钮。完整提示词原文可下载为 TXT；浏览器打印只输出当前主题。
+
+内容是人工核对的静态快照；工程测试不能代替真实裁判效果。更新时同步核对版本、来源、分母和复核状态，不修改原始结果或生产统计契约。
+
 ## 最短运行路径
 
 ```bash

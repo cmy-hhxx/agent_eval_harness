@@ -6,7 +6,7 @@ import example from "./fixtures/example.json" with { type: "json" };
 import { evidenceId } from "@eval/tools";
 import { ValidationError, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
 
-const audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
+const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 test("numeric ledger verifies rounded values against final-answer evidence", () => {
   const request = structuredClone(example.request);
   request.input.ground_truth.value = "2023年9.4";

@@ -116,7 +116,7 @@
         },
         "comparisons": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -367,6 +367,13 @@
                 "meets_core": {
                   "type": "boolean"
                 }
+              }
+            }
+          },
+          "decision_basis": {
+            "properties": {
+              "comparisons": {
+                "minItems": 1
               }
             }
           }

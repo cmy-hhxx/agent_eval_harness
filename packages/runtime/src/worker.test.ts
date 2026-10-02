@@ -14,16 +14,19 @@ import {
   type AttemptStatus,
   type FailureContext,
   type RunManifest,
+  type RunState,
   type Submission,
   type SubmissionReceipt,
+  type TaskPlan,
+  type TraceRead,
   type WorkerEvent,
 } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
-import { exists, readJson } from "@eval/data";
+import { createRunRepository, exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
 import { services, prepare } from "../../../tests/fixtures/services.js";
 import { buildPlan } from "@eval/workflows/comparison";
-import { RunStore } from "@eval/host";
+import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import {
   fakeIdentity,
@@ -39,14 +42,39 @@ async function harness(
   create: AgentBackend["createSession"],
   policy: Partial<typeof DEFAULT_POLICY> = {},
   dropAck = false,
+  genericMaterial?: string,
 ) {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  const plan = await buildPlan(config),
-    task = plan.tasks.find((item) => item.stage === "attribution")!,
-    criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria)!;
-  const criteriaReceipt: SubmissionReceipt = {
+  const plan: TaskPlan = genericMaterial === undefined ? await buildPlan(config) : {
+    tasks: [{ id: "material-task", stage: "material", inputIds: { answer: "material-input" }, dependencies: {}, data: {} }],
+    inputs: { "material-input": { messages: [{ content: genericMaterial }, { content: "非必读正文" }] } },
+    summary: {},
+  };
+  const task = plan.tasks.find((item) => item.stage === "attribution") ?? plan.tasks[0],
+    criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria);
+  const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
     taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
     acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
+  };
+  const evaluationServices: EvaluationServices = genericMaterial === undefined ? services : {
+    repository: createRunRepository<RunState>({
+      encode: (state) => structuredClone(state), references: () => [], resultId: (row) => String(row.id), decode: (state) => state,
+    }, (item, state) => ({ id: item.id, file: "material.jsonl", row: { id: item.id, result: state.receipts[item.id].evaluation } })),
+    taskSource: {
+      id: "material",
+      bind(item, inputs) {
+        const id = item.inputIds.answer;
+        return { agent: "material", profile: "default", request: { input: {}, sources: { answer: { id, value: inputs[id] } } } };
+      },
+    },
+    agents: new AgentRegistry([{ id: "material", profiles: { default: {
+      id: "default", systemPrompt: "Read the material.", instructions: "Submit JSON.", submissionNudge: "Submit JSON.",
+      toolNames: ["read_trace", "calculate"], fileSubmission: false,
+      toolDescriptions: { read_trace: "Read source text.", calculate: "Calculate exactly.", submit_evaluation: "Submit JSON." },
+      renderPrompt: () => "Read the material and submit JSON.", requestSchema: { type: "object" },
+      submissionSchema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { const: true } } },
+      requiredReads: () => [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: genericMaterial.length }],
+    } } }]),
   };
   const manifest: RunManifest = {
     format: "evaluation-run",
@@ -56,17 +84,18 @@ async function harness(
     engine: fakeIdentity,
     evaluatorVersion: "fixture",
     config,
-    tasks: [criteria, task],
+    tasks: criteria ? [criteria, task] : [task],
     inputs: {},
-    states: { [criteria.id]: { status: "succeeded", attempts: 1 }, [task.id]: { status: "pending", attempts: 0 } },
+    states: { ...(criteria ? { [criteria.id]: { status: "succeeded" as const, attempts: 1 } } : {}),
+      [task.id]: { status: "pending", attempts: 0 } },
     preflight: plan.summary,
     startedAt: Date.now(),
   };
   const store = new RunStore(
     path.join(directory, "run"),
-    { manifest, receipts: { [criteria.id]: criteriaReceipt }, usage: emptyUsage(), recordedAttempts: 0 },
+    { manifest, receipts: criteria ? { [criteria.id]: criteriaReceipt! } : {}, usage: emptyUsage(), recordedAttempts: 0 },
     plan.inputs,
-    services,
+    evaluationServices,
   );
   let posts = 0,
     lookups = 0;
@@ -89,7 +118,8 @@ async function harness(
     { identity: fakeIdentity, createSession: create },
     path.join(directory, "worker"),
   );
-  const prepared = prepare(task, plan.inputs, { criteria: criteriaReceipt });
+  const prepared = genericMaterial === undefined ? prepare(task, plan.inputs, { criteria: criteriaReceipt! }) :
+    evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs, {}));
   const attemptPolicy = { ...DEFAULT_POLICY, ...policy };
   const spec: AttemptSpec = {
     inputRevision: 1,
@@ -158,6 +188,42 @@ test("Host rejects malformed trace-read audits before accepting a submission", a
       submissionId: "invalid-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
       evaluation: {}, audit: { ...emptyAudit(), traceReads } as Submission["audit"], usage: emptyUsage(),
     }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+test("Host rejects malformed table-check audit specs at the submission boundary", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }));
+  try {
+    await fixture.store.activate(fixture.spec);
+    const source = { table_id: "table-source", key_columns: [{ answer: 0, source: 0 }], value_columns: [{ answer: 1, source: 1 }] };
+    const spec = { candidate: "answer", answer_table_id: "table-final", sources: [source] };
+    const audit = (tableChecks: unknown) => ({ ...emptyAudit(), tableChecks }) as Submission["audit"];
+    const submit = (audit: Submission["audit"]) => request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
+      submissionId: "invalid-table-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+      evaluation: {}, audit, usage: emptyUsage(),
+    });
+    for (const tableChecks of [
+      null, {}, [null], [{ ...spec, candidate: "unknown" }], [{ ...spec, answer_table_id: " " }],
+      [{ ...spec, matches: true }], [{ ...spec, sources: [] }], [{ ...spec, sources: [source, source] }],
+      [{ ...spec, sources: [{ ...source, table_id: "" }] }],
+      [{ ...spec, sources: [{ ...source, table_id: spec.answer_table_id }] }],
+      [{ ...spec, sources: [{ ...source, result: { matches: true } }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [] }] }],
+      [{ ...spec, sources: [{ ...source, value_columns: [] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: -1, source: 0 }] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: 0.5, source: 0 }] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: 0, source: Number.MAX_SAFE_INTEGER + 1 }] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: 0, source: 0, matches: true }] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: 0, source: 0 }, { answer: 0, source: 2 }] }] }],
+      [{ ...spec, sources: [{ ...source, key_columns: [{ answer: 0, source: 0 }, { answer: 2, source: 0 }] }] }],
+      [{ ...spec, sources: [{ ...source, value_columns: [{ answer: 0, source: 1 }] }] }],
+      [{ ...spec, sources: [{ ...source, value_columns: [{ answer: 1, source: 0 }] }] }],
+      [{ ...spec, sources: [source, { ...source, table_id: "other", value_columns: [{ answer: 2, source: 1 }] }] }],
+    ]) await assert.rejects(submit(audit(tableChecks)), (error: unknown) =>
+      error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit", JSON.stringify(tableChecks));
+    // Valid audit shapes reach the Agent's evaluation validation (the empty evaluation is intentionally invalid).
+    for (const tableChecks of [undefined, [], [spec], [{ ...spec, sources: [source, { ...source, table_id: "other" }] }]])
+      await assert.rejects(submit(audit(tableChecks)), (error: unknown) => error instanceof HttpError && error.status === 422);
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally { await fixture.close(); }
 });
@@ -353,6 +419,110 @@ test("exhausted exploration budget still permits submission and two repairs", as
     await fixture.close();
   }
 });
+test("generic required text stays readable beyond twelve pages after exploration is exhausted", async () => {
+  const material = '材料"\\\n🙂'.repeat(40000);
+  let pages = 0, recovered = "";
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (let i = 0; i < options.spec.policy.maxToolCalls; i++) {
+        const result = await options.execute("calculate", { operation: "add", operands: ["1", "2"] });
+        assert.notEqual(result.isError, true);
+      }
+      let offset = 0;
+      do {
+        const args = { candidate: "answer", message_index: 0, path: "/content", offset };
+        const result = await options.execute("read_trace", args);
+        assert.notEqual(result.isError, true, JSON.stringify(result));
+        const blocks = result.content.map((item) => JSON.parse(item.text!));
+        assert(result.content.map((item) => item.text!).join("\n").length <= options.spec.policy.maxOutputChars);
+        const page = blocks[0], budget = blocks.at(-1).budget;
+        assert.equal(page.source.kind, "text");
+        assert.equal(page.source.path, "/content");
+        assert.equal(page.offset, offset);
+        assert(page.next_offset > offset);
+        assert.equal(page.total_chars, material.length);
+        assert.equal(page.evidence.length, 1);
+        assert.equal(page.evidence[0].quote, material.slice(offset, page.next_offset));
+        recovered += page.evidence[0].quote;
+        pages++;
+        assert.equal(budget.required_reads.used, pages);
+        assert.equal(budget.exploration.used, options.spec.policy.maxToolCalls);
+        assert.equal(budget.exploration.remaining, 0);
+        if (pages === 1) {
+          for (const forbidden of [
+            args,
+            { ...args, offset: page.next_offset, max_chars: 1 },
+            { ...args, offset: page.next_offset, max_chars: 12000 },
+            { ...args, message_index: 1 },
+            { ...args, offset: "invalid" },
+          ]) assert.equal((await options.execute("read_trace", forbidden)).isError, true,
+            "duplicates, small pages, undeclared sources and invalid arguments consume exploration");
+        }
+        offset = page.next_offset;
+        if (!page.has_more) break;
+      } while (offset < material.length);
+      assert.equal(recovered, material);
+      assert(pages > 12);
+      assert.equal((await options.execute("submit_evaluation", { ok: true })).terminate, true);
+    },
+    async abort() {}, async dispose() {},
+  }), { maxToolCalls: 12, repairAttempts: 2 }, false, material);
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt?.evaluation, { ok: true });
+    assert.equal(receipt?.audit.requiredReadCalls, pages);
+    assert.equal(receipt?.audit.calls, 12 + pages);
+    assert(receipt!.audit.calls > fixture.spec.policy.maxToolCalls + fixture.spec.policy.repairAttempts);
+    assert.equal(receipt?.audit.traceReads.length, pages);
+  } finally { await fixture.close(); }
+});
+
+test("Host refuses forged required-read counts without matching new declared reads", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), {}, false, "材料".repeat(1000));
+  const read: TraceRead = fixture.spec.evaluation.requiredReads![0];
+  const audits = [
+    { ...emptyAudit(), requiredReadCalls: undefined },
+    { ...emptyAudit(), calls: 1, requiredReadCalls: -1 },
+    { ...emptyAudit(), calls: 1, requiredReadCalls: 0.5 },
+    { ...emptyAudit(), calls: 1, requiredReadCalls: 2 },
+    { ...emptyAudit(), calls: 15 },
+    { ...emptyAudit(), calls: 15, requiredReadCalls: 1 },
+    { ...emptyAudit(), calls: 1, requiredReadCalls: 1, traceReads: [{ ...read, kind: "json" as const, path: "", end: 1 }] },
+    { ...emptyAudit(), calls: 1, requiredReadCalls: 1, traceReads: [{ ...read, message_index: 1, end: 2 }] },
+    { ...emptyAudit(), calls: 2, requiredReadCalls: 2, traceReads: [read, read] },
+    { ...emptyAudit(), calls: 3, requiredReadCalls: 3, traceReads: [
+      { ...read, end: 600 }, { ...read, start: 600, end: 1200 }, { ...read, start: 1200 },
+    ] },
+  ];
+  try {
+    await fixture.store.activate(fixture.spec);
+    for (const [index, audit] of audits.entries())
+      await assert.rejects(request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
+        submissionId: `invalid-required-audit-${index}`, attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+        evaluation: { ok: true }, audit, usage: emptyUsage(),
+      }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit", JSON.stringify(audit));
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+
+test("a task without declared required material cannot claim a reading allowance", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), {}, false, "材料");
+  fixture.spec.evaluation.requiredReads = [];
+  try {
+    await fixture.store.activate(fixture.spec);
+    await assert.rejects(request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
+      submissionId: "undeclared-required-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+      evaluation: { ok: true }, usage: emptyUsage(),
+      audit: { ...emptyAudit(), calls: 15, requiredReadCalls: 1,
+        traceReads: [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 2 }] },
+    }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+
 test("file submission repairs a rejected evidence ID after exploration is exhausted", async () => {
   const fixture = await harness(
     async (options) => ({
@@ -366,6 +536,7 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
         const rejected = await options.execute("submit_evaluation", invalid);
         assert.equal(rejected.isError, true);
         const feedback = JSON.parse(rejected.content[0]!.text!);
+        assert.equal(feedback.draft_file, "evaluation-draft.json");
         const issue = feedback.errors.find((item: { code: string }) => item.code === "evidence_range_invalid");
         assert(issue, "Host rejection must preserve actionable evidence feedback through Worker");
         const replacement = issue.expected.suggested_evidence.find((item: { quote: string }) => item.quote === "2+2=4");
@@ -467,6 +638,70 @@ test("file loading errors do not consume content repairs", async () => {
   } finally {
     await fixture.close();
   }
+});
+test("a missing submission file does not invent a saved repair draft", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const rejected = await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" });
+      assert.equal(rejected.isError, true);
+      const feedback = JSON.parse(rejected.content[0]!.text!);
+      assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false);
+      assert.equal(Object.hasOwn(feedback, "draft_file"), false);
+      assert.doesNotMatch(feedback.message, /已保存/);
+      assert.match(feedback.message, /submit_evaluation/);
+      assert.equal(
+        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        true,
+      );
+    },
+    async abort() {}, async dispose() {},
+  }), { repairAttempts: 0 });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.deepEqual((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats, {
+      contentSubmissions: 1,
+      fileErrors: 1,
+    });
+  } finally { await fixture.close(); }
+});
+test("a rejected draft without file submission capability requests a complete direct submission", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      assert.deepEqual(options.tools.filter((tool) => tool.name.startsWith("submit_evaluation")).map((tool) => tool.name),
+        ["submit_evaluation"]);
+      const unavailable = await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" });
+      assert.equal(unavailable.isError, true);
+      assert.match(unavailable.content[0]!.text!, /Unknown tool/);
+      assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false);
+      const invalid = draftFor(options.spec, invalidResult(options.spec));
+      const rejected = await options.execute("submit_evaluation", invalid);
+      assert.equal(rejected.isError, true);
+      const feedback = JSON.parse(rejected.content[0]!.text!);
+      assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), invalid);
+      assert.equal(Object.hasOwn(feedback, "draft_file"), false);
+      assert.match(feedback.message, /完整 JSON/);
+      assert.match(feedback.message, /submit_evaluation/);
+      assert.equal(
+        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        true,
+      );
+    },
+    async abort() {}, async dispose() {},
+  }), { repairAttempts: 1 });
+  fixture.spec.evaluation.fileSubmission = false;
+  fixture.spec.evaluation.toolDescriptions = { ...fixture.spec.evaluation.toolDescriptions };
+  delete fixture.spec.evaluation.toolDescriptions.submit_evaluation_file;
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.deepEqual((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats, {
+      contentSubmissions: 2,
+      fileErrors: 0,
+    });
+  } finally { await fixture.close(); }
 });
 test("three file loading failures stop independently of the content budget", async () => {
   const fixture = await harness(
@@ -711,6 +946,33 @@ test("mismatched engine, unknown tools and missing descriptions are refused befo
     await fixture.close();
   }
 });
+test("malformed required-material specs are refused before creating a model session", async () => {
+  let sessions = 0;
+  const fixture = await harness(async () => {
+    sessions++;
+    throw new Error("Must not start");
+  }, {}, false, "材料");
+  const read = fixture.spec.evaluation.requiredReads![0];
+  try {
+    for (const requiredReads of [
+      null, {}, [null], [{ ...read, candidate: "unknown" }], [{ ...read, message_index: -1 }],
+      [{ ...read, kind: "json" }], [{ ...read, path: undefined }], [{ ...read, start: -1 }],
+      [{ ...read, start: 0.5 }], [{ ...read, end: 0 }], [{ ...read, start: 2, end: 1 }],
+      [{ ...read, end: Number.MAX_SAFE_INTEGER + 1 }],
+    ]) await assert.rejects(request(`${fixture.worker.url}/api/attempts`, "POST", {
+      ...fixture.spec, evaluation: { ...fixture.spec.evaluation, requiredReads },
+    }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid required material ranges");
+    await assert.rejects(request(`${fixture.worker.url}/api/attempts`, "POST", {
+      ...fixture.spec,
+      evaluation: { ...fixture.spec.evaluation, toolNames: ["calculate"],
+        toolDescriptions: { calculate: "Calculate exactly.", submit_evaluation: "Submit JSON." } },
+    }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid required material ranges");
+    for (const inputs of [undefined, null, {}, [null], [{ id: 1, name: "answer" }], [fixture.spec.inputs[0], fixture.spec.inputs[0]]])
+      await assert.rejects(request(`${fixture.worker.url}/api/attempts`, "POST", { ...fixture.spec, inputs }),
+        (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid input refs");
+    assert.equal(sessions, 0);
+  } finally { await fixture.close(); }
+});
 test("token budget aborts at the model response boundary", async () => {
   let aborted = false;
   const fixture = await harness(
@@ -747,8 +1009,22 @@ test("token budget aborts at the model response boundary", async () => {
   }
 });
 
-for (const message of ["Connection error.", "terminated", "Request timed out."])
-  test(`transient SDK error is retryable: ${message}`, async () => {
+for (const [message, retryable] of [
+  ["Connection error.", true],
+  ["terminated", true],
+  ["Request timed out.", true],
+  ['evaluation-gateway API error (529): {"message":"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)","code":"server_error"}', true],
+  ["HTTP 503 Service Unavailable", true],
+  ["HTTP/2 500 Internal Server Error", true],
+  ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_01a0fc93466c7cd2907ddcf5|070ed59d2f624fb64934837f33bc1803_fc_0); expected complete JSON object", true],
+  ["Invalid OpenAI Responses tool arguments: fc_123; expected JSON object", true],
+  ["Evaluation validation failed: Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object", false],
+  ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object; wrong business criteria", false],
+  ["Evaluation validation failed: expected 529 characters", false],
+  ["Evaluation validation failed: expected 503 characters", false],
+  ["evaluation-gateway API error (422): invalid request", false],
+] as const)
+  test(`SDK error retryable=${retryable}: ${message}`, async () => {
     const fixture = await harness(async (options) => ({
       async run() {
         options.onEvent({
@@ -764,14 +1040,29 @@ for (const message of ["Connection error.", "terminated", "Request timed out."])
       async dispose() {},
     }));
     try {
+      fixture.spec.model.api = "openai-responses";
       await fixture.start();
       const status = await fixture.done();
       assert.equal(status.error, message);
-      assert.equal(status.retryable, true);
+      assert.equal(status.retryable, retryable);
+      assert.equal(status.failure?.errors[0]?.category, retryable ? "transport" : "interruption");
     } finally {
       await fixture.close();
     }
   });
+
+test("an ordinary thrown error cannot impersonate an SDK malformed-arguments response", async () => {
+  const message = "Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object";
+  const fixture = await harness(async () => ({ async run() { throw new Error(message); }, async abort() {}, async dispose() {} }));
+  try {
+    fixture.spec.model.api = "openai-responses";
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.error, message);
+    assert.equal(status.retryable, false);
+    assert.equal(status.failure?.errors[0]?.category, "interruption");
+  } finally { await fixture.close(); }
+});
 
 test("repair exhaustion preserves its cause instead of a generic SDK abort", async () => {
   const fixture = await harness(

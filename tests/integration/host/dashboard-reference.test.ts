@@ -24,22 +24,27 @@ async function referencePage() {
   } catch (error) { dom.window.close(); throw error; }
 }
 
-test("reference definitions distinguish derived Comparison submissions from Clustering short-reference schemas", async () => {
+test("reference definitions distinguish source selections, derived comparisons and clustering short references", async () => {
   const page = await referencePage();
   const { document } = page;
   const click = (selector: string) => document.querySelector(selector).click();
   try {
     click('[data-section="contracts"]');
-    for (const stage of ["criteria", "rewrite"]) {
-      click(`[data-stage="${stage}"]`);
-      assert.equal(document.querySelector('[data-document="submission"]'), null, "shared schemas have only one output tab");
-      assert.equal(document.querySelector('[data-document="result"]').textContent, "提交 / 结果 Schema");
-      assert.equal(document.querySelector(".definition-source").textContent, `schemas/${stage}/result.schema.json`);
-    }
+    click('[data-stage="rewrite"]');
+    assert.equal(document.querySelector('[data-document="submission"]'), null, "shared schemas have only one output tab");
+    assert.equal(document.querySelector('[data-document="result"]').textContent, "提交 / 结果 Schema");
+    assert.equal(document.querySelector(".definition-source").textContent, "schemas/rewrite/result.schema.json");
+    click('[data-stage="criteria"]');
+    assert.equal(document.querySelector('[data-document="result"]').textContent, "结果 Schema");
+    click('[data-document="submission"]');
+    assert.equal(document.querySelector(".definition-source").textContent, "schemas/criteria/submission.schema.json");
+    const criteriaSubmission = JSON.parse(document.querySelector(".schema-json").textContent);
+    assert.deepEqual(criteriaSubmission, page.reference.stages.find((stage) => stage.id === "criteria")!.schemas.submission);
     click('[data-stage="comparison"]');
     click('[data-document="submission"]');
-    assert.equal(document.querySelector(".definition-source").textContent,
-      "schemas/comparison/result.schema.json（去掉 rewritten/task_analysis 字段后派生）");
+    assert.equal(document.querySelector(".definition-source").textContent, "schemas/comparison/submission.schema.json");
+    const comparisonSubmission = JSON.parse(document.querySelector(".schema-json").textContent);
+    assert.deepEqual(comparisonSubmission, page.reference.stages.find((stage) => stage.id === "comparison")!.schemas.submission);
     click('[data-stage="clustering"]');
     click('[data-document="submission"]');
     assert.equal(document.querySelector(".definition-source").textContent, "schemas/clustering/submission.schema.json");

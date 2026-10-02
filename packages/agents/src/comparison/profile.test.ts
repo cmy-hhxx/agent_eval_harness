@@ -3,12 +3,23 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AgentRequest, ToolAudit } from "@eval/contracts";
 import { comparisonAgent, comparisonProfile } from "./index.js";
-import type { ComparisonResult } from "./types.js";
+import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
-const audit: ToolAudit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
+const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 const validate = (request: AgentRequest, result: unknown, reads = audit) => comparisonProfile.validate!(request, result, reads);
 const pair = () => ({ request: structuredClone(example.request), result: structuredClone(example.result) as ComparisonResult });
+const submission = (result: ComparisonResult): ComparisonSubmission => {
+  const common = { assessments: Object.fromEntries(Object.entries(result.assessments).map(([label, item]) => [label, { summary: item.summary }])),
+    review_requests: structuredClone(result.review_requests) };
+  if (result.status === "needs_review") return { ...common, status: "needs_review" };
+  return { ...common, status: "decided", ranking: structuredClone(result.ranking), decision_basis: {
+    ...structuredClone(result.decision_basis), comparisons: result.decision_basis.comparisons.map(row => ({ ...structuredClone(row),
+      assessments: Object.fromEntries(Object.entries(row.assessments).map(([label, cell]) =>
+        [label, { summary: cell.summary, finding_indices: [...cell.finding_indices] }])) })),
+  } };
+};
+const resolve = (data: ReturnType<typeof pair>) => comparisonProfile.resolve!(data.request, submission(data.result), audit) as ComparisonResult;
 const review = () => {
   const data = pair();
   data.result.status = "needs_review";
@@ -17,6 +28,62 @@ const review = () => {
   data.result.review_requests.push({ candidate: "A", criterion_ids: ["sum"], finding_indices: [], reason: "来源遗漏，需要复核最终表格。" } as never);
   return data;
 };
+
+test("a located review request resolves without first constructing a complete comparison matrix", () => {
+  const data = review();
+  Object.assign(data.request.input, { source_review: { A: ["最终表有未核实来源行。"] } });
+  const draft = submission(data.result);
+  const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
+  assert.deepEqual(result.ranking, []);
+  assert.deepEqual(result.decision_basis.comparisons, []);
+  assert.deepEqual(result.decision_basis.decisive_findings, []);
+  assert.equal(result.assessments.A.meets_core, null);
+  assert.deepEqual(result.assessments.A.core_failure_refs, []);
+  assert.equal(result.assessments.B.meets_core, true);
+  validate(data.request, result);
+  assert.throws(() => comparisonProfile.resolve!(data.request, { ...draft, ranking: [], decision_basis: data.result.decision_basis }, audit));
+  const decided = pair();
+  decided.result.decision_basis.comparisons = [];
+  assert.throws(() => validate(decided.request, decided.result), /1 items/);
+  result.review_requests[0].candidate = "B";
+  assert.throws(() => validate(data.request, result), /来源核验/);
+});
+
+test("review requests cannot leave an unknown assessment unreviewed or send a blank reason", () => {
+  const data = review();
+  data.result.assessments.B.meets_core = null;
+  assert.throws(() => validate(data.request, data.result), /核心状态未决/);
+  data.result.assessments.B.meets_core = true;
+  data.result.review_requests[0].reason = "   ";
+  assert.throws(() => validate(data.request, data.result), /复核原因不能为空/);
+});
+
+test("unresolved source table evidence requires independent review instead of a decided ranking", () => {
+  const data = pair();
+  Object.assign(data.request.input, { source_review: { A: ["原始来源与最终代码/名称对应仍有冲突。"] } });
+  assert.throws(() => validate(data.request, data.result), (error: unknown) =>
+    error instanceof Error && error.message.includes("来源核验"));
+  const pending = review();
+  Object.assign(pending.request.input, { source_review: { A: ["原始来源与最终代码/名称对应仍有冲突。"] } });
+  validate(pending.request, pending.result);
+});
+
+test("unknown core evidence requests review of the unresolved candidate and its core criteria", () => {
+  const data = review();
+  data.request.input.attributions.A.core_assessment.meets_core = null as unknown as boolean;
+  data.request.input.attributions.A.criterion_assessments[0].status = "unknown";
+  data.request.input.attributions.A.criterion_assessments[0].evidence_status = "uncertain";
+  data.result.assessments.A.meets_core = null;
+  data.result.decision_basis.comparisons[0].assessments.A.status = "unknown";
+  data.result.decision_basis.comparisons[0].assessments.A.evidence_status = "uncertain";
+  validate(data.request, data.result);
+  data.result.review_requests[0].candidate = "B";
+  assert.throws(() => validate(data.request, data.result), /核心状态未决/);
+  data.result.review_requests[0].candidate = "A";
+  data.result.review_requests[0].criterion_ids = [];
+  data.result.review_requests[0].finding_indices = [0];
+  assert.throws(() => validate(data.request, data.result), /核心状态未决/);
+});
 const fail = (data: ReturnType<typeof pair>, label: "A" | "B") => {
   const attribution = data.request.input.attributions[label];
   attribution.core_assessment.meets_core = false;
@@ -31,17 +98,113 @@ const fail = (data: ReturnType<typeof pair>, label: "A" | "B") => {
 test("Comparison accepts an independently judged pair and mirrors the shared analysis", () => {
   assert.deepEqual(Object.keys(comparisonAgent.profiles), ["default"]);
   validate(example.request, example.result);
-  const draft = structuredClone(example.result) as Record<string, unknown>;
-  delete draft.task_analysis;
+  const draft = submission(example.result as ComparisonResult);
   const resolved = comparisonProfile.resolve!(example.request, draft, audit) as typeof example.result;
   assert.deepEqual(resolved.task_analysis, example.request.input.task_analysis);
   assert.notEqual(resolved.task_analysis, example.request.input.task_analysis);
+  assert.deepEqual(resolved.assessments, example.result.assessments);
+  assert.deepEqual(resolved.decision_basis, example.result.decision_basis);
   validate(example.request, resolved);
   assert.throws(() => comparisonProfile.resolve!(example.request, example.result, audit), /additional properties/);
   const changed = pair(); changed.result.task_analysis.goal = "新目标";
   assert.throws(() => validate(changed.request, changed.result), /不得增加、改写或删除/);
   const localError = pair(); localError.request.input.attributions.A.is_correct = false;
   validate(localError.request, localError.result);
+});
+
+test("submissions reject source state fields and resolution preserves source core failures", () => {
+  const data = pair(); fail(data, "A"); data.result.ranking = [["B"], ["A"]];
+  const draft = submission(data.result);
+  const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
+  assert.equal(result.assessments.A.meets_core, false);
+  assert.deepEqual(result.assessments.A.core_failure_refs, ["sum"]);
+  assert.equal(result.decision_basis.comparisons[0].assessments.A.status, "unmet");
+  validate(data.request, result);
+  assert.deepEqual(draft, submission(data.result), "resolution must not mutate the model submission");
+  for (const field of ["meets_core", "core_failure_refs"]) {
+    const invalid = structuredClone(draft);
+    Object.assign(invalid.assessments.A, { [field]: result.assessments.A[field as "meets_core" | "core_failure_refs"] });
+    assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /additional properties/);
+  }
+  for (const field of ["status", "evidence_status"]) {
+    const invalid = structuredClone(draft);
+    if (invalid.status !== "decided") throw new Error("expected decided fixture");
+    Object.assign(invalid.decision_basis.comparisons[0].assessments.A, { [field]: "met" });
+    assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /additional properties/);
+  }
+  const invalid = structuredClone(draft);
+  (invalid.assessments as Record<string, unknown>)["候选A"] = invalid.assessments.A;
+  delete invalid.assessments.A;
+  assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /合法候选标识.*\["A","B"\]/);
+});
+
+test("resolution aggregates applicable source criteria and preserves uncertain findings", () => {
+  const data = pair();
+  const partial = { id: "detail", text: "补全细节", applies_to: [], acceptance_rule: "给出全部细节。" };
+  data.request.input.task_analysis.scoring_points.push(partial as never);
+  data.result.decision_basis.comparisons[0].criterion_ids.push("detail");
+  for (const label of ["A", "B"] as const) {
+    const source = data.request.input.attributions[label];
+    source.task_analysis = structuredClone(data.request.input.task_analysis);
+    source.criterion_assessments.push({ criterion_id: "detail", status: label === "A" ? "partial" : "unknown",
+      evidence_status: label === "A" ? "established" : "uncertain", summary: "细节核对。", evidence: [] });
+  }
+  const result = resolve(data);
+  assert.equal(result.decision_basis.comparisons[0].assessments.A.status, "partial");
+  assert.equal(result.decision_basis.comparisons[0].assessments.A.evidence_status, "established");
+  assert.equal(result.decision_basis.comparisons[0].assessments.B.status, "unknown");
+  assert.equal(result.decision_basis.comparisons[0].assessments.B.evidence_status, "uncertain");
+  validate(data.request, result);
+  data.request.input.attributions.A.findings[0].assessment.evidence_status = "uncertain";
+  data.result.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
+  const uncertain = resolve(data);
+  assert.equal(uncertain.decision_basis.comparisons[0].assessments.A.evidence_status, "uncertain");
+  validate(data.request, uncertain);
+  data.result.decision_basis.comparisons[0].better_candidates = ["A"];
+  assert.throws(() => validate(data.request, resolve(data)), /相对优势需要两方|uncertain finding 的比较行/);
+});
+
+test("resource-only rows require valid original metrics and finding-only rows preserve uncertainty", () => {
+  const data = pair();
+  const candidates = (data.request.input as unknown as ComparisonInput).candidates;
+  data.result.decision_basis.comparisons.push({ aspect: "资源用量", criterion_ids: [], importance: "low", better_candidates: [],
+    assessments: { A: { summary: "资源未知。", finding_indices: [], status: "unknown", evidence_status: "uncertain" },
+      B: { summary: "资源未知。", finding_indices: [], status: "unknown", evidence_status: "uncertain" } } });
+  candidates.A.original_answer_timing.finish_seconds = null;
+  candidates.B.original_answer_timing.finish_seconds = null;
+  candidates.A.original_answer_usage.total_tokens = null;
+  candidates.B.original_answer_usage.total_tokens = null;
+  let result = resolve(data);
+  for (const cell of Object.values(result.decision_basis.comparisons[1].assessments))
+    assert.deepEqual({ status: cell.status, evidence_status: cell.evidence_status }, { status: "unknown", evidence_status: "uncertain" });
+  validate(data.request, result);
+  candidates.A.original_answer_usage.total_tokens = 100;
+  candidates.A.original_answer_usage.issues = ["统计冲突"] as never[];
+  assert.equal(resolve(data).decision_basis.comparisons[1].assessments.A.status, "unknown");
+  candidates.A.original_answer_usage.issues = [];
+  result = resolve(data);
+  assert.equal(result.decision_basis.comparisons[1].assessments.A.status, "met");
+  assert.equal(result.decision_basis.comparisons[1].assessments.A.evidence_status, "established");
+  candidates.A.original_answer_usage.total_tokens = null;
+  candidates.A.original_answer_timing.finish_seconds = 0;
+  assert.equal(resolve(data).decision_basis.comparisons[1].assessments.A.status, "met", "zero is a valid original metric");
+  data.request.input.attributions.A.findings[0].assessment.evidence_status = "uncertain";
+  data.result.decision_basis.comparisons[1].assessments.A.finding_indices = [0];
+  data.result.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
+  result = resolve(data);
+  assert.equal(result.decision_basis.comparisons[1].assessments.A.status, "unknown");
+  assert.equal(result.decision_basis.comparisons[1].assessments.A.evidence_status, "uncertain");
+  validate(data.request, result);
+});
+
+test("required reads declare every deferred final source using its own candidate and path", () => {
+  const data = pair();
+  data.request.input.candidates.A.deferred_final_material = [{ message_index: 1, path: "/content", total_chars: 5 }] as never[];
+  data.request.input.candidates.B.deferred_final_material = [{ message_index: 1, path: "/content/0/text", total_chars: 7 }] as never[];
+  assert.deepEqual(comparisonProfile.requiredReads!(data.request), [
+    { candidate: "A", message_index: 1, kind: "text", path: "/content", start: 0, end: 5 },
+    { candidate: "B", message_index: 1, kind: "text", path: "/content/0/text", start: 0, end: 7 },
+  ]);
 });
 
 test("Comparison requires exact pair candidate keys and complete row and finding coverage", () => {

@@ -1,12 +1,14 @@
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis } from "@eval/contracts";
+import type { AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis, CriteriaInput, PlannedTask } from "@eval/contracts";
+import { criteriaProfile, criteriaSources, type CriterionSource, type CriteriaSubmission } from "@eval/agents/criteria";
 import { evidenceId } from "@eval/tools";
 import { ROOT } from "./services.js";
 import { writeJsonl } from "@eval/data";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
 import type { AttributionResult, ComparisonResult, RawInput } from "@eval/workflows/comparison";
+import { comparisonWorkflow } from "@eval/workflows/comparison";
 
 export const fakeIdentity: EngineIdentity = {
   engine: "pi",
@@ -20,6 +22,7 @@ export const fakeEvaluatorVersion = "fixture";
 export const fakeJudge = "fixture";
 export const emptyAudit = (): ToolAudit => ({
   calls: 0,
+  requiredReadCalls: 0,
   viewedImages: [],
   traceReads: [],
   calculations: [],
@@ -36,10 +39,10 @@ export function raw(caseId = "q1", reference: unknown = "4", answer = "2+2=4"): 
     meta: { ok: true, ground_truth: reference, finish_answer_time_cost: 1200 },
   };
 }
-export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResult {
+export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAnalysis = criteriaResult()): ComparisonResult {
   return {
     status: "decided", review_requests: [],
-    task_analysis: criteriaResult(),
+    task_analysis: analysis,
     ranking: [labels],
     assessments: Object.fromEntries(
       labels.map((label) => [label, { meets_core: true, core_failure_refs: [], summary: "正确给出了结果。" }]),
@@ -53,10 +56,24 @@ export function comparisonResult(labels: string[] = ["A", "B"]): ComparisonResul
     },
   };
 }
-export function criteriaResult(): TaskAnalysis {
-  return { task_type: "整数加法", goal: "计算2+2",
-    requirements: [{ id: "r1", text: "给出正确的加法结果", applies_to: [], acceptance_rule: "使用题目中的2和2相加，结果为4。" }],
+export function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
+  return { requirements: [{ id: "r1", source_ids: sources.filter((source) => source.kind === "question" || source.kind === "reference").map((source) => source.id) }],
     scoring_points: [], red_flags: [] };
+}
+export function criteriaResult(input: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },
+  candidates: [{ candidate_id: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd", instructions: [], context: [] }] }): TaskAnalysis {
+  const request = { input: input as unknown as import("@eval/contracts").JsonObject, sources: {} };
+  const result = criteriaProfile.resolve!(request, criteriaDraft(criteriaSources(input)), emptyAudit()) as TaskAnalysis;
+  criteriaProfile.validate!(request, result, emptyAudit());
+  return result;
+}
+/** A legal accepted rubric derived from exactly the same material as its real Criteria task. */
+export function criteriaResultForTask(task: PlannedTask, inputs: Record<string, unknown>): TaskAnalysis {
+  const data = task.data as { candidates: Record<string, { input_id: string }> };
+  const criterionTask = { ...task, stage: "criteria", data: { ...data, stage: "criteria" },
+    inputIds: Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) => [label, candidate.input_id])) };
+  const binding = comparisonWorkflow.bind(criterionTask, inputs, {});
+  return criteriaResult(binding.request.input as unknown as CriteriaInput);
 }
 export async function fixtureConfig(
   rows: RawInput[][] = [[raw()], [raw()], [raw()], [raw()]],
@@ -101,7 +118,8 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
     correctness_reason: available ? "与标准答案一致。" : "",
     numeric_checks: [],
     correctness_evidence: available ? [{ message_index: 1, quote: answer }] : [],
-    task_analysis: criteriaResult(),
+    task_analysis: criteriaResult({ question: "计算2+2", ground_truth: { available, value: available ? "4" : null },
+      candidates: [{ candidate_id: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd", instructions: [], context: [] }] }),
     criterion_assessments: [{ criterion_id: "r1", status: correct ? "met" : "unmet", evidence_status: "established",
       summary: correct ? "正确给出4。" : "结果错误。", evidence: [{ message_index: 1, quote: answer }] }],
     core_assessment: { meets_core: correct, reason: correct ? "核心计算交付完成。" : "关键计算结果错误。", criterion_ids: ["r1"] },
@@ -130,7 +148,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
   };
 }
 
-/** Resolved result matching the task's agent profile and the case's standard-answer presence. */
+/** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
@@ -167,7 +185,8 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt">): un
       merges: [],
     };
   }
-  if ("requirements" in properties && !("task_analysis" in properties)) return criteriaResult();
+  if ("requirements" in properties && !("task_analysis" in properties))
+    return criteriaDraft((parsedMaterial(spec) as { source_catalog: CriterionSource[] }).source_catalog);
   if (!("answer" in materialOf(spec))) {
     const material = materialOf(spec), labels = Object.keys(material.candidates);
     const result = comparisonResult(labels);
@@ -231,11 +250,12 @@ const materialOf = (spec: { prompt: string }) =>
     answer?: { question: string; final_answer: string; final_message_index: number };
   };
 
-/** Convert a resolved result (message_index/quote) into a submission draft (evidence_id/finding_id). */
+/** Build the current model submission, using evidence IDs and omitting program-derived fields. */
 export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: unknown): unknown {
   const result = structuredClone(value) as Record<string, unknown>;
   if (!result || typeof result !== "object") return result;
   const material = materialOf(spec);
+  if ("source_catalog" in material) return result;
   const evidence = (items: unknown, label: string) =>
     (items as { message_index: number; quote: string }[]).map((item) => {
       if (item.quote.startsWith("[图像观察]"))
@@ -258,7 +278,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
       result.is_correct = null;
       result.correctness_reason = "";
       result.correctness_evidence = [];
-    } else if (typeof result.is_correct !== "boolean") result.is_correct = true;
+    }
     result.correctness_evidence = evidence(result.correctness_evidence, "answer");
     (result.criterion_assessments as Record<string, unknown>[]).forEach((item) => { item.evidence = evidence(item.evidence, "answer"); });
     (result.findings as Record<string, unknown>[]).forEach((finding, i) => {
@@ -267,7 +287,21 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt">, value: un
     });
     return result;
   }
-  // Comparison references attribution findings directly; no evidence to resolve.
+  // Comparison submissions contain prose and references; the profile derives source states.
+  if ("assessments" in result) {
+    result.assessments = Object.fromEntries(Object.entries(result.assessments as Record<string, { summary: string }>).map(([label, item]) =>
+      [label, { summary: item.summary }]));
+    if ("decision_basis" in result) {
+      const basis = result.decision_basis as { comparisons: { assessments: Record<string, { summary: string; finding_indices: number[] }> }[] };
+      for (const row of basis.comparisons) row.assessments = Object.fromEntries(Object.entries(row.assessments).map(([label, cell]) =>
+        [label, { summary: cell.summary, finding_indices: cell.finding_indices }]));
+    }
+  }
+  if (result.status === "needs_review") return {
+    status: result.status,
+    assessments: result.assessments,
+    review_requests: result.review_requests,
+  };
   if ("decision_basis" in result) delete result.task_analysis;
   return result;
 }

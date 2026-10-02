@@ -4,6 +4,10 @@
 
 专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；Eris 的系统规则、恢复文案和工具描述集中在 `resources/eris/system.md`、`resources/eris/recovery.md` 和 `resources/eris/tools/<tool>.md`。组装顺序见 `src/index.ts`；`shared/` 集中材料边界、预算、恢复及无提交时的补交提示，不包含阶段判定规则。
 
+Profile 通过 `fileSubmission` 声明能否创建和修复提交文件。内置 Criteria、Rewrite、Clustering 仅暴露 `submit_evaluation`；Attribution、Comparison 配有 `execute_code`，同时暴露 `submit_evaluation_file`。Host 和 Worker 严格核对该能力与工具描述，补交提示统一引导直接提交完整 JSON。文件读取失败没有草稿时，不返回草稿路径或声称已经保存；无文件提交能力时，校验反馈引导修正完整 JSON 后直接重交。
+
+Criteria 的模型材料是完整原文来源目录，提交只选择 `source_ids`；程序用集中资源生成固定验收规则与目标，不允许模型自由重写标准。Attribution 在评审入口先确定无标准答案时的固定字段，并直接检查请求中程序预计算的 `table_check_results`，额外探索可用 `check_table`，Comparison 对 `source_review` 中未解决事项走独立复核；待复核提交只含 status、点评 assessments、review_requests，Host 生成空排名与空比较矩阵，固定待核说明由本模块提供。完整比较矩阵仅用于正式判决。Comparison 的核心状态、失败判据与比较格 status/evidence_status 由程序从既有归因派生，模型只提交点评、标准/finding 引用、优势与取舍。必读延后正文声明在 Profile 的 requiredReads 中，独立于探索调用额度。
+
 ## 提示词写法
 
 恢复提示携带校验错误和仍可修复的草稿，要求逐项修复并检查关联字段；草稿已连续校验失败而停止时，仅保留错误，要求根据原材料重新评测。不向模型发送上次 attempt 的停止状态或已消耗预算。候选标识错误由 Comparison 校验反馈列出本组合法键，沿用当前请求中的原始标识；核心未达标缺少归因依据时，提醒按该候选自身的系统约束与权限限制复核。

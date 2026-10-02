@@ -10,7 +10,7 @@ import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
 import type { BatchPreflight, EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
+import { comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 
 const firstDay = "2026-09-23",
   secondDay = "2026-09-24";
@@ -135,11 +135,12 @@ test("100 + 120 daily samples retain repeated questions through planning, export
 
     const state = runState(config, reordered),
       run = path.join(directory, "run");
-    for (const task of plan.tasks)
+    for (const task of reordered.tasks)
       accept(
         state,
         task.id,
-        task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult(true, "2+2=4", false) : comparisonResult(),
+        task.stage === "criteria" ? criteriaResultForTask(task, reordered.inputs) : task.stage === "attribution" ? attributionResult(true, "2+2=4", false)
+          : comparisonResult(undefined, criteriaResultForTask(task, reordered.inputs)),
       );
     await writeRunState(run, state);
     const stats = await reportRun(run);
@@ -290,7 +291,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         };
         continue;
       }
-      if (task.stage === "criteria") { accept(state, task.id, criteriaResult()); continue; }
+      if (task.stage === "criteria") { accept(state, task.id, criteriaResultForTask(task, plan.inputs)); continue; }
       if (task.stage === "attribution") {
         accept(
           state,
@@ -305,7 +306,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
       }
       const labels = Object.keys(data.candidates),
         labelOf = new Map(labels.map((label) => [data.candidates[label]!.version, label])),
-        result = comparisonResult();
+        result = comparisonResult(undefined, criteriaResultForTask(task, plan.inputs));
       if (candidate.case_id === "bad") {
         for (const label of labels) {
           result.assessments[label] = { meets_core: false, core_failure_refs: ["r1"], summary: "核心结果错误。" };

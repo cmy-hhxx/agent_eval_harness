@@ -37,6 +37,7 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
     correctness_evidence: EvidenceRef[];
     findings: DraftFinding[];
     criterion_assessments: DraftCriterionAssessment[];
+    table_resolutions?: { table_id: string; row_index: number; outcome: "supported" | "conflict"; reason: string; evidence: EvidenceRef[] }[];
   };
   const findings = value.findings.map((finding, index) => ({
     ...finding,
@@ -52,6 +53,9 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
       evidence: resolveRefs(assessment.evidence, `/criterion_assessments/${index}/evidence`),
     })),
     correctness_evidence: resolveRefs(value.correctness_evidence, "/correctness_evidence"),
+    ...(value.table_resolutions ? { table_resolutions: value.table_resolutions.map((resolution, index) => ({
+      ...resolution, evidence: resolveRefs(resolution.evidence, `/table_resolutions/${index}/evidence`),
+    })) } : {}),
   };
   if (errors.length) throw new ValidationError(errors);
   return resolved;

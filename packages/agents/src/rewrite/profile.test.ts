@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { rewriteAgent, rewriteProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
-const audit = { calls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
+const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 test("cell rewrites cannot copy the winning model label onto the other model's facts", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
     { id: "comparison.0.B.summary", label: "B组Fast的点评", text: "没有给出结果。", context: "A组Fast给出结果。",

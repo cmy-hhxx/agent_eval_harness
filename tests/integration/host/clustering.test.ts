@@ -311,7 +311,8 @@ test("two runs writing the same model cannot lose each other's occurrences", asy
       for (const item of states) (item.manifest.config as typeof config).problemLibrary = {
         kind: "directory", path: path.join(directory, `library-${attempt}`),
       };
-      await Promise.all(states.map(syncProblemLibrary));
+      const settled = await Promise.allSettled(states.map(syncProblemLibrary));
+      for (const result of settled) if (result.status === "rejected") throw result.reason;
       const library = await readJson<{ occurrences: unknown[] }>(path.join(directory, `library-${attempt}`, `${model}.json`));
       assert.equal(library.occurrences.length, 2);
     }

@@ -440,6 +440,11 @@ export async function processResponsesStream<TApi extends Api>(
 	let sawTerminalResponseEvent = false;
 	const outputSlots = new Map<number, ResponsesOutputSlot>();
 	const reasoningBlocksById = new Map<string, ThinkingContent>();
+	const functionIdentities = new Set<string>();
+	const completedFunctionCalls: {
+		slot: ToolCallOutputSlot;
+		item: Extract<ResponseOutputItem, { type: "function_call" }>;
+	}[] = [];
 	const applyMessagePhaseStopReason = (item: ResponseOutputItem): void => {
 		if (item.type === "message" && item.phase === "final_answer") {
 			output.stopReason = "stop";
@@ -484,6 +489,11 @@ export async function processResponsesStream<TApi extends Api>(
 			return slot;
 		}
 		if (item.type === "function_call") {
+			if (functionIdentities.has(`item:${item.id}`) || functionIdentities.has(`call:${item.call_id}`)) {
+				throw new Error(`Duplicate OpenAI Responses function call identity: ${item.id}`);
+			}
+			functionIdentities.add(`item:${item.id}`);
+			functionIdentities.add(`call:${item.call_id}`);
 			const block: StreamingToolCall = {
 				type: "toolCall",
 				id: `${item.call_id}|${item.id}`,
@@ -593,6 +603,56 @@ export async function processResponsesStream<TApi extends Api>(
 		else output.errorMessage = mappedStop.errorMessage;
 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 			output.stopReason = "toolUse";
+		}
+		if (output.stopReason === "toolUse") {
+			// Some gateways send item.done with empty arguments before the argument delta.
+			// The terminal response contains the authoritative complete call. Match by ID,
+			// never by output order, and validate every call before emitting any toolcall_end.
+			const calls = completedFunctionCalls.map(({ slot, item }) => {
+				const matches =
+					response.output?.filter(
+						(candidate) =>
+							candidate.type === "function_call" &&
+							(candidate.id === item.id || candidate.call_id === item.call_id),
+					) ?? [];
+				const terminalItem = matches[0];
+				if (
+					matches.length > 1 ||
+					(terminalItem &&
+						(terminalItem.type !== "function_call" ||
+							terminalItem.id !== item.id ||
+							terminalItem.call_id !== item.call_id ||
+							terminalItem.name !== item.name))
+				) {
+					throw new Error(`OpenAI Responses tool identity mismatch: ${item.name} (${slot.block.id})`);
+				}
+				const argumentsJson = terminalItem?.type === "function_call" ? terminalItem.arguments : item.arguments;
+				let args: unknown;
+				try {
+					args = JSON.parse(argumentsJson);
+				} catch {
+					throw new Error(
+						`Invalid OpenAI Responses tool arguments: ${item.name} (${slot.block.id}); expected complete JSON object`,
+					);
+				}
+				if (typeof args !== "object" || args === null || Array.isArray(args)) {
+					throw new Error(
+						`Invalid OpenAI Responses tool arguments: ${item.name} (${slot.block.id}); expected JSON object`,
+					);
+				}
+				return { slot, args: args as ToolCall["arguments"], namespace: terminalItem?.namespace ?? item.namespace };
+			});
+			for (const { slot, args, namespace } of calls) {
+				slot.block.arguments = args;
+				if (namespace !== undefined) slot.block.namespace = namespace;
+				stream.push({
+					type: "toolcall_end",
+					contentIndex: slot.contentIndex,
+					toolCall: slot.block,
+					partial: output,
+				});
+			}
+			completedFunctionCalls.length = 0;
 		}
 	};
 
@@ -713,17 +773,15 @@ export async function processResponsesStream<TApi extends Api>(
 				slot?.type === "toolCall" &&
 				slot.block.partialJson !== undefined
 			) {
+				if (slot.block.id !== `${item.call_id}|${item.id}` || slot.block.name !== item.name) {
+					throw new Error(`OpenAI Responses tool identity mismatch: ${item.name} (${slot.block.id})`);
+				}
 				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
 				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
-				// Finalize in-place and strip the scratch buffer so replay only
-				// carries parsed arguments.
+				// Item completion closes the scratch buffer; the terminal response
+				// still validates the complete arguments before toolcall_end.
 				delete slot.block.partialJson;
-				stream.push({
-					type: "toolcall_end",
-					contentIndex: slot.contentIndex,
-					toolCall: slot.block,
-					partial: output,
-				});
+				completedFunctionCalls.push({ slot, item });
 				outputSlots.delete(event.output_index);
 			} else if (item.type === "custom_tool_call" && slot?.type === "toolCall" && slot.block.customInput) {
 				pushToolCallDelta(

@@ -402,6 +402,16 @@
           }
         }
       }
+    },
+    "source_review": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   },
   "$defs": {

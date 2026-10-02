@@ -1,4 +1,4 @@
-/** One independently checkable task criterion. An empty scope applies to every candidate. */
+/** One source-derived criterion; complete source paragraphs preserve conditions and exceptions. An empty scope applies to every candidate. */
 export interface TaskCriterion {
   id: string;
   text: string;

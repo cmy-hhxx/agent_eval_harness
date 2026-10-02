@@ -488,7 +488,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   await atomicWrite(layout.summaries, markdown.join("\n"));
   await writeDetail(
     "failures",
-    outcomes.filter((v) => ["failed", "blocked", "cancelled", "timed_out"].includes(String(v.status))),
+    outcomes.filter((v) => ["failed", "timed_out"].includes(String(v.status))),
   );
   await writeDetail("skipped", (manifest.preflight.skipped as unknown[]) || []);
   const attemptUsage = state.usage;
@@ -615,7 +615,7 @@ export async function writeOverview(
   },
 ): Promise<void> {
   const statuses = summary.task_statuses as Record<string, number>;
-  const failures = ["failed", "blocked", "cancelled", "timed_out"].reduce(
+  const failures = ["failed", "timed_out"].reduce(
     (n, key) => n + (statuses[key] || 0),
     0,
   );
@@ -641,7 +641,7 @@ export async function writeOverview(
   await atomicWrite(
     locateRun(run).report,
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
-      `执行失败：${failures}；输入跳过对比组：${skipped}。\n\n` +
+      `执行失败：${failures}；依赖阻塞：${statuses.blocked || 0}；已取消：${statuses.cancelled || 0}；输入跳过对比组：${skipped}。\n\n` +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation
         ? `[校验记录](stats.json)；附件：${validation.artifacts?.status === "missing" ? "缺失（不影响正式结果状态）" : validation.artifacts_checked ? "已检查" : "未保留"}。`
@@ -674,16 +674,16 @@ export async function writeOverview(
         )
         .join("\n") +
       "\n\n## 批次汇总\n\n" +
-      "| 批次 | 样本 | 计划任务 | 有效比较 | 失败 | 待完成 | 跳过对比组 | 输入异常 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n" +
+      "| 批次 | 样本 | 计划任务 | 有效比较 | 失败 | 依赖阻塞 | 已取消 | 待完成 | 跳过对比组 | 输入异常 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n" +
       batches
         .map(([batch, stats]) => {
           const statuses = stats.task_statuses;
-          const failed = ["failed", "blocked", "cancelled", "timed_out"].reduce(
+          const failed = ["failed", "timed_out"].reduce(
             (n, status) => n + (statuses[status] || 0),
             0,
           );
           const pending = (statuses.pending || 0) + (statuses.running || 0);
-          return `| ${cell(batch)} | ${stats.planned.cases} | ${stats.planned.tasks} | ${stats.completed_comparisons} | ${failed} | ${pending} | ${stats.planned.skipped_groups} | ${stats.planned.input_issues} |`;
+          return `| ${cell(batch)} | ${stats.planned.cases} | ${stats.planned.tasks} | ${stats.completed_comparisons} | ${failed} | ${statuses.blocked || 0} | ${statuses.cancelled || 0} | ${pending} | ${stats.planned.skipped_groups} | ${stats.planned.input_issues} |`;
         })
         .join("\n") +
       "\n\n" +

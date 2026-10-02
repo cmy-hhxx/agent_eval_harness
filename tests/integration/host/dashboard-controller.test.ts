@@ -70,6 +70,28 @@ function samplingScope(page: Awaited<ReturnType<typeof controller>>, reversed = 
     page.document.querySelector(`#setting-${id}`).value = String(value);
 }
 
+test("dashboard preserves totals while displaying failures, blocked tasks and cancellations separately", async () => {
+  const run = { run_id: "status-counts", status: "finished", engine: "pi", evaluator_version: "test",
+    progress: { accepted: 4, queued: 0, running: 0, failures: { file: 6, interruption: 5 }, blocked: 97, cancelled: 2 },
+    stages: { criteria: { succeeded: 4, failed: 6, timed_out: 5, blocked: 97, cancelled: 2 } } };
+  const page = await controller(url => url.endsWith("/runs") ? { runs: [run], errors: [] }
+    : url.includes("/cases?") ? { cases: [], total: 0, page: 1, page_size: 40 } : run);
+  try {
+    page.state.selectedRun = run.run_id;
+    await page.refresh();
+    const entry = page.document.querySelector(".run-meta").textContent;
+    assert.match(entry, /4\/114/);
+    assert.match(entry, /11 失败.*97 阻塞.*2 取消/);
+    assert.match(page.document.querySelector("#run-description").textContent, /4\/114 已接受/);
+    assert.match(page.document.querySelector(".stage-note").textContent, /11 失败.*97 阻塞.*2 取消/);
+    run.progress.failures = { file: 0, interruption: 0 };
+    run.stages.criteria.failed = run.stages.criteria.timed_out = 0;
+    await page.refresh();
+    assert.equal(page.document.querySelector("#run-status").textContent, "已结束（有阻塞、取消）");
+    assert.doesNotMatch(page.document.querySelector(".run-meta").textContent, /失败/);
+  } finally { page.dom.window.close(); }
+});
+
 test("dashboard renders gateway models with eight-way concurrency, high thinking and all rewrites", async () => {
   const source = await readConfigSources(path.join(ROOT, "configs/host.json"));
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);

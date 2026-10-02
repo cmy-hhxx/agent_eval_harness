@@ -1,4 +1,6 @@
 export type Engine = "pi" | "prime";
+export { evidenceId } from "./evidence.js";
+export { mergeRequiredReadRanges, requiredReadCallLimit } from "./required-reading.js";
 export * from "./automations.js";
 export type * from "./criteria.js";
 export type * from "./publication.js";
@@ -39,14 +41,21 @@ export interface EvaluationSpec {
   /** Worker-facing copy of AgentProfile.submissionSchema. */
   outputSchema: JsonSchema;
   toolNames: string[];
+  /** Whether this profile can create and repair JSON files in the task workspace. */
+  fileSubmission: boolean;
   /** Model-facing descriptions for exactly the selected and submission tools. */
   toolDescriptions: Record<string, string>;
   /** One bounded follow-up when a session ends without an accepted submission. */
   submissionNudge: string;
+  /** Exact material ranges that must be read before this task can be accepted. */
+  requiredReads?: TraceRead[];
 }
 export interface InputRef {
   id: string;
   name: string;
+}
+export function submissionToolNames(fileSubmission: boolean): string[] {
+  return fileSubmission ? ["submit_evaluation", "submit_evaluation_file"] : ["submit_evaluation"];
 }
 export interface EngineIdentity {
   engine: Engine;
@@ -103,12 +112,25 @@ export interface TraceRead {
   start: number;
   end: number;
 }
+/** Recomputable table comparison coordinates; never stores copied cells or verdicts. */
+export interface TableCheckSpec {
+  candidate: string;
+  answer_table_id: string;
+  sources: {
+    table_id: string;
+    key_columns: { answer: number; source: number }[];
+    value_columns: { answer: number; source: number }[];
+  }[];
+}
 export interface ToolAudit {
   calls: number;
+  /** Successful new mandatory pages; other calls consume the exploration budget. */
+  requiredReadCalls: number;
   viewedImages: string[];
   traceReads: TraceRead[];
   calculations: unknown[];
   artifacts: Artifact[];
+  tableChecks?: TableCheckSpec[];
 }
 export interface Submission {
   submissionId: string;
@@ -248,6 +270,7 @@ export interface ToolContext {
   inputs: Map<string, unknown>;
   audit: ToolAudit;
   policy: Policy;
+  requiredReads?: TraceRead[];
   artifacts: {
     put(name: string, data: string | Uint8Array): Promise<Artifact>;
     get(id: string): Promise<Uint8Array>;
@@ -325,9 +348,11 @@ export interface AgentProfile {
   instructions: string;
   submissionNudge: string;
   toolNames: string[];
+  fileSubmission: boolean;
   toolDescriptions: Record<string, string>;
   /** Task material on its own for inspection; policy and recovery are added per attempt. */
   renderPrompt(input: JsonObject, policy?: Policy, recovery?: FailureContext): string;
+  requiredReads?(request: AgentRequest): TraceRead[];
   resolve?(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown;
   validate?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
 }

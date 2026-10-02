@@ -29,12 +29,21 @@ test("all stage texts come from one resource tree; tool descriptions are complet
 test("stage instructions discuss only available materials and actions", () => {
   const attribution = agentPrompt("attribution", ["read_trace", "execute_code"]);
   assert(!/其他回答|A\/B\/C|问题库/.test(attribution.systemPrompt + attribution.instructions));
-  for (const stage of ["rewrite", "clustering"] as const) {
+  for (const stage of ["criteria", "rewrite", "clustering"] as const) {
     const prompt = agentPrompt(stage, []);
     assert(!/execute_code|submit_evaluation_file|inputs\//.test(prompt.instructions));
+    assert.deepEqual(Object.keys(prompt.toolDescriptions), ["submit_evaluation"]);
+    assert.equal(prompt.fileSubmission, false);
+    assert(!/submit_evaluation_file|read_trace|search_trace|view_image/.test(prompt.submissionNudge));
   }
   const rewrite = agentPrompt("rewrite", []);
   assert(!/看不到|工具记录|原始回答|核验过材料/.test(rewrite.systemPrompt + rewrite.instructions));
+});
+
+test("file submission is exposed only with a file writing tool", () => {
+  const prompt = agentPrompt("attribution", ["execute_code"]);
+  assert.equal(prompt.fileSubmission, true);
+  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation", "submit_evaluation_file"]);
 });
 
 test("rewrite asks for direct factual critique without boilerplate or stronger certainty", () => {

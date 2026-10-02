@@ -2,6 +2,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   schemaIssues,
   ValidationError,
+  submissionToolNames,
   type AgentDefinition,
   type AgentBinding,
   type AgentProfile,
@@ -45,8 +46,8 @@ export class AgentRegistry {
   }
   prepare(binding: AgentBinding) {
     const { profile } = this.get(binding);
-    const names = [...profile.toolNames, "submit_evaluation", "submit_evaluation_file"];
-    if (new Set(names).size !== names.length ||
+    const names = [...profile.toolNames, ...submissionToolNames(profile.fileSubmission)];
+    if (typeof profile.fileSubmission !== "boolean" || new Set(names).size !== names.length ||
       Object.keys(profile.toolDescriptions).length !== names.length ||
       names.some((name) => !profile.toolDescriptions[name]?.trim()))
       throw new Error(`Incomplete tool descriptions: ${binding.agent}/${binding.profile}`);
@@ -59,8 +60,10 @@ export class AgentRegistry {
         systemPrompt: profile.systemPrompt,
         outputSchema: profile.submissionSchema,
         toolNames: profile.toolNames,
+        fileSubmission: profile.fileSubmission,
         toolDescriptions: { ...profile.toolDescriptions },
         submissionNudge: profile.submissionNudge,
+        requiredReads: profile.requiredReads?.(binding.request) ?? [],
       },
       prompt: profile.renderPrompt(binding.request.input),
       renderAttempt: (policy: Policy, recovery?: FailureContext) =>

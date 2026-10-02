@@ -14,6 +14,7 @@ import { services, ROOT } from "../fixtures/services.js";
 import { fixtureConfig, fakeIdentity, taskResult, draftFor, parsedMaterial, raw } from "../fixtures/comparison.js";
 import { createEris } from "@eval/assistant";
 import type { AnalysisReference, TaskAnalysis } from "@eval/contracts";
+import type { CriteriaSubmission, CriterionSource } from "@eval/agents/criteria";
 
 test("standalone Attribution and Comparison share material, validation, accepted results and resume", {timeout:30000}, async()=>{
  const fixture=await fixtureConfig();
@@ -93,10 +94,11 @@ test("three-model specialist runs share one criteria task and return all three r
  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
   async run() {
    const stage = options.spec.evaluation.id; stages.push(stage);
-   const material = parsedMaterial(options.spec) as { task_analysis?: TaskAnalysis; candidates?: { instructions: { role: string }[]; context: { role: string }[] }[] };
+   const material = parsedMaterial(options.spec) as { task_analysis?: TaskAnalysis; candidate_ids?: string[]; source_catalog?: CriterionSource[] };
    if (stage === "criteria") {
     assert(!("task_analysis" in material));
-    assert(material.candidates!.every(candidate => candidate.context.every(message => message.role === "user")));
+    assert.equal(material.candidate_ids!.length, 3);
+    assert(material.source_catalog!.filter(source => source.kind === "context").every(source => source.role === "user"));
    } else standards.push(material.task_analysis!);
    const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
    assert.equal(result.isError, undefined, JSON.stringify(result));
@@ -150,7 +152,9 @@ test("incompatible accepted attributions are independently reassessed without ch
    stages.push(options.spec.evaluation.id);
    const output = taskResult(options.spec);
    if (revised && options.spec.evaluation.id === "criteria")
-    (output as TaskAnalysis).requirements[0]!.acceptance_rule = "明确给出题目2与2相加的完整结果4。";
+    (output as CriteriaSubmission).requirements = [
+     { id: "r1", source_ids: ["question"] }, { id: "r2", source_ids: ["reference"] },
+    ];
    if (revised && options.spec.evaluation.id === "attribution")
     assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,
      ["已有归因与本次共享判据、标准答案或当前验证要求不一致，按本次判据独立重新核验。"]);

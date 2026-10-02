@@ -22,7 +22,7 @@ import {
   fakeIdentity,
   fakeJudge,
   comparisonResult,
-  criteriaResult,
+  criteriaResultForTask,
   fixtureConfig,
   raw,
   taskResult,
@@ -61,8 +61,9 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
           evaluatorVersion: fakeEvaluatorVersion,
           judge: fakeJudge,
           acceptedAt: 2,
-          evaluation: task.stage === "criteria" ? criteriaResult() : task.stage === "attribution"
-            ? attributionResult(true, "2+2=4", (task.data as TaskData).reference !== null) : comparisonResult(),
+          evaluation: task.stage === "criteria" ? criteriaResultForTask(task, plan.inputs) : task.stage === "attribution"
+            ? attributionResult(true, "2+2=4", (task.data as TaskData).reference !== null)
+            : comparisonResult(undefined, criteriaResultForTask(task, plan.inputs)),
           audit: emptyAudit(),
           usage: emptyUsage(),
         },

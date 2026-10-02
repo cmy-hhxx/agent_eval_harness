@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r62",
+  "evaluatorVersion": "r73",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -10,7 +10,10 @@
         "display_name": "A组Fast",
         "adapter": "a",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/a_fast" }
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/a_fast"
+          }
         ]
       },
       {
@@ -20,7 +23,10 @@
         "display_name": "A组Expert",
         "adapter": "a",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/a_expert" }
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/a_expert"
+          }
         ]
       },
       {
@@ -30,7 +36,10 @@
         "display_name": "B组Fast",
         "adapter": "b",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/b_fast" }
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/b_fast"
+          }
         ]
       },
       {
@@ -40,14 +49,23 @@
         "display_name": "B组Expert",
         "adapter": "b",
         "sources": [
-          { "kind": "directory", "path": "../data/sources/model-answers/b_expert" }
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/b_expert"
+          }
         ]
       }
     ]
   },
   "comparisons": [
-    ["a_fast", "b_fast"],
-    ["a_expert", "b_expert"]
+    [
+      "a_fast",
+      "b_fast"
+    ],
+    [
+      "a_expert",
+      "b_expert"
+    ]
   ],
   "rewrite": {
     "comparison": true,
@@ -93,7 +111,10 @@
   },
   "execution": {
     "concurrency": 8,
-    "failureGuard": { "windowSize": 50, "threshold": 5 },
+    "failureGuard": {
+      "windowSize": 50,
+      "threshold": 5
+    },
     "timeoutSeconds": 900,
     "idleTimeoutSeconds": 120,
     "maxToolCalls": 12,
@@ -104,6 +125,12 @@
     "maxOutputChars": 16000,
     "initialContextChars": 16000
   },
-  "output": { "kind": "directory", "path": "../data/runs/comparison" },
-  "problemLibrary": { "kind": "directory", "path": "../data/problems" }
+  "output": {
+    "kind": "directory",
+    "path": "../data/runs/comparison"
+  },
+  "problemLibrary": {
+    "kind": "directory",
+    "path": "../data/problems"
+  }
 }

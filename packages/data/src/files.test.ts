@@ -1,11 +1,51 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import filesystem from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { exists, hasLiveRunOwner, runLock, writeJson } from "./files.js";
 
 const deadOwner = { pid: 2147483647, token: "dead-owner" };
+
+test("run lock publishes a complete owner before concurrent callers can observe it", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-lock-publish-"));
+  const originalOpen = filesystem.open;
+  let started!: () => void, resume!: () => void;
+  const writing = new Promise<void>((resolve) => { started = resolve; });
+  const ready = new Promise<void>((resolve) => { resume = resolve; });
+  let paused = false;
+  t.mock.method(filesystem, "open", async (...args: Parameters<typeof originalOpen>) => {
+    const handle = await originalOpen(...args);
+    if (!paused && args[1] === "wx" && path.basename(String(args[0])).startsWith(".run-lock")) {
+      paused = true;
+      const write = handle.writeFile.bind(handle);
+      handle.writeFile = async (data, options) => { started(); await ready; return write(data, options); };
+    }
+    return handle;
+  });
+  syncBuiltinESMExports();
+  const first = runLock(directory);
+  let contender: ReturnType<typeof runLock> | undefined;
+  try {
+    await writing;
+    contender = runLock(directory);
+    const [second] = await Promise.allSettled([contender]);
+    resume();
+    const [initial] = await Promise.allSettled([first]);
+    assert.equal(second.status, "fulfilled", second.status === "rejected" ? String(second.reason) : "");
+    assert.equal(initial.status, "rejected", "the first caller cannot overwrite the published owner");
+    if (initial.status === "rejected") assert.match(String(initial.reason), /Run already owned by host PID /);
+  } finally {
+    resume();
+    for (const result of await Promise.allSettled(contender ? [first, contender] : [first]))
+      if (result.status === "fulfilled") await result.value();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("run lock excludes a second host and is released only by its owner", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-lock-"));

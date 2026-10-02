@@ -56,9 +56,8 @@ async function resumeExperiment(change: "none" | "rubric" | "reference" | "sourc
             result = incorrect;
           }
           if (stage === "criteria" && expanded && change === "rubric") {
-            const criteria = result as TaskAnalysis;
-            criteria.requirements[0].text = "给出算式和正确的整数结果";
-            criteria.requirements[0].acceptance_rule = "回答写出2+2以及整数结果4。";
+            const criteria = result as import("@eval/agents/criteria").CriteriaSubmission;
+            criteria.requirements = [{ id: "r1", source_ids: ["question"] }, { id: "r2", source_ids: ["reference"] }];
           }
           const response = await options.execute("submit_evaluation", draftFor(options.spec, result));
           assert.equal(response.isError, undefined, JSON.stringify(response));
@@ -175,9 +174,8 @@ for (const change of ["rubric", "reference"] as const)
       assert.equal(expanded.manifest.tasks.filter((task) => task.stage === "attribution" && expanded.receipts[task.id]).length, 5);
       const newCriteria = expanded.manifest.tasks.find((task) => task.stage === "criteria" && !acceptedIds.has(task.id))!;
       const criteria = expanded.receipts[newCriteria.id].evaluation;
-      if (change === "rubric") assert.notDeepEqual(criteria, original.receipts[originalRows[0].criteria_task_id].evaluation);
-      else assert.deepEqual(criteria, original.receipts[originalRows[0].criteria_task_id].evaluation,
-        "a changed reference requires reassessment even when rubric text stays equal");
+      assert.notDeepEqual(criteria, original.receipts[originalRows[0].criteria_task_id].evaluation,
+        "source-based criteria preserve both changed source selections and changed reference text");
       for (const review of reviews) {
         const data = review.data as TaskData;
         assert.equal(data.reviewOf!.round, 1);

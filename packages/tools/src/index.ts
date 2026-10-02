@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { canonical, errorText, object, schemaIssues, ValidationError } from "@eval/contracts";
 
 import { cite, evidenceId, evidenceSources, imagePlaceholder } from "./evidence.js";
+import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
+import { calculate } from "./decimal.js";
+import { fitStringPage } from "./pagination.js";
+import { RequiredReadBudget } from "./required-reading.js";
 
 const schema = (properties: JsonSchema, required = Object.keys(properties)): JsonSchema => ({
   type: "object",
@@ -33,12 +37,12 @@ function message(ctx: ToolContext, candidate: string, i: number): unknown {
 }
 export function images(value: unknown): ToolContent[] {
   if (typeof value === "string") {
-    const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/.exec(value);
+    const match = /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/i.exec(value);
     return match ? [{ type: "image", mimeType: match[1], data: match[2] }] : [];
   }
   if (!value || typeof value !== "object") return [];
   const node = value as Record<string, unknown>;
-  if (node.type === "image" && typeof node.data === "string" && (node.mimeType || node.mime_type))
+  if (node.type === "image" && typeof node.data === "string" && /^image\//i.test(String(node.mimeType || node.mime_type || "")))
     return [
       {
         type: "image",
@@ -47,30 +51,6 @@ export function images(value: unknown): ToolContent[] {
       },
     ];
   return Object.values(node).flatMap(images);
-}
-export function calculate(operation: string, operands: string[]): unknown {
-  if (
-    operands.length < 2 ||
-    operands.length > 20 ||
-    operands.some((v) => !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(v))
-  )
-    throw new Error("需要 2—20 个十进制数值字符串");
-  const numbers = operands.map(Number);
-  if (!numbers.every(Number.isFinite)) throw new Error("数值超出范围");
-  const result = numbers.slice(1).reduce((a, b) => {
-    if (operation === "add") return a + b;
-    if (operation === "subtract") return a - b;
-    if (operation === "multiply") return a * b;
-    if (operation === "divide" && b !== 0) return a / b;
-    throw new Error("不支持的运算或除数为零");
-  }, numbers[0]);
-  if (!Number.isFinite(result)) throw new Error("计算结果溢出");
-  return {
-    operation,
-    operands,
-    result: result.toPrecision(15),
-    precision: "IEEE-754, 15 significant digits",
-  };
 }
 const calculationSchema = schema({
   operation: { enum: ["add", "subtract", "multiply", "divide"] },
@@ -200,6 +180,79 @@ export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
   {
+    name: "check_table",
+    inputSchema: schema({
+      candidate: str,
+      answer_table_id: str,
+      sources: { type: "array", minItems: 1, items: schema({
+        table_id: str,
+        key_columns: { type: "array", minItems: 1, items: schema({ answer: index, source: index }) },
+        value_columns: { type: "array", minItems: 1, items: schema({ answer: index, source: index }) },
+      }) },
+      message_index: index,
+      offset: index,
+    }, ["candidate"]),
+    async execute(ctx, value) {
+      const args = value as Partial<TableCheckRequest> & { candidate: string; message_index?: number; offset?: number };
+      const raw = record(ctx, args.candidate), offset = args.offset ?? 0;
+      if ((args.answer_table_id === undefined) !== (args.sources === undefined))
+        throw new Error("核验时必须同时提供 answer_table_id 和 sources；只传 candidate 可先获取表格目录");
+      if (args.answer_table_id === undefined) {
+        const all = parseTraceTables(raw).filter((table) => args.message_index === undefined || table.message_index === args.message_index);
+        if (offset > all.length) throw new Error("offset 超出表格目录范围");
+        const shown = all.slice(offset, offset + 20).map((table) => ({
+          table_id: table.table_id, message_index: table.message_index, path: table.path,
+          headers: table.headers, row_count: table.rows.length,
+          preview: table.rows.slice(0, 2).map((row) => ({ row_index: row.row_index,
+            cells: row.cells.slice(0, 6).map((cell) => cell.slice(0, 80)),
+          })),
+        }));
+        const page = () => textResult({ tables: shown, total: all.length, offset,
+          next_offset: offset + shown.length, has_more: offset + shown.length < all.length });
+        let result = page();
+        while (result.content[0].text!.length > ctx.policy.maxOutputChars && shown.length > 1) {
+          shown.pop(); result = page();
+        }
+        if (result.content[0].text!.length > ctx.policy.maxOutputChars)
+          throw new Error("maxOutputChars 太小，无法完整返回一张表的目录；请增大工具输出预算");
+        return result;
+      }
+      if (args.message_index !== undefined) throw new Error("message_index 仅用于表格目录，核验直接使用 table_id");
+      const request: TableCheckRequest = { answer_table_id: args.answer_table_id, sources: args.sources! };
+      const checked = compareTraceTableRows(raw, request);
+      if (offset > checked.rows.length) throw new Error("offset 超出回答表行范围");
+      const evidence = (item: ReturnType<typeof cite>) => ({ evidence_id: item.evidence_id,
+        message_index: item.message_index, quote_preview: item.quote.slice(0, 600), has_more: item.quote.length > 600 });
+      const answerColumns = [...request.sources[0].key_columns, ...request.sources[0].value_columns];
+      const sourceSpecs = new Map(request.sources.map((source) => [source.table_id, source]));
+      const shown = checked.rows.slice(offset, offset + 30).map((row) => row.status === "matched"
+        ? { row_index: row.row_index, status: row.status }
+        : { row_index: row.row_index, status: row.status,
+          answer: { cells: answerColumns.map((column) => ({ column: column.answer, value: row.answer.cells[column.answer] })),
+            evidence: evidence(row.answer.evidence) },
+          sources: row.sources.map((source) => {
+            const mapping = sourceSpecs.get(source.table_id)!;
+            return { table_id: source.table_id, row_index: source.row_index, matched_by: source.matched_by,
+              cells: [...mapping.key_columns, ...mapping.value_columns].map((column) => ({ column: column.source,
+                value: source.cells[column.source] })), evidence: evidence(source.evidence) };
+          }),
+        });
+      const page = () => textResult({ answer_table_id: checked.answer_table_id, summary: checked.summary,
+        rows: shown, total: checked.rows.length, offset, next_offset: offset + shown.length,
+        has_more: offset + shown.length < checked.rows.length });
+      let result = page();
+      while (result.content[0].text!.length > ctx.policy.maxOutputChars && shown.length > 1) {
+        shown.pop(); result = page();
+      }
+      if (result.content[0].text!.length > ctx.policy.maxOutputChars)
+        throw new Error("maxOutputChars 太小，无法完整返回一行对应核验；请增大工具输出预算");
+      const entry = { candidate: args.candidate, ...request };
+      if (!(ctx.audit.tableChecks ?? []).some((check) => canonical(check) === canonical(entry)))
+        (ctx.audit.tableChecks ??= []).push(structuredClone(entry));
+      return result;
+    },
+  },
+  {
     name: "read_trace",
     inputSchema: schema(
       {
@@ -208,6 +261,7 @@ export const builtinTools: ExecutableTool[] = [
         path: { type: "string" },
         offset: index,
         max_chars: { type: "integer", minimum: 1, maximum: 16000 },
+        source_offset: index,
       },
       ["candidate", "message_index"],
     ),
@@ -218,41 +272,46 @@ export const builtinTools: ExecutableTool[] = [
         path?: string;
         offset?: number;
         max_chars?: number;
+        source_offset?: number;
       };
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
-      const source = args.path
+      const source = args.path !== undefined
         ? sources.find((item) => item.kind === "text" && item.path === args.path)
         : sources.find((item) => item.kind === "json");
       if (!source) throw new Error("文本路径不存在；先省略 path 读取该消息的 text_sources，再选择其中的路径");
+      if (args.path !== undefined && args.source_offset !== undefined) throw new Error("source_offset 仅用于整条消息的文本路径目录");
       const offset = args.offset ?? 0;
       if (offset > source.text.length) throw new Error(`offset 超出当前来源长度 ${source.text.length}，请使用上次返回的 next_offset`);
-      let end = Math.min(offset + (args.max_chars ?? 12000), source.text.length);
       const paths = sources.filter((item) => item.kind === "text");
-      const shownPaths = source.kind === "json" ? paths.slice(0, 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
-      const page = () => {
+      const sourceOffset = args.source_offset ?? 0;
+      if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
+      const shownPaths = source.kind === "json" ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
+      const page = (end: number) => {
         const evidence = cite(args.message_index, source, offset, end);
         const quotable = !!evidence.quote && !evidence.quote.includes(imagePlaceholder);
-        return textResult({
+        return {
           source: { kind: source.kind, path: source.path },
           evidence: quotable ? [evidence] : [],
           // Text is shown once, paired with its ID; image placeholders have no evidence ID.
           ...(!quotable ? { text: evidence.quote } : {}),
           offset, next_offset: end, total_chars: source.text.length, has_more: end < source.text.length,
-          ...(source.kind === "json" ? { text_sources: shownPaths, text_sources_has_more: shownPaths.length < paths.length } : {}),
-        });
+          ...(source.kind === "json" ? { text_sources: shownPaths, text_sources_total: paths.length,
+            text_sources_next_offset: sourceOffset + shownPaths.length,
+            text_sources_has_more: sourceOffset + shownPaths.length < paths.length } : {}),
+        };
       };
-      let result = page();
-      // Fit the serialized response, including escaped quotes and metadata, before generic truncation.
-      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && end - offset > 1) {
-        end = offset + Math.max(1, Math.floor((end - offset) / 2));
-        result = page();
+      let fitted;
+      for (;;) {
+        try {
+          fitted = fitStringPage({ totalChars: source.text.length, offset, maxChars: args.max_chars ?? 16000,
+            maxOutputChars: ctx.policy.maxOutputChars, build: page });
+          break;
+        } catch (error) {
+          if (!(error instanceof RangeError) || shownPaths.length <= 1) throw error;
+          shownPaths.pop();
+        }
       }
-      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && shownPaths.length) {
-        shownPaths.pop();
-        result = page();
-      }
-      if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
-        throw new Error("maxOutputChars 太小，无法完整返回一条证据；请增大工具输出预算");
+      const end = fitted.end, result = textResult(fitted.value);
       if (end > offset) ctx.audit.traceReads.push({
         candidate: args.candidate, message_index: args.message_index,
         kind: source.kind, path: source.path, start: offset, end,
@@ -276,7 +335,9 @@ export const builtinTools: ExecutableTool[] = [
         query: string;
         offset?: number;
       };
+      const offset = args.offset ?? 0;
       const matches: { path: string; evidence: ReturnType<typeof cite>; read: TraceRead }[] = [];
+      let total = 0;
       record(ctx, args.candidate).messages.forEach((m, i) => {
         for (const source of evidenceSources(m)) {
           const { path: location, text } = source;
@@ -289,22 +350,24 @@ export const builtinTools: ExecutableTool[] = [
               Math.max(0, position - 100),
               Math.min(text.length, position + args.query.length + 200),
             );
-            if (!evidence.quote.includes("[图像数据")) matches.push({ path: location, evidence, read: {
+            if (!evidence.quote.includes(imagePlaceholder)) {
+              if (total >= offset && matches.length < 20) matches.push({ path: location, evidence, read: {
               candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
               start: Math.max(0, position - 100), end: Math.min(text.length, position + args.query.length + 200),
-            } });
+              } });
+              total++;
+            }
             start = position + args.query.length;
-            if (matches.length >= 10000) break;
           }
         }
       });
-      const offset = args.offset || 0;
-      const shown = matches.slice(offset, offset + 20);
+      if (offset > total) throw new Error("offset 超出检索结果范围");
+      const shown = matches;
       const page = () => textResult({
         matches: shown.map(({ path, evidence }) => ({ path, evidence })),
-        total: matches.length,
+        total,
         next_offset: offset + shown.length,
-        has_more: offset + shown.length < matches.length,
+        has_more: offset + shown.length < total,
       });
       let result = page();
       while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && shown.length > 1) {
@@ -325,15 +388,18 @@ export const builtinTools: ExecutableTool[] = [
       const content = images(message(ctx, args.candidate, args.message_index));
       if (!content.length) throw new Error("该消息没有可读取的内嵌图片");
       const id = `${args.candidate}:${args.message_index}`;
+      const metadata = JSON.stringify({
+        message: `原始消息 ${id}，${content.length} 张图片`,
+        evidence_id: evidenceId(args.message_index, "image"),
+      });
+      if (metadata.length > ctx.policy.maxOutputChars)
+        throw new Error("maxOutputChars 太小，无法完整返回图片元数据；请增大工具输出预算");
       if (!ctx.audit.viewedImages.includes(id)) ctx.audit.viewedImages.push(id);
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              message: `原始消息 ${id}，${content.length} 张图片`,
-              evidence_id: evidenceId(args.message_index, "image"),
-            }),
+            text: metadata,
           },
           ...content,
         ],
@@ -417,14 +483,13 @@ export const builtinTools: ExecutableTool[] = [
           ],
         };
       const text = Buffer.from(bytes).toString("utf8"),
-        offset = args.offset || 0,
-        length = args.max_chars || 12000;
-      return textResult({
-        text: text.slice(offset, offset + length),
-        total_chars: text.length,
-        next_offset: offset + length,
-        has_more: offset + length < text.length,
-      });
+        offset = args.offset ?? 0;
+      const page = fitStringPage({ totalChars: text.length, offset, maxChars: args.max_chars ?? 16000,
+        maxOutputChars: ctx.policy.maxOutputChars, build: (end) => ({
+          text: text.slice(offset, end), offset, total_chars: text.length,
+          next_offset: end, has_more: end < text.length,
+        }) });
+      return textResult(page.value);
     },
   },
 ];
@@ -462,8 +527,10 @@ export class ToolRuntime {
   private readonly definitions: Map<string, ExecutableTool>;
   private readonly validators;
   private readonly reads = new Map<string, ToolResult>();
+  private readonly required: RequiredReadBudget;
   constructor(context: ToolContext, tools: ExecutableTool[]) {
     this.context = context;
+    this.required = new RequiredReadBudget(context.inputs, context.requiredReads ?? [], context.policy.maxOutputChars);
     this.definitions = new Map(tools.map((t) => [t.name, t]));
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     this.validators = new Map(tools.map((t) => [t.name, ajv.compile(t.inputSchema)]));
@@ -479,40 +546,52 @@ export class ToolRuntime {
       const tool = this.definitions.get(name),
         validate = this.validators.get(name);
       if (!tool || !validate) throw new Error("Unknown tool");
-      if (this.context.audit.calls >= maxCalls) throw new Error("探索工具预算已耗尽，请根据已有证据提交");
+      const valid = validate(args);
+      const mandatory = valid && name === "read_trace" && this.required.isRequired(args, this.context.audit);
+      if (this.context.audit.calls - this.context.audit.requiredReadCalls >= maxCalls && !mandatory)
+        throw new Error("探索工具预算已耗尽；尚未读取的必读正文仍可按 next_offset 继续读取，然后提交");
       this.context.audit.calls++;
-      if (!validate(args)) throw new ValidationError(schemaIssues(validate.errors, args));
+      if (!valid) throw new ValidationError(schemaIssues(validate.errors, args));
       const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
         key = canonical([name, args]);
       const cached = this.reads.get(key);
-      if (cacheable && cached) return structuredClone(cached);
-      const result = await tool.execute(this.context, args, signal);
+      const before = { traceReads: [...this.context.audit.traceReads] };
+      // Keep the cached data independent of the live invocation budget. All tools
+      // receive the same reserved space, including pages loaded from artifacts.
+      const outputChars = Math.max(1, this.context.policy.maxOutputChars - 200);
+      const result = cacheable && cached ? structuredClone(cached) : await tool.execute({
+        ...this.context, policy: { ...this.context.policy, maxOutputChars: outputChars },
+      }, args, signal);
+      if (mandatory && !cached && !result.isError) {
+        const returned = this.context.audit.traceReads.at(-1);
+        if (returned && this.required.charge(args, returned, before)) this.context.audit.requiredReadCalls++;
+      }
       const text = result.content
         .filter((c) => c.type === "text")
         .map((c) => c.text || "")
         .join("\n");
-      if (text.length > this.context.policy.maxOutputChars) {
+      if (text.length > outputChars) {
         const artifact = await this.context.artifacts.put(`${name}-result.json`, canonical(result));
         this.context.audit.artifacts.push(artifact);
+        const page = fitStringPage({ totalChars: text.length, maxChars: text.length,
+          maxOutputChars: outputChars, build: (end) => ({ preview: text.slice(0, end), artifact, truncated: true }) });
         result.content = [
-          {
-            type: "text",
-            text:
-              text.slice(0, this.context.policy.maxOutputChars) +
-              `\n[完整工具结果见产物 ${artifact.id}，可用 read_artifact 分页读取]`,
-          },
+          { type: "text", text: page.serialized },
           ...result.content.filter((c) => c.type !== "text"),
         ];
         result.details = { artifact, truncated: true };
       }
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));
+      const budget = {
+        exploration: { used: this.context.audit.calls - this.context.audit.requiredReadCalls,
+          remaining: Math.max(0, maxCalls - (this.context.audit.calls - this.context.audit.requiredReadCalls)) },
+        required_reads: { used: this.required.used, remaining: this.required.remaining },
+      };
       result.details = {
         ...(result.details && typeof result.details === "object" ? result.details : {}),
-        budget: {
-          used: this.context.audit.calls,
-          remaining: Math.max(0, maxCalls - this.context.audit.calls),
-        },
+        budget,
       };
+      result.content.push({ type: "text", text: JSON.stringify({ budget }) });
       return result;
     } catch (error) {
       const errors =
@@ -539,5 +618,7 @@ export class ToolRuntime {
 export * from "./evidence.js";
 export * from "./validation.js";
 export * from "./trace-audit.js";
+export * from "./table-correspondence.js";
 export * from "./serper.js";
 export * from "./web-reader.js";
+export { calculate } from "./decimal.js";

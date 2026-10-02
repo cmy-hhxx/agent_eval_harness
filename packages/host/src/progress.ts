@@ -26,7 +26,7 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
   const queued = tasks.filter((task) => task.status === "pending" && (!scope || scope.has(task.id))).length;
   const failures: Record<string, number> = {};
   for (const task of tasks)
-    if (["failed", "timed_out", "cancelled", "blocked"].includes(task.status)) {
+    if (["failed", "timed_out"].includes(task.status)) {
       const category = task.failure?.errors[0]?.category || "interruption";
       failures[category] = (failures[category] || 0) + 1;
     }
@@ -58,6 +58,8 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
     accepted: Object.keys(state.receipts).length,
     repairing: running.filter((task) => task.failure?.draft !== undefined).length,
     failures,
+    blocked: tasks.filter((task) => task.status === "blocked").length,
+    cancelled: tasks.filter((task) => task.status === "cancelled").length,
     concurrency,
     recent_completed_per_minute: Object.values(state.receipts).filter((r) => r.acceptedAt >= now - 60000)
       .length,

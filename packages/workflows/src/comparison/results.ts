@@ -98,6 +98,7 @@ export function comparisonRow(
       correctness_reason: attribution.correctness_reason,
       correctness_evidence: attribution.correctness_evidence,
       numeric_checks: attribution.numeric_checks,
+      ...(attribution.table_resolutions ? { table_resolutions: attribution.table_resolutions } : {}),
       criterion_assessments: attribution.criterion_assessments,
       core_assessment: attribution.core_assessment,
       summary: attribution.summary,

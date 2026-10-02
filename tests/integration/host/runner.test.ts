@@ -534,6 +534,39 @@ for (const stop of [false, true]) test(`Host persists its actual retry deadline 
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+for (const exhausted of [false, true]) test(`SDK malformed Responses arguments ${exhausted ? "stop at" : "recover within"} the configured retry budget`, async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  let targetId: string | undefined, targetCalls = 0;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    targetId ??= options.spec.taskId;
+    return { async run() {
+      if (options.spec.taskId === targetId && (++targetCalls === 1 || exhausted)) {
+        options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error",
+          errorMessage: "Invalid OpenAI Responses tool arguments: submit_evaluation (call_retry|fc_retry); expected complete JSON object" } });
+        return;
+      }
+      const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    const runId = exhausted ? "malformed-arguments-exhausted" : "malformed-arguments-recovered";
+    const summary = await runEvaluation({ ...services, runId, output: config.output, config,
+      plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url] });
+    const saved = await readRunState(path.join(config.output.path, runId));
+    assert.equal(targetCalls, 2, "one initial request and exactly one retry; no unbounded SDK fallback");
+    assert.equal(saved.manifest.states[targetId!].attempts, 2);
+    assert.equal(saved.manifest.states[targetId!].status, exhausted ? "failed" : "succeeded");
+    assert.equal(summary.completed_comparisons, exhausted ? 0 : 1);
+    if (exhausted) {
+      assert.equal(saved.receipts[targetId!], undefined);
+      assert.equal(saved.manifest.states[targetId!].failure?.errors[0].category, "transport");
+      assert.equal(saved.manifest.states[targetId!].failure?.contentSubmissions, 0, "incomplete arguments never reach content validation");
+    } else assert(saved.receipts[targetId!], "only the valid retry produces an accepted evaluation");
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 for (const debug of [false, true])
   test(`same run ID resumes with changed model, budget and build (debug: ${debug})`, async () => {
     const rows = ["2026-09-23", "2026-09-24"].map((batch_id) => ({
@@ -596,7 +629,7 @@ for (const debug of [false, true])
         "diagnostics",
         "failures.jsonl",
       );
-      assert.equal(await exists(failureFile), debug);
+      assert.equal(await exists(failureFile), false, "interrupted tasks are not exported as execution failures");
       const run = path.join(config.output.path, "resume");
       assert.match(await readFile(path.join(run, "task_summaries.md"), "utf8"), /Interrupted/);
       const saved = await readRunState(run);
@@ -628,7 +661,7 @@ for (const debug of [false, true])
       assert.deepEqual(complete.judge_models, {
         criteria: ["changed-model", "fixture"], attribution: ["changed-model"], comparison: ["changed-model"],
       });
-      assert.equal(await exists(failureFile), false, "resume must remove stale failure exports");
+      assert.equal(await exists(failureFile), false, "a successful resume has no failure export");
       assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);

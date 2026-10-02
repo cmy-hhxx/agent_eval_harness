@@ -1,0 +1,136 @@
+{
+  "suite_id": "judgment-quality-core",
+  "purpose": "Controlled variants derived from observed evaluator failure modes. These are targeted regression checks, not an independently annotated human gold benchmark or a measurement of overall judge accuracy.",
+  "orders": {
+    "baseline": [0, 1],
+    "swapped": [1, 0]
+  },
+  "cases": [
+    {
+      "case_id": "volume-unit-dimension",
+      "provenance": {
+        "run_id": "eval-20261002-r66-quality",
+        "batch_id": "2026-09-24",
+        "case_id": "客观题2500条补充_带标准答案_with_gt_客观题_00105",
+        "adaptation": "Keep the observed scalar volume and unit; replace the long company trace with a short disclosed-data return and change only the final quantity's expression."
+      },
+      "question": "根据销量查询结果，回答本期总销量。只给出销量及单位。",
+      "ground_truth": "总销量为1087.4万千升",
+      "tool": {
+        "name": "SalesQuery",
+        "arguments": { "metric": "本期总销量" },
+        "output": "本期总销量：1087.4万千升。"
+      },
+      "variants": [
+        {
+          "id": "equivalent-volume",
+          "answer": "总销量为10,874,000千升。",
+          "expected": {
+            "is_correct": true,
+            "numeric": { "expected": "1087.4", "actual": "10874000", "scale": "0.0001", "matches": true },
+            "no_established_correctness_problem": true
+          }
+        },
+        {
+          "id": "wrong-mass-dimension",
+          "answer": "总销量为1087.4万吨。",
+          "expected": {
+            "is_correct": false,
+            "numeric": { "expected": "1087.4", "actual": "1087.4", "scale": "1", "matches": false }
+          }
+        }
+      ],
+      "expected_pair": { "preferred_variant": "equivalent-volume", "reason": "The volume conversion is exact; mass cannot replace volume without an additional density premise." }
+    },
+    {
+      "case_id": "percentage-point-sign",
+      "provenance": {
+        "run_id": "eval-20261002-r66-quality",
+        "adaptation": "Minimal signed percentage-point variant of the observed unsupported-tolerance failure; all source values are controlled test inputs."
+      },
+      "question": "本期利润率相对上期变化了多少个百分点？按查询中给出的利润率计算，只给出变化结果。",
+      "ground_truth": "-0.6个百分点",
+      "tool": {
+        "name": "MarginQuery",
+        "arguments": { "metric": "利润率", "periods": ["上期", "本期"] },
+        "output": "同一口径利润率：上期为6.9%，本期为6.3%。"
+      },
+      "variants": [
+        {
+          "id": "negative-equivalent-precision",
+          "answer": "利润率变化为−0.60个百分点。",
+          "expected": {
+            "is_correct": true,
+            "numeric": { "expected": "-0.6", "actual": "-0.60", "scale": "1", "matches": true },
+            "no_established_correctness_problem": true
+          }
+        },
+        {
+          "id": "positive-wrong-value",
+          "answer": "利润率变化为+1.25个百分点。",
+          "expected": {
+            "is_correct": false,
+            "numeric": { "expected": "-0.6", "actual": "+1.25", "scale": "1", "matches": false }
+          }
+        }
+      ],
+      "expected_pair": { "preferred_variant": "negative-equivalent-precision", "reason": "The signed difference is -0.6 percentage points; changing only the final value to +1.25 is wrong." }
+    },
+    {
+      "case_id": "source-code-name-alignment",
+      "provenance": {
+        "run_id": "eval-20261002-r66-quality",
+        "batch_id": "2026-09-25",
+        "case_id": "case_0924_case_0924_080",
+        "adaptation": "Retain two audited source code/name pairs and one observed final-code substitution. Omit financial amounts, rankings, and the original long trace."
+      },
+      "question": "整理本次查询返回的公司名称与股票代码，表格列出所有返回记录，保持名称和代码的对应关系。无需补充检索。",
+      "ground_truth": null,
+      "tool": {
+        "name": "FinQuery",
+        "arguments": { "names": ["电科思仪", "路桥信息"], "fields": ["公司名称", "股票代码"] },
+        "output": "| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 301689.SZ |\n| 路桥信息 | 920748.BJ |"
+      },
+      "variants": [
+        {
+          "id": "single-code-substitution",
+          "answer": "| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 688255.SH |\n| 路桥信息 | 920748.BJ |",
+          "expected": { "is_correct": null, "established_source_discrepancy": true }
+        },
+        {
+          "id": "source-pairs-preserved",
+          "answer": "| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 301689.SZ |\n| 路桥信息 | 920748.BJ |",
+          "expected": { "is_correct": null, "no_established_correctness_problem": true }
+        }
+      ],
+      "expected_pair": { "preferred_variant": "source-pairs-preserved", "reason": "Only the first final code changes; the source tool return preserves the code/name pairing." }
+    },
+    {
+      "case_id": "truncated-source-uncertainty",
+      "provenance": {
+        "run_id": "eval-20261002-r66-quality",
+        "adaptation": "Controlled false-positive guard: an explicitly truncated query leaves one requested code unknown; both candidates correctly retain uncertainty."
+      },
+      "question": "整理查询中的电科思仪与路桥信息两家公司代码。对于查询未显示的记录，代码标记为“待核实”并说明原因，不补查、不推断缺失代码。",
+      "ground_truth": null,
+      "tool": {
+        "name": "FinQuery",
+        "arguments": { "names": ["电科思仪", "路桥信息"], "fields": ["公司名称", "股票代码"] },
+        "output": "返回状态：truncated=true。总共2条，当前仅显示第1条；未显示部分未知。\n\n| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 301689.SZ |"
+      },
+      "variants": [
+        {
+          "id": "explicit-uncertainty-left",
+          "answer": "| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 301689.SZ |\n| 路桥信息 | 待核实 |\n\n查询返回被截断，路桥信息的代码尚未显示，不能据此认定其代码错误或记录不存在。",
+          "expected": { "is_correct": null, "no_established_problem": true }
+        },
+        {
+          "id": "explicit-uncertainty-right",
+          "answer": "| 公司名称 | 股票代码 |\n| --- | --- |\n| 电科思仪 | 301689.SZ |\n| 路桥信息 | 待核实 |\n\n查询返回被截断，路桥信息的代码尚未显示，不能据此认定其代码错误或记录不存在。",
+          "expected": { "is_correct": null, "no_established_problem": true }
+        }
+      ],
+      "expected_pair": { "preferred_variant": null, "reason": "Identical uncertainty-preserving answers should tie; unseen source rows are not evidence of a wrong answer." }
+    }
+  ]
+}

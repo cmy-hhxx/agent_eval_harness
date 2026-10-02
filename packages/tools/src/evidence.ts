@@ -1,24 +1,30 @@
 import type { ValidationIssue } from "@eval/contracts";
-import { ValidationError } from "@eval/contracts";
+import { evidenceId, ValidationError } from "@eval/contracts";
+export { evidenceId } from "@eval/contracts";
 
 export const imagePlaceholder = "[图像数据，请使用 view_image]";
+function isImageText(value: unknown, parent?: unknown, key?: string): boolean {
+  if (typeof value !== "string") return false;
+  if (/^data:image\//iu.test(value)) return true;
+  if (key !== "data" || !parent || typeof parent !== "object") return false;
+  const node = parent as Record<string, unknown>;
+  return node.type === "image" && [node.mimeType, node.mime_type].some((mime) =>
+    typeof mime === "string" && /^image\/\S+/iu.test(mime));
+}
 function renderMessage(value: unknown): string {
   return JSON.stringify(
     value,
-    (key, child: unknown) =>
-      typeof child === "string" &&
-      (child.startsWith("data:image/") || (key === "data" && child.length > 20000))
-        ? imagePlaceholder
-        : child,
+    function (this: unknown, key, child: unknown) {
+      return isImageText(child, this, key) ? imagePlaceholder : child;
+    },
     2,
   );
 }
 function textLeaves(value: unknown, prefix = ""): [string, string][] {
-  if (typeof value === "string") return value.startsWith("data:image/") ? [] : [[prefix, value]];
+  if (typeof value === "string") return isImageText(value) ? [] : [[prefix, value]];
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, child]) =>
-    key === "data" && typeof child === "string" && child.length > 20000
-      ? []
+    isImageText(child, value, key) ? []
       : textLeaves(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
   );
 }
@@ -31,21 +37,6 @@ export function evidenceSources(message: unknown): { kind: "text" | "json"; path
     })),
     { kind: "json", path: "", text: renderMessage(message) },
   ];
-}
-/**
- * A plain-text evidence coordinate. It encodes the message, source kind, character
- * range and source path directly so the model can copy a tool-issued ID without an
- * opaque encoding step; only the mapping from kind+path back to source text is
- * resolved at submission time.
- */
-export function evidenceId(
-  messageIndex: number,
-  kind: "text" | "json" | "image",
-  path = "",
-  start = 0,
-  end = 0,
-): string {
-  return kind === "image" ? `ev_${messageIndex}_image` : `ev_${messageIndex}_${kind}_${start}_${end}_${path}`;
 }
 export function cite(
   messageIndex: number,

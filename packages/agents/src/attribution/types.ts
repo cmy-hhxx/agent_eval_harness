@@ -61,7 +61,7 @@ export interface AttributionResult {
   rewritten?: RewrittenResult;
   /** Whether the case carries a usable standard answer; mirrors the request input. */
   has_standard_answer: boolean;
-  /** Must be boolean when a standard answer exists, otherwise null. */
+  /** With a reference, null requires an uncertain applicable core criterion and independent review; otherwise boolean. Without a reference, null. */
   is_correct: boolean | null;
   correctness_reason: string;
   correctness_evidence: Evidence[];
@@ -80,4 +80,12 @@ export interface AttributionResult {
   core_assessment: CoreAssessment;
   summary: string;
   findings: AttributionFinding[];
+  /** Only independent review can resolve a specific table row with source evidence. */
+  table_resolutions?: {
+    table_id: string;
+    row_index: number;
+    outcome: "supported" | "conflict";
+    reason: string;
+    evidence: Evidence[];
+  }[];
 }

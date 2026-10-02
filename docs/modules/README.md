@@ -9,10 +9,10 @@
 | 应用 Host | [CLI](../../apps/host/src/cli.ts)、[看板服务](../../apps/host/src/dashboard.ts)、[日期盘点与预检复用](../../apps/host/src/dashboard-inputs.ts)、[看板视图模块](../../apps/host/dashboard/dashboard-view.js)、[数据与流程](../../apps/host/src/dashboard-reference.ts)、[问题库页面](../../apps/host/dashboard/problems.html)、[配置](../../apps/host/src/config.ts)、[组装](../../apps/host/src/composition.ts) | 根 `eval`；`@eval/host-app/config`、`composition` | Host、具体 Agent / Workflow、Data | 配置、看板、问题库树与样本召回、跨模块回归、doctor |
 | Eris | [完整定义](../../agent/src/core/profile.ts)、[核心工具](../../agent/src/core/tools.ts)、[产品接口](../../agent/src/server/index.ts)、[原界面装配](../../agent/src/client/main.js) | `@eval/assistant`、`@eval/assistant/server` | Contracts、Prompts、Tools、Runtime；具体业务由应用 Host 注入 | 会话、浏览器、原上游回归与性能 |
 | 应用 Worker | [底座与进程入口](../../apps/worker/src/cli.ts) | 根 `worker` | Runtime、Contracts | 双 SDK 集成、独立构建 |
-| Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
+| Contracts | [通用接口、JSON 与协议](../../packages/contracts/src/index.ts)、[证据坐标](../../packages/contracts/src/evidence.ts)、[必读区间归并与页额度](../../packages/contracts/src/required-reading.ts) | `@eval/contracts` | 无 IO / SDK | 类型检查、架构测试 |
 | Automations | [流水线、恢复与退避](../../packages/automations/src/index.ts)、Mongo 增量同步与四小时日志交付、[只读监控](../../apps/host/src/automation-dashboard.ts)；[使用与状态](../automations.md) | `@eval/automations`；根 `automations`、[automation.sh](../../automation.sh) | Contracts；应用注入 Runtime / Data / Host / Workflow | 下载完整性、队列并行、历史接管、全阶段、上传续传与回执、时段统计与看板 |
 | Host | [调度](../../packages/host/src/runner.ts)、[提交与恢复](../../packages/host/src/store.ts)、[Profile 契约](../../packages/host/src/agents.ts)、进度 | `@eval/host` | Contracts、Data、Runtime 客户端/HTTP | 提交与恢复、通用 JSON 隔离 |
-| Criteria | [验收基准 Profile](../../packages/agents/src/criteria/index.ts)，只读问题和候选约束、固定逐项验收规则 | `@eval/agents/criteria` | Contracts、Prompts | 作用域、唯一 ID、材料边界 |
+| Criteria | [验收基准 Profile](../../packages/agents/src/criteria/index.ts)，只读问题、标准答案和候选约束原文、固定逐项验收规则 | `@eval/agents/criteria` | Contracts、Prompts | 来源覆盖、作用域、唯一 ID、材料边界 |
 | Comparison | [默认 Profile](../../packages/agents/src/comparison/index.ts)、业务校验与[根目录 schemas/comparison](../../schemas/comparison/)、validate | `@eval/agents/comparison` | Contracts、Tools、Prompts | 同目录单元测试、组合判决 |
 | Attribution | [归因 Profile](../../packages/agents/src/attribution/index.ts)、集中提示词与[根目录 schemas/attribution](../../schemas/attribution/)、resolve/validate | `@eval/agents/attribution` | Contracts、Tools、Prompts | 同目录单元测试、问题描述 |
 | Clustering | [聚类 Profile 与纯问题库规则](../../packages/agents/src/clustering/index.ts)、集中提示词与[根目录 schemas/clustering](../../schemas/clustering/)、归类/合并校验 | `@eval/agents/clustering` | Contracts、Prompts | 同目录单元测试、库合并与上限 |
@@ -23,6 +23,7 @@
 | Tools | [注册与执行](../../packages/tools/src/index.ts)、[外部搜索](../../packages/tools/src/serper.ts)、[公开原文提取](../../packages/tools/src/web-reader.ts)、证据、分页、图片、代码与产物 | `@eval/tools` | Contracts、Data | 工具、搜索响应与进程生命周期 |
 | Prompts | [集中提示词模块](../../packages/prompts/README.md)、阶段规则、工具描述、组装 | `@eval/prompts` | Contracts | 文案、工具覆盖和实际发送内容 |
 | Schemas | [根目录 Schema 模块](../../schemas/README.md)、Criteria / Attribution / Comparison / Rewrite / Clustering / Workflow Schema | 根目录 `schemas/` | 被 Agents 与 Workflow 读取 | JSON Schema 与文档一致性 |
+| 离线汇报 | [开发预览](../../evaluation-report/index.html)、[独立源码与导出](../../evaluation-report/README.md)，SVG 机制图、提示词快照与真实验证数据 | 浏览器直接打开；`node evaluation-report/build.mjs` 导出单文件 | 无业务代码依赖，不接入项目运行或构建 | 模块构建测试、快照分母、一级导航、原文下载、单文件再打开与响应式核验 |
 
 Agent 不导入其他 Agent 或 Workflow。新增 Profile 在 `packages/prompts` 配套提交提示词与工具描述，在 Agent 目录提交校验、测试样例和单元测试，并在根目录 `schemas/<stage>/` 增加或修改 Schema，在应用组装处登记。Workflow 负责组合和输入映射，Agent 不读取其他 Agent 的实现或状态。改写 Agent 只认文本槽位，槽位选择、回填和内嵌 rewritten 字段由 Comparison Workflow 维护；聚类 Agent 拥有问题库，归因只提供问题描述，工作流负责按 `(模型 × 批次)` 分片组合观察，并通过 Data 的模型锁读改写问题库。
 

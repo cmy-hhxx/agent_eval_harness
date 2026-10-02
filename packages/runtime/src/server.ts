@@ -6,6 +6,7 @@ import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
+  submissionToolNames,
   type AgentBackend,
   type AgentSession,
   type AttemptSpec,
@@ -89,6 +90,7 @@ export async function startWorker(
     const { spec, controller } = attempt,
       audit: ToolAudit = {
         calls: 0,
+        requiredReadCalls: 0,
         viewedImages: [],
         traceReads: [],
         calculations: [],
@@ -140,6 +142,7 @@ export async function startWorker(
           inputs,
           audit,
           policy: spec.policy,
+          requiredReads: spec.evaluation.requiredReads,
           artifacts,
         },
         definitions,
@@ -197,16 +200,21 @@ export async function startWorker(
           );
           void attempt.session?.abort();
         }
+        const fileRepair = spec.evaluation.fileSubmission && draft !== undefined && await exists(draftPath);
         return {
           ...textResult({
             accepted: false,
             errors,
-            draft_file: "evaluation-draft.json",
+            ...(fileRepair ? { draft_file: "evaluation-draft.json" } : {}),
             budget: {
               content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions),
               file_errors_remaining: Math.max(0, 3 - fileErrors),
             },
-            message: "未通过草稿已保存为 evaluation-draft.json。按具体字段修复，保留其他内容。",
+            message: fileRepair
+              ? "未通过草稿已保存为 evaluation-draft.json。按具体字段修复，保留其他内容。"
+              : draft === undefined
+                ? "未读取到提交内容，未生成草稿。请直接调用 submit_evaluation 提交完整 JSON。"
+                : "按具体字段修正完整 JSON，再调用 submit_evaluation 提交，保留其他内容。",
           }),
           isError: true,
         };
@@ -336,7 +344,7 @@ export async function startWorker(
             return readJson(file);
           }),
       };
-      const submissionTools = [submit, submitFile];
+      const submissionTools = spec.evaluation.fileSubmission ? [submit, submitFile] : [submit];
       emit(attempt, "started", {
         engine: backend.identity,
         policy: spec.policy,
@@ -430,11 +438,17 @@ export async function startWorker(
         );
         attempt.status.errorDetail = redact(inspect(original, { depth: null, maxStringLength: null, maxArrayLength: null }),
           [process.env[spec.model.apiKeyEnv] || ""]);
+        // The SDK has already rejected the response before dispatching a tool. Retry
+        // that protocol failure through Host's existing budget; never repair its JSON.
+        const malformedToolResponse = spec.model.api === "openai-responses" && modelError === errorText(original) &&
+          /^Invalid OpenAI Responses tool arguments: (?:[A-Za-z_][A-Za-z0-9_.-]* \([A-Za-z0-9_|.-]+\)|[A-Za-z0-9_|.-]+); expected (?:complete )?JSON object$/u.test(modelError);
         attempt.status.retryable =
           !controller.signal.aborted &&
-          /fetch|network|connection|terminated|ECONN|429|50[234]|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
+          (malformedToolResponse || /fetch|network|connection|terminated|ECONN|429|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
             attempt.status.error,
-          );
+          ) || /\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+(?:error|status(?:\s+code)?))?|API\s+error)\s*[:(]?\s*5\d{2}\b/i.test(
+            attempt.status.error,
+          ));
       }
     } finally {
       clearTimeout(deadline);
@@ -501,10 +515,21 @@ export async function startWorker(
       if (canonical(spec.engine) !== canonical(backend.identity))
         throw new HttpError(409, "Worker engine build mismatch");
       if (!spec.evaluation || !Array.isArray(spec.evaluation.toolNames) || !spec.evaluation.outputSchema ||
+        typeof spec.evaluation.fileSubmission !== "boolean" ||
         typeof spec.evaluation.submissionNudge !== "string" || !spec.evaluation.submissionNudge.trim())
         throw new HttpError(400, "Invalid evaluation spec");
+      if (!Array.isArray(spec.inputs) || spec.inputs.some(ref => !ref || typeof ref.id !== "string" || typeof ref.name !== "string") ||
+        new Set(spec.inputs.map(ref => ref.name)).size !== spec.inputs.length)
+        throw new HttpError(400, "Invalid input refs");
       registry.select(spec.evaluation.toolNames);
-      const names = [...spec.evaluation.toolNames, "submit_evaluation", "submit_evaluation_file"];
+      if (spec.evaluation.requiredReads !== undefined && (!Array.isArray(spec.evaluation.requiredReads) ||
+        spec.evaluation.requiredReads.some(read => !read || read.kind !== "text" || typeof read.path !== "string" ||
+          !spec.inputs.some(input => input.name === read.candidate) ||
+          !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
+          !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
+        (spec.evaluation.requiredReads.length > 0 && !spec.evaluation.toolNames.includes("read_trace"))))
+        throw new HttpError(400, "Invalid required material ranges");
+      const names = [...spec.evaluation.toolNames, ...submissionToolNames(spec.evaluation.fileSubmission)];
       const descriptions = spec.evaluation.toolDescriptions;
       if (!descriptions || typeof descriptions !== "object" || Array.isArray(descriptions) ||
         new Set(names).size !== names.length || Object.keys(descriptions).length !== names.length ||
@@ -528,8 +553,6 @@ export async function startWorker(
         (!Number.isInteger(spec.policy.maxTokens) || spec.policy.maxTokens < 1)
       )
         throw new HttpError(400, "Invalid token budget");
-      if (!Array.isArray(spec.inputs) || new Set(spec.inputs.map((r) => r.name)).size !== spec.inputs.length)
-        throw new HttpError(400, "Invalid input refs");
       spec.inputs.forEach((ref) => {
         safeId(ref.id);
         safeId(ref.name);

@@ -24,7 +24,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
     ].map(({ profile, ...stage }) => ({
       ...stage,
       toolDescriptions: profile.toolDescriptions,
-      schemas: ["criteria", "rewrite"].includes(stage.id)
+      schemas: stage.id === "rewrite"
         ? { request: profile.requestSchema, result: profile.resultSchema }
         : { request: profile.requestSchema, submission: profile.submissionSchema, result: profile.resultSchema },
       prompts: { system: profile.systemPrompt, instructions: profile.instructions, submissionNudge: profile.submissionNudge },

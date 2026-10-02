@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { JsonObject, PlannedTask } from "@eval/contracts";
 import type { Candidate, TaskData } from "./types.js";
-import { summarizeResults } from "./report.js";
+import { summarizeResults, writeOverview } from "./report.js";
 
 const answer = (id: string, version: string, correct: boolean | null, batch = "day", caseId = "case", inputId = `${batch}:${caseId}:${version}`): JsonObject => ({
   task_id: id, version, input_id: inputId, batch_id: batch, case_id: caseId, is_correct: correct,
@@ -27,6 +30,22 @@ function pair(first: string, second: string, core: [boolean, boolean], refs: [st
 }
 const summarize = (answers: JsonObject[], pairs: JsonObject[]) =>
   summarizeResults(answers.map(source), [], answers, pairs, [], []);
+
+test("report separates failed attempts, blocked dependencies and cancelled tasks", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "report-statuses-"));
+  const statuses = { succeeded: 4, failed: 6, timed_out: 5, blocked: 97, cancelled: 2, pending: 3, running: 1 };
+  const totals = { ...summarize([], []), task_statuses: statuses,
+    planned: { cases: 10, tasks: 118, skipped_groups: 0, input_issues: 0 } };
+  try {
+    await writeOverview(directory, { ...totals, run_id: "status-counts", status: "finished",
+      evaluator_versions: ["test"], by_batch: { day: totals }, tokens: { totalTokens: 0 }, attempts_without_final_metrics: 0 });
+    const report = await readFile(path.join(directory, "report.md"), "utf8");
+    assert.match(report, /执行失败：11；依赖阻塞：97；已取消：2/);
+    assert.match(report, /\| 失败 \| 依赖阻塞 \| 已取消 \| 待完成 \|/);
+    assert.match(report, /\| day \| 10 \| 118 \| 0 \| 11 \| 97 \| 2 \| 4 \| 0 \| 0 \|/);
+    assert.equal(statuses.blocked, 97);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("two-model statistics preserve battle counts while separating answer identity across batches", () => {
   const answers = [answer("a1", "a", true, "first"), answer("b1", "b", true, "first"),
