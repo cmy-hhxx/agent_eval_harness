@@ -69,7 +69,7 @@ npm run build:prime
 
 工具版本以 [mise.toml](../mise.toml) 为准。根 workspace、两个 vendor npm workspace 和 Prime Python runtime 使用各自锁文件；vendor 保持独立依赖树。修改 vendor 必须同步 `vendor/upstream.json` 的 `local_changes` 并重建，不在运行时自动升级。不要手改 `dist/`。`build:app` 会移除并重建部分 `dist/`；在共享工作目录中构建前先停止活跃 Host / Worker，避免破坏在途任务加载的入口。
 
-Pi 仅保留应用显式注册的网关模型。`npm --prefix vendor/pi run check:sources` 使用 [源码检查配置](../vendor/pi/tsconfig.check-sources.json) 验证裁剪后的 TypeScript 实现和公开示例；功能回归使用根目录的 `npm test` 和 `npm run test:integration`。原上游 `check` 命令仍包含依赖内建模型目录的测试类型检查，这些测试依赖的模型数据已被裁剪；`check:sources` 不运行或验证这些测试。
+Pi 仅保留应用显式注册的网关模型。`npm --prefix vendor/pi run check:sources` 使用 [源码检查配置](../vendor/pi/tsconfig.check-sources.json) 按当前上游包目录验证裁剪后的 TypeScript 实现和公开示例；升级时同步移除上游已删除的目录与检查引用。功能回归使用根目录的 `npm test` 和 `npm run test:integration`。原上游 `check` 命令仍包含依赖内建模型目录的测试类型检查，这些测试依赖的模型数据已被裁剪；`check:sources` 不运行或验证这些测试。
 
 Python 只承担公共代码工具和 Prime SDK runtime；[bootstrap](../scripts/bootstrap.mjs) 创建不含第三方依赖的代码工具环境，Prime 使用独立项目和锁文件。
 

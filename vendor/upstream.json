@@ -1,12 +1,12 @@
 {
   "pi": {
     "repository": "https://github.com/earendil-works/pi",
-    "version": "0.99.2",
-    "commit": "005af57d88ee23b33778f343a9595b32e67ff788",
+    "version": "1.0.0",
+    "commit": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
     "directory": "vendor/pi",
     "local_changes": [
       "Evaluation-only gateway models: the offline generator emits empty chat, image and classifier catalogs without hydration or bundled model data; builtin provider registration is disabled. ModelRuntime registers only explicit application models, with network catalog refresh disabled.",
-      "check:sources typechecks implementation sources and public examples for the gateway-only vendor without builtin-catalog-dependent upstream tests. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites."
+      "check:sources typechecks implementation sources and public examples for the gateway-only vendor using the current upstream package graph. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites."
     ]
   },
   "prime": {
