@@ -309,7 +309,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
         if (message?.role === "toolResult") {
           await this.flushProgress(value, String(message.toolCallId), true);
           const sourceRead = object(message.details ?? {}).sourceRead;
-          const content = sourceRead ? [{ type: "text", text: JSON.stringify({ sourceRead }) }] : (message.content as JsonObject[]).map((block) => block.type === "image" ? { type: "text", text: "[image reference]" } : block);
+          const content = sourceRead && !message.isError ? [{ type: "text", text: JSON.stringify({ sourceRead }) }] : (message.content as JsonObject[]).map((block) => block.type === "image" ? { type: "text", text: "[image reference]" } : block);
           await this.append(value, "tool/result", { ...turnStep(), ...(event.entryId ? { entryId: event.entryId } : {}), message: createToolResultMessage({ callId: message.toolCallId, content, isError: message.isError === true }), ...(message.details ? { meta: message.details } : {}) }, true);
         }
         break;

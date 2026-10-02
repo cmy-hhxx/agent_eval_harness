@@ -175,6 +175,57 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
   }
 });
 
+test("Pi conversation preserves source read errors without re-executing failed tools on restoration", { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "assistant-tool-error-"));
+  const scope = { userId: "alice", sessionId: randomUUID() };
+  const requests: JsonObject[] = [], errors: unknown[] = [];
+  const previousSecret = process.env.ASSISTANT_TEST_KEY;
+  process.env.ASSISTANT_TEST_KEY = "fixture-secret";
+  const gateway = await listen(async (req, res) => {
+    const request = object(await body(req)); requests.push(request);
+    const hasTool = (request.messages as JsonObject[]).some(message => message.role === "tool");
+    const delta = hasTool ? { role: "assistant", content: "材料读取失败。" }
+      : { role: "assistant", tool_calls: [{ index: 0, id: "failed-lookup", type: "function", function: { name: "lookup", arguments: "{}" } }] };
+    const chunk = { id: "tool-error-fixture", object: "chat.completion.chunk", created: 1, model: "fixture" };
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+    res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: hasTool ? "stop" : "tool_calls" }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\n`);
+    res.end("data: [DONE]\n\n");
+  });
+  const model: ModelConfig = { provider: "test-gateway", baseUrl: gateway.url + "/v1", api: "openai-completions", apiKeyEnv: "ASSISTANT_TEST_KEY", model: "fixture", thinking: "off", contextWindow: 65536, maxOutputTokens: 4096 };
+  let toolExecutions = 0;
+  const options = { directory, url: "http://127.0.0.1:1", model, systemPrompt: "Use lookup, then explain.", tools: [{ name: "lookup", readOnly: true, description: "Read source material.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, execute: async () => {
+    toolExecutions++;
+    return { isError: true, content: [{ type: "text" as const, text: "Source reader unavailable" }], details: { sourceRead: { tool: "lookup", args: {} } } };
+  } }], onError: (error: unknown) => errors.push(error) };
+  let sessions = new AssistantSessions(options);
+  try {
+    await sessions.create(scope.userId, scope.sessionId);
+    const prompt: AssistantPrompt = { sessionId: scope.sessionId, requestId: randomUUID(), mode: "queue", content: [{ type: "text", text: "读取材料" }] };
+    await sessions.prompt(scope.userId, prompt);
+    assert.equal((await settled(sessions, scope.sessionId, prompt.requestId)).requests[prompt.requestId], "completed", JSON.stringify(errors));
+    const page = object(await sessions.page(scope));
+    const rows = page.records as { event: { type: string; data: JsonObject } }[];
+    const result = rows.find(row => row.event.type === "tool/result")!.event.data;
+    assert.equal(object(result.message).isError, true, "a returned tool failure must not become a successful SDK result");
+    assert(JSON.stringify(object(result.message).content).includes("Source reader unavailable"));
+    assert.deepEqual(object(result.meta ?? {}).sourceRead, { tool: "lookup", args: {} }, "locator metadata does not authorize replay of a failed read");
+    await assert.rejects(sessions.toolResult(scope, "failed-lookup"), /没有可读取/);
+    assert.equal(toolExecutions, 1);
+    assert.equal(requests.length, 2, "the model can explain a tool failure without failing the whole turn");
+    await sessions.dispose(); sessions = new AssistantSessions(options);
+    const next = { ...prompt, requestId: randomUUID(), content: [{ type: "text" as const, text: "继续说明读取失败" }] };
+    await sessions.prompt(scope.userId, next);
+    assert.equal((await settled(sessions, scope.sessionId, next.requestId)).requests[next.requestId], "completed", JSON.stringify(errors));
+    assert.equal(toolExecutions, 1, "restoration must not execute a failed source reader again");
+    assert(JSON.stringify(requests.at(-1)!.messages).includes("Source reader unavailable"));
+    assert.deepEqual(errors, []);
+  } finally {
+    await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });
+    if (previousSecret === undefined) delete process.env.ASSISTANT_TEST_KEY; else process.env.ASSISTANT_TEST_KEY = previousSecret;
+  }
+});
+
 test("Pi conversation checkpoints before requests, deduplicates, invokes tools, and restores one authoritative history", { timeout: 30000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "assistant-pi-"));
   const scope = { userId: "alice", sessionId: randomUUID() };

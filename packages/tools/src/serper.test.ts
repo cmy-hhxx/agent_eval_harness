@@ -235,6 +235,28 @@ test("Serper reports all HTTP failures without raw provider bodies or retries", 
   }
 });
 
+test("Serper cancels failed HTTP response bodies without reading secrets or waiting on cleanup", { timeout: 1000 }, async () => {
+  for (const cancellation of ["completed", "rejected", "pending"] as const) {
+    let cancelled = false, requestedSignal: AbortSignal | undefined;
+    const search = createSerperSearch({ apiKey: "private-key", fetch: stub((_, options) => {
+      requestedSignal = options.signal as AbortSignal;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull() { throw new Error("private-key response body must not be read"); },
+        cancel() {
+          cancelled = true;
+          if (cancellation === "rejected") throw new Error("private-key cleanup failure");
+          if (cancellation === "pending") return new Promise<void>(() => {});
+        },
+      }, { highWaterMark: 0 }), { status: 429 });
+    }) });
+    await assert.rejects(search.search(request(), signal()), (error: Error) => {
+      assert.match(error.message, /HTTP 429/); assert(!error.message.includes("private-key")); return true;
+    });
+    assert(cancelled, "an unread error response must release its transport instead of keeping it open");
+    assert(requestedSignal?.aborted, "finish the request lifecycle even when no body was consumed");
+  }
+});
+
 test("Serper rejects malformed results and invalid JSON without silently claiming an empty success", async () => {
   const invalid = [json(null), json([]), json({}), json({ organic: null }), json({ organic: [null] }),
     json({ organic: [{ title: "", link: item.link }] }), json({ organic: [{ title: "x", link: "javascript:alert(1)" }] }),

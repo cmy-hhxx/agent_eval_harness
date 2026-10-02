@@ -174,7 +174,11 @@ export function createSerperSearch(options: SerperSearchOptions = {}): WebSearch
             if (controller.signal.aborted) throw new Error(timedOut ? `Serper 搜索超时（${timeoutMs} ms）` : "Serper 搜索已取消");
             throw new Error("Serper 搜索网络请求失败");
           }), aborted]);
-          if (!response.ok) throw httpError(response.status);
+          if (!response.ok) {
+            // Do not read provider error bodies; cancel without waiting on transport cleanup.
+            void response.body?.cancel().catch(() => {});
+            throw httpError(response.status);
+          }
           const body = await Promise.race([readResponseJson(response, controller.signal), aborted]);
           const normalized = responseResults(body, parameters.category);
           attempts[queryIndex] = { ...query, queryIndex, state: "succeeded", resultCount: normalized.results.length, elapsedMs: Date.now() - start,
@@ -188,6 +192,7 @@ export function createSerperSearch(options: SerperSearchOptions = {}): WebSearch
         } finally {
           clearTimeout(timer);
           signal.removeEventListener("abort", cancel);
+          controller.abort();
         }
       }
       let next = 0;

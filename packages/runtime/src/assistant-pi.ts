@@ -54,7 +54,7 @@ async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntr
       const requested = history.findLast((entry) => entry.type === "assistant/message" && (object(entry.data.message).content as JsonObject[]).some(block => block.type === "tool-call" && block.id === message.toolCallId));
       const block = (requested ? object(requested.data.message).content as JsonObject[] : []).find(block => block.type === "tool-call" && block.id === message.toolCallId);
       const sourceRead = object(data.meta ?? {}).sourceRead;
-      if (sourceRead) {
+      if (sourceRead && !message.isError) {
         message.content = sdkContent((await readAssistantSource(options.tools, options.scope, String(message.toolCallId), sourceRead)).content);
       }
       messages.push({ role: "toolResult", toolCallId: message.toolCallId, toolName: call?.data.name ?? block?.name ?? "tool", content: message.content, isError: message.isError, timestamp: event.time });
