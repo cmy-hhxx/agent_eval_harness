@@ -4,4 +4,6 @@
 
 返回 kind、分页单位、hasMore、nextOffset；默认 30 条、最多 100 条。输入项的 reference 用于读取原始消息，任务项的 reference 用于读取正式结果，可直接传给 read_data。
 
+kind=inputs 还返回运行配置的 comparisonGroups；组内 models 给模型标识与展示名，comparisonTier 给声明的档位。每条输入的 model 用于定位，modelName 用于用户正文，comparisonTier 为 null 表示档位未声明。Fast 只能与 Fast 比，Expert 只能与 Expert 比，按声明和分组确认范围，不从名称猜测。配置组不代表已完成对局；场数与胜负须读取正式结果。分析具体案例时继续读取完整问句和必要回答片段，不把 caseId 或目录主题作为题目正文。
+
 kind=inputs 的 total 是回答输入数，不是题数；同题的不同模型各占一条输入。按 batchId + caseId 去重计算题数，同题编号跨批次分别计题，任务按 reference 去重，跨页统计先读完。只统计目录数量、覆盖和状态时，直接据目录交付，不为计数读取回答正文或正式判词。向用户直接报告业务数量、模型覆盖与任务状态，不输出内部引用或另一种题数；批次名中的数字不能当成本次样本量。pending 只表示待处理，目录未说明原因时不要自行解释。

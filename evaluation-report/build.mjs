@@ -6,11 +6,15 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const assets = [
   { path: 'src/tokens.css', tag: 'link', attribute: 'href', kind: 'style' },
   { path: 'src/styles.css', tag: 'link', attribute: 'href', kind: 'style' },
+  { path: 'src/rules.css', tag: 'link', attribute: 'href', kind: 'style' },
+  { path: 'src/prompts.css', tag: 'link', attribute: 'href', kind: 'style' },
   { path: 'src/data.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/motion.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/icons.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/diagram-interaction.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/flow.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/rules.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/prompts.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/app.js', tag: 'script', attribute: 'src', kind: 'script' },
 ];
 
@@ -54,10 +58,11 @@ export async function buildReport({ output = resolve(directory, 'report.html') }
 
   // 检查页面标签，避免将脚本字符串中的 HTML 模板误当成资源引用。
   const markup = html.replace(/(<script\b[^>]*>)[\s\S]*?<\/script\s*>/gi, '$1</script>');
+  const styles = assets.flatMap((asset, index) => asset.kind === 'style' ? [contents[index + 1]] : []);
   if (/<link\b[^>]*\brel=["']stylesheet["']/i.test(markup)
       || /<script\b[^>]*\bsrc\s*=/i.test(markup)
       || /<(?:img|iframe|audio|video|source)\b[^>]*\bsrc\s*=\s*["'](?!data:)/i.test(markup)
-      || /url\(\s*["']?(?!data:|#)[^\s"')]/i.test(contents[1] + contents[2])) {
+      || styles.some(style => /url\(\s*["']?(?!data:|#)[^\s"')]/i.test(style))) {
     throw new Error('导出仍包含外部资源；离线汇报必须把所有展示资源放进 HTML。');
   }
   await mkdir(dirname(outputPath), { recursive: true });

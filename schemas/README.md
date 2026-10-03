@@ -10,7 +10,7 @@
 | `rewrite/` | 改写阶段的请求和结果；只交换文本槽位、不解析证据，因此提交与结果共用 `result.schema.json` |
 | `clustering/` | 聚类阶段的请求、短编号提交和持久化身份结果；submission/result 分离 |
 | `workflow/` | Workflow 组合后的正式导出、回溯标注与聚类产物 Schema |
-| `eris/` | 独立分析助手的数据读取、专业任务及总结工具输入 |
+| `eris/` | 独立分析助手的数据读取、专业任务、图表及总结工具输入 |
 
 ## 文件含义
 
@@ -21,7 +21,7 @@
 - `workflow/statistics-log.schema.json`：已冻结的统计日志外部契约，覆盖完整日志信封、累计总计、逐日统计和全部嵌套字段；所有 `wins` 同级紧随必填非负整数 `both_good / both_bad`，涵盖模型、场景、难度及趋势。生成日志落盘前与恢复日志上传前严格校验。仅允许数值、标签内容和日期条目更新，未经用户明确授权不得修改结构。
 - `attribution/result.schema.json`、`comparison/result.schema.json`、`clustering/result.schema.json`：各自包含可选 `rewritten` 槽位，原字段不变；Workflow 在改写成功后写回。
 - `workflow/clustering.schema.json`：聚类阶段接受后的归类产物行，按模型与批次引用观察和归类决定。
-- `eris/tools.json`：独立分析助手的数据读取、专业任务及总结工具输入，不接受自行填写的专业判词。
+- `eris/tools.json`：独立分析助手的数据读取、专业任务、受限柱状图/折线图/饼图及总结工具输入，不接受自行填写的专业判词。图表只接收有来源引用的标签与有限数值，不接收 HTML、脚本、回调或远程数据配置。
 
 Criteria 的 `submission.schema.json` 只接收三组 `{id, source_ids}`；来源目录由程序从本题、已有标准答案及候选约束原文生成，解析后按 `result.schema.json` 接受固定共同 `task_analysis`。Attribution/Comparison 的提交不重复写此分析，Host 从请求镜像。Comparison 请求严格包含 A/B 两个候选及各自的当前归因；源归因的完整 `task_analysis` 必须与共同基准一致，否则只能提交定位候选与 criterion 的 `needs_review`。待复核结果单独写入 `comparison-review.jsonl`，不使用正式对比导出 Schema，不派生胜负。Comparison 的独立 `submission.schema.json` 中，decided 提交完整排名与非空比较矩阵；needs_review 只允许必填 status、assessments、非空 review_requests。Host 为待复核结果生成空排名、空比较矩阵与固定待复核说明；正式 result 保持完整结构，待复核观察行不要求覆盖全部事实。Clustering 用独立的 `submission.schema.json` 接收请求内短编号，解析后按 `result.schema.json` 保存真实身份；Rewrite 的提交与结果共用 `result.schema.json`。
 

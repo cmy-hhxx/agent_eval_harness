@@ -1,7 +1,7 @@
 import path from "node:path";
 import { safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisQuery, type JsonObject } from "@eval/contracts";
 import { exists, localFiles, readJson } from "@eval/data";
-import { locateAnalysisInput, readAnalysisInput, readRunTasks, type Checkpoint } from "@eval/workflows/comparison";
+import { assertComparableGroups, locateAnalysisInput, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
 
 function page(total: number, offset: number, limit: number, unit: "items" | "messages" | "characters") {
@@ -25,13 +25,25 @@ export class LocalAnalysisData implements AnalysisDataSource {
         if (query.query && !runId.includes(query.query)) continue;
         items.push({ runId, evaluatorVersion: state.evaluatorVersion, status: state.status });
       }
-      return { kind: "runs", ...page(items.length, offset, limit, "items"), items: items.slice(offset, offset + limit) };
+      return { kind: "runs" as const, ...page(items.length, offset, limit, "items"), items: items.slice(offset, offset + limit) };
     }
     const saved = await readJson<Checkpoint>(path.join(this.run(query.runId), "state.json"));
-    const items = Object.entries(saved.inputs).map(([inputId, input]) => ({ reference: { runId: query.runId!, inputId }, runId: query.runId!, inputId, batchId: input.batch_id, caseId: input.case_id, model: input.version,
+    const config = saved.config as EvalConfig;
+    assertComparableGroups(config);
+    const versions = new Map(config.inputs.versions.map((version) => [version.id, version]));
+    const model = (id: string) => {
+      const version = versions.get(id);
+      if (!version) throw new Error("输入版本未登记：" + id);
+      return { model: id, modelName: version.display_name ?? version.name, comparisonTier: version.comparison_tier ?? null };
+    };
+    const comparisonGroups = config.comparisons.map((group) => {
+      const models = group.map(model);
+      return { comparisonTier: models[0]!.comparisonTier, models: models.map(({ model, modelName }) => ({ model, modelName })) };
+    });
+    const items = Object.entries(saved.inputs).map(([inputId, input]) => ({ reference: { runId: query.runId!, inputId }, runId: query.runId!, inputId, batchId: input.batch_id, caseId: input.case_id, ...model(input.version),
       tasks: Object.entries(saved.tasks).filter(([, task]) => Object.values(task.inputIds).includes(inputId)).map(([taskId, task]) => ({ reference: { runId: query.runId!, taskId }, taskId, stage: task.stage, status: task.status })) }));
     const filtered = query.query ? items.filter((item) => JSON.stringify(item).includes(query.query!)) : items;
-    return { kind: "inputs", ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), evaluatorVersion: saved.evaluatorVersion };
+    return { kind: "inputs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion };
   }
   async raw(reference: AnalysisReference) {
     if (!reference.inputId) throw new Error("inputId is required");

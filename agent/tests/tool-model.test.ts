@@ -7,6 +7,14 @@ import { ROOT } from "../../tests/fixtures/services.js";
 
 const { analysisToolModel } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/tool-model.js")).href);
 
+test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
+  assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "bar" } }) }),
+    { summary: "显示柱形图 · 已完成" });
+  assert.deepEqual(analysisToolModel("show_chart", { state: "error", bodyRaw: JSON.stringify({ type: "pie", references: [{ runId: "run-private" }] }), output: "invalid values" }),
+    { summary: "显示饼图 · 未完成" });
+  assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });
+});
+
 test("calculation summaries tolerate rejected arguments and incomplete streaming calls", () => {
   for (const operands of ["1", {}, 1, null, undefined]) {
     const args = JSON.stringify({ operation: "add", operands });

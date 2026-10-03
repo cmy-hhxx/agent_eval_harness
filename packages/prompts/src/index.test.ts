@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, type PromptStage } from "./index.js";
+import { agentPrompt, erisPrompt, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -61,6 +61,25 @@ test("rewrite asks for direct factual critique without boilerplate or stronger c
   assert.match(text, /不能写成已证实错误/);
   assert.match(text, /未展示、未展开、未提供证据.*不能改成.*未核查/);
   assert(!text.includes("原样保留数字"), "self-rated 6/10 is not a source fact that must survive");
+});
+
+test("Eris wording exposes original evidence, purposeful endings and fixed same-tier visuals", () => {
+  const { systemPrompt, toolDescriptions } = erisPrompt(["read_data", "call_specialist", "show_chart"]);
+  assert.match(systemPrompt, /不为延长对话追加邀约、选项或钩子问句/);
+  assert.match(systemPrompt, /原始自然语言问句/);
+  assert.match(systemPrompt, /问句、回答、实际推导、断点评语/);
+  assert.match(systemPrompt, /首次失去依据或违反题目约束的位置/);
+  assert.match(systemPrompt, /多项数量.*优先用 show_chart.*优先用 Markdown 表格/);
+  assert.match(toolDescriptions.read_data, /正式结果.*不能代替原始问句和回答/);
+  for (const text of [systemPrompt, toolDescriptions.call_specialist])
+    assert.match(text, /Fast 只能与 Fast 比，Expert 只能与 Expert 比/);
+  assert.match(systemPrompt, /不能混成总排名或跨档优劣/);
+  const chart = toolDescriptions.show_chart;
+  assert.match(chart, /A组固定中灰，B组固定暗红/);
+  assert.match(chart, /不随赢家或涨跌改变.*不按类别位置猜测身份/);
+  assert.match(chart, /双方都好、双方都差.*独立的固定中性灰色/);
+  assert.match(chart, /不是官方模板或设计 token/);
+  assert.doesNotMatch(chart, /A组固定墨黑|B组固定铜色/);
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {

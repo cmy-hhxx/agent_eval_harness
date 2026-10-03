@@ -63,6 +63,7 @@ export function analysisToolModel(name,model){
  const status=statusText(model,output);
  if(name==='search_web')return webSearchModel(model,args,output,status);
  if(name==='read_web')return webReadModel(model,args,output,status);
+ if(name==='show_chart')return {summary:`显示${({bar:'柱形图',line:'折线图',pie:'饼图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
  if(name==='list_data')summary=output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'批评测':output.kind==='inputs'?'条评测样本':'项结果'}`;
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');

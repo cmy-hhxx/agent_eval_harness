@@ -26,11 +26,11 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 ## 离线评测汇报
 
-开发预览打开 [evaluation-report/index.html](evaluation-report/index.html)。流程、判决规则、提示词、实验各为一个主题页，页内重点直接展开，无嵌套切换或折叠。流程以真实的银河证券利率题贯穿共同标准、两条证据材料泳道、匿名比较与判决，支持关联高亮、局部放大和 A/B 换位；换位只改变代号，获胜来源仍是回答②（B组Expert）。本条结果来自 `eval-20261002-r68-quality`，实际评测器为 r69；与报告原有 r65 提示词快照、实验页 r64 聚合数据分别标明来源。复核、归类与润色呈现通用流程，不虚构本例执行记录。案例内容、图形、样式和交互在 [evaluation-report](evaluation-report/README.md) 内分开维护，不接入业务运行时。
+开发预览打开 [evaluation-report/index.html](evaluation-report/index.html)。流程页展示 `eval-20261003-002216` 中 r73 的 10 个真实案例，包含 3 道客观题、7 道主观题。完整问句、验收清单、独立核验、逐项优劣与原判取舍直接展示在同一机制图；69 条正式比较归并为 60 行有来源的图内摘要，区分优势、专属约束、待核实项和已知疑点。支持下拉选择、前后翻页、连线高亮和仅改变代号的 A/B 交换，没有缩放或浮层。底部按 A/B 展示真实问题归因的组件与问题名称，保留待核实状态。判决规则使用完整决策树，提示词的关键摘录与 28 份原文通过七个入口阅读。实验页仅保留空结构，尚未启动新的对比实验。
 
-执行 `node evaluation-report/build.mjs` 合并为 [evaluation-report/report.html](evaluation-report/report.html)，可单文件离线展示，页面不提供 HTML 导出按钮。完整提示词原文可下载为 TXT；浏览器打印只输出当前主题。
+源码、内容、样式和交互在 [evaluation-report](evaluation-report/README.md) 内独立维护。执行 `node evaluation-report/build.mjs` 将 4 份 CSS 和 8 份 JS 内联为 [evaluation-report/report.html](evaluation-report/report.html)，可单文件离线展示；页面不提供下载或导出入口，不在运行时读取业务文件。
 
-内容是人工核对的静态快照；工程测试不能代替真实裁判效果。更新时同步核对版本、来源、分母和复核状态，不修改原始结果或生产统计契约。
+案例保留 r73 已接受评测记录的静态快照，不保证全部语义判断正确；提示词阅读器对应当前 r74。具体来源与已发现的案例问题见模块文档；更新时核对原始记录，不修改生产统计契约、输入或正式结果。
 
 ## 最短运行路径
 

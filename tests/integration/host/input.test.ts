@@ -567,7 +567,7 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       } else if (stage === "attribution") {
         assert(rules.includes("evidence_id"));
         assert(instruction.includes("final_message_index"));
-        assert(rules.includes("优点 finding 的 problem 填 JSON null"));
+        assert(rules.includes("type=strength 时 problem 填 JSON null"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));

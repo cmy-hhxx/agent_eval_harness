@@ -31,7 +31,7 @@ export function matchesReference(actual: string, expected: string, scale: string
 export function containsNumber(text: string, value: string, preservePrecision = false): boolean {
   const normalized = text.replaceAll(",", "").replace(/[−﹣－]/gu, "-")
     // Count words are literal quantities; do not match inside a compound numeral.
-    .replace(/(?<![零〇一二两三四五六七八九十百千万亿])([一二两三四五六七八九十])(?=[只条家个项份次])/gu,
+    .replace(/(?<![零〇一二两三四五六七八九十百千万亿])([一二两三四五六七八九十])(?=[只条家个项份次天]|交易日)/gu,
       (_, digit: string) => String({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[digit]))
     // A missing separator before a calendar heading must not extend a decimal.
     .replace(/(\d+\.\d+)(20\d{2})(?=\s*年\s*(?:[上下]半年|第[一二三四1-4]季度|\d{1,2}月))/gu, "$1 $2")

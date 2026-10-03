@@ -455,17 +455,27 @@ export async function startWorker(
       clearTimeout(idle!);
       controller.abort();
       if (!accepted) {
+        const retryableInterruption = submissions === 0 && !record.failure &&
+          (spec.recovery?.draft === undefined || spec.recovery.stopped) &&
+          ((attempt.status.state === "failed" && attempt.status.error === "Agent ended without an accepted submission") ||
+            (attempt.status.state === "timed_out" && attempt.status.error === "Model/tool idle timeout"));
+        if (retryableInterruption) attempt.status.retryable = true;
+        const recoveryDraft = spec.recovery?.stopped ? undefined : spec.recovery?.draft;
         record.failure ??= {
+          ...(recoveryDraft === undefined ? {} : { draft: recoveryDraft }),
           errors: [
             {
-              category: attempt.status.retryable ? "transport" : "interruption",
-              code: attempt.status.retryable ? "transport_failed" : "attempt_interrupted",
+              category: attempt.status.retryable && !retryableInterruption ? "transport" : "interruption",
+              code: attempt.status.retryable && !retryableInterruption ? "transport_failed" : "attempt_interrupted",
               path: "/",
               message: attempt.status.error || "No accepted submission",
             },
+            ...(recoveryDraft === undefined ? [] : spec.recovery!.errors.filter(
+              ({ category }) => category !== "transport" && category !== "interruption",
+            )),
           ],
-          contentSubmissions: submissions,
-          fileErrors: 0,
+          contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
+          fileErrors: spec.recovery?.fileErrors || 0,
           repeatedErrors: 0,
           stopped: false,
           attemptId: spec.attemptId,

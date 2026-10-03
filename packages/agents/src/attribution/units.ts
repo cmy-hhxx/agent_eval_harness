@@ -13,6 +13,7 @@ register("currency:USD", { 美元: 0, 万美元: 4, 百万美元: 6, 亿美元: 
 register("currency:HKD", { 港元: 0, 万港元: 4, 百万港元: 6, 亿港元: 8 });
 register("ratio", { "%": -2, "％": -2, "‰": -3 });
 register("percentage-point", { 百分点: 0, 个百分点: 0, 基点: -2, 个基点: -2 });
+register("count:day", { 天: 0, 交易日: 0, 个交易日: 0 });
 for (const name of ["个", "家", "只", "条", "项", "份", "次", "人", "户", "股"])
   register(`count:${name}`, { [name]: 0, [`万${name}`]: 4, [`亿${name}`]: 8 });
 const names = [...units.keys()].sort((a, b) => b.length - a.length);
@@ -51,6 +52,18 @@ function headerUnit(header: string): { name: string; unit: Unit } | null {
   return parsed && !parsed.remaining.trim() ? parsed : null;
 }
 
+function tableUnit(text: string, start: number): { name: string; unit: Unit } | null {
+  const paragraph = text.slice(0, start).trimEnd().split(/\n[ \t]*\n/u).at(-1) ?? "";
+  if (paragraph.includes("|")) return null;
+  const declaration = /单位\s*[:：]\s*([^()（）\n]+?)\s*(?:[)）]\s*)?[:：]?\s*$/u.exec(paragraph);
+  return declaration ? headerUnit(declaration[1]) : null;
+}
+
+function identifierColumn(header: string): boolean {
+  const name = header.trim().replace(/\s*[（(][^()（）]*[）)]\s*$/u, "");
+  return /^(?:日期|月份|年月|年份|年度|交易日期|时间|股票代码|证券代码|基金代码|代码|编号|序号|id)$/iu.test(name);
+}
+
 /** Recover the cited token's real surroundings, even when its quote omits the unit. */
 function finalNumberUnits(message: unknown, quote: string, value: string): {
   found: boolean; units: { name: string; unit: Unit }[]; ambiguous: boolean;
@@ -74,7 +87,9 @@ function finalNumberUnits(message: unknown, quote: string, value: string): {
     // back to this exact content leaf; do not inspect numeric metadata as answer text.
     const jsonLeaves = jsonQuotes.length ? occurrences(json, JSON.stringify(source.text)) : [];
     if (!ranges.length && !jsonLeaves.length) continue;
-    const tokens = /(?:[+−﹣－-]\s*)?\d+(?:,\d{3})*(?:\.\d+)?(?:[eE][+-]?\d{1,3})?|[一二两三四五六七八九十](?=[只条家个项份次])/gu;
+    const dates = [...source.text.matchAll(/(?<!\d)(?:\d{4}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?<!\d)\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?(?!\d)/gu)]
+      .map((match) => ({ start: match.index, end: match.index + match[0].length }));
+    const tokens = /(?:[+−﹣－-]\s*)?\d+(?:,\d{3})*(?:\.\d+)?(?:[eE][+-]?\d{1,3})?|(?<![零〇一二两三四五六七八九十百千万亿])[一二两三四五六七八九十](?=[只条家个项份次天]|交易日)/gu;
     for (const token of source.text.matchAll(tokens)) {
       const start = token.index, end = start + token[0].length;
       const quoted = ranges.some((range) => start < range.end && end > range.start) || jsonLeaves.some((leaf) => {
@@ -83,13 +98,14 @@ function finalNumberUnits(message: unknown, quote: string, value: string): {
         return jsonQuotes.some((range) => from < range.end && to > range.start);
       });
       if (!quoted ||
-        /[\d.eE]$/u.test(source.text.slice(0, start)) || /[\d.eE]/u.test(source.text[end] ?? "")) continue;
+        /[\d.eE]$/u.test(source.text.slice(0, start)) || /[\d.eE]/u.test(source.text[end] ?? "") ||
+        dates.some((date) => start < date.end && end > date.start)) continue;
       const tail = source.text.slice(end);
       const adjacent = adjacentUnit(tail);
       const direction = source.text.slice(0, start).match(/[^\d]*$/u)?.[0] ?? "";
       if (!containsNumber(direction + token[0] + (/^[一二两三四五六七八九十]$/u.test(token[0]) ? adjacent?.name ?? "" : ""), value)) continue;
-      matched = true;
       const candidates: { name: string; unit: Unit }[] = adjacent ? [adjacent] : [];
+      let identifier = false;
       for (const table of tables.filter((table) => table.path === source.path)) for (const row of table.rows) {
         const coordinate = /^ev_\d+_text_(\d+)_(\d+)_/u.exec(row.evidence.evidence_id);
         if (!coordinate || start < Number(coordinate[1]) || end > Number(coordinate[2])) continue;
@@ -102,11 +118,19 @@ function finalNumberUnits(message: unknown, quote: string, value: string): {
           cursor = at + cell.length;
           const cellStart = Number(coordinate[1]) + at, cellEnd = cellStart + cell.length;
           if (start >= cellStart && end <= cellEnd) {
-            const unit = headerUnit(table.headers[column] ?? "");
+            if (identifierColumn(table.headers[column] ?? "")) {
+              identifier = true;
+              break;
+            }
+            const tableStart = /^ev_\d+_text_(\d+)_/u.exec(table.evidence.evidence_id);
+            const unit = headerUnit(table.headers[column] ?? "") ??
+              (!adjacent && tableStart ? tableUnit(source.text, Number(tableStart[1])) : null);
             if (unit) candidates.push(unit);
           }
         }
       }
+      if (identifier) continue;
+      matched = true;
       if (!candidates.length) unknownUnit = true;
       for (const candidate of candidates) found.set(`${candidate.unit.dimension}:${candidate.unit.power}`, candidate);
     }
@@ -154,7 +178,7 @@ export function numericUnitIssue(reference: unknown, quote: string, check: { exp
     };
   } else if (!matchesReference(check.scale, "1", "1", "exact")) return {
     code: "numeric_scale_unverified",
-    message: "非1的scale必须由标准与最终原文中数值紧邻的同维单位，或目标单元格同列的明确单位表头推导；当前单位缺失、不受支持或存在歧义。请补充可定位的完整原文；币种省略、复合单位等语义推导须在correctness_reason说明，不能编造倍率。",
+    message: "非1的scale必须由标准与最终原文中数值紧邻的同维单位、目标单元格同列的明确单位表头，或该表紧邻前一段落的单一单位声明推导；当前单位缺失、不受支持或存在歧义。请补充可定位的完整原文；币种省略、复合单位等语义推导须在correctness_reason说明，不能编造倍率。",
   };
   return null;
 }

@@ -2,5 +2,5 @@
 2. 每条判据只提交 id 和 source_ids。只能选择目录中已有 ID，不提交或自创 text、acceptance_rule、applies_to、task_type、goal；程序会回填完整原文、固定验收规则与共同适用候选。相同原文已确定性合并；不同候选的相反指令必须分别列条，不合并成无共同适用候选的判据。
 3. 每个候选的 requirements 必须覆盖 question，以及目录中存在的 reference。建议各自单独列一条公共要求，source_ids=["question"] 或 ["reference"]，使用不同的判据 ID；也可合并共同适用的完整来源，但合并后的作用域取交集，不能导致其他候选遗漏题目或标准。不可遗漏，不把标准答案降为可选加分项或红线。标准只供核对，不代表被评方知道它。数值、单位、精度、容差与区间由原文和程序固定规则确定，你不能生成等价单位、换算值或容差。
 4. 其余 requirements 选择完成任务必需的来源约束；scoring_points 只选确有原文依据的可选加分项，red_flags 只选原文明确禁止的行为。没有独立加分项或禁止事项时填 []。“不必风险提示”是免除要求，不是禁止风险提示；条件、例外、可选性和否定范围以源句为准，分组不能改变源句效力。保留重要的候选专有合法要求，不能将一方约束施加给另一方。
-5. 为每条判据分配 r1、s1、f1 等简短 ID，三数组内全局唯一；合计最多 24 条。可将共同适用且有关联的完整来源合并为一条，不能因省事漏掉关键指令。同一句可能同时来自 question 和 context，已有公共 question 时不再为同文公共 context 重复列条；相同原文、作用域和验收规则不得再列成多条判据。后续归因按完整原文核对真实交付、选择真正影响核心可用性的判据，不把段落中的所有内容都当核心。
-6. 通过 submit_evaluation 直接提交 requirements、scoring_points、red_flags 三数组。遇到不存在的源 ID、缺失 question/reference、无共同作用域或数量/ID 错误时，按反馈修复来源选择，重新提交完整 JSON。
+5. 为每条判据分配 r1、s1、f1 等简短 ID，三数组内全局唯一；合计最多 24 条。可将共同适用且有关联的完整来源合并为一条，不能因省事漏掉关键指令。同一句可能同时来自 question 和 context，已有公共 question 时不再为同文公共 context 重复列条；相同原文、作用域和验收规则在 requirements、scoring_points、red_flags 三数组之间也只能保留一条，不能靠换分组重复评审。后续归因按完整原文核对真实交付、选择真正影响核心可用性的判据，不把段落中的所有内容都当核心。
+6. 通过 submit_evaluation 直接提交 requirements、scoring_points、red_flags 三数组。遇到 criterion_duplicate 时合并或删除重复来源选择，只换判据 ID 不能消除重复。其他源 ID、question/reference 覆盖、作用域或数量/ID 错误按反馈修复，再提交完整 JSON。

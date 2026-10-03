@@ -14,6 +14,16 @@ const models=new GatewayAssistantModels(directory,config,async()=>modelIds.map(i
 const selected=[];
 let sourceReads=0;let sourceAvailable=true;
 let webSearches=0;let webReads=0;
+let chartDisplays=0;
+const chartData={type:'bar',title:'FAST：已裁决胜场',scope:'已裁决的 11 场 FAST 对战',unit:'场',source:'正式对比结果',categories:['A组Fast','B组Fast'],series:[{name:'胜场',values:[6,5]}]};
+const templateExamples={
+ '时间趋势':{type:'line',title:'时间趋势（测试示例）',scope:'离线测试；2026-01-01 至 2026-01-21',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['2026-01-01','2026-01-02','2026-01-03','2026-01-11','2026-01-21'],series:[{name:'A组Fast',values:[1.25,1.35,null,1.42,1.6]},{name:'B组Fast',values:[1.1,null,1.45,1.3,1.5]}]},
+ '结果组成':{type:'pie',title:'结果组成（测试示例）',scope:'离线测试；12 条互斥示例记录',unit:'条',source:'浏览器测试数据，非评测结论',categories:['A组胜','B组胜','双方均好','双方均差','待定'],series:[{name:'组成',values:[5,3,2,2,0]}]},
+};
+templateExamples['多系列趋势']={...templateExamples['时间趋势'],title:'多系列趋势（测试示例）',series:[templateExamples['时间趋势'].series[1],templateExamples['时间趋势'].series[0],{name:'C组Fast',values:[1.7,1.75,1.8,1.85,1.9]},{name:'参照Fast',values:[.8,.85,.9,.95,1]}]};
+templateExamples['长数字组成']={type:'pie',title:'长数字组成（测试示例）',scope:'离线测试；长数值与极小非零类别，不代表真实场数',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['双方均差','经营现金流与利润口径不一致且关键推导缺失'.repeat(4),'A组胜','双方均好'],series:[{name:'组成',values:[1,999999999999999.9,1,0]}]};
+const modelColors={'A组Fast':'rgb(103, 103, 103)','B组Fast':'rgb(119, 65, 67)','C组Fast':'rgb(66, 66, 66)','参照Fast':'rgb(169, 112, 115)'};
+const chartTool={name:'show_chart',readOnly:true,description:'Show structured chart',inputSchema:{type:'object'},execute:async(chart=chartData)=>{chartDisplays++;return {content:[{type:'text',text:JSON.stringify({kind:'chart',chart})}]};}};
 const searchArgs={queries:[{query:'央行政策利率公告',domains:['pbc.gov.cn']},{query:'中国人民银行 利率 公告'},{query:'央行发布会 利率'}],category:'news',dateTo:'2026-10-02',limit:3};
 const searchTitle='中国人民银行政策利率公告';
 const searchSnippet='政策利率以公告发布日为准。[伪造来源](javascript:alert(1))';
@@ -42,10 +52,23 @@ const rawReadError='读取失败：taskId task-private-missing，路径 /private
 const sourceTool={name:'read_data',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>{sourceReads++;if(!sourceAvailable)throw new Error('原始材料暂时不可用');return {content:[{type:'text',text:JSON.stringify({reference:sourceArgs.reference,text:sourceText,evidence:[{evidence_id:'ev_0_text_0_4_/content',quote:'原始问题'}],total:sourceText.length,hasMore:false,nextOffset:null})}]};}};
 const thinkingGate=Promise.withResolvers();
 const imageTool={name:'view_image',readOnly:true,description:'Read image',inputSchema:{type:'object'},execute:async()=>({content:[{type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6G2YAAAAASUVORK5CYII='}]})};
-const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool,searchTool,webReadTool],driver:async({event,model,scope})=>({
+const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool,searchTool,webReadTool,chartTool],driver:async({event,model,scope})=>({
  async prompt(text){
   selected.push(model);const callId="lookup-"+selected.length;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
+  const example=templateExamples[text.replace('图表模板测试示例：','')];
+  if(example){
+   const exampleCall='template-'+selected.length;
+   await event({type:'message_start',message:{role:'assistant'}});
+   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,content:[{type:'toolCall',id:exampleCall,name:'show_chart',arguments:{...example,references:[{reference:formalReference}]}}],stopReason:'toolUse'}});
+   await event({type:'tool_execution_start',toolCallId:exampleCall,toolName:'show_chart',args:{...example,references:[{reference:formalReference}]}});
+   await event({type:'message_end',message:{role:'toolResult',toolCallId:exampleCall,...await chartTool.execute(example),isError:false}});
+   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
+   const exampleText='图表模板测试示例，仅用于验证渲染，不代表评测结论。';
+   await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:exampleText}});
+   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,content:[{type:'text',text:exampleText}],stopReason:'stop'}});
+   await event({type:'turn_end'});await event({type:'agent_end'});return;
+  }
   await event({type:'message_start',message:{role:'assistant'}});
   const tagged='<think>先核对引用，再查询正式结果。</think>';
   for(const delta of ['<thi','nk>先核对引用，','再查询正式结果。</thi','nk>']){
@@ -71,6 +94,10 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'read-specialist-'+selected.length,content:[{type:'text',text:JSON.stringify({operationId,state:'succeeded',evaluatorVersion,result:{conclusion:'对比完成'}})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'calculate-'+selected.length,toolName:'calculate',args:{operation:'add',operands:['1','2']}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'calculate-'+selected.length,content:[{type:'text',text:JSON.stringify({operation:'add',operands:['1','2'],result:'3'})}],isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'chart-'+selected.length,toolName:'show_chart',args:{...chartData,references:[{reference:formalReference}]}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'chart-'+selected.length,...await chartTool.execute(),isError:false}});
+  await event({type:'tool_execution_start',toolCallId:'failed-chart-'+selected.length,toolName:'show_chart',args:{...chartData,type:'pie',series:[{name:'FAST',values:[5,-3]}],references:[{reference:formalReference}]}});
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-chart-'+selected.length,content:[{type:'text',text:'饼图数值必须非负'}],isError:true}});
   await event({type:'tool_execution_start',toolCallId:'summary-'+selected.length,toolName:'save_summary',args:{markdown:'评测总结',references:[{operationId}]}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'summary-'+selected.length,content:[{type:'text',text:JSON.stringify({id:operationId,name:summaryName,bytes:Buffer.byteLength('评测总结'),url:`${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${summaryName}`})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'failed-source-'+selected.length,toolName:'read_data',args:{reference:{runId:'run-alpha',inputId:failedInputId}}});
@@ -119,6 +146,36 @@ try{
  assert.equal(await page.locator('[data-variant=think]').count(),1,'reasoning must use the upstream collapsible reasoning row');
  assert.equal(await page.getByRole('button',{name:/analysis-a/}).count(),1,'the configured gateway model must have an upstream selection control');
 
+ const chart=page.locator('[data-turn-charts] figure[data-analysis-chart=bar]').first();
+ await chart.getByRole('heading',{name:chartData.title,exact:true}).waitFor();
+ assert.equal(await page.locator('[data-turn-process]').getAttribute('aria-expanded'),'false','the completed work steps stay collapsed by default');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'the accepted chart appears once beside the answer without opening work steps');
+ assert.equal(await chart.locator('svg[role=img]').count(),1);
+ assert.equal(await chart.locator('[data-chart-mark=bar]').count(),2,'the chart draws the receipt values as real SVG marks');
+ assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
+ assert.deepEqual(await chart.locator('[data-chart-mark=bar]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the UBS-derived grey and dark red identity colours');
+ assert.equal(await chart.locator('details,summary,button').count(),0,'the chart has no data disclosure controls');
+ const chartTable=chart.getByRole('table');
+ assert((await chartTable.textContent()).includes('5'),'the semantic table retains the real values');
+ assert.equal(await chart.locator('[data-chart-accessible-data]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','the semantic table remains available inside a clipped container without duplicating visible values');
+ await page.setViewportSize({width:375,height:900});
+ await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison-compact');
+ assert(await chart.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth),'the entire comparison fits the narrow answer column');
+ assert(await chart.evaluate(node=>node.scrollWidth<=node.clientWidth),'the comparison does not conceal a group behind horizontal scrolling');
+ for(const label of ['A组Fast','B组Fast','6','5'])assert((await chart.locator('svg').textContent()).includes(label),`${label} remains directly readable at 375px`);
+ const plotBounds=await chart.locator('svg').boundingBox();
+ for(const label of await chart.locator('[data-chart-label=category], [data-chart-value]').all()){
+  const bounds=await label.boundingBox();assert(bounds && bounds.x>=plotBounds.x-1 && bounds.x+bounds.width<=plotBounds.x+plotBounds.width+1,'both full group labels and exact values fit the narrow plot');
+  assert.equal(await label.getAttribute('font-size'),await label.getAttribute('data-chart-value')!==null?'18':'14','narrow layouts retain the label and value hierarchy');
+ }
+ const narrowBars=await chart.locator('[data-chart-mark=bar]').evaluateAll(nodes=>nodes.map(node=>({y:Number(node.getAttribute('y')),width:Number(node.getAttribute('width'))})));
+ assert(narrowBars[1].y>narrowBars[0].y,'both groups have independent visible rows');
+ assert(Math.abs(narrowBars[0].width/narrowBars[1].width-6/5)<0.001,'narrow bars retain their true ratio from a common zero');
+ await page.screenshot({path:shots+'/chart-narrow.png',fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});
+ await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison');
+ await chart.screenshot({path:shots+'/fast-chart.png'});
+
  // The upstream Turn process owns both the thought and the business tool.
  await page.locator('[data-turn-process]').click();
  await page.locator('[data-process-activity][aria-expanded=false]').first().click();
@@ -127,6 +184,14 @@ try{
  for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,summaryName,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
  assert(!/runId|inputId|taskId|operationId|evaluatorVersion/.test(collapsedSteps),'collapsed tool steps expose internal field names');
  for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ const chartRow=page.locator('[data-tool=show_chart][data-state=ok]').getByRole('button').first();
+ assert.equal(await chartRow.getAttribute('aria-expanded'),'false','a successful chart is visible without opening its tool details');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'expanded work steps do not duplicate accepted charts or display rejected charts');
+ await chartRow.click();await chartRow.click();
+ await chart.waitFor({state:'visible'});
+ assert.equal(chartDisplays,1,'tool disclosure changes use the persisted chart receipt');
+ const failedChart=page.locator('[data-tool=show_chart][data-state=error]').getByRole('button').first();
+ await failedChart.click();await page.getByText('饼图数值必须非负',{exact:true}).waitFor();await failedChart.click();
  const webSearch=page.locator('[data-tool=search_web]');
  const webSearchRow=webSearch.getByRole('button',{name:/搜索外部资料/}).first();
  await webSearchRow.click();
@@ -208,10 +273,15 @@ try{
  await page.getByRole('menuitem',{name:'完全展开',exact:true}).click();
  await settings.getByRole('button',{name:'详细',exact:true}).click();
  await page.getByRole('menuitem',{name:'简洁',exact:true}).click();
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'compact work-step mode retains exactly one chart beside the answer');
+ await chart.waitFor({state:'visible'});
  await settings.getByRole('button',{name:'中文',exact:true}).click();
  await page.getByRole('menuitem',{name:'English',exact:true}).click();
  await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();
  await page.reload();
+ await page.locator('[data-turn-charts] figure[data-analysis-chart=bar]').first().waitFor({state:'visible'});
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
+ assert.equal(chartDisplays,1,'refresh does not repeat the chart tool');
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Steer',exact:true}).waitFor();
  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Verbose',exact:true}).waitFor();
@@ -285,9 +355,111 @@ try{
  await restoredRead.getByRole('link',{name:webReadUrl+'#page=8',exact:true}).waitFor();
  assert((await restoredRead.innerText()).includes('130: '+webReadText),'refresh retains source evidence coordinates and exact text');
  assert.equal(webReads,1,'refresh renders persisted web source text without another network request');
+ await page.locator('figure[data-analysis-chart=bar]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
+ assert.equal(chartDisplays,1,'refresh renders the stored chart without executing the tool again');
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
  await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).model,'analysis-b');assert.equal(selected.at(-1).thinking,'high');
+ await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
+ for(const [label,example] of Object.entries(templateExamples)){
+  await page.locator('[contenteditable=true]').fill('图表模板测试示例：'+label);await page.locator('[contenteditable=true]').press('Enter');
+  const exampleChart=page.locator(`figure[data-analysis-chart=${example.type}]`).last();
+  await exampleChart.getByRole('heading',{name:example.title,exact:true}).waitFor();
+  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
+  await exampleChart.getByText('来源：'+example.source,{exact:true}).waitFor();
+  assert.equal(await exampleChart.locator('details,summary,button').count(),0,'chart examples expose their values without bottom disclosure controls');
+  if(example.type==='line'){
+   assert.equal(await exampleChart.locator('[data-chart-value]').count(),example.series.length,'each trend labels its last known value');
+   assert.deepEqual((await exampleChart.locator('[data-chart-tail-name]').allTextContents()).toSorted(),example.series.map(series=>series.name).toSorted(),'tail labels identify every model beside its exact value');
+   assert.equal(await exampleChart.locator('[data-chart-legend]').count(),0,'trends use direct model labels');
+   for(const series of example.series){
+    const line=exampleChart.locator(`[data-chart-mark=line][data-series="${series.name}"]`).first();
+    assert.equal(await line.evaluate(node=>getComputedStyle(node).stroke),modelColors[series.name],'model colours remain fixed when B precedes A');
+    assert.equal(Number(await exampleChart.locator(`[data-chart-value][data-series="${series.name}"]`).textContent()),series.values.findLast(value=>value!==null),'each named tail retains its precise last known value');
+   }
+   if(label==='多系列趋势'){
+    const lineStyles=await exampleChart.locator('[data-chart-mark=line]').evaluateAll(nodes=>Object.fromEntries(nodes.map(node=>[node.getAttribute('data-series'),node.getAttribute('stroke-dasharray')])));
+    assert.deepEqual(lineStyles,{'B组Fast':null,'A组Fast':null,'C组Fast':'6 4','参照Fast':'2 4'},'four series retain solid, dashed and dotted line identities');
+   }else{
+    assert.equal(await exampleChart.locator('[data-chart-mark=line]').count(),3,'missing dates remain real gaps in the trend');
+    const target=exampleChart.locator('[data-chart-hit][data-series="A组Fast"][data-date="2026-01-21"]');
+    await target.focus();
+    await exampleChart.locator('[data-chart-readout]').getByText('2026-01-21 · A组Fast · 1.6 示例值',{exact:true}).waitFor();
+    assert(await target.evaluate(node=>node===document.activeElement),'a trend reading is available from keyboard focus');
+    await target.press('Escape');
+    await exampleChart.locator('[data-chart-readout]').waitFor({state:'hidden'});
+    await target.hover();
+    await exampleChart.locator('[data-chart-readout]').getByText('2026-01-21 · A组Fast · 1.6 示例值',{exact:true}).waitFor();
+    await page.mouse.move(0,0);await target.evaluate(node=>node.blur());
+   }
+  }else{
+   assert.equal(Number(await exampleChart.locator('[data-chart-total]').textContent()),example.series[0].values.reduce((sum,value)=>sum+value,0),'the visible total retains the complete recorded value');
+   assert.equal(await exampleChart.locator('ul li').count(),example.categories.length,'the full composition includes the zero category');
+   assert.equal(await exampleChart.locator('ul li').last().locator('[data-chart-composition-value]').textContent(),'0','zero categories retain their actual count');
+   assert.equal(await exampleChart.locator('[data-chart-denominator]').count(),1,'the total is stated once in the visible composition');
+   assert.deepEqual((await exampleChart.locator('[data-chart-composition-value]').allTextContents()).map(Number),example.series[0].values,'composition values remain exact including scientific notation');
+   const swatches=await exampleChart.locator('ul li').evaluateAll(nodes=>Object.fromEntries(nodes.map(node=>[node.firstElementChild.textContent,getComputedStyle(node.querySelector('[aria-hidden=true]')).backgroundColor])));
+   assert.equal(swatches['双方均好'],'rgb(189, 189, 189)','both-good remains a neutral light grey after reordering');
+   assert.equal(swatches['双方均差'],'rgb(48, 48, 48)','both-bad remains a neutral dark grey after reordering');
+   assert.equal(swatches['A组胜'],modelColors['A组Fast'],'A wins keep the A identity colour');
+   if(label==='结果组成'){
+    assert.equal(swatches['B组胜'],modelColors['B组Fast'],'B wins keep the B identity colour');
+    assert.equal(new Set(Object.values(swatches)).size,5,'the five displayed result categories do not share a swatch');
+   }else{
+    assert(await exampleChart.locator('[data-chart-mark=wedge]').evaluateAll(nodes=>nodes.every(node=>getComputedStyle(node).strokeWidth==='0px')),'tiny nonzero sectors are not erased by separator strokes');
+    assert.equal(await exampleChart.locator('[data-chart-share]').first().textContent(),'<0.01%','tiny nonzero shares are never presented as zero');
+   }
+  }
+  const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long'}[label];
+  await exampleChart.screenshot({path:shots+'/'+screenshot+'.png'});
+ }
+ const mobileContext=await browser.newContext({storageState:await page.context().storageState(),viewport:{width:375,height:900},isMobile:true,hasTouch:true});
+ try{
+  const mobilePage=await mobileContext.newPage();await mobilePage.goto(page.url());
+  const mobileTrend=mobilePage.locator('figure[data-analysis-chart=line]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['时间趋势'].title,exact:true})});
+  await mobileTrend.getByRole('heading',{name:templateExamples['时间趋势'].title,exact:true}).waitFor();
+  await mobileTrend.locator('[data-chart-tails]').waitFor({state:'visible'});
+  assert(await mobileTrend.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth+1),'ordinary A/B date trends fit the narrow figure without horizontal scrolling');
+  assert(await mobileTrend.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'the narrow trend keeps model names and last values inside its figure');
+  assert.deepEqual(await mobileTrend.locator('[data-chart-tails] [data-chart-tail-name]').allTextContents(),['A组Fast','B组Fast']);
+  assert.deepEqual(await mobileTrend.locator('[data-chart-tails] [data-chart-value]').allTextContents(),['1.6','1.5'],'both precise last values are directly visible below the mobile plot');
+  const mobileBounds=await mobileTrend.boundingBox();
+  for(const tail of await mobileTrend.locator('[data-chart-tails] [data-chart-tail-name], [data-chart-tails] [data-chart-value]').all()){
+   assert(await tail.isVisible(),'each mobile model and last value is visible');
+   const bounds=await tail.boundingBox();assert(bounds && bounds.x>=mobileBounds.x-1 && bounds.x+bounds.width<=mobileBounds.x+mobileBounds.width+1,'mobile tail labels and values remain inside the answer column');
+  }
+  const mobileDates=mobileTrend.locator('[data-chart-label=date]');
+  assert.equal(await mobileDates.first().getAttribute('data-date'),'2026-01-01','short axis labels retain their complete date coordinates');
+  assert.equal(await mobileDates.last().getAttribute('data-date'),'2026-01-21');
+  assert.equal(await mobileDates.first().textContent(),'01-01');
+  assert.equal(await mobileDates.last().textContent(),'01-21');
+  await mobileTrend.locator('[data-chart-hit][data-series="A组Fast"][data-date="2026-01-01"]').tap();
+  await mobileTrend.locator('[data-chart-readout]').getByText('2026-01-01 · A组Fast · 1.25 示例值',{exact:true}).waitFor();
+  await mobilePage.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert(await mobileTrend.locator('[data-chart-readout]').isVisible(),'a touch reading stays visible after release and rendering settle');
+  assert.equal(await mobileTrend.locator('[data-chart-readout]').textContent(),'2026-01-01 · A组Fast · 1.25 示例值','touch release retains the exact selected observation');
+  await mobileTrend.screenshot({path:shots+'/chart-trend-narrow.png'});
+  const mobileComposition=mobilePage.locator('figure[data-analysis-chart=pie]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['长数字组成'].title,exact:true})});
+  await mobileComposition.scrollIntoViewIfNeeded();
+  assert(await mobileComposition.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'long composition labels and exact scientific values do not overflow the mobile figure');
+  const compositionBounds=await mobileComposition.boundingBox();
+  for(const row of await mobileComposition.locator('ul li').all()){
+   for(const cell of await row.locator(':scope > *').all()){
+    const bounds=await cell.boundingBox();assert(bounds && bounds.x>=compositionBounds.x-1 && bounds.x+bounds.width<=compositionBounds.x+compositionBounds.width+1,'every composition name, value and share stays within the answer column');
+    assert(await cell.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'composition text wraps inside its allocated column');
+   }
+  }
+  assert(await mobilePage.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1),'chart examples do not introduce page-wide horizontal overflow');
+  await mobileComposition.screenshot({path:shots+'/chart-composition-long-narrow.png'});
+ }finally{await mobileContext.close();}
+ const recordedCharts=chartDisplays;
+ await page.reload();
+ for(const example of Object.values(templateExamples))await page.locator(`figure[data-analysis-chart=${example.type}]`).getByRole('heading',{name:example.title,exact:true}).waitFor();
+ const older=page.getByRole('button',{name:'加载更早',exact:true});
+ if(await older.count())await older.click();
+ await page.locator('figure[data-analysis-chart=bar]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across all three chart types');
+ assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  assert.deepEqual(errors,[]);
- console.log('Gateway favorites, fuzzy model search, keyboard focus, queue editing, running clock, reasoning, structured tools, multi-query search receipts, PDF source coordinates, usage and reload: passed');
+ console.log('Gateway favorites, fuzzy model search, keyboard focus, queue editing, running clock, reasoning, structured tools, charts, multi-query search receipts, PDF source coordinates, usage and reload: passed');
 
 }finally{thinkingGate.resolve();await browser.close();await server.close();await rm(directory,{recursive:true,force:true});}

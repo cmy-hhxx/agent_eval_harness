@@ -476,7 +476,7 @@ test("stopping concurrent attempts never trips the stage circuit and the same ru
     const options = {
       ...services, runId: "stop-concurrent", output: config.output, config, plan: await buildPlan(config),
       modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
-      policy: config.execution, concurrency: 2, retries: 0, retryDelaySeconds: 0,
+      policy: config.execution, concurrency: 2, retries: 1, retryDelaySeconds: 0,
       failureGuard: { windowSize: 4, threshold: 2 }, workerUrls: workers.map((worker) => worker.url),
     };
     const stopped = await runEvaluation({ ...options, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) });
@@ -567,6 +567,146 @@ for (const exhausted of [false, true]) test(`SDK malformed Responses arguments $
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+for (const reason of ["no-submission", "idle"] as const)
+  for (const scenario of ["disabled", "recovered", "exhausted"] as const)
+    test(`unsubmitted ${reason} interruptions ${scenario} respect the configured retry budget`, async () => {
+      const { directory, config, modelForStage } = await fixtureConfig();
+      let targetId: string | undefined, targetAttempts = 0, targetRuns = 0, retryAt: number | undefined;
+      const starts: number[] = [];
+      const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+        targetId ??= options.spec.taskId;
+        const targeted = options.spec.taskId === targetId;
+        const fail = targeted && (++targetAttempts === 1 || scenario === "exhausted");
+        if (targeted) starts.push(Date.now());
+        let release = () => {};
+        return { async run() {
+          if (targeted) targetRuns++;
+          if (fail) {
+            if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
+            return;
+          }
+          const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          assert.equal(result.isError, undefined, JSON.stringify(result));
+        }, async abort() { release(); }, async dispose() {} };
+      } }, path.join(directory, "worker"));
+      try {
+        const runId = `${reason}-${scenario}`;
+        const summary = await runEvaluation({ ...services, runId, output: config.output, config,
+          plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+          policy: { ...config.execution, idleTimeoutSeconds: reason === "idle" ? 1 : 10 }, concurrency: 1,
+          retries: scenario === "disabled" ? 0 : 1, retryDelaySeconds: .05, workerUrls: [worker.url],
+          signal: AbortSignal.timeout(20_000),
+          repository: { ...services.repository, async writeRun(run, saved) {
+            await services.repository.writeRun(run, saved);
+            if (targetId && retryAt === undefined) retryAt = saved.manifest.states[targetId]?.nextRetryAt;
+          } },
+        });
+        const saved = await readRunState(path.join(config.output.path, runId));
+        const state = saved.manifest.states[targetId!];
+        const attempts = scenario === "disabled" ? 1 : 2;
+        assert.equal(targetAttempts, attempts, "the configured budget bounds fresh attempts");
+        assert.equal(state.attempts, attempts);
+        assert.equal(state.nextRetryAt, undefined);
+        if (scenario === "disabled") assert.equal(retryAt, undefined);
+        else {
+          assert(retryAt, "the existing retry delay is persisted before the replacement attempt");
+          assert(starts[1] >= retryAt, "replacement attempts wait until the persisted retry deadline");
+        }
+        assert.equal(summary.completed_comparisons, scenario === "recovered" ? 1 : 0);
+        if (scenario === "recovered") {
+          assert.equal(state.status, "succeeded");
+          assert(saved.receipts[targetId!]);
+        } else {
+          assert.equal(state.status, reason === "idle" ? "timed_out" : "failed");
+          assert.equal(state.reason, reason === "idle" ? "Model/tool idle timeout" : "Agent ended without an accepted submission");
+          assert.equal(state.failure?.errors[0]?.category, "interruption");
+          assert.equal(state.failure?.contentSubmissions, 0);
+          assert.equal(state.failure?.draft, undefined);
+          assert.equal(saved.receipts[targetId!], undefined);
+        }
+        assert.equal(targetRuns, reason === "idle" ? attempts : scenario === "recovered" ? 3 : 2 * attempts,
+          "only a normally stopped session receives one submission nudge");
+      } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+    });
+
+test("a repair attempt that makes no submission retains its draft and counters for explicit resume", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  let targetId: string | undefined, attempts = 0, resumed = false;
+  let draft: unknown;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    if (options.spec.evaluation.id === "attribution") targetId ??= options.spec.taskId;
+    const targeted = options.spec.taskId === targetId;
+    if (targeted) attempts++;
+    return { async run() {
+      if (targeted && !resumed) {
+        if (attempts === 1) {
+          draft = draftFor(options.spec, invalidResult(options.spec));
+          assert.equal((await options.execute("submit_evaluation", draft)).isError, true);
+        } else assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draft);
+        return;
+      }
+      if (targeted) {
+        assert.deepEqual(options.spec.recovery?.draft, draft);
+        assert.equal(options.spec.recovery?.contentSubmissions, 1);
+        assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draft);
+      }
+      const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    const options = { ...services, runId: "unsubmitted-repair", output: config.output, config,
+      plan: await buildPlan(config), modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 2, retryDelaySeconds: 0, workerUrls: [worker.url] };
+    const failed = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
+    assert.equal(failed.completed_comparisons, 0);
+    assert.equal(attempts, 2, "a business draft uses only the content repair budget");
+    const saved = await readRunState(path.join(config.output.path, options.runId));
+    const state = saved.manifest.states[targetId!];
+    assert.equal(state.status, "failed");
+    assert.deepEqual(state.failure?.draft, draft);
+    assert.equal(state.failure?.contentSubmissions, 1);
+    assert.equal(state.failure?.errors[0]?.category, "interruption");
+    assert(state.failure?.errors.some(({ category }) => category === "evidence" || category === "structure"));
+    resumed = true;
+    const complete = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
+    assert.equal(complete.completed_comparisons, 1);
+    assert.equal(attempts, 3);
+    assert.deepEqual((await readRunState(path.join(config.output.path, options.runId))).receipts[targetId!].submissionStats,
+      { contentSubmissions: 2, fileErrors: 0 });
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a task deadline without a submission does not consume the automatic retry budget", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  let targetId: string | undefined, attempts = 0;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    targetId ??= options.spec.taskId;
+    let release = () => {};
+    return { async run() {
+      if (options.spec.taskId === targetId) {
+        attempts++;
+        await new Promise<void>((resolve) => { release = resolve; });
+      } else {
+        const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+      }
+    }, async abort() { release(); }, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    await runEvaluation({ ...services, runId: "unsubmitted-deadline", output: config.output, config,
+      plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: { ...config.execution, timeoutSeconds: 1, idleTimeoutSeconds: 10 }, concurrency: 1,
+      retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(10_000) });
+    const saved = await readRunState(path.join(config.output.path, "unsubmitted-deadline"));
+    assert.equal(attempts, 1);
+    assert.equal(saved.manifest.states[targetId!].attempts, 1);
+    assert.equal(saved.manifest.states[targetId!].status, "timed_out");
+    assert.equal(saved.manifest.states[targetId!].reason, "Task deadline exceeded");
+    assert.equal(saved.receipts[targetId!], undefined);
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 for (const debug of [false, true])
   test(`same run ID resumes with changed model, budget and build (debug: ${debug})`, async () => {
     const rows = ["2026-09-23", "2026-09-24"].map((batch_id) => ({
@@ -590,7 +730,11 @@ for (const debug of [false, true])
               await new Promise<void>((r) => {
                 release = r;
               });
-            } else await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            } else {
+              const submitted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+              assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
+              assert.equal(submitted.terminate, true);
+            }
           },
           async abort() {
             release();
@@ -656,7 +800,8 @@ for (const debug of [false, true])
           maxToolCalls: config.execution.maxToolCalls + 1,
         },
       });
-      assert.equal(complete.completed_comparisons, 2);
+      assert.equal(complete.completed_comparisons, 2,
+        JSON.stringify((await readRunState(run)).manifest.states));
       assert.deepEqual(complete.evaluator_versions, [fakeEvaluatorVersion, "fixture-2"].sort());
       assert.deepEqual(complete.judge_models, {
         criteria: ["changed-model", "fixture"], attribution: ["changed-model"], comparison: ["changed-model"],

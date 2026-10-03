@@ -1,0 +1,109 @@
+/* A quiet document reader: one component choice, complete original text. */
+.rp-reader { display: grid; grid-template-columns: 194px minmax(0, 1fr); gap: clamp(30px, 5vw, 76px); align-items: start; }
+.rp-sidebar { position: sticky; top: 24px; }
+.rp-components { display: flex; flex-direction: column; }
+.rp-component { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; padding: 10px 14px; border: 0; border-left: 2px solid transparent; border-radius: 0; background: transparent; text-align: left; transition: background var(--motion-fast), border-color var(--motion-fast); }
+.rp-component:hover { background: var(--secondary); }
+.rp-component[aria-selected="true"] { border-left-color: var(--primary); background: var(--secondary); }
+.rp-component-name { font-size: 16px; line-height: 1.5; font-weight: 500; }
+.rp-component-divider { margin-top: 20px; }
+.rp-reading { min-width: 0; max-width: 930px; padding-bottom: 32px; outline: none; }
+.rp-reading:focus-visible { outline: 2px solid var(--ring); outline-offset: 8px; }
+.rp-heading { padding: 4px 0 16px; }
+.rp-snapshot { margin-bottom: 8px; color: var(--muted-fg); font-size: 14px; }
+.rp-heading-title { font-size: 24px; font-weight: 500; line-height: 1.3; letter-spacing: -.015em; }
+.rp-heading-summary { margin-top: 10px; font-size: 15px; line-height: 1.65; }
+.rp-key-rules { padding-top: 4px; }
+.rp-key-rules > .rp-section-title { font-size: 17px; margin-bottom: 7px; }
+.rp-principles { margin: 0; border-top: 1px solid var(--input); }
+.rp-principle { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.rp-principle-label { font-size: 15px; font-weight: 550; }
+.rp-principle-quote { min-width: 0; margin: 0; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.rp-workflow { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 0; margin: 20px 0 6px; padding: 0 0 18px; border-bottom: 1px solid var(--input); }
+.rp-workflow-step { min-width: 0; padding-right: 23px; }
+.rp-workflow-step + .rp-workflow-step { border-left: 1px solid var(--border); padding-left: 23px; }
+.rp-workflow-step:last-child { padding-right: 0; }
+.rp-workflow dt { font-size: 16px; font-weight: 550; margin-bottom: 8px; }
+.rp-workflow dd { margin: 0; color: var(--black); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.rp-section { padding-top: 22px; }
+.rp-section + .rp-section { margin-top: 8px; }
+.rp-section-title { font-size: 20px; font-weight: 550; line-height: 1.5; margin: 0 0 17px; }
+.rp-resource { min-width: 0; }
+.rp-resource + .rp-resource { padding-top: 23px; margin-top: 24px; border-top: 1px solid var(--border); }
+.rp-resource-name { font-size: 16px; line-height: 1.7; font-weight: 550; margin: 0 0 11px; overflow-wrap: anywhere; }
+.rp-original { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.rp-paragraph { margin: 0 0 12px; white-space: pre-wrap; }
+.rp-paragraph:last-child { margin-bottom: 0; }
+.rp-rule-block { padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--border); }
+.rp-rule-block:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
+.rp-rule-title { margin: 0 0 14px; font-size: 17px; font-weight: 550; line-height: 1.8; }
+.rp-numbered-rule > .rp-rule-title { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.rp-rule-number { font-family: var(--mono); font-size: 21px; line-height: 1.4; color: var(--muted-fg); white-space: pre; font-weight: 400; }
+.rp-rule-heading-text { min-width: 0; }
+.rp-numbered-rule > .rp-rule-body { padding-left: 48px; }
+.rp-support-rule { margin-top: 20px; padding-top: 20px; }
+.rp-support-rule > .rp-rule-title { font-size: 16px; }
+.rp-subrule { padding-left: 14px; border-left: 2px solid var(--border); }
+.rp-field { font-family: var(--mono); font-size: .88em; background: transparent; overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .rp-reader { grid-template-columns: 136px minmax(0, 1fr); gap: 24px; }
+  .rp-component { padding: 11px 12px; }
+  .rp-component-name { font-size: 15px; }
+  .rp-heading-title { font-size: 23px; }
+  .rp-heading-summary { font-size: 16px; }
+  .rp-principle { grid-template-columns: 95px minmax(0, 1fr); gap: 14px; }
+  .rp-workflow-step { padding-right: 16px; }
+  .rp-workflow-step + .rp-workflow-step { padding-left: 16px; }
+}
+
+@media (max-width: 640px) {
+  .rp-reader { grid-template-columns: 1fr; gap: 25px; }
+  .rp-sidebar { position: static; }
+  .rp-components { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 8px; }
+  .rp-component { min-width: 0; padding: 10px 12px; }
+  .rp-component-divider { margin-top: 0; }
+  .rp-reading { padding-bottom: 16px; }
+  .rp-heading { padding-top: 0; padding-bottom: 20px; }
+  .rp-heading-title { font-size: 23px; }
+  .rp-heading-summary { font-size: 16px; }
+  .rp-principle { grid-template-columns: 80px minmax(0, 1fr); gap: 12px; padding: 13px 0; }
+  .rp-principle-label { font-size: 14px; }
+  .rp-principle-quote { font-size: 14px; }
+  .rp-workflow { grid-template-columns: 1fr; margin-top: 23px; padding-bottom: 8px; }
+  .rp-workflow-step { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; padding: 0 0 16px; }
+  .rp-workflow-step + .rp-workflow-step { padding-left: 0; border-left: 0; }
+  .rp-workflow dt { font-size: 15px; margin: 0; }
+  .rp-section { padding-top: 26px; }
+  .rp-section-title { font-size: 21px; margin-bottom: 16px; }
+  .rp-rule-title { font-size: 16px; }
+  .rp-numbered-rule > .rp-rule-title { grid-template-columns: 27px minmax(0, 1fr); gap: 9px; }
+  .rp-numbered-rule > .rp-rule-body { padding-left: 0; }
+  .rp-original { font-size: 14px; line-height: 1.95; }
+  .rp-subrule { padding-left: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-component { transition: none; }
+}
+
+@media print {
+  .rp-reader { display: block; }
+  .rp-sidebar { display: none; }
+  .rp-reading { max-width: none; padding: 0; }
+  .rp-heading { padding-top: 0; }
+  .rp-heading-title { font-size: 22pt; }
+  .rp-heading-summary { font-size: 12pt; }
+  .rp-principle { grid-template-columns: 90px minmax(0, 1fr); }
+  .rp-principle-label, .rp-principle-quote { font-size: 10pt; }
+  .rp-workflow { grid-template-columns: 1fr 1fr 1.15fr; break-inside: avoid; }
+  .rp-workflow dt { font-size: 11pt; }
+  .rp-workflow dd { font-size: 9pt; }
+  .rp-section-title { font-size: 14pt; break-after: avoid; }
+  .rp-resource-name { font-size: 9pt; break-after: avoid; }
+  .rp-original { font-size: 10pt; line-height: 1.75; }
+  .rp-paragraph { orphans: 3; widows: 3; }
+  .rp-rule-title { font-size: 11pt; break-after: avoid; }
+  .rp-rule-number { font-size: 12pt; }
+  .rp-rule-block { padding-top: 14px; margin-top: 18px; }
+}

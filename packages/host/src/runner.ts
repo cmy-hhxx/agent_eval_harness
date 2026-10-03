@@ -444,7 +444,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (!receipt)
           await current.endAttempt(
             spec,
-            controller.signal.aborted ? "cancelled" : state.status === "timed_out" ? "timed_out" : "failed",
+            controller.signal.aborted ? "cancelled" : state.status === "timed_out" || status?.state === "timed_out" ? "timed_out" : "failed",
             state.reason || status?.error || "Worker disconnected",
           );
         await request(
@@ -596,8 +596,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       ) {
         if (retries.content++ >= 1) return;
       } else return;
-      // Cancel the old attempt before authorizing a replacement.
-      await request(`${workerUrl}/api/attempts/${spec.attemptId}/cancel`, "POST", {}).catch(() => {});
       const retryDelay = status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
       state.status = "pending";
       state.nextRetryAt = Date.now() + retryDelay;

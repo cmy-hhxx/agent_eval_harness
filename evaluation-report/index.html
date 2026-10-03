@@ -3,10 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="模型评测流程、判决规则、提示词和验证数据。">
+  <meta name="description" content="模型评测流程、判决规则、提示词和对比实验。">
   <title>模型评测汇报</title>
   <link rel="stylesheet" href="src/tokens.css">
   <link rel="stylesheet" href="src/styles.css">
+  <link rel="stylesheet" href="src/rules.css">
+  <link rel="stylesheet" href="src/prompts.css">
 </head>
 <body>
   <a class="skip" href="#main">跳到正文</a>
@@ -26,44 +28,29 @@
     </section>
     <section class="page" id="page-rules" aria-labelledby="rulesTitle" hidden>
       <div class="page-heading"><h1 id="rulesTitle">判决规则</h1></div>
-      <div class="rules-layout">
-        <section class="decision-section"><h2>结果映射</h2><div class="table-wrap"><table><thead><tr><th>核心交付</th><th>实质差距</th><th>正式结果</th></tr></thead><tbody>
-          <tr><td>仅一方可用</td><td>核心可用性优先</td><td><strong>可用方胜</strong></td></tr>
-          <tr><td>双方均不可用</td><td>可保留相对优劣</td><td><strong>都差</strong></td></tr>
-          <tr><td>双方均可用</td><td>一方有实质优势</td><td><strong>较优方胜</strong></td></tr>
-          <tr><td>双方均可用</td><td>无实质差距</td><td><strong>都好</strong></td></tr>
-          <tr class="warning-row"><td>证据不足或归因冲突</td><td>需独立复核</td><td><strong>暂不交付</strong></td></tr>
-        </tbody></table></div></section>
-        <section class="example-section" id="caseExample"></section>
-      </div>
-      <section class="section-block"><h2>控制与边界</h2><div class="guard-grid">
-        <div><h3>共同标准</h3><p>验收条款预先固定，不读取回答。</p></div>
-        <div><h3>证据约束</h3><p>核验坐标、原文和数值；引用成立不等于语义正确。</p></div>
-        <div><h3>身份隔离</h3><p>标准与对比去身份；归因仍可见身份。</p></div>
-        <div><h3>未决处理</h3><p>独立复核最多 1 轮；仍未决不进入胜负或平局统计。</p></div>
-      </div></section>
+      <div id="rulesBody"></div>
     </section>
     <section class="page" id="page-prompts" aria-labelledby="promptsTitle" hidden>
-      <div class="page-heading"><h1 id="promptsTitle">评测提示词</h1><button class="button" id="downloadPromptsBtn" type="button">下载完整原文</button></div>
-      <div class="prompt-summary" id="promptSummary"></div>
-      <div class="table-wrap prompt-table"><table><thead><tr><th>组件</th><th>系统提示词原文节选</th><th>关键约束</th></tr></thead><tbody id="promptRows"></tbody></table></div>
-      <div class="prompt-resources"><section><h2>共用文案</h2><p id="sharedPrompts"></p></section><section><h2>工具说明</h2><p id="toolPrompts"></p></section></div>
+      <div class="page-heading"><h1 id="promptsTitle">评测提示词</h1></div>
+      <div id="promptsBody"></div>
     </section>
     <section class="page" id="page-experiments" aria-labelledby="experimentsTitle" hidden>
-      <div class="page-heading"><h1 id="experimentsTitle">验证与实测</h1><span class="page-meta" id="resultScope"></span></div>
-      <div class="evidence-layout"><section id="runEvidence"></section><section id="semanticEvidence"></section></div>
-      <section class="section-block"><h2>评测方法验证</h2><div class="table-wrap"><table class="validation-table"><thead><tr><th>实验</th><th>对照条件</th><th>主要指标</th><th>结果</th></tr></thead><tbody id="validationRows"></tbody></table></div></section>
-      <section class="engineering-line" id="engineeringEvidence"></section>
-      <section id="supplementalRecords" hidden></section>
+      <div class="page-heading"><h1 id="experimentsTitle">对比实验</h1></div>
+      <div class="experiment-layout">
+        <section class="experiment-panel"><h2>评测器版本</h2><div class="table-wrap"><table><thead><tr><th>评测器</th><th>题集</th><th>裁判模型</th><th>重复次数</th></tr></thead><tbody><tr class="empty-row"><td colspan="4">—</td></tr></tbody></table></div></section>
+        <section class="experiment-panel"><h2>实验结果</h2><div class="experiment-metrics"><section><h3>盲测换位</h3><div class="empty-metric">—</div></section><section><h3>提示词消融</h3><div class="empty-metric">—</div></section><section><h3>人工一致性</h3><div class="empty-metric">—</div></section></div></section>
+        <section class="experiment-panel"><h2>逐轮对比</h2><div class="table-wrap"><table><thead><tr><th>实验</th><th>基线版本</th><th>对照版本</th><th>有效样本</th><th>差异</th></tr></thead><tbody><tr class="empty-row"><td colspan="5">—</td></tr></tbody></table></div></section>
+      </div>
     </section>
   </main>
-  <div class="toast" id="toast" role="status" hidden></div>
-  <noscript><p>请启用 JavaScript 以显示报告快照。</p></noscript>
+  <noscript><p>请启用 JavaScript 以显示报告。</p></noscript>
   <script id="report-data" src="src/data.js"></script>
   <script id="report-motion" src="src/motion.js"></script>
   <script id="report-icons" src="src/icons.js"></script>
   <script id="report-interaction" src="src/diagram-interaction.js"></script>
   <script id="report-flow" src="src/flow.js"></script>
+  <script id="report-rules" src="src/rules.js"></script>
+  <script id="report-prompts" src="src/prompts.js"></script>
   <script id="report-app" src="src/app.js"></script>
 </body>
 </html>

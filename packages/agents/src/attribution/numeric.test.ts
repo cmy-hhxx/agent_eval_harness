@@ -68,6 +68,10 @@ test("spaced signs and explicit decline wording retain numeric direction", () =>
 test("literal counts, arithmetic operands and adjoining calendar headings keep their boundaries", () => {
   assert.equal(containsNumber("消费主题基金有两只", "2"), true);
   assert.equal(containsNumber("消费主题基金有十二只", "2"), false);
+  for (const quantity of ["六天", "六交易日", "六个交易日"])
+    assert.equal(containsNumber(`命中${quantity}`, "6"), true);
+  for (const quantity of ["二十六天", "二十六交易日", "二十六个交易日", "五月六日"])
+    assert.equal(containsNumber(`记录${quantity}`, "6"), false);
   assert.equal(containsNumber("| 剩余现金 | 20000 − 19684 | 316.00 |", "19684"), true);
   assert.equal(containsNumber("| 支出 | −19,684.00 |", "19684"), false);
   assert.equal(containsNumber("极差=110.71−102.35=8.362025 年上半年指数", "8.36", true), true);

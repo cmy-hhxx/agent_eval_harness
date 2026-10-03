@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { buildPlan, readRunTasks } from "@eval/workflows/comparison";
-import { writeJson, writeJsonl } from "@eval/data";
+import { buildPlan, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { LocalSpecialists } from "../../apps/host/src/assistant-specialists.js";
@@ -23,6 +23,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
  try {
   const config=await loadConfig(path.join(ROOT,"configs/host.json"),{EVAL_BASE_URL:"http://127.0.0.1:1/v1"});
   config.evaluation=fixture.config;config.models=fixture.models;
+  fixture.config.comparisons=[["a_fast","b_fast"],["a_expert","b_expert"]];
   const plan=await buildPlan(fixture.config);
   // Persist only the current source catalogue through the same Host preflight path.
   await runEvaluation({...services,plan:{...plan,tasks:[]},runId:"source",output:fixture.config.output,engine:"pi",evaluatorVersion:config.evaluatorVersion,config:fixture.config,policy:fixture.config.execution,modelForStage:fixture.modelForStage,retries:0,retryDelaySeconds:0,workerUrls:[worker.url],concurrency:1});
@@ -30,6 +31,18 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const task=plan.tasks.find(task=>task.stage==="comparison")!;
   const inputs: AnalysisReference[]=Object.values(task.inputIds).map(inputId=>({runId:"source",inputId}));
   const scope={userId:"alice",sessionId:randomUUID()},signal=new AbortController().signal;
+  const expert=(plan.catalog as {input_id:string;version:string}[]).find(candidate=>candidate.version==="a_expert")!;
+  await assert.rejects(gateway.invoke(scope,{kind:"comparison",operationId:randomUUID(),inputs:[inputs[0],{runId:"source",inputId:expert.input_id}]},signal),/same comparison_tier/);
+  assert.equal(calls,0,"cross-tier comparisons never start a specialist Worker");
+  const sourceFile=path.join(fixture.config.output.path,"source/state.json"),sourceState=await readJson<Checkpoint>(sourceFile);
+  const fast=(sourceState.config as EvalConfig).inputs.versions.find(version=>version.id==="b_fast")!;
+  const tier=fast.comparison_tier;
+  try{
+   delete fast.comparison_tier;
+   await writeJson(sourceFile,sourceState);
+   await assert.rejects(gateway.invoke(scope,{kind:"comparison",operationId:randomUUID(),inputs},signal),/same comparison_tier/);
+   assert.equal(calls,0,"undeclared tiers never start a specialist Worker");
+  }finally{fast.comparison_tier=tier;await writeJson(sourceFile,sourceState);}
   const interruptedId=randomUUID();
   await writeJson(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",interruptedId,"request.json"),{operationId:interruptedId,kind:"attribution",inputs:[inputs[0]]});
   assert.equal((await gateway.read(scope,interruptedId)).error,"interrupted");

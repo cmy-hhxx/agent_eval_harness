@@ -216,6 +216,7 @@
             }
           },
           "problem": {
+            "description": "type=strength 时填 JSON null；type=problem 时填写责任组件与问题描述。",
             "type": [
               "object",
               "null"
@@ -290,7 +291,7 @@
     "numeric_checks": {
       "type": "array",
       "maxItems": 64,
-      "description": "逐项核对标准答案的数值。所有同口径数值均列出，不能仅列错误项；无标准、未提供结果或非数值任务填空数组。明确区间/容差任务用 correctness_reason 单独说明。",
+      "description": "逐项核对标准答案的数值。所有同口径数值均列出，不能仅列错误项；无标准或非数值任务填空数组；所需指标未交付时保留 actual=null、matches=false 的核对项。明确区间/容差任务用 correctness_reason 单独说明。",
       "items": {
         "type": "object",
         "additionalProperties": false,

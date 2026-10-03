@@ -108,6 +108,62 @@ test("a unit-bearing table header is tied to the cited target cell's column", ()
   assert.throws(wrong.validate, code("numeric_unit_mismatch"));
 });
 
+test("an explicit unit immediately before a table covers its bare numeric cells", () => {
+  const answer = "最高值出现在2023年2月，为12.9%。\n\n达标月份的具体数值如下（单位：%）：\n\n" +
+    "| 月份 | M2同比 |\n| --- | --- |\n| 2023-01 | 12.6 |\n| 2023-02 | 12.9 |";
+  fixture("最高为12.9%", answer, [check("12.9", "12.9")]).validate();
+});
+
+test("a table's declared unit cannot turn a date or identifier column into a quantity", () => {
+  for (const header of ["日期", "月份", "股票代码", "编号"]) {
+    const answer = `单位：元\n\n| ${header} | 价格 |\n| --- | --- |\n| 10 | 8 |`;
+    assert.throws(fixture("10元", answer, [check("10", "10")]).validate,
+      code("numeric_answer_context_missing"), header);
+  }
+});
+
+test("table unit declarations stay local and do not conceal mixed or unknown units", () => {
+  const table = "| 指标 | 数值 |\n| --- | --- |\n| 同比 | 12.9 |";
+  const declared = "最高值12.9%。\n\n单位：%\n\n" + table;
+  assert.throws(fixture("12.9%", declared + "\n\n" + table, [check("12.9", "12.9")]).validate,
+    code("numeric_unit_ambiguous"));
+  assert.throws(fixture("12.9%", "最高值12.9%。\n\n单位：%或亿元\n\n" + table,
+    [check("12.9", "12.9")]).validate, code("numeric_unit_ambiguous"));
+  assert.throws(fixture("12.9%", "最高值12.9%。\n\n单位：%\n\n以下为其他指标。\n\n" + table,
+    [check("12.9", "12.9")]).validate, code("numeric_unit_ambiguous"));
+  fixture("12.9亿元", "单位：%\n\n| 指标 | 收入（亿元） |\n| --- | --- |\n| 收入 | 12.9 |",
+    [check("12.9", "12.9")]).validate();
+  assert.throws(fixture("12.9%", declared + "\n\n销量为12.9吨。", [check("12.9", "12.9")]).validate,
+    code("numeric_unit_ambiguous"));
+});
+
+test("trading-day counts stay distinct from calendar coordinates in the same evidence", () => {
+  const answer = "2026 年 5 月 6 日至 5 月 29 日，最高价在 11 元以上的有 6 天。\n\n" +
+    "最高价 ≥ 11 元的 6 个交易日：\n- 5月6日：11.49 元\n- 5月7日：11.22 元";
+  const count = fixture("13天", answer, [{ ...check("13", "6"), mode: "exact", matches: false }]);
+  count.result.is_correct = false;
+  count.validate();
+  assert.throws(fixture("6天", "最高价在2026年5月6日为11.49元。", [check("6", "6")]).validate,
+    code("numeric_answer_context_missing"));
+  assert.throws(fixture("6天", "命中6天，另有6%。", [check("6", "6")]).validate,
+    code("numeric_unit_ambiguous"));
+  assert.throws(fixture("6天", "命中6天，另一指标为6，单位未提供。", [check("6", "6")]).validate,
+    code("numeric_unit_ambiguous"));
+});
+
+test("a trading-day unit header identifies a count rather than a calendar coordinate", () => {
+  const answer = "| 指标 | 交易日 |\n| --- | --- |\n| 最高价超过11元 | 6 |";
+  fixture("6天", answer, [{ ...check("6", "6"), mode: "exact" }]).validate();
+});
+
+test("single-character Chinese day counts stay literal without cropping compound numerals or dates", () => {
+  for (const answer of ["共六天", "共六交易日", "共六个交易日"])
+    fixture("6天", answer, [{ ...check("6", "6"), mode: "exact" }]).validate();
+  for (const answer of ["共二十六天", "共二十六交易日", "日期为2026年5月六日"])
+    assert.throws(fixture("6天", answer, [{ ...check("6", "6"), mode: "exact" }]).validate,
+      code("numeric_answer_context_missing"), answer);
+});
+
 test("unverifiable scalar conversions have an explicit pending-review state", () => {
   const pending = fixture("1087.4万千升", "总销量为3/7个标准容器，资料未说明容器容量。");
   pending.result.is_correct = null;

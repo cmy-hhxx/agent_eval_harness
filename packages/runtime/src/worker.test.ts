@@ -783,6 +783,8 @@ test("an unchanged error stops repair even when another field was fixed", async 
     const status = await fixture.done();
     assert.equal(status.state, "failed");
     assert.equal(status.failure?.repeatedErrors, 2);
+    assert.equal(status.failure?.stopped, true);
+    assert.equal(status.retryable, false, "repeated business errors must not become retryable interruptions");
     assert.match(status.error || "", /Repeated validation errors/);
   } finally {
     await fixture.close();
@@ -846,7 +848,7 @@ test("a session that stops before submitting gets one nudge and can still succee
     await fixture.close();
   }
 });
-test("a session that ignores the nudge fails after one bounded follow-up", async () => {
+test("a session that ignores the nudge fails after one bounded follow-up and can retry without a draft", async () => {
   let runs = 0;
   const fixture = await harness(async () => ({
     async run() {
@@ -860,11 +862,46 @@ test("a session that ignores the nudge fails after one bounded follow-up", async
     const status = await fixture.done();
     assert.equal(status.state, "failed");
     assert.equal(runs, 2);
+    assert.equal(status.error, "Agent ended without an accepted submission");
+    assert.equal(status.retryable, true);
+    assert.equal(status.failure?.errors[0]?.category, "interruption");
     assert.equal(status.failure?.contentSubmissions, 0);
+    assert.equal(status.failure?.draft, undefined);
   } finally {
     await fixture.close();
   }
 });
+for (const reason of ["no-submission", "idle"] as const)
+  for (const stopped of [false, true])
+    test(`an unsubmitted ${reason} recovery preserves repair state (stopped: ${stopped})`, async () => {
+      const draft = { invalid: true };
+      const issue = { category: "structure" as const, code: "invalid_draft", path: "/invalid", message: "Invalid draft" };
+      let release = () => {};
+      const fixture = await harness(async (options) => ({
+        async run() {
+          assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), !stopped);
+          if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
+        },
+        async abort() { release(); }, async dispose() {},
+      }), { idleTimeoutSeconds: reason === "idle" ? 1 : 10 });
+      fixture.spec.recovery = {
+        draft, errors: [issue], contentSubmissions: 2, fileErrors: 1, repeatedErrors: 2, stopped, attemptId: "previous-attempt",
+      };
+      try {
+        await fixture.start();
+        const status = await fixture.done();
+        assert.equal(status.state, reason === "idle" ? "timed_out" : "failed");
+        assert.equal(status.retryable === true, stopped, "only an attempt without a resumable business draft uses interruption retries");
+        assert.equal(status.failure?.contentSubmissions, 2);
+        assert.equal(status.failure?.fileErrors, 1);
+        assert.equal(status.failure?.repeatedErrors, 0);
+        assert.equal(status.failure?.stopped, false);
+        assert.equal(status.failure?.attemptId, fixture.spec.attemptId);
+        assert.deepEqual(status.failure?.draft, stopped ? undefined : draft);
+        assert.equal(status.failure?.errors[0]?.category, "interruption");
+        assert.deepEqual(status.failure?.errors.slice(1), stopped ? [] : [issue]);
+      } finally { await fixture.close(); }
+    });
 for (const reason of ["idle", "deadline", "cancel"] as const)
   test(`worker ${reason} aborts and disposes its own session`, async () => {
     let disposed = false, running = false,
@@ -897,6 +934,13 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
       }
       const status = await fixture.done();
       assert.equal(status.state, reason === "cancel" ? "cancelled" : "timed_out");
+      if (reason === "idle") {
+        assert.equal(status.error, "Model/tool idle timeout");
+        assert.equal(status.retryable, true);
+        assert.equal(status.failure?.errors[0]?.category, "interruption");
+        assert.equal(status.failure?.contentSubmissions, 0);
+        assert.equal(status.failure?.draft, undefined);
+      } else assert.notEqual(status.retryable, true, "cancellation and the task deadline cannot trigger automatic retry");
       assert.equal(disposed, true);
       assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
     } finally {
