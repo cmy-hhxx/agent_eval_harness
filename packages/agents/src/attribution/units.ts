@@ -139,20 +139,6 @@ function finalNumberUnits(message: unknown, inputId: string, quote: string, valu
   return { found: matched, units: [...found.values()], ambiguous: found.size > 1 || found.size > 0 && unknownUnit };
 }
 
-/** A bounded scalar grammar, not extraction of every number from natural language. */
-export function scalarReference(reference: unknown): string | null {
-  if (typeof reference === "number") return Number.isFinite(reference) ? String(reference) : null;
-  if (typeof reference !== "string") return null;
-  const text = normalize(reference).trim().replace(/[。.]$/u, "");
-  const numericOnly = new RegExp(`^(${numberPattern})$`, "u").exec(text);
-  // A bare integer string can instead be a year or identifier.
-  if (numericOnly) return numericOnly[1].length <= 80 && /[.eE]/u.test(numericOnly[1]) ? numericOnly[1] : null;
-  const quantity = new RegExp(`^(?:[\\p{L}]{1,40}(?:为|是|[:：=])\\s*)?(${numberPattern})(.*)$`, "u").exec(text);
-  if (!quantity) return null;
-  const parsed = adjacentUnit(quantity[2]);
-  return parsed && !parsed.remaining.trim() && quantity[1].length <= 80 ? quantity[1] : null;
-}
-
 export interface NumericReference { reference_index: number; expected: string; context: string; }
 
 /** Quantities from the standard only; identifiers and calendar coordinates are not targets. */

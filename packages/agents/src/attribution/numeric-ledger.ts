@@ -1,5 +1,5 @@
-import { resolveEvidenceSelection, ValidationError, type AgentRequest, type ToolAudit, type TaskAnalysis, type ValidationIssue } from "@eval/contracts";
-import { numericReferenceDirectory, numericUnitIssue, scalarReference } from "./units.js";
+import { resolveEvidenceSelection, ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
+import { numericReferenceDirectory, numericUnitIssue } from "./units.js";
 import { containsNumber, matchesReference } from "./numeric.js";
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import type { AttributionResult, Evidence } from "./types.js";
@@ -23,8 +23,8 @@ export function numericReferenceSelectionIssues(request: AgentRequest, draft: un
     if (Number.isSafeInteger(selection) && directory[selection as number]) return [];
     return [{ category: "decision", code: "numeric_reference_index_invalid", path: `/numeric_checks/${index}/reference_index`,
       actual: selection, expected: { numeric_references: directory },
-      message: directory.length ? "只选择 numeric_references 的真实 reference_index；expected 与 matches 由程序生成，工具或自算值不属于标准目录。"
-        : "本标准没有可明确识别的数值目标，numeric_checks 必须为 []；工具来源、日期、证券代码及自算值不能加入此表。" } as ValidationIssue];
+      message: directory.length ? "reference_index 只选择 numeric_references 中列出的编号；先核对目标口径，不能以工具值或新计算值替换标准原值。"
+        : "本标准没有可明确识别的数值目录项，numeric_checks 必须为 []；工具来源、日期、证券代码及标准之外的新计算值不能作为标准目标。" } as ValidationIssue];
   });
 }
 
@@ -75,16 +75,6 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
       return undefined; // Evidence diagnostics are already collected by submissionEvidenceIssues.
     }
   }) : [];
-  const core = object(value.core_assessment), task = request.input.task_analysis as unknown as TaskAnalysis;
-  const selected = representation === "submission" ? core?.requirement_indices : core?.criterion_ids;
-  const assessments = Array.isArray(value.criterion_assessments) ? value.criterion_assessments.map(object) : [];
-  const pending = value.is_correct === null && core?.meets_core === null && Array.isArray(selected) && selected.some(selection => {
-    const criterion = representation === "submission" ? task.requirements[selection as number]
-      : task.requirements.find(item => item.id === selection);
-    return criterion && (!criterion.applies_to.length || criterion.applies_to.includes(request.input.candidate_id as string)) &&
-      assessments.some(item => item?.criterion_id === criterion.id && (item.status === "unknown" || item.evidence_status === "uncertain"));
-  });
-  const recognized: NumericCheck[] = [];
   value.numeric_checks.forEach((raw, index) => {
     const item = object(raw), location = `/numeric_checks/${index}`;
     if (!item) return;
@@ -98,7 +88,6 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
       typeof item.scale !== "string" || !["rounded", "exact"].includes(item.mode as string) || !Number.isSafeInteger(item.evidence_index)) return;
     if (typeof item.actual === "number" && (!Number.isFinite(item.actual) || Number.isInteger(item.actual) && !Number.isSafeInteger(item.actual))) return;
     const check = { ...item, expected, actual: typeof item.actual === "number" ? Object.is(item.actual, -0) ? "-0" : String(item.actual) : item.actual } as NumericCheck;
-    recognized.push(check);
     const actualEvidence = evidence[check.evidence_index];
     let calculation: ReturnType<typeof numericMatch>;
     try { calculation = numericMatch(request, check, actualEvidence); }
@@ -119,8 +108,5 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
     if (value.is_correct === null && !matches)
       issue("numeric_uncertainty_contradiction", "/is_correct", "数值核对已确认缺失、不等价或不同量纲时必须明确判false，不能把已知错误改写成待核实。");
   });
-  const scalar = truth.available ? scalarReference(truth.value) : null;
-  if (scalar !== null && !pending && !recognized.some(check => containsNumber(scalar, check.expected, true)))
-    issue("numeric_reference_unchecked", "/numeric_checks", `标准答案含可明确识别的单一目标数值${scalar}，必须选择目录项核对并保留原精度；不能通过空表跳过。回答未提供值时填actual=null。`, scalar, directory);
   return issues;
 }

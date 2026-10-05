@@ -120,10 +120,10 @@ test("too-small output budgets fail instead of returning an empty unread page or
   assert.throws(() => fitStringPage({
     totalChars: text.length, maxChars: text.length,
     maxOutputChars: JSON.stringify(build(1)).length - 1, build,
-  }), /无法完整返回一页/);
+  }), RangeError);
   assert.throws(() => fitStringPage({
     totalChars: 0, maxChars: 1, maxOutputChars: 1, build: pageBuilder(""),
-  }), /无法完整返回一页/);
+  }), RangeError);
 });
 
 test("the builder can include all transport metadata in the measured page", () => {

@@ -521,7 +521,7 @@ test("an oversized text-path entry fails instead of returning a directory that c
     const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
     const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0 }, new AbortController().signal);
     assert.equal(result.isError, true);
-    assert.match(JSON.parse(result.content[0].text!).message, /增大工具输出预算/);
+    assert.match(JSON.parse(result.content[0].text!).message, /工具输出上限.*完整页面/);
     assert.deepEqual(ctx.audit.traceReads, []);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });

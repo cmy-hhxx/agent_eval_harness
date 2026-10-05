@@ -61,7 +61,7 @@ test("Clustering binds a new class by position and fills an empty component's co
   assert(!("closest_existing" in draft.new_classes[0]!));
   input.budget.max_new_classes = 0;
   const resolved = registry.resolve(binding, draft, audit);
-  assert.throws(() => registry.validate(binding, resolved, audit), /超过本次预算/);
+  assert.throws(() => registry.validate(binding, resolved, audit), /超过 budget\.max_new_classes/);
 });
 
 test("Clustering requires a real new-class position and offers only current declaration positions", () => {
@@ -224,16 +224,16 @@ test("Clustering assigns every observation and caps new classes", () => {
 
   const overBudget = request();
   requestInput(overBudget).budget.max_new_classes = 0;
-  assert.throws(() => clusteringProfile.validate!(overBudget, result(), audit), /超过本次预算/);
+  assert.throws(() => clusteringProfile.validate!(overBudget, result(), audit), /超过 budget\.max_new_classes/);
 
   const atCap = request();
   requestInput(atCap).budget.active_classes = 80;
   requestInput(atCap).budget.max_classes = 80;
-  assert.throws(() => clusteringProfile.validate!(atCap, result(), audit), /超过每模型上限/);
+  assert.throws(() => clusteringProfile.validate!(atCap, result(), audit), /超过 budget\.max_classes/);
 
   const weakSupport = request();
   requestInput(weakSupport).budget.min_support = 5;
-  assert.throws(() => clusteringProfile.validate!(weakSupport, result(), audit), /出现样本不足/);
+  assert.throws(() => clusteringProfile.validate!(weakSupport, result(), audit), /低于 budget\.min_support/);
 
   const blankLabel = result();
   blankLabel.new_classes[0]!.label = "  ";

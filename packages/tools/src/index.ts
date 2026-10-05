@@ -32,7 +32,7 @@ function record(ctx: ToolContext, candidate: string): { messages: unknown[] } {
 }
 function registeredInputId(ctx: ToolContext, candidate: string): string {
   const id = ctx.inputIds.get(candidate);
-  if (!ctx.inputs.has(candidate) || !id) throw new Error("只能访问本任务登记的材料与 input UUID");
+  if (!ctx.inputs.has(candidate) || !id) throw new Error("candidate 必须选择本任务材料中列出的候选标识");
   evidenceId(id, 0, "image");
   return id;
 }
@@ -244,7 +244,7 @@ export const builtinTools: ExecutableTool[] = [
           shown.pop(); result = page();
         }
         if (result.content[0].text!.length > ctx.policy.maxOutputChars)
-          throw new Error("maxOutputChars 太小，无法完整返回一张表的目录；请增大工具输出预算");
+          throw new Error("本次工具输出上限无法容纳一个完整表格目录条目；请用 read_trace 读取目标消息");
         return result;
       }
       if (args.message_index !== undefined) throw new Error("message_index 仅用于表格目录，核验直接使用 table_index");
@@ -276,7 +276,7 @@ export const builtinTools: ExecutableTool[] = [
         shown.pop(); result = page();
       }
       if (result.content[0].text!.length > ctx.policy.maxOutputChars)
-        throw new Error("maxOutputChars 太小，无法完整返回一行对应核验；请增大工具输出预算");
+        throw new Error("本次工具输出上限无法容纳一行完整核验结果；请用 read_trace 读取两侧原文");
       const entry = { candidate: args.candidate, ...request };
       if (!(ctx.audit.tableChecks ?? []).some((check) => canonical(check) === canonical(entry)))
         (ctx.audit.tableChecks ??= []).push(structuredClone(entry));
@@ -408,7 +408,7 @@ export const builtinTools: ExecutableTool[] = [
         result = page();
       }
       if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
-        throw new Error("maxOutputChars 太小，无法完整返回一条检索证据；请增大工具输出预算");
+        throw new Error("本次工具输出上限无法容纳一条完整检索证据；请用 read_trace 读取已定位的消息");
       ctx.audit.traceReads.push(...shown.map((match) => match.read));
       return result;
     },
@@ -426,7 +426,7 @@ export const builtinTools: ExecutableTool[] = [
         reference: { evidence_id: evidenceId(registeredInputId(ctx, args.candidate), args.message_index, "image") },
       });
       if (metadata.length > ctx.policy.maxOutputChars)
-        throw new Error("maxOutputChars 太小，无法完整返回图片元数据；请增大工具输出预算");
+        throw new Error("本次工具输出上限无法容纳图片元数据，未成功查看图片");
       if (!ctx.audit.viewedImages.includes(id)) ctx.audit.viewedImages.push(id);
       return {
         content: [

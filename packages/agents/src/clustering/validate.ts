@@ -205,7 +205,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     issue(
       "clustering_new_class_budget",
       "/new_classes",
-      "新增类超过本次预算；合并不会提高本次预算，请复用已有类或在下次运行再新增",
+      "new_classes 数量超过 budget.max_new_classes；合并不提高该上限。请复用合适的已有类，无法归类的观察填写 deferred_reason 说明本次限制。",
       value.new_classes.length,
       input.budget.max_new_classes,
     );
@@ -214,7 +214,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     issue(
       "clustering_class_cap",
       "/new_classes",
-      "归类后活跃问题类超过每模型上限",
+      "合并后保留的活跃类数加 new_classes 数量超过 budget.max_classes。请复用合适类、合并同组件近义类，或对受上限限制的观察填写 deferred_reason。",
       expectedClasses,
       input.budget.max_classes,
     );
@@ -227,7 +227,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     issue(
       "clustering_component_budget",
       "/new_classes",
-      "新增组件超过本次预算",
+      "new_classes 涉及的新增组件数超过 budget.max_new_components；已有组件应使用目录名称或别名，不改动观察的责任组件。",
       newComponents.size,
       input.budget.max_new_components,
     );
@@ -235,7 +235,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     issue(
       "clustering_component_cap",
       "/new_classes",
-      "组件总数超过每模型上限",
+      "已有组件数加新增组件数超过 budget.max_components；对无法归入已有组件且受上限限制的观察填写 deferred_reason。",
       input.budget.active_components + newComponents.size,
       input.budget.max_components,
     );
@@ -252,7 +252,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue(
         "clustering_new_support",
         "/new_classes",
-        "新类覆盖的出现样本不足",
+        "该新类所覆盖观察的 count 之和低于 budget.min_support；不能用不同现象凑数，请复用合适的已有类或填写 deferred_reason 说明支持数量限制。",
         { key: entry.key, support: support.get(entry.key) ?? 0 },
         input.budget.min_support,
       );

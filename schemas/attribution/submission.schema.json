@@ -175,7 +175,7 @@
                   "type": "integer",
                   "minimum": 0
                 },
-                "description": "本 finding 原提交 evidence 数组中证明本方工具自身失误的零起始位置；程序按实际调用绑定工具名。不能选择仅作正确来源或反证的工具；未定位时与 model_responsible=false 一同留空。"
+                "description": "本 finding 提交的 evidence 数组中证明本方工具自身失误的零起始位置，须对应本方真实工具调用或返回。没有工具失误证据时填 []，不能选择仅作正确来源或反证的工具。"
               },
               "label": {
                 "type": "string",
@@ -193,7 +193,7 @@
               "null"
             ],
             "minimum": 0,
-            "description": "仅 instruction_following 选择本方 norm_directory 的 norm_index；未知规范用 null 且 uncertain，requirement_index由程序绑定。"
+            "description": "仅 instruction_following 选择 answer.norm_directory 中对应规范的 norm_index，不另填 assessment.requirement_index；未知规范用 null 且 evidence_status=uncertain。"
           }
         },
         "allOf": [
@@ -285,7 +285,7 @@
     "numeric_checks": {
       "type": "array",
       "maxItems": 64,
-      "description": "仅核对 numeric_references 目录中的标准数值；选择原零起始 reference_index，不提交 expected 或 matches。目录为空时必须为空数组。工具或自算数值只在理由中保留证据与计算。",
+      "description": "逐项核对 numeric_references 中可直接比较的同口径点值；选择原零起始 reference_index，不提交 expected 或 matches。显式容差、区间、上下限及须计算或解码的表达在 correctness_reason 按原规则核验，该目标不入表。目录为空或没有直接点值目标时填空数组；最终回答已直接给出的计算结果可按原值入表。",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -324,24 +324,24 @@
               "rounded",
               "exact"
             ],
-            "description": "连续量按标准精度rounded；整数计数等离散结果用exact"
+            "description": "直接点值比较：连续量按标准精度rounded，整数计数等离散结果用exact；显式容差、区间和上下限不使用此表"
           },
           "evidence_index": {
             "type": "integer",
             "minimum": 0,
-            "description": "包含actual的 correctness_evidence 条目的零起始索引，证据必须指向最终回答"
+            "description": "correctness_evidence 数组中的零起始位置，不是 reference.evidence_index；actual 非 null 时选包含原值的本方最终回答证据，actual=null 时选覆盖待核缺失范围的本方最终回答证据"
           },
           "reference_index": {
             "type": "integer",
             "minimum": 0,
-            "description": "numeric_references 中程序提供的零起始标准数值位置"
+            "description": "numeric_references 中所核对标准数值的零起始 reference_index，须与实际值口径相同"
           }
         }
       }
     },
     "criterion_assessments": {
       "type": "array",
-      "description": "只提交 task_analysis 中适用于当前 candidate_id 的条款（applies_to=[] 或包含该候选）；不提交其他候选的条款或 not_applicable，程序据可信 scope 生成正式不适用结果。",
+      "description": "对 task_analysis 中本方适用的每条 requirements、scoring_points 和 red_flags 各提交一项；不提交他方条款或 not_applicable。",
       "minItems": 1,
       "maxItems": 24,
       "items": {

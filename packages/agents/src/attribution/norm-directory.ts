@@ -111,7 +111,7 @@ export function findingNormSelectionIssues(request: AgentRequest, draft: unknown
       const coverage = traceReadCoverage(audit, { candidate: "answer", message_index: point.message_index,
         kind: "text", path: point.path, start: point.start, end: point.end });
       if (!coverage.covered) issues.push({ category: "evidence", code: "finding_norm_not_read", path: `${path}/norm_index`,
-        message: "选中的长规范须读取全部原条件和例外；目录预览或自动绑定不代替完整阅读。",
+        message: "选中的长规范须读取全部原条件和例外；请按 read_request 读取到 end_offset，目录预览不代替完整阅读。",
         actual: coverage.missing, expected: { norm_index: selected, read_request: { tool: "read_trace", arguments: {
           candidate: "answer", message_index: point.message_index, path: point.path, offset: point.start } }, end_offset: point.end } });
     });

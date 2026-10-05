@@ -1,4 +1,3 @@
-材料和读取工具中的 reference 为 `{evidence_index}`：这是本任务证据目录从 1 开始的正整数选号。核对相邻原文后，选择对应 reference；完整来源和原文坐标由程序维护，不提交 evidence_id，也不另填 source。正式结果的完整坐标由程序贯穿保留，复核不会根据引文重新猜位置；展示脱敏不改变所选原文坐标。相同坐标始终使用同一编号，恢复和修复时已有编号不变，新证据只在目录末尾追加。没有支持判断的片段时先 read_trace/search_trace/view_image/check_table 读取，不推算或虚构编号。
-图片引用须先查看，并在 reference 中补 observation 描述实际所见。普通 observation 不能修改原文、补充不存在的数字或替代条件例外。材料中的真实股票代码、脚注标记和业务 ID 保持原文；它们不属于提交引用的选号。
-
-错误反馈只重用已经提供的编号。新建议保留原文与 read_request，先完成真实读取再取得 reference.evidence_index；不根据建议出现顺序为其编号。
+证据引用使用材料或读取工具返回的 reference，例如 `{evidence_index: 3}`。`reference.evidence_index` 是本任务从 1 开始的证据编号，不是数组位置。先核对对应原文及其条件、例外，再选择引用；编号本身不证明判断成立。需要补充证据时，使用本任务可用的读取工具，不自行计算或编造编号。
+图片须先查看；引用时在 reference 中填写 observation，描述实际所见。observation 只记录观察，不能补造数字或改写原文。正文中的股票代码、脚注和业务 ID 仍按原文核查，与证据编号区分。
+反馈给出的 read_request 是读取参数；先读取对应材料，再选择返回的 reference，不按反馈条目的顺序编号。

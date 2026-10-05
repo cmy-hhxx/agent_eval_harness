@@ -617,8 +617,8 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
         assert(rules.includes("reference.evidence_index"));
-        assert(instruction.includes("完整读取实际交付与适用要求"));
-        assert(rules.includes("type=strength/problem"));
+        assert(instruction.includes("读完整交付，确定要求的作用域"));
+        assert(rules.includes("strength/problem"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));

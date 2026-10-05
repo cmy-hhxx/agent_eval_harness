@@ -1,1 +1,1 @@
-分页读取之前工具保存的文本产物；图片产物返回图片内容。文本页完整返回JSON，has_more=true时将next_offset原样作为下次offset；最后一页不会越过total_chars。页长会按实际JSON输出预算缩小。
+读取先前工具返回的产物，id 使用该产物的原编号；图片返回图片内容，文本返回当前页及分页字段。文本 has_more=true 时，保持 id 不变，将 next_offset 原样作为下次 offset，直到 has_more=false。产物用于辅助核查；引用原材料仍使用 read_trace/search_trace 返回的 reference。

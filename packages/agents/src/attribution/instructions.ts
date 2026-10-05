@@ -120,7 +120,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
               evidenceCovers(context.raw, request.sources.answer.id, item.evidence_id, norm.evidence_id)))));
     if (!hasNorm) errors.push({
       category: "evidence", code: "instruction_evidence_required", path,
-      message: "遵守或违反指令的已确认判断须同时保留真实规范与实际回答证据；共同要求按真实 requirement 绑定，本方原规范按 norm_directory 的明确选择绑定完整来源。未关联的 USER 要求同样选择真实规范，未知规范保持 uncertain。规范坐标不证明触发、遵守或违反。",
+      message: "已确认的指令判断须有完整原规范及实际回答或执行证据。instruction_following 选择本方 norm_directory 中对应规范的 norm_index；未知规范用 null 且 uncertain。核对原条件是否触发以及实际行为，来源编号本身不证明遵守或违反。",
       expected: { normative_sources: (path.startsWith("/findings/") ? context.sources : normSources).map(source => ({ message_index: source.message_index, path: source.path, role: source.role,
         references: source.evidence.map(item => ({ evidence_id: item.evidence_id })) })) },
     });

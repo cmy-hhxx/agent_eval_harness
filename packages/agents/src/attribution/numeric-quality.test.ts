@@ -1,22 +1,57 @@
-import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
+import { canonicalEvidence, resolveFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
+import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError } from "@eval/contracts";
-import { attributionProfile } from "./index.js";
+import { AgentRegistry } from "@eval/host";
+import { attributionAgent, attributionProfile } from "./index.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
-function fixture(reference: string, answer: string, checks: AttributionResult["numeric_checks"] = []) {
+const registry = new AgentRegistry([attributionAgent]);
+function fixture(reference: string | number, answer: string, checks: AttributionResult["numeric_checks"] = []) {
   const request = structuredClone(example.request);
-  request.input.ground_truth.value = reference;
+  Object.assign(request.input.ground_truth, { value: reference });
   request.sources.answer.value.messages[1]!.content = answer;
+  request.input.answer.final_answer = answer;
   const result = structuredClone(example.result) as AttributionResult;
   result.correctness_evidence = [canonicalEvidence(example.request.sources.answer.id, 1, answer)];
   result.criterion_assessments.forEach((item) => { item.evidence = result.correctness_evidence; });
   result.findings = [];
   result.numeric_checks = checks;
   return { request, result, validate: () => attributionProfile.validate!(request, result, audit) };
+}
+function taskFixture(question: string, reference: string | number, answer: string, reason: string,
+  checks: AttributionResult["numeric_checks"] = []) {
+  const value = fixture(reference, answer, checks), { request, result } = value;
+  request.input.answer.question = question;
+  request.sources.answer.value.messages[0]!.content = question;
+  Object.assign(request.sources.answer.value.meta, { ground_truth: reference });
+  request.input.task_analysis = { task_type: "数值核验", goal: question,
+    requirements: [{ id: "r1", text: question, applies_to: [], acceptance_rule: "按原题和标准答案核验最终交付。" }],
+    scoring_points: [], red_flags: [] };
+  result.task_analysis = structuredClone(request.input.task_analysis);
+  result.correctness_reason = reason;
+  result.summary = reason;
+  result.core_assessment = { meets_core: true, reason, criterion_ids: ["r1"] };
+  result.criterion_assessments = [{ criterion_id: "r1", status: "met", evidence_status: "established", summary: reason,
+    evidence: [canonicalEvidence(request.sources.answer.id, 0, question), ...result.correctness_evidence] }];
+  setFixtureNormDirectory(request);
+  return value;
+}
+function submit(value: ReturnType<typeof fixture>) {
+  return resolveFixtureEvidence(registry, { agent: "attribution", profile: "default", request: value.request },
+    attributionSubmission(value.request, value.result), audit) as AttributionResult;
+}
+function validateEmptyLedger(value: ReturnType<typeof fixture>) {
+  // These checks preserve a supplied semantic assessment; they do not prove the original numerical rule.
+  value.validate();
+  const resolved = submit(value);
+  registry.validate({ agent: "attribution", profile: "default", request: value.request }, resolved, audit);
+  assert.deepEqual(resolved.numeric_checks, []);
+  assert.equal(resolved.is_correct, value.result.is_correct);
+  assert.equal(resolved.correctness_reason, value.result.correctness_reason);
 }
 function check(expected: string, actual: string | null, scale = "1"): AttributionResult["numeric_checks"][number] {
   return { label: "目标结果", expected, actual, scale, mode: "rounded", matches: true, evidence_index: 0 };
@@ -32,17 +67,52 @@ test("citation numbers cannot borrow a table header unit to replace missing data
     [check("12", "12")]).validate();
 });
 
-test("a single explicit reference quantity cannot disappear from the numeric ledger", () => {
-  for (const reference of ["总销量为1087.4万千升", "−0.6个百分点", "1.13018E+12元", "-0.6"])
-    assert.throws(fixture(reference, reference).validate, code("numeric_reference_unchecked"), reference);
-  fixture("总销量为1087.4万千升", "总销量1087.40万千升", [check("1087.4", "1087.40")]).validate();
-  fixture("−0.6个百分点", "减少0.60个百分点", [check("-0.6", "-0.60")]).validate();
+test("an explicit question tolerance can be reviewed outside the ledger for string and numeric standards", () => {
+  for (const reference of ["10.0", 10]) {
+    validateEmptyLedger(taskFixture("测量长度，以标准答案为基准，允许误差±1。", reference, "长度为10.5。",
+      "原题允许误差±1；回答10.5与标准10相差0.5，在允许范围内。"));
+  }
+  validateEmptyLedger(taskFixture("测量长度，按标准答案明确给出的容差判断。", "10.0±1", "长度为10.5。",
+    "标准允许10.0±1；回答10.5处于9至11范围内。"));
 });
 
-test("ambiguous identifiers and compound references do not become invented scalar targets", () => {
-  for (const reference of ["301689", "2024", "2024年", "2024年总销量为1087.4万千升", "1至2万吨",
-    "1087.4万千升±10%", "至少1087.4万千升", "销量为1087.4万千升，收入为3亿元", "约1087.4万千升", "1/3", "24年11个月"])
-    fixture(reference, reference).validate();
+test("an interval and its permitted point estimate retain their original semantic assessment", () => {
+  validateEmptyLedger(taskFixture("给出区间[9,11]内的一个估计值，标准答案为中值。", "10.0", "估计值为10.5。",
+    "原题允许区间内的任一估计值，10.5落在[9,11]内；中值10.0不是唯一允许值。"));
+  validateEmptyLedger(taskFixture("按标准答案给出的区间，选取一个区间内的估计值。", "[9.0,11.0]", "估计值为10.0。",
+    "任务允许选取区间内的估计值，回答10.0位于标准区间内。"));
+});
+
+test("upper and lower limits remain inequality assessments even with scalar-looking standards", () => {
+  for (const [question, reference, answer, reason] of [
+    ["提交一个不超过10元的预算。", "10.0元", "预算为9元。", "原题给出10元上限；回答9元未超过上限。"],
+    ["按标准答案的预算上限给出预算。", "上限为10.0元", "预算为9元。", "标准上限为10元；回答9元符合该上限。"],
+    ["提交一个至少10元的预算。", "10.0元", "预算为11元。", "原题给出10元下限；回答11元达到下限。"],
+    ["按标准答案的预算下限给出预算。", "最低为10.0元", "预算为11元。", "标准最低为10元；回答11元达到下限。"],
+  ] as const) validateEmptyLedger(taskFixture(question, reference, answer, reason));
+});
+
+test("a fraction can retain its derived comparison without inventing a delivered decimal actual", () => {
+  const value = taskFixture("计算1除以3，允许用分数作答。", "0.3333", "结果为1/3。",
+    "回答原文为1/3；计算该分数并按标准四位小数舍入为0.3333，与标准一致，不将自算小数填入actual。");
+  validateEmptyLedger(value);
+  value.result.numeric_checks = [check("0.3333", "0.3333")];
+  assert.throws(() => submit(value), code("numeric_answer_missing"));
+  assert.throws(value.validate, code("numeric_answer_missing"));
+});
+
+test("submitted point-value contradictions remain invalid on submission and formal result paths", () => {
+  const wrong = taskFixture("给出长度，与标准答案按末位精度核对。", "10.0", "长度为10.5。",
+    "回答长度为10.5。", [{ ...check("10.0", "10.5"), matches: false }]);
+  assert.throws(() => submit(wrong), code("numeric_correctness_contradiction"));
+  assert.throws(wrong.validate, code("numeric_correctness_contradiction"));
+  wrong.result.is_correct = false;
+  wrong.result.correctness_reason = "回答10.5按标准末位精度核验仍不等于10.0。";
+  wrong.result.core_assessment = { meets_core: false, reason: wrong.result.correctness_reason, criterion_ids: ["r1"] };
+  wrong.result.criterion_assessments[0]!.status = "unmet";
+  wrong.result.criterion_assessments[0]!.summary = wrong.result.correctness_reason;
+  registry.validate({ agent: "attribution", profile: "default", request: wrong.request }, submit(wrong), audit);
+  wrong.validate();
 });
 
 test("equal numerals cannot make mass and volume or percentages and percentage points equivalent", () => {
@@ -77,10 +147,15 @@ test("unit scale is derived from the cited number's adjacent units", () => {
     code("numeric_scale_unverified"));
 });
 
-test("missing scalar result remains explicit and cannot be called correct", () => {
-  const missing = fixture("1087.4万千升", "没有查到销量", [{ ...check("1087.4", null), matches: false }]);
+test("a submitted missing target cannot be called correct on submission or formal result paths", () => {
+  const missing = taskFixture("给出总销量。", "1087.4万千升", "没有查到销量。", "回答未交付总销量。",
+    [{ ...check("1087.4", null), matches: false }]);
+  assert.throws(() => submit(missing), code("numeric_correctness_contradiction"));
   assert.throws(missing.validate, code("numeric_correctness_contradiction"));
   missing.result.is_correct = false;
+  missing.result.core_assessment.meets_core = false;
+  missing.result.criterion_assessments[0]!.status = "unmet";
+  registry.validate({ agent: "attribution", profile: "default", request: missing.request }, submit(missing), audit);
   missing.validate();
 });
 
@@ -174,7 +249,7 @@ test("single-character Chinese day counts stay literal without cropping compound
       code("numeric_answer_context_missing"), answer);
 });
 
-test("unverifiable scalar conversions have an explicit pending-review state", () => {
+test("unverifiable conversions still require a supported pending-review state", () => {
   const pending = fixture("1087.4万千升", "总销量为3/7个标准容器，资料未说明容器容量。");
   pending.result.is_correct = null;
   pending.result.core_assessment.meets_core = null;

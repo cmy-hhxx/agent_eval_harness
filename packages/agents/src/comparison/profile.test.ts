@@ -521,7 +521,7 @@ test("Comparison requires exact pair candidate keys and complete row and finding
   const missingCandidate = structuredClone(data.result); delete (missingCandidate.decision_basis.comparisons[0].assessments as Record<string, unknown>).B;
   assert.throws(() => validate(data.request, missingCandidate), /同一行包含全部候选/);
   const missingStrength = structuredClone(data.result); missingStrength.decision_basis.comparisons[0].assessments.B.finding_indices = [];
-  assert.throws(() => validate(data.request, missingStrength), /B\.findings\[0\].*assessments\.B\.finding_indices.*索引从0开始/);
+  assert.throws(() => validate(data.request, missingStrength), /B\.findings\[0\].*comparison_slots.*summary/);
   const badRef = structuredClone(data.result); badRef.decision_basis.comparisons[0].assessments.A.finding_indices = [99];
   assert.throws(() => validate(data.request, badRef), /只能引用该候选/);
   const missed = pair(); missed.request.input.attributions.A.findings.push({ ...missed.request.input.attributions.A.findings[0], type: "problem", importance: "medium" });
@@ -812,7 +812,7 @@ test("scope differences do not create an advantage and row states cannot strengt
     assert(error instanceof ValidationError);
     const scope = error.issues?.find(issue => issue.code === "comparison_advantage_scope_mismatch");
     assert.equal(scope?.path, "/decision_basis/comparisons/0/better_candidates");
-    assert.match(scope?.message ?? "", /保留当前程序槽位/);
+    assert.match(scope?.message ?? "", /保留当前比较格/);
     assert.match(scope?.message ?? "", /better_candidate=null/);
     assert.match(scope?.message ?? "", /summary.*材料未提供本方同等约束/);
     return true;
@@ -843,7 +843,7 @@ test("scope differences do not create an advantage and row states cannot strengt
     assert(error instanceof ValidationError);
     const unproven = error.issues?.find(issue => issue.code === "comparison_advantage_unproven");
     assert.match(unproven?.message ?? "", /相对优势需要两方/);
-    assert.match(unproven?.message ?? "", /保留当前程序槽位/);
+    assert.match(unproven?.message ?? "", /保留当前比较格/);
     assert.match(unproven?.message ?? "", /better_candidate=null/);
     return true;
   });

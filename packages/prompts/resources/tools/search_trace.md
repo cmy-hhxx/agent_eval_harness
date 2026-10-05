@@ -1,1 +1,2 @@
-在当前任务可读取的消息中搜索逐字子串，返回配对的原文 quote 和 reference；先核对原文是否支持判断，再选择对应 reference.evidence_index 作为提交引用。不复制展示的 message_index、quote 或 path，也不自行计算、拼接或虚构证据编号。每页按工具输出预算返回完整的证据条目；has_more 为 true 时，保持 candidate、query 不变，将 next_offset 原样作为下一次的 offset。 来源和完整坐标由程序维护，提交只填已提供的 evidence_index，不另填 source。
+在 candidate 的消息中搜索 query 的逐字子串，返回匹配片段及 reference；不支持语义搜索或正则表达式。片段未覆盖完整条件时，用 read_trace 补读上下文，再判断是否支持结论。未命中只表示没有找到该字面词，不能证明相关事实不存在。
+has_more=true 时，保持 candidate、query 不变，将 next_offset 原样作为下一次 offset。引用使用对应 reference。

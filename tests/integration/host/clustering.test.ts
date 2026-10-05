@@ -123,7 +123,7 @@ test("clustering bind preserves each shard's reserved component headroom", async
       const proposal = proposedClass();
       proposal.new_classes[0]!.component = component;
       if (index === 0) assert.doesNotThrow(() => clusteringProfile.validate!(request, proposal, emptyAudit()));
-      else assert.throws(() => clusteringProfile.validate!(request, proposal, emptyAudit()), /新增组件超过本次预算/);
+      else assert.throws(() => clusteringProfile.validate!(request, proposal, emptyAudit()), /新增组件数超过 budget\.max_new_components/);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

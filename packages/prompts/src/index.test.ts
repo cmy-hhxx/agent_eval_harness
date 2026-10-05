@@ -47,19 +47,19 @@ test("built-in profiles submit JSON directly while keeping code tools for calcul
 });
 
 test("independent comparison verification uses its own centralized prompt resources", () => {
-  const prompt = agentPrompt("comparison", ["read_trace", "execute_code"], "verification");
+  const prompt = agentPrompt("comparison", ["read_trace", "execute_code", "inspect_material"], "verification");
   for (const key of ["system", "instructions"] as const)
     assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(
       new URL(`../resources/comparison/verification/${key}.md`, import.meta.url), "utf8").trim());
   assert.match(prompt.instructions, /原问题/);
-  assert.match(prompt.instructions, /零起始索引/);
+  assert.match(prompt.instructions, /requirement_indices.*全局零起始编号/);
   assert.match(prompt.instructions, /inspect_material/);
-  assert.match(prompt.instructions, /共用执行预算中给出的内容调用上限/);
-  assert.match(prompt.instructions, /程序自动保留/);
-  assert.match(prompt.instructions, /必须提交.*concern_matches.*concern_refutations.*source_reviews/);
+  assert.match(prompt.toolDescriptions.inspect_material, /与最终提交共用 content_call_limit/);
+  assert.match(prompt.instructions, /已有 material_inspection 时继续第二步，不重复首查/);
+  assert.match(prompt.instructions, /填写 concern_matches、concern_refutations、source_reviews 三数组/);
   assert.match(prompt.instructions, /verification_check_slots/);
   assert.match(prompt.instructions, /contradicted/);
-  assert.match(prompt.instructions, /needs_review/);
+  assert.match(prompt.instructions, /source_reviews 只列真实需要更正的归因疑点/);
   assert.throws(() => agentPrompt("comparison", [], "../default"), /Invalid prompt profile/);
 });
 
@@ -68,15 +68,15 @@ test("rewrite asks for direct factual critique without boilerplate or stronger c
   const text = systemPrompt + "\n" + instructions;
   assert.match(text, /短句|短评/);
   assert.match(text, /通俗易懂/);
-  assert.match(text, /保留原意/);
+  assert.match(text, /保留主体、事实、限定、不确定性和既定取舍/);
   assert.match(text, /具体|事实/);
   assert.match(text, /置信度|自评/);
   assert.match(text, /删除|删去/);
   assert.match(text, /犀利/);
-  assert.match(text, /同义词替换/);
+  assert.match(text, /换词、调语序/);
   assert.match(text, /重复判词/);
-  assert.match(text, /不能写成已证实错误/);
-  assert.match(text, /未展示、未展开、未提供证据.*不能改成.*未核查/);
+  assert.match(text, /不能改成确证错误/);
+  assert.match(text, /未展示、未展开、未提供证据.*不能据此写成.*未核查/);
   assert(!text.includes("原样保留数字"), "self-rated 6/10 is not a source fact that must survive");
 });
 
@@ -120,7 +120,6 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(chart, /A组固定中灰，B组固定暗红/);
   assert.match(chart, /不随赢家或涨跌改变.*不按类别位置猜测身份/);
   assert.match(chart, /双方都好、双方都差.*独立的固定中性灰色/);
-  assert.match(chart, /不是官方模板或设计 token/);
   assert.match(chart, /taskId 不放在 references 项的顶层/);
   assert.match(chart, /不在校验失败后换成运行引用/);
   assert.doesNotMatch(chart, /A组固定墨黑|B组固定铜色/);
@@ -136,12 +135,29 @@ test("task materials and per-attempt budget/recovery render once and in order", 
     repeatedErrors: 1, stopped: false, attemptId: "attempt",
   };
   assert.equal(prompt.renderPrompt(material, DEFAULT_POLICY, failure),
-    task + `\n\n执行预算：${JSON.stringify(DEFAULT_POLICY)}。` +
+    task + `\n\n执行预算：${JSON.stringify({ content_call_limit: 1 + DEFAULT_POLICY.repairAttempts })}。` +
     `\n${readFileSync(new URL("../resources/shared/recovery.md", import.meta.url), "utf8").trim()}\n${JSON.stringify({ draft: failure.draft, errors: failure.errors })}`);
   assert.throws(() => prompt.renderPrompt(material, undefined, failure), /Recovery requires/);
   const stopped = prompt.renderPrompt(material, DEFAULT_POLICY, { ...failure, stopped: true });
   assert(!stopped.includes('"draft"'), "a repeatedly rejected draft must not anchor a fresh attempt");
   assert(stopped.endsWith(JSON.stringify({ errors: failure.errors })));
+});
+
+test("model budgets expose actionable call limits for the selected tools", () => {
+  const policy = { ...DEFAULT_POLICY, repairAttempts: 4, maxTokens: 10000 };
+  const limits = (stage: PromptStage, tools: string[]) => {
+    const text = agentPrompt(stage, tools).renderPrompt(material, policy);
+    return JSON.parse(text.match(/\n\n执行预算：(.*)。/)![1]) as Record<string, number>;
+  };
+  assert.deepEqual(limits("rewrite", []), { content_call_limit: 5 });
+  assert.deepEqual(limits("comparison", ["inspect_material"]), { content_call_limit: 5 });
+  assert.deepEqual(limits("attribution", ["read_trace"]), {
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls,
+  });
+  assert.deepEqual(limits("attribution", ["read_trace", "execute_code"]), {
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls,
+    code_timeout_seconds: DEFAULT_POLICY.codeTimeoutSeconds,
+  });
 });
 
 test("a workflow task focus is shown before full material without losing or rewriting either view", () => {

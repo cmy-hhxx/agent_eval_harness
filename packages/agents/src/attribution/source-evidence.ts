@@ -53,7 +53,7 @@ const correctnessPath = (path: string) => /^\/?correctness_evidence(?:\/|\[|$)/u
 /** Select a source solely from the complete program-generated ID, never a model-provided source label. */
 function sourceForReference(request: AgentRequest, ref: EvidenceReference, path: string) {
   if (Object.hasOwn(ref, "source")) throw new ValidationError([fail(path,
-    "证据来源由程序根据已提供的 evidence_index 绑定，不能另填 source 或手写来源 ID", ref)]);
+    "引用只填写所选材料的 evidence_index，不能另填 source 或手写来源 ID", ref)]);
   const inputId = parseEvidenceCoordinates(ref.evidence_id)?.input_id ??
     /^ev_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})_/u.exec(ref.evidence_id)?.[1];
   if (!inputId) return { key: "answer", entry: request.sources.answer! }; // The strict resolver rejects malformed/old IDs.

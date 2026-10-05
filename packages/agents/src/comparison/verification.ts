@@ -275,7 +275,7 @@ function sourceOnlyNormProof(request: AgentRequest, concern: ComparisonMaterialI
       return coordinates.kind === "text" && covered(coordinates.message_index, coordinates);
     })) return true;
     issues.push({ category: "evidence", code: "inspection_private_norm_required", path,
-      message: "规范证据检查点须保留程序闭合的完整原始规范块及所有真实文本来源、条件和例外。", actual: block });
+      message: "规范证据须保留同一本方完整原始规范，包括全部真实文本来源、条件和例外。", actual: block });
     return false;
   });
   return { issues, blocks: complete };
@@ -438,7 +438,7 @@ function concernMatchChoices(request: AgentRequest, concern: ComparisonMaterialI
       requirement_index: requirements.findIndex(item => item.id === id), full_norm_blocks: selectedNormBlocks(request, concern, id) }))
       : [{ full_norm_blocks: sourceOnlyNormProof(request, concern, audit, `${path}/source_evidence`).blocks }],
     actual_answer_evidence: concern.answer_evidence,
-    unmatched_action: "可省略此 concern 的匹配项；程序会保留原发现，进入已有来源复核。合法坐标范围只证明机械覆盖，仍须核查是否同一问题及责任链。" };
+    unmatched_action: "无法确认准确对应时可省略此 concern 的匹配项并保留原发现待核；可选 finding 不证明是同一问题，仍须核查实际行为与责任链。" };
 }
 
 /** Reveal finite structural choices after inspection; they never establish semantic equivalence. */
@@ -500,7 +500,7 @@ export function validateMaterialInspection(request: AgentRequest, draft: unknown
   for (const [index, check] of value.checks.entries()) {
     const path = `/checks/${index}`, slot = slots[index];
     if (!slot || check.candidate !== slot.candidate || check.criterion_id !== slot.criterion_id) {
-      issue("verification_check_scope", path, "核对项须按程序固定顺序绑定本方适用 requirements，不能改变关联、重复或借用他方私规。", slot);
+      issue("verification_check_scope", path, "核对项须按 verification_check_slots 顺序检查本方适用要求，不能调换、重复或借用他方私规。", slot);
       continue;
     }
     issues.push(...answerEvidenceIssues(request, check.candidate, check.answer_evidence, audit, `${path}/answer_evidence`));
@@ -508,7 +508,7 @@ export function validateMaterialInspection(request: AgentRequest, draft: unknown
   }
   for (const [index, check] of value.checks.entries()) if (check.result === "contradicted" &&
     !value.concerns.some(concern => concern.candidate === check.candidate && concern.criterion_ids.includes(check.criterion_id)))
-    issue("inspection_contradiction_removed", `/checks/${index}`, "contradicted 核对项须在 concerns 保留同一本方要求的具体反证；完整审阅范围不能自动替代该发现。");
+    issue("inspection_contradiction_removed", `/checks/${index}`, "contradicted 核对项须在 concerns 保留同一本方要求的具体反证；输出违规用 answer_evidence 定位正文，缺项说明完整回答中的缺失范围，过程违规用 source_evidence 引用规范和实际过程，并以 answer_evidence 关联最终交付。");
   issues.push(...verificationConcernIssues(request, value.concerns, audit, "/concerns"));
   if (issues.length) throw new ValidationError(issues);
 }
@@ -545,7 +545,7 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
           if (!coverage.eligible)
             throw new ValidationError([{ category: "decision", code: "inspection_match_private_norm", path,
               expected: concernMatchChoices(request, concern, match.concern_index, audit, path),
-              message: "未选入要求的局部发现只能对应本方未绑定 requirement 的 instruction_following established problem，须共同保留同一完整真实规范和实际回答证据；仍须核查具体行为和责任链相符。" }]);
+              message: "未选入要求的局部发现只能对应本方 requirement_index=null 的 instruction_following established problem；只选择 eligible_findings 中的 finding，并核查同一完整真实规范、实际回答、行为与责任链。" }]);
           return [];
         }
         if (!coverage.eligible) throw new ValidationError([{ category: "decision", code: "inspection_match_finding", path,
@@ -708,14 +708,14 @@ export function validateVerification(request: AgentRequest, result: unknown, aud
   const requiredUnverified = inspection ? unverifiedReviews(request, audit) : [];
   if (requiredUnverified.some(review => !value.review_requests.some(item => isDeepStrictEqual(item, review))))
     throw new ValidationError([{ category: "decision", code: "verification_unverified_removed", path: "/review_requests",
-      expected: requiredUnverified, message: "原材料仍未核实的同一要求已被来源作确定结论使用，程序派生的复核请求须保留。" }]);
+      expected: requiredUnverified, message: "原材料仍未核实的要求已被归因作确定结论使用，该来源复核疑点须保留。" }]);
   const requiredConflicts = inspection ? checkConflictReviews(request, audit) : [];
   if (requiredConflicts.some(review => !value.review_requests.some(item => isDeepStrictEqual(item, review))))
     throw new ValidationError([{ category: "decision", code: "verification_check_conflict_removed", path: "/review_requests",
-      expected: requiredConflicts, message: "首查实际满足或条件未触发与同一要求的已确认来源失败相矛盾，或条件未触发却有同项已确认问题；程序派生的来源复核请求须保留。" }]);
+      expected: requiredConflicts, message: "首查实际满足或条件未触发，与归因同项已确认的失败或问题相矛盾，该来源复核疑点须保留。" }]);
   if (value.status === "decided" && !isDeepStrictEqual(value, input.comparison_draft))
     throw new ValidationError([{ category: "decision", code: "verification_draft_changed", path: "/",
-      message: "复核只能确认程序复制的比较草稿；发现错误须请求归因复核，不得改写排名、点评或来源事实。" }]);
+      message: "比较草稿只读；发现归因错误须提出 source_reviews，不得改写排名、点评或来源事实。" }]);
   if (value.status === "needs_review" && input.comparison_draft.review_requests.some(review =>
     !value.review_requests.some(item => isDeepStrictEqual(item, review))))
     throw new ValidationError([{ category: "decision", code: "verification_review_removed", path: "/review_requests",
@@ -723,5 +723,5 @@ export function validateVerification(request: AgentRequest, result: unknown, aud
       message: "草稿中尚未完成的来源复核请求必须保留；不能通过独立复核删除或跳过。" }]);
   if (value.status === "needs_review" && !isDeepStrictEqual(value, pendingComparison(request, Object.fromEntries(Object.entries(input.comparison_draft.assessments)
       .map(([candidate, assessment]) => [candidate, { summary: assessment.summary }])), value.review_requests))) throw new ValidationError([{ category: "decision", code: "verification_review_changed", path: "/",
-    message: "待复核结果由草稿和复核引用派生，不能改写草稿点评、核心状态或待核实判决。" }]);
+    message: "有未解决的来源疑点时保留复核；不能改写草稿点评、核心状态或待核实判决。" }]);
 }

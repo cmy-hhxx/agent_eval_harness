@@ -81,8 +81,8 @@ export function correctnessSubmissionIssues(request: AgentRequest, draft: unknow
       path: `/${field}`, actual: value[field],
       expected: available ? { required_field: field } : { remove_fields: [field] },
       message: available
-        ? `有标准答案时必须提交 ${field}，按实际核对结果填写，不由程序代判。`
-        : `无标准答案时请删除 ${field} 字段；程序生成 is_correct=null、correctness_reason=""、correctness_evidence=[]，不要提交这些空值。`,
+        ? `有标准答案时必须提交 ${field}，按实际核对结果填写。`
+        : `无标准答案时请删除 ${field} 字段，不提交 null、空文本或空数组占位。`,
     }];
   });
 }
@@ -140,7 +140,7 @@ export function validateCriterionAssessments(request: AgentRequest, draft: unkno
     }
     if (representation === "submission" && !applicable(criterion))
       issue("criterion_out_of_scope", `${location}/criterion_id`,
-        "模型只提交当前候选适用的判据；删除本条完整评审，程序按可信 applies_to 生成不适用结果，不填写占位证据。",
+        "只提交当前候选适用的判据；本条不适用，请删除完整评审，不填写 not_applicable 或占位证据。",
         assessment.criterion_id, { candidate_id: input.candidate_id, applies_to: [...criterion.applies_to], target_path: location });
     if (representation === "result" && typeof assessment.status === "string" && statuses.includes(assessment.status) &&
       (assessment.status === "not_applicable") !== !applicable(criterion))
@@ -281,7 +281,7 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       if (finding.type === "problem" && (representation === "submission" || assessment.evidence_status === "established") &&
         requirement && applicable(requirement) && criterionAssessment?.status === "met" && criterionAssessment.evidence_status === "established")
         issue("finding_requirement_conflict", `${location}/assessment/requirement_index`,
-          `finding_index=${index}（零起始）${typeof finding.finding_id === "string" ? `、finding_id=${finding.finding_id}` : ""} 的 problem 显式关联 requirement ${requirement.id}，但同一判据却声明已确认 met。新提交不能仅把 problem 改为 uncertain 来保留这组冲突，任何 dimension 都不能绕过。请按原要求和实际证据核对：确实违反同一 requirement 时，将该判据改为 partial 或 unmet；该条证据确实不足时保留 uncertain，不能同时声明已确认 met；实际关联其他 requirement 时，填写其正确的 requirement_index；只是原要求之外的附加观察或自身规范未入 requirements 中时填 null。若没有真实问题则修正 finding，不能为消除反馈删去真实缺陷或将仍属同条规则的问题脱去关联。程序不根据索引证明违规，也不自动改动判据事实或核心可用性。`,
+          `finding_index=${index}（零起始）${typeof finding.finding_id === "string" ? `、finding_id=${finding.finding_id}` : ""} 的 problem 关联 requirement ${requirement.id}，但同一判据声明已确认 met。请核对原要求和实际证据：已确认缺口时，将判据改为 partial 或 unmet；证据确实不足时保留 uncertain，不能同时声明已确认 met。若关联错误，instruction_following 重新选择本方 norm_directory 的 norm_index，其他维度填写正确的 requirement_index；其他维度的观察确实未入 requirements 中时填 null。没有真实问题时修正 finding；真实问题仍须保留，不能仅降低其确定性或解除真实关联来消除冲突。`,
           assessment.requirement_index, { criterion_id: requirement.id, status: criterionAssessment.status,
             evidence_status: criterionAssessment.evidence_status, finding_index: index,
             ...(typeof finding.finding_id === "string" ? { finding_id: finding.finding_id } : {}),
@@ -290,7 +290,7 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
     const problem = object(finding.problem);
     if (finding.type === "strength" && (representation === "submission" ? Object.hasOwn(finding, "problem") : finding.problem !== null))
       issue("strength_problem_forbidden", `${location}/problem`, representation === "submission"
-        ? "本条 type=strength，请删除 problem 字段；程序会在正式结果中生成 null，不提交 null、空字符串或对象。"
+        ? "本条 type=strength，请删除 problem 字段，不提交 null、空字符串或对象。"
         : "正式结果中 type=strength 的 problem 必须为 null", finding.problem);
     if (finding.type === "problem" && !problem)
       issue("problem_required", `${location}/problem`, representation === "submission"

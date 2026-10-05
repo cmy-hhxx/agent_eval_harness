@@ -49,8 +49,13 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
       const focus = task_focus === undefined ? "" : `${taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
       const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
         ? `\n${evidence}\n` : "";
+      const limits = policy ? {
+        content_call_limit: 1 + policy.repairAttempts,
+        ...(toolNames.some(name => name !== "inspect_material") ? { exploration_call_limit: policy.maxToolCalls } : {}),
+        ...(toolNames.includes("execute_code") ? { code_timeout_seconds: policy.codeTimeoutSeconds } : {}),
+      } : undefined;
       return focus + instructions + evidenceGuide + `\n${material}\n` + canonical(task_focus === undefined ? input : complete) +
-        (policy ? `\n\n${budget}${JSON.stringify(policy)}。` : "") +
+        (limits ? `\n\n${budget}${JSON.stringify(limits)}。` : "") +
         (failure ? `\n${recovery}\n${JSON.stringify({
           ...(!failure.stopped ? { draft: failure.draft } : {}), errors: failure.errors,
         })}` : "");

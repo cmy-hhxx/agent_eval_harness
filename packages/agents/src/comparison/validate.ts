@@ -53,11 +53,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     errors.push({ category: "decision", code, path, message, candidate, actual, ...(expected !== undefined ? { expected } : {}) });
   const labels = Object.keys(input.candidates);
   const labelHelp = `合法候选标识为 ${JSON.stringify(labels)}，所有候选键和引用必须原样使用这些标识。`;
-  const advantageRepair = "保留当前程序槽位，better_candidate=null，summary 写清已核对事实与未知范围；不修改程序关联或删除必填槽。";
+  const advantageRepair = "保留当前比较格，better_candidate=null，summary 写清已核对事实与未知范围，不删除必填槽。";
   if (labels.length !== 2 || !labels.includes("A") || !labels.includes("B"))
     issue("pair_candidates_invalid", "/candidates", "每次 Comparison 必须只比较 A、B 两个候选。");
   if (!isDeepStrictEqual(value.task_analysis, input.task_analysis))
-    issue("task_analysis_changed", "/task_analysis", "共享任务分析由 Host 镜像，Comparison 不得增加、改写或删除标准。");
+    issue("task_analysis_changed", "/task_analysis", "共享任务分析是只读材料，Comparison 不得增加、改写或删除标准。");
   const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
   const byId = new Map<string, TaskCriterion>();
   for (const criterion of criteria) {
@@ -108,7 +108,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       if (sourceCore.meets_core === false && !comparisonCoreFailureRefs(input, label).length &&
         privateFailures.some(id => !hasReview(label, id)))
         issue("core_failure_scope_review_required", "/review_requests",
-          "来源仅由专有要求失败支持核心不可用，不能跨候选扣分；必须 needs_review 并定位这些 criterion_ids，独立重看共同交付，不得自动改判通过。",
+          "来源仅由专有要求失败支持核心不可用，不能跨候选扣分；核查共同核心交付，在对应格的 source_review 写具体疑点，不能直接改判通过。",
           label, privateFailures);
       if (assessment.meets_core === null && !hasReview(label))
         issue("assessment_review_required", "/review_requests", "核心状态未决，必须请求该候选独立复核，不能只复核另一方。", label);
@@ -220,11 +220,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     if (tierOf(first) !== tierOf(second)) {
       const leader = tierOf(first) < tierOf(second) ? first : second;
       if (!advantage(leader)) issue("ranking_unproven", "/ranking",
-        "双方共同交付均可用时，分层须由领先方已确认的中高重要性共同优势支持；清空专有或未证实优势后不能保留无依据的胜者，合规点评仍保留。expected.ranking 按当前有效优势给出；修复无效优势时同时修正排名。", undefined, value.ranking, expected);
+        "双方共同交付均可用时，分层须由领先方已确认的中高重要性共同优势支持；清空专有或未证实优势后不能保留无依据的偏好，合规点评仍保留。核查 better_candidate 和 preference，缺少实质优势时填 null。", undefined, value.ranking, expected);
     }
     if (advantage(first) !== advantage(second)) {
       const better = advantage(first) ? first : second; const worse = better === first ? second : first;
-      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好或把优势方排后；应根据实质差异分胜负。expected.ranking 给出与当前有效优势一致的排名。", undefined, value.ranking, expected);
+      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好或把优势方排后；核查本项 better_candidate、importance 和整场 preference，按实质差异写 tradeoff。", undefined, value.ranking, expected);
     }
   }
   if (errors.length) throw new ValidationError(errors);

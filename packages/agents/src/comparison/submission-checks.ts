@@ -24,14 +24,14 @@ export function comparisonReferenceIssues(request: AgentRequest, draft: unknown)
     errors.push({ category: "decision", code, path, message, candidate, actual });
   const covered = new Map(labels.map(label => [label, new Set<number>()]));
   const criteriaCovered = new Map(labels.map(label => [label, new Set<string>()]));
-  const advantageRepair = "保留当前程序槽位，better_candidate=null，summary 写清已核对事实与未知范围；不修改程序关联或删除必填槽。";
+  const advantageRepair = "保留当前比较格，better_candidate=null，summary 写清已核对事实与未知范围，不删除必填槽。";
   for (const label of labels) {
     const concerns = input.source_review?.[label]?.filter(concern => concern.requires_review) ?? [];
     if (concerns.length)
-      issue("source_review_required", "/review_requests", "来源核验存在影响判定的未解决事项，必须改为 needs_review 并请求该候选独立复核；不能继续提交排名。", label, concerns);
+      issue("source_review_required", "/review_requests", "来源核验存在影响判定的未解决事项；核查原文，在该候选对应格的 source_review 说明具体疑点，不以未决事实支持优势。", label, concerns);
     const core = input.attributions[label]?.core_assessment;
     if (core?.meets_core === null)
-      issue("core_review_required", "/review_requests", "来源核心状态未决，必须改为 needs_review，请求该候选及其核心判据的独立复核；不能修改来源 meets_core 或继续提交排名。", label, core.criterion_ids);
+      issue("core_review_required", "/review_requests", "来源核心状态未决；核查该候选核心交付，在对应格的 source_review 说明需复核的事实，不改写来源核心状态。", label, core.criterion_ids);
   }
   rows.forEach((raw, index) => {
     const row = record(raw);
@@ -51,11 +51,11 @@ export function comparisonReferenceIssues(request: AgentRequest, draft: unknown)
     if (labels.some(label => indices(record(cells?.[label])?.finding_indices).some(findingIndex =>
       input.attributions[label]?.findings[findingIndex] && !findingAppliesToPair(input, label, findingIndex, request.sources[label]?.value))))
       issue("comparison_advantage_finding_scope_mismatch", `${path}/better_candidates`,
-        "引用 finding 仍继承来源 requirement 的适用范围，删除 criterion_ids 不能把专有合规表现变成横向优势；requirement_index=null 的 instruction_following finding 只保留本方合规点评，Comparison 不能用本行 criterion_ids 为来源补充适用范围。指令 finding 显式引用的来源规范还须属于该共同 requirement，错误索引不能把自身系统协议变为共同优势。" + advantageRepair);
+        "引用 finding 的来源规范须属于双方共同 requirement；本方专有 instruction_following 事实只保留本方合规点评，不能作为横向优势。" + advantageRepair);
   });
   for (const label of labels) for (const criterion of criteria)
     if (criterionAppliesToPair(input, criterion) && !criteriaCovered.get(label)!.has(criterion.id))
-      issue("comparison_criterion_uncovered", "/decision_basis/comparisons", `逐项对照必须覆盖双方的全部共同标准，不能只列有 finding 的方面。漏项为 ${label} 的 ${criterion.id}；将此标准加回匹配行的 criterion_ids，并保留双方 assessments。证据不足的共同标准行仍须保留；无法确认相对优势时 better_candidates=[]，不能靠删行修复优势错误。专有标准由来源归因完整评审，其待核对优点和中高重要性问题仍须在矩阵中展示。`, label, criterion.id);
+      issue("comparison_criterion_uncovered", "/decision_basis/comparisons", `逐项对照必须覆盖双方的全部共同标准，不能只列有 finding 的方面。漏项为 ${label} 的 ${criterion.id}；按 comparison_slots 保留该标准对应行及双方 summary。证据不足的共同标准行仍须保留；无法确认相对优势时 better_candidate=null，不能靠删行修复优势错误。专有标准由来源归因完整评审，其待核对优点和中高重要性问题仍须在矩阵中展示。`, label, criterion.id);
   const required = [...Object.entries(input.attributions).flatMap(([candidate, attribution]) =>
     attribution.findings.flatMap((finding, finding_index) => finding.type === "strength" || finding.importance !== "low" ? [{ candidate, finding_index }] : [])),
   ...decisive.flatMap(raw => {
@@ -70,7 +70,7 @@ export function comparisonReferenceIssues(request: AgentRequest, draft: unknown)
     seen.add(key);
     if (input.attributions[ref.candidate]?.findings[ref.finding_index] && !covered.get(ref.candidate)?.has(ref.finding_index))
       issue("comparison_finding_uncovered", "/decision_basis/comparisons",
-        `逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现。漏项为 ${ref.candidate}.findings[${ref.finding_index}]。将索引加入对应行 assessments.${ref.candidate}.finding_indices；索引从0开始。`, ref.candidate, ref.finding_index);
+        `逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现。漏项为 ${ref.candidate}.findings[${ref.finding_index}]。按 comparison_slots 保留对应比较行，在该候选的 summary 核查并说明本项事实。`, ref.candidate, ref.finding_index);
   }
   decisive.forEach((raw, index) => {
     const ref = record(raw);

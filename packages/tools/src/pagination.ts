@@ -42,7 +42,7 @@ export function fitStringPage<T>(options: StringPageOptions<T>): StringPage<T> {
   const limit = offset + Math.min(maxChars, totalChars - offset);
   const full = encode(limit);
   if (full.serialized.length <= maxOutputChars) return full;
-  const tooSmall = () => new RangeError("maxOutputChars 太小，无法完整返回一页；请增大工具输出预算");
+  const tooSmall = () => new RangeError("本次工具输出上限无法容纳一个完整页面");
   if (offset === totalChars) throw tooSmall();
 
   let best = encode(offset + 1);

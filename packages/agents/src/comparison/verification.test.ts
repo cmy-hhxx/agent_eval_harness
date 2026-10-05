@@ -318,7 +318,7 @@ test("blind inspection covers common and own requirements but never peer-only or
   const missing = structuredClone(value); missing.checks.pop(); assert.throws(() => inspected(request, missing), /全部适用 requirements/);
   for (const [candidate, id] of [["B", "own"], ["A", "derived"], ["A", "invented"]]) {
     const extra = structuredClone(value); extra.checks.push({ ...extra.checks[0]!, candidate: candidate!, criterion_id: id! });
-    assert.throws(() => inspected(request, extra), /本方适用 requirements/);
+    assert.throws(() => inspected(request, extra), /verification_check_slots.*本方适用要求/);
   }
   const duplicate = structuredClone(value); duplicate.checks.push(duplicate.checks[0]!); assert.throws(() => inspected(request, duplicate), /固定顺序|重复/);
 });

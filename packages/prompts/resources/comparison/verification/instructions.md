@@ -1,31 +1,47 @@
-本任务分两步，inspect_material 与最终 submit 共用执行预算中给出的内容调用上限，成功核查也占一次。第一步只提供原问题、标准答案、本方真实指令、原始时刻、完整最终交付/确证模型生成与可读来源目录，不提供归因判词或比较排名。先完成原材料核查，将 checks/concerns 作为完整 JSON 直接调用 inspect_material 揭示既有结论，程序负责保存原核查。材料已有 material_inspection 时首查已成功，继续第二步，不重复调用 inspect_material。不要从文件、工具或恢复草稿猜测未揭示的判词。concern_index 与 finding_indices 均使用目录中的零起始索引。
+第一步：核查原材料
 
-首查先逐一列明原问的必要限制和每个实际条目的核对结果、来源与计算，再决定 supported。形式齐全不代替事实正确，部分正确不证明整条满足；尚未读取的必要事实保留 unverified。用户明确要求的时窗、不能执行的步骤、代码与名称对应都是实际交付条件，不能因回答有其他用途降为可选瑕疵。必要证据和说明保留完整，不为字符数省去决定性的核对。
+按 verification_check_slots 的顺序填写 checks。每条要求分 delivery 与 constraints 两槽：delivery 核查对象、结果、完整度和事实；constraints 逐项核查限制、禁行步骤、时窗、阈值、触发条件和例外，将它们应用到全部实际条目、建议和后续步骤。没有额外限制时 constraints=not_applicable；整条要求在当前任务未触发时，两槽均为 not_applicable。
 
-每条原规则分两个固定槽：delivery 核对所需对象、结果、完整度和事实；constraints 单独逐项核对原问的限制、禁行步骤、时窗、阈值、触发条件与真实例外，应用到全部实际建议和后续步骤。没有额外条件时 constraints=not_applicable；整条规则未触发时两个槽均为 not_applicable。未公开的第三方 SYS 不自动制造未知约束。按 verification_check_slots 给出的顺序填两槽，不提交 aspect 或关联字段。程序按位置绑定原规则并合并：任一槽 contradicted 就保留整条反证；否则有 unverified 保留未知；其余至少一项 supported 才为 supported。不能因主结论或一个步骤正确而将 constraints 填为 supported。每槽记录完整核对说明和实际来源；程序按本方固定位置绑定完整最终交付及确证生成作为审阅范围，保留两槽说明。该范围不能替代具体反证；contradicted 必须在 concerns 记录同一本方要求的具体实际回答证据和原始来源，不能用整篇核对范围消除另一处新问题。
+result=supported 表示该槽的全部适用要求已有真实证据确认满足；contradicted 表示证据确认违反或矛盾；unverified 表示必要事实尚不能核实。形式完整、一个正确步骤或局部正确不证明全部满足。observation 写清实际核对范围、逐项结果和必要计算，source_evidence 选择支持或反证的原始来源；标准答案或原规范已足够时可为空。仅提交检查字段，不在 checks 复制候选、要求编号或关联字段。
 
-禁止进入某时间区间时，以区间起点核对实际步骤；早于区间内的最后期限不证明避开该区间。相对期限和具体日期同时出现时分别核算，不能只选合规的一种。规范例外须有原文依据且满足触发条件；回答自称“通用框架、参考、非建议”不自动豁免实际执行步骤、仓位比例或金额。
+每个 contradicted 检查都须在 concerns 记录本方同一要求的具体反证。输出内容违规时，answer_evidence 定位违规正文；缺项时选择应交付该项的完整回答范围并说明缺失；过程违规时，source_evidence 定位本方真实规范及违规调用、返回或执行记录，answer_evidence 指向相关最终交付，不捏造最终文字中的违规。reason 写清行为、规则及其冲突，不能只引用整份回答而不说明问题。其他实际发现也记入 concerns：选择 candidate、本方适用的 requirement_indices、实际回答证据、原始来源证据并说明 reason。requirement_indices 使用目录展示的全局零起始编号，不用过滤后的位置，不自创标准。
 
-揭示后先核查已有 problem 的具体事实，再对照其等级与责任。凡声称“无来源、未提供、遗漏”，先 search_trace 查实际实体、数值及同口径指标，再读命中完整来源；未读或预览没出现不能证明不存在。只读最终回答和规范不足以核查工具事实。
+answer_evidence 只选择本方最终回答或确证最后模型生成的 reference.evidence_index，不能用原问题、工具、规划器、元数据或他方回答代替交付。source_evidence 引用真实支持或反证，不把查询词、调用参数、请求名单或另一指标排序当作返回事实。原要求、标准答案及实际回答已完整证明疑点时，source_evidence 可为空。
 
-已有 strength 同样核对真实范围；引用编号或片段数量不是独立来源数量，按真实文档 URL、uid 和内容去核对，同文不同片段不能称多份独立披露。
+requirements 不穷尽本方真实指令。检查当前适用的 SYS/DEV 原文及其层级、完整条件和例外；instruction_sources 可按 read_request 读到 end_offset。若违规依据是尚未选入 requirements 的本方 SYS/DEV 规则，requirement_indices=[]，source_evidence 选择该真实规范锚点及必要的过程事实，answer_evidence 按前述规则选择本方实际交付。须读完整规范后判断触发条件，不能只凭锚点出现就认定违规；工具、用户或其他来源可补充触发场景与因果，不能代替本方 SYS/DEV 规则。私规只核查所属候选，不作为跨候选优势；未提供的第三方规则保持未知，不制造未知约束。目录与 review_context 不新增要求。
 
-concern_index 只选择揭示后 inspection_context.verification_concerns 中真实存在的发现：本轮 fresh concerns 在前，父轮尚未闭合的 pending concerns 在后，fresh_concern_count 标明边界。不能用 checks、比较槽或 findings 的索引代替。concern_matches 可匹配目录中的两类发现；inspection_context.eligible_match_choices 给出程序按真实作用域、证据和问题状态计算的数字选择，只选其中 eligible_findings 的 finding_index，它们仍不证明语义相同，须核对实际行为与责任。无法确证相同就省略匹配，程序保留复核。整个目录为空时 concern_matches 和 concern_refutations 均填 []。source_reviews 只提交真实需要更正的条目，每条选择目录中的 slot_index、candidate 并写 reason；没有额外疑点填 []。复核理由与匹配观察保留完整的来源、反证及责任说明，不因展示长度删去决定性事实。不提交空表或 null 格，核验通过或无需复核的说明不要填作请求。
+禁止进入某时间区间时，核对实际步骤是否落入原文规定的区间，起止、端点和例外按原文，不默认区间结束后仍禁止；早于区间内最后期限不证明避开区间。相对期限与具体日期同时出现时分别核算。例外须有原文依据且触发条件成立，回答自称“通用框架、参考、非建议”不能自动豁免实际执行步骤、仓位或金额。词形、句式相近不证明违例，须核对表达功能与规范范围。
 
-pending concern 是上一轮已记录、仍须闭合的疑点，不是不可推翻的事实。新 met/core/strength 或本轮未再发现不能消除它。旧疑点确有误判时，用 concern_refutations 提交 concern_index、answer_evidence、source_evidence、observation：保留同一本方原规范和实际最终回答，指出具体原始反证、合法例外或所称缺项实际存在的位置，说明为什么推翻原疑点。可信共同原问或标准答案已提供原规范时无需制造轨迹证据，实际回答本身完整证明反证时 source_evidence 可为 []；私规必须保留旧发现所据完整真实本方 SYS/DEV 块和条件、例外，不能借他方规范或“通用框架”声明豁免。所有证据仍只选择程序提供的 evidence_index。仅复述规范、引用新判词、无实际回答反证都不足。同一发现不能同时 match 和 refute，不能重复选择或反驳本轮 fresh concern；无法准确闭合时保留待核。
+将完整 checks/concerns 提交给 inspect_material 后再对照揭示材料。已有 material_inspection 时继续第二步，不重复首查；揭示前不从文件、恢复草稿或其他工具猜测归因和排名。
 
-第一步按程序给出的 verification_check_slots 原顺序恰好填写 checks，每条只填 result、source_evidence、observation；不提交 candidate、criterion_id 或索引。程序按固定位置绑定本方适用原规则。result=supported 表示已核查原要求的真实条件、全部实际交付及可用事实，确认实际满足；contradicted 表示真实证据确认违反或矛盾；unverified 表示具体必要事实尚不能核实；not_applicable 仅表示原规则触发条件在真实当前任务未生效。给出某个日期、表格或复述一句正确规则不等于满足，观察须记录逐实际条目核对的范围和必要计算。contradicted 须在 concerns 选择本方同一 requirement 的具体反证，程序不把完整审阅范围复制成发现；尚未核实保留未知，在揭示后不能被既定满足或优点冒用。逐条把对象、或/且、期限、阈值、触发条件与例外应用到实际全部条目、建议、后续步骤和结论，不只找答案中的一句正确规则。私规仅用于所属候选，不作为跨产品优势。已选 requirements 不穷尽本方已提供的真实规范；检查当前任务适用的 SYS/DEV 规则，不将整份 SYS 展开成新标准。source_directory.candidate_sources 的 instruction_sources 只定位确证作用于本回答的真实 SYS/DEV，按 read_request 读到 end_offset，保留条件与例外；未提供的第三方指令保持未知。目录和 review_context 都不能新增指令或验收要求。原问题没有要求的固定标签、精度或结构不能自创。仅词形或句式相近不足以证明违例，须核对其实际表达功能及原规范范围。
+第二步：对照归因与草稿
 
-concerns 的 answer_evidence 选择本方 final 或确证最后模型生成片段的 reference.evidence_index，不用原问题、工具、规划器、元数据或他方回答替代实际交付。checks 的 observation 记录完整实际核对及必要计算；实际回答含图片时，先真实 view_image 并记录可见内容，程序只保留你写出的观察，不生成图片事实，result 是独立原材料核查结果，不是比较胜负或改写上游状态。source_evidence 选支撑/反证的实际返回；标准答案与原规范已经足够证明时可为空，不能把参数、查询词、另一指标的排序当作返回事实。发现真实遗漏、内容冲突、问题证据不足或责任链未定位时，在 concerns 记录 candidate、requirement_indices、answer_evidence、source_evidence、reason。已有适用 requirement 的额外发现只选目录中真实 requirement_index，程序绑定完整 ID。真实本方 SYS/DEV 规则尚未选入 requirements 时，requirement_indices=[]，source_evidence 选择本方真实 SYS/DEV 规范锚点的 reference.evidence_index，并提供本方实际回答 evidence；程序保留该锚点并按原始段落或章节边界补齐完整规范块，包括连续跨文本叶子的条件和例外，不要求手工拼齐引用范围。补入上下文只闭合来源，不证明条款触发、适用或实际违规；还可保留真实已登记的工具、用户或其他事实来源，用来证明触发场景与因果，但这些补充来源不能替代本方规范授权；不能借共同 ID，也不能用原问题、工具内部提示、规划器、他方规则或 reason 制造私规。只描述实际行为和适用规则；有关联 requirement 的原始来源证据可为空仅当原规则/标准答案及实际回答已完整证明疑点；不要把“可能如此”写成事实，也不要要求归因修改比较排名。首次核查允许发现上游尚未记录的问题，程序在揭示前保存全部发现。
+先核查已有 problem 的事实、等级和责任，再核查草稿采用的 strength、要求满足状态、核心状态和逐项取舍。声称“无来源、未提供、遗漏”前，用 search_trace 查实际实体、数值和同口径指标，再读取命中来源全文；未读或预览未出现不证明不存在，只读最终回答与规范不足以核查工具事实。
 
-时间保留原始时刻、明确 UTC offset、实际模型时钟与用户指定目标时刻来源。只有可靠时区依据才能换算到同一基准；无 offset 的时间不使用本机时区、不借对方时钟。发布或事件时间按原条件核对，不能把“或”变为“且”。日历对齐全部参与对象、业务类别和年份；行政工作日或另一市场营业日不能证明共同结算日。数字对齐实体、单位、期间、口径和阈值，计算使用 calculate/execute_code，局部年化不冒充全年。相同出版物的不同片段、语言、标题或重复工具返回不构成独立来源。判问题前先核反证：合法舍入与区间中值不是矛盾，两个同口径下界不因不同就冲突，原来源的近似措辞不能改称精确声明。
+inspection_context.verification_concerns 是统一疑点目录：本轮 fresh concerns 在前，此前未解决的 pending concerns 在后，fresh_concern_count 给出边界。concern_index 仅使用这个目录的零起始位置，不能用 checks、比较槽或 findings 的位置代替。
 
-核验事实须读实际返回表或对应完整文本，查询词、调用参数与请求名单不能代替返回字段。原回答写出的数量、份额和变化先按其自身数值核算，不替换分母或虚构期间解释；部分期间不自动证明全年，不同日期或估值口径未混用时不要求额外并列另一套数值。
+concern_matches 用于确认既有本方 established problem 已准确记录同一缺陷事实与责任链。finding_indices 仅选择 inspection_context.eligible_match_choices 对应疑点的 eligible_findings.finding_index；可选资格不证明语义相同，仍须逐一核对实际行为、回答片段、适用规范和责任。同一要求、相似标签、完整回答范围重合或无关的另一处缺陷都不能证明是同一问题。涉及私规时须核对同一本方完整 SYS/DEV 规则及其条件和例外；不同条款的可选 finding 也不能用共有文字掩盖新增条款的违反。无法确认准确对应时省略该匹配。
 
-引用须检查真实支持内容和实际产品协议；同段相关引用可以联合支持不同分句，第三方协议未知不能套用另一产品语法。stdout 片段不是完整文件；目录原文可按 read_request 读到 end_offset，延后正文须完整读取，图片须 view_image。生成已有图表、采集 final 缺标记时，不推断模型未生成或用户不可见。工具原环境已成功生成文件，本地缺文件不反证原生成失败。每个非空 problem.component 都是责任声明，须有具体行为和传播链证据；单独引用生成内容或采集差异不足以归责。责任未知请保留观察，提出来源复查核对责任；不能自行改写归因组件，也不能自动清空所有 uncertain 问题的责任。
+匹配只确认问题已被记录，不确认要求满足或核心可用。原问必要条件已确认失败并决定任务目的，但归因仍判 met 或 core=true 时，即使问题已匹配，仍在对应 source_reviews 请求纠正。其他内容尚有研究用途不能免除必要条件；局部问题或 partial 也不自动证明核心失败，须核查剩余交付能否独立完成全部必要条件。supported 与已有 unmet/partial、not_applicable 与已有失败或相关 problem 不一致时，核对真实条件和影响，不反向修改首查来迎合归因。满足要求可以同时有局部质量问题；unknown 如实保留且未用于归责、判失败或制造优势时，无须消除它。
 
-第二步工具揭示既有 findings、来源状态及不可改写的比较草稿。逐个已有 problem、草稿采用的 strength 和比较格对照原核查，原发现不消失。已被准确的本方 established problem 处理的发现，可用 concern_matches 记录 concern_index、finding_indices、observation，说明为什么是同一真实行为和责任链；同一 criterion 或相似标签不证明同一问题；主要 requirement 匹配须引用同一实际回答片段；共同非私规要求下，也可由 concern 的有效本方实际回答与双方重合的本方真实工具返回事实建立机械资格。查询参数、用户或规范文本、他方来源不能代替返回事实；资格不证明同一问题，仍须核对实际行为与责任链，不能用另一句已有缺陷覆盖当前发现。既有 finding 的 requirement_index 只给主要关联；私规的跨条款匹配须具备该适用 criterion 精确包含的完整本方 SYS/DEV 规范及同一实际回答证据。共同主要要求的完整本方 USER 原块若也出现在另一适用要求中，程序可按同一原消息、全部真实来源及同一实际回答提供额外资格；只引用另一要求新增条款的发现不能借共同原块的问题闭合。资格不代表复合要求全部满足，完整回答或混合规范的范围重合也不证明是同一缺陷，仍须逐个核对具体行为与责任链并显式匹配，不改写索引。空 criterion_ids 的私规发现只可对应本方已确立、requirement_index=null 的 instruction_following problem，双方须保留同一完整真实规范及实际回答证据，具体行为和责任链也须相符；不能借已有无关问题消除新发现。concern_matches 只确认缺陷事实及责任已被准确记录，不确认其对要求满足或核心可用性的影响。原问必要条件已确认失败、且其失败决定任务目的时，若上游仍判 met 或 core=true，即使同一 problem 已匹配，仍在对应 source_reviews 请求纠正该满足或核心结论；不能以局部内容仍有研究用途免除必要条件。仅有局部质量问题或 partial 不自动证明核心失败，须核对余下交付是否独立完成原核心。事实、责任及其影响均准确时无需再次复核；遗漏、矛盾或不能对应的发现会由程序保留为待来源复核。supported 与同一要求已确认的 unmet/partial 相矛盾，not_applicable 与同项已确认的 unmet/partial 或关联 problem 相矛盾时，程序保留来源复核；met 因条件免除不冲突，满足要求也可保留局部质量问题，未知不自动改判。met/core/strength 和旧复核理由仍只是待验证结论，不能反向修改原核查。
+首查 unverified 时，逐项检查对应的既有 met/unmet/partial、问题责任、核心状态和优势声明是否有充分原始证据；已有确定结论与实际未确认范围冲突时，在对应 source_reviews 说明并请求核对。不能只因为上游已有判词就把未确认事实当作确定事实。
 
-ranking_tiers 的同一层表示并列，层内无先后。资源优势须比较双方同一种有效指标，不能把一方耗时与另一方 token 数比较；单方指标保留展示。token 数不等于费用，单次原始耗时不证明模型固有速度，也不能仅凭总量猜提示词长度、缓存或重复调用导致差异。核对现有规则，不能发明禁止资源排名等更严格规则。来源如实保留未知且未据此归责、判失败或制造优势，无须消除所有未知；纯比较排名异议不能指派 Attribution 修改排名，必须指出其采用的来源事实具体矛盾。
+concern_refutations 仅用于推翻 pending concern，不能反驳本轮 fresh concern。引用本方实际回答及具体原始反证、合法例外或所称缺项的真实位置，说明旧疑点为何错误。私规仍须同一本方完整规范；共同原问或标准答案已提供规则时不必另造规范证据，实际回答本身完整证明反证时 source_evidence 可为空。仅复述规范、引用新判词、本轮未再发现，或新增 met/core/strength 都不能推翻旧疑点。同一疑点不能同时匹配和反驳，不能重复选择；证据不足时保留待核。
 
-最终必须提交 concern_matches、concern_refutations、source_reviews 三数组，作为完整 JSON 直接调用 submit_evaluation。source_reviews 只列非空复核选择，例如 [{"slot_index":0,"candidate":"A","reason":"既有来源结论与原文的具体冲突"}]；没有额外疑点填 []。slot_index 选择揭示后 comparison_slots 明示的零起始位置，candidate 只选择该槽 reviewable_candidates，同一格的多个疑点写在一条 reason。程序生成全部空格和完整标准/发现关联，不提交 criterion_ids 或 review_requests。纯资源/排名取舍不回写 Attribution，资源槽不提交 source_reviews 条目。已准确对应的原发现填写 concern_matches，明确原始证据推翻的旧发现填写 concern_refutations；其余 fresh/pending 发现、未知却被当既定结论的检查，以及草稿已有待核请求由程序自动保留，并派生 needs_review；没有待核项时程序复制不可改写草稿。不得通过删字段、虚构匹配或反驳、空选择或另写结论消除未解决发现；不创建新 finding、不重写勝负、点评或核心状态。一次列全独立疑点，修正只改反馈指向的真实选择和观察。
+source_reviews 只列真实需要更正的归因疑点：slot_index 使用揭示后 comparison_slots 的零起始位置，candidate 选择该槽 reviewable_candidates，reason 写具体冲突、来源和责任依据；同格多个疑点合为一条。无需复核的说明不写成请求，没有额外疑点填 []。纯资源或排名取舍不要求 Attribution 修改，资源槽不提交 source_reviews。不能通过空选择、虚构匹配或改写结论掩盖未解决的疑点。
+
+按提交 Schema 填写 concern_matches、concern_refutations、source_reviews 三数组，调用 submit_evaluation。统一疑点目录为空时，前两数组填 []。一次列全独立疑点，收到反馈后只修对应选择和说明，保留其他核查。
+
+两步共同的核查要求
+
+图片先 view_image，observation 写实际看见的内容。deferred_final_material 按候选、message_index、path 从 offset=0 调用 read_trace，沿返回的 next_offset 读到 total_chars；长引用和来源按 read_request 读到 end_offset。只按可见事实判断，不把“可能”写成确定错误，不因说明较长删去决定性的来源、反证或计算。
+
+数字对齐实体、单位、期间、口径和阈值，用 calculate/execute_code 验证必要计算；按回答原有数量、份额和变化核算，不换分母或虚构年化解释。显式容差、区间、上限或下限按原题与标准的原条件核验，不把中心值或边界当成必须相等的点值。揭示后的 numeric_checks 只核对直接点值；其余目标核查 correctness_reason 中的原规则、实际表达、计算或解码过程和结论，空表本身不证明未核验或未交付。局部期间不证明全年，不同日期或口径已明确区分时不要求额外并列另一套值。合法舍入、区间中值和同口径下界的数值不同本身不足以判为矛盾；取中值、近似值或下界是否合题、是否有支持，仍按原任务与来源核查。近似来源不改称精确声明。
+
+时间保留原始时刻、可靠 UTC offset、实际模型时钟和用户目标时刻的来源，有时区依据才换算。不以本机时区补缺失 offset，不借对方时钟。区分发布和事件时间，保留“或/且”及真实触发条件。日历核查全部对象、业务类别和年份，行政工作日或另一市场营业日不证明共同结算日。
+
+引用核对真实支持内容和本回答的引用协议，同组相关来源可共同支持不同分句；第三方协议未知时不套另一产品语法。同一原始文档的不同片段、译文、标题变体或重复返回不算独立来源，按真实 URL、uid 和内容核查。stdout 摘录不代表完整文件。
+
+最终采集文本与确证生成不同，只能证明记录差异；没有真实成品观察，不能断言模型未生成、用户不可见或渲染失败。原环境工具成功生成文件后，本地缺文件不能反证生成失败。非空 problem.component 须有具体行为与传播链，生成内容或采集差异本身不足以归责；责任未知时记录观察并请求核对，不能自行清空其他有证据的组件。
+
+ranking_tiers 同层表示并列，层内无先后。资源只比较双方同一种有效指标；token 数不等于费用，单次原始耗时不证明固有速度，总量不证明差异由提示词长度、缓存或重复调用造成。遵循现有比较规则，不发明禁止资源排名等更严格要求；排名异议只有涉及归因事实的具体冲突时才提出来源复核。
