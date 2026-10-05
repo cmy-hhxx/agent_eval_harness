@@ -109,11 +109,12 @@ test("Host retains remaining repairs for identical invalid evidence without exce
   const input = structuredToolInput("evidence-repeat");
   const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
   const contentBudget = 1 + config.execution.repairAttempts;
-  assert.equal(contentBudget, 3, "the default permits one draft and two content repairs in total");
+  assert.equal(contentBudget, 4, "the default permits one draft and three content repairs in total");
   const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "attribution")!;
   const invalidIndex = 999999;
   let attempts = 0, submissions = 0;
   const attemptContentBudgets: number[] = [];
+  const remainingContentBudgets: number[] = [];
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     if (options.spec.taskId === target.id) {
       attempts++;
@@ -129,7 +130,9 @@ test("Host retains remaining repairs for identical invalid evidence without exce
       draft.findings![0].evidence = [{ evidence_index: invalidIndex }];
       for (let index = 0; index < Math.min(2, 1 + options.spec.policy.repairAttempts); index++) {
         submissions++;
-        assert.equal((await submitFor(options, draft)).isError, true);
+        const rejected = await submitFor(options, draft);
+        assert.equal(rejected.isError, true);
+        remainingContentBudgets.push(payload(rejected).budget.content_remaining);
       }
     }, async abort() {}, async dispose() {} };
   } }, path.join(directory, "worker"));
@@ -141,12 +144,13 @@ test("Host retains remaining repairs for identical invalid evidence without exce
     assert.equal(summary.completed_comparisons, 0);
     const saved = await readRunState(path.join(config.output.path, runId)), failed = saved.manifest.states[target.id];
     assert.equal(attempts, 2, "one bounded content continuation uses the remaining repairs despite identical errors");
-    assert.deepEqual(attemptContentBudgets, [contentBudget, 1], "the continuation receives only the one unspent content submission");
+    assert.deepEqual(attemptContentBudgets, [contentBudget, 2], "the continuation receives only the two unspent content submissions");
+    assert.deepEqual(remainingContentBudgets, [3, 2, 1, 0], "the same-run continuation cannot reset the cumulative repair budget");
     assert.equal(submissions, contentBudget);
     assert.equal(failed.status, "failed");
     assert.equal(failed.attempts, 2);
     assert.equal(failed.failure!.contentSubmissions, contentBudget);
-    assert.equal(failed.failure!.repeatedErrors, 1, "the last continuation has one rejected draft; duplicate diagnostics are scoped to its session");
+    assert.equal(failed.failure!.repeatedErrors, 2, "the last continuation has two rejected drafts; duplicate diagnostics are scoped to its session");
     assert.equal(failed.failure!.stopped, false, "duplicate errors are diagnostic; cumulative exhaustion stops the task");
     assert.equal(saved.receipts[target.id], undefined, "invalid evidence never produces an accepted receipt");
     assert.deepEqual(failed.failure!.errors.find(issue => issue.code === "evidence_selection_invalid")!.actual,

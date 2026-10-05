@@ -136,10 +136,10 @@ for (const engine of ["pi", "prime"] as const)
     });
 
 // A schema-valid unknown norm cannot establish compliance; the program binds known final delivery.
-// Direct submission remains available after the repair exploration budget is exhausted.
+// File submission and its reserved writer remain available after repair exploration is exhausted.
 for (const engine of ["pi", "prime"] as const)
   for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} repairs an unknown norm selector directly after exploration is exhausted`,
+    test(`${engine}: ${api} repairs an unknown norm selector through a scalar file submission after exploration is exhausted`,
       { timeout: 60000 }, async () => {
         const { directory, config, models } = await fixtureConfig();
         const norm = "结论优先：正文第一句明确判断，随后使用 Markdown 解释依据。";
@@ -199,8 +199,10 @@ for (const engine of ["pi", "prime"] as const)
           (error: unknown) => error instanceof ValidationError && error.issues!.length > 0 && error.issues!.every(issue =>
             issue.code === "finding_norm_unknown" && issue.path === `/findings/${findingIndex}/norm_index`),
           "the schema accepts null, but business validation requires uncertain for an unknown norm");
-        const submissions = ["submit_evaluation"];
+        const submissions = ["submit_evaluation_file"];
         const allTools = [...attributionProfile.toolNames, ...submissions];
+        const writeDraft = (value: unknown) => ({ language: "python",
+          code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(value))}, encoding='utf-8')` });
         const frames = (payload: Record<string, unknown>) => {
           const outputs = api === "openai-completions"
             ? (payload.messages as Record<string, unknown>[]).filter(item => item.role === "tool").map(item => String(item.content))
@@ -214,53 +216,67 @@ for (const engine of ["pi", "prime"] as const)
         const gateway = await listen(async (req, res) => {
           try {
             const payload = object(await body(req)), current = ++requests;
-            assert(current <= 7, "two content submissions and four repair exploration calls terminate the loop");
+            assert(current <= 9, "two real file writes, two content submissions, and four exploration calls terminate the loop");
             const definitions = (payload.tools as Record<string, unknown>[]).map(tool =>
               api === "openai-completions" ? object(tool.function) : tool);
             const names = definitions.map(tool => tool.name);
             const history = frames(payload), budget = object(history.filter(frame => frame.budget).at(-1)?.budget ?? {});
             const contentFeedback = history.filter(frame => Array.isArray(frame.errors) && frame.budget &&
               Object.hasOwn(object(frame.budget), "content_remaining"));
-            assert.deepEqual(names, current >= 6 ? submissions : allTools,
-              `request ${current}: content submission remains available after exploration is exhausted`);
-            if (current === 2) {
+            assert.deepEqual(names, current === 7 ? ["execute_code", ...submissions]
+              : current >= 8 ? submissions : allTools,
+              `request ${current}: file submission and protected draft writes follow their independent budgets`);
+            assert(!names.includes("submit_evaluation"), "built-in attribution never exposes direct nested JSON arguments");
+            const fileTool = definitions.find(tool => tool.name === "submit_evaluation_file")!;
+            const scalarSchema = object(fileTool.parameters);
+            assert.equal(scalarSchema.additionalProperties, false);
+            assert.deepEqual(scalarSchema.required, ["path"]);
+            assert.deepEqual(scalarSchema.properties, { path: { type: "string", minLength: 1 } });
+            const description = String(fileTool.description);
+            const contentSchema = object(JSON.parse(description.slice(description.indexOf('\n{"file_content_schema":') + 1)).file_content_schema);
+            assert.equal(object(object(object(contentSchema.properties).findings).items).type, "object");
+            if (current === 3) {
               const errors = history.flatMap(frame => Array.isArray(frame.errors) ? frame.errors : []);
               assert(errors.some(value => object(value).code === "finding_norm_unknown" &&
                 object(value).path === `/findings/${findingIndex}/norm_index`));
-              assert.equal(budget.content_remaining, 2, "the rejected content consumes one of the three total submissions");
+              assert.equal(budget.content_remaining, 3, "one rejected file consumes one of the four submissions allowed by three repairs");
               assert.equal(object(budget.exploration).remaining, 4);
             }
-            if (current === 4) {
+            if (current === 5) {
               const read = history.find(frame => frame.selection_path === "/content" && Array.isArray(frame.evidence));
               const evidence = (read?.evidence as { quote: string; reference: { evidence_index: number } }[] | undefined)?.[0];
               assert.equal(evidence?.quote, final.text);
             }
-            if (current >= 6) {
-              assert.equal(object(budget.exploration).used, 4);
+            if (current >= 7) {
+              assert.equal(object(budget.exploration).used, 5, "the initial writer and four repair exploration calls are charged");
               assert.equal(object(budget.exploration).remaining, 0);
-              assert.deepEqual(budget.draft_writes, { used: 0, remaining: 0, tools: ["execute_code"] });
+              assert.deepEqual(budget.draft_writes, { used: current === 7 ? 0 : 1,
+                remaining: current === 7 ? 1 : 0, tools: ["execute_code"] });
               assert.equal(contentFeedback.length, 1, "exploration adds no content rejection or repair");
-              assert.equal(object(contentFeedback[0]!.budget).content_remaining, 2,
+              assert.equal(object(contentFeedback[0]!.budget).content_remaining, 3,
                 "content feedback retains the cumulative ledger independently of exploration-only budget frames");
             }
-            if (current === 7) assert(history.some(frame => frame.message && /预算|额度/.test(String(frame.message))),
+            if (current === 9) assert(history.some(frame => frame.message && /预算|额度/.test(String(frame.message))),
               "an exhausted code call is rejected without creating writer credit");
             let name: string, args: Record<string, unknown>;
             if (current === 1) {
-              name = "submit_evaluation"; args = structuredClone(draft);
-            } else if (current === 2 || current === 4) {
-              name = "search_trace"; args = { candidate: "answer", query: current === 2 ? final.text : "=4" };
-            } else if (current === 3) {
+              name = "execute_code"; args = writeDraft(draft);
+            } else if (current === 2) {
+              name = "submit_evaluation_file"; args = { path: "evaluation.json" };
+            } else if (current === 3 || current === 5) {
+              name = "search_trace"; args = { candidate: "answer", query: current === 3 ? final.text : "=4" };
+            } else if (current === 4) {
               name = "read_trace"; args = { candidate: "answer", message_index: 2, path: "/content" };
-            } else if (current === 5) {
-              name = "calculate"; args = { operation: "add", operands: ["2", "2"] };
             } else if (current === 6) {
+              name = "calculate"; args = { operation: "add", operands: ["2", "2"] };
+            } else if (current === 7) {
+              name = "execute_code"; args = writeDraft(validDraft);
+            } else if (current === 8) {
               name = "execute_code"; args = { language: "python", code: "raise RuntimeError('exhausted code call must never execute')" };
             } else {
-              name = "submit_evaluation";
-              args = structuredClone(validDraft);
+              name = "submit_evaluation_file"; args = { path: "evaluation.json" };
             }
-            const id = `direct-${current}`;
+            const id = `file-${current}`;
             res.writeHead(200, { "content-type": "text/event-stream" });
             if (api === "openai-completions") {
               const event = { id, object: "chat.completion.chunk", created: 1, model: "fixture" };
@@ -299,17 +315,17 @@ for (const engine of ["pi", "prime"] as const)
               inputIds: { answer: request.sources.answer.id }, dependencies: {}, data: {} }],
             inputs: { [request.sources.answer.id]: request.sources.answer.value }, summary: {} },
             engine, identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
-            policy: { ...config.execution, maxToolCalls: 1, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+            policy: { ...config.execution, maxToolCalls: 2, repairAttempts: 3 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
             agents: registry, repository,
             taskSource: { id: "final-evidence-repair", bind: () => binding },
             workerUrls: [worker.url], runtime: services.runtime,
           });
           assert.deepEqual(gatewayErrors, []);
-          assert.equal(requests, 7);
+          assert.equal(requests, 9);
           const saved = await repository.readRun(path.join(config.output.path, runId)), receipt = saved.receipts["final-evidence-repair"];
           assert.equal(saved.manifest.states["final-evidence-repair"].attempts, 1);
           assert.deepEqual(receipt?.submissionStats, { contentSubmissions: 2, fileErrors: 0 });
-          assert.equal(receipt?.audit.calls, 4, "three source reads and one calculation execute; direct submissions do not use a writer");
+          assert.equal(receipt?.audit.calls, 6, "two real draft writes, three source reads, and one calculation execute; the exhausted extra writer does not run");
           assert.equal(receipt?.audit.requiredReadCalls, 0);
           const textRead = { candidate: "answer", message_index: 2, kind: "text", path: "/content", start: 0, end: final.text.length };
           const jsonRead = { candidate: "answer", message_index: 2, kind: "json", path: "", start: 0,

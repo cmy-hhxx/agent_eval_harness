@@ -6,7 +6,7 @@ import path from "node:path";
 import { loadConfig } from "@eval/host-app/config";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { attributionAgent } from "@eval/agents/attribution";
-import { evidenceSelectionSchema, type JsonSchema } from "@eval/contracts";
+import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, type JsonSchema } from "@eval/contracts";
 import { sharedPromptResources } from "@eval/prompts";
 import { builtinTools } from "@eval/tools";
 import { dashboardReference } from "../../../apps/host/src/dashboard-reference.js";
@@ -109,10 +109,11 @@ test("reference profiles expose independent inspection and the current canonical
     assert.equal(primary.requestBoundSubmission, true);
     assert.equal(verification.requestBoundSubmission, false);
     for (const stage of reference.stages) for (const profile of stage.profiles) {
-      assert.equal(profile.fileSubmission, false);
+      assert.equal(profile.fileSubmission, stage.id === "attribution" || stage.id === "comparison");
       assert.deepEqual(Object.keys(profile.toolSchemas), Object.keys(profile.toolDescriptions));
       for (const [name, schema] of Object.entries(profile.toolSchemas)) {
-        assert.deepEqual(schema, name === "submit_evaluation" ? profile.schemas.modelSubmission ?? profile.schemas.submission ?? profile.schemas.result
+        assert.deepEqual(schema, name === "submit_evaluation_file" || name === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA
+          : name === "submit_evaluation" ? profile.schemas.modelSubmission ?? profile.schemas.submission ?? profile.schemas.result
           : name === "inspect_material" ? profile.schemas.modelInspection : builtinTools.find((tool) => tool.name === name)!.inputSchema);
         assert(profile.sources.toolSchemas.includes("packages/prompts/resources/tools/" + name + ".md"));
       }
@@ -138,7 +139,7 @@ test("reference profiles expose independent inspection and the current canonical
     assert(names.includes("inspect_material"));
     const tools = [...document.querySelectorAll(".tool-definitions > div")];
     const inspectionTool = tools.find((element: any) => element.querySelector("dt").textContent === "inspect_material")!;
-    assert.deepEqual(JSON.parse(inspectionTool.querySelector(".schema-json").textContent), verification.schemas.modelInspection);
+    assert.deepEqual(JSON.parse(inspectionTool.querySelector(".schema-json").textContent), SUBMISSION_FILE_SCHEMA);
     click('[data-stage="exports"]');
     click('[data-document="comparison"]');
     assert.deepEqual([...document.querySelectorAll(".definition-source code")].map((element: any) => element.textContent), reference.exportSources.comparison);

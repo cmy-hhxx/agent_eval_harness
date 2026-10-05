@@ -38,7 +38,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const systemPrompt = resource(`${stage}/${profile}/system.md`);
   const instructions = resource(`${stage}/${profile}/instructions.md`);
-  const fileSubmission = false;
+  const fileSubmission = stage === "attribution" || stage === "comparison";
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {

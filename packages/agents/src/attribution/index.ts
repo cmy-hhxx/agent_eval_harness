@@ -1,5 +1,5 @@
 import { agentPrompt } from "@eval/prompts";
-import { ValidationError, type AgentDefinition, type AgentProfile } from "@eval/contracts";
+import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
@@ -7,7 +7,7 @@ import { validateEvaluation, validateSubmission } from "./validate.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { resolveSubmission } from "./resolve.js";
 import { numericReferenceDirectory } from "./units.js";
-import { normDirectoryIssues, attributionNormDirectory } from "./norm-directory.js";
+import { attributionSubmissionSchema } from "./submission-schema.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
@@ -25,21 +25,7 @@ export const attributionProfile: AgentProfile = {
   requestSchema,
   submissionSchema,
   evidenceSelections: true,
-  modelSubmissionSchema(request) {
-    const issues = normDirectoryIssues(request);
-    if (issues.length) throw new ValidationError(issues);
-    const schema = structuredClone(submissionSchema);
-    const indices = attributionNormDirectory(request).map(item => item.norm_index);
-    Object.assign(schema.properties.findings.items.properties.norm_index, { enum: [...indices, null] });
-    const fields = ["is_correct", "correctness_reason", "correctness_evidence"] as const;
-    if ((request.input.ground_truth as { available: boolean }).available) schema.required.push(...fields);
-    else for (const field of fields) delete (schema.properties as Partial<typeof schema.properties>)[field];
-    const groundTruth = request.input.ground_truth as { available: boolean; value: unknown };
-    const references = groundTruth.available ? numericReferenceDirectory(groundTruth.value) : [];
-    if (!references.length) schema.properties.numeric_checks.maxItems = 0;
-    else (schema.properties.numeric_checks.items.properties.reference_index as { enum?: number[] }).enum = references.map(item => item.reference_index);
-    return schema;
-  },
+  modelSubmissionSchema: attributionSubmissionSchema,
   resultSchema,
   ...prompt,
   renderPrompt(input, policy, failure) {

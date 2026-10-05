@@ -104,6 +104,32 @@ test(`pi: only debug records original malformed arguments in ${status} Responses
 });
 
 for (const engine of ["pi", "prime"] as const) {
+for (const streamed of [false, true]) {
+test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve nested evaluation arrays and candidate siblings`, async () => {
+  const draft = {
+    summary: '原文含 "引号"、\\ 路径和\n换行',
+    findings: [{ type: "strength", dimension: "instruction_following", norm_index: 1,
+      evidence: [{ evidence_index: 2, observation: "最终回答首段的风险提示" }],
+      assessment: { observation: "已确认", evidence_status: "established", impact: "满足指令" } }],
+    assessments: { A: { summary: "A 的完整归因" }, B: { summary: "B 的完整归因" } },
+    comparisons: [{ importance: "high", better_candidate: "A",
+      assessments: { A: { summary: "A 在当前槽位的表现" }, B: { summary: "B 在当前槽位的表现" } } }, null],
+    preference: "A", tradeoff: "保留两个候选的独立表现",
+  };
+  const args = JSON.stringify(draft);
+  const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",
+    output_index: 0, item_id: "fc_nested", delta })) : [];
+  const result = await replay(engine, [itemEvent("added", 0, call("nested")), ...deltas,
+    { type: "response.function_call_arguments.done", output_index: 0, item_id: "fc_nested", arguments: args },
+    itemEvent("done", 0, call("nested", args)), terminal([call("nested", args)])], true);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.executed, [draft], "the SDK must dispatch the complete terminal JSON without moving nested fields");
+  assert.deepEqual(result.ended, result.executed);
+  assert.equal(result.requests.length, 2);
+  if (engine === "pi") assert.equal(object((result.providerArguments[0].calls as Record<string, unknown>[])[0]).arguments, args);
+});
+}
+
 test(`${engine}: terminal Responses arguments reach the tool when a gateway sends item.done before its delta`, async () => {
   // Minimal event ordering from the captured MiniMax stream; no evaluation material is needed.
   const args = '{"value":"accepted"}';

@@ -12,7 +12,7 @@ requirements 不穷尽本方真实指令。检查当前适用的 SYS/DEV 原文�
 
 禁止进入某时间区间时，核对实际步骤是否落入原文规定的区间，起止、端点和例外按原文，不默认区间结束后仍禁止；早于区间内最后期限不证明避开区间。相对期限与具体日期同时出现时分别核算。例外须有原文依据且触发条件成立，回答自称“通用框架、参考、非建议”不能自动豁免实际执行步骤、仓位或金额。词形、句式相近不证明违例，须核对表达功能与规范范围。
 
-将完整 checks/concerns 提交给 inspect_material 后再对照揭示材料。已有 material_inspection 时继续第二步，不重复首查；揭示前不从文件、恢复草稿或其他工具猜测归因和排名。
+将完整 checks/concerns 写入核查 JSON 文件并通过 inspect_material 提交其 path 后，再对照揭示材料。已有 material_inspection 时继续第二步，不重复首查；揭示前不从文件、恢复草稿或其他工具猜测归因和排名。
 
 第二步：对照归因与草稿
 
@@ -30,13 +30,15 @@ concern_refutations 仅用于推翻 pending concern，不能反驳本轮 fresh c
 
 source_reviews 只列真实需要更正的归因疑点：slot_index 使用揭示后 comparison_slots 的零起始位置，candidate 选择该槽 reviewable_candidates，reason 写具体冲突、来源和责任依据；同格多个疑点合为一条。无需复核的说明不写成请求，没有额外疑点填 []。纯资源或排名取舍不要求 Attribution 修改，资源槽不提交 source_reviews。不能通过空选择、虚构匹配或改写结论掩盖未解决的疑点。
 
-按提交 Schema 填写 concern_matches、concern_refutations、source_reviews 三数组，调用 submit_evaluation。统一疑点目录为空时，前两数组填 []。一次列全独立疑点，收到反馈后只修对应选择和说明，保留其他核查。
+按提交 Schema 填写 concern_matches、concern_refutations、source_reviews 三数组，写入 JSON 文件后调用 submit_evaluation_file。统一疑点目录为空时，前两数组填 []。一次列全独立疑点，收到反馈后只修对应选择和说明，保留其他核查。
 
 两步共同的核查要求
 
 图片先 view_image，observation 写实际看见的内容。deferred_final_material 按候选、message_index、path 从 offset=0 调用 read_trace，沿返回的 next_offset 读到 total_chars；长引用和来源按 read_request 读到 end_offset。只按可见事实判断，不把“可能”写成确定错误，不因说明较长删去决定性的来源、反证或计算。
 
 数字对齐实体、单位、期间、口径和阈值，用 calculate/execute_code 验证必要计算；按回答原有数量、份额和变化核算，不换分母或虚构年化解释。显式容差、区间、上限或下限按原题与标准的原条件核验，不把中心值或边界当成必须相等的点值。揭示后的 numeric_checks 只核对直接点值；其余目标核查 correctness_reason 中的原规则、实际表达、计算或解码过程和结论，空表本身不证明未核验或未交付。局部期间不证明全年，不同日期或口径已明确区分时不要求额外并列另一套值。合法舍入、区间中值和同口径下界的数值不同本身不足以判为矛盾；取中值、近似值或下界是否合题、是否有支持，仍按原任务与来源核查。近似来源不改称精确声明。
+
+首查与最终提交分别用 execute_code 将完整对象写到当前工作目录的 JSON 文件（Python 使用 json.dump，ensure_ascii=False，不手拼 JSON）。首查调用 `inspect_material({"path":"inspection.json"})`；材料揭示后写 evaluation-draft.json，调用 `submit_evaluation_file({"path":"evaluation-draft.json"})`。写稿时在 `outputs` 声明对应的相对文件名，确认 `exit_code=0` 且声明产物读取成功，不切换工作目录。每次只传相对 path，文件正文遵循相应工具描述中的 file_content_schema；写入失败先修正写稿，不提交旧文件。
 
 时间保留原始时刻、可靠 UTC offset、实际模型时钟和用户目标时刻的来源，有时区依据才换算。不以本机时区补缺失 offset，不借对方时钟。区分发布和事件时间，保留“或/且”及真实触发条件。日历核查全部对象、业务类别和年份，行政工作日或另一市场营业日不证明共同结算日。
 

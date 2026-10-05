@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult, TraceRead, ValidationIssue } from "@eval/contracts";
 import { fileURLToPath } from "node:url";
-import { canonical, errorText, object, presentSource, projectEvidenceReferences, schemaIssues, toolBudgetMetadataChars, validateEvidenceBank, ValidationError } from "@eval/contracts";
+import { canonical, errorText, object, presentSource, projectEvidenceReferences, schemaIssues, SUBMISSION_FILE_SCHEMA, toolBudgetMetadataChars, validateEvidenceBank, ValidationError } from "@eval/contracts";
 
 import { cite, displayEvidence, evidenceId, evidenceSources, overlapsImagePlaceholder, selectEvidenceSource } from "./evidence.js";
 import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
@@ -193,7 +193,7 @@ export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
   { name: "inspect_material",
-    inputSchema: schema({ path: str }),
+    inputSchema: SUBMISSION_FILE_SCHEMA,
     async execute(context, value, signal) {
       if (!context.inspectMaterial) throw new Error("当前任务未配置结构化材料核查");
       return context.inspectMaterial(value, signal);

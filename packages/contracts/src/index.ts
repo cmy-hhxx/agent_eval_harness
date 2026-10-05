@@ -22,7 +22,7 @@ export const DEFAULT_POLICY: Policy = {
   timeoutSeconds: 900,
   idleTimeoutSeconds: 600,
   maxToolCalls: 12,
-  repairAttempts: 2,
+  repairAttempts: 3,
   codeTimeoutSeconds: 60,
   maxOutputChars: 16000,
 };
@@ -65,6 +65,13 @@ export interface InputRef {
 export function submissionToolNames(fileSubmission: boolean): string[] {
   return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];
 }
+/** Native arguments for both a JSON file submission and a file-backed material inspection. */
+export const SUBMISSION_FILE_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path"],
+  properties: { path: { type: "string", minLength: 1 } },
+};
 export interface EngineIdentity {
   engine: Engine;
   version: string;

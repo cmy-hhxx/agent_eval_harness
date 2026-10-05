@@ -3,7 +3,7 @@ import { criteriaAgent } from "@eval/agents/criteria";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { rewriteAgent } from "@eval/agents/rewrite";
 import { clusteringAgent } from "@eval/agents/clustering";
-import { evidenceSelectionSchema, type AgentProfile, type JsonSchema } from "@eval/contracts";
+import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, type AgentProfile, type JsonSchema } from "@eval/contracts";
 import { criteriaText, comparisonText, sharedPromptResources } from "@eval/prompts";
 import { builtinTools } from "@eval/tools";
 import { outputSchema, clusteringSchema, type EvalConfig } from "@eval/workflows/comparison";
@@ -62,7 +62,8 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
     }
   }
   const toolSchemas = Object.fromEntries(Object.keys(profile.toolDescriptions).map(tool => {
-    const schema = tool === "submit_evaluation" ? modelSubmission : tool === "inspect_material" ? schemas.modelInspection
+    const schema = tool === "submit_evaluation_file" || tool === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA
+      : tool === "submit_evaluation" ? modelSubmission : tool === "inspect_material" ? schemas.modelInspection
       : builtinTools.find(definition => definition.name === tool)?.inputSchema;
     if (!schema) throw new Error("Missing reference tool schema: " + stage + "/" + profile.id + "/" + tool);
     return [tool, schema];
@@ -70,6 +71,7 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
   sources.toolSchemas = [...new Set([
     ...Object.keys(profile.toolDescriptions).map(tool => "packages/prompts/resources/tools/" + tool + ".md"),
     "packages/tools/src/index.ts", "packages/host/src/agents.ts", submissionSource,
+    ...(profile.fileSubmission ? ["packages/contracts/src/index.ts"] : []),
     ...(profile.evidenceSelections ? ["packages/contracts/src/evidence-selection.ts"] : []),
     ...(profile.modelSubmissionSchema ? [agentSource] : []),
     ...(profile.inspection ? [schemaSource("inspection"), "packages/agents/src/comparison/verification.ts"] : []),

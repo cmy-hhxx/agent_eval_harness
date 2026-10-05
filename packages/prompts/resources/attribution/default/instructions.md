@@ -43,4 +43,4 @@
 
 5. 提交完整评审。
 - 引用使用材料或实际工具返回给出的 `reference.evidence_index`。未找到合适片段时先读取；图片先查看并填写 `observation`。`suggested_evidence` 也是待核材料，核对支持关系后再选择。
-- 用 `submit_evaluation` 直接提交完整 JSON。收到错误反馈时，核对指定字段、证据选择和关联判断，修正后按剩余额度重新提交完整 JSON。`summary` 简明概括完成情况、主要优点和真实缺口，避免重复逐条 findings。
+- 用 `execute_code` 将完整评审写入本任务工作目录的相对路径 `evaluation-draft.json`。先用 Python 字典和列表组装 `data`，布尔值与空值使用 `True/False/None`，再用 `json.dump(data, 文件, ensure_ascii=False)` 保存 JSON；文本字段保留普通字符串，不拼接 JSON 文本。写稿调用同时声明 `outputs=["evaluation-draft.json"]`，用于确认本任务工作目录内的文件确实生成；不要改到其他目录。确认写稿 `exit_code=0` 且声明产物读取成功后，用 `submit_evaluation_file` 只提交 `{"path":"evaluation-draft.json"}`，正文遵循该工具描述的 `file_content_schema`。收到错误反馈时，核对指定字段、证据选择和关联判断，成功写回修正后的完整 JSON，再按剩余额度重新提交该文件。`summary` 简明概括完成情况、主要优点和真实缺口，避免重复逐条 findings。

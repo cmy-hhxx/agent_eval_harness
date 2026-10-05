@@ -59,8 +59,7 @@ interface WorkerHarnessOptions {
 const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true,
   toolDescriptions: {
-    ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions)
-      .filter(([name]) => name !== "submit_evaluation")),
+    ...attributionAgent.profiles.default.toolDescriptions,
     submit_evaluation_file: "Submit the complete evaluation JSON file.",
   },
 };
@@ -956,6 +955,74 @@ test("file loading errors do not consume content repairs", async () => {
     await fixture.close();
   }
 });
+
+for (const firstWrite of ["read_only", "outside_workspace"] as const)
+test(`a missing submission file restores a bounded writer after ${firstWrite} consumed its reserved call`, async () => {
+  const fixture = await harness(async options => ({ async run() {
+    assert.equal((await options.execute("calculate", { operation: "add", operands: ["2", "2"] })).isError, undefined);
+    const consumed = await options.execute("execute_code", { language: "python", code: firstWrite === "read_only"
+      ? "print(4)" : "from pathlib import Path\nPath('../evaluation.json').write_text('{\"ok\":true}')" });
+    assert.equal(consumed.isError, undefined);
+    assert.deepEqual(object(object(consumed.details).budget).draft_writes, { used: 1, remaining: 0, tools: ["execute_code"] });
+    const code = "from pathlib import Path\nPath('evaluation.json').write_text('{\"ok\":true}')";
+    assert.equal((await options.execute("execute_code", { language: "python", code })).isError, true,
+      "a successful protected call is not silently refunded");
+    const missing = await options.execute("submit_evaluation_file", { path: "evaluation.json" });
+    assert.equal(missing.isError, true);
+    const budget = object(object(missing.details).budget);
+    assert.equal(budget.content_remaining, 4, "a missing file spends no content submission");
+    assert.equal(budget.file_errors_remaining, 2);
+    assert.deepEqual(budget.draft_writes, { used: 1, remaining: 1, tools: ["execute_code"] },
+      "file feedback reoffers one unused writer call without refunding the previous call");
+    const corrected = await options.execute("execute_code", { language: "python", code, outputs: ["evaluation.json"] });
+    assert.equal(corrected.isError, undefined, JSON.stringify(corrected));
+    assert.deepEqual(object(object(corrected.details).budget).exploration, { used: 1, remaining: 0 });
+    assert.deepEqual(object(object(corrected.details).budget).draft_writes, { used: 2, remaining: 0, tools: ["execute_code"] });
+    assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation.json" })).terminate, true);
+  }, async abort() {}, async dispose() {} }), { material: "source", policy: { maxToolCalls: 1, repairAttempts: 3 },
+    profile: { requiredReads: () => [], fileSubmission: true, toolNames: ["calculate", "execute_code"],
+      toolDescriptions: { calculate: "Calculate exactly.", execute_code: "Write the complete JSON file.", submit_evaluation_file: "Submit the JSON file." } } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.deepEqual(receipt.submissionStats, { contentSubmissions: 1, fileErrors: 1 });
+    assert.equal(receipt.audit.calls, 3, "the exploration call and both protected calls remain charged");
+  } finally { await fixture.close(); }
+});
+
+test("file loading feedback cannot renew exhausted protected writers or bypass the independent file cap", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    await options.execute("calculate", { operation: "add", operands: ["2", "2"] });
+    for (let used = 1; used <= 4; used++) {
+      const failed = await options.execute("execute_code", { language: "python", code: "raise RuntimeError('failed writer')" });
+      assert.equal(failed.isError, true);
+      assert.deepEqual(object(object(failed.details).budget).draft_writes,
+        { used, remaining: used < 4 ? 1 : 0, tools: ["execute_code"] });
+    }
+    for (let fileErrors = 1; fileErrors <= 3; fileErrors++) {
+      const missing = await options.execute("submit_evaluation_file", { path: "evaluation.json" });
+      assert.equal(missing.isError, true);
+      const budget = object(object(missing.details).budget);
+      assert.equal(budget.content_remaining, 4);
+      assert.equal(budget.file_errors_remaining, 3 - fileErrors);
+      assert.deepEqual(budget.draft_writes, { used: 4, remaining: 0, tools: ["execute_code"] });
+    }
+  }, async abort() {}, async dispose() {} }), { material: "source", policy: { maxToolCalls: 1, repairAttempts: 3 },
+    profile: { requiredReads: () => [], fileSubmission: true, toolNames: ["calculate", "execute_code"],
+      toolDescriptions: { calculate: "Calculate exactly.", execute_code: "Write the complete JSON file.", submit_evaluation_file: "Submit the JSON file." } } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.match(status.error!, /File loading budget exhausted/);
+    assert.equal(status.failure?.contentSubmissions, 0);
+    assert.equal(status.failure?.fileErrors, 3);
+    assert.equal(fixture.counts().posts, 0);
+  } finally { await fixture.close(); }
+});
+
 test("file profiles retain their JSON schema and expose no direct submission fallback", async () => {
   const fixture = await harness(async options => ({ async run() {
     assert(!options.tools.some(tool => tool.name === "submit_evaluation"));
@@ -1021,25 +1088,21 @@ test("a rejected draft without file submission capability requests a complete di
       assert.equal(unavailable.isError, true);
       assert.match(unavailable.content[0]!.text!, /Unknown tool/);
       assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false);
-      const invalid = invalidDraft(options.spec);
+      const invalid = { ok: false };
       const rejected = await submitFor(options, invalid);
       assert.equal(rejected.isError, true);
       const feedback = JSON.parse(rejected.content[0]!.text!);
       assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), invalid);
       assert.equal(Object.hasOwn(feedback, "draft_file"), false);
       assert.match(feedback.message, /完整 JSON/);
-      assert.match(feedback.message, /submit_evaluation/);
+      assert.equal(feedback.next_tool, "submit_evaluation");
       assert.equal(
-        (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
+        (await submitFor(options, { ok: true })).terminate,
         true,
       );
     },
     async abort() {}, async dispose() {},
-  }), { policy: { repairAttempts: 1 } });
-  fixture.spec.evaluation.fileSubmission = false;
-  fixture.spec.evaluation.toolDescriptions = { ...fixture.spec.evaluation.toolDescriptions };
-  delete fixture.spec.evaluation.toolDescriptions.submit_evaluation_file;
-  fixture.spec.evaluation.toolDescriptions.submit_evaluation = "Submit the complete JSON using submit_evaluation.";
+  }), { policy: { repairAttempts: 1 }, material: "source", profile: { requiredReads: () => [] } });
   try {
     await fixture.start();
     const status = await fixture.done();
@@ -1222,7 +1285,7 @@ test("changed drafts with the same errors retain repair opportunities without re
     assert.equal(fixture.counts().posts, 4);
     assert.deepEqual(feedback.map((item) => item.errors), Array(4).fill(feedback[0]!.errors));
     assert.deepEqual(feedback.map((item) => item.budget.content_remaining), [3, 2, 1, 0]);
-    assert.deepEqual(writerRemaining, [0, 0, 0, 0], "direct JSON repairs never reserve a file writer");
+    assert.deepEqual(writerRemaining, [1, 1, 1, 0], "each remaining file repair preserves one writer; cumulative exhaustion removes it");
     assert.equal(status.failure?.contentSubmissions, 4);
     assert.equal(status.failure?.repeatedErrors, 1);
     assert.equal(status.failure?.stopped, false);
@@ -1897,7 +1960,9 @@ for (const kind of ["body", "missing", "malformed", "outside", "symlink"] as con
       assert.equal(feedback.message, inspectionProfile.toolDescriptions!.inspect_material);
       assert.equal(feedback.instructions, inspectionProfile.toolDescriptions!.inspect_material);
       assert(!JSON.stringify(feedback).includes("hidden conclusion"));
-      assert.equal(feedback.budget.content_remaining, 3); assert.equal(feedback.budget.file_errors_remaining, 2);
+      assert.equal(feedback.budget.content_remaining, 1 + options.spec.policy.repairAttempts,
+        "file errors preserve the complete content submission budget");
+      assert.equal(feedback.budget.file_errors_remaining, 2);
       assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 0);
       assert.equal(fixture.inspectionPosts(), 0);
       const inspected = await inspectMaterials(options, { actual: "original facts" });

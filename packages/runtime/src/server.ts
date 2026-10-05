@@ -6,6 +6,7 @@ import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
+  SUBMISSION_FILE_SCHEMA,
   submissionToolNames,
   type AgentBackend,
   type AgentSession,
@@ -357,13 +358,7 @@ export async function startWorker(
         submissionQueue = pending.then(() => undefined, () => undefined);
         return pending;
       };
-      const fileSchema = {
-        type: "object",
-        additionalProperties: false,
-        required: ["path"],
-        properties: { path: { type: "string", minLength: 1 } },
-      };
-      const validateFile = ajv.compile(fileSchema);
+      const validateFile = ajv.compile(SUBMISSION_FILE_SCHEMA);
       const loadFileContent = async (args: unknown) => {
         if (!validateFile(args)) throw new Error("文件提交参数必须是 {path: 文件路径}");
         const root = await realpath(runtime.context.workdir);
@@ -373,10 +368,13 @@ export async function startWorker(
           throw new Error("提交文件必须位于本任务工作目录内");
         return readJson(file);
       };
-      const rejectedFile = (error: unknown) => {
+      const rejectedFile = async (error: unknown) => {
         fileErrors++;
-        return rejected([{ category: "file", code: "submission_file_invalid", path: "/path",
+        const feedback = await rejected([{ category: "file", code: "submission_file_invalid", path: "/path",
           actual: errorText(error), message: errorText(error) }], failure.draft, false);
+        // A failed load leaves content untouched. Reoffer one writer within its existing total cap.
+        if (!failure.stopped) reserveFileDraft();
+        return feedback;
       };
       runtime.context.inspectMaterial = (args, signal) => enqueueContent(async () => {
         signal.throwIfAborted();
@@ -432,7 +430,7 @@ export async function startWorker(
       };
       const submitFile: ExecutableTool = {
         name: "submit_evaluation_file",
-        inputSchema: fileSchema,
+        inputSchema: SUBMISSION_FILE_SCHEMA,
         execute: (_context, value) =>
           submitResult(() => loadFileContent(value)),
       };

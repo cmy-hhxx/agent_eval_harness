@@ -161,6 +161,49 @@ test("feedback annotation preserves formal error multiplicity and leaves profile
   });
 });
 
+test("recovery rendering enriches saved errors with current profile guidance without changing durable drafts or constraints", () => {
+  const { registry, profile } = fixture();
+  const sourceId = "71e88588-5740-4e67-a710-7cc9b7b98717";
+  const known = evidenceId(sourceId, 0, "text", "/content", 0, 7);
+  const bound: AgentBinding = { ...binding, request: { input: {}, sources: {
+    answer: { id: sourceId, value: { messages: [{ role: "system", content: "真实材料与规范。" }] } },
+  } }, projectModelInput: projectEvidenceReferences };
+  profile.evidenceSelections = true;
+  const draft = { value: "wrong", satisfies: false, proof: "unknown" };
+  const errors: ValidationIssue[] = [
+    { category: "structure", code: "schema_type", path: "/value", actual: "wrong", expected: { type: "number" }, message: "Use a number." },
+    { category: "decision", code: "requirement_unmet", path: "/satisfies", actual: false, expected: [true], message: "Meet the requirement." },
+  ];
+  const shape = { value: 1, satisfies: true, proof: "source" };
+  const contexts: ValidationIssue[] = [];
+  profile.validationIssueContext = (request, value, issue) => {
+    assert.equal(request, bound.request);
+    assert.equal(value, draft, "current guidance uses the saved rejected draft");
+    contexts.push(issue);
+    return { submission_shape: shape, type: "must not replace number", value: "must not replace choices",
+      suggested_evidence: [{ quote: "真实材料与规范", reference: { evidence_id: known } }] };
+  };
+  profile.renderPrompt = (_input, _policy, recovery) => JSON.stringify(recovery);
+  const recovery = { draft, errors, evidenceBank: [known], contentSubmissions: 3, fileErrors: 0,
+    repeatedErrors: 1, stopped: false, attemptId: "saved-attempt" };
+  const before = structuredClone({ recovery, request: bound.request, shape });
+  const shown = JSON.parse(registry.prepare(bound).renderAttempt(DEFAULT_POLICY, recovery));
+  assert.deepEqual(contexts, errors, "historical errors receive current guidance on resume");
+  assert(shown.errors.every((issue: ValidationIssue) => {
+    const expected = issue.expected as { submission_shape: unknown; suggested_evidence: { reference: unknown }[] };
+    assert.deepEqual(expected.submission_shape, shape);
+    assert.deepEqual(expected.suggested_evidence[0].reference, { evidence_index: 1 }, "new guidance uses durable model-facing evidence choices");
+    return true;
+  }));
+  assert.equal(shown.errors[0].expected.type, "number");
+  assert.deepEqual(shown.errors[1].expected.value, [true]);
+  assert.deepEqual(shown.errors.map((issue: ValidationIssue) => [issue.category, issue.code, issue.path, issue.actual, issue.message]),
+    errors.map(issue => [issue.category, issue.code, issue.path, issue.actual, issue.message]));
+  assert.deepEqual(shown.draft, draft);
+  assert.equal(shown.contentSubmissions, 3);
+  assert.deepEqual({ recovery, request: bound.request, shape }, before, "rendering must not rewrite the saved failure or the request");
+});
+
 
 test("rejection and recovery mask source identity in suggested quotes without changing durable choices or raw locations", () => {
   const { registry, profile } = fixture();

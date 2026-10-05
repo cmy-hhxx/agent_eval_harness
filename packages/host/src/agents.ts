@@ -145,7 +145,8 @@ export class AgentRegistry {
         const previous = recovery?.evidenceBank ?? [];
         validateEvidenceBank(previous);
         evidenceBank.splice(0, evidenceBank.length, ...previous);
-        const recoveryView = recovery ? { ...recovery, errors: this.feedbackProjection(binding,recovery.errors, evidenceBank) } : undefined;
+        const recoveryView = recovery ? { ...recovery, errors: this.feedbackProjection(binding,
+          this.feedback(profile, binding.request, recovery.draft, recovery.errors), evidenceBank) } : undefined;
         if (!recovery?.inspection) return profile.renderPrompt(shown(modelInput), policy, recoveryView);
         const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, calculations: [], artifacts: [], evidenceBank,
           ...structuredClone(recovery.inspection.proof) };

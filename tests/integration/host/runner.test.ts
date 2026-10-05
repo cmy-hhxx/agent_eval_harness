@@ -537,7 +537,7 @@ for (const stop of [false, true]) test(`Host persists its actual retry deadline 
 for (const exhausted of [false, true]) test(`completed SDK malformed arguments ${exhausted ? "stop at" : "recover within"} the shared content budget in one Host attempt`, async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   const contentBudget = 1 + config.execution.repairAttempts;
-  assert.equal(contentBudget, 3, "the default permits one draft and two repairs");
+  assert.equal(contentBudget, 4, "the default permits one draft and three repairs");
   let targetId: string | undefined, targetCalls = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     targetId ??= options.spec.taskId;
@@ -655,7 +655,7 @@ test("a repair attempt that makes no submission retains its draft and counters f
         return;
       }
       if (targeted) {
-        assert.equal(options.spec.policy.repairAttempts, 1, "the resumed task has two submissions left within its cumulative cap of three");
+        assert.equal(options.spec.policy.repairAttempts, 2, "the resumed task has three submissions left within its cumulative cap of four");
         assert.deepEqual(options.spec.recovery?.draft, draft);
         assert.equal(options.spec.recovery?.contentSubmissions, 1);
         assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);

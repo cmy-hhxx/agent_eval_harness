@@ -162,7 +162,7 @@ for (const configured of [false, true]) test(`repeated comparison rewrite prepar
     const resume = { ...options, plan: { tasks: [], inputs: {}, summary: {} } };
     await runEvaluation(resume);
     const spent = await readRunState(run), failure = structuredClone(spent.manifest.states[id].failure!);
-    assert.equal(failure.contentSubmissions, 3);
+    assert.equal(failure.contentSubmissions, 1 + config.execution.repairAttempts);
     const callsAfterFailure = calls;
     for (let index = 0; index < 2; index++) {
       assert.equal((await prepareComparisonRewrites(run, selection)).selected[0]!.rewrite_task_id, id);

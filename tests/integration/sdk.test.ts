@@ -5,7 +5,7 @@ import path from "node:path";
 import type { Engine, WorkerEvent } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
-import { object } from "@eval/contracts";
+import { object, SUBMISSION_FILE_SCHEMA } from "@eval/contracts";
 import { createModelResolver } from "@eval/host-app/config";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
@@ -30,7 +30,7 @@ for (const engine of ["pi", "prime"] as Engine[])
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 2 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 2, verification: 4 };
       const gateway = await listen(async (req, res) => {
         try {
           assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
@@ -39,9 +39,15 @@ for (const engine of ["pi", "prime"] as Engine[])
           const tools = payload.tools as {
             function: { name: string; description: string; parameters: { properties: object } };
           }[];
-          const submit = tools.find((t) => t.function.name === "submit_evaluation");
+          const directSubmit = tools.find((t) => t.function.name === "submit_evaluation");
+          const fileSubmit = tools.find((t) => t.function.name === "submit_evaluation_file");
+          const submit = fileSubmit ?? directSubmit;
           const inspect = tools.find(t => t.function.name === "inspect_material");
-          const contentSchema = (submit ?? inspect)!.function.parameters;
+          const contentTool = (submit ?? inspect)!;
+          const fileSubmission = !!fileSubmit || !!inspect;
+          const contentSchema = fileSubmission
+            ? object(JSON.parse(contentTool.function.description.split("\n").at(-1)!)).file_content_schema as { properties: object }
+            : contentTool.function.parameters;
           const schemaProperties = object(contentSchema.properties);
           assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(tools.map(tool => tool.function.parameters))), "model-visible parameters must contain inline schemas");
           assert(!tools.some((t) => t.function.name === "set_task_contract"));
@@ -49,6 +55,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             role: string;
             name?: string;
             content: unknown;
+            tool_calls?: { function: { name: string } }[];
           }[];
           const attribution = "criterion_assessments" in schemaProperties;
           const criteria = "requirements" in schemaProperties;
@@ -70,12 +77,16 @@ for (const engine of ["pi", "prime"] as Engine[])
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
           const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
           const descriptions = profile.toolDescriptions;
-          assert(!tools.some(t => t.function.name === "submit_evaluation_file"), "built-in profiles submit JSON directly");
+          assert.equal(fileSubmission, !criteria, "deep Attribution and Comparison JSON use a file with a scalar native envelope");
+          assert.equal(Boolean(directSubmit), criteria, "only the shallow Criteria contract submits native JSON");
           if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
           for (const tool of tools) {
-            assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
-            if (tool.function.name === "inspect_material")
-              assert.deepEqual(Object.keys(object(tool.function.parameters.properties)), ["checks", "concerns"]);
+            if (["submit_evaluation_file", "inspect_material"].includes(tool.function.name)) {
+              assert(tool.function.description.startsWith(descriptions[tool.function.name]! + "\n"), tool.function.name);
+              assert.deepEqual(tool.function.parameters, SUBMISSION_FILE_SCHEMA);
+              assert(object(JSON.parse(tool.function.description.split("\n").at(-1)!)).file_content_schema,
+                "the complete content schema remains model-visible while the native tool envelope stays scalar");
+            } else assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
           }
           const prompt = messages
             .flatMap((m) =>
@@ -131,14 +142,20 @@ for (const engine of ["pi", "prime"] as Engine[])
             (m) => m.role === "tool" && String(m.content).includes("evidence_selection_invalid"),
           );
           let name: string, args: unknown;
-          if (verification && !disclosed) {
-            name = "inspect_material";
-            args = inspectionDraft(spec);
-          } else {
+          const previousCall = messages.flatMap(message => message.tool_calls ?? []).at(-1)?.function.name;
+          if (criteria) {
             name = "submit_evaluation";
             args = evaluation;
+          } else if (previousCall === "execute_code") {
+            name = verification && !disclosed ? "inspect_material" : "submit_evaluation_file";
+            args = { path: "evaluation.json" };
+          } else {
+            const content = verification && !disclosed ? inspectionDraft(spec) : evaluation;
             if (attribution && engine === "pi" && !rejected)
-              (args as { correctness_evidence: { evidence_index: number }[] }).correctness_evidence[0]!.evidence_index = 999999;
+              (content as { correctness_evidence: { evidence_index: number }[] }).correctness_evidence[0]!.evidence_index = 999999;
+            name = "execute_code";
+            args = { language: "python", code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(content))}, encoding='utf-8')`,
+              outputs: ["evaluation.json"] };
           }
           const event = {
             id: "fixture-" + requests.length,

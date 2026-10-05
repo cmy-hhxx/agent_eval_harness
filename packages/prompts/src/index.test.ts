@@ -18,7 +18,8 @@ test("all stage texts come from one resource tree; tool descriptions are complet
     const prompt = agentPrompt(stage, tools.filter((name) => !submissionToolNames.includes(name)));
     for (const key of ["system", "instructions"] as const)
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/default/${key}.md`, resources), "utf8").trim());
-    assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== "submit_evaluation_file").sort());
+    assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !==
+      (stage === "attribution" || stage === "comparison" ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(`tools/${name}.md`, resources), "utf8").trim());
   }
@@ -61,10 +62,12 @@ test("attribution names the finding-level norm selector and its separate assessm
   assert.match(prompt.instructions, /assessment.*observation\/evidence_status\/impact.*不在其中放 `norm_index` 或 `requirement_index`/);
 });
 
-test("built-in profiles submit JSON directly while keeping code tools for calculations", () => {
+test("Attribution and Comparison write JSON files while other built-ins submit directly", () => {
   const prompt = agentPrompt("attribution", ["execute_code"]);
-  assert.equal(prompt.fileSubmission, false);
-  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation"]);
+  assert.equal(prompt.fileSubmission, true);
+  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
+  for (const profile of ["default", "verification"])
+    assert.equal(agentPrompt("comparison", ["execute_code"], profile).fileSubmission, true);
 });
 
 test("independent comparison verification uses its own centralized prompt resources", () => {

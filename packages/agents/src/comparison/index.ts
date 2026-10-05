@@ -9,6 +9,7 @@ import { resolveComparison } from "./resolve.js";
 import { comparisonSlotChoices } from "./slots.js";
 import type { ComparisonInput } from "./types.js";
 import { comparisonSubmissionIssues } from "./submission-validation.js";
+import { comparisonIssueContext } from "./submission-feedback.js";
 import { resolveVerification, validateVerification, validateMaterialInspection, inspectionSchema, modelInspectionSchema, resolveMaterialInspection, inspectionMatchContext } from "./verification.js";
 export * from "./types.js";
 export { comparisonSlots, comparisonSlotChoices } from "./slots.js";
@@ -39,6 +40,7 @@ export const comparisonProfile: AgentProfile = {
   toolNames,
   validate: validateEvaluation,
   validateSubmission: comparisonSubmissionIssues,
+  validationIssueContext: comparisonIssueContext,
   requiredReads: (request) => Object.entries((request.input as unknown as ComparisonInput).candidates).flatMap(([candidate, material]) =>
     material.deferred_final_material.map(item => ({ candidate, message_index: item.message_index, kind: "text" as const,
       path: item.path, start: 0, end: item.total_chars }))),
