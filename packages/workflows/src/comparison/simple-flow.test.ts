@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
+import path from "node:path";
 import { comparisonProfile } from "@eval/agents/comparison";
 import type { RunManifest } from "@eval/contracts";
+import { loadConfig } from "@eval/host-app/config";
 import { fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
+import { ROOT } from "../../../../tests/fixtures/services.js";
 import { buildPlan } from "./input.js";
 import { comparisonWorkflow } from "./workflow.js";
 import type { TaskData } from "./types.js";
 
-test("default evaluation has one comparison and no mandatory verification or source-review cells", async () => {
+test("evaluation with explicit rewrites off has one comparison and no mandatory verification or source-review cells", async () => {
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
   try {
     const plan = await buildPlan(f.config);
@@ -19,6 +22,49 @@ test("default evaluation has one comparison and no mandatory verification or sou
       assessments: { properties: Record<string, { properties: Record<string, unknown> }> }
     } } } } };
     for (const candidate of ["A", "B"]) assert.equal(schema.properties.comparisons.items.properties.assessments.properties[candidate].properties.source_review, undefined);
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
+test("real config defaults polish each attribution and comparison, then separately enabled clustering", async () => {
+  const defaults = (await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" })).evaluation;
+  assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, clustering: true });
+  assert.equal(defaults.clustering.enabled, false);
+  const f = await fixtureConfig([[raw()], [], [raw()], []]);
+  f.config.rewrite = { ...defaults.rewrite };
+  try {
+    const primary = await buildPlan(f.config);
+    const sources = primary.tasks.filter(task => ["attribution", "comparison"].includes(task.stage));
+    assert.equal(sources.filter(task => task.stage === "attribution").length, 2);
+    assert.equal(sources.filter(task => task.stage === "comparison").length, 1);
+    assert.equal(primary.tasks.filter(task => task.stage === "rewrite").length, 3);
+    assert.equal(primary.tasks.filter(task => task.stage === "clustering").length, 0);
+    for (const source of sources) {
+      const polish = primary.tasks.filter(task => (task.data as TaskData).rewriteOf?.taskId === source.id);
+      assert.equal(polish.length, 1);
+      assert.equal((polish[0].data as TaskData).rewriteOf!.stage, source.stage);
+      assert.deepEqual(polish[0].dependencies, { source: source.id });
+      assert.equal((source.data as TaskData).verificationAudit, undefined);
+      assert.equal((source.data as TaskData).verificationOf, undefined);
+      assert(Object.values(source.dependencies).every(id => primary.tasks.find(task => task.id === id)?.stage !== "rewrite"));
+    }
+
+    const maintenance = await buildPlan({ ...f.config, clustering: { ...f.config.clustering, enabled: true } });
+    const clusters = maintenance.tasks.filter(task => task.stage === "clustering");
+    assert.equal(clusters.length, 2);
+    const manifest = { tasks: maintenance.tasks, states: Object.fromEntries(maintenance.tasks.map(task => [task.id,
+      { status: "pending", attempts: 0 }])) } as RunManifest;
+    for (const cluster of clusters) {
+      assert.equal(comparisonWorkflow.canStart!(cluster, manifest), false);
+      const polish = maintenance.tasks.filter(task => (task.data as TaskData).rewriteOf?.taskId === cluster.id);
+      assert.equal(polish.length, 1);
+      assert.equal((polish[0].data as TaskData).rewriteOf!.stage, "clustering");
+      assert.deepEqual(polish[0].dependencies, { source: cluster.id });
+      assert(Object.values(cluster.dependencies).every(id => maintenance.tasks.find(task => task.id === id)?.stage === "attribution"));
+    }
+    for (const task of maintenance.tasks.filter(task => task.stage === "attribution")) manifest.states[task.id].status = "succeeded";
+    for (const cluster of clusters) assert.equal(comparisonWorkflow.canStart!(cluster, manifest), true,
+      "settled attribution opens the separate clustering phase while comparisons and polish are pending");
+    assert.equal(maintenance.tasks.filter(task => task.stage === "comparison").length, 1);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 

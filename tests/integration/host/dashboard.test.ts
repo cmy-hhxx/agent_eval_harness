@@ -1193,7 +1193,7 @@ test("run-scoped settings are validated with the same model and execution config
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
-    assert.deepEqual(settings.rewrite, { attribution: false, comparison: false, clustering: false });
+    assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
     assert.equal(settings.clustering.enabled, false);
     const stages = ["criteria", "attribution", "comparison", "rewrite", "clustering"];
     const defaults = editableDashboardSettings({
@@ -1201,12 +1201,16 @@ test("run-scoped settings are validated with the same model and execution config
       models: { judge: {} },
     });
     assert.equal(defaults.execution.concurrency, 8);
+    assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, clustering: true });
     for (const stage of stages) assert.equal(defaults.bindings[stage]!.thinking, "medium");
     assert.equal(editableDashboardSettings({
       models: { judge: { thinking: "low" } },
       bindings: { comparison: { profile: "judge", thinking: "medium" } },
     }).bindings.comparison.thinking, "medium", "explicit stage reasoning is preserved");
-    assert.equal(editableDashboardSettings({ rewrite: { comparison: false } }).rewrite.comparison, false);
+    assert.deepEqual(editableDashboardSettings({ rewrite: { comparison: false } }).rewrite,
+      { attribution: true, comparison: false, clustering: true });
+    assert.deepEqual(editableDashboardSettings({ rewrite: { attribution: false, comparison: false, clustering: false } }).rewrite,
+      { attribution: false, comparison: false, clustering: false });
     const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
     assert.deepEqual(fairSettings.comparisons, [["a_fast", "b_fast"], ["a_expert", "b_expert"]]);
     const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {

@@ -99,7 +99,7 @@ export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: st
       batches: [date],
     },
     comparisons: base.comparisons,
-    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: false },
+    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: true },
     clustering: { ...base.clustering, enabled: false },
   };
 }

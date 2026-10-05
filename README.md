@@ -4,7 +4,7 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 **当前契约优先：**项目快速迭代，不设置未确定的版本号；结果只记录显式声明的 `evaluatorVersion`，用于区分不同评测器产出的判词，不是 Schema 版本。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
 
-默认主线是共同 Criteria → 每条回答一次 Attribution → 每场一次 Comparison。对比接受后即形成正式结果；独立核验和文案改写按需启用，聚类在全部归因结束后单独执行。流程与科学边界见[评测质量](docs/quality.md#流程与科学边界)，命令见[使用指南](docs/usage.md#可选复核与后置聚类)。
+默认主线是共同 Criteria → 每条回答一次 Attribution → 每场一次 Comparison。对比接受后即形成正式结果，归因与对比文案默认自动润色，可显式关闭改写；独立核验按需启用且不阻塞主线。聚类在全部归因结束后单独执行，其结果默认自动润色。流程与科学边界见[评测质量](docs/quality.md#流程与科学边界)，命令见[使用指南](docs/usage.md#可选复核与后置聚类)。
 
 ## Agent 开发导航
 

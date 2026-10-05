@@ -47,7 +47,7 @@ flowchart LR
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
-Comparison Workflow 默认将每个候选对规划为一个 `default` 任务，依赖共同 Criteria 与双方已接受 Attribution。接受后直接写正式 `comparison.jsonl`；改写和交付引用该节点。普通主线默认关闭文案改写与聚类，不安排独立核验或自动归因复核。
+Comparison Workflow 默认将每个候选对规划为一个 `default` 任务，依赖共同 Criteria 与双方已接受 Attribution。接受后直接写正式 `comparison.jsonl`；改写和交付引用该节点。归因、对比文案默认自动改写，可显式关闭。聚类默认不进入主线，后置执行后默认改写；主线不安排独立核验或自动归因复核。
 
 显式 `verify-comparisons` 为已接受正式对比准备独立 `verification` 任务，使用新的 UUID 和只含核验的执行范围；结果写 `comparison-verification.jsonl`。核验请求保留完整可信材料，首查隐藏上游归因及排名，成功后再揭示。Registry/Host 持久化检查点，Worker 的首查与最终提交共用内容预算；恢复重新验证可信检查点。核验仅记录确认或疑点，不替换正式结果，不触发归因重做或修改下游依赖。协议见[数据契约](contract.md)。
 

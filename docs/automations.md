@@ -57,7 +57,7 @@ npm run automations -- retry --date 2026-09-29
 
 ## 后置聚类
 
-自动化固定关闭 `clustering.enabled` 和 `rewrite.clustering`。操作者确认全部输入的归因已结束后，停止自动化，用 `cluster --run PATH` 预览、加 `--apply` 准备，再在原 run ID 的固定聚类范围执行。聚类只读取已接受归因，不等待对比或可选核验；原归因、对比和改写收据保留。命令见[后置聚类](usage.md#可选复核与后置聚类)。
+自动化固定关闭 `clustering.enabled`，聚类改写默认开启。操作者确认全部输入的归因已结束后，停止自动化，用 `cluster --run PATH` 预览、加 `--apply` 准备，再在原 run ID 的固定聚类范围执行，并自动润色聚类结果。聚类只读取已接受归因，不等待对比或可选核验；原归因、对比和改写收据保留。命令见[后置聚类](usage.md#可选复核与后置聚类)。
 
 ## 调度与状态
 

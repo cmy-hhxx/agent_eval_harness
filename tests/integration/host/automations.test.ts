@@ -125,7 +125,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
     const plan = await automationWorkflow.plan(evaluation);
     assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["criteria", "attribution", "comparison", "rewrite"]));
     assert.equal(evaluation.clustering.enabled, false);
-    assert.equal(evaluation.rewrite.clustering, false);
+    assert.equal(evaluation.rewrite.clustering, true);
     const rewrites = plan.tasks.filter((task) => task.stage === "rewrite");
     assert.equal(evaluation.rewrite.comparisonItems, true);
     assert(rewrites.filter((task) => (task.data as TaskData).rewriteOf?.stage === "comparison")

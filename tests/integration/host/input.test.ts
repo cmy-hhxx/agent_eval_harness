@@ -74,7 +74,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.models.models.judge?.thinking, "medium");
   assert.equal(host.evaluation.execution.concurrency, 8);
-  assert.deepEqual(host.evaluation.rewrite, { attribution: false, comparison: false, clustering: false });
+  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
@@ -128,7 +128,7 @@ test("model profiles preserve explicit max effort and endpoint developer-role ca
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("omitted rewrite settings leave each stage off while explicit opt-ins remain effective", async () => {
+test("omitted rewrite settings enable each stage while explicit opt-outs remain effective", async () => {
   const { directory } = await fixtureConfig();
   try {
     const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
@@ -136,11 +136,11 @@ test("omitted rewrite settings leave each stage off while explicit opt-ins remai
     const file = path.join(directory, "defaults.json");
     await writeFile(file, JSON.stringify(source));
     const defaults = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
-    assert.deepEqual(defaults.evaluation.rewrite, { comparison: false, attribution: false, clustering: false });
-    source.rewrite = { attribution: true };
+    assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, attribution: true, clustering: true });
+    source.rewrite = { attribution: false };
     await writeFile(file, JSON.stringify(source));
     const partial = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
-    assert.deepEqual(partial.evaluation.rewrite, { comparison: false, attribution: true, clustering: false });
+    assert.deepEqual(partial.evaluation.rewrite, { comparison: true, attribution: false, clustering: true });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

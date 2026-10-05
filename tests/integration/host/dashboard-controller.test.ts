@@ -94,7 +94,7 @@ test("dashboard preserves totals while displaying failures, blocked tasks and ca
   } finally { page.dom.window.close(); }
 });
 
-test("dashboard renders gateway models with eight-way concurrency, medium thinking and optional rewrites off", async () => {
+test("dashboard renders gateway models with eight-way concurrency, medium thinking and default rewrites on", async () => {
   const source = await readConfigSources(path.join(ROOT, "configs/host.json"));
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);
   const page = await controller(() => ({
@@ -120,6 +120,18 @@ test("dashboard renders gateway models with eight-way concurrency, medium thinki
       assert.equal(select.value, "medium");
       assert([...select.options].some(option => option.value === "max"));
     }
+    for (const stage of ["attribution", "comparison", "clustering"])
+      assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, true);
+  } finally { page.dom.window.close(); }
+});
+
+test("dashboard preserves explicitly disabled rewrites", async () => {
+  const page = await controller(() => ({
+    paths: [], environment: {}, model_catalog: [],
+    settings: editableDashboardSettings({ rewrite: { attribution: false, comparison: false, clustering: false } }),
+  }));
+  try {
+    await page.loadConfig();
     for (const stage of ["attribution", "comparison", "clustering"])
       assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, false);
   } finally { page.dom.window.close(); }

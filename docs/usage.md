@@ -41,7 +41,7 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；ID 用小写字母开头的字母、数字和下划线，不能包含对局保留分隔符 `__vs__`；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 每组选择二至三个已登记模型，展开为独立两两比较；档位声明、缺失模型与重复模型对的规则见[对比组契约](contract.md#对比组) |
-| `rewrite` | 可选文案改写：`{ comparison, attribution, clustering }`，普通主线默认均关闭；开启对比改写时默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `rewrite` | 文案改写：`{ comparison, attribution, clustering }`，三项默认开启，可显式设为 `false`；归因、对比及后置聚类接受后自动润色。对比默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前配置为 `openai-responses`）、`apiKeyEnv`、`thinking`（评测各阶段缺省 `medium`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认8并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
@@ -297,17 +297,17 @@ bash run.sh
 
 **刷新与读取边界。**运行中或等待新运行登记时自动刷新，登记后选中新运行；两分钟未登记则显示超时。空闲时不轮询。已接受结论只读正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，只在可信本机打开看板；页面仅监听回环地址。
 
-「数据与流程」（`/reference`）是只读视图：按日期、版本和 case 查看输入覆盖；查看主线标准、归因、对比依赖，以及可选核验、改写和后置聚类；按 Agent 和 Profile 查看当前请求、首查、提交、结果 Schema、提示词和工具描述。定义来自当前 Profile、Workflow 和[提示词模块](../packages/prompts/README.md)，不是历史 run 的提示词快照。
+「数据与流程」（`/reference`）是只读视图：按日期、版本和 case 查看输入覆盖；查看主线标准、归因、对比依赖，以及默认改写、可选核验和后置聚类；按 Agent 和 Profile 查看当前请求、首查、提交、结果 Schema、提示词和工具描述。定义来自当前 Profile、Workflow 和[提示词模块](../packages/prompts/README.md)，不是历史 run 的提示词快照。
 
 「开始评测」按以下步骤操作：
 
 1. 选择日期、模型（至少两个同组模型）和抽样数量，默认 10；点击“全部”或留空表示全部。数量旁的 `Seed` 每次打开页面默认填入 41，可修改为 0–4294967295 的整数；相同可评测样本范围、数量和 Seed 每次抽到相同的 case，读取顺序不影响结果，适合对照实验。Seed 留空使用随机抽样，选择全部时不使用 Seed。全选模型仍按配置的 Fast / Expert 对比组分别规划。日期筛选转成已登记的 `batch_id` + case 选择，批次契约不变；run ID 由看板生成。
-2. 在「高级设置」按需调整阶段模型、推理等级、并发、预算、文案改写和 Debug。模型选项来自 `.env` 网关 `/models` 返回的完整列表，不在列表中的模型不能启动。各阶段推理默认中（`medium`），支持显式 `max`；普通归因、对比文案改写默认关闭，聚类后置单独准备。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不返回密钥。
+2. 在「高级设置」按需调整阶段模型、推理等级、并发、预算、文案改写和 Debug。模型选项来自 `.env` 网关 `/models` 返回的完整列表，不在列表中的模型不能启动。各阶段推理默认中（`medium`），支持显式 `max`；归因、对比和聚类文案改写默认开启，可显式关闭；聚类后置单独准备。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不返回密钥。
 3. 先预检再确认启动。默认每场只有一个对比任务；预检不调用模型、不创建 run。启动复用预检选中的 case，重新校验来源、模型、密钥和运行锁。修改 Seed 或其他设置需重新预检。可选择 Pi / Prime、停止或调整并发，并从详情续跑未完成任务；续跑沿用原批次、模型和抽样范围，保留已接受结果。
 
 ## 可选复核与后置聚类
 
-普通运行只完成共同标准、一次归因和一次对比。需要独立检查已接受的正式对比时，先预览，再准备核验：
+普通运行完成共同标准、一次归因和一次对比，并默认自动润色归因与对比文案。需要独立检查已接受的正式对比时，先预览，再准备核验：
 
 ```bash
 npm run eval -- verify-comparisons --run data/runs/comparison/pi-001
@@ -327,7 +327,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 
-有归因仍待执行或运行时，拒绝准备；仅成功且有正式收据的归因参与，未成功归因列出并跳过。聚类不等待对比或可选核验，按模型和批次维护问题库。`--apply` 保存聚类执行范围，预览不调用模型、不改状态。继续发现主线新增输入时显式使用 `run --discover-inputs`；它保留已接受判词。
+有归因仍待执行或运行时，拒绝准备；仅成功且有正式收据的归因参与，未成功归因列出并跳过。聚类不等待对比或可选核验，按模型和批次维护问题库；聚类结果默认自动改写，可显式设 `rewrite.clustering=false` 关闭。`--apply` 保存聚类执行范围，预览不调用模型、不改状态。继续发现主线新增输入时显式使用 `run --discover-inputs`；它保留已接受判词。
 
 ## 运行产物
 

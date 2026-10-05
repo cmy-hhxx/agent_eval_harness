@@ -100,7 +100,7 @@ Comparison 使用两条已接受归因完成一次比较，照录各回答核心
 
 Comparison 模型按程序目录 `comparison_slots` 的固定顺序评审；程序已关联共同标准和必需 finding。无 finding 的专有条款、低重要性问题与资源槽可选，填 null 时不生成展示行；私规的 strength 和中高问题仍必须保留。每个已展示格的 status/evidence_status 和关联由程序派生，未知对方没有同名 finding 不能证明其缺失。共同优势仍须由双方同一适用方面的 established 事实支持。
 
-主线接受 Comparison 后直接形成正式对比，不自动重做归因。已知材料冲突或核心未决的样本保存待核，不计 wins/both_good/both_bad、不上传；其他样本继续。`verify-comparisons` 为已正式决定的对比准备可选独立核验，结果单独写 `comparison-verification.jsonl`，核验失败或发现疑点不撤销正式结果、不重接下游依赖。改写按配置润色主线正式裁决，聚类单独读取已接受归因。
+主线接受 Comparison 后直接形成正式对比，不自动重做归因。已知材料冲突或核心未决的样本保存待核，不计 wins/both_good/both_bad、不上传；其他样本继续。`verify-comparisons` 为已正式决定的对比准备可选独立核验，结果单独写 `comparison-verification.jsonl`，核验失败或发现疑点不撤销正式结果、不重接下游依赖。归因与对比文案默认自动润色，可显式关闭；聚类单独读取已接受归因，其结果同样默认改写。
 
 Agent 自主决定读取、检索、图片观察和计算步骤。提示词要求数值争议核算，但程序不强制调用某个计算工具或按固定顺序操作。内置 Profile 的 `fileSubmission=false`，通过 `submit_evaluation` 直接提交完整 JSON，程序保存草稿；`execute_code` 只提供计算与探索能力。泛型自定义 Profile 显式选择 `fileSubmission=true` 时，使用 `submit_evaluation_file` 提交工作目录内的已有 JSON 文件，完整 schema 以 `file_content_schema` 附在工具描述中，调用只传 path。`inspect_material` 按同一 Profile 的提交模式直接接收核查 JSON 或读取 path 文件，每阶段只暴露该模式的参数结构。能力声明见[提示词模块](../packages/prompts/README.md)。独立首查阶段只暴露 `inspect_material` 及读写工具，首查成功后才暴露当前 Profile 的最终提交工具。各阶段使用同一内容队列及累计修正预算。读取到内容后，程序将提交快照单独保存为 `submission-rejected.json`；文件模式反馈的 `draft_file` 指向该快照，与模型自行创建的工作文件分开。文件加载失败不生成草稿，也不反馈不存在的草稿路径。校验反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`。Attribution 的具体 finding 错误另给出 `expected.target`：原错误完整 path、零起始 finding_index 与 index_base=0、原稿中可识别的 finding_id 和短 text；优先按稳定 finding_id 匹配原稿条目，不把 `/findings/5` 误当第五条，它指第六个元素。定位信息不提供证据或修改草稿；原 expected 约束与真实 normative_sources 保留。可用工具获取证据选号后修正草稿；每次内容失败为下一次修正提供三次额外探索调用；显式文件模式在当前阶段仍有内容额度时，为首次写稿、内容拒绝后的修正及成功首查后的最终稿分别保留一次已注册 fileWriter 调用。待用写稿额度最多一份、不累积，每 attempt 总使用次数不超过 1 + repairAttempts，首查与最终稿共享该上限；仅探索耗尽后消费，执行成功、失败或参数错误均计入实际工具调用。失败后若总次数尚未耗尽，恢复一次修正调用；文件加载错误不补发。写稿使用当前工作目录的相对文件名。当前阶段的内容工具始终保留在可用工具集合中，不消耗探索预算。完整错误集和草稿 JSON 内容均未变化（键顺序不计）时，反馈明确指出尚未修正的重复错误；保留剩余内容额度，所有内容提交使用同一累计上限，额度耗尽后停止，不重置提交次数。证据选号不合法时反馈当前可选范围，来源不符时给出实际材料及读取入口。真实 completed OpenAI Responses assistant 错误中，当前已注册工具的参数非完整 JSON 对象时，在同一会话反馈失败工具、当前阶段、集中工具说明和真实剩余额度；不补写 JSON、不派发参数对象。提交及 inspect_material 的无对象尝试经同一内容队列消耗预算并保存 checkpoint，读取工具消耗探索额度；事件保留 malformed_arguments 和 argument_object_available=false，不创建草稿或收据，不推断未知参数 JSON 相同。已登记证据、已有真实草稿和成功首查继续保留。未知工具、身份不符、缺终态、输出截断与连接服务错误不进入这个修正入口。模型整回合没有提交且没有报错时，Worker 用集中提示词追加一次提交提示，仍无提交记为一次执行中断，并按[运行与恢复](usage.md#运行与恢复)中的有界重试处理。Worker 在直接收到提交 JSON 或文件 JSON 加载成功后发出 content_loaded 提交事件，保存该稿的真实内容与累计序号；文件随后被覆盖仍可在显式 debug 事件中核对原稿。该事件不表示通过，不增加第二次内容计数；没有参数对象的 SDK 错误不制造 evaluation。Host 保存有效收据后才算完成；未接受时退出、超时或模型报错保留失败状态。
 
@@ -169,7 +169,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 ## 改写
 
-改写阶段可选（配置 rewrite.attribution / rewrite.comparison / rewrite.clustering），普通主线三项默认关闭；开启后把已接受结论润色为更简洁规整的表达。每个开启阶段的源结果初次规划一个改写任务；对比默认只改偏好理由，comparisonItems=true 同时加入逐项点评。改写只接收文本槽位、不接触证据或改变判决；自动化为完整交付仍强制开启归因、对比及逐项点评改写，见[自动化](automations.md)。
+改写配置为 rewrite.attribution / rewrite.comparison / rewrite.clustering，三项默认开启，可显式设为 false；归因、对比及后置聚类接受后自动把结论润色为更简洁规整的表达。每个开启阶段的源结果初次规划一个改写任务；对比默认只改偏好理由，comparisonItems=true 同时加入逐项点评。改写只接收文本槽位、不接触证据或改变判决；自动化为完整交付仍强制开启归因、对比及逐项点评改写，见[自动化](automations.md)。
 
 - 对比裁判继续盲测；Workflow 在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、B组Fast），槽位 id 不变。
 - Rewrite 的模型侧 label/text/context 将 ASCII 尖括号显示为全角符号，保留标记名称、属性值、数字和既定判断；正式请求、源结果、id、preference 与 forbiddenPrefixes 保持原值。展示替换不代表原回答使用全角字符。提交 text 仍须为字符串，对象不会转换为文字。

@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r126",
+  "evaluatorVersion": "r127",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -68,9 +68,9 @@
     ]
   ],
   "rewrite": {
-    "comparison": false,
-    "attribution": false,
-    "clustering": false
+    "comparison": true,
+    "attribution": true,
+    "clustering": true
   },
   "clustering": {
     "enabled": false,
