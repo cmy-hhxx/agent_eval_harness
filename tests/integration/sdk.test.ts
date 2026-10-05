@@ -10,7 +10,7 @@ import { createModelResolver } from "@eval/host-app/config";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
 import { criteriaProfile } from "@eval/agents/criteria";
-import { buildPlan, readRunState, type TaskData } from "@eval/workflows/comparison";
+import { buildPlan, prepareComparisonVerification, readRunState, type TaskData } from "@eval/workflows/comparison";
 import { prepare, services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
@@ -18,7 +18,7 @@ import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult, inspect
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
-    `${engine}: real vendored SDK over HTTP worker, code tool, three stages and resume`,
+    `${engine}: real vendored SDK over HTTP worker, three stages, optional verification and resume`,
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -219,9 +219,22 @@ for (const engine of ["pi", "prime"] as Engine[])
         );
         const failures = (await exists(failureFile)) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
+        assert.deepEqual(stageRequests, { ...expectedStageRequests, verification: 0 });
+        const run = path.join(config.output.path, options.runId), primary = await readRunState(run);
+        assert(!primary.manifest.tasks.some(task => (task.data as TaskData).verificationAudit));
+        const primaryOutput = await readFile(path.join(run, "results/comparison.jsonl"), "utf8");
+        const prepared = await prepareComparisonVerification(run, { apply: true });
+        assert.equal(prepared.count, 1);
+        const audited = await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+        assert.equal(audited.completed_comparisons, 1);
+        assert.deepEqual(serverErrors, []);
         assert.deepEqual(stageRequests, expectedStageRequests);
-        const state = await readRunState(path.join(config.output.path, options.runId));
-        const verificationTask = state.manifest.tasks.find(task => (task.data as TaskData).verificationOf)!;
+        const state = await readRunState(run);
+        for (const task of primary.manifest.tasks) assert.deepEqual(state.receipts[task.id], primary.receipts[task.id]);
+        assert.equal(await readFile(path.join(run, "results/comparison.jsonl"), "utf8"), primaryOutput);
+        const verificationTask = state.manifest.tasks.find(task => (task.data as TaskData).verificationAudit)!;
+        assert.equal(verificationTask.id, prepared.selected[0]!.verification_task_id);
+        assert.equal(state.receipts[verificationTask.id].exported!.file, "comparison-verification.jsonl");
         assert.equal(state.receipts[verificationTask.id].submissionStats!.contentSubmissions, 2,
           "the actual inspection and final submission both consume content budget");
         assert(state.receipts[verificationTask.id].audit.inspection);

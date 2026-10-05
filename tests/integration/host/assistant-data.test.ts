@@ -57,8 +57,7 @@ test("Eris's paginated directory exposes persisted display names, tiers and conf
     ]);
     assert(items.every((item) => item.reference.runId === "source" && item.reference.inputId === item.inputId));
     assert(items.every((item) => item.tasks.every((task) => task.status === "pending")), "configured groups do not imply completed results");
-    assert(items.flatMap((item) => item.tasks).some((task) => task.purpose === "comparison_draft"));
-    assert(items.flatMap((item) => item.tasks).some((task) => task.purpose === "comparison_verification"));
+    assert.equal(new Set(items.flatMap(item => item.tasks).filter(task => task.purpose === "comparison_formal").map(task => task.taskId)).size, 2);
     const found = await source.list({ runId: "source", query: "A组极速" });
     assert(found.kind === "inputs");
     assert.equal(found.total, 1);
@@ -82,7 +81,6 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     let accepted: Record<string, SubmissionReceipt> = {};
     const source = await register(fixture.config, async (state, plan) => {
       for (const task of plan.tasks) {
-        if (task.stage === "comparison" && !(task.data as TaskData).verificationOf) continue;
         const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult()
           : comparisonResult(Object.keys((task.data as TaskData).candidates));
         state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,

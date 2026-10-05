@@ -180,13 +180,13 @@ export function resultFile(stage: Stage): string {
 }
 /** The stage output inside its exported identity envelope. */
 export function stageResult(stage: string, row: JsonObject): JsonObject {
-  return stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type)) ? row.result as JsonObject
+  return stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? row.result as JsonObject
     : stage === "attribution" ? row.evaluation as JsonObject
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
   return stage === "attribution" ? { ...row, evaluation: result }
-    : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
+    : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
 }
 export function originalResultRow(stage: string, row: JsonObject): JsonObject {
   const { rewritten: _rewritten, ...result } = stageResult(stage, row);
@@ -226,11 +226,15 @@ const validateOutput = ajv.compile(outputSchema),
   validateRewritten = ajv.compile(rewrittenSchema),
   validateClustering = ajv.compile(clusteringSchema);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): ResultReference & { row: JsonObject; auxiliary?: boolean } {
+  const data = task.data as TaskData;
+  if ((data.verificationAudit || data.verificationOf) &&
+    (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
+    throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   const receipt = state.receipts[task.id];
   // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
   if (receipt.exported && task.stage !== "rewrite") {
     const data = task.data as TaskData;
-    const file = receipt.exported.file ?? (data.stage === "comparison" && data.verificationPending ? "comparison-draft.jsonl"
+    const file = receipt.exported.file ?? (data.stage === "comparison" && data.verificationAudit ? "comparison-verification.jsonl"
       : data.stage === "comparison" && (receipt.evaluation as ComparisonResult).status === "needs_review" ? "comparison-review.jsonl"
       : resultFile(data.stage === "rewrite" ? data.rewriteOf!.stage : task.stage as Stage));
     return { ...receipt.exported, file };
@@ -272,11 +276,12 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   const config = state.manifest.config as EvalConfig;
   const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const result = receipt.evaluation as ComparisonResult;
-  if ((task.data as TaskData).verificationPending) {
-    if (!validateComparison(result)) throw new Error("比较草稿 schema 无效：" + ajv.errorsText(validateComparison.errors));
-    return { id: task.id, file: "comparison-draft.jsonl", row: {
-      evaluation_type: "comparison_draft", evaluator_version: receipt.evaluatorVersion,
-      task_id: task.id, comparison_id: (task.data as TaskData).comparisonId, result,
+  if ((task.data as TaskData).verificationAudit) {
+    if (!validateComparison(result)) throw new Error("可选复核结果 schema 无效：" + ajv.errorsText(validateComparison.errors));
+    return { id: task.id, file: "comparison-verification.jsonl", row: {
+      evaluation_type: "comparison_verification", evaluator_version: receipt.evaluatorVersion,
+      task_id: task.id, comparison_id: (task.data as TaskData).comparisonId,
+      source_task_id: (task.data as TaskData).verificationOf!.taskId, result,
     } };
   }
   if (result.status === "needs_review") {

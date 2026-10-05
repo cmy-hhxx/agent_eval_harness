@@ -9,7 +9,7 @@ const task = (stage: Task["stage"], status: Task["status"], data: Task["data"] =
   ...(file !== undefined ? { receipt: { exported: { ...(file ? { file } : {}), comparisonId: "comparison" } } as Task["receipt"] } : {}),
 });
 
-test("whole-run progress counts business identities and accepted outputs without counting peers, drafts or replaced reviews", () => {
+test("whole-run progress counts business identities and accepted outputs without counting peers, optional audits or replaced reviews", () => {
   const saved = {
     runId: "run", status: "finished", startedAt: 10, finishedAt: 20,
     config: { inputs: { versions: [
@@ -28,10 +28,10 @@ test("whole-run progress counts business identities and accepted outputs without
       attribution: task("attribution", "succeeded", { reference: null }, { answer: "own", peer_B: "peer" }, "attribution.jsonl"),
       repeatedAttribution: task("attribution", "succeeded", { reference: null }, { answer: "own" }, "attribution.jsonl"),
       timedOut: task("attribution", "timed_out"),
-      draft: task("comparison", "succeeded", { reference: null, verificationPending: true }, {}, "comparison-draft.jsonl"),
-      acceptedVerification: task("comparison", "succeeded", { reference: null, verificationOf: { taskId: "draft" } }, {}, ""),
-      failedVerification: task("comparison", "failed", { reference: null, verificationOf: { taskId: "draft-two" } }),
-      pendingReview: task("comparison", "succeeded", { reference: null, verificationOf: { taskId: "draft-three" } }, {}, "comparison-review.jsonl"),
+      audit: task("comparison", "succeeded", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }, {}, "comparison-verification.jsonl"),
+      acceptedComparison: task("comparison", "succeeded", { reference: null }, {}, ""),
+      failedVerification: task("comparison", "failed", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }),
+      pendingReview: task("comparison", "succeeded", { reference: null }, {}, "comparison-review.jsonl"),
       replacedReview: task("comparison", "succeeded", { reference: null, supersededBy: "pendingReview" }, {}, "comparison-review.jsonl"),
       directComparison: task("comparison", "running"),
       rewrite: task("rewrite", "blocked"),
@@ -49,15 +49,14 @@ test("whole-run progress counts business identities and accepted outputs without
   ]);
   assert.equal(summary.tasks.total, 12);
   assert.deepEqual(summary.tasks.states, { pending: 1, running: 1, succeeded: 6, failed: 1, blocked: 1, cancelled: 1, timed_out: 1 });
-  assert.equal(summary.tasks.byPurpose.comparison_draft.total, 1);
-  assert.equal(summary.tasks.byPurpose.comparison_verification.total, 3);
-  assert.equal(summary.tasks.byPurpose.comparison_formal.total, 2);
+  assert.equal(summary.tasks.byPurpose.comparison_verification.total, 2);
+  assert.equal(summary.tasks.byPurpose.comparison_formal.total, 4);
   assert.equal(summary.formalComparisonsAccepted, 1);
-  assert.deepEqual(summary.formalComparisonReferences, [{ runId: "run", taskId: "acceptedVerification" }]);
+  assert.deepEqual(summary.formalComparisonReferences, [{ runId: "run", taskId: "acceptedComparison" }]);
   assert.equal(summary.comparisonsPendingReview, 1);
   assert.deepEqual(summary.comparisonReviewReferences, [{ runId: "run", taskId: "pendingReview" }]);
   assert.equal(summary.startedAt, 10);
   assert.equal(summary.finishedAt, 20);
-  assert.equal(analysisTaskPurpose(saved.tasks.acceptedVerification!), "comparison_verification");
+  assert.equal(analysisTaskPurpose(saved.tasks.audit!), "comparison_verification");
   assert.deepEqual(saved, before, "the projection neither modifies the checkpoint nor copies its source material");
 });

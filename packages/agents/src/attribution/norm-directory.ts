@@ -95,12 +95,12 @@ export function findingNormSelectionIssues(request: AgentRequest, draft: unknown
     if (selected === null) {
       if (object(finding.assessment)?.evidence_status !== "uncertain") issues.push({ category: "evidence",
         code: "finding_norm_unknown", path: `${path}/norm_index`,
-        message: "未知规范只能选择 null 并保留 evidence_status=uncertain，不能宣称已确认遵守或违反。" });
+        message: `未知规范只能在 ${path}/norm_index 填 null，并保留 assessment.evidence_status=uncertain；不能宣称已确认遵守或违反。` });
       continue;
     }
     if (!Number.isSafeInteger(selected) || Number(selected) < 0 || !directory[Number(selected)]) {
       issues.push({ category: "evidence", code: "finding_norm_index_invalid", path: `${path}/norm_index`,
-        message: "指令发现只选择本方 norm_directory 的原 norm_index；未知规范用 null 并保留 uncertain。",
+        message: `规范编号填写在 ${path}/norm_index，与 dimension 同级，不放进 assessment；只选择本方 norm_directory 的原 norm_index，未知规范用 null 并保留 uncertain。`,
         actual: selected, expected: directory.map(item => item.norm_index) });
       continue;
     }

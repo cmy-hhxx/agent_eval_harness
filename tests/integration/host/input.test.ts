@@ -74,7 +74,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.models.models.judge?.thinking, "medium");
   assert.equal(host.evaluation.execution.concurrency, 8);
-  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
+  assert.deepEqual(host.evaluation.rewrite, { attribution: false, comparison: false, clustering: false });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
@@ -128,7 +128,7 @@ test("model profiles preserve explicit max effort and endpoint developer-role ca
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("omitted rewrite settings enable each stage while explicit opt-outs remain effective", async () => {
+test("omitted rewrite settings leave each stage off while explicit opt-ins remain effective", async () => {
   const { directory } = await fixtureConfig();
   try {
     const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
@@ -136,11 +136,11 @@ test("omitted rewrite settings enable each stage while explicit opt-outs remain 
     const file = path.join(directory, "defaults.json");
     await writeFile(file, JSON.stringify(source));
     const defaults = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
-    assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, attribution: true, clustering: true });
-    source.rewrite = { attribution: false };
+    assert.deepEqual(defaults.evaluation.rewrite, { comparison: false, attribution: false, clustering: false });
+    source.rewrite = { attribution: true };
     await writeFile(file, JSON.stringify(source));
     const partial = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
-    assert.deepEqual(partial.evaluation.rewrite, { comparison: true, attribution: false, clustering: true });
+    assert.deepEqual(partial.evaluation.rewrite, { comparison: false, attribution: true, clustering: false });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -155,7 +155,7 @@ test("default comparisons plan separate Fast and Expert matches", async () => {
     assert.deepEqual(plan.summary.comparisons, [
       ["a_fast", "b_fast"], ["a_expert", "b_expert"],
     ]);
-    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
       .map((task) => (task.data as TaskData).group), plan.summary.comparisons);
     assert.equal(plan.summary.attribution_tasks, 4);
     assert.equal(plan.summary.comparison_tasks, 2);
@@ -204,7 +204,7 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
     assert.deepEqual((await loadConfig([root, file], { EVAL_BASE_URL: "https://gateway.example/v1" })).evaluation.comparisons, config.comparisons);
     const plan = await buildPlan(config);
     assert.equal(plan.summary.comparison_tasks, 6);
-    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
       .map((task) => (task.data as TaskData).group), [
         ["a_fast", "b_fast"], ["a_fast", "deepseek"], ["b_fast", "deepseek"],
         ["a_expert", "b_expert"], ["a_expert", "kimi"], ["b_expert", "kimi"],
@@ -223,7 +223,7 @@ test("overlapping comparison groups share one attribution and rewrite per answer
     const attributions = plan.tasks.filter((task) => task.stage === "attribution");
     assert.equal(attributions.length, 3, "each answer is attributed once, regardless of group overlap");
     assert.equal(new Set(attributions.map((task) => task.inputIds.answer)).size, 3);
-    const comparisons = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending);
+    const comparisons = plan.tasks.filter((task) => task.stage === "comparison");
     for (const task of comparisons)
       for (const [label, inputId] of Object.entries(task.inputIds))
         assert.equal(task.dependencies[label], attributions.find((task) => task.inputIds.answer === inputId)!.id);
@@ -238,13 +238,12 @@ test("overlapping comparison groups share one attribution and rewrite per answer
     assert.equal(new Set(attributions.map((task) => task.dependencies.criteria)).size, 1, "shared compatible question scope prepares one rubric");
     for (const cluster of clusters) {
       const refs = Object.values(cluster.dependencies);
-      const local = refs.filter((id) => attributions.some((task) => task.id === id));
-      const related = comparisons.filter((task) => local.some((id) => Object.values(task.dependencies).includes(id)));
-      assert.deepEqual(new Set(refs.filter((id) => comparisons.some((task) => task.id === id))), new Set(related.map((task) => task.id)), "clustering waits for all local pair reviews");
+      assert.equal(refs.filter((id) => comparisons.some((task) => task.id === id)).length, 0,
+        "clustering depends on attribution, independently of pair comparisons");
     }
     const resumed = await buildPlan(config, plan);
     assert.deepEqual(resumed.tasks.map((task) => task.id), plan.tasks.map((task) => task.id));
-    assert.deepEqual(resumed.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => task.dependencies),
+    assert.deepEqual(resumed.tasks.filter((task) => task.stage === "comparison").map((task) => task.dependencies),
       comparisons.map((task) => task.dependencies));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -258,17 +257,17 @@ test("three candidates create independent pairs, preserving valid pairs when one
       ["a_fast", "b_fast"], ["a_fast", "a_expert"], ["b_fast", "a_expert"],
     ]);
     const complete = await buildPlan(config);
-    assert.equal(complete.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length, 3);
+    assert.equal(complete.tasks.filter((task) => task.stage === "comparison").length, 3);
     assert.equal(complete.tasks.filter((task) => task.stage === "attribution").length, 3);
     const source = config.inputs.versions[1].sources[0].path;
     await writeJsonl(source, []);
     const missing = await buildPlan(config);
-    assert.deepEqual(missing.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
+    assert.deepEqual(missing.tasks.filter((task) => task.stage === "comparison").map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
     assert.equal((missing.summary.skipped as unknown[]).length, 2);
     const conflict = raw(); conflict.messages[0].content = "计算3+3";
     await writeJsonl(source, [conflict]);
     const mismatched = await buildPlan(config);
-    assert.deepEqual(mismatched.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
+    assert.deepEqual(mismatched.tasks.filter((task) => task.stage === "comparison").map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
     assert.equal((mismatched.summary.issues as unknown[]).length, 2);
     delete config.inputs.versions[1].comparison_tier;
     await assert.rejects(buildPlan(config), /comparison_tier/);
@@ -281,14 +280,14 @@ test("reversed pair declarations preserve task identities and blind assignment o
   const { directory, config } = await fixtureConfig();
   try {
     const before = await buildPlan(config);
-    const original = before.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const original = before.tasks.find((task) => task.stage === "comparison")!;
     config.comparisons = [["b_fast", "a_fast"]];
     const after = await buildPlan(config, before);
-    const resumed = after.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const resumed = after.tasks.find((task) => task.stage === "comparison")!;
     assert.equal(resumed.id, original.id);
     assert.deepEqual((resumed.data as TaskData).candidates, (original.data as TaskData).candidates);
     const accepted = await buildPlan(config, before, { acceptedTaskIds: new Set([original.id]) });
-    assert.equal(accepted.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length, 0, "accepted business pairs are not replanned");
+    assert.equal(accepted.tasks.filter((task) => task.stage === "comparison").length, 0, "accepted business pairs are not replanned");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -332,11 +331,11 @@ test("new comparisons shuffle blind labels once and preserve the assignment on r
   try {
     const plan = await buildPlan(config);
     assert.equal(random.mock.callCount(), 1, "new two-answer comparisons must run the shuffle");
-    const comparison = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const comparison = plan.tasks.find((task) => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).candidates.A.version, "b_fast");
     const resumed = await buildPlan(config, plan);
     assert.equal(random.mock.callCount(), 1, "resuming must not reshuffle registered labels");
-    assert.deepEqual(resumed.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!.data, comparison.data);
+    assert.deepEqual(resumed.tasks.find((task) => task.stage === "comparison")!.data, comparison.data);
   } finally {
     random.mock.restore();
     syncBuiltinESMExports();
@@ -395,7 +394,7 @@ test("comparison groups are configured, not fixed to built-in versions", async (
     const plan = await buildPlan(config);
     assert.deepEqual(plan.summary.comparisons, [["deepseek", "kimi"]]);
     assert.equal(plan.summary.comparison_tasks, 1);
-    const group = (plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!.data as { group: string[] })
+    const group = (plan.tasks.find((task) => task.stage === "comparison")!.data as { group: string[] })
       .group!;
     assert.equal(group.join("__vs__"), "deepseek__vs__kimi");
   } finally {
@@ -471,17 +470,17 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 5);
+    assert.equal(plan.tasks.length, 4);
     assert.equal(plan.summary.attribution_tasks, 2);
     assert.equal(plan.summary.comparison_tasks, 1);
-    const original = plan.tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending).map((t) => t.data);
+    const original = plan.tasks.filter((t) => t.stage === "comparison").map((t) => t.data);
     config.inputs.versions.reverse();
     assert.deepEqual(
-      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending).map((t) => t.data),
+      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "comparison").map((t) => t.data),
       original,
     );
-    for (const task of plan.tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending))
-      assert.equal(Object.keys(task.dependencies).length, 4);
+    for (const task of plan.tasks.filter((t) => t.stage === "comparison"))
+      assert.equal(Object.keys(task.dependencies).length, 3);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -627,21 +626,23 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       } else {
         assert(!rules.includes("不提交 evidence_id"));
         assert(!rules.includes("不新建问题节点"));
-        for (const rule of ["comparison_slots", "assessments", "comparisons", "better_candidate", "preference", "source_review"])
+        for (const rule of ["comparison_slots", "assessments", "comparisons", "better_candidate", "preference"])
           assert(rules.includes(rule), rule);
+        assert(!rules.includes("source_review"), "default comparison reads accepted attribution directly");
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
         assert.deepEqual(submission.required, ["assessments", "comparisons", "tradeoff"]);
         assert(Object.hasOwn(submission.properties, "preference"), "a meaningful preference remains selectable");
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
         const rows = submission.properties.comparisons as { items: false; minItems: number; maxItems: number;
-          prefixItems: { type: string | string[]; properties: { assessments: { properties: Record<string, { required: string[] }> } } }[] };
+          prefixItems: { type: string | string[]; properties: { assessments: { properties: Record<string, { required: string[]; properties: Record<string, unknown> }> } } }[] };
         assert.equal(rows.items, false);
         assert.equal(rows.prefixItems[0].type, "object", "the core requirement row cannot be omitted");
         assert.equal(rows.minItems, rows.prefixItems.length);
         assert.equal(rows.maxItems, rows.prefixItems.length);
         assert(rows.prefixItems.every(row => Object.values(row.properties.assessments.properties)
-          .every(cell => !cell.required.includes("source_review"))), "empty source review choices are program-owned");
+          .every(cell => cell.required.includes("summary") && !Object.hasOwn(cell.properties, "source_review"))),
+          "default cells require only prose about the accepted attribution");
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {
@@ -701,7 +702,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
   try {
     const plan = await buildPlan(config),
       task = plan.tasks.find((item) => item.stage === "attribution")!;
-    assert.equal(plan.tasks.length, 5);
+    assert.equal(plan.tasks.length, 4);
     assert.deepEqual(Object.keys(task.dependencies), ["criteria"]);
     assert.equal(plan.tasks.find((item) => item.id === task.dependencies.criteria)!.stage, "criteria");
     const prepared = prepare(task, plan.inputs, {});
@@ -769,7 +770,7 @@ test("submission feedback locates invalid comparison references", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks.find((item) => item.stage === "comparison" && (item.data as TaskData).verificationPending)!,
+      task = plan.tasks.find((item) => item.stage === "comparison" && !(item.data as TaskData).verificationAudit)!,
       labels = Object.keys((task.data as TaskData).candidates);
     const attributions = Object.fromEntries(
       Object.entries(task.dependencies).map(([label, id]) => [

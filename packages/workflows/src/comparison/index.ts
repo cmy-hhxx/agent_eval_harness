@@ -21,3 +21,5 @@ export * from "./publication.js";
 export * from "./problem-occurrence-review.js";
 export * from "./analysis-progress.js";
 export * from "./analysis-comparison.js";
+
+export { prepareComparisonVerification } from "./verification-preparation.js";

@@ -14,7 +14,7 @@ import { validateRun } from "../../fixtures/services.js";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
-import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
 
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
@@ -48,7 +48,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
           const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
           assert.equal(submitted.terminate, true);
-          if (options.spec.evaluation.profile === "verification") {
+          if (options.spec.evaluation.id === "comparison") {
             const file = path.join(
               config.output.path,
               options.spec.runId,
@@ -95,23 +95,23 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     await assert.rejects(runEvaluation({ ...options, evaluatorVersion: " " }), /evaluatorVersion/);
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls, 9);
+    assert.equal(calls, 7);
     const businessLog = path.join(directory, "log/evaluation.log");
     const logged = (await readFile(businessLog, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.equal(logged.length, 9);
+    assert.equal(logged.length, 7);
     assert.equal(logged.filter((row) => row.stage === "criteria").length, 1);
     assert.equal(logged.filter((row) => row.stage === "attribution").length, 4);
-    assert.equal(logged.filter((row) => row.stage === "comparison").length, 4);
+    assert.equal(logged.filter((row) => row.stage === "comparison").length, 2);
     assert.equal(await readFile(path.join(directory, "log/runtime.log"), "utf8"), "");
     assert.deepEqual(summary.tokens, {
-      input: 90,
-      output: 45,
-      cacheRead: 270,
-      cacheWrite: 90,
-      totalTokens: 495,
+      input: 70,
+      output: 35,
+      cacheRead: 210,
+      cacheWrite: 70,
+      totalTokens: 385,
     });
     assert.deepEqual(summary.cache, {
       model_input: { hit_rate: 0.6 },
@@ -182,15 +182,15 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.equal((await readJson(path.join(run, "stats.json"))).validation, undefined);
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：尚未校验/);
     await runEvaluation(options);
-    assert.equal(calls, 9, "same-run resume repeats none of the accepted five-stage tasks");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 9);
+    assert.equal(calls, 7, "same-run resume repeats none of the accepted evaluation tasks");
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 7);
     const cached = await runEvaluation({ ...options, runId: "second" });
-    assert.equal(calls, 18, "a new run must evaluate independently");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 18);
+    assert.equal(calls, 14, "a new run must evaluate independently");
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 14);
     assert.deepEqual(cached.cache, {
       model_input: { hit_rate: 0.6 },
     });
-    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 495);
+    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 385);
     assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
   } finally {
     await Promise.all(workers.map((w) => w.close()));
@@ -243,7 +243,7 @@ test("different runs and batches evaluate independently", async () => {
         plan: await buildPlan(config),
       });
       assert.equal(stats.completed_comparisons, 1);
-      assert.equal(calls, (index + 1) * 5, "another batch must invoke the evaluator even for the same question");
+      assert.equal(calls, (index + 1) * 4, "another batch must invoke the evaluator even for the same question");
     }
     config.inputs.batches = days;
     const combined = await runEvaluation({
@@ -251,7 +251,7 @@ test("different runs and batches evaluate independently", async () => {
       runId: "combined",
       plan: await buildPlan(config),
     });
-    assert.equal(calls, 20);
+    assert.equal(calls, 16);
     assert.equal(combined.completed_comparisons, 2);
     assert.deepEqual(Object.keys(combined.by_batch as object), days);
     assert.equal((await validateRun(path.join(config.output.path, "combined"))).valid, true);
@@ -328,7 +328,7 @@ for (const missingArtifact of [false, true])
         workerUrls: [worker.url],
       });
       assert.equal(summary.completed_comparisons, 0);
-      assert.deepEqual(summary.task_statuses, { succeeded: 1, failed: 2, blocked: 2 });
+      assert.deepEqual(summary.task_statuses, { succeeded: 1, failed: 2, blocked: 1 });
       const runtimeLog = (await readFile(path.join(directory, "log/runtime.log"), "utf8"))
         .trim()
         .split("\n")
@@ -424,8 +424,8 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       workerUrls: workers.map((w) => w.url),
     });
     assert.equal(summary.completed_comparisons, 2);
-    assert.deepEqual(calls, { pi: 4, prime: 5 });
-    assert.equal(workdirs.size, 9);
+    assert.deepEqual(calls, { pi: 3, prime: 4 });
+    assert.equal(workdirs.size, 7);
     const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
       "report.md",
@@ -640,7 +640,6 @@ for (const reason of ["no-submission", "idle"] as const)
 test("a repair attempt that makes no submission retains its draft and counters for explicit resume", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   let targetId: string | undefined, attempts = 0, resumed = false;
-  let freshVerificationStarted = false;
   let draft: unknown;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     if (options.spec.evaluation.id === "attribution") targetId ??= options.spec.taskId;
@@ -660,10 +659,6 @@ test("a repair attempt that makes no submission retains its draft and counters f
         assert.deepEqual(options.spec.recovery?.draft, draft);
         assert.equal(options.spec.recovery?.contentSubmissions, 1);
         assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
-      }
-      if (resumed && options.spec.evaluation.inspectionSchema) {
-        freshVerificationStarted = true;
-        assert.equal(options.spec.policy.repairAttempts, 2, "a fresh verification task retains all three submissions");
       }
       const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       assert.equal(result.isError, undefined, JSON.stringify(result));
@@ -687,7 +682,6 @@ test("a repair attempt that makes no submission retains its draft and counters f
     const complete = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
     assert.equal(complete.completed_comparisons, 1);
     assert.equal(attempts, 3);
-    assert.equal(freshVerificationStarted, true);
     assert.deepEqual((await readRunState(path.join(config.output.path, options.runId))).receipts[targetId!].submissionStats,
       { contentSubmissions: 2, fileErrors: 0 });
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
@@ -994,7 +988,7 @@ for (const debug of [false, true])
         criteria: ["changed-model", "fixture"], attribution: ["changed-model"], comparison: ["changed-model"],
       });
       assert.equal(await exists(failureFile), false, "a successful resume has no failure export");
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);
@@ -1023,12 +1017,12 @@ for (const debug of [false, true])
             : [],
         );
       const appendedPlan = await buildPlan(config);
-      assert.equal(appendedPlan.tasks.length, 15);
+      assert.equal(appendedPlan.tasks.length, 12);
       const unchanged = await runEvaluation({ ...options, plan: appendedPlan });
       assert.equal(unchanged.completed_comparisons, 2);
       assert.equal((unchanged.planned as { cases: number }).cases, 2);
       assert.deepEqual(Object.keys(unchanged.by_batch as object), ["2026-09-23", "2026-09-24"]);
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
       const validation = await validateRun(run);
       assert.equal(validation.results.valid, true);
       assert.equal(
@@ -1047,7 +1041,8 @@ for (const reportedContent of [0, undefined]) test(`a worker's ${reportedContent
   const input = raw("inspection-final-ledger", null);
   const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
   config.execution.repairAttempts = 3;
-  const plan = await buildPlan(config), target = plan.tasks.find(task => (task.data as TaskData).verificationOf)!;
+  const plan = await buildPlan(config), target = optionalVerificationTask(plan.tasks.find(task => task.stage === "comparison")!);
+  plan.tasks.push(target);
   let attempts = 0, resumed = false, targetAttempt: string | undefined;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     const targeted = options.spec.taskId === target.id;
@@ -1088,7 +1083,7 @@ for (const reportedContent of [0, undefined]) test(`a worker's ${reportedContent
       signal: AbortSignal.timeout(20_000) };
     const failed = await runEvaluation(options), run = path.join(config.output.path, options.runId), saved = await readRunState(run);
     assert.equal(attempts, 1, "a final count below the known Host count is incomplete, so no automatic extra draft is allowed");
-    assert.equal(failed.completed_comparisons, 0);
+    assert.equal(failed.completed_comparisons, 1, "the failed optional inspection cannot withhold the accepted primary comparison");
     const state = saved.manifest.states[target.id];
     assert.equal(state.failure!.contentSubmissions, 3, "preserve only the acknowledged historical count without inventing unknown costs");
     assert(state.failure!.inspection); assert(state.failure!.errors.some(issue => issue.code === "submission_ledger_unavailable"));

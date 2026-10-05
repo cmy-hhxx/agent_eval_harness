@@ -167,7 +167,7 @@ function terminalReviewReason(states: Checkpoint[]): string | undefined {
   const reviews: string[] = [];
   for (const state of states) {
     const entries = Object.entries(state.tasks);
-    const final = entries.filter(([, task]) => task.stage === "comparison" && !task.data.verificationPending && !task.data.supersededBy &&
+    const final = entries.filter(([, task]) => task.stage === "comparison" && !task.data.verificationAudit && !task.data.supersededBy &&
       (task.data.reviewOf?.round ?? 0) >= 1 && task.status === "succeeded" && task.receipt?.status === "succeeded" &&
       task.receipt.exported?.file === "comparison-review.jsonl");
     const descendants = new Set(final.map(([id]) => id));
@@ -234,7 +234,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     return;
   }
   const complete = publishableComparisons(saved, true);
-  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationPending && !task.data.supersededBy);
+  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit && !task.data.supersededBy);
   if (finalComparisons.length > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
   if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
@@ -316,7 +316,7 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
   const dates = Object.values(state.jobs).map((job) => {
     const planned = expandComparisonPairs((runs.get(job.date) ?? []).flatMap((run) => [
       ...(run.config as EvalConfig).comparisons,
-      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationPending && task.receipt && task.data.group ? [task.data.group] : []),
+      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
     ]));
     const pairName = (group: string[]) => [...group].sort().join("__vs__");
     const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
@@ -334,7 +334,7 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
       // A queued date may still hold its unlimited plan until the evaluator reaches it.
       const run = limitedCheckpoint(saved, limit);
       for (const task of Object.values(run.tasks)) {
-        if (task.stage !== "comparison" || task.data.verificationPending || task.data.supersededBy) continue;
+        if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy) continue;
         const input = run.inputs[Object.values(task.inputIds)[0]];
         if (input) add(task.data.group!, input.batch_id, input.case_id,
           task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);

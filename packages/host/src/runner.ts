@@ -148,7 +148,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     manifest.pausedStages = (manifest.pausedStages ?? []).filter((pause) => !options.resumeStages?.includes(pause.stage));
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
     const inScope = (task: PlannedTask) => !manifest.executionScope || manifest.executionScope.includes(task.id);
-    const dispatchable = (task: PlannedTask) => inScope(task) && !guard.paused(task.stage);
+    const observesFailures = (task: PlannedTask) => options.taskSource.observesFailures?.(task) !== false;
+    const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
+    const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
     manifest.concurrency = desiredConcurrency;
     for (const engine of new Set(manifest.tasks.map(engineForTask)))
       identities[engine] ??= await loadIdentity(engine, options.runtime.root);
@@ -309,7 +311,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         transport: 0, content: 0,
       };
       retryBudgets.set(task.id, retries);
-      if (guard.paused(task.stage)) return;
+      if (paused(task)) return;
       if (contentRemaining(task) <= 0) {
         state.status = "failed";
         state.reason ??= "Content submission budget exhausted";
@@ -351,7 +353,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         workerUrl = replacement.url;
         worker.url = workerUrl;
       }
-      if (guard.paused(task.stage)) return;
+      if (paused(task)) return;
       // Automatic retries and explicit resume share the task's cumulative content cap.
       const policy = { ...options.policy, repairAttempts: contentRemaining(task) - 1 };
       const spec: AttemptSpec = {
@@ -657,7 +659,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           path: "/",
           message: state.reason || "No committed receipt",
         }]);
-      const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, errors);
+      const pause = controller.signal.aborted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, errors);
       if (!receipt && !controller.signal.aborted) await options.logger?.error(state.reason || "No committed receipt", {
         component: "host", event: "attempt_failed", run_id: options.runId, task_id: task.id,
         attempt_id: spec.attemptId, stage: task.stage, errors,
@@ -698,7 +700,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
         return;
       }
-      if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped ||
+      if (controller.signal.aborted || paused(task) || state.failure?.stopped ||
         !contentLedgerConfirmed || contentRemaining(task) <= 0) return;
       if (status?.retryable) {
         if (retries.transport++ >= options.retries) return;
@@ -770,6 +772,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           continue;
         }
         if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
+        if (options.taskSource.canStart?.(task, manifest) === false) continue;
         if (running.size >= desiredConcurrency || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const acceptedDependencies = await current.dependencies(task);
         const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
@@ -780,7 +783,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           continue;
         }
         const binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
-        if (guard.paused(task.stage)) continue;
+        if (paused(task)) continue;
         const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(
           (w) =>
@@ -798,7 +801,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             if (await current.receipt(task.id)) return;
             manifest.states[task.id].status = controller.signal.aborted ? "cancelled" : "failed";
             manifest.states[task.id].reason = errorText(error);
-            const pause = controller.signal.aborted ? undefined : guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
+            const pause = controller.signal.aborted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
             if (pause) options.onProgress?.("stage_paused " + JSON.stringify(pause));
             await current.save();
             if (!controller.signal.aborted)

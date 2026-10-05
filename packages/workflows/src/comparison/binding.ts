@@ -123,6 +123,9 @@ function bindSourceTask(
   acceptedAnalysis?: TaskAnalysis,
 ): AgentBinding {
   const data = task.data as TaskData;
+  if ((data.verificationAudit || data.verificationOf) &&
+    (task.stage !== "comparison" || data.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
+    throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   if (data.stage === "criteria") {
     const blind = blindMaterials(data.candidates);
     const first = Object.values(data.candidates)[0]!;
@@ -371,15 +374,17 @@ function bindSourceTask(
         original_user_timestamp: originalUserTimestamp(inputs[candidate.input_id] as RawInput) }];
     })) : undefined;
   let comparisonDraft: ComparisonResult | undefined;
-  if (data.verificationOf) {
+  if (data.verificationAudit) {
     const draftTask = context.tasks.find(item => item.id === data.verificationOf!.taskId);
     const draft = dependencies.draft;
-    if (task.dependencies.draft !== data.verificationOf.taskId || !draftTask || !(draftTask.data as TaskData).verificationPending ||
+    if (task.dependencies.draft !== data.verificationOf!.taskId || !draftTask || draftTask.stage !== "comparison" ||
+      (draftTask.data as TaskData).verificationAudit || (draftTask.data as TaskData).verificationOf ||
+      (draft?.evaluation as ComparisonResult)?.status !== "decided" ||
       draft?.taskId !== draftTask.id || draft.status !== "succeeded" ||
       !isDeepStrictEqual(draftTask.inputIds, task.inputIds) ||
       !isDeepStrictEqual(Object.fromEntries(Object.entries(task.dependencies).filter(([key]) => key !== "draft")), draftTask.dependencies))
-      throw new Error("独立核验缺少匹配的已接受比较草稿：" + data.verificationOf.taskId);
-    comparisonDraft = structuredClone(draft.evaluation as ComparisonResult);
+      throw new Error("可选核验缺少匹配的已接受正式对比：" + data.verificationOf!.taskId);
+    comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
   const reviewContext = data.reviewOf ? { reasons: data.reviewOf.reasons,
     ...(!acceptedAnalysis && task.dependencies.previous_review ? { concerns: pendingConcerns.map(({ criterion_ids, candidate: _candidate, ...concern }) => ({
@@ -402,14 +407,14 @@ function bindSourceTask(
       ground_truth: { available: data.reference !== null, value: reference },
       candidates: materials,
       ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}),
-      ...(data.verificationOf && task.dependencies.previous_review ? { pending_concerns: pendingConcerns } : {}),
+      ...(data.verificationAudit && task.dependencies.previous_review ? { pending_concerns: pendingConcerns } : {}),
       attributions,
       source_review: sourceReview,
     };
   if (answer) Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
   const binding: AgentBinding = {
     agent: attribution ? "attribution" : "comparison",
-    profile: data.verificationOf ? "verification" : "default",
+    profile: data.verificationAudit ? "verification" : "default",
     projectModelInput: projectComparisonEvidence,
     request: { input, sources },
     modelInput: attribution
@@ -427,7 +432,7 @@ function bindSourceTask(
           const { instruction_sources: _instructions, ...factual } = projected;
           return [key, factual];
         })) } : {}) }
-      : data.verificationOf ? verificationPresentation({ ...input, candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
+      : data.verificationAudit ? verificationPresentation({ ...input, candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
           const projected = modelMaterial(material, label, sources[label].value as RawInput, sources[label].id);
           return [label, { ...material, citation_inventory: projected.citation_inventory, answer_generation: projected.answer_generation,
             criterion_instruction_sources: criterionInstructionSources(sources[label].value as RawInput,
@@ -451,7 +456,7 @@ function bindSourceTask(
         [label, modelMaterial(material, label, sources[label].value as RawInput, sources[label].id)])) },
   };
   if (blind && binding.modelInput) binding.modelInput = presentSource(binding.modelInput, blind.presentation);
-  if (data.verificationOf) {
+  if (data.verificationAudit) {
     binding.inspectionInput = binding.modelInput;
     binding.modelInput = verificationInspectionPresentation(binding.modelInput as ReturnType<typeof verificationPresentation>, task_analysis as TaskAnalysis);
   }

@@ -41,14 +41,14 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；ID 用小写字母开头的字母、数字和下划线，不能包含对局保留分隔符 `__vs__`；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 每组选择二至三个已登记模型，展开为独立两两比较；档位声明、缺失模型与重复模型对的规则见[对比组契约](contract.md#对比组) |
-| `rewrite` | 改写开关：`{ comparison, attribution, clustering }`，三项默认均开启，可显式关闭；对比默认改写对局偏好理由，`comparisonItems: true` 另将逐项点评加入同一任务（自动化强制开启）；各阶段源结果接受后改写，文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `rewrite` | 可选文案改写：`{ comparison, attribution, clustering }`，普通主线默认均关闭；开启对比改写时默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前配置为 `openai-responses`）、`apiKeyEnv`、`thinking`（评测各阶段缺省 `medium`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认8并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
 | `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
 | `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
-| `clustering` | 问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；启用时必须有 `bindings.clustering` |
+| `clustering` | 后置问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；普通主线默认关闭，全部归因结束后用 `cluster --run` 单独准备；执行时必须有 `bindings.clustering` |
 
 入库的 [configs/host.json](../configs/host.json) 只定义共享的输入、执行预算和模型档案骨架，不含具体模型 ID。具体模型放在不入库的本地配置：
 
@@ -205,13 +205,13 @@ npm run eval -- run --engine pi --run-id daily-a --batch <batch_id_a> --batch <b
 
 再次执行相同 `--run-id` 自动续跑。Host 从 `state.json` 读取任务索引、源文件引用、预检诊断、收据、修复草稿和累计用量，A/B 分配不再重建。代码、模型、预算和评测器版本变化不阻止续跑；已接受的任务始终保留，其他 run 不复用结果。同一 run 可以混合多个 `evaluatorVersion`：已接受行保留各自版本，未完成任务使用当前配置的版本，行内 `evaluator_version` 与 `stats.json` 的 `evaluator_versions` 可区分。模型服务端缓存行为保持不变。
 
-改写与聚类开关可以随续跑变化：开启后为已接受的归因/对比结果补齐改写任务、为该模型批次补齐聚类任务；关闭后不再计划未完成的对应任务；已接受的收据和正式评测结果都保留。
+改写开关可以随续跑变化：开启后为已接受归因/对比补齐改写任务，关闭后不再计划未完成的对应任务；已接受收据和正式结果保留。聚类在全部归因结束后单独准备，见[可选复核与后置聚类](#可选复核与后置聚类)。
 
-通过试跑或修复命令保存了 `executionScope` 时，续跑只执行清单内的任务及其必要的独立复核后续任务，不重新发现输入，也不根据开关增加或删去任务。只读取范围内未完成任务实际需要的源记录；纯改写无需原始输入。范围完成后仍保留清单；显式 `run --discover-inputs` 才恢复原选择范围内的输入发现和规划。此选项不会重评成功任务，也不会扩大原先的日期、case 或数量限制。
+通过试跑或修复命令保存了 `executionScope` 时，续跑只执行清单内的任务，不重新发现输入，也不根据开关增加或删去任务。只读取范围内未完成任务实际需要的源记录；纯改写无需原始输入。范围完成后仍保留清单；显式 `run --discover-inputs` 才恢复原选择范围内的输入发现和规划。此选项不会重评成功任务，也不会扩大原先的日期、case 或数量限制。
 
 续跑沿用原运行的批次、case 和数量筛选条件，按 `batch_id + case_id + 阶段 + 版本组合` 识别归因与对比任务，改写任务保留原 UUID 与源任务引用，补缺和刷新按来源、范围及槽位清单复用未完成工作；本次传入的 `--batch`、`--case`、`--limit-cases` 不替换原范围。已经接受的归因、对比和改写结果不再评测，即使原输入、标准答案或模型参数发生变化。未完成任务使用最新有效输入，并加入原选择范围内的新增对比组；无效或冲突记录不能覆盖未完成任务，未完成任务的来源缺失或无效时使该任务跳过并记入预检诊断，不中断其他任务。需要新增日期批次或重新评测已完成样本时使用新 run ID。旧归因收据始终保留；未完成或新增对比仅在共同标准、标准答案一致且通过当前材料校验时复用它，否则创建独立归因复核。需要重做已经接受的判决时使用新 run ID。累计 attempts 和已记录的 Token 保留历次执行成本。运行退出码：0 成功、2 有失败、130 被中断。
 
-内容修复、文件加载与传输错误使用独立预算。单任务跨自动 attempt 和同 run 续跑共享 `1 + execution.repairAttempts` 次累计内容调用；独立核验首查与最终确认共用该上限，恢复保留成功首查，不重新盲查或重复扣次。Host 只派发剩余额度，耗尽时保存草稿、错误和计数，不调用模型；新建核验或复核任务按各自 UUID 获得完整上限，已接受任务始终跳过。
+内容修复、文件加载与传输错误使用独立预算。单任务跨自动 attempt 和同 run 续跑共享 `1 + execution.repairAttempts` 次累计内容调用；可选核验的首查与最终确认共用该上限，恢复保留成功首查。Host 只派发剩余额度，耗尽时保存草稿、错误和计数，不调用模型；显式准备的新核验任务按 UUID 记录独立预算，已接受任务跳过。
 
 内容失败最多自动开启一次跨 attempt 续修，带入最后草稿和结构化反馈；相同错误或实际改稿都不重置次数。代码、模型变化、重复准备和显式续跑不补发额度；提高 `execution.repairAttempts` 时，只补足新上限与历史用量之差。源材料修订会清除失效草稿、证据目录、首查和材料反馈，但保留同 UUID 的历史提交、文件错误、用量及未知终态诊断。
 
@@ -287,23 +287,47 @@ bash run.sh
 
 **输入盘点与预检。**日期按网格列出，并分别标明可评测数量与总数；样本数量扫描完成后才可预检。默认抽样 10 个样本，仓库配置默认并发 8。日期盘点与预检复用本机内存中的轻量输入索引；来源或适配配置变化时重读受影响文件，不缓存原始回答或评测结论。每次预检按所选日期、模型、抽样数量和设置重新规划；确认启动后由独立评测进程重新校验输入、模型、密钥与运行锁。
 
-**运行总览。**选择或登记运行时收起新建配置，续跑时展开；刷新保留重新展开的设置和输入草稿。总览紧凑显示五个阶段的任务进度，对比包含草稿和独立核验；聚类按模型、批次和分片展开，不挂在单个 case 下。
+**运行总览。**选择或登记运行时收起新建配置，续跑时展开；刷新保留重新展开的设置和输入草稿。主线显示共同标准、归因和对比的任务进度，改写按启用范围显示；后置聚类按模型、批次和分片展开，不挂在单个 case 下。可选核验单独记录任务和产物，不作为正式对局完成的前置条件。
 
 **问题库。**导航中的「问题库」（`/problems`）独立读取共享问题库，按模型 → 组件 → 问题类展开树状目录；默认四模型分别显示，空库显示当前状态。主题目录显示独立缺陷出现数，可筛选同一类；选择问题类后查看定义、主题路径、别名、首次出现、合并记录和分页出现样本，证据状态、引用与源文件位置逐条对应。可召回样本提供「召回样本」链接，直接定位到对应运行、batch、case 和归因 finding；运行或正式结果不可用时显示状态。目录展开、选择、分页和召回支持键盘操作。问题库按需读取，不是当前 run 的副本。
 
 **删除运行。**运行列表和详情提供删除入口，确认后删除该运行目录内的状态、正式评测输出、报告、统计及 Debug 材料，同时清除根 `log/runtime.log`、`log/evaluation.log` 中精确匹配该 `run_id` 的记录。仍在启动、执行或退出的运行，以及锁未释放、身份无效或日志损坏的运行拒绝删除；先停止并等待进程退出。原始输入、其他运行、跨 run 问题库及聚合统计交付回执保留。删除不可恢复，操作复用运行锁和共享日志写锁，不更改统计上传契约。
 
-**样本与任务详情。**按 case 分页；样本从 run 登记的 `input_id` 定位源记录，只读取问题、各版本最终回答及可用的标准答案，不加载消息链路。标准答案直接在问题正文下方以一行标签与答案显示，长内容自动换行；没有标准答案时不显示这一行。输入和归因按 A组左、B组右排列，组内 Fast / Expert 顺序固定，其他模型独立分组；展开输入时同时读取各组当前版本，两侧独立切换；同一版本的在途请求去重，已读取版本切换时直接展示，点击刷新重读当前版本。归因和对比按任务展开原始判词与已接受改写；成功提交的任务读取正式 JSONL 的对应行，失败任务显示错误。出现复核时，任务名称区分首次归因、归因复核、首次对比和对比复核，任务行显示轮次，展开可查看原因；`review_of` / `superseded_by` 保留谱系与原收据。Comparison 的 `succeeded` 任务按 `result_status` 显示待复核或已接受。Comparison 的盲测标签在展示时映射回真实模型；发现与要求保留结果中的零起始索引。逐项对照保留原索引、比较点、重要性、标准 ID 与相对比较结果，候选格突出原结果的满足状态、证据状态和比较摘要；表内可展开完整关联归因与证据，并保留跳转到原归因 finding 的链接；单方归因类型只在展开详情中显示，候选格与收起摘要不显示优点 / 缺点标签，原归因明细保持不变。按 `better_candidates` 将优势候选标为「更优」，为空时该行显示「未区分优劣」，不推断双方相等、都好或都坏；`unknown` / `not_applicable` 分别显示「未确认 / 不适用」，不从摘要另判。聚类的原始输出及改写在运行总览按任务展开。长正文和证据按显示上限裁剪，原文与改写保留一一对应；界面呈现规则集中在 [PRODUCT.md](../PRODUCT.md)。
+**样本与任务详情。**按 case 分页；样本从 run 登记的 `input_id` 定位源记录，只读取问题、各版本最终回答及可用的标准答案，不加载消息链路。标准答案直接在问题正文下方以一行标签与答案显示，长内容自动换行；没有标准答案时不显示这一行。输入和归因按 A组左、B组右排列，组内 Fast / Expert 顺序固定，其他模型独立分组；展开输入时同时读取各组当前版本，两侧独立切换；同一版本的在途请求去重，已读取版本切换时直接展示，点击刷新重读当前版本。归因和对比按任务展开原始判词与已接受改写；成功提交的任务读取正式 JSONL 的对应行，失败任务显示错误。可选核验任务与主线对比区分，展开查看独立确认或疑点；主线原收据和正式结果保留。Comparison 的 `succeeded` 任务按 `result_status` 显示待复核或已接受。Comparison 的盲测标签在展示时映射回真实模型；发现与要求保留结果中的零起始索引。逐项对照保留原索引、比较点、重要性、标准 ID 与相对比较结果，候选格突出原结果的满足状态、证据状态和比较摘要；表内可展开完整关联归因与证据，并保留跳转到原归因 finding 的链接；单方归因类型只在展开详情中显示，候选格与收起摘要不显示优点 / 缺点标签，原归因明细保持不变。按 `better_candidates` 将优势候选标为「更优」，为空时该行显示「未区分优劣」，不推断双方相等、都好或都坏；`unknown` / `not_applicable` 分别显示「未确认 / 不适用」，不从摘要另判。聚类的原始输出及改写在运行总览按任务展开。长正文和证据按显示上限裁剪，原文与改写保留一一对应；界面呈现规则集中在 [PRODUCT.md](../PRODUCT.md)。
 
 **刷新与读取边界。**运行中或等待新运行登记时自动刷新，登记后选中新运行；两分钟未登记则显示超时。空闲时不轮询。已接受结论只读正式结果 JSONL，不因来源变化而重评。输入可能包含敏感内容，只在可信本机打开看板；页面仅监听回环地址。
 
-「数据与流程」（`/reference`）是只读视图：按日期、版本和 case 查看输入覆盖；查看阶段依赖、产物和聚类预算；按 Agent 和 Profile 查看当前请求、首查、提交、结果 Schema、提示词和工具描述，共用文案展示原文及来源。对比草稿与独立核验分别列出，流程呈现隐藏上游判词的首查、揭示后核验及一次归因复核、改写和聚类分支。定义直接来自当前 Profile、Workflow 和[提示词模块](../packages/prompts/README.md)，不是历史 run 的提示词快照。
+「数据与流程」（`/reference`）是只读视图：按日期、版本和 case 查看输入覆盖；查看主线标准、归因、对比依赖，以及可选核验、改写和后置聚类；按 Agent 和 Profile 查看当前请求、首查、提交、结果 Schema、提示词和工具描述。定义来自当前 Profile、Workflow 和[提示词模块](../packages/prompts/README.md)，不是历史 run 的提示词快照。
 
 「开始评测」按以下步骤操作：
 
 1. 选择日期、模型（至少两个同组模型）和抽样数量，默认 10；点击“全部”或留空表示全部。数量旁的 `Seed` 每次打开页面默认填入 41，可修改为 0–4294967295 的整数；相同可评测样本范围、数量和 Seed 每次抽到相同的 case，读取顺序不影响结果，适合对照实验。Seed 留空使用随机抽样，选择全部时不使用 Seed。全选模型仍按配置的 Fast / Expert 对比组分别规划。日期筛选转成已登记的 `batch_id` + case 选择，批次契约不变；run ID 由看板生成。
-2. 在「高级设置」按需调整阶段模型、推理等级、并发、预算、改写、聚类和 Debug。模型选项来自 `.env` 配置的网关 `/models` 返回的**完整列表**，不按 GPT 等名称筛选；不在列表中的模型不能启动。Criteria、Attribution、Comparison、Rewrite 与 Clustering 的推理默认中（`medium`），支持显式选择 `max`；归因/对比/聚类改写默认全开，显式配置或本次选择仍可覆盖。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不向浏览器返回密钥。
-3. 先预检再确认启动。预检分列业务对局和独立核验数量；每场有草稿与核验两个普通预算节点。预检不调用模型、不创建 run；启动复用预检选中的 case，重新核验来源、模型、密钥和运行锁。修改 Seed 与其他设置一样，需要重新预检。可选择 Pi / Prime、停止或调整并发，并从运行详情续跑未完成任务。续跑沿用原批次、被评模型范围和抽样范围，保留已接受结果；停止和并发控制仍由持锁 Host 执行，看板只转发。
+2. 在「高级设置」按需调整阶段模型、推理等级、并发、预算、文案改写和 Debug。模型选项来自 `.env` 网关 `/models` 返回的完整列表，不在列表中的模型不能启动。各阶段推理默认中（`medium`），支持显式 `max`；普通归因、对比文案改写默认关闭，聚类后置单独准备。页面不编辑配置文件、网关地址、密钥、输入或输出路径，也不返回密钥。
+3. 先预检再确认启动。默认每场只有一个对比任务；预检不调用模型、不创建 run。启动复用预检选中的 case，重新校验来源、模型、密钥和运行锁。修改 Seed 或其他设置需重新预检。可选择 Pi / Prime、停止或调整并发，并从详情续跑未完成任务；续跑沿用原批次、模型和抽样范围，保留已接受结果。
+
+## 可选复核与后置聚类
+
+普通运行只完成共同标准、一次归因和一次对比。需要独立检查已接受的正式对比时，先预览，再准备核验：
+
+```bash
+npm run eval -- verify-comparisons --run data/runs/comparison/pi-001
+npm run eval -- verify-comparisons --run data/runs/comparison/pi-001 --apply
+npm run eval -- run --engine pi --run-id pi-001 \
+  --config configs/host.json --config configs/local/models.json
+```
+
+`--result <comparison_id>` 可选择特定正式对比。不带 `--apply` 只读预览；准备后保存仅包含核验任务的执行范围，后续同 run 运行调用模型。核验复用已接受主线收据，结果写 `results/comparison-verification.jsonl`，不替换归因或正式对比，不自动扩展复核链。核验失败、疑点或未完成都不影响原正式结果的统计、改写与交付。
+
+全部归因已结束后，单独准备问题聚类：
+
+```bash
+npm run eval -- cluster --run data/runs/comparison/pi-001
+npm run eval -- cluster --run data/runs/comparison/pi-001 --apply
+npm run eval -- run --engine pi --run-id pi-001 \
+  --config configs/host.json --config configs/local/models.json
+```
+
+有归因仍待执行或运行时，拒绝准备；仅成功且有正式收据的归因参与，未成功归因列出并跳过。聚类不等待对比或可选核验，按模型和批次维护问题库。`--apply` 保存聚类执行范围，预览不调用模型、不改状态。继续发现主线新增输入时显式使用 `run --discover-inputs`；它保留已接受判词。
 
 ## 运行产物
 
@@ -313,8 +337,8 @@ bash run.sh
 |---|---|
 | `report.md` | 总览、分批样本、排名与对局矩阵、异常数量、用量缺失和校验状态；开启改写时优先展示润色文案 |
 | `results/criteria.jsonl` | 同题共同验收标准，从题目、已有标准答案、上下文与指令原文生成；归因和裁决镜像同一份标准 |
-| `results/comparison-review.jsonl` | 待复核收据与定位，不计对战判决；原判词与一次独立复核的血缘保留 |
-| `results/comparison-draft.jsonl` | 每场独立核验的不可变比较草稿，按任务 UUID 恢复引用；决定或待核都不计正式对战 |
+| `results/comparison-review.jsonl` | 主线中来源核心未知或材料存在已知冲突的待核结果，不计对战判决；不自动重新归因 |
+| `results/comparison-verification.jsonl` | 显式准备的独立核验记录；成功、疑点与主线结果分开保存，不改写正式胜负、不阻塞交付 |
 | `results/comparison.jsonl` | 每场两两正式对比结果（排名、核心判定、裁决短评、逐项对照与派生两两判决），行内 `evaluator_version` 标识产出评测器；接受后追加并刷盘，运行中即可读取 |
 | 源结果的 `rewritten` 字段 | 保存 `evaluator_version` 与 `rewrites` 槽位文本，原评测字段保留裁判原文；不单独生成改写文件或业务日志 |
 | `results/attribution.jsonl` | 每条回答的归因判决与证据，行内 `evaluator_version` 标识产出评测器；按任务 ID 引用，成功提交后追加并刷盘；每条回答都会归因 |
@@ -323,7 +347,7 @@ bash run.sh
 | `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、当前 `evaluatorVersion` 与引擎身份、结果引用、待修草稿与错误、累计用量；已接受收据保留产出时的评测器版本与判官模型 ID（不保存连接配置）；候选信息仅登记一次 |
 | `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `evaluator_versions`、`judge_models`（按阶段列出去重的模型 ID）和 `artifacts` 产物清单；不包含回答正文，来源冲突单列 `statistical_diagnostics` |
 
-`stats.json` 保存 `standings`（每个版本对局数、核心可判题数、完成核心要求、核心待定题数、胜/都好/都差，以及核心样本覆盖和冲突计数）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。报告与看板的失败只计 `failed`、`timed_out`；`blocked` 单列为依赖阻塞，`cancelled` 单列为取消，待完成计 `pending`、`running`，原始任务状态保持不变。各项均按任务计数，计划任务包含共同标准、归因、对比草稿与独立核验，以及开启时的改写与聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
+`stats.json` 保存 `standings`（每个版本对局数、核心可判题数、完成核心要求、核心待定题数、胜/都好/都差，以及核心样本覆盖和冲突计数）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。报告与看板的失败只计 `failed`、`timed_out`；`blocked` 单列为依赖阻塞，`cancelled` 单列为取消，待完成计 `pending`、`running`，原始任务状态保持不变。各项均按任务计数，计划任务包含共同标准、归因、对比，以及显式开启的核验、改写和聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
 
 正确性和核心完成情况按 `batch_id + case_id + version` 去重；同一回答参加多场对战或保留多条复核归因时，只计一次。正确性优先采用正式对比引用的归因来源；没有正式对比时，只采用唯一的当前输入来源，来源缺失、来源不唯一或结论冲突均计为未确定，冲突另计 `conflicted_count` 并写入 `statistical_diagnostics`。核心通过率的分母是结论明确的去重样本数，`core_decidable_coverage` 表示这部分样本占所有核心样本的比例；跨对战的核心结论冲突计入 `core_conflicted_count` 和未确定数。`standings.entered`、胜率及 `head_to_head` 仍按实际对战场数计数。上述报告字段不改变冻结的统计上传日志结构。
 
@@ -361,7 +385,7 @@ npm run eval -- validate --run data/runs/comparison/daily-a \
   --require-batch <batch-id> --require-rewrite verdicts --require-rewrite items
 ```
 
-`delivery` 按核验节点输出分日期的计划、接受和满足改写要求的场数，及具体缺失槽位清单；同时检查业务键重复与未完成刷新，不能拿文件中的旧文案代替刷新成功。原字段/收据和重复/缺行由 `results` 核对，旧证据异常单列在 `evidence`。`--selected` 只将覆盖范围缩至当前固定清单对应的对比，用于试跑或定向修复；原字段、JSONL和证据仍检查该 run 的已有收据。四个日期分别执行上述验收，历史异常单独列明，不能将局部通过表述为全量通过。
+`delivery` 按主线正式对比节点输出分日期的计划、接受和满足改写要求的场数，及具体缺失槽位清单；同时检查业务键重复与未完成刷新，不能拿文件中的旧文案代替刷新成功。原字段/收据和重复/缺行由 `results` 核对，旧证据异常单列在 `evidence`。`--selected` 只将覆盖范围缩至当前固定清单对应的对比，用于试跑或定向修复；原字段、JSONL和证据仍检查该 run 的已有收据。四个日期分别执行上述验收，历史异常单独列明，不能将局部通过表述为全量通过。
 
 输入只长期保留在原始数据源。`state.json` 保存源文件路径与行号供恢复和证据核对，不保存消息正文，也不计算内容哈希；项目校验限制见[开发指南](development.md#禁止项目哈希与兼容层)。Worker 工作区中的 `inputs/` 是执行期间的临时材料，完成后清除，不归档到 run。普通模式的 Worker 工作区临时存在，清理前保存最后草稿、错误与用量；debug 模式额外收集事件和产物，收集不完整时保留 Worker 副本。debug 事件运行中追加 `events.jsonl`，收集结束后压缩，崩溃时可能保留未压缩日志。
 

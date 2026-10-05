@@ -37,14 +37,14 @@ export function publishableComparisons(state: Checkpoint, requireItems = false):
   }
   const config = state.config as EvalConfig;
   for (const [id, task] of entries) {
-    if (task.stage !== "comparison" || task.data.verificationPending || task.data.supersededBy || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
+    if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
     const required = new Set([id, ...Object.values(task.dependencies)]);
     let missing = false;
     for (const sourceId of [...required]) {
       const source = state.tasks[sourceId];
       if (!source) { missing = true; continue; }
       const planned = rewrites.get(sourceId) ?? [];
-      if (!source.data.verificationPending && config.rewrite[source.stage as keyof EvalConfig["rewrite"]] && !planned.length) missing = true;
+      if (!source.data.verificationAudit && config.rewrite[source.stage as keyof EvalConfig["rewrite"]] && !planned.length) missing = true;
       planned.forEach((rewrite) => required.add(rewrite));
     }
     if (missing || !rewrites.get(id)?.length) continue;

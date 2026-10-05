@@ -110,7 +110,7 @@ function validTableChecks(value: unknown, inputs: AttemptSpec["inputs"]): boolea
 export interface EvaluationServices {
   logger?: LogSink;
   repository: RunRepository;
-  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason">;
+  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason" | "canStart" | "observesFailures">;
   agents: AgentRegistry;
 }
 

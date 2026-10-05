@@ -96,8 +96,8 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     const plan = await buildPlan(config);
     assert.equal(plan.summary.cases, 220);
     assert.equal(plan.summary.valid_inputs, 880);
-    assert.equal(plan.tasks.length, 1100);
-    assert.equal(new Set(plan.tasks.map((task) => task.id)).size, 1100);
+    assert.equal(plan.tasks.length, 880);
+    assert.equal(new Set(plan.tasks.map((task) => task.id)).size, 880);
     assert.equal(plan.summary.attribution_tasks, 440);
     assert.deepEqual(plan.summary.issues, []);
     assert.deepEqual(plan.summary.skipped, []);
@@ -107,7 +107,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       valid_inputs: 400,
       attribution_tasks: 200,
       comparison_tasks: 100,
-      comparison_verification_tasks: 100,
+      comparison_verification_tasks: 0,
       skipped_groups: 0,
       input_issues: 0,
     });
@@ -116,12 +116,12 @@ test("100 + 120 daily samples retain repeated questions through planning, export
       valid_inputs: 480,
       attribution_tasks: 240,
       comparison_tasks: 120,
-      comparison_verification_tasks: 120,
+      comparison_verification_tasks: 0,
       skipped_groups: 0,
       input_issues: 0,
     });
     for (const task of plan.tasks) {
-      if (task.stage !== "comparison" || (task.data as { verificationPending?: boolean }).verificationPending) continue;
+      if (task.stage !== "comparison") continue;
       const data = task.data as TaskData;
       assert.equal(data.candidates.A.batch_id, data.candidates.B.batch_id);
     }
@@ -176,8 +176,8 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     assert(markdown.includes(`# ${firstDay} / q000`));
     assert(markdown.includes(`# ${secondDay} / q000`));
     const overview = await readFile(path.join(run, "report.md"), "utf8");
-    assert(overview.includes(`| ${firstDay} | 100 | 500 | 100 |`));
-    assert(overview.includes(`| ${secondDay} | 120 | 600 | 120 |`));
+    assert(overview.includes(`| ${firstDay} | 100 | 400 | 100 |`));
+    assert(overview.includes(`| ${secondDay} | 120 | 480 | 120 |`));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -191,16 +191,16 @@ test("batch and case selection preserve batch identities and apply one global ca
   try {
     config.inputs.batches = [secondDay];
     let plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 5);
+    assert.equal(plan.tasks.length, 4);
     assert.deepEqual(Object.keys(plan.summary.by_batch as object), [secondDay]);
     config.inputs.batches = [firstDay, secondDay];
     config.inputs.case_ids = ["q1"];
     plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 10);
+    assert.equal(plan.tasks.length, 8);
     assert.equal(plan.summary.cases, 2);
     config.inputs.limit = 1;
     plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 5);
+    assert.equal(plan.tasks.length, 4);
     assert.deepEqual(Object.keys(plan.summary.by_batch as object), [firstDay]);
     assert.equal((plan.tasks[0].data as TaskData).candidates.A.batch_id, firstDay);
   } finally {
@@ -230,9 +230,9 @@ test("references, invalid answers and identity conflicts stay within their input
   try {
     await appendFile(config.inputs.versions[0].sources[0].path, "not-json\n");
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 10);
+    assert.equal(plan.tasks.length, 8);
     assert.equal(plan.summary.cases, 6);
-    const groups = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending);
+    const groups = plan.tasks.filter((task) => task.stage === "comparison");
     assert.deepEqual(
       groups.map((task) => (task.data as TaskData).reference),
       ["4", "5"],
@@ -346,11 +346,11 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
       daily = stats.by_batch as Record<string, BatchStats>;
     assert.equal((stats.planned as JsonObject).cases, 8);
     assert.equal(stats.completed_comparisons, 5);
-    assert.deepEqual(daily[firstDay].task_statuses, { succeeded: 10 });
+    assert.deepEqual(daily[firstDay].task_statuses, { succeeded: 8 });
     assert.deepEqual(daily[secondDay].task_statuses, {
-      succeeded: 15,
-      failed: 5,
-      pending: 5,
+      succeeded: 12,
+      failed: 4,
+      pending: 4,
     });
     assert.equal(daily[firstDay].planned.cases, 2);
     assert.equal(daily[secondDay].planned.cases, 6);

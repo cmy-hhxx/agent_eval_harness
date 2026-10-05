@@ -131,7 +131,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
     assert(rewrites.filter((task) => (task.data as TaskData).rewriteOf?.stage === "comparison")
       .every((task) => (task.data as TaskData).comparisonRewriteScope === "all"));
     assert.deepEqual(new Set(rewrites.map((task) => (task.data as TaskData).rewriteOf!.stage)), new Set(["attribution", "comparison"]));
-    for (const task of plan.tasks.filter((task) => task.stage === "attribution" || task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending))
+    for (const task of plan.tasks.filter((task) => task.stage === "attribution" || task.stage === "comparison"))
       assert.equal(rewrites.filter((rewrite) => (rewrite.data as TaskData).rewriteOf!.taskId === task.id).length, 1);
 
     const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
@@ -146,7 +146,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw(), raw("new-case")].map((record) => ({ ...record, batch_id: date })));
     await automationWorkflow.reconcile!(directory, state, evaluation);
     assert.equal(state.manifest.tasks.find((task) => task.id === accepted.id), accepted);
-    assert(state.manifest.tasks.some((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending && Object.values((task.data as TaskData).candidates)[0].case_id === "new-case"));
+    assert(state.manifest.tasks.some((task) => task.stage === "comparison" && Object.values((task.data as TaskData).candidates)[0].case_id === "new-case"));
     assert.equal(state.manifest.states[accepted.id].status, "succeeded");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -163,13 +163,13 @@ test("automation keeps an explicitly same-tier local baseline without requesting
     assert.deepEqual(evaluation.inputs.versions.find((version) => version.id === "baseline")!.sources, [{ kind: "file", path: local }]);
     assert.deepEqual(evaluation.comparisons, config.comparisons);
     const plan = await buildPlan(evaluation);
-    assert.equal(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending).length, 3);
+    assert.equal(plan.tasks.filter((task) => task.stage === "comparison").length, 3);
     assert.equal(plan.tasks.filter((task) => task.stage === "attribution").length, 3);
-    assert(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending).every((task) => Object.values((task.data as TaskData).candidates).every((candidate) => candidate.batch_id === date)));
+    assert(plan.tasks.filter((task) => task.stage === "comparison").every((task) => Object.values((task.data as TaskData).candidates).every((candidate) => candidate.batch_id === date)));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("automation defers unfinished clustering, retains accepted results and can cluster all attributions later", async () => {
+test("automation defers unfinished clustering and later classifies attributions independently of comparisons", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
@@ -181,7 +181,7 @@ test("automation defers unfinished clustering, retains accepted results and can 
       receipts: Object.fromEntries(plan.tasks.map(task => {
         const rewrites = comparisonSlots(comparisonResult(), "all").map(({ id, text }) => ({ id, text }));
         return [task.id, { taskId: task.id,
-          ...(task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending ? { evaluation: comparisonResult(), exported: {
+          ...(task.stage === "comparison" ? { evaluation: comparisonResult(), exported: {
             id: (task.data as TaskData).comparisonId!, row: { rewritten: { rewrites } },
           } } : (task.data as TaskData).rewriteOf?.stage === "comparison" ? { evaluation: { rewrites } } : {}),
         }];
@@ -212,6 +212,8 @@ test("automation defers unfinished clustering, retains accepted results and can 
     assert.deepEqual(state.manifest.tasks.map(task => task.id).sort(), ids.sort(), "reconciliation must not duplicate supplemental tasks");
     await reconcileRun(directory, state, clustered);
     const clusters = state.manifest.tasks.filter(task => task.stage === "clustering");
+    assert(clusters.every(cluster => Object.values(cluster.dependencies).every(id =>
+      state.manifest.tasks.find(task => task.id === id)!.stage === "attribution")), "clustering has no comparative dependencies");
     for (const task of state.manifest.tasks.filter(task => task.stage === "attribution"))
       assert(clusters.some(cluster => Object.values(cluster.dependencies).includes(task.id)), "missing deferred clustering for " + task.id);
     for (const cluster of clusters)
@@ -595,7 +597,7 @@ test("a daily Fast run expands to Expert with all rewrites in the same directory
     assert.equal(result.status, "finished");
     const after = await readRunState(run);
     assert.deepEqual((after.manifest.config as typeof config).inputs.versions.map((v) => v.id).sort(), [...REMOTE_MODELS].sort());
-    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending).length, 2);
+    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit).length, 2);
     assert(after.manifest.tasks.some((task) => (task.data as TaskData).group?.includes("a_expert")));
     for (const [id, receipt] of Object.entries(accepted.receipts)) {
       if ((accepted.manifest.tasks.find((task) => task.id === id)!.data as TaskData).rewriteOf?.stage === "comparison") {

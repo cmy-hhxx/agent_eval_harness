@@ -126,12 +126,12 @@ test("public judgment bindings keep global indices and separate blind originals 
     }
     const contextTasks = [criteriaTask, task];
     if (mode === "verification") {
-      const draftTask: PlannedTask = { ...task, id: randomUUID(), dependencies: { ...task.dependencies },
-        data: { ...(task.data as TaskData), verificationPending: true } satisfies TaskData };
-      task.data = { ...(task.data as TaskData), verificationOf: { taskId: draftTask.id } } satisfies TaskData;
-      task.dependencies.draft = draftTask.id;
-      dependencies.draft = receipt(draftTask.id, comparisonResult(["A", "B"], analysis));
-      contextTasks.push(draftTask);
+      const primaryTask: PlannedTask = { ...task, id: randomUUID(), dependencies: { ...task.dependencies },
+        data: { ...(task.data as TaskData) } satisfies TaskData };
+      task.data = { ...(task.data as TaskData), verificationAudit: true, verificationOf: { taskId: primaryTask.id } } satisfies TaskData;
+      task.dependencies.draft = primaryTask.id;
+      dependencies.draft = receipt(primaryTask.id, comparisonResult(["A", "B"], analysis));
+      contextTasks.push(primaryTask);
     }
     const before = structuredClone({ task, inputs, dependencies });
     const binding = comparisonWorkflow.bind(task, inputs, dependencies, { tasks: contextTasks });

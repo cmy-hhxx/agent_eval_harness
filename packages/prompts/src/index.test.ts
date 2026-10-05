@@ -46,6 +46,21 @@ test("stage instructions discuss only available materials and actions", () => {
   assert(!/看不到|工具记录|原始回答|核验过材料/.test(rewrite.systemPrompt + rewrite.instructions));
 });
 
+test("default comparison consumes accepted attribution without a source review submission branch", () => {
+  const prompt = agentPrompt("comparison", ["read_trace"]);
+  const text = prompt.systemPrompt + "\n" + prompt.instructions;
+  assert.match(text, /已接受.*归因|归因.*已接受/);
+  assert.match(text, /完成一次比较|比较一次/);
+  assert.match(text, /核验通过.*summary/);
+  assert.doesNotMatch(text, /source_review|inspect_material|归因复核/);
+});
+
+test("attribution names the finding-level norm selector and its separate assessment fields", () => {
+  const prompt = agentPrompt("attribution", []);
+  assert.match(prompt.instructions, /findings\[i\]\.norm_index.*与 `dimension` 同级/);
+  assert.match(prompt.instructions, /assessment.*observation\/evidence_status\/impact.*不在其中放 `norm_index` 或 `requirement_index`/);
+});
+
 test("built-in profiles submit JSON directly while keeping code tools for calculations", () => {
   const prompt = agentPrompt("attribution", ["execute_code"]);
   assert.equal(prompt.fileSubmission, false);

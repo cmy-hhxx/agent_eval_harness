@@ -37,7 +37,7 @@ export function summarizeResults(
 ) {
   const cases = new Set([
     ...tasks
-      .filter((task) => task.stage === "attribution" || task.stage === "comparison" && !(task.data as TaskData).verificationPending)
+      .filter((task) => task.stage === "attribution" || task.stage === "comparison" && !(task.data as TaskData).verificationAudit)
       .map((task) => {
         const c = taskCase(task.data as TaskData);
         return canonical([c.batch_id, c.case_id]);
@@ -234,7 +234,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
   const needsInputs = manifest.tasks.some(
-    (task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending && state.receipts[task.id] &&
+    (task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit && state.receipts[task.id] &&
       (state.receipts[task.id].evaluation as ComparisonResult).status === "decided" && !state.receipts[task.id].exported,
   );
   const inputs = needsInputs ? await loadRunInputs(manifest) : {};
@@ -280,7 +280,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       reason: manifest.states[task.id]?.reason || null,
     });
     // Rewrite and clustering receipts feed the report view, not the per-case result sections.
-    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || data.verificationPending) continue;
+    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || data.verificationAudit) continue;
     if (!receipt) {
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
@@ -534,9 +534,11 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   );
   const resultArtifacts = ["results/attribution.jsonl"];
   if (manifest.tasks.some((task) => task.stage === "criteria" && receipts.has(task.id))) resultArtifacts.push("results/criteria.jsonl");
-  if (manifest.tasks.some((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending &&
+  if (manifest.tasks.some((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit &&
     (receipts.get(task.id)?.evaluation as ComparisonResult | undefined)?.status === "needs_review")) resultArtifacts.push("results/comparison-review.jsonl");
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
+  if (manifest.tasks.some(task => (task.data as TaskData).verificationAudit && receipts.has(task.id)))
+    resultArtifacts.push("results/comparison-verification.jsonl");
   if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
     resultArtifacts.push("results/clustering.jsonl");
   const evaluatorVersions = [...new Set([...receipts.values()].map((receipt) => receipt.evaluatorVersion))].sort();

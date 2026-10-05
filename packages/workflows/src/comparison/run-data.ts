@@ -194,15 +194,15 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
   plan.summary.criteria_tasks = plan.tasks.filter((task) => task.stage === "criteria").length;
-  plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length;
-  plan.summary.comparison_verification_tasks = plan.tasks.filter(task => !!(task.data as TaskData).verificationOf).length;
+  plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length;
+  plan.summary.comparison_verification_tasks = plan.tasks.filter(task => !!(task.data as TaskData).verificationAudit).length;
   plan.summary.rewrite_tasks = plan.tasks.filter((task) => task.stage === "rewrite").length;
   plan.summary.clustering_tasks = plan.tasks.filter((task) => task.stage === "clustering").length;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
     const selected = plan.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch);
     counts.attribution_tasks = selected.filter((task) => task.stage === "attribution").length;
-    counts.comparison_verification_tasks = selected.filter(task => !!(task.data as TaskData).verificationOf).length;
-    counts.comparison_tasks = selected.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length;
+    counts.comparison_verification_tasks = selected.filter(task => !!(task.data as TaskData).verificationAudit).length;
+    counts.comparison_tasks = selected.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length;
   }
   const catalog = new Map((plan.catalog as Candidate[]).map((c) => [c.input_id, c]));
   for (const task of plan.tasks)
@@ -230,6 +230,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       const data = task.data as TaskData;
       if (data.rewriteOf?.stage !== "comparison") continue;
       const id = data.rewriteOf.taskId;
+      if ((tasks.get(id)?.data as TaskData | undefined)?.verificationAudit) continue;
       bySource.set(id, [...(bySource.get(id) ?? []), task]);
     }
     for (const [sourceId, rewrites] of bySource) {

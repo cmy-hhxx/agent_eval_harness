@@ -94,7 +94,7 @@ test("dashboard preserves totals while displaying failures, blocked tasks and ca
   } finally { page.dom.window.close(); }
 });
 
-test("dashboard renders gateway models with eight-way concurrency, medium thinking and all rewrites", async () => {
+test("dashboard renders gateway models with eight-way concurrency, medium thinking and optional rewrites off", async () => {
   const source = await readConfigSources(path.join(ROOT, "configs/host.json"));
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);
   const page = await controller(() => ({
@@ -121,7 +121,7 @@ test("dashboard renders gateway models with eight-way concurrency, medium thinki
       assert([...select.options].some(option => option.value === "max"));
     }
     for (const stage of ["attribution", "comparison", "clustering"])
-      assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, true);
+      assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, false);
   } finally { page.dom.window.close(); }
 });
 
@@ -336,7 +336,7 @@ test("run selection folds launch settings while refresh preserves a reopened dra
     assert.equal(config.open, true);
     await page.selectRun(run.run_id);
     assert.equal(config.open, false);
-    assert.match(page.document.querySelector("#stage-summary").textContent, /对比 \/ 核验/);
+    assert.match(page.document.querySelector("#stage-summary").textContent, /对比/);
     config.open = true;
     page.document.querySelector("#sample-size").value = "19";
     await page.refresh(true);

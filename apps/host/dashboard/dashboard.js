@@ -125,7 +125,7 @@ function renderOverview() {
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     const failures = (counts.failed || 0) + (counts.timed_out || 0);
     const note = `${counts.running || 0} 执行${failures ? ` · ${failures} 失败` : ""}${counts.blocked ? ` · ${counts.blocked} 阻塞` : ""}${counts.cancelled ? ` · ${counts.cancelled} 取消` : ""}`;
-    return `<div class="stage-row"><strong>${stage === "comparison" ? "对比 / 核验" : stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
+    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
   }).join("");
 }
 function scrollBehavior() {
@@ -668,7 +668,7 @@ async function preview() {
       value.resuming ? `未完成 ${value.remaining || 0}` : `任务 ${value.tasks || 0}`,
       `样本 ${summary.cases || 0}`,
       `对局 ${summary.comparison_tasks || 0}`,
-      `独立核验 ${summary.comparison_verification_tasks || 0}`,
+      ...(summary.comparison_verification_tasks ? [`独立核验 ${summary.comparison_verification_tasks}`] : []),
       ...(state.sampleInfo?.size ? [`抽样 ${(state.sampledCases || []).length} / 可用 ${state.sampleInfo.available}`] : []),
       `有效输入 ${summary.valid_inputs || 0}`,
       `输入异常 ${summary.issues_count || 0}`,

@@ -13,7 +13,7 @@ export function previousReviewConcerns(task: PlannedTask, inputs: Record<string,
   const previousId = task.dependencies.previous_review;
   if (!previousId) return [];
   const previous = tasks.find(item => item.id === previousId), receipt = dependencies.previous_review;
-  if (!previous || previous.stage !== "comparison" || (previous.data as TaskData).verificationPending ||
+  if (!previous || previous.stage !== "comparison" || (previous.data as TaskData).verificationAudit ||
     !receipt || receipt.taskId !== previousId || receipt.status !== "succeeded" ||
     previous.dependencies.criteria !== task.dependencies.criteria || previous.dependencies.previous_review ||
     ((previous.data as TaskData).reviewOf?.round ?? 0) >= 1 ||

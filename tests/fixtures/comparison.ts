@@ -9,7 +9,7 @@ import { canonicalEvidence } from "./evidence.js";
 import { ROOT } from "./services.js";
 import { writeJson, writeJsonl } from "@eval/data";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
-import type { AttributionResult, ComparisonResult, RawInput } from "@eval/workflows/comparison";
+import type { AttributionResult, ComparisonResult, RawInput, TaskData } from "@eval/workflows/comparison";
 import { comparisonSubmission } from "./comparison-submission.js";
 import { problemSubmission, normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
@@ -34,6 +34,15 @@ export const emptyAudit = (): ToolAudit => ({
   calculations: [],
   artifacts: [],
 });
+/** An explicitly requested independent check, outside the primary evaluation dependency graph. */
+export function optionalVerificationTask(source: PlannedTask): PlannedTask {
+  const data = source.data as TaskData;
+  if (source.stage !== "comparison" || data.verificationOf || data.verificationAudit)
+    throw new Error("Optional verification requires a primary comparison task");
+  return { id: randomUUID(), stage: "comparison", inputIds: { ...source.inputIds },
+    dependencies: { ...source.dependencies, draft: source.id },
+    data: { ...structuredClone(data), verificationOf: { taskId: source.id }, verificationAudit: true } satisfies TaskData };
+}
 export function raw(caseId = "q1", reference: unknown = "4", answer = "2+2=4"): RawInput {
   return {
     batch_id: "b1",

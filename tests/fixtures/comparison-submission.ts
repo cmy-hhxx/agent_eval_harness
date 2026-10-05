@@ -37,19 +37,18 @@ export function comparisonVerificationSubmission(request: AgentRequest, selectio
 /** Fixtures use the current thin submission; the canonical result remains a separate contract. */
 export function comparisonSubmission(result: ComparisonResult, slots: ComparisonSlot[]): ComparisonSubmission {
  const rows = result.decision_basis?.comparisons ?? [];
- const reviews = sourceReviews(result, slots, Object.keys(result.assessments));
  return { assessments: Object.fromEntries(Object.entries(result.assessments).map(([candidate,item]) => [candidate,{ summary:item.summary }])),
-  comparisons: slots.map((slot,index) => {
+  comparisons: slots.map(slot => {
    const row = [...rows].sort((a,b) => {
     const score = (row:ComparisonResult["decision_basis"]["comparisons"][number]) => Object.entries(slot.finding_indices).reduce((sum,[label,indices]) => sum+indices.filter(index => row.assessments[label]?.finding_indices.includes(index)).length,0);
     return score(b)-score(a);
    }).find(row => slot.kind === 'resource' ? !row.criterion_ids.length && Object.values(row.assessments).every(cell => !cell.finding_indices.length)
     : slot.criterion_ids.some(id => row.criterion_ids.includes(id)) || Object.entries(slot.finding_indices).some(([label,indices]) =>
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
-   if (!row && slot.optional && Object.values(reviews[index]).every(reason => reason === null)) return null;
+   if (!row && slot.optional) return null;
    return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,
     assessments: Object.fromEntries(Object.entries(result.assessments).map(([candidate,item]) => [candidate, {
-     summary: row?.assessments[candidate]?.summary ?? item.summary, source_review: reviews[index][candidate] }])) };
+     summary: row?.assessments[candidate]?.summary ?? item.summary }])) };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
   tradeoff: result.decision_basis?.tradeoff ?? '来源存在待核事项。' };
 }

@@ -4,7 +4,7 @@ import type { EvalConfig, Stage } from "./types.js";
 
 type SavedTask = Checkpoint["tasks"][string];
 type AnalysisCheckpoint = Pick<Checkpoint, "runId" | "status" | "startedAt" | "finishedAt" | "config" | "inputs" | "tasks">;
-export type AnalysisTaskPurpose = Exclude<Stage, "comparison"> | "comparison_draft" | "comparison_verification" | "comparison_formal";
+export type AnalysisTaskPurpose = Exclude<Stage, "comparison"> | "comparison_verification" | "comparison_formal";
 export interface AnalysisTaskCounts { total: number; states: Record<TaskState["status"], number> }
 
 function counts(): AnalysisTaskCounts {
@@ -14,13 +14,12 @@ function counts(): AnalysisTaskCounts {
 /** The execution purpose differs from whether the task produced a formal result. */
 export function analysisTaskPurpose(task: Pick<SavedTask, "stage" | "data">): AnalysisTaskPurpose {
   if (task.stage !== "comparison") return task.stage;
-  if (task.data.verificationPending) return "comparison_draft";
   return task.data.verificationOf ? "comparison_verification" : "comparison_formal";
 }
 
 /** Checkpoint receipts identify accepted output files without reading verdicts. */
 function analysisComparisonResult(task: SavedTask): "accepted" | "pending_review" | null {
-  if (task.stage !== "comparison" || task.data.verificationPending || task.data.supersededBy || task.status !== "succeeded") return null;
+  if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy || task.status !== "succeeded") return null;
   const exported = task.receipt?.exported;
   if (!exported) return null;
   // The current codec omits a stage's default filename; comparison-review keeps it explicitly.
@@ -46,7 +45,7 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
   }
   const total = counts();
   const byPurpose: Record<AnalysisTaskPurpose, AnalysisTaskCounts> = {
-    criteria: counts(), attribution: counts(), comparison_draft: counts(), comparison_verification: counts(),
+    criteria: counts(), attribution: counts(), comparison_verification: counts(),
     comparison_formal: counts(), rewrite: counts(), clustering: counts(),
   };
   const formalComparisonReferences: { runId: string; taskId: string }[] = [];

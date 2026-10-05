@@ -125,7 +125,7 @@ export async function validateRun(
     .map((task) => (task.data as TaskData).rewriteOf?.taskId ?? task.id));
   for (const task of manifest.tasks) {
     const receipt = receipts.get(task.id);
-    if (task.stage !== "comparison" || (task.data as TaskData).verificationPending || !receipt?.exported) continue;
+    if (task.stage !== "comparison" || (task.data as TaskData).verificationAudit || !receipt?.exported) continue;
     if (selectedSources && !selectedSources.has(task.id)) continue;
     const data = task.data as TaskData;
     const stored = stageResult("comparison", receipt.exported.row).rewritten as { rewrites: { id: string; text: string }[] } | undefined;
@@ -146,7 +146,7 @@ export async function validateRun(
     if (receipts.has(task.id)) {
       try {
         const receipt = receipts.get(task.id)!;
-        if (task.stage === "criteria" || (task.data as TaskData).verificationPending || (receipt.evaluation as ComparisonResult).status === "needs_review") {
+        if (task.stage === "criteria" || (task.data as TaskData).verificationAudit || (receipt.evaluation as ComparisonResult).status === "needs_review") {
           const exported = encodeResult(task, state, inputs);
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));

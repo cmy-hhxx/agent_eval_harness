@@ -332,7 +332,7 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
     state.manifest.states[taskId] = { ...state.manifest.states[taskId], status: "succeeded", attempts: 1 };
   };
   try {
-    const task = state.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const task = state.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit)!;
     const data = task.data as TaskData;
     const criteria = state.manifest.tasks.find((item) => item.id === task.dependencies.criteria)!;
     const analysis = criteriaResultForTask(criteria, inputs);
@@ -354,7 +354,6 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
       accept(task.dependencies[label]!, evaluation);
     }
     const result = comparisonResult(Object.keys(data.candidates), analysis);
-    accept(data.verificationOf!.taskId, structuredClone(result));
     accept(task.id, result);
     const writer = createResultWriter(fixture.run, inputs);
     await writer(state);
@@ -407,7 +406,7 @@ test("dashboard distinguishes accepted review requests and preserves independent
     const attributions = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "attribution" &&
       checkpoint.inputs[task.inputIds.answer]!.case_id === "q1");
     const comparisons = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "comparison" &&
-      !task.data.verificationPending);
+      !task.data.verificationAudit);
     const [comparisonId, comparison] = comparisons.find(([, task]) =>
       checkpoint.inputs[Object.values(task.inputIds)[0]!]!.case_id === "q1")!;
     const reviewId = randomUUID(), reasons = ["首轮证据不足，核验原始来源。"];
@@ -456,8 +455,6 @@ test("dashboard distinguishes accepted review requests and preserves independent
     assert.equal(reassessment.result_status, undefined);
     assert.deepEqual(reassessment.review_of, { task_id: comparisonId, round: 1, reasons });
     assert.equal(tasks.filter((task) => task.stage === "comparison").length, 2);
-    assert(!tasks.some((task) => task.id === comparison.data.verificationOf!.taskId),
-      "the immutable comparison draft remains outside the sample task list");
     assert.equal(await exists(path.join(fixture.run, "results", "comparison-review.jsonl")), false,
       "task metadata is projected without reading accepted result bodies");
 
@@ -969,14 +966,15 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.deepEqual(reference.inputs.versions, fixture.config.inputs.versions);
     assert.deepEqual(reference.comparisons, fixture.config.comparisons);
     assert.deepEqual(reference.stages.map((stage: { id: string }) => stage.id), ["criteria", "attribution", "comparison", "rewrite", "clustering"]);
-    assert.deepEqual(reference.stages[0].schemas.result, criteriaProfile.resultSchema);
-    assert.deepEqual(reference.stages[1].schemas.result, attributionProfile.resultSchema);
-    assert.deepEqual(reference.stages[1].schemas.submission, attributionProfile.submissionSchema);
-    assert.equal(reference.stages[1].prompts.system, attributionProfile.systemPrompt);
-    assert.equal(reference.stages[2].prompts.instructions, comparisonProfile.instructions);
-    assert.equal(reference.stages[2].prompts.submissionNudge, comparisonProfile.submissionNudge);
-    assert.deepEqual(reference.stages[1].toolDescriptions, attributionProfile.toolDescriptions);
-    assert.deepEqual(reference.stages[2].schemas.submission, comparisonProfile.submissionSchema);
+    const criteria = reference.stages[0].profiles[0], attribution = reference.stages[1].profiles[0], comparison = reference.stages[2].profiles[0];
+    assert.deepEqual(criteria.schemas.result, criteriaProfile.resultSchema);
+    assert.deepEqual(attribution.schemas.result, attributionProfile.resultSchema);
+    assert.deepEqual(attribution.schemas.submission, attributionProfile.submissionSchema);
+    assert.equal(attribution.prompts.system, attributionProfile.systemPrompt);
+    assert.equal(comparison.prompts.instructions, comparisonProfile.instructions);
+    assert.equal(comparison.prompts.submissionNudge, comparisonProfile.submissionNudge);
+    assert.deepEqual(attribution.toolDescriptions, attributionProfile.toolDescriptions);
+    assert.deepEqual(comparison.schemas.submission, comparisonProfile.submissionSchema);
     assert.deepEqual(Object.keys(reference.exports), ["comparison", "clustering"]);
     assert(!JSON.stringify(reference).includes("private-key-do-not-expose"));
     assert(!JSON.stringify(reference).includes(gateway));
@@ -1195,7 +1193,8 @@ test("run-scoped settings are validated with the same model and execution config
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
-    assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
+    assert.deepEqual(settings.rewrite, { attribution: false, comparison: false, clustering: false });
+    assert.equal(settings.clustering.enabled, false);
     const stages = ["criteria", "attribution", "comparison", "rewrite", "clustering"];
     const defaults = editableDashboardSettings({
       bindings: Object.fromEntries(stages.map((stage) => [stage, { profile: "judge" }])),

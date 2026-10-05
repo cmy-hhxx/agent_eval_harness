@@ -145,10 +145,10 @@ export interface TaskData {
   /** Compared group version IDs, in declaration order. */
   group?: string[];
   comparisonId?: string;
-  /** Workflow draft, accepted and persisted but never a formal comparison. */
-  verificationPending?: true;
-  /** Independent verification of this immutable draft receipt. */
+  /** Independent optional verification of this accepted formal comparison. */
   verificationOf?: { taskId: string };
+  /** Optional retrospective check; never owns or replaces the formal comparison. */
+  verificationAudit?: true;
   /** Registered same-case factual sources available only to an attribution review. */
   referenceCandidates?: Record<string, Candidate>;
   /** Business scope of the shared criteria, including its candidate set. */

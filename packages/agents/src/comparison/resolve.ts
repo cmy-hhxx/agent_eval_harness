@@ -4,7 +4,7 @@ import { comparisonText } from "@eval/prompts";
 import schema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import { criterionAppliesToPair } from "./pair-scope.js";
-import { comparisonSlots, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourcesComparable, requiredSourceReviews, resolveSourceReviews } from "./slots.js";
+import { comparisonSlots, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
 
@@ -41,9 +41,8 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
   if (value.comparisons.length !== slots.length) throw new ValidationError([{ category: "decision", code: "comparison_slot_count",
     path: "/comparisons", actual: value.comparisons.length, expected: slots.length,
-    message: `comparisons 须按 comparison_slots 的同一顺序填写恰好 ${slots.length} 行；每行填写双方 summary/source_review、importance 和 better_candidate，不提交关联 ID 或索引。` }]);
-  const reviews = [...requiredSourceReviews(request), ...resolveSourceReviews(request, value.comparisons.map(row =>
-    Object.fromEntries(labels.map(label => [label, row?.assessments[label].source_review ?? null]))), '/comparisons')];
+    message: `comparisons 须按 comparison_slots 的同一顺序填写恰好 ${slots.length} 行；每行填写双方 summary、importance 和 better_candidate，不提交关联 ID 或索引。` }]);
+  const reviews = requiredSourceReviews(request);
   if (reviews.length) return pendingComparison(request, value.assessments, reviews);
   const rowIssues: ValidationIssue[] = [];
   const comparisons = value.comparisons.flatMap((row,index) => {

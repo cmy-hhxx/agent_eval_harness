@@ -47,13 +47,13 @@ flowchart LR
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
-Comparison Workflow 将每个候选对规划为 `default` 草稿和 `verification` 核验两个任务，依赖同一份 Criteria 与 Attribution，核验再依赖草稿收据。草稿以任务 UUID 保存到 `comparison-draft.jsonl`；核验才写正式 `comparison.jsonl`，改写、聚类、交付与统计选择核验节点。两个节点分别记录普通内容修复预算；进度如实计入两次调用，预检将业务对局与核验任务分别计数。
+Comparison Workflow 默认将每个候选对规划为一个 `default` 任务，依赖共同 Criteria 与双方已接受 Attribution。接受后直接写正式 `comparison.jsonl`；改写和交付引用该节点。普通主线默认关闭文案改写与聚类，不安排独立核验或自动归因复核。
 
-核验请求保留完整可信材料，Workflow 分别提供首查与揭示视图，首查隐藏上游归因及排名。Comparison Profile 校验原材料核查，通用 Registry/Host 接受并持久化检查点，Tools 只委托 Worker；Worker 让核查与最终提交共用队列和内容预算。恢复重新验证可信检查点，不能从客户端失败草稿引入未知首查或回退计数。核验只能确认不可修改的草稿或提出来源复核，协议详见[数据契约](contract.md)。最多一轮 Attribution 复核，随后建立新草稿与核验 UUID；原收据和 superseded lineage 保留。
+显式 `verify-comparisons` 为已接受正式对比准备独立 `verification` 任务，使用新的 UUID 和只含核验的执行范围；结果写 `comparison-verification.jsonl`。核验请求保留完整可信材料，首查隐藏上游归因及排名，成功后再揭示。Registry/Host 持久化检查点，Worker 的首查与最终提交共用内容预算；恢复重新验证可信检查点。核验仅记录确认或疑点，不替换正式结果，不触发归因重做或修改下游依赖。协议见[数据契约](contract.md)。
 
 证据选号目录属于 task 的程序恢复状态：Contracts 提供纯坐标与选号 helper，Workflow 只投影自己生成的材料引用并排除原始 source values，Tools 只登记实际返回的完整页，Worker 在返回前保存目录，Host 独立校验追加前缀和本次实际绑定来源。首查按模型选号解析后保存 canonical checkpoint；恢复使用 canonical Schema，后续模型 Schema 或模型参数变化不会重新编号已成功首查。
 
-归因复核可读取程序登记的同批次、同 case、同原问和当前候选对的其他回答作为 `grader_only` 事实源；每个来源保留各自的原用户时间，缺失保持未知，不把对方时间填入本方；相对时间主张仍按本方原始上下文核验。对方私有指令不能成为本方义务。外来正式证据保留 `source` 与 `source_input_id`，读工具与模型引用显式带来源，报告与看板按该输入 ID 定位，不能套用本方消息索引。
+独立 Attribution 调用可读取程序登记的同批次、同 case、同原问参考材料作为 `grader_only` 事实源；每个来源保留各自原用户时间，缺失保持未知，不用对方时间或私有指令补本方依据。外来正式证据保留 `source` 与 `source_input_id`，报告与看板按真实输入 ID 定位，不能套用本方消息索引。
 
 ## 生命周期
 
@@ -110,7 +110,7 @@ Workflow.bind 必传当前任务清单，Host、复核与离线校验按共同 C
 [通用契约](../packages/contracts/src/index.ts)区分以下接口：
 
 - `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、本地提交 Schema、接受结果 Schema、引用展开及业务校验；可选 `modelSubmissionSchema(request)` 按可信请求生成模型参数 Schema，不使用展示投影，也不改变本地校验。可选 `validateSubmission` 安全检查部分或结构无效的草稿，独立业务错误与结构错误合并反馈；Attribution 的可识别引用坐标同样提前检查，不等待其他结构或覆盖错误修完。全部通过才校验正式结果。Worker 收到的 `EvaluationSpec.outputSchema` 用于向模型描述提交参数。
-- `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`；可选同步 `advance` 规划已验证收据的后续任务，Host 串行提交收据、任务变更和结果，持久化失败时回滚此次任务变更。`blockedReason` 在依赖已接受后检查下游是否仍需等待，未决复核不能进入改写或问题库。
+- `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`；可选同步 `advance` 规划已验证收据的后续任务，Host 串行提交收据、任务变更和结果，持久化失败时回滚此次任务变更。`blockedReason` 在依赖已接受后检查下游是否仍需等待；可选核验没有指向正式对比改写或聚类的下游依赖。
 - `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
 - `AgentBackend` 适配 SDK 会话。Runtime 的客户端公开入口不加载 SDK，Worker 应用按选择加载 Adapter。
@@ -121,7 +121,7 @@ Repository 的完整读取与按任务读取复用同一流式 JSONL 路径，�
 
 源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，评测集目录只保存显式来源和逐行字节坐标（不保存消息正文），任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；样本身份仍是本方 input UUID 与 finding ID，代表证据只选本方真实证据，缺少时明确报错；跨来源证据完整保留在归因结果中，不把对方消息坐标记录成本方位置；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
 
-归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。组合属于 Workflow。
+归因位于 `packages/agents/src/attribution`，只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类位于 `packages/agents/src/clustering`；`cluster --run` 在该 run 的全部归因任务结束后，按 `(模型 × 批次)` 从已接受归因准备分片，失败归因不参与。先归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化。聚类不等待对比或可选核验，组合和报告属于 Workflow。
 
 改写已实现于 `packages/agents/src/rewrite`：它只接收 Workflow 选定的文本槽位，输出同 id 的润色文本；正式结果 JSONL 保留裁判原文，改写附在源结果的 `rewritten` 字段，报告与逐题总结优先展示改写文案。
 
@@ -131,7 +131,7 @@ Repository 的完整读取与按任务读取复用同一流式 JSONL 路径，�
 
 [失败熔断](../packages/host/src/failure-guard.ts)只消费通用阶段与 ValidationIssue 签名，不识别评测业务。它按不同任务维护有界窗口，将暂停原因写进 manifest；调度和 attempt 重试都检查该状态，健康阶段继续，显式恢复才清除暂停。初始托管 Worker 只按实际就绪任务启动，避免在所有剩余任务被依赖或熔断阻塞时空建进程。
 
-[定向修复](../packages/workflows/src/comparison/repair.ts)属于 Workflow：在运行锁内计算依赖范围及文本槽位，预览与应用共用选择逻辑；应用只改变选中进度并保存通用 `executionScope`，不另存输入或正式正文。聚类分片只有其余依赖均已接受或已选中时才自动随局部补跑推进，不能反向拉入整批未完成样本。Host 只按 UUID 范围调度，必要的独立复核后续任务随源任务加入范围；Workflow 在固定范围下跳过输入发现，并只加载所需记录。分层试跑、交付覆盖和文案审阅在[交付模块](../packages/workflows/src/comparison/delivery.ts)，不进入通用调度器。
+[定向修复](../packages/workflows/src/comparison/repair.ts)属于 Workflow：在运行锁内计算依赖范围及文本槽位，预览与应用共用选择逻辑；应用只改变选中进度并保存通用 `executionScope`，不另存输入或正式正文。聚类分片只有其余依赖均已接受或已选中时才自动随局部补跑推进，不能反向拉入整批未完成样本。Host 只按 UUID 范围调度；Workflow 在固定范围下跳过输入发现，并只加载所需记录。分层试跑、交付覆盖和文案审阅在[交付模块](../packages/workflows/src/comparison/delivery.ts)，不进入通用调度器。
 
 `AttemptSpec` 包含任务标识、引擎版本与构建 UUID、模型、输入引用、预算、截止时间和评测契约。Host 不依赖上游 SDK 类型；底座公共接口只覆盖创建、运行、事件、取消和释放。
 

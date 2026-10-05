@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r125",
+  "evaluatorVersion": "r126",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -68,12 +68,12 @@
     ]
   ],
   "rewrite": {
-    "comparison": true,
-    "attribution": true,
-    "clustering": true
+    "comparison": false,
+    "attribution": false,
+    "clustering": false
   },
   "clustering": {
-    "enabled": true,
+    "enabled": false,
     "maxClassesPerModel": 80,
     "maxNewClassesPerTask": 8,
     "maxComponentsPerModel": 12,

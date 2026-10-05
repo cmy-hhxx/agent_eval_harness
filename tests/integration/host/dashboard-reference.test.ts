@@ -68,14 +68,17 @@ test("reference storage lists actual result files and keeps rewrites embedded in
     const section = [...document.querySelectorAll(".reference-section")].find((element: any) => element.querySelector("h2").textContent === "保存位置")!;
     const cells = new Map([...section.querySelectorAll("tbody tr")].map((row: any) => [row.cells[0].textContent, row.cells[1]]));
     assert.deepEqual([...cells.get("对比").querySelectorAll("code")].map((element: any) => element.textContent),
-      ["comparison-draft.jsonl", "comparison.jsonl", "comparison-review.jsonl"].map((file) => `${reference.storage.runs}/<run-id>/results/${file}`));
+      ["comparison.jsonl", "comparison-review.jsonl", "comparison-verification.jsonl"].map((file) => `${reference.storage.runs}/<run-id>/results/${file}`));
     assert.equal(cells.get("改写").textContent, "源结果的 rewritten 字段");
     assert.equal(cells.get("改写").querySelector("code"), null, "rewrites do not have a separate result file");
-    assert.match(document.querySelector("#reference-content").textContent, /该分片归因与涉及对局裁决完成/);
-    assert.deepEqual(reference.flow.steps.map((step) => step.id), ["preflight", "criteria", "attribution", "draft", "inspection", "verification"]);
-    const review = reference.flow.branches.find((branch) => branch.name === "一次独立归因复核")!;
-    assert.deepEqual(review.steps.map((step) => [step.stage, step.profile]), [["attribution", "default"], ["comparison", "default"], ["comparison", "verification"]]);
-    assert.match(reference.flow.branches.find((branch) => branch.name === "末轮待复核")!.steps[0].output!, /无正式判决或统计/);
+    assert.match(document.querySelector("#reference-content").textContent, /全部基础归因完成后/);
+    assert.deepEqual(reference.flow.steps.map((step) => [step.id, step.stage, step.profile]),
+      [["criteria", "criteria", "default"], ["attribution", "attribution", "default"], ["comparison", "comparison", "default"]]);
+    const audit = reference.flow.branches.find((branch) => branch.name === "可选独立复核")!;
+    assert.deepEqual(audit.steps.map((step) => [step.stage, step.profile]), [["comparison", "verification"], ["comparison", "verification"]]);
+    assert.match(audit.condition, /失败或证据不足不影响原正式裁决/);
+    assert.match(audit.steps[1].output!, /不自动开启归因或对比重评/);
+    assert.match(reference.flow.branches.find((branch) => branch.name === "问题库维护")!.condition, /不依赖对比裁决/);
     assert.equal(reference.flow.branches.find((branch) => branch.name === "聚类改写")!.enabled, reference.clustering.enabled && reference.rewrite.clustering);
     assert.equal(reference.flow.branches.find((branch) => branch.name === "逐项点评改写")!.enabled, reference.rewrite.comparison && reference.rewrite.comparisonItems === true);
     assert.match(document.querySelector("#reference-content").textContent, /任务内正整数 evidence_index/);
@@ -91,7 +94,7 @@ test("reference profiles expose independent inspection and the current canonical
   try {
     const comparison = reference.stages.find((stage) => stage.id === "comparison")!;
     assert.deepEqual(comparison.profiles.map((profile) => profile.id), ["default", "verification"]);
-    const draft = comparison.profiles[0], verification = comparison.profiles[1];
+    const primary = comparison.profiles[0], verification = comparison.profiles[1];
     const current = comparisonAgent.profiles.verification;
     assert.deepEqual(verification.schemas.request, current.requestSchema);
     assert.deepEqual(verification.schemas.submission, current.submissionSchema);
@@ -99,11 +102,11 @@ test("reference profiles expose independent inspection and the current canonical
     assert.deepEqual(verification.schemas.modelInspection, current.inspection!.modelSchema);
     assert.deepEqual(verification.schemas.result, current.resultSchema);
     assert.deepEqual(verification.schemas.modelSubmission, evidenceSelectionSchema(current.submissionSchema));
-    assert.deepEqual(draft.schemas.modelSubmission, evidenceSelectionSchema(comparisonAgent.profiles.default.submissionSchema));
+    assert.deepEqual(primary.schemas.modelSubmission, evidenceSelectionSchema(comparisonAgent.profiles.default.submissionSchema));
     const attribution = reference.stages.find((stage) => stage.id === "attribution")!.profiles[0];
     assert.deepEqual(attribution.schemas.modelSubmission, evidenceSelectionSchema(attributionAgent.profiles.default.submissionSchema));
     assert.equal(attribution.requestBoundSubmission, true);
-    assert.equal(draft.requestBoundSubmission, true);
+    assert.equal(primary.requestBoundSubmission, true);
     assert.equal(verification.requestBoundSubmission, false);
     for (const stage of reference.stages) for (const profile of stage.profiles) {
       assert.equal(profile.fileSubmission, false);

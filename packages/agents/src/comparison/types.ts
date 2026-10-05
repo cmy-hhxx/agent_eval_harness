@@ -145,7 +145,7 @@ export interface ComparisonSlot {
 export interface SubmittedComparison {
   importance: "high" | "medium" | "low";
   better_candidate?: string | null;
-  assessments: Record<string, { summary: string; source_review?: string | null }>;
+  assessments: Record<string, { summary: string }>;
 }
 /** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
 export interface ComparisonSubmission {

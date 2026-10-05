@@ -270,7 +270,7 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
   const saved = await checkpoint(run);
   const taskIds = Object.entries(saved.tasks).flatMap(([id, task]) => {
     // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
-    if (task.stage === "clustering" || task.data.verificationPending || task.data.rewriteOf?.stage === "clustering") return [];
+    if (task.stage === "clustering" || task.data.verificationAudit || task.data.rewriteOf?.stage === "clustering") return [];
     const candidate = Object.values(task.inputIds)
       .map((inputId) => saved.inputs[inputId])
       .find(Boolean);
@@ -356,7 +356,7 @@ export async function listClusteringTasks(run: string) {
 export async function readTaskResult(run: string, taskId: string) {
   const saved = await checkpoint(run);
   const task = saved.tasks[taskId];
-  if (!task || task.data.verificationPending) return undefined;
+  if (!task || task.data.verificationAudit) return undefined;
   // Repository decoding checks the accepted reference against its authoritative JSONL row.
   const dependencies = task.stage === "comparison" ? Object.values(task.dependencies) : [];
   const state = await readRunTasks(run, [taskId, ...dependencies]);

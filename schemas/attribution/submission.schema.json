@@ -122,6 +122,7 @@
           },
           "assessment": {
             "type": "object",
+            "description": "本条观察、确定性与影响；instruction_following 时只填 observation/evidence_status/impact，norm_index 放在 findings[i] 顶层，与 dimension 同级。其他维度可关联 requirement_index。",
             "additionalProperties": false,
             "required": [
               "observation",
@@ -193,7 +194,7 @@
               "null"
             ],
             "minimum": 0,
-            "description": "仅 instruction_following 选择 answer.norm_directory 中对应规范的 norm_index，不另填 assessment.requirement_index；未知规范用 null 且 evidence_status=uncertain。"
+            "description": "仅 instruction_following 必填 findings[i].norm_index，与 dimension 同级，不放进 assessment。选择 answer.norm_directory 的原 norm_index；未知规范用 null 且 assessment.evidence_status=uncertain，不另填 assessment.requirement_index。"
           }
         },
         "allOf": [

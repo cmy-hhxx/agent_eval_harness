@@ -81,6 +81,10 @@ function encodeState(state: RunState): Checkpoint {
   };
   const saved = Object.fromEntries(
     tasks.map((task) => {
+      const taskData = task.data as TaskData;
+      if ((taskData.verificationAudit || taskData.verificationOf) &&
+        (task.stage !== "comparison" || taskData.verificationAudit !== true || !taskData.verificationOf?.taskId))
+        throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
       const { candidates: _candidates, referenceCandidates: _peers, stage: _stage, revision, ...data } = task.data as TaskData;
       const value: SavedTask = {
         ...states[task.id],
@@ -96,7 +100,7 @@ function encodeState(state: RunState): Checkpoint {
         const rewriteIds = task.stage === "rewrite"
           ? (evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id) : undefined;
         const reference = exported && {
-          ...(task.stage === "comparison" && !(task.data as TaskData).verificationPending && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
+          ...(task.stage === "comparison" && !(task.data as TaskData).verificationAudit && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
         };
         const evaluationPatch = exported
@@ -168,7 +172,7 @@ function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]
   }
   row = originalResultRow(data.stage, row);
   if (data.stage === "attribution") return row.evaluation;
-  if (data.stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type))) return row.result;
+  if (data.stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type))) return row.result;
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
 }
@@ -215,6 +219,12 @@ function decodeState(
       ),
     },
   }));
+  for (const task of plan) {
+    const data = task.data as TaskData;
+    if ((data.verificationAudit || data.verificationOf) &&
+      (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
+      throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
+  }
   const state: RunState = {
     manifest: {
       ...metadata,
@@ -251,15 +261,15 @@ function decodeState(
       continue;
     }
     const data = task.data as TaskData;
-    if (data.stage === "criteria" || data.verificationPending || receipt.exported.file === "comparison-review.jsonl") {
+    if (data.stage === "criteria" || data.verificationAudit || receipt.exported.file === "comparison-review.jsonl") {
       const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
-      if (data.verificationPending && (receipt.exported.taskId !== task.id || receipt.exported.file !== "comparison-draft.jsonl"))
-        throw new Error("比较草稿结果引用与任务不一致：" + task.id);
+      if (data.verificationAudit && (receipt.exported.taskId !== task.id || receipt.exported.file !== "comparison-verification.jsonl"))
+        throw new Error("可选复核结果引用与任务不一致：" + task.id);
       const row = resultRow(receipt, { id: resultId, file: receipt.exported.file ?? resultFile(data.stage) });
-      if (row.task_id !== task.id || row.evaluation_type !== (data.stage === "criteria" ? "criteria" : data.verificationPending ? "comparison_draft" : "comparison_review"))
+      if (row.task_id !== task.id || row.evaluation_type !== (data.stage === "criteria" ? "criteria" : data.verificationAudit ? "comparison_verification" : "comparison_review"))
         throw new Error("阶段结果身份不一致：" + task.id);
-      if (data.verificationPending && (row.comparison_id !== data.comparisonId || row.evaluator_version !== receipt.evaluatorVersion))
-        throw new Error("比较草稿来源身份不一致：" + task.id);
+      if (data.verificationAudit && (row.comparison_id !== data.comparisonId || row.source_task_id !== data.verificationOf?.taskId))
+        throw new Error("可选复核来源身份不一致：" + task.id);
       const evaluation = restore(row.result, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),

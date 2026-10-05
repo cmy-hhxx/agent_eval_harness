@@ -147,13 +147,13 @@ test("clustering builds a bounded per-model library and recalls classes across r
     const plan = await buildPlan(config);
     assert.equal(plan.summary.attribution_tasks, 4);
     assert.equal(plan.summary.comparison_tasks, 2);
-    assert.equal(plan.summary.comparison_verification_tasks, 2);
+    assert.equal(plan.summary.comparison_verification_tasks, 0);
     assert.equal(plan.summary.clustering_tasks, 2);
     for (const task of plan.tasks.filter((item) => item.stage === "clustering")) {
       assert.deepEqual(task.inputIds, {}, "clustering must not fetch input material");
-      const keys = Object.keys(task.dependencies);
-      assert.equal(keys.filter((key) => !key.startsWith("comparison:")).length, 2, "one attribution dependency per answer");
-      assert.equal(keys.filter((key) => key.startsWith("comparison:")).length, 2, "both case comparisons must resolve before library admission");
+      assert.equal(Object.keys(task.dependencies).length, 2, "one attribution dependency per answer");
+      assert(Object.values(task.dependencies).every(id => plan.tasks.find(task => task.id === id)!.stage === "attribution"),
+        "library maintenance depends only on accepted attribution");
     }
     const options = {
       runId: "cluster-first",
@@ -173,7 +173,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
     };
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls.value, 12, "2 criteria + 4 attribution + 2 comparison drafts + 2 checks + 2 clustering");
+    assert.equal(calls.value, 10, "2 criteria + 4 attribution + 2 comparisons + 2 clustering");
     const run = path.join(config.output.path, "cluster-first");
 
     const clustering = await rows(path.join(run, "results", "clustering.jsonl"));
@@ -227,7 +227,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       config: { ...config, clustering: { ...config.clustering, enabled: false } },
       plan: { tasks: [], inputs: {}, summary: {} },
     });
-    assert.equal(calls.value, 12, "resume preserves all accepted draft and check receipts");
+    assert.equal(calls.value, 10, "resume preserves all accepted evaluation receipts");
     assert.equal((resumed.problem_library as Record<string, { occurrences: number }>).a_fast?.occurrences, 2);
 
     // A new run recalls the existing class instead of creating another one.
@@ -236,7 +236,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       runId: "cluster-second",
       plan: await buildPlan(config),
     });
-    assert.equal(calls.value, 24);
+    assert.equal(calls.value, 20);
     const recalled = await readJson<{ classes: Record<string, unknown>; occurrences: { classification: string }[] }>(
       path.join(config.problemLibrary.path, "a_fast.json"),
     );

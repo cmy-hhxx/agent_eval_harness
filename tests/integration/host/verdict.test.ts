@@ -149,9 +149,8 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
   const { directory, config } = await fixtureConfig([[first], [], [second], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks.find(item => item.stage === "comparison" && (item.data as TaskData).verificationOf)!,
-      draft = plan.tasks.find(item => item.id === task.dependencies.draft)!,
-      receipts = attributionReceipts(draft),
+      task = plan.tasks.find(item => item.stage === "comparison" && !(item.data as TaskData).verificationAudit)!,
+      receipts = attributionReceipts(task),
       run = path.join(directory, "run"),
       labels = Object.keys((task.data as TaskData).candidates);
     const state = {
@@ -191,13 +190,9 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
       status: "succeeded",
       acceptedAt: 0,
     };
-    state.receipts[draft.id] = { ...state.receipts[task.id], taskId: draft.id,
-      attemptId: "draft", submissionId: randomUUID(), evaluation: structuredClone(evaluation) };
     await createResultWriter(run, plan.inputs)(state);
-    const draftRows = (await readFile(path.join(run, "results", "comparison-draft.jsonl"), "utf8")).trim().split("\n");
     const formalRows = (await readFile(path.join(run, "results", "comparison.jsonl"), "utf8")).trim().split("\n");
-    assert.equal(draftRows.length, 1);
-    assert.equal(formalRows.length, 1, "only the independent check enters formal comparison results");
+    assert.equal(formalRows.length, 1, "one accepted primary comparison enters formal results");
     await writeRunState(run, state);
     for (const version of config.inputs.versions)
       await rm(path.join(directory, version.id + ".jsonl"));
@@ -211,7 +206,6 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     const erisResult = await eris.read({ runId: "run", taskId: task.id });
     assert.equal((erisResult.comparisonScope as { comparisonTier: string }).comparisonTier, "Fast");
     assert.deepEqual(erisResult.result, state.receipts[task.id]!.exported!.row, "the business scope does not replace or rewrite the full formal result");
-    assert(!Object.hasOwn(await eris.read({ runId: "run", taskId: draft.id }), "comparisonScope"), "an accepted workflow draft is not projected as a formal comparison");
     const summary = await reportRun(run);
     assert.equal(summary.completed_comparisons, 1);
     const standings = summary.standings as Record<string, { entered: number; core_decidable_count: number; meets_core: number }>;

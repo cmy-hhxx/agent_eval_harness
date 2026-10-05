@@ -132,7 +132,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     output: source.output as OutputTarget,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
-    rewrite: { comparison: true, attribution: true, clustering: true },
+    rewrite: { comparison: false, attribution: false, clustering: false },
     clustering: { ...CLUSTERING_DEFAULTS },
   };
   if (source.clustering !== undefined) {
@@ -172,10 +172,10 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       if (source.rewrite[key] !== undefined && typeof source.rewrite[key] !== "boolean")
         throw new Error(`Invalid rewrite.${key}`);
     config.rewrite = {
-      comparison: source.rewrite.comparison !== false,
+      comparison: source.rewrite.comparison === true,
       ...(source.rewrite.comparisonItems !== undefined ? { comparisonItems: source.rewrite.comparisonItems === true } : {}),
-      attribution: source.rewrite.attribution !== false,
-      clustering: source.rewrite.clustering !== false,
+      attribution: source.rewrite.attribution === true,
+      clustering: source.rewrite.clustering === true,
     };
   }
   const versions = config.inputs?.versions;
@@ -315,7 +315,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
     },
-    rewrite: { attribution: rewrite.attribution !== false, comparison: rewrite.comparison !== false, clustering: rewrite.clustering !== false },
+    rewrite: { attribution: rewrite.attribution === true, comparison: rewrite.comparison === true, clustering: rewrite.clustering === true },
     clustering: { enabled: clustering.enabled === true },
     comparisons: Array.isArray(source.comparisons) ? source.comparisons : [],
     models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>

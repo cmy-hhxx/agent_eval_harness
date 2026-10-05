@@ -9,7 +9,7 @@ import { comparisonAgent, comparisonProfile, comparisonSlots, comparisonSlotChoi
 import example from './fixtures/example.json' with { type: 'json' };
 import type { ComparisonInput, ComparisonSubmission, ComparisonResult } from './types.js';
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
-const cells = (A: string, B: string) => ({ A: { summary: A, source_review: null as string | null }, B: { summary: B, source_review: null as string | null } });
+const cells = (A: string, B: string) => ({ A: { summary: A }, B: { summary: B } });
 function setup() {
  const request = structuredClone(example.request) as AgentRequest, input = request.input as unknown as ComparisonInput;
  const registry = new AgentRegistry([comparisonAgent]), binding = { agent: 'comparison', profile: 'default', request };
@@ -80,29 +80,38 @@ test('omitted empty comparison choices derive null without changing required bus
  delete draft.preference;
  for (const row of draft.comparisons) if (row) {
   delete row.better_candidate;
-  for (const cell of Object.values(row.assessments)) delete cell.source_review;
  }
  const before = structuredClone(draft), result = f.registry.resolve(f.binding,draft,audit);
  f.registry.validate(f.binding,result,audit);
  assert.deepEqual(result,expected);
  assert.deepEqual(draft,before);
 });
-test('omitting empty choices preserves actual advantages and source reviews', () => {
+test('omitting empty choices preserves actual advantages', () => {
  const f = setup();
  f.draft.comparisons[0]!.better_candidate='A';
  const expected = f.registry.resolve(f.binding,f.draft,audit) as ComparisonResult;
  delete f.draft.preference;
  for (const row of f.draft.comparisons) if (row) {
   if (row.better_candidate === null) delete row.better_candidate;
-  for (const cell of Object.values(row.assessments)) delete cell.source_review;
  }
  assert.deepEqual(f.registry.resolve(f.binding,f.draft,audit),expected);
  assert.deepEqual(expected.ranking,[['A'],['B']]);
- f.draft.comparisons[0]!.assessments.A.source_review='按本方实际交付复核来源结论。';
- const pending = f.registry.resolve(f.binding,f.draft,audit) as ComparisonResult;
- f.registry.validate(f.binding,pending,audit);
- assert.equal(pending.status,'needs_review');
- assert.equal(pending.review_requests[0]!.reason,f.draft.comparisons[0]!.assessments.A.source_review);
+
+});
+test('default comparison accepts clean prose and rejects affirmative review fields without converting them', () => {
+ const f = setup(), accepted = f.registry.resolve(f.binding,f.draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,accepted,audit);
+ assert.equal(accepted.status,'decided');
+ assert.deepEqual(accepted.review_requests,[]);
+ for (const reason of ['无','核对通过']) {
+  const submission = structuredClone(f.draft);
+  Object.assign(submission.comparisons[0]!.assessments.A,{ source_review:reason });
+  const before = structuredClone(submission);
+  assert.throws(() => f.registry.resolve(f.binding,submission,audit),(error:any) =>
+   error.issues.some((issue:any) => issue.code==='schema_additionalProperties' &&
+    issue.path==='/comparisons/0/assessments/A/source_review'));
+  assert.deepEqual(submission,before);
+ }
 });
 test('optional empty choices never default required prose, importance or unknown fields', () => {
  for (const modify of [
@@ -118,7 +127,7 @@ test('optional empty choices never default required prose, importance or unknown
   [(draft:any) => { draft.comparisons[0].invented_choice=true; },'schema_additionalProperties'],
   [(draft:any) => { draft.comparisons[0].better_candidate='C'; },'schema_enum'],
   [(draft:any) => { draft.preference='C'; },'schema_enum'],
-  [(draft:any) => { draft.comparisons[0].assessments.A.source_review=''; },'schema_minLength'],
+  [(draft:any) => { draft.comparisons[0].assessments.A.invented_review=''; },'schema_additionalProperties'],
  ] as const) {
   const f = setup(); modify(f.draft);
   assert.throws(() => f.registry.resolve(f.binding,f.draft,audit),(error:any) => error.issues.some((issue:any) => issue.code===code));
@@ -237,67 +246,6 @@ test('full decision narratives survive public result validation while preference
  assert.throws(() => f.registry.resolve(f.binding,f.draft,audit),(error:any) =>
   error.issues.some((issue:any) => issue.code === 'preference_unproven'));
 });
-test('actual answer contradicting an inherited met assessment becomes pending through its fixed cell', () => {
- const f = setup(), before = structuredClone(f.input.attributions);
- (f.request.sources.A.value as { messages: { content: string }[] }).messages[1].content = '2+2=5';
- const row = f.draft.comparisons[0]!;
- row.assessments.A.summary = '实际回答为2+2=5，与既有核心正确判定冲突。';
- row.assessments.A.source_review = '实际回答的算术结论不成立，请复核既有核心正确判定。';
- f.draft.preference = 'B';
- const pending = f.registry.resolve(f.binding,f.draft,audit) as ComparisonResult;
- f.registry.validate(f.binding,pending,audit);
- assert.equal(pending.status,'needs_review'); assert.deepEqual(pending.ranking,[]);
- assert.equal(pending.assessments.A.meets_core,null);
- assert.deepEqual(pending.review_requests,[{ candidate:'A',criterion_ids:['sum'],finding_indices:[0],reason:row.assessments.A.source_review }]);
- assert.deepEqual(f.input.attributions,before,'Comparison preserves the existing attribution while requesting its owner to review');
- assert(!Object.hasOwn(f.draft,'review_requests'));
-});
-test('a source review cannot rewrite attribution for a resource ranking dispute', () => {
- const f = setup(); f.input.candidates.A.original_answer_timing.finish_seconds = 20;
- f.draft.comparisons = comparisonSlots(f.request).map(() => ({ importance:'medium',better_candidate:null,assessments:cells('A原文。','B原文。') }));
- const index = comparisonSlots(f.request).findIndex(slot => slot.kind === 'resource');
- assert.deepEqual(comparisonSlotChoices(f.request)[index].reviewable_candidates,[]);
- f.draft.comparisons[index]!.assessments.A.source_review = '耗时较长，请修改来源核心判定。';
- assert.throws(() => f.registry.resolve(f.binding,f.draft,audit),(error:any) => {
-  assert.equal(error.issues[0].code,'review_slot_invalid');
-  assert.equal(error.issues[0].path,`/comparisons/${index}/assessments/A/source_review`); return true;
- });
-});
-test('all independently invalid source review cells are reported in one repair', () => {
- const f = setup();
- f.input.task_analysis.requirements[0].applies_to = [f.input.candidates.A.candidate_id];
- f.input.attributions.B.criterion_assessments[0]!.status = 'not_applicable';
- f.input.attributions.B.findings = [];
- for (const attr of Object.values(f.input.attributions)) attr.task_analysis = structuredClone(f.input.task_analysis);
- f.input.candidates.A.original_answer_timing.finish_seconds = 20;
- f.draft.comparisons = comparisonSlots(f.request).map(() => ({ importance:'medium',better_candidate:null,assessments:cells('A实际回答','B实际回答') }));
- f.draft.comparisons[0]!.assessments.B.source_review = '错误借用另一方规范。';
- const index = comparisonSlots(f.request).findIndex(slot => slot.kind === 'resource');
- f.draft.comparisons[index]!.assessments.A.source_review = '用耗时改来源结论。';
- f.draft.comparisons[index]!.assessments.B.source_review = '用用量改来源结论。';
- assert.throws(() => f.registry.resolve(f.binding,f.draft,audit),(error:any) => {
-  assert.deepEqual(error.issues.map((issue:any) => [issue.code,issue.path]), [
-   ['review_slot_scope','/comparisons/0/assessments/B/source_review'],
-   ['review_slot_invalid',`/comparisons/${index}/assessments/A/source_review`],
-   ['review_slot_invalid',`/comparisons/${index}/assessments/B/source_review`],
-  ]); return true;
- });
-});
-test('an unrelated schema failure cannot defer independently known review scope errors', () => {
- const f = setup();
- f.input.candidates.A.original_answer_timing.finish_seconds = 20;
- f.draft.comparisons = comparisonSlots(f.request).map(() => ({ importance:'medium',better_candidate:null,assessments:cells('A实际回答','B实际回答') }));
- const index = comparisonSlots(f.request).findIndex(slot => slot.kind === 'resource');
- f.draft.comparisons[index]!.assessments.A.source_review = '用耗时改来源结论。';
- f.draft.comparisons[index]!.assessments.B.source_review = '用用量改来源结论。';
- f.draft.tradeoff = 7 as unknown as string;
- assert.throws(() => f.registry.resolve(f.binding,f.draft,audit),(error:any) => {
-  assert(error.issues.some((issue:any) => issue.code === 'schema_type'));
-  assert.deepEqual(error.issues.filter((issue:any) => issue.code === 'review_slot_invalid').map((issue:any) => issue.path),[
-   `/comparisons/${index}/assessments/A/source_review`,`/comparisons/${index}/assessments/B/source_review`,
-  ]); return true;
- });
-});
 test('private instruction slot cannot become a shared advantage', () => {
  const f = setup();
  f.input.task_analysis.requirements[0].applies_to = [f.input.candidates.A.candidate_id];
@@ -350,7 +298,7 @@ test('an unbound strength cannot infer counterpart absence from a missing findin
  assert.deepEqual(row.assessments.A.finding_indices,[0]);
  assert.equal(row.assessments.B.status,'unknown'); assert.equal(row.assessments.B.evidence_status,'uncertain');
 });
-test('a private criterion without mandatory findings is optional but remains selectable for source review', () => {
+test('a private criterion is optional while present cells retain canonical scope', () => {
  const f = setup(), privateCriterion = { id: 'own', text: '本方交付约束', acceptance_rule: '仅评审A自己的交付。', applies_to: [f.input.candidates.A.candidate_id] };
  f.input.task_analysis.requirements.push(privateCriterion);
  for (const attr of Object.values(f.input.attributions)) attr.task_analysis = structuredClone(f.input.task_analysis);
@@ -363,14 +311,7 @@ test('a private criterion without mandatory findings is optional but remains sel
  f.registry.validate(f.binding,decided,audit); assert(!decided.decision_basis.comparisons.some(row => row.criterion_ids.includes('own')));
  const reviewDraft = structuredClone(f.draft);
  reviewDraft.comparisons[privateIndex] = { importance: 'low', better_candidate: null, assessments: cells('本方规范需要核查。','本方未提供此规范。') };
- reviewDraft.comparisons[privateIndex]!.assessments.A.source_review = '需要核查本方交付规范的真实遵循情况。';
  assert.deepEqual(comparisonSlotChoices(f.request)[privateIndex].applicable_candidates,['A']);
- const pending = f.registry.resolve(f.binding,reviewDraft,audit) as ComparisonResult;
- assert.equal(pending.status,'needs_review'); assert.deepEqual(pending.review_requests[0]!.criterion_ids,['own']);
- reviewDraft.comparisons[privateIndex]!.assessments.A.source_review = null;
- reviewDraft.comparisons[privateIndex]!.assessments.B.source_review = '将A的私规用于B。';
- assert.throws(() => f.registry.resolve(f.binding,reviewDraft,audit),(error:any) => error.issues[0].code==='review_slot_scope');
- reviewDraft.comparisons[privateIndex]!.assessments.B.source_review = null;
  reviewDraft.comparisons[privateIndex]!.assessments.B.summary = 'B已满足A的私有条款。';
  const scoped = f.registry.resolve(f.binding,reviewDraft,audit) as ComparisonResult;
  const privateRow = scoped.decision_basis.comparisons.find(row => row.criterion_ids.includes('own'))!;

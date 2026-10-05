@@ -37,7 +37,7 @@ async function publicationSnapshot(config: AutomationConfig, job: AutomationJob,
     }
     // Accepted results may reference records no longer present in the current remote snapshot.
     for (const { state } of runs) if (state) {
-      const acceptedInputs = new Set(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationPending && task.receipt)
+      const acceptedInputs = new Set(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt)
         .flatMap((task) => Object.values(task.inputIds)));
       for (const inputId of acceptedInputs) {
         const candidate = state.inputs[inputId], key = JSON.stringify([candidate.case_id, candidate.version]);
@@ -56,7 +56,7 @@ async function publicationSnapshot(config: AutomationConfig, job: AutomationJob,
       const requireItems = !job.adopted || (state.config as EvalConfig).rewrite.comparisonItems === true;
       const ready = publishableComparisons(state, requireItems);
       if (!ready.size) continue;
-      const labels = new Map(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationPending)
+      const labels = new Map(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit)
         .map((task) => [task.data.comparisonId, Object.keys(task.inputIds)]));
       for await (const item of readJsonl(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"))) {
         signal.throwIfAborted();
@@ -72,7 +72,7 @@ async function publicationSnapshot(config: AutomationConfig, job: AutomationJob,
   }
   const comparisons = runs.flatMap(({ state }) => state ? [
     ...(state.config as EvalConfig).comparisons,
-    ...Object.values(state.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationPending && task.receipt && task.data.group ? [task.data.group] : []),
+    ...Object.values(state.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
   ] : []);
   return { inputs, results, comparisons: runs.some(({ state }) => state) ? comparisons : host.evaluation.comparisons };
 }

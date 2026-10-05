@@ -112,14 +112,14 @@ test("same-run AB to ABC expansion reuses accepted sources when the shared crite
     const sourceReceipts = structuredClone(original.receipts);
     const acceptedIds = new Set(Object.keys(original.receipts));
     assert.deepEqual(experiment.entered.map((item) => item.stage).sort(),
-      ["attribution", "attribution", "comparison", "comparison", "criteria"]);
+      ["attribution", "attribution", "comparison", "criteria"]);
 
     assert.equal((await experiment.extend()).completed_comparisons, 3);
     const expanded = await readRunState(experiment.run);
     const rows = await formalRows(experiment.run);
     const counts = Object.fromEntries(["criteria", "attribution", "comparison"].map((stage) =>
       [stage, expanded.manifest.tasks.filter((task) => task.stage === stage && expanded.receipts[task.id]).length]));
-    assert.deepEqual(counts, { criteria: 2, attribution: 3, comparison: 6 });
+    assert.deepEqual(counts, { criteria: 2, attribution: 3, comparison: 3 });
     for (const id of acceptedIds)
       assert.deepEqual(expanded.receipts[id], sourceReceipts[id], "accepted AB receipts remain exact durable sources");
     assert.deepEqual(rows.find((row) => row.comparison_id === originalRows[0].comparison_id), originalRows[0]);
@@ -127,7 +127,7 @@ test("same-run AB to ABC expansion reuses accepted sources when the shared crite
     assert.equal(new Set(rows.map((row) => Object.keys(row.attribution_task_ids).sort().join("/"))).size, 3);
 
     const additions = experiment.entered.filter((item) => !acceptedIds.has(item.taskId));
-    assert.deepEqual(additions.map((item) => item.stage).sort(), ["attribution", "comparison", "comparison", "comparison", "comparison", "criteria"]);
+    assert.deepEqual(additions.map((item) => item.stage).sort(), ["attribution", "comparison", "comparison", "criteria"]);
     const newCriteria = expanded.manifest.tasks.find((task) => task.stage === "criteria" && !acceptedIds.has(task.id))!;
     assert.deepEqual(expanded.receipts[newCriteria.id].evaluation,
       original.receipts[originalRows[0].criteria_task_id].evaluation);
@@ -251,22 +251,12 @@ test("same-run source changes independently reassess stale evidence for new pair
     assert.equal(ac.assessments.c_fast.meets_core, true);
     assert.deepEqual(ac.ranking, [["c_fast"], ["a_fast"]]);
 
-    const verification = expanded.manifest.tasks.find(task =>
-      (task.data as TaskData).verificationOf && (task.data as TaskData).comparisonId === ac.comparison_id)!;
-    const receipt = expanded.receipts[verification.id];
-    const inspection = receipt.audit.inspection!.value as unknown as {
-      checks: { candidate: string; result: string; answer_evidence: { evidence_id: string }[] }[];
-      concerns: { candidate: string; criterion_ids: string[] }[];
-    };
-    const wrong = inspection.checks.find(check => check.result === "contradicted")!;
-    assert(wrong, "the source-only inspection identifies the actual wrong sum");
-    assert(inspection.checks.some(check => check.candidate !== wrong.candidate && check.result === "supported"));
-    assert.equal(inspection.concerns.length, 1, "the actual contradiction produces an immutable concern");
-    assert.equal(inspection.concerns[0].candidate, wrong.candidate);
-    const confirmation = receipt.submitted as { concern_matches: { concern_index: number; finding_indices: number[] }[] };
-    assert.deepEqual(confirmation.concern_matches.map(match => ({ concern_index: match.concern_index,
-      finding_indices: match.finding_indices })), [{ concern_index: 0, finding_indices: [0] }]);
-    assert.equal(receipt.submissionStats!.contentSubmissions, 2, "one blind inspection plus one source-backed confirmation");
+    const comparison = expanded.manifest.tasks.find(task =>
+      task.stage === "comparison" && !(task.data as TaskData).verificationAudit &&
+      (task.data as TaskData).comparisonId === ac.comparison_id)!;
+    const receipt = expanded.receipts[comparison.id];
+    assert.equal(receipt.audit.inspection, undefined, "the primary comparison does not repeat source verification");
+    assert.equal(receipt.submissionStats!.contentSubmissions, 1, "the accepted attribution supports one comparative submission");
 
     const inputs = await loadRunInputs(expanded.manifest);
     for (const task of expanded.manifest.tasks.filter((item) => !acceptedIds.has(item.id))) {

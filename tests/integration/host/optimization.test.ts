@@ -184,14 +184,14 @@ test("attribution reads identity while comparison worker sees only its blind pro
     const result = await runEvaluation(optionsFor(config, modelForStage, plan, [worker.url]));
     const saved = await readRunState(path.join(config.output.path, "test"));
     assert.equal(result.completed_comparisons, 1, JSON.stringify(saved.manifest.states));
-    const comparison = saved.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const comparison = saved.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit)!;
     const row = saved.receipts[comparison.id]!.exported!.row as {
       ground_truth: { value: string };
       evaluations: Record<string, { summary: string }>;
     };
     assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
     assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
-    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "comparison", "criteria"]);
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -478,7 +478,7 @@ test("shared reference revisions preserve task IDs and paid content while invali
     state.manifest.states[uncertain].failure!.contentSubmissions = 1;
     state.manifest.states[uncertain].failure!.errors.push(ledgerIssue);
     const next = await reconcileRun(directory, state, config);
-    assert.equal(next.tasks.length, 5);
+    assert.equal(next.tasks.length, 4);
     assert.deepEqual(
       next.tasks.map((t) => t.id),
       first.tasks.map((t) => t.id),
@@ -710,7 +710,7 @@ test("failed dependencies are checkpointed as one batch", async () => {
       repository: { ...services.repository, async writeRun(...args) { writes++; return services.repository.writeRun(...args); } },
     });
     const after = await readRunState(path.join(config.output.path, "test"));
-    assert.equal(Object.values(after.manifest.states).filter(state => state.status === "blocked").length, 24);
+    assert.equal(Object.values(after.manifest.states).filter(state => state.status === "blocked").length, 12);
     assert(writes <= 3, `dependency handling saved the whole run ${writes} times`);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -783,7 +783,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 6);
+    assert.equal(calls, 5);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(state.manifest.states[firstTask!].failure?.draft, undefined);
@@ -1009,7 +1009,7 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     await writeJsonl(file, [row]);
     assert.equal((await validateRun(run)).valid, false);
     assert.equal(Object.keys(before.receipts).length, options.plan.tasks.length);
-    const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending)!;
+    const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison" && !(t.data as TaskData).verificationAudit)!;
     await writeJsonl(file, [before.receipts[comparisonTask.id].exported!.row]);
     const inputFile = (before.manifest.tasks[0].data as TaskData).candidates.A.source;
     await writeJsonl(inputFile, [raw("another-case", null)]);

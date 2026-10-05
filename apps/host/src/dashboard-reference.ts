@@ -92,32 +92,25 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
     stages: [
       { id: "criteria", name: "共同标准", unit: "同问题与标准答案范围", input: "问题、标准答案与候选 USER 指令来源", output: "原文来源选择生成的要求、得分点、红线与固定验收规则", dependency: "输入预检通过", file: "criteria.jsonl", profiles: [referenceProfile("criteria", criteriaAgent.profiles.default, "共同标准")] },
       { id: "attribution", name: "归因", unit: "单条回答", input: "共同标准、本方完整规范、最终交付与原始调用链", output: "标准评估、核心可用性、标准答案核对、发现与证据", dependency: "共同标准已接受", file: "attribution.jsonl", profiles: [referenceProfile("attribution", attributionAgent.profiles.default, "单回答归因")] },
-      { id: "comparison", name: "对比", unit: "同批次、同 case 的两条候选", input: "共同标准、双方归因、真实规范与原始材料", output: "比较草稿；独立核验接受的裁决或归因复核请求", dependency: "共同标准与双方归因已接受；核验还依赖不可变草稿", file: "comparison-draft.jsonl / comparison.jsonl / comparison-review.jsonl", profiles: [referenceProfile("comparison", comparisonAgent.profiles.default, "对比草稿"), referenceProfile("comparison", comparisonAgent.profiles.verification, "独立核验")] },
+      { id: "comparison", name: "对比", unit: "同批次、同 case 的两条候选", input: "共同标准、双方归因、真实规范与原始材料", output: "正式裁决或证据不足结果；可选复核结果单独保存", dependency: "共同标准与双方归因已接受；可选复核依赖已接受的正式裁决", file: "comparison.jsonl / comparison-review.jsonl / comparison-verification.jsonl", profiles: [referenceProfile("comparison", comparisonAgent.profiles.default, "对比评测"), referenceProfile("comparison", comparisonAgent.profiles.verification, "可选复核")] },
       { id: "rewrite", name: "改写", unit: "已接受结果的文本槽位", input: "槽位 ID、原文与已确定偏好；无原始证据", output: "同 ID 的润色文本", dependency: "源结果已接受；对比已裁决；对应开关开启", file: "源结果的 rewritten 字段", profiles: [referenceProfile("rewrite", rewriteAgent.profiles.default, "文本改写")] },
-      { id: "clustering", name: "聚类", unit: "模型 × 批次分片", input: "归因的问题观察、组件与当前问题库", output: "归类、延期、新类、合并与目录维护决定", dependency: "该分片归因与涉及对局裁决完成；聚类开启", file: "clustering.jsonl", profiles: [referenceProfile("clustering", clusteringAgent.profiles.default, "问题聚类")] },
+      { id: "clustering", name: "聚类", unit: "模型 × 批次分片", input: "归因的问题观察、组件与当前问题库", output: "归类、延期、新类、合并与目录维护决定", dependency: "全部基础归因完成后显式准备聚类；只使用已接受的归因", file: "clustering.jsonl", profiles: [referenceProfile("clustering", clusteringAgent.profiles.default, "问题聚类")] },
     ],
     flow: {
       steps: [
-        { id: "preflight", name: "输入预检", input: "来源适配与登记", output: "有效样本及独立模型对" },
         { id: "criteria", name: "共同标准", stage: "criteria", profile: "default", input: "问题、标准答案与 USER 来源", output: "原文标准与适用范围" },
         { id: "attribution", name: "单回答归因", stage: "attribution", profile: "default", input: "本方完整规范与实际材料", output: "已接受归因" },
-        { id: "draft", name: "对比草稿", stage: "comparison", profile: "default", input: "双方归因与真实材料", output: "不可变草稿" },
-        { id: "inspection", name: "独立首查", stage: "comparison", profile: "verification", input: "真实材料；隐藏上游判词", output: "inspect_material 检查点" },
-        { id: "verification", name: "揭示后核验", stage: "comparison", profile: "verification", input: "草稿、归因与未闭合问题", output: "decided / needs_review" },
+        { id: "comparison", name: "对比评测", stage: "comparison", profile: "default", input: "双方归因与真实材料", output: "正式裁决或证据不足结果" },
       ],
       branches: [
-        { name: "一次独立归因复核", condition: "首次核验 needs_review；只复核请求涉及的候选", steps: [
-          { id: "attribution-review", name: "独立归因复核", stage: "attribution", profile: "default" },
-          { id: "review-draft", name: "新对比草稿", stage: "comparison", profile: "default" },
-          { id: "review-verification", name: "新首查与核验", stage: "comparison", profile: "verification" },
-        ] },
-        { name: "末轮待复核", condition: "一次复核后仍为 needs_review", steps: [
-          { id: "blocked", name: "阻塞该对局的改写与聚类", output: "保留原收据、review_of 与 superseded_by；无正式判决或统计" },
+        { name: "可选独立复核", condition: "用户显式准备已完成对比的复核；失败或证据不足不影响原正式裁决", steps: [
+          { id: "inspection", name: "独立首查", stage: "comparison", profile: "verification", input: "真实材料；隐藏上游判词", output: "inspect_material 检查点" },
+          { id: "verification", name: "揭示后核验", stage: "comparison", profile: "verification", input: "原正式裁决与归因", output: "独立复核结果；不自动开启归因或对比重评" },
         ] },
         { name: "归因改写", condition: "已接受归因", enabled: config.rewrite.attribution, steps: [{ id: "attribution-rewrite", name: "归因文本槽位", stage: "rewrite", profile: "default" }] },
-        { name: "对比偏好改写", condition: "独立核验 decided", enabled: config.rewrite.comparison, steps: [{ id: "comparison-rewrite", name: "对战偏好理由", stage: "rewrite", profile: "default" }] },
+        { name: "对比偏好改写", condition: "对比已接受正式裁决", enabled: config.rewrite.comparison, steps: [{ id: "comparison-rewrite", name: "对战偏好理由", stage: "rewrite", profile: "default" }] },
         { name: "逐项点评改写", condition: "对比改写与 comparisonItems 开启", enabled: config.rewrite.comparison && config.rewrite.comparisonItems === true, steps: [{ id: "comparison-items-rewrite", name: "全部候选格 summary", stage: "rewrite", profile: "default" }] },
-        { name: "问题库维护", condition: "该分片归因与涉及对局裁决完成", enabled: config.clustering.enabled, steps: [
+        { name: "问题库维护", condition: "全部基础归因完成后单独准备；使用已接受归因，不依赖对比裁决", enabled: config.clustering.enabled, steps: [
           { id: "clustering", name: "聚类决定", stage: "clustering", profile: "default" },
           { id: "problem-library", name: "模型问题库", output: "归类、新类、合并、目录与样本事件" },
         ] },
@@ -126,15 +119,15 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
       rules: [
         "共同标准只选择问题、有效标准答案与 USER 约束原文；SYS / DEV 完整规范由归因独立核查。",
         "归因与核验选择任务内正整数 evidence_index；程序解析并保留 evidence_id、message_index、quote 与真实来源。",
-        "草稿不产生正式对局、统计、聚类或对局点评改写；只有独立核验接受的 decided 结果进入正式导出。",
-        "首查隐藏归因、排名与上游评审；inspect_material 成功后揭示，再提交已有发现的匹配、反驳与来源复核选择。",
+        "默认共同标准、一次归因、一次对比；decided 结果直接进入正式导出，needs_review 保留证据不足状态，不自动重评。",
+        "可选复核首查隐藏归因、排名与上游评审；inspect_material 成功后揭示，复核结果单独保存，不覆盖正式裁决。",
         "对比确认既有 finding；排名、核心状态与逐项关联由程序解析，两两判决由排名和核心可用性派生。",
         "better_candidates 为空表示未区分优劣；unknown 与 not_applicable 保留各自状态，不从摘要另判。",
         "改写只润色指定文本槽位；原判词、证据、排名与判决保留。",
-        "聚类维护每模型跨 run 问题库；归因不建类，对比不改写归因。",
+        "聚类在全部基础归因完成后单独准备，维护每模型跨 run 问题库；归因不建类，对比不改写归因。",
         "同 run ID 续跑保留已接受任务与收据，只补未完成和新增任务。",
       ],
-      sources: ["packages/workflows/src/comparison/input.ts", "packages/workflows/src/comparison/binding.ts", "packages/workflows/src/comparison/review.ts", "packages/workflows/src/comparison/results.ts", "packages/workflows/src/comparison/rewrite-projection.ts"],
+      sources: ["packages/workflows/src/comparison/input.ts", "packages/workflows/src/comparison/binding.ts", "packages/workflows/src/comparison/verification-preparation.ts", "packages/workflows/src/comparison/repair.ts", "packages/workflows/src/comparison/results.ts", "packages/workflows/src/comparison/rewrite-projection.ts"],
     } as ReferenceFlow,
     exports: { comparison: outputSchema, clustering: clusteringSchema },
     exportSources: {

@@ -22,7 +22,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
   const { directory, config, modelForStage } = await fixtureConfig(
     clustering ? Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]) : undefined, true, clustering,
   );
-  const expectedCalls = clustering ? 12 : 8;
+  const expectedCalls = clustering ? 11 : 7;
   const expectedRewrites = clustering ? 5 : 3;
   let calls = 0;
   const logged: EvaluationLog[] = [];
@@ -75,7 +75,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(plan.summary.rewrite_tasks, expectedRewrites);
     assert.deepEqual(
       plan.tasks.map((task) => task.stage).sort(),
-      ["criteria", "attribution", "attribution", "comparison", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
+      ["criteria", "attribution", "attribution", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
     );
     for (const task of plan.tasks.filter((task) => task.stage === "rewrite")) {
       assert.deepEqual(task.inputIds, {}, "rewrite tasks must not fetch input material");
@@ -113,7 +113,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     );
     const attributions = await rows(path.join(run, "results", "attribution.jsonl"));
     assert.equal(attributions.length, 2);
-    const comparisonTask = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const comparisonTask = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit)!;
     const dashboard = (await readTaskResult(run, comparisonTask.id))!.result!;
     const evaluations = dashboard.evaluations as Record<string, JsonObject>;
     for (const attribution of attributions) {

@@ -38,7 +38,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
       modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
     await runEvaluation(options);
     const baseline = await readRunState(run), checkpoint = await readFile(path.join(run, "state.json"), "utf8");
-    const comparisons = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending), source = comparisons[0]!;
+    const comparisons = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit), source = comparisons[0]!;
     const resultId = (source.data as TaskData).comparisonId!;
     const selection = { scope: "items" as const, mode: "missing" as const, resultIds: [resultId], slotIds: ["comparison.0.A.summary"] };
     const preview = await prepareComparisonRewrites(run, selection);
@@ -57,9 +57,9 @@ test("slot repairs preview without mutation, preserve every other field and excl
     }
     const resume = { ...options, plan: { tasks: [], inputs: {}, summary: {} } };
     await runEvaluation(resume);
-    assert.equal(calls, 11, "ten original judgments including draft/check pairs plus one selected rewrite");
+    assert.equal(calls, 9, "eight original judgments plus one selected rewrite");
     let after = await readRunState(run);
-    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending).length, 2);
+    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit).length, 2);
     for (const task of baseline.manifest.tasks) {
       assert.deepEqual(after.receipts[task.id]!.evaluation, baseline.receipts[task.id]!.evaluation);
       assert.equal(after.receipts[task.id]!.submissionId, baseline.receipts[task.id]!.submissionId);
@@ -121,7 +121,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
     await runEvaluation({ ...resume, discoverInputs: true });
     after = await readRunState(run);
     assert.equal(after.manifest.executionScope, undefined);
-    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending).length, 3);
+    assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit).length, 3);
     for (const task of baseline.manifest.tasks) assert.equal(after.manifest.states[task.id].attempts, 1);
     assert.deepEqual(after.receipts[source.id].exported!.row, afterRefresh, "input discovery cannot replay old text over the refreshed slot");
     const callsBeforeReport = calls;
@@ -154,7 +154,7 @@ for (const configured of [false, true]) test(`repeated comparison rewrite prepar
       identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, plan: await buildPlan(config), policy: config.execution,
       modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
     await runEvaluation(options);
-    const state = await readRunState(run), source = state.manifest.tasks.find(task => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const state = await readRunState(run), source = state.manifest.tasks.find(task => task.stage === "comparison" && !(task.data as TaskData).verificationAudit)!;
     const selection = { scope: configured ? "verdicts" as const : "items" as const, mode: "missing" as const, taskIds: [source.id], apply: true };
     const prepared = await prepareComparisonRewrites(run, selection), id = prepared.selected[0]!.rewrite_task_id!;
     if (configured) assert.equal(id, state.manifest.tasks.find(task => (task.data as TaskData).rewriteOf?.taskId === source.id)!.id,
@@ -177,7 +177,7 @@ test("failure circuit preserves healthy downstream work, survives restart and re
   const records = [raw("healthy"), raw("broken-1"), raw("broken-2"), raw("broken-3")];
   const { directory, config, modelForStage } = await fixtureConfig([records, [], records, []], true, true);
   config.rewrite.attribution = false;
-  const plan = await buildPlan(config), healthy = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending)!;
+  const plan = await buildPlan(config), healthy = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit)!;
   let fail = false;
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
@@ -241,7 +241,7 @@ test("pilot samples date/group strata and includes only their dependencies and r
   try {
     config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const plan = await buildPlan(config), selected = new Set(pilotTaskIds(plan, 4));
-    const comparisons = plan.tasks.filter((task) => selected.has(task.id) && task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending);
+    const comparisons = plan.tasks.filter((task) => selected.has(task.id) && task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit);
     assert.equal(comparisons.length, 4);
     assert.equal(new Set(comparisons.map((task) => JSON.stringify([(task.data as TaskData).group, Object.values((task.data as TaskData).candidates)[0]!.batch_id]))).size, 4);
     for (const task of plan.tasks.filter((task) => selected.has(task.id)))

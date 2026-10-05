@@ -114,6 +114,23 @@ test("norm selectors cannot be missing, out of range, guessed on other dimension
   assert.throws(() => resolve(value), issue("norm_directory_invalid"));
 });
 
+test("a misplaced norm selector is rejected with the exact finding path and accepts the corrected placement", () => {
+  const value = scenario(), misplaced = structuredClone(value.submitted);
+  Object.assign(misplaced.findings[0]!.assessment, { norm_index: misplaced.findings[0]!.norm_index });
+  delete misplaced.findings[0]!.norm_index;
+  assert.throws(() => resolve({ ...value, submitted: misplaced }), (error: unknown) => {
+    if (!(error instanceof ValidationError)) return false;
+    assert(error.issues!.some(item => item.code === "schema_additionalProperties" && item.path === "/findings/0/assessment/norm_index"));
+    const selector = error.issues!.find(item => item.code === "finding_norm_index_invalid")!;
+    assert.equal(selector.path, "/findings/0/norm_index");
+    assert.match(selector.message, /\/findings\/0\/norm_index.*不放进 assessment/);
+    return true;
+  });
+  misplaced.findings[0]!.norm_index = value.finding.norm_index;
+  delete (misplaced.findings[0]!.assessment as Record<string, unknown>).norm_index;
+  assert.deepEqual(resolve({ ...value, submitted: misplaced }), resolve(value));
+});
+
 test("non-final instruction findings require concrete execution coordinates and cannot substitute repeated norm text", () => {
   const value = scenario([{ role: "user", content: "计算2+2" },
     { type: "llm_turn", input_messages: [{ role: "system", content: rule }, { role: "user", content: "计算2+2" }],

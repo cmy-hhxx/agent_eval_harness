@@ -25,7 +25,7 @@
 3. 写逐项状态、发现和核心结论。
 - `status=met/partial/unmet/unknown` 分别表示满足、部分满足、未满足或证据不足，均依原验收条件判断。`red_flags` 的 `met` 表示遵守禁令，`unmet` 表示违反禁令。条件性义务已确认未触发时不计缺项，在 summary 说明；同一判据的其余条款照常核查，整条没有未满足或未知条款时才填 `met`。是否触发尚不明确且没有已确认缺口时填 `unknown`。`unknown` 对应 `evidence_status=uncertain`；已确认结论须有真实交付或执行证据。
 - `findings` 按独立行为组织 `strength/problem`，同一错误的传播链合为一项，保留全部具体发现，不凑固定条数。`text` 写具体优点或缺陷，`assessment.observation` 写所见行为，`reason` 说明判断依据，`assessment.impact` 说明对用户的影响；`dimension/stage` 依实际内容选择。优点也须说明核实范围，不能以一句正确规则或一个引用概括整份回答正确。
-- `dimension=instruction_following` 时只选 `norm_index`，不填 `assessment.requirement_index`；规范未确认时选 `null` 且保留 `uncertain`。其他维度用 `assessment.requirement_index` 关联确实涉及的本方 requirement，无关联时省略或填 `null`。遵守专有规则即使表现为格式，也用 `instruction_following`；`format` 只评价普通可读性。私有 SYS/DEV 仅用于本方指令评审，不决定共同核心。
+- `dimension=instruction_following` 时，把规范编号写在 `findings[i].norm_index`，与 `dimension` 同级；本条 `assessment` 只填 `observation/evidence_status/impact`，不在其中放 `norm_index` 或 `requirement_index`。规范未确认时，顶层 `norm_index=null` 且保留 `uncertain`。其他维度用 `assessment.requirement_index` 关联确实涉及的本方 requirement，无关联时省略或填 `null`。遵守专有规则即使表现为格式，也用 `instruction_following`；`format` 只评价普通可读性。私有 SYS/DEV 仅用于本方指令评审，不决定共同核心。
 - `importance` 按本题实际用途判断：`high` 表示明显影响核心结果或关键决策，`medium` 表示影响局部结果或造成实质核查、修正成本，`low` 表示影响轻微且不改变实际结果或决策，例如轻微表达、呈现或事实瑕疵。问题数量、措辞强烈或技术名词复杂不提高重要性。
 - problem 与同一 requirement 关联时，不能同时把该条声明为已确认 `met`。已确认局部缺口写 `status=partial/unmet`；证据确实不足写 `status=unknown`、`evidence_status=uncertain`。先核对关联和事实，不能仅降低 problem 的确定性、删除真实缺陷或解除真实关联来消除冲突。
 - `stage=final_answer` 时，`evidence` 可为 `[]`，但仍须完整阅读最终正文和图片，在 `assessment.observation` 准确描述实际交付。其他 stage 选择支持结论的具体本方执行或推理证据。真实违例和有价值的未知写入具体 finding，不只写 summary。

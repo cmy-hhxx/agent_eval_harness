@@ -459,6 +459,10 @@ export interface WorkflowDefinition {
   };
   /** A business-owned admission gate, also evaluated when resuming accepted dependencies. */
   blockedReason?(task: PlannedTask, dependencies: Record<string, SubmissionReceipt>): string | undefined;
+  /** Wait for a workflow phase without turning unfinished work into a failed dependency. */
+  canStart?(task: PlannedTask, manifest: RunManifest): boolean;
+  /** Independent optional checks must not pause the primary task stage. */
+  observesFailures?(task: PlannedTask): boolean;
 }
 export interface RunRepository {
   readRun(run: string): Promise<RunState>;
