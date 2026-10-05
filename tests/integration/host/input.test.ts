@@ -72,7 +72,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.criteria?.profile, "judge");
   assert.equal(host.models.bindings.comparison?.profile, "judge");
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
-  assert.equal(host.models.models.judge?.thinking, "xhigh");
+  assert.equal(host.models.models.judge?.thinking, "medium");
   assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
@@ -90,15 +90,15 @@ test("configuration composes layered files and resolves bound models", async () 
   for (const stage of ["criteria", "attribution", "comparison", "rewrite", "clustering"]) {
     assert.equal(modelForStage(stage).model, "your-gateway-model-id");
     assert.equal(modelForStage(stage).maxOutputTokens, 32768);
-    assert.equal(modelForStage(stage).thinking, "xhigh");
-    assert.equal(unconfigured(stage).thinking, "xhigh", "unconfigured profiles preserve the default reasoning level");
+    assert.equal(modelForStage(stage).thinking, "medium");
+    assert.equal(unconfigured(stage).thinking, "medium", "unconfigured profiles preserve the default reasoning level");
   }
   const overridden = createModelResolver({
     ...resolved.models,
-    models: { ...resolved.models.models, judge: { ...resolved.models.models.judge!, thinking: "medium" } },
+    models: { ...resolved.models.models, judge: { ...resolved.models.models.judge!, thinking: "high" } },
     bindings: { ...resolved.models.bindings, comparison: { ...resolved.models.bindings.comparison, thinking: "low" } },
   });
-  assert.equal(overridden("attribution").thinking, "medium", "explicit profile reasoning is preserved");
+  assert.equal(overridden("attribution").thinking, "high", "explicit profile reasoning is preserved");
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);

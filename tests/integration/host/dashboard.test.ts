@@ -11,21 +11,21 @@ import { comparisonProfile } from "@eval/agents/comparison";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { toDashboardModels } from "../../../apps/host/src/dashboard-models.js";
 import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
-import { emptyUsage, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, evidenceId, type JsonObject, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { exists, fileSourceReader, readJson, runLock, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
-  attributionRow, buildPlan, caseResultView, listInputInventory, listRunCases, readCaseDetail,
+  attributionRow, buildPlan, caseResultView, createResultWriter, listInputInventory, listRunCases, readCaseDetail,
   readRegisteredInput, readRunTasks, readTaskResult, writeRunState,
   type Candidate, type Checkpoint, type TaskData,
 } from "@eval/workflows/comparison";
-import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
 const gateway = "https://private-gateway.example/v1";
 
-async function setup(rewrite = false, clustering = false) {
-  const { directory, config } = await fixtureConfig([
+async function setup(rewrite = false, clustering = false, rows?: Parameters<typeof fixtureConfig>[0]) {
+  const { directory, config } = await fixtureConfig(rows ?? [
     [raw("q1", "4", clustering ? "2+2=5" : "2+2=4"), raw("q2")], [], [raw("q1"), raw("q2")], [],
   ], rewrite, clustering);
   const configFile = path.join(directory, "dashboard-config.json");
@@ -192,7 +192,7 @@ async function setup(rewrite = false, clustering = false) {
     });
   }
   await writeRunState(run, state);
-  return { directory, config, configFile, task, run, row };
+  return { directory, config, configFile, task, run, row, state, inputs: plan.inputs };
 }
 
 test("dashboard exposes every gateway model's public identity", () => {
@@ -314,37 +314,201 @@ test("dashboard workflow view pages cases, resolves moved inputs, and reads auth
   }
 });
 
+test("dashboard accepted task reads align formal traces by model and finding ID while retaining current attribution rewrites", async () => {
+  const source = (version: string) => ({ ...raw("q1"), messages: [
+    raw("q1").messages[0]!,
+    { type: "function_call", name: `${version}_first`, call_id: "first" },
+    { type: "function_call_output", call_id: "first", output: "第一条资料：4" },
+    { type: "function_call", name: `${version}_second`, call_id: "second" },
+    { type: "function_call_output", call_id: "second", output: "第二条资料：4" },
+    raw("q1").messages[1]!,
+  ] });
+  const fixture = await setup(true, false, [[source("a_fast")], [], [source("b_fast")], []]);
+  const { state, inputs } = fixture;
+  const accept = (taskId: string, evaluation: unknown) => {
+    state.receipts[taskId] = { taskId, attemptId: randomUUID(), submissionId: randomUUID(), evaluation,
+      audit: emptyAudit(), usage: emptyUsage(), evaluatorVersion: fakeEvaluatorVersion, judge: "fixture-model",
+      acceptedAt: Date.now(), status: "succeeded" };
+    state.manifest.states[taskId] = { ...state.manifest.states[taskId], status: "succeeded", attempts: 1 };
+  };
+  try {
+    const task = state.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
+    const data = task.data as TaskData;
+    const criteria = state.manifest.tasks.find((item) => item.id === task.dependencies.criteria)!;
+    const analysis = criteriaResultForTask(criteria, inputs);
+    state.receipts = {};
+    accept(criteria.id, analysis);
+    for (const [label, candidate] of Object.entries(data.candidates)) {
+      const evaluation = attributionResult(true, "2+2=4", true, candidate.input_id);
+      evaluation.task_analysis = analysis;
+      evaluation.correctness_evidence = [{ evidence_id: evidenceId(candidate.input_id, 5, "text", "/content", 0, 5),
+        message_index: 5, quote: "2+2=4" }];
+      evaluation.criterion_assessments[0]!.evidence = [...evaluation.correctness_evidence,
+        { evidence_id: evidenceId(candidate.input_id, 0, "text", "/content", 0, 5), message_index: 0, quote: "计算2+2" }];
+      const original = evaluation.findings[0]!;
+      evaluation.findings = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
+        ...structuredClone(original), finding_id: `f${index}`, text: `${candidate.version}正式归因正文${index}`,
+        evidence: [{ evidence_id: evidenceId(candidate.input_id, 2 + index * 2, "text", "/output", 0, quote.length),
+          message_index: 2 + index * 2, quote }],
+      }));
+      accept(task.dependencies[label]!, evaluation);
+    }
+    const result = comparisonResult(Object.keys(data.candidates), analysis);
+    accept(data.verificationOf!.taskId, structuredClone(result));
+    accept(task.id, result);
+    const writer = createResultWriter(fixture.run, inputs);
+    await writer(state);
+    for (const rewrite of state.manifest.tasks.filter((item) => item.stage === "rewrite" && (item.data as TaskData).rewriteOf!.stage === "attribution")) {
+      const owner = state.manifest.tasks.find((item) => item.id === rewrite.dependencies.source)!;
+      const version = (owner.data as TaskData).candidates.A!.version;
+      accept(rewrite.id, { rewrites: [{ id: "findings.0.text", text: `${version}已接受改写` }] });
+    }
+    await writer(state);
+    state.recordedAttempts = Object.keys(state.receipts).length;
+    await writeRunState(fixture.run, state);
+
+    type FindingView = { finding_id: string; text: string; stage_trace?: JsonObject };
+    type EvaluationView = { findings: FindingView[]; rewritten?: { rewrites: { id: string; text: string }[] } };
+    const formal = structuredClone(state.receipts[task.id]!.exported!.row);
+    const snapshotEvaluations = formal.evaluations as Record<string, EvaluationView>;
+    const traces: Record<string, Record<string, JsonObject>> = Object.fromEntries(Object.entries(snapshotEvaluations).map(([version, evaluation]) =>
+      [version, Object.fromEntries(evaluation.findings.map((finding) => [finding.finding_id, structuredClone(finding.stage_trace!)]))]));
+    for (const [version, evaluation] of Object.entries(snapshotEvaluations)) {
+      evaluation.findings.reverse();
+      evaluation.findings.forEach((finding) => { finding.text = `${version}导出时的旧正文`; });
+    }
+    const file = path.join(fixture.run, "results", "comparison.jsonl");
+    await writeJsonl(file, [formal]);
+    const originalFile = await readFile(file, "utf8");
+    const projected = (await readTaskResult(fixture.run, task.id))!.result!;
+    const evaluations = projected.evaluations as Record<string, EvaluationView>;
+    for (const version of ["a_fast", "b_fast"]) {
+      assert.deepEqual(evaluations[version]!.findings.map((finding) => finding.finding_id), ["f0", "f1"]);
+      for (const [index, finding] of evaluations[version]!.findings.entries()) {
+        assert.deepEqual(finding.stage_trace, traces[version]![finding.finding_id],
+          "formal annotations follow the same model and finding ID after index changes");
+        assert.deepEqual(finding.stage_trace!.tools, [`${version}_${index ? "second" : "first"}`]);
+        assert.equal(finding.text, `${version}正式归因正文${index}`, "the source attribution owns the current accepted body");
+      }
+      assert(evaluations[version]!.rewritten!.rewrites.some((item) => item.id === "findings.0.text" && item.text === `${version}已接受改写`));
+    }
+    assert.equal(await readFile(file, "utf8"), originalFile, "the dashboard keeps accepted files read-only");
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard distinguishes accepted review requests and preserves independent reassessment lineage", async () => {
+  const fixture = await setup();
+  const file = path.join(fixture.run, "state.json");
+  const readTasks = async (caseId: string) => (await readCaseDetail(fixture.run, "b1", caseId))!.tasks;
+  try {
+    const checkpoint = await readJson<Checkpoint>(file);
+    const attributions = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "attribution" &&
+      checkpoint.inputs[task.inputIds.answer]!.case_id === "q1");
+    const comparisons = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "comparison" &&
+      !task.data.verificationPending);
+    const [comparisonId, comparison] = comparisons.find(([, task]) =>
+      checkpoint.inputs[Object.values(task.inputIds)[0]!]!.case_id === "q1")!;
+    const reviewId = randomUUID(), reasons = ["首轮证据不足，核验原始来源。"];
+    const accepted = checkpoint.tasks[fixture.task.id]!.receipt!;
+    const reviewAttributions = attributions.map(([id, task]) => {
+      task.status = "succeeded";
+      task.attempts = 1;
+      task.receipt = { ...accepted, taskId: id, exported: { taskId: id, file: "attribution.jsonl" } };
+      const reassessmentId = randomUUID();
+      checkpoint.tasks[reassessmentId] = {
+        ...structuredClone(task), status: "pending", attempts: 0, receipt: undefined,
+        dependencies: { ...task.dependencies, previous_review: comparisonId },
+        data: { ...task.data, reviewOf: { taskId: id, round: 1, reasons } },
+      };
+      return { sourceId: id, taskId: reassessmentId };
+    });
+    comparison.status = "succeeded";
+    comparison.attempts = 1;
+    comparison.receipt = {
+      ...accepted, taskId: comparisonId, exported: { taskId: comparisonId, file: "comparison-review.jsonl" },
+    };
+    comparison.data.supersededBy = reviewId;
+    const dependencies = Object.fromEntries(Object.entries(comparison.dependencies).map(([label, id]) =>
+      [label, reviewAttributions.find((item) => item.sourceId === id)?.taskId ?? id]));
+    checkpoint.tasks[reviewId] = {
+      ...structuredClone(comparison), status: "pending", attempts: 0, receipt: undefined,
+      dependencies: { ...dependencies, previous_review: comparisonId },
+      data: { ...comparison.data, supersededBy: undefined, reviewOf: { taskId: comparisonId, round: 1, reasons } },
+    };
+    await writeJson(file, checkpoint);
+
+    const tasks = await readTasks("q1");
+    assert.equal(tasks.filter((task) => task.stage === "attribution").length, 4,
+      "each accepted attribution and its independent review remain separate tasks");
+    for (const { sourceId, taskId } of reviewAttributions) {
+      assert.equal(tasks.find((task) => task.id === sourceId)!.status, "succeeded");
+      assert.deepEqual(tasks.find((task) => task.id === taskId)!.review_of,
+        { task_id: sourceId, round: 1, reasons });
+    }
+    const original = tasks.find((task) => task.id === comparisonId)!;
+    assert.equal(original.status, "succeeded", "acceptance remains the Host submission status");
+    assert.equal(original.result_status, "needs_review");
+    assert.equal(original.superseded_by, reviewId);
+    const reassessment = tasks.find((task) => task.id === reviewId)!;
+    assert.equal(reassessment.status, "pending");
+    assert.equal(reassessment.result_status, undefined);
+    assert.deepEqual(reassessment.review_of, { task_id: comparisonId, round: 1, reasons });
+    assert.equal(tasks.filter((task) => task.stage === "comparison").length, 2);
+    assert(!tasks.some((task) => task.id === comparison.data.verificationOf!.taskId),
+      "the immutable comparison draft remains outside the sample task list");
+    assert.equal(await exists(path.join(fixture.run, "results", "comparison-review.jsonl")), false,
+      "task metadata is projected without reading accepted result bodies");
+
+    const [terminalId, terminal] = comparisons.find(([, task]) =>
+      checkpoint.inputs[Object.values(task.inputIds)[0]!]!.case_id === "q2")!;
+    terminal.status = "succeeded";
+    terminal.receipt = {
+      ...accepted, taskId: terminalId, exported: { taskId: terminalId, file: "comparison-review.jsonl" },
+    };
+    await writeJson(file, checkpoint);
+    const unresolved = (await readTasks("q2")).find((task) => task.id === terminalId)!;
+    assert.equal(unresolved.result_status, "needs_review", "a terminal review has no follow-up task");
+    assert.equal(unresolved.superseded_by, undefined);
+    terminal.receipt.exported = { comparisonId: terminal.data.comparisonId!, file: "comparison.jsonl" };
+    await writeJson(file, checkpoint);
+    assert.equal((await readTasks("q2")).find((task) => task.id === terminalId)!.result_status,
+      "decided");
+    terminal.receipt.exported = undefined;
+    terminal.receipt.evaluation = { status: "needs_review" };
+    await writeJson(file, checkpoint);
+    assert.equal((await readTasks("q2")).find((task) => task.id === terminalId)!.result_status,
+      "needs_review", "an accepted receipt awaiting export retains its business status");
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("dashboard case results include comparison evaluations and preserve attribution Schema fields", () => {
   const comparison = caseResultView("comparison", {
+    ...comparisonResult(["a_fast"]),
     evaluation_type: "group_model_comparison",
     evaluator_version: "r1",
     evaluations: { a_fast: attributionResult() },
     models: { a_fast: { version: "A组Fast", llm: "x", trace_id: null } },
     ground_truth: { available: false, value: null },
     ranking: [["a_fast"]],
-    task_analysis: { goal: "g" },
-    decision_basis: { tradeoff: "t", decisive_findings: [], comparisons: [{ aspect: "结果", importance: "high", better_candidates: [], assessments: {
-      a_fast: { summary: "给出结果。", finding_indices: [0] },
-    } }] },
-    assessments: { a_fast: { meets_core: true, summary: "s" } },
     verdicts: { a_fast__vs__b_fast: { result: "win" } },
   })!;
   const expectedComparison = attributionResult();
-  for (const item of [...expectedComparison.correctness_evidence, ...expectedComparison.findings.flatMap(finding => finding.evidence)])
-    delete (item as Partial<typeof item>).evidence_id;
   assert.deepEqual(comparison.evaluations, { a_fast: expectedComparison });
   assert.ok(attributionResult().findings[0]!.evidence[0]!.evidence_id, "display projection preserves the stored program coordinate");
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
   assert.deepEqual(Object.keys(comparison).sort(), [
-    "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "task_analysis", "verdicts",
+    "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "review_requests", "status", "task_analysis", "verdicts",
   ]);
   const source = attributionResult();
   source.findings[0]!.evidence[0]!.quote = "q".repeat(5000);
+  source.findings[0]!.evidence[0]!.source = "原始材料来源";
   const attribution = caseResultView("attribution", { evaluation: source })!;
   const expected = structuredClone(source);
   expected.findings[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
-  for (const item of [...expected.correctness_evidence, ...expected.findings.flatMap(finding => finding.evidence)])
-    delete (item as Partial<typeof item>).evidence_id;
   assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
   assert.equal(caseResultView("attribution", undefined), null);
 });
@@ -1032,9 +1196,13 @@ test("run-scoped settings are validated with the same model and execution config
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
     assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
     assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
-    const defaults = editableDashboardSettings({ bindings: { comparison: { profile: "judge" } }, models: { judge: {} } });
+    const stages = ["criteria", "attribution", "comparison", "rewrite", "clustering"];
+    const defaults = editableDashboardSettings({
+      bindings: Object.fromEntries(stages.map((stage) => [stage, { profile: "judge" }])),
+      models: { judge: {} },
+    });
     assert.equal(defaults.execution.concurrency, 8);
-    assert.equal(defaults.bindings.comparison.thinking, "xhigh");
+    for (const stage of stages) assert.equal(defaults.bindings[stage]!.thinking, "medium");
     assert.equal(editableDashboardSettings({
       models: { judge: { thinking: "low" } },
       bindings: { comparison: { profile: "judge", thinking: "medium" } },

@@ -24,6 +24,15 @@ const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
 );
 
+/** Read-only dashboard projection of the same shared text used by prompt assembly. */
+export function sharedPromptResources() {
+  return Object.entries({ material, evidence, taskFocus, budget, recovery, nudge }).map(([name, text]) => ({
+    name,
+    source: `packages/prompts/resources/shared/${name === "taskFocus" ? "task-focus" : name}.md`,
+    text,
+  }));
+}
+
 /** The only source of model-facing text for the built-in evaluation profiles. */
 export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "default") {
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, erisPrompt, type PromptStage } from "./index.js";
+import { agentPrompt, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -24,7 +24,13 @@ test("all stage texts come from one resource tree; tool descriptions are complet
   }
   assert.throws(() => agentPrompt("rewrite", ["unknown_tool"]), /Missing tool description/);
   assert.throws(() => agentPrompt("rewrite", ["submit_evaluation"]), /Duplicate prompt tool/);
+  const shared = sharedPromptResources();
+  assert.deepEqual(shared.map(item => pathName(item.source)).sort(), readdirSync(new URL("shared/", resources)).sort());
+  for (const item of shared)
+    assert.equal(item.text, readFileSync(new URL(`shared/${pathName(item.source)}`, resources), "utf8").trim());
 });
+
+function pathName(source: string): string { return source.slice(source.lastIndexOf("/") + 1); }
 
 test("stage instructions discuss only available materials and actions", () => {
   const attribution = agentPrompt("attribution", ["read_trace", "execute_code"]);

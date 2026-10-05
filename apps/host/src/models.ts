@@ -2,7 +2,7 @@ import type { ModelConfig } from "@eval/contracts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
-export const DEFAULT_THINKING: Thinking = "xhigh";
+export const DEFAULT_THINKING: Thinking = "medium";
 
 /** A reusable model profile: gateway identity plus default parameters. */
 export interface ModelProfile {

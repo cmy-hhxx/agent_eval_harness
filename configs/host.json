@@ -87,7 +87,7 @@
       "baseUrlEnv": "EVAL_BASE_URL",
       "api": "openai-responses",
       "apiKeyEnv": "EVAL_API_KEY",
-      "thinking": "xhigh",
+      "thinking": "medium",
       "contextWindow": 524288,
       "maxOutputTokens": 32768
     }

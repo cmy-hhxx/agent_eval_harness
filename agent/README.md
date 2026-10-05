@@ -16,7 +16,7 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 默认端口 `4180`、用户 `local`。入口 `/u/alice/` 或 `/?user=alice` 可指定用户；不同端口的本机副本共享 `data/assistant`。只监听 `127.0.0.1`。`userId` 是可信本机环境下的数据归属标志，不是登录或鉴权。按 Ctrl+C 停止服务。
 
-`.env` 使用现有 `EVAL_BASE_URL`、`EVAL_API_KEY`，可设置 `AGENT_MODEL` 指定总 Agent 的网关模型、`AGENT_CONTEXT_WINDOW`（默认 131072）、`AGENT_MAX_TOKENS`（默认 8192）。设置 `AGENT_MODEL` 时总 Agent 使用默认 `xhigh` 推理强度；未设置时使用 `configs/local/models.json` 的 Attribution 模型配置及其推理等级（未指定时默认 `xhigh`）。专业调用继续使用现有阶段模型绑定；不加载内置第三方模型目录。
+`.env` 使用现有 `EVAL_BASE_URL`、`EVAL_API_KEY`，可设置 `AGENT_MODEL` 指定总 Agent 的网关模型、`AGENT_CONTEXT_WINDOW`（默认 131072）、`AGENT_MAX_TOKENS`（默认 8192）。设置 `AGENT_MODEL` 时总 Agent 使用默认 `medium` 推理强度；未设置时使用 `configs/local/models.json` 的 Attribution 模型配置及其推理等级（未指定时默认 `medium`）。专业调用继续使用现有阶段模型绑定；不加载内置第三方模型目录。
 
 外部搜索使用 Serper。在根目录 `.env` 设置 `SEARCH_API_KEY`，再重新运行 `bash agent/run.sh`；运行中的服务不热读密钥。搜索请求由服务端发送到 `https://google.serper.dev/search` 或 `/news`，密钥不发送给浏览器。未配置密钥或服务请求失败时直接报告搜索错误，不降级为未经检索的答案。
 

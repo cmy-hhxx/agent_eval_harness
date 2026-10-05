@@ -21,12 +21,12 @@
       <div><dt>评测器</dt><dd id="evaluator-version"></dd></div>
       <div><dt id="concurrency-label">实时并发</dt><dd id="live-concurrency"></dd><dd id="slot-utilization" class="metric-detail"></dd><dd id="live-stages" class="metric-detail"></dd></div>
       <div><dt>评测待重试</dt><dd id="retry-count"></dd><dd id="paused-count" class="metric-detail" hidden></dd></div>
-      <div><dt>最近评测重试</dt><dd id="next-retry"></dd><dd id="next-retry-time" class="metric-detail"></dd></div>
+      <div><dt>下次评测重试</dt><dd id="next-retry"></dd><dd id="next-retry-time" class="metric-detail"></dd></div>
       <div><dt>累计缓存命中率</dt><dd id="cache-hit-rate"></dd><dd id="cache-tokens" class="metric-detail"></dd></div>
     </dl>
     <dl id="pipeline-flow" class="pipeline-flow" aria-label="流水线通道" hidden>
       <div><dt>取数</dt><dd id="lane-download"></dd><dd id="lane-download-queue" class="metric-detail"></dd></div>
-      <div><dt>标准 → 归因 → 对比 → 改写</dt><dd id="lane-evaluation"></dd><dd id="lane-evaluation-queue" class="metric-detail"></dd></div>
+      <div><dt>评测与改写</dt><dd id="lane-evaluation"></dd><dd id="lane-evaluation-queue" class="metric-detail"></dd></div>
       <div><dt>MongoDB 增量交付</dt><dd id="lane-mongo"></dd><dd id="lane-mongo-queue" class="metric-detail"></dd></div>
       <div><dt>日志 · 每 4 小时</dt><dd id="lane-log"></dd><dd id="lane-log-receipt" class="metric-detail"></dd></div>
     </dl>
@@ -44,7 +44,7 @@
     <section id="dates" role="tabpanel" aria-labelledby="tab-dates" tabindex="0">
       <div class="section-heading"><h2 id="dates-title">日期进度</h2><span id="date-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日期阶段进度">
-        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">对比完成 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">标准任务</th><th scope="col">归因任务</th><th scope="col">改写任务</th><th scope="col">缓存命中率</th></tr></thead><tbody id="date-rows"><tr><td colspan="11" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col">远端输入 · 条</th><th scope="col">本地输入 · 条</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col">完成对比 · 份 · 含改写</th><th scope="col">任务池 · 个</th><th scope="col">标准任务</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th><th scope="col">缓存命中率</th></tr></thead><tbody id="date-rows"><tr><td colspan="12" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="date-pagination" class="table-pagination" aria-label="日期进度分页" hidden></nav>
     </section>

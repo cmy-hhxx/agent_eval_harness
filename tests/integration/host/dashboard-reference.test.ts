@@ -4,6 +4,11 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { loadConfig } from "@eval/host-app/config";
+import { comparisonAgent } from "@eval/agents/comparison";
+import { attributionAgent } from "@eval/agents/attribution";
+import { evidenceSelectionSchema, type JsonSchema } from "@eval/contracts";
+import { sharedPromptResources } from "@eval/prompts";
+import { builtinTools } from "@eval/tools";
 import { dashboardReference } from "../../../apps/host/src/dashboard-reference.js";
 import { ROOT } from "../../fixtures/services.js";
 
@@ -39,17 +44,17 @@ test("reference definitions distinguish source selections, derived comparisons a
     click('[data-document="submission"]');
     assert.equal(document.querySelector(".definition-source").textContent, "schemas/criteria/submission.schema.json");
     const criteriaSubmission = JSON.parse(document.querySelector(".schema-json").textContent);
-    assert.deepEqual(criteriaSubmission, page.reference.stages.find((stage) => stage.id === "criteria")!.schemas.submission);
+    assert.deepEqual(criteriaSubmission, page.reference.stages.find((stage) => stage.id === "criteria")!.profiles[0].schemas.submission);
     click('[data-stage="comparison"]');
     click('[data-document="submission"]');
     assert.equal(document.querySelector(".definition-source").textContent, "schemas/comparison/submission.schema.json");
     const comparisonSubmission = JSON.parse(document.querySelector(".schema-json").textContent);
-    assert.deepEqual(comparisonSubmission, page.reference.stages.find((stage) => stage.id === "comparison")!.schemas.submission);
+    assert.deepEqual(comparisonSubmission, page.reference.stages.find((stage) => stage.id === "comparison")!.profiles[0].schemas.submission);
     click('[data-stage="clustering"]');
     click('[data-document="submission"]');
     assert.equal(document.querySelector(".definition-source").textContent, "schemas/clustering/submission.schema.json");
     const schema = JSON.parse(document.querySelector(".schema-json").textContent);
-    assert.deepEqual(schema, page.reference.stages.find((stage) => stage.id === "clustering")!.schemas.submission);
+    assert.deepEqual(schema, page.reference.stages.find((stage) => stage.id === "clustering")!.profiles[0].schemas.submission);
     click('[data-document="submissionNudge"]');
     assert.equal(document.querySelector(".definition-source").textContent, "packages/prompts/resources/shared/nudge.md");
   } finally { page.dom.window.close(); }
@@ -67,5 +72,109 @@ test("reference storage lists actual result files and keeps rewrites embedded in
     assert.equal(cells.get("改写").textContent, "源结果的 rewritten 字段");
     assert.equal(cells.get("改写").querySelector("code"), null, "rewrites do not have a separate result file");
     assert.match(document.querySelector("#reference-content").textContent, /该分片归因与涉及对局裁决完成/);
+    assert.deepEqual(reference.flow.steps.map((step) => step.id), ["preflight", "criteria", "attribution", "draft", "inspection", "verification"]);
+    const review = reference.flow.branches.find((branch) => branch.name === "一次独立归因复核")!;
+    assert.deepEqual(review.steps.map((step) => [step.stage, step.profile]), [["attribution", "default"], ["comparison", "default"], ["comparison", "verification"]]);
+    assert.match(reference.flow.branches.find((branch) => branch.name === "末轮待复核")!.steps[0].output!, /无正式判决或统计/);
+    assert.equal(reference.flow.branches.find((branch) => branch.name === "聚类改写")!.enabled, reference.clustering.enabled && reference.rewrite.clustering);
+    assert.equal(reference.flow.branches.find((branch) => branch.name === "逐项点评改写")!.enabled, reference.rewrite.comparison && reference.rewrite.comparisonItems === true);
+    assert.match(document.querySelector("#reference-content").textContent, /任务内正整数 evidence_index/);
+    document.querySelector('[data-open-stage="comparison"][data-open-profile="verification"]').click();
+    assert.equal(document.querySelector('[data-profile="verification"]').getAttribute("aria-pressed"), "true");
+    assert.equal(document.activeElement, document.querySelector('[data-profile="verification"]'));
+  } finally { dom.window.close(); }
+});
+
+test("reference profiles expose independent inspection and the current canonical and model submission schemas", async () => {
+  const { dom, document, reference } = await referencePage();
+  const click = (selector: string) => document.querySelector(selector).click();
+  try {
+    const comparison = reference.stages.find((stage) => stage.id === "comparison")!;
+    assert.deepEqual(comparison.profiles.map((profile) => profile.id), ["default", "verification"]);
+    const draft = comparison.profiles[0], verification = comparison.profiles[1];
+    const current = comparisonAgent.profiles.verification;
+    assert.deepEqual(verification.schemas.request, current.requestSchema);
+    assert.deepEqual(verification.schemas.submission, current.submissionSchema);
+    assert.deepEqual(verification.schemas.inspection, current.inspection!.schema);
+    assert.deepEqual(verification.schemas.modelInspection, current.inspection!.modelSchema);
+    assert.deepEqual(verification.schemas.result, current.resultSchema);
+    assert.deepEqual(verification.schemas.modelSubmission, evidenceSelectionSchema(current.submissionSchema));
+    assert.deepEqual(draft.schemas.modelSubmission, evidenceSelectionSchema(comparisonAgent.profiles.default.submissionSchema));
+    const attribution = reference.stages.find((stage) => stage.id === "attribution")!.profiles[0];
+    assert.deepEqual(attribution.schemas.modelSubmission, evidenceSelectionSchema(attributionAgent.profiles.default.submissionSchema));
+    assert.equal(attribution.requestBoundSubmission, true);
+    assert.equal(draft.requestBoundSubmission, true);
+    assert.equal(verification.requestBoundSubmission, false);
+    for (const stage of reference.stages) for (const profile of stage.profiles) {
+      assert.equal(profile.fileSubmission, false);
+      assert.deepEqual(Object.keys(profile.toolSchemas), Object.keys(profile.toolDescriptions));
+      for (const [name, schema] of Object.entries(profile.toolSchemas)) {
+        assert.deepEqual(schema, name === "submit_evaluation" ? profile.schemas.modelSubmission ?? profile.schemas.submission ?? profile.schemas.result
+          : name === "inspect_material" ? profile.schemas.modelInspection : builtinTools.find((tool) => tool.name === name)!.inputSchema);
+        assert(profile.sources.toolSchemas.includes("packages/prompts/resources/tools/" + name + ".md"));
+      }
+      for (const sources of Object.values(profile.sources)) for (const source of sources)
+        assert((await readFile(path.join(ROOT, source), "utf8")).trim(), "reference source exists: " + source);
+    }
+    click('[data-section="contracts"]');
+    click('[data-stage="comparison"]');
+    click('[data-profile="verification"]');
+    for (const key of ["modelInspection", "inspection", "submission", "modelSubmission"] as const) {
+      click('[data-document="' + key + '"]');
+      assert.deepEqual(JSON.parse(document.querySelector(".schema-json").textContent), verification.schemas[key]);
+      assert.deepEqual([...document.querySelectorAll(".definition-source code")].map((element: any) => element.textContent), verification.sources[key]);
+    }
+    for (const key of ["system", "instructions"] as const) {
+      click('[data-document="' + key + '"]');
+      assert.equal(document.querySelector(".prompt-text").textContent, verification.prompts[key]);
+      assert.equal(document.querySelector(".definition-source").textContent, "packages/prompts/resources/comparison/verification/" + key + ".md");
+    }
+    click('[data-document="tools"]');
+    const names = [...document.querySelectorAll(".tool-definitions dt")].map((element: any) => element.textContent);
+    assert.deepEqual(names, Object.keys(current.toolDescriptions));
+    assert(names.includes("inspect_material"));
+    const tools = [...document.querySelectorAll(".tool-definitions > div")];
+    const inspectionTool = tools.find((element: any) => element.querySelector("dt").textContent === "inspect_material")!;
+    assert.deepEqual(JSON.parse(inspectionTool.querySelector(".schema-json").textContent), verification.schemas.modelInspection);
+    click('[data-stage="exports"]');
+    click('[data-document="comparison"]');
+    assert.deepEqual([...document.querySelectorAll(".definition-source code")].map((element: any) => element.textContent), reference.exportSources.comparison);
+    const output = JSON.parse(document.querySelector(".schema-json").textContent);
+    assert.deepEqual(output, reference.exports.comparison);
+    assert(((output.$defs as Record<string, any>).evaluation.properties.findings.items.properties as Record<string, JsonSchema>).stage_trace);
+  } finally { dom.window.close(); }
+});
+
+test("reference shared prompts retain live text and definition disclosures survive document switches", async () => {
+  const { dom, document, reference } = await referencePage();
+  const click = (selector: string) => document.querySelector(selector).click();
+  try {
+    assert.deepEqual(reference.sharedPrompts, Object.fromEntries(sharedPromptResources().map(({ name, text, source }) => [name, { text, source }])));
+    assert.deepEqual(Object.keys(reference.sharedPrompts), ["material", "evidence", "taskFocus", "budget", "recovery", "nudge"]);
+    click('[data-section="contracts"]');
+    click('[data-stage="shared"]');
+    for (const [key, resource] of Object.entries(reference.sharedPrompts)) {
+      click('[data-document="' + key + '"]');
+      assert.equal(document.querySelector(".prompt-text").textContent, resource.text);
+      assert.equal(document.querySelector(".definition-source").textContent, resource.source);
+      assert.equal(resource.text, (await readFile(path.join(ROOT, resource.source), "utf8")).trim());
+    }
+    click('[data-stage="comparison"]');
+    click('[data-profile="verification"]');
+    click('[data-document="inspection"]');
+    const disclosure = document.querySelector(".reference-disclosure");
+    disclosure.open = true;
+    click('[data-document="system"]');
+    click('[data-document="inspection"]');
+    assert.equal(document.querySelector(".reference-disclosure").open, true);
+    const current = document.querySelector('[data-profile="verification"]');
+    current.focus();
+    current.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+    assert.equal(document.querySelector('[data-profile="default"]').getAttribute("aria-pressed"), "true");
+    assert.equal(document.activeElement, document.querySelector('[data-profile="default"]'));
+    assert.equal(document.querySelector('[data-document="inspection"]'), null);
+    click('[data-profile="verification"]');
+    click('[data-document="inspection"]');
+    assert.equal(document.querySelector(".reference-disclosure").open, true);
   } finally { dom.window.close(); }
 });

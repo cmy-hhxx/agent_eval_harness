@@ -21,8 +21,8 @@
         </header>
         <div id="error-banner" class="error-banner" role="alert" hidden></div>
 
-        <section class="panel launch-panel" id="config" aria-labelledby="config-title">
-          <div class="panel-heading"><h2 id="config-title">新建评测</h2><div id="env-status" class="env-status" aria-label="网关配置状态"></div></div>
+        <details class="panel launch-panel" id="config" aria-labelledby="config-title" open>
+          <summary class="panel-heading"><h2 id="config-title">新建评测</h2><div id="env-status" class="env-status" aria-label="网关配置状态"></div></summary>
           <form id="start-form" class="start-form">
             <div class="field-row date-field">
               <div class="date-selection"><div class="date-columns" aria-hidden="true"><span>日期</span><span>可评测 / 总数</span></div><div id="date-options" class="date-options" role="group" aria-label="日期"><span class="loading" role="status" aria-label="正在读取日期"><span class="spinner" aria-hidden="true"></span></span></div></div>
@@ -63,7 +63,7 @@
               <p id="config-path" class="config-path"></p>
             </details>
           </form>
-        </section>
+        </details>
 
         <section class="run-overview" id="run-overview" hidden>
           <div class="overview-head">

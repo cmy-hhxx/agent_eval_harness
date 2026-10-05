@@ -202,7 +202,7 @@ test("date table separates remote/local input rows, refresh state, completed com
   const payload = { ...state(), execution: execution(), status: "running", sampledAt: at, jobs: [{ ...job("2026-09-28"), observed, downloaded: observed,
     download: "downloading", evaluation: "retry", nextEvaluationAt: at + 1000, hours: [],
     summary: { readyComparisons: 139, skipped: 83, stages: {
-      attribution: stage(810, 290, 505, 15), comparison: stage(405, 139, 252, 0, 14),
+      attribution: stage(810, 290, 505, 15), comparison: stage(405, 280, 111, 0, 14),
       rewrite: stage(1225, 429, 763, 0, 33), clustering: stage(10, 0, 6, 0, 4),
     } },
     mongo: { status: "completed", completedAt: at, counts: { inputs: 890, comparisons: 138 } },
@@ -215,8 +215,11 @@ test("date table separates remote/local input rows, refresh state, completed com
     assert.equal(document.querySelector(".remote-inputs").textContent, "890");
     assert.match(document.querySelector(".local-inputs").textContent, /^890/);
     assert.match(document.getElementById("date-rows").textContent, /核对更新中/);
-    assert.match(document.querySelector(".completed-comparisons").textContent, /139 \/ 405/);
-    assert.match(document.querySelector(".task-pool").textContent, /待执行 1,520待重试 15依赖阻塞 47/);
+    assert.equal(document.querySelector(".completed-comparisons").textContent, "139", "publishable result count is independent of comparison task totals and accepted receipts");
+    assert.match(document.querySelector('.stage-tasks[data-stage="comparison"]').textContent, /^280 \/ 405待执行 111依赖阻塞 14$/);
+    assert.equal(document.querySelector(".date-table th:nth-child(6)").textContent, "完成对比 · 份 · 含改写");
+    assert.equal(document.querySelector(".date-table th:nth-child(10)").textContent, "对比任务");
+    assert.match(document.querySelector(".task-pool").textContent, /待执行 1,379待重试 15依赖阻塞 47/);
     assert.match(document.querySelector(".mongo-outputs").textContent, /^138待上传 1$/);
     assert.match(document.getElementById("mongo-progress-rows").textContent, /等待同步新输出/);
   } finally { dom.window.close(); }

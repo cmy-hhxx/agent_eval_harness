@@ -245,7 +245,7 @@ export async function startDashboard(options: DashboardOptions) {
       ]);
       return json(res, dashboardReference(evaluation, current.evaluatorVersion));
     }
-    if (req.method === "GET" && ["/dashboard.css", "/problems.css"].includes(url.pathname)) {
+    if (req.method === "GET" && ["/dashboard.css", "/reference.css", "/problems.css"].includes(url.pathname)) {
       res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
       res.end(await asset(url.pathname.slice(1)));
       return;

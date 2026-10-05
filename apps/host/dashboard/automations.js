@@ -171,23 +171,23 @@ function render() {
   $("date-total").textContent = `${number(jobs.length)} 个日期`;
   $("date-rows").innerHTML = pageRows("date", jobs).map((job) => {
     const error = [["retry", "blocked"].includes(job.evaluation) ? job.evaluationError : undefined, job.monitorError].filter(Boolean).join("\n");
-    const cells = ["criteria", "attribution", "rewrite"].map((name) => {
+    const cells = stages.map((name) => {
       const stage = job.summary?.stages[name];
       if (!stage) return "<td>—</td>";
       const retrying = job.execution?.retryingStages?.[name] ?? 0, pending = Math.max(0, (stage.pending ?? 0) - retrying);
-      return `<td>${number(stage.completed)} / ${number(stage.total)}${stage.running ? sub(`进行中 ${number(stage.running)}`, "tone-active") : ""}${pending ? sub(`待执行 ${number(pending)}`) : ""}${retrying ? sub(`待重试 ${number(retrying)}`, "tone-warning") : ""}${stage.cancelled ? sub(`已中断 ${number(stage.cancelled)}`, "tone-warning") : ""}${stage.blocked ? sub(`依赖阻塞 ${number(stage.blocked)}`, "tone-warning") : ""}${stage.failed ? sub(`失败 ${number(stage.failed)}`, "tone-error") : ""}</td>`;
+      return `<td class="stage-tasks" data-stage="${name}">${number(stage.completed)} / ${number(stage.total)}${stage.running ? sub(`进行中 ${number(stage.running)}`, "tone-active") : ""}${pending ? sub(`待执行 ${number(pending)}`) : ""}${retrying ? sub(`待重试 ${number(retrying)}`, "tone-warning") : ""}${stage.cancelled ? sub(`已中断 ${number(stage.cancelled)}`, "tone-warning") : ""}${stage.blocked ? sub(`依赖阻塞 ${number(stage.blocked)}`, "tone-warning") : ""}${stage.failed ? sub(`失败 ${number(stage.failed)}`, "tone-error") : ""}</td>`;
     }).join("");
     const counts = (key) => stages.reduce((n, name) => n + (job.summary?.stages[name]?.[key] ?? 0), 0);
-    const local = inputCount(job.downloaded), comparison = job.summary?.stages.comparison;
+    const local = inputCount(job.downloaded);
     const retrying = job.execution?.retryingTasks ?? 0, retries = counts("failed") + counts("cancelled") + retrying;
     const pool = job.summary ? `待执行 ${number(Math.max(0, counts("pending") - retrying))}${sub(`${job.evaluation === "blocked" ? "已暂停" : "待重试"} ${number(retries)}`, retries ? "tone-warning" : "")}${sub(`依赖阻塞 ${number(counts("blocked"))}`)}${counts("running") ? sub(`进行中 ${number(counts("running"))}`, "tone-active") : ""}` : "—";
     return `<tr><td><strong>${escape(job.date)}</strong>${job.adopted ? sub("历史已完成") : ""}</td>
       <td class="remote-inputs">${number(inputCount(job.observed))}</td><td class="local-inputs">${local === undefined ? "—" : number(local)}${job.summary?.skipped ? sub(`预检跳过 ${number(job.summary.skipped)}`) : ""}${job.summary?.issues ? sub(`输入异常 ${number(job.summary.issues)}`, "tone-error") : ""}</td>
       <td>${downloadState(job)}</td>
       <td>${status(job.evaluation)}${job.evaluation === "retry" ? retrySchedule(job.nextEvaluationAt) + sub(`连续失败 ${number(job.evaluationAttempts)} 轮`) : ""}${job.execution?.retryingTasks ? sub(`任务重试 ${number(job.execution.retryingTasks)} 个`, "tone-warning") + retrySchedule(job.execution.nextRetryAt) : ""}${error ? sub(error, "row-error") : ""}</td>
-      <td class="completed-comparisons">${comparison ? `${number(job.summary.readyComparisons)} / ${number(comparison.total)}` : "—"}</td>
+      <td class="completed-comparisons">${job.summary ? number(job.summary.readyComparisons) : "—"}</td>
       <td class="task-pool">${pool}</td>${cells}<td class="cache-rate">${percent(job.cache?.hitRate)}</td></tr>`;
-  }).join("") || empty(11, "暂无日期");
+  }).join("") || empty(12, "暂无日期");
 
   const hours = new Map();
   for (const job of jobs) for (const hour of job.hours) {

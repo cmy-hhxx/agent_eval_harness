@@ -122,9 +122,8 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
       assert.deepEqual(evaluations[version].task_analysis, source.task_analysis);
       const formalEvidence = source.correctness_evidence as { evidence_id: string; message_index: number; quote: string }[];
       assert(formalEvidence.every(item => item.evidence_id.startsWith("ev_")), "formal evidence keeps the program's canonical coordinate");
-      assert.deepEqual(evaluations[version].correctness_evidence,
-        formalEvidence.map(({ evidence_id: _coordinate, ...visible }) => visible),
-        "the dashboard displays source quotes while formal results retain canonical coordinates");
+      assert.deepEqual(evaluations[version].correctness_evidence, formalEvidence,
+        "the dashboard preserves canonical coordinates alongside source quotes");
       const rewritten = evaluations[version].rewritten as { rewrites: { path: string; text: string }[] };
       assert(rewritten.rewrites.some((item) => item.path === "findings.0.text" && item.text.startsWith("精简：")));
     }

@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "../../fixtures/services.js";
+import { attributionResult, comparisonResult, criteriaResult } from "../../fixtures/comparison.js";
+import { caseResultView } from "@eval/workflows/comparison";
 import { editableDashboardSettings, readConfigSources } from "@eval/host-app/config";
 
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
@@ -19,7 +21,7 @@ async function controller(respond: (url: string, options?: RequestInit) => unkno
   // Exercise the real controller with an in-memory DOM and network; no browser or boot requests.
   const load = new Function("document", "createDashboardViews", "groupCaseCandidates", "fetch", "setTimeout", "clearTimeout",
     source.slice(source.indexOf("\n") + 1, source.lastIndexOf("\n(async () => {")) +
-    "\nreturn { state, loadConfig, loadInputs, refresh, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, preview, startRun, deleteRun, restoreRecall };",
+    "\nreturn { state, loadConfig, loadInputs, refresh, selectRun, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, preview, startRun, deleteRun, restoreRecall };",
   );
   const api = load(dom.window.document, createDashboardViews, groupCaseCandidates,
     async (url: string, options: RequestInit) => {
@@ -92,7 +94,7 @@ test("dashboard preserves totals while displaying failures, blocked tasks and ca
   } finally { page.dom.window.close(); }
 });
 
-test("dashboard renders gateway models with eight-way concurrency, xhigh thinking and all rewrites", async () => {
+test("dashboard renders gateway models with eight-way concurrency, medium thinking and all rewrites", async () => {
   const source = await readConfigSources(path.join(ROOT, "configs/host.json"));
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);
   const page = await controller(() => ({
@@ -115,7 +117,7 @@ test("dashboard renders gateway models with eight-way concurrency, xhigh thinkin
       assert.equal(select.value, "claude-4");
     }
     for (const select of page.document.querySelectorAll("[data-thinking-stage]")) {
-      assert.equal(select.value, "xhigh");
+      assert.equal(select.value, "medium");
       assert([...select.options].some(option => option.value === "max"));
     }
     for (const stage of ["attribution", "comparison", "clustering"])
@@ -131,6 +133,111 @@ test("comparison finding links reveal collapsed attribution details and preserve
     assert.equal(page.document.querySelector(".comparison-attributions").open, true);
     assert.equal(page.document.querySelector("#target").open, true);
     assert(page.state.openFindings.has("task.evaluations.left.findings.0"));
+  } finally { page.dom.window.close(); }
+});
+
+test("criterion rule toggles survive case refreshes and retain a user's closed state", async () => {
+  const criteria = criteriaResult();
+  const criteriaTask = { id: "criteria-one", stage: "criteria", status: "succeeded", versions: ["a_fast"], attempts: 1 };
+  const pendingTask = { id: "attribution-one", stage: "attribution", status: "running", versions: ["a_fast"], attempts: 0 };
+  const page = await controller(url => {
+    assert(url.includes("/cases/detail"));
+    return { batch_id: "batch", case_id: "q1", question: "问题", tasks: [criteriaTask, pendingTask], candidates: [
+      { version: "a_fast", name: "A组Fast", input_id: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd" },
+    ] };
+  });
+  try {
+    page.state.selectedRun = "run-one";
+    await page.loadCase("batch", "q1");
+    page.state.taskResults[criteriaTask.id] = { result: { result: criteria } };
+    page.state.openTasks.add(criteriaTask.id);
+    pendingTask.attempts++;
+    await page.loadCase("batch", "q1");
+    let rule = page.document.querySelector(".criterion-rule");
+    assert.equal(rule.open, false);
+    const key = rule.dataset.criterionRule;
+    rule.open = true;
+    rule.dispatchEvent(new page.dom.window.Event("toggle"));
+    assert(page.state.expandedTexts.has(key), "the controller records a native rule disclosure");
+    const opened = rule;
+    pendingTask.attempts++;
+    await page.loadCase("batch", "q1");
+    rule = page.document.querySelector(".criterion-rule");
+    assert.notEqual(rule, opened, "another task's progress causes the detail view to redraw");
+    assert.equal(rule.open, true);
+    assert.equal(rule.querySelector(".text-content").textContent, criteria.requirements[0]!.acceptance_rule);
+    rule.open = false;
+    rule.dispatchEvent(new page.dom.window.Event("toggle"));
+    assert(!page.state.expandedTexts.has(key));
+    pendingTask.attempts++;
+    await page.loadCase("batch", "q1");
+    assert.equal(page.document.querySelector(".criterion-rule").open, false, "a closed rule stays closed after refreshing");
+  } finally { page.dom.window.close(); }
+});
+
+test("case refresh updates review lineage and business status without changing execution progress", async () => {
+  const initial = { id: "initial", stage: "comparison", status: "succeeded", versions: ["a_fast", "b_fast"], attempts: 1,
+    result_status: "decided", superseded_by: undefined as string | undefined };
+  const review = { id: "review", stage: "comparison", status: "pending", versions: ["a_fast", "b_fast"], attempts: 0,
+    review_of: { task_id: "earlier", round: 1, reasons: ["原复核原因"] } };
+  const page = await controller(() => ({
+    batch_id: "batch", case_id: "q1", question: "问题", tasks: [initial, review], candidates: [
+      { version: "a_fast", name: "A组Fast", input_id: "a" },
+      { version: "b_fast", name: "B组Fast", input_id: "b" },
+    ],
+  }));
+  try {
+    page.state.selectedRun = "run-one";
+    await page.loadCase("batch", "q1");
+    assert.equal(page.document.querySelector('[data-task="initial"] .task-status').textContent, "已接受");
+    page.state.openTasks.add(review.id);
+    initial.result_status = "needs_review";
+    initial.superseded_by = review.id;
+    review.review_of.task_id = initial.id;
+    review.review_of.reasons = ["当前证据存在冲突"];
+    await page.loadCase("batch", "q1");
+    assert.equal(page.document.querySelector('[data-task="initial"] .task-status').textContent, "待复核");
+    assert.equal(page.document.querySelector('[data-task="initial"] .task-phase').textContent, "首次对比");
+    assert.equal(page.document.querySelector('[data-task="review"] .task-phase').textContent, "对比复核 · 第 1 轮");
+    assert.equal(page.document.querySelector('[data-task="review"] .task-review-reasons').textContent, "当前证据存在冲突");
+    assert(page.document.querySelector('[data-task="review"]').open);
+    review.review_of.reasons = ["补充核验原始材料"];
+    await page.loadCase("batch", "q1");
+    assert.equal(page.document.querySelector('[data-task="review"] .task-review-reasons').textContent, "补充核验原始材料");
+    assert(page.document.querySelector('[data-task="review"]').open, "refresh preserves the expanded review");
+  } finally { page.dom.window.close(); }
+});
+
+test("inline comparison findings retain their expanded state after another task progresses", async () => {
+  const comparison = { id: "comparison", stage: "comparison", status: "succeeded", versions: ["a_fast", "b_fast"], attempts: 1 };
+  const pending = { id: "pending", stage: "attribution", status: "running", versions: ["a_fast"], attempts: 0 };
+  const page = await controller(() => ({ batch_id: "batch", case_id: "q1", question: "问题", tasks: [comparison, pending], candidates: [
+    { version: "a_fast", name: "A组Fast", input_id: "a" }, { version: "b_fast", name: "B组Fast", input_id: "b" },
+  ] }));
+  try {
+    page.state.selectedRun = "run-one";
+    await page.loadCase("batch", "q1");
+    page.state.taskResults[comparison.id] = { result: caseResultView("comparison", {
+      ...comparisonResult(["a_fast", "b_fast"]), evaluations: { a_fast: attributionResult(), b_fast: attributionResult() },
+    }) };
+    page.state.openTasks.add(comparison.id);
+    pending.attempts++;
+    await page.loadCase("batch", "q1");
+    let finding = page.document.querySelector(".comparison-finding");
+    assert.equal(finding.open, false);
+    const key = finding.dataset.comparisonFinding;
+    finding.open = true;
+    finding.dispatchEvent(new page.dom.window.Event("toggle"));
+    assert(page.state.expandedTexts.has(key));
+    pending.attempts++;
+    await page.loadCase("batch", "q1");
+    finding = page.document.querySelector(".comparison-finding");
+    assert.equal(finding.open, true);
+    finding.open = false;
+    finding.dispatchEvent(new page.dom.window.Event("toggle"));
+    pending.attempts++;
+    await page.loadCase("batch", "q1");
+    assert.equal(page.document.querySelector(".comparison-finding").open, false);
   } finally { page.dom.window.close(); }
 });
 
@@ -214,7 +321,41 @@ test("a launched process keeps refreshing until its checkpoint appears, then sel
     await page.refresh();
     assert.equal(page.state.startingRun, null);
     assert.equal(page.state.selectedRun, "new-run");
+    assert.equal(page.document.querySelector("#config").open, false);
     assert.equal(page.timers.size, 0, "a finished run stops polling");
+  } finally { page.dom.window.close(); }
+});
+
+test("run selection folds launch settings while refresh preserves a reopened draft and resume reveals it", async () => {
+  const run = { run_id: "layout-run", status: "finished", engine: "pi", progress: {}, stages: {} };
+  let runs = [run];
+  const page = await controller(url => url.endsWith("/runs") ? { runs, errors: [] }
+    : url.includes("/cases?") ? { cases: [], total: 0, page_size: 20 } : run);
+  try {
+    const config = page.document.querySelector("#config");
+    assert.equal(config.open, true);
+    await page.selectRun(run.run_id);
+    assert.equal(config.open, false);
+    assert.match(page.document.querySelector("#stage-summary").textContent, /对比 \/ 核验/);
+    config.open = true;
+    page.document.querySelector("#sample-size").value = "19";
+    await page.refresh(true);
+    assert.equal(config.open, true);
+    assert.equal(page.document.querySelector("#sample-size").value, "19");
+    config.open = false;
+    config.scrollIntoView = () => {};
+    page.document.querySelector("[data-resume]").click();
+    assert.equal(config.open, true);
+    assert.equal(page.state.runId, run.run_id);
+    assert.equal(page.document.activeElement.id, "preview-button");
+    page.state.startingRun = { id: run.run_id, deadline: Date.now() + 120000 };
+    await page.refresh();
+    assert.equal(config.open, false, "registering a resumed run also folds the launch form");
+    assert.equal(page.document.querySelector("#sample-size").value, "19");
+    runs = [];
+    config.open = false;
+    await page.refresh();
+    assert.equal(config.open, true, "an unavailable selected run returns to launch settings");
   } finally { page.dom.window.close(); }
 });
 

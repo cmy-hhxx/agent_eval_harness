@@ -1,9 +1,9 @@
 .automation-page main { max-width: 1560px; margin: 0 auto; padding: 28px 32px 56px; }
 .automation-page { font-variant-numeric: tabular-nums; }
 .automation-page ::selection { background: var(--accent-soft); color: var(--text); }
-.automation-page .page-header { margin-bottom: 6px; }
-.monitor-title { display: flex; align-items: center; gap: 16px; }
-.monitor-actions { display: flex; align-items: center; gap: 12px; }
+.automation-page .page-header { justify-content: space-between; flex-wrap: wrap; row-gap: 12px; margin-bottom: 6px; }
+.monitor-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
+.monitor-actions { display: flex; flex: none; align-items: center; gap: 12px; margin-left: auto; }
 .monitor-actions a { display: inline-flex; align-items: center; text-decoration: none; }
 .monitor-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; margin-bottom: 20px; color: var(--muted); font-size: 12px; }
 .execution-overview { display: grid; grid-template-columns: minmax(80px, .6fr) minmax(235px, 1.5fr) repeat(3, minmax(150px, 1fr)); gap: 16px 28px; margin: 0 0 20px; padding: 16px 0; border-block: 1px solid var(--line); }
@@ -30,7 +30,7 @@
 .automation-page h2 { font-size: 16px; }
 .automation-page h3 { font-size: 14px; margin: 0; }
 .automation-page .delivery-history-heading { margin-top: 24px; }
-.date-table { min-width: 1380px; }
+.date-table { min-width: 1480px; }
 .date-table th { white-space: nowrap; }
 .automation-page .date-table .row-error { max-width: 220px; }
 .task-pool { min-width: 100px; }

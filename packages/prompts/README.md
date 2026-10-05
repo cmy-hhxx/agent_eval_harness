@@ -11,7 +11,7 @@
 | `resources/tools/<tool>.md` | 内置评测工具描述 |
 | `resources/shared/` | 材料边界、任务焦点、预算、恢复与无提交补交说明 |
 | `resources/eris/` | Eris 系统、恢复及工具规则 |
-| [src/index.ts](src/index.ts) | 资源加载、工具清单和提示词渲染 |
+| [src/index.ts](src/index.ts) | 资源加载、工具清单、提示词渲染及 `sharedPromptResources()` 只读展示入口 |
 
 Workflow 提供 `task_focus` 时，先用 `shared/task-focus.md` 呈现，再放阶段 instructions 与完整材料；展示材料移去重复键，可信输入保持原样。focus 只重复原问、目标、真实标准、可见最终回答、原用户时刻和共同要求，不代替完整材料或改变证据。
 

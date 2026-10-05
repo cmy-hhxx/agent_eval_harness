@@ -17,6 +17,7 @@ const stageLabels = { criteria: "共同标准", attribution: "归因", compariso
 const statusLabels = {
   running: "运行中", finished: "已结束", interrupted: "已中断", pending: "排队",
   succeeded: "已接受", failed: "失败", timed_out: "超时", blocked: "阻塞", cancelled: "取消",
+  needs_review: "待复核",
 };
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const escapeHtml = (value) => String(value ?? "")
@@ -124,7 +125,7 @@ function renderOverview() {
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     const failures = (counts.failed || 0) + (counts.timed_out || 0);
     const note = `${counts.running || 0} 执行${failures ? ` · ${failures} 失败` : ""}${counts.blocked ? ` · ${counts.blocked} 阻塞` : ""}${counts.cancelled ? ` · ${counts.cancelled} 取消` : ""}`;
-    return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
+    return `<div class="stage-row"><strong>${stage === "comparison" ? "对比 / 核验" : stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
   }).join("");
 }
 function scrollBehavior() {
@@ -307,7 +308,10 @@ async function loadCase(batch, caseId) {
     const detail = await api(`${urlFor(runId)}/cases/detail?${params}`);
     if (request !== state.caseRequest || runId !== state.selectedRun) return;
     const previous = state.caseDetail;
-    const signature = (value) => JSON.stringify(value.tasks.map((item) => [item.id, item.status, item.attempts, item.rewrite_submission_ids]));
+    const signature = (value) => JSON.stringify(value.tasks.map((item) => [
+      item.id, item.status, item.attempts, item.rewrite_submission_ids,
+      item.review_of, item.superseded_by, item.result_status,
+    ]));
     state.caseDetail = detail;
     for (const task of detail.tasks) {
       const oldTask = previous?.tasks.find((item) => item.id === task.id);
@@ -355,6 +359,7 @@ async function refresh(auto = false) {
     if (state.startingRun) {
       if (runs.some((run) => run.run_id === state.startingRun.id)) {
         state.selectedRun = state.startingRun.id;
+        $("#config").open = false;
         state.startingRun = null;
         state.page = 1;
       } else if (Date.now() >= state.startingRun.deadline) {
@@ -365,6 +370,7 @@ async function refresh(auto = false) {
     }
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
     if (previousRun !== state.selectedRun) {
+      $("#config").open = !state.selectedRun;
       ++state.caseRequest;
       state.selectedCase = state.caseDetail = null;
       resetInputs();
@@ -414,6 +420,7 @@ async function selectRun(runId) {
   if (runId === state.selectedRun) return;
   ++state.caseRequest;
   state.selectedRun = runId;
+  $("#config").open = false;
   state.selectedCase = state.caseDetail = state.cases = null;
   resetInputs();
   state.page = 1;
@@ -750,6 +757,7 @@ $("#run-actions").addEventListener("click", async (event) => {
     state.runId = node.dataset.resume;
     $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
+    $("#config").open = true;
     $("#config").scrollIntoView({ behavior: scrollBehavior() });
     $("#preview-button").focus();
   } else if (node.dataset.stop && confirm(`确定停止 ${node.dataset.stop}？已接受结果会保留。`)) {
@@ -811,6 +819,12 @@ document.addEventListener("click", async (event) => {
 document.addEventListener(
   "toggle",
   (event) => {
+    if (event.target.matches?.(".criterion-rule, .comparison-finding")) {
+      const key = event.target.dataset.criterionRule || event.target.dataset.comparisonFinding;
+      if (event.target.open) state.expandedTexts.add(key);
+      else state.expandedTexts.delete(key);
+      return;
+    }
     if (event.target.matches?.(".finding")) {
       if (event.target.open) state.openFindings.add(event.target.dataset.finding);
       else state.openFindings.delete(event.target.dataset.finding);

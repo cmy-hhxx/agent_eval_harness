@@ -155,7 +155,10 @@ const clipEvidence = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map((item) => {
         const entry = (item ?? {}) as JsonObject;
-        return { ...(entry.source_input_id ? { source: entry.source, source_input_id: entry.source_input_id } : {}), message_index: entry.message_index, quote: clip(entry.quote, 4000) };
+        return { evidence_id: entry.evidence_id,
+          ...(entry.source !== undefined ? { source: entry.source } : {}),
+          ...(entry.source_input_id !== undefined ? { source_input_id: entry.source_input_id } : {}),
+          message_index: entry.message_index, quote: clip(entry.quote, 4000) };
       })
     : value;
 /** Sample-view projection of accepted rows, including each comparison model's attribution. */
@@ -231,6 +234,7 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
                 evidence: clipEvidence(item.evidence),
                 assessment: item.assessment,
                 problem: item.problem,
+                ...(item.stage_trace !== undefined ? { stage_trace: item.stage_trace } : {}),
               };
             })
           : value.findings,
@@ -311,8 +315,23 @@ function taskDetails(saved: Checkpoint, id: string, rewriteIds: Map<string, stri
   const task = saved.tasks[id]!;
   const status: TaskState = task;
   const scope = task.data.scope;
+  let resultStatus: ComparisonResult["status"] | undefined;
+  if (task.stage === "comparison" && task.receipt) {
+    const reference = task.receipt.exported;
+    if (reference?.file === "comparison-review.jsonl") resultStatus = "needs_review";
+    else if (reference?.file === "comparison.jsonl" || reference?.comparisonId) resultStatus = "decided";
+    else {
+      const result = task.receipt.evaluation as ComparisonResult | undefined;
+      if (result?.status === "decided" || result?.status === "needs_review") resultStatus = result.status;
+    }
+  }
   return {
     id, stage: task.stage, status: status.status, attempts: status.attempts,
+    ...(task.data.reviewOf ? { review_of: {
+      task_id: task.data.reviewOf.taskId, round: task.data.reviewOf.round, reasons: task.data.reviewOf.reasons,
+    } } : {}),
+    ...(task.data.supersededBy ? { superseded_by: task.data.supersededBy } : {}),
+    ...(resultStatus ? { result_status: resultStatus } : {}),
     reason: status.reason || status.failure?.errors[0]?.message || null,
     last_progress_at: status.lastProgressAt ?? null,
     duration_ms: status.durationMs ?? null,
@@ -346,7 +365,15 @@ export async function readTaskResult(run: string, taskId: string) {
     const evaluations = Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => Object.hasOwn(task.inputIds, label)).map(([label, id]) => {
       const attribution = state.receipts[id]?.exported?.row;
       if (!attribution) throw new Error(`缺少归因任务结果：${id}`);
-      return [saved.inputs[task.inputIds[label]].version, attribution.evaluation];
+      const version = saved.inputs[task.inputIds[label]].version;
+      const evaluation = attribution.evaluation as JsonObject;
+      const formal = (row!.evaluations as Record<string, JsonObject> | undefined)?.[version];
+      // Attribution owns the accepted text and rewrites; the formal comparison owns trace annotations.
+      const traces = new Map(((formal?.findings as JsonObject[] | undefined) ?? [])
+        .filter((finding) => finding.stage_trace !== undefined)
+        .map((finding) => [finding.finding_id, finding.stage_trace]));
+      return [version, { ...evaluation, findings: (evaluation.findings as JsonObject[]).map((finding) =>
+        traces.has(finding.finding_id) ? { ...finding, stage_trace: traces.get(finding.finding_id) } : finding) }];
     }));
     const models = Object.fromEntries(Object.entries(task.inputIds).map(([, id]) => {
       const candidate = saved.inputs[id]!;

@@ -1,8 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const state = { data: null, inventory: null, inventoryError: "", section: "inputs", stage: "criteria", document: "result", date: null, search: "", page: 1 };
-const stageNames = { criteria: "共同标准", attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类", exports: "正式导出" };
-const documentNames = { request: "请求 Schema", submission: "提交 Schema", result: "结果 Schema", system: "系统提示词", instructions: "任务提示词", submissionNudge: "补交提示词", comparison: "对比结果", clustering: "聚类结果" };
+const state = { data: null, inventory: null, inventoryError: "", section: "inputs", stage: "criteria", profile: "default", document: "result", date: null, search: "", page: 1, disclosures: new Map() };
+const documentNames = { request: "请求 Schema", submission: "提交 Schema", modelSubmission: "模型提交基础 Schema", result: "结果 Schema", inspection: "首查保存 Schema", modelInspection: "首查提交 Schema", system: "系统提示词", instructions: "任务提示词", submissionNudge: "补交提示词", taskType: "任务类型文案", sourceRule: "原文验收规则", referenceRule: "标准答案验收规则", reviewPending: "待复核文案", notApplicable: "不适用文案", tools: "工具描述与 Schema", comparison: "对比结果", clustering: "聚类结果", material: "材料文案", evidence: "证据说明", taskFocus: "任务聚焦", budget: "预算提示", recovery: "恢复提示", nudge: "补交提示" };
 const onOff = (value) => value ? "开启" : "关闭";
 async function get(url) {
   const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
@@ -54,9 +53,14 @@ function inputsHtml() {
     ["case_id", "顶层或 meta.case_id；同时存在时必须一致"],
     ["version", "由来源配置决定；记录值若存在，须与配置 name 一致"],
     ["messages", "问题、回答与调用链；保留原始消息序号"],
+    ["messages[].timestamp", "最后一条 USER 消息的原始时刻；缺失或非字符串为 null"],
+    ["meta.question", "核对最后 USER 问题首段；缺少消息正文时回退到本字段；去空白后冲突拒绝"],
     ["meta.ground_truth / std_answer", "同批次、同 case 的同问题范围共享有效标准答案；冲突时跳过受影响模型对"],
     ["has_standard_answer", "false 忽略本条标准答案；最终对错核验取样本共享值"],
     ["request_time", "原样保留；缺失为 null"],
+    ["meta.first_token_time_cost / first_answer_time_cost / finish_answer_time_cost", "按 timing_unit 转为秒；评测材料只提供完整回答完成耗时 finish_seconds"],
+    ["meta.usage", "读取输入、输出、总 token 和缓存输入；缓存为输入子集；缺失或无效指标为 null"],
+    ["meta.usage.type / messages[].model", "a 使用 usage.type；b 优先最终回答前最后 llm_turn.model，否则使用 usage.type"],
     ["meta / trace_id", "采集状态、模型、耗时与追踪标识"],
   ];
   return section("数据覆盖", coverage, inventory?.issues != null ? `<span class="inventory-state ${inventory.issues ? "has-issues" : ""}">${inventory.issues} 项输入异常</span>` : "")
@@ -74,13 +78,19 @@ function inputsHtml() {
 function flowHtml() {
   const data = state.data;
   const policyNames = { concurrency: "并发", idleTimeoutSeconds: "无进展超时（秒）", repairAttempts: "提交修正次数", codeTimeoutSeconds: "代码执行超时（秒）", maxOutputChars: "工具输出字符上限", timeoutSeconds: "任务超时（秒）", maxToolCalls: "工具调用上限", retries: "传输重试次数", retryDelaySeconds: "重试间隔（秒）", initialContextChars: "初始上下文字符", maxClassesPerModel: "每模型类上限", maxNewClassesPerTask: "单次新增类预算", maxComponentsPerModel: "每模型组件上限", consolidateAt: "合并整理阈值", minSupport: "新类最少样本", maxCasesPerTask: "分片 case 上限", enabled: "聚类" };
-  const settings = (value) => table(["设置", "当前值"], Object.entries(value).map(([key, item]) => row([`${escapeHtml(policyNames[key] || key)}<code class="table-sub">${escapeHtml(key)}</code>`, escapeHtml(typeof item === "boolean" ? onOff(item) : item)])));
-  return section("处理关系", `<div class="flow-map"><div>输入预检</div><span aria-hidden="true">→</span><div>共同标准</div><span aria-hidden="true">→</span><div>单回答归因</div><span aria-hidden="true">→</span><div>对比草稿</div><span aria-hidden="true">→</span><div>独立核验</div></div><div class="flow-branches"><p><strong>归因 / 核验裁决 → 改写</strong><span>归因 ${onOff(data.rewrite.attribution)} · 对比 ${onOff(data.rewrite.comparison)}</span></p><p><strong>归因问题 → 聚类 → 问题库</strong><span>${onOff(data.clustering.enabled)}</span></p><p><strong>核验待核 → 一轮归因复核 → 新草稿与核验</strong></p></div>`)
+  const settings = (value) => table(["设置", "当前值"], Object.entries(value).map(([key, item]) => row([`${escapeHtml(policyNames[key] || key)}<code class="table-sub">${escapeHtml(key)}</code>`, typeof item === "object" && item !== null ? `<code>${escapeHtml(JSON.stringify(item))}</code>` : escapeHtml(typeof item === "boolean" ? onOff(item) : item)])));
+  const stepName = (step) => step.stage
+    ? `<button class="table-link" data-open-stage="${escapeHtml(step.stage)}" ${step.profile ? `data-open-profile="${escapeHtml(step.profile)}"` : ""}>${escapeHtml(step.name)}</button>`
+    : `<span>${escapeHtml(step.name)}</span>`;
+  const stepData = (step) => step.input || step.output ? `<dl class="flow-step-data">${[["输入", step.input], ["输出", step.output]].filter(([, value]) => value).map(([name, value]) => `<div><dt>${name}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>` : "";
+  const flow = `<ol class="flow-sequence">${data.flow.steps.map((step, index) => `<li><span class="flow-number" aria-hidden="true">${index + 1}</span><div class="flow-step"><h3>${stepName(step)}</h3>${stepData(step)}</div></li>`).join("")}</ol>`
+    + `<div class="flow-branch-list">${data.flow.branches.map((branch) => `<section class="flow-branch"><div class="flow-branch-head"><h3>${escapeHtml(branch.name)}</h3>${typeof branch.enabled === "boolean" ? `<span class="flow-branch-condition">${onOff(branch.enabled)}</span>` : ""}</div><div class="flow-branch-condition">${escapeHtml(branch.condition)}</div><ul class="flow-branch-steps">${branch.steps.map((step) => `<li><div>${stepName(step)}${stepData(step)}</div></li>`).join("")}</ul></section>`).join("")}</div>`;
+  return section("处理关系", flow)
     + section("阶段职责", table(["阶段 / 单位", "输入 → 输出", "依赖"], data.stages.map((stage) => row([
       `<button class="table-link" data-open-stage="${stage.id}">${stage.name}</button><span class="table-sub">${stage.unit}</span>`,
-      `${stage.input}<span class="table-sub">${stage.output}</span>`, escapeHtml(stage.dependency),
+      `${escapeHtml(stage.input)}<span class="table-sub">${escapeHtml(stage.output)}</span>`, escapeHtml(stage.dependency),
     ]))))
-    + section("判决与证据", `<ul class="rule-list"><li>对比确认既有 finding，按核心要求与分层排名派生两两判决。</li><li>归因提交 evidence_id，接受后展开为 message_index + quote。</li><li>改写仅处理文本槽位；排名、对错和证据沿用已接受结果。</li><li>聚类负责归类、新建与合并；问题库按模型跨 run 持续维护。</li><li>同 run ID 续跑保留已接受任务，只补未完成与新增任务。</li></ul>`)
+    + section("判决与证据", `<ul class="rule-list">${data.flow.rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul><details class="reference-disclosure"><summary>流程来源</summary><div class="definition-source">${data.flow.sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></details>`)
     + section("保存位置", table(["内容", "文件"], [
       ...data.stages.map((stage) => row([stage.name, stage.id === "rewrite" ? escapeHtml(stage.file)
         : stage.file.split(" / ").map((file) => `<code>${escapeHtml(data.storage.runs)}/&lt;run-id&gt;/results/${escapeHtml(file)}</code>`).join("<br>")])),
@@ -91,7 +101,7 @@ function flowHtml() {
 }
 function resolveRef(schema, root) {
   if (!schema?.$ref?.startsWith("#/")) return schema;
-  return schema.$ref.slice(2).split("/").reduce((value, part) => value?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], root) || schema;
+  return schema.$ref.slice(2).split("/").reduce((value, part) => value?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], root) ?? schema;
 }
 function schemaHtml(schema, root = schema, name = "root", required = false, depth = 0) {
   schema = resolveRef(schema, root);
@@ -110,40 +120,55 @@ function schemaHtml(schema, root = schema, name = "root", required = false, dept
 }
 function contractHtml() {
   const isExport = state.stage === "exports";
+  const isShared = state.stage === "shared";
   const stage = state.data.stages.find((item) => item.id === state.stage);
-  const documents = isExport ? state.data.exports : { ...stage.schemas, ...stage.prompts };
-  if (!Object.hasOwn(documents, state.document)) state.document = isExport ? "comparison" : "result";
+  const profile = stage ? stage.profiles.find((item) => item.id === state.profile) || stage.profiles[0] : null;
+  if (profile) state.profile = profile.id;
+  const documents = isExport ? state.data.exports : isShared ? Object.fromEntries(Object.entries(state.data.sharedPrompts).map(([key, value]) => [key, value.text])) : { ...profile.schemas, ...profile.prompts };
+  const toolDocument = profile && Object.keys(profile.toolDescriptions).length > 0;
+  if (!Object.hasOwn(documents, state.document) && !(toolDocument && state.document === "tools")) state.document = isExport ? "comparison" : isShared ? Object.keys(documents)[0] : "result";
   const value = documents[state.document];
   const prompt = typeof value === "string";
-  const schemaFile = isExport ? { comparison: "export", clustering: "clustering" }[state.document]
-    : state.document;
-  const source = prompt ? (state.document === "submissionNudge" ? "packages/prompts/resources/shared/nudge.md" : `packages/prompts/resources/${stage.id}/default/${state.document === "system" ? "system" : "instructions"}.md`)
-    : `schemas/${isExport ? "workflow" : stage.id}/${schemaFile}.schema.json`;
-  return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${Object.entries(stageNames).map(([id, name]) => `<button data-stage="${id}" aria-pressed="${id === state.stage}">${name}</button>`).join("")}</nav><section class="contract-content">
-    <header class="section-heading"><h2>${stageNames[state.stage]}</h2>${stage ? `<span class="muted">${stage.unit}</span>` : ""}</header>
-    <nav class="document-tabs" aria-label="定义类型">${Object.keys(documents).map((key) => `<button data-document="${key}" aria-pressed="${key === state.document}">${!isExport && key === "result" && stage.id === "rewrite" ? "提交 / 结果 Schema" : documentNames[key]}</button>`).join("")}</nav>
-    <p class="definition-source"><code>${source}</code></p>
-    ${prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<div class="schema-tree">${schemaHtml(value)}</div>`}
-    ${!prompt ? `<details class="reference-disclosure"><summary>JSON 定义</summary><pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>` : ""}
-    ${stage ? `<div class="contract-tools"><strong>工具描述</strong><span>${Object.entries(stage.toolDescriptions).map(([name, description]) => `<span><code>${escapeHtml(name)}</code> · ${escapeHtml(description)}</span>`).join("<br>")}</span></div>` : ""}
+  const tools = state.document === "tools";
+  const sources = isExport ? state.data.exportSources[state.document] : isShared ? [state.data.sharedPrompts[state.document].source] : profile.sources[tools ? "toolSchemas" : state.document];
+  const tabs = (keys, name) => `<nav class="document-tabs" aria-label="${name}">${keys.map((key) => `<button type="button" data-document="${key}" aria-pressed="${key === state.document}">${escapeHtml(key === "result" && stage?.id === "rewrite" ? "提交 / 结果 Schema" : documentNames[key] || key)}</button>`).join("")}</nav>`;
+  return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${[...state.data.stages, { id: "shared", name: "共用提示词" }, { id: "exports", name: "正式导出" }].map(({ id, name }) => `<button type="button" data-stage="${id}" aria-pressed="${id === state.stage}">${escapeHtml(name)}</button>`).join("")}</nav><section class="contract-content">
+    <header class="section-heading"><h2>${escapeHtml(stage?.name || (isShared ? "共用提示词" : "正式导出"))}</h2>${stage ? `<span class="muted">${escapeHtml(stage.unit)}</span>` : ""}</header>
+    ${stage?.profiles.length > 1 ? `<nav class="profile-tabs" aria-label="阶段流程">${stage.profiles.map((item) => `<button type="button" data-profile="${escapeHtml(item.id)}" aria-pressed="${item.id === state.profile}">${escapeHtml(item.name)}</button>`).join("")}</nav>` : ""}
+    <div class="definition-documents">${isExport || isShared ? tabs(Object.keys(documents), isShared ? "共用提示词" : "正式导出 Schema") : tabs(Object.keys(profile.schemas), "Schema 定义") + tabs(Object.keys(profile.prompts), "提示词与文案") + (toolDocument ? tabs(["tools"], "工具定义") : "")}</div>
+    ${sources?.length ? sources.length > 1 ? `<details class="reference-disclosure definition-provenance"><summary>来源 · ${sources.length} 项</summary><div class="definition-source">${sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></details>` : `<p class="definition-source"><code>${escapeHtml(sources[0])}</code></p>` : ""}
+    ${tools ? `<dl class="tool-definitions">${Object.entries(profile.toolDescriptions).map(([name, description]) => `<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(description)}${profile.toolSchemas[name] ? `<details class="reference-disclosure"><summary>${name === "submit_evaluation" && profile.requestBoundSubmission ? "工具基础 Schema" : "工具 Schema"}</summary><pre class="schema-json">${escapeHtml(JSON.stringify(profile.toolSchemas[name], null, 2))}</pre></details>` : ""}</dd></div>`).join("")}</dl>`
+      : prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<div class="schema-tree">${schemaHtml(value)}</div>`}
+    ${!prompt && !tools ? `<details class="reference-disclosure"><summary>JSON 定义</summary><pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>` : ""}
   </section></div>`;
 }
 function render() {
   if (!state.data) return;
-  $("#reference-content").innerHTML = state.section === "inputs" ? inputsHtml() : state.section === "flow" ? flowHtml() : contractHtml();
+  const content = $("#reference-content");
+  if (content.dataset.view) state.disclosures.set(content.dataset.view, [...content.querySelectorAll("details")].map((detail) => detail.open));
+  const focused = document.activeElement;
+  const focusAttribute = ["section", "stage", "profile", "document"].find((name) => focused?.dataset[name]);
+  const focusValue = focusAttribute ? focused.dataset[focusAttribute] : null;
+  content.innerHTML = state.section === "inputs" ? inputsHtml() : state.section === "flow" ? flowHtml() : contractHtml();
+  content.dataset.view = `${state.section}:${state.stage}:${state.profile}:${state.document}`;
+  const saved = state.disclosures.get(content.dataset.view);
+  if (saved) [...content.querySelectorAll("details")].forEach((detail, index) => { detail.open = saved[index] === true; });
   document.querySelectorAll("[data-section]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.section === state.section)));
+  if (focusAttribute) [...document.querySelectorAll(`[data-${focusAttribute}]`)].find((button) => button.dataset[focusAttribute] === focusValue)?.focus();
 }
 document.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
   if (button.dataset.section) state.section = button.dataset.section;
-  else if (button.dataset.stage) { state.stage = button.dataset.stage; state.document = "result"; }
-  else if (button.dataset.openStage) { state.section = "contracts"; state.stage = button.dataset.openStage; state.document = "result"; }
+  else if (button.dataset.stage) { state.stage = button.dataset.stage; state.profile = "default"; state.document = "result"; }
+  else if (button.dataset.openStage) { state.section = "contracts"; state.stage = button.dataset.openStage; state.profile = button.dataset.openProfile || "default"; state.document = "result"; }
+  else if (button.dataset.profile) state.profile = button.dataset.profile;
   else if (button.dataset.document) state.document = button.dataset.document;
   else if (button.dataset.date) { state.date = state.date === button.dataset.date ? null : button.dataset.date; state.search = ""; state.page = 1; }
   else if (button.dataset.casePage) { state.page = Number(button.dataset.casePage); $("#coverage-cases").innerHTML = caseRows(); return; }
   else return;
   render();
+  if (button.dataset.openStage) (document.querySelector(`[data-profile="${state.profile}"]`) || document.querySelector(`[data-stage="${state.stage}"]`))?.focus();
 });
 document.addEventListener("input", (event) => {
   if (event.target.id !== "case-search") return;
@@ -175,14 +200,14 @@ async function loadInventory() {
   render();
 }
 document.addEventListener("keydown", (event) => {
-  const button = event.target.closest(".page-tabs button, .document-tabs button, .contract-stages button");
+  const button = event.target.closest(".page-tabs button, .document-tabs button, .contract-stages button, .profile-tabs button");
   if (!button || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
   const items = [...button.parentElement.querySelectorAll("button")];
   const index = items.indexOf(button);
   const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
     : (index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + items.length) % items.length;
   event.preventDefault();
-  const attribute = button.dataset.section ? "section" : button.dataset.stage ? "stage" : "document";
+  const attribute = button.dataset.section ? "section" : button.dataset.stage ? "stage" : button.dataset.profile ? "profile" : "document";
   const value = items[next].dataset[attribute];
   items[next].click();
   document.querySelector(`[data-${attribute}="${value}"]`)?.focus();
