@@ -8,6 +8,8 @@ import {
 } from "@eval/contracts";
 import type { ClusteringRequest, ClusteringResult } from "./types.js";
 import { normalizeLabel } from "./library.js";
+import { categoryPathIssues, temporaryReferenceInDescription, unionCategoryPaths } from "./organization.js";
+import { references } from "./references.js";
 import schema from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -41,6 +43,16 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const classChoices = (component: string | undefined) => input.library.components
     .filter((entry) => component !== undefined && entry.id === componentKey(component))
     .flatMap((entry) => entry.classes.map(({ id, label }) => ({ id, label, component: entry.label })));
+  const directoryRefs = references(input);
+  const temporaryRefs = new Set([...directoryRefs.classIds.keys(), ...directoryRefs.itemIds.keys(),
+    ...input.library.components.map((_, index) => `P${index + 1}`)]);
+  const description = (text: string | undefined, path: string) => {
+    if (text === undefined) return;
+    if (!text.trim()) issue("clustering_description_empty", path, "类名称、定义和维护理由不能为空。", text);
+    const reference = temporaryReferenceInDescription(text, temporaryRefs);
+    if (reference) issue("clustering_temporary_reference", path,
+      "长期类名称和定义不能使用本次请求的临时编号来解释含义；请直接描述现象及边界。", reference);
+  };
 
   const intoIds = new Set(value.merges.map((merge) => merge.into));
   const fromIds = new Set<string>();
@@ -62,6 +74,35 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   for (const id of intoIds)
     if (fromIds.has(id))
       issue("clustering_merge_target", "/merges", "into 不能同时是其他合并的源", id);
+
+  const updated = new Set<string>();
+  for (const [index, update] of (value.class_updates ?? []).entries()) {
+    const path = `/class_updates/${index}`, current = classes.find(item => item.id === update.class_id);
+    if (!current) issue("clustering_update_unknown", `${path}/class_id`, "只能维护本次库中的活跃问题类。", update.class_id);
+    if (fromIds.has(update.class_id)) issue("clustering_update_merged", `${path}/class_id`, "请维护合并后的 into 类，不能同时维护 from 类。", update.class_id);
+    if (updated.has(update.class_id)) issue("clustering_update_duplicate", `${path}/class_id`, "同一问题类只能维护一次。", update.class_id);
+    updated.add(update.class_id);
+    description(update.label, `${path}/label`);
+    description(update.definition, `${path}/definition`);
+    if (!update.reason.trim()) issue("clustering_update_reason_empty", `${path}/reason`, "维护理由不能为空。", update.reason);
+    errors.push(...categoryPathIssues(update.category_paths, `${path}/category_paths`));
+    if (update.label && current) {
+      const name = normalizeLabel(update.label);
+      const collision = classes.find(item => item.id !== current.id && !fromIds.has(item.id) &&
+        classComponents.get(item.id) === classComponents.get(current.id) &&
+        [item.label, ...item.aliases, value.class_updates?.find(update => update.class_id === item.id)?.label ?? ""]
+          .some(label => normalizeLabel(label) === name));
+      if (collision) issue("clustering_update_label_existing", `${path}/label`, "该名称已属于同组件的其他活跃类；同义类应明确合并。", update.label, collision.id);
+    }
+  }
+  for (const into of intoIds) {
+    const index = value.merges.findIndex(merge => merge.into === into);
+    const explicit = value.class_updates?.find(update => update.class_id === into)?.category_paths;
+    const from = value.merges.filter(merge => merge.into === into).flatMap(merge => merge.from);
+    const paths = explicit ?? unionCategoryPaths(...[into, ...from].map(id => classes.find(item => item.id === id)?.category_paths));
+    if (paths.length > 3) issue("clustering_merge_category_budget", `/merges/${index}`,
+      "合并后的主题路径超过三条；请在 class_updates 中明确整理 into 类的 category_paths。", paths);
+  }
 
   const assigned = new Set<string>();
   for (const [index, assignment] of value.assignments.entries()) {
@@ -99,7 +140,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
   for (const item of input.items)
     if (!assigned.has(item.id))
-      issue("clustering_item_missing", "/assignments", "每个观察都必须归类", item.id);
+      issue("clustering_item_missing", "/assignments", "每个观察都必须归类或明确延期", item.id);
 
   const usedKeys = new Set(
     value.assignments.flatMap((assignment) => (assignment.new_class_key ? [assignment.new_class_key] : [])),
@@ -119,6 +160,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("clustering_new_component_empty", `/new_classes/${index}/component`, "问题组件不能为空");
     if (!entry.definition.trim())
       issue("clustering_new_definition_empty", `/new_classes/${index}/definition`, "问题定义不能为空");
+    description(entry.label, `/new_classes/${index}/label`);
+    description(entry.definition, `/new_classes/${index}/definition`);
+    errors.push(...categoryPathIssues(entry.category_paths, `/new_classes/${index}/category_paths`));
     const key = `${componentKey(entry.component)}\u0000${label}`;
     if (labels.has(key))
       issue("clustering_new_class_duplicate", `/new_classes/${index}/label`, "同一组件内的新类 label 不能重复", entry.label);
@@ -126,7 +170,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const existing = classes.find(
       (problem) =>
         classComponents.get(problem.id) === componentKey(entry.component) &&
-        (normalizeLabel(problem.label) === label ||
+        (normalizeLabel(problem.label) === label || normalizeLabel(value.class_updates?.find(update => update.class_id === problem.id)?.label ?? "") === label ||
           problem.aliases.some((alias) => normalizeLabel(alias) === label)),
     );
     if (existing)
@@ -137,11 +181,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         entry.label,
         existing.id,
       );
-    if (input.budget.active_classes > 0 && !entry.closest_existing)
+    if (classChoices(entry.component).length > 0 && !entry.closest_existing)
       issue(
         "clustering_new_class_uncompared",
         `/new_classes/${index}/closest_existing`,
-        "库非空时必须给出最接近的已有问题类",
+        "同组件已有活跃类时必须给出最接近的已有问题类",
         entry.label,
       );
     if (entry.closest_existing && !classIds.has(entry.closest_existing))
@@ -151,6 +195,11 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         "closest_existing 必须是库中活跃问题类",
         entry.closest_existing,
       );
+    if (entry.closest_existing && classIds.has(entry.closest_existing) &&
+      classComponents.get(entry.closest_existing) !== componentKey(entry.component))
+      issue("clustering_new_class_component_comparison", `/new_classes/${index}/closest_existing`,
+        "closest_existing 只能比较同组件的活跃类；该组件没有已有类时填 null。",
+        entry.closest_existing, { available_classes: classChoices(entry.component) });
   }
   if (value.new_classes.length > input.budget.max_new_classes)
     issue(
@@ -207,6 +256,24 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         { key: entry.key, support: support.get(entry.key) ?? 0 },
         input.budget.min_support,
       );
+
+  for (const [index, assignment] of value.assignments.entries()) {
+    if (assignment.deferred_reason === undefined) continue;
+    const item = items.get(assignment.item_id);
+    if (!assignment.deferred_reason.trim()) issue("clustering_deferred_reason_empty", `/assignments/${index}/deferred_reason`, "延期归类必须说明实际预算或支持数量限制。");
+    if (!item) continue;
+    const existing = classes.find(problem => classComponents.get(problem.id) === componentKey(item.component) &&
+      problem.definition === item.definition &&
+      [problem.label, ...problem.aliases].some(label => normalizeLabel(label) === normalizeLabel(item.label)));
+    if (existing) issue("clustering_deferred_existing", `/assignments/${index}`,
+      "同组件已有同名或别名且定义完全相同的活跃类，应选择该类而非延期。", assignment.item_id, existing.id);
+    const newComponent = !componentIds.has(normalizeLabel(item.component));
+    const limited = value.new_classes.length >= input.budget.max_new_classes || expectedClasses >= input.budget.max_classes ||
+      (newComponent && (newComponents.size >= input.budget.max_new_components ||
+        input.budget.active_components + newComponents.size >= input.budget.max_components)) || item.count < input.budget.min_support;
+    if (!limited) issue("clustering_deferred_unjustified", `/assignments/${index}`,
+      "创建预算和支持数量充足时不能延期；请复用合适类或声明符合预算的新类。", assignment.item_id);
+  }
 
   if (errors.length) throw new ValidationError(errors);
 }

@@ -10,7 +10,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 const { createProblemBrowser } = await import(pathToFileURL(path.join(ROOT, "apps/host/dashboard/problems.js")).href);
 
 function model(id: string, name: string, count = 1) {
-  return { model: id, name, updated_at: "2026-10-01T01:00:00Z", totals: { components: 1, classes: count, occurrences: count * 2 }, merged: [], components: [{ id: `component-${id}`, label: "推理与验证", definition: "计算与判断", aliases: [], classes: Array.from({ length: count }, (_, index) => ({ id: `class-${id}-${index}`, label: index ? "答案缺少核对" : "计算存在错误", definition: index ? "未核对结果" : "计算结果不正确", aliases: index ? ["检查缺失"] : [], occurrences: 2, first_seen: null })) }] };
+  return { model: id, name, updated_at: "2026-10-01T01:00:00Z", totals: { components: 1, classes: count, occurrences: count * 2 }, merged: [], categories: [], components: [{ id: `component-${id}`, label: "推理与验证", definition: "计算与判断", aliases: [], classes: Array.from({ length: count }, (_, index) => ({ id: `class-${id}-${index}`, label: index ? "答案缺少核对" : "计算存在错误", definition: index ? "未核对结果" : "计算结果不正确", aliases: index ? ["检查缺失"] : [], occurrences: 2, first_seen: null })) }] };
 }
 function detail(id: string, page = 1) {
   return { model: id, name: id, class: { id: `class-${id}-0`, label: "计算存在错误", definition: "计算结果不正确", aliases: [], status: "active", first_seen: null }, component: { id: `component-${id}`, label: "推理与验证", definition: "计算与判断" }, total: 51, page, page_size: 50, lineage: [{ id: "old", label: "旧类", into: `class-${id}-0`, into_label: "计算存在错误", reason: "同义" }], occurrences: [true, false].map((available, index) => ({ id: `occurrence-${index}`, run_id: "run-1", batch_id: "batch-1", case_id: `case-${index}`, version: id, evaluator_version: "r52", finding_id: "f0", evidence_status: index ? "uncertain" : "established", message_index: 3, quote: index ? "待核实证据" : "确认的证据", source: { file: "/data/2026-10-01.jsonl", line: index + 1 }, classification: "assigned", previous_class_id: null, at: "2026-10-01T01:00:00Z", recall: { available, reason: available ? null : "run_missing", url: available ? "/?run=run-1&batch=batch-1&case=case-0&task=task-1&finding=f0" : null, attribution_task_id: available ? "task-1" : null } })) };
@@ -107,5 +107,23 @@ test("switching models discards a late class response and class errors can retry
     view.document.querySelector("[data-retry-class]").click();
     await settle();
     assert.equal(view.state.detail.model, "ae");
+  } finally { view.dom.window.close(); }
+});
+
+test("topics show distinct defect counts and select the same existing class", async () => {
+  const item = model("af", "A组Fast", 2);
+  const library = { ...item, categories: [{ path: ["指令遵循", "遗漏"], class_ids: ["class-af-1"], occurrences: 1 }],
+    components: item.components.map(component => ({ ...component, classes: component.classes.map((problem, index) => ({ ...problem,
+      category_paths: index ? [["指令遵循", "遗漏"], ["完整性"]] : [["数值可靠性"]] })) })) };
+  const view = await page(url => url === "/api/dashboard/library" ? [library] : {
+    ...detail("af"), class: { ...detail("af").class, category_paths: [["数值可靠性"]] },
+  });
+  try {
+    await view.load();
+    assert.match(view.document.querySelector("#problem-topics").textContent, /指令遵循 \/ 遗漏.*1 次出现/);
+    view.document.querySelector("[data-topic]").click();
+    assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 1);
+    assert.equal(view.document.querySelector("[aria-level='3']").dataset.class, "class-af-1");
+    assert.match(view.document.querySelector("#problem-detail").textContent, /主题数值可靠性/);
   } finally { view.dom.window.close(); }
 });

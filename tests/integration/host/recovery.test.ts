@@ -21,6 +21,7 @@ import { validateRun } from "../../fixtures/services.js";
 import {
   attributionResult,
   draftFor,
+  invalidDraft,
   emptyAudit,
   fakeEvaluatorVersion,
   fakeIdentity,
@@ -73,6 +74,7 @@ async function fixture(rows = [raw("q", null)]) {
     taskId: task.id,
     attemptId: "first",
     engine: fakeIdentity,
+    evidenceBank: [...prepared.evidenceBank],
     evaluation: prepared.evaluation,
     model: {
       provider: "mock",
@@ -92,17 +94,25 @@ async function fixture(rows = [raw("q", null)]) {
   };
   const evaluation = draftFor(
     spec,
-    task.stage === "attribution" ? attributionResult(true, "2+2=4") : comparisonResult(),
+    task.stage === "attribution" ? attributionResult(true, "2+2=4", true, task.inputIds.answer) : comparisonResult(),
   );
   const value: Submission = {
     taskId: task.id,
     attemptId: spec.attemptId,
     submissionId: randomUUID(),
     evaluation,
-    audit: emptyAudit(),
+    audit: { ...emptyAudit(), evidenceBank: [...spec.evidenceBank] },
     usage: emptyUsage(),
   };
   return { directory, store, spec, value };
+}
+
+function specForTask(store: RunStore, base: AttemptSpec, taskId: string, attemptId: string): AttemptSpec {
+  const task = store.manifest.tasks.find(task => task.id === taskId)!;
+  const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, store.state.receipts[id]]));
+  const prepared = prepare(task, store.inputs, dependencies);
+  return { ...base, ...prepared, evidenceBank: [...prepared.evidenceBank], taskId, attemptId,
+    inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })) };
 }
 test("only the current active attempt retains its spec and accepted submissions stay idempotent", async () => {
   const { directory, store, spec, value } = await fixture();
@@ -229,7 +239,7 @@ test("independent task activations share a checkpoint instead of waiting for eac
     await blocked;
     return write(...args);
   });
-  const pending = tasks.map((task, index) => store.activate({ ...spec, taskId: task.id, attemptId: `attempt-${index}` }));
+  const pending = tasks.map((task, index) => store.activate(specForTask(store, spec, task.id, `attempt-${index}`)));
   try {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(tasks.filter((task) => store.manifest.states[task.id].status === "running").length, tasks.length);
@@ -286,9 +296,11 @@ test("concurrent tasks cannot reserve the same submission ID", async () => {
   const { directory, store, spec, value } = await fixture();
   const tasks = store.manifest.tasks.filter((task) => task.stage === "attribution");
   try {
-    await Promise.all(tasks.map((task, index) => store.activate({ ...spec, taskId: task.id, attemptId: `attempt-${index}` })));
-    const results = await Promise.allSettled(tasks.map((task, index) => store.accept({
-      ...value, taskId: task.id, attemptId: `attempt-${index}`,
+    const attempts = tasks.map((task, index) => specForTask(store, spec, task.id, `attempt-${index}`));
+    await Promise.all(attempts.map(attempt => store.activate(attempt)));
+    const results = await Promise.allSettled(attempts.map(attempt => store.accept({
+      ...value, taskId: attempt.taskId, attemptId: attempt.attemptId,
+      evaluation: draftFor(attempt, taskResult(attempt)), audit: { ...emptyAudit(), evidenceBank: [...attempt.evidenceBank] },
     })));
     assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
     assert.equal(results.filter((r) => r.status === "rejected").length, 1);
@@ -322,7 +334,11 @@ test("failed follow-up commits roll back task changes and preserve a queued inde
     } },
   });
   store.manifest.executionScope = [spec.taskId];
-  const secondSpec = { ...spec, taskId: other.id, attemptId: "independent", inputs: Object.entries(other.inputIds).map(([name, id]) => ({ name, id })) };
+  const secondCriteria = store.state.receipts[other.dependencies.criteria];
+  assert(secondCriteria);
+  const secondPrepared = prepare(other, store.inputs, { criteria: secondCriteria });
+  const secondSpec = { ...spec, taskId: other.id, attemptId: "independent", evaluation: secondPrepared.evaluation,
+    prompt: secondPrepared.prompt, evidenceBank: [...secondPrepared.evidenceBank], inputs: Object.entries(other.inputIds).map(([name, id]) => ({ name, id })) };
   let first: Promise<unknown> | undefined, second: Promise<unknown> | undefined;
   try {
     await store.activate(spec);
@@ -331,7 +347,10 @@ test("failed follow-up commits roll back task changes and preserve a queued inde
     // Attach the rejection observer before releasing the deliberate IO failure.
     const firstOutcome = first.then(() => "accepted", (error: Error) => error.message);
     await entered;
-    second = store.accept({ ...value, taskId: other.id, attemptId: secondSpec.attemptId, submissionId: randomUUID() });
+    const secondEvaluation = draftFor(secondSpec, taskResult(secondSpec));
+    assert.notDeepEqual(secondSpec.evidenceBank, spec.evidenceBank, "local selections resolve through each task's own input directory");
+    second = store.accept({ ...value, taskId: other.id, attemptId: secondSpec.attemptId,
+      evaluation: secondEvaluation, audit: { ...emptyAudit(), evidenceBank: [...secondSpec.evidenceBank] }, submissionId: randomUUID() });
     release();
     assert.equal(await firstOutcome, "follow-up checkpoint unavailable");
     const accepted = await second;
@@ -411,6 +430,7 @@ test("correctness receipts are durable references and preserve exact duplicate c
   try {
     await store.activate(spec);
     await store.checkpoint(spec.taskId, {
+      evidenceBank: [...spec.evidenceBank],
       draft: value.evaluation,
       errors: [],
       contentSubmissions: 3,
@@ -546,29 +566,18 @@ test("successful submissions append immediately without replacing earlier lines"
       .filter((task) => task.stage === "attribution")
       .map((task, i) => {
       const attemptId = `attempt-${i}`;
-      const prepared = prepare(task, store.inputs, {});
-      const taskSpec = {
-        ...spec,
-        ...prepared,
-        inputs: Object.entries(task.inputIds).map(([name, id]) => ({
-          name,
-          id,
-        })),
-      };
+      const taskSpec = specForTask(store, spec, task.id, attemptId);
       return {
         ...value,
         evaluation: draftFor(taskSpec, taskResult(taskSpec)),
+        audit: { ...emptyAudit(), evidenceBank: [...taskSpec.evidenceBank] },
         taskId: task.id,
         attemptId,
         submissionId: randomUUID(),
       };
     });
     for (const submission of submissions)
-      await store.activate({
-        ...spec,
-        taskId: submission.taskId,
-        attemptId: submission.attemptId,
-      });
+      await store.activate(specForTask(store, spec, submission.taskId, submission.attemptId));
     const file = path.join(store.run, "results/attribution.jsonl");
     assert.equal(await exists(file), false);
     await store.accept(submissions[0]);
@@ -684,16 +693,10 @@ test("invalid evidence is rejected without producing a formal receipt", async ()
   const { directory, store, spec, value } = await fixture();
   try {
     await store.activate(spec);
-    const invalid = taskResult(spec) as {
-      findings?: { evidence: { quote: string }[] }[];
-      evaluations?: { A: { findings: { evidence: { quote: string }[] }[] } };
-    };
-    const findings = invalid.findings ?? invalid.evaluations!.A.findings;
-    findings[0].evidence[0].quote = "invented";
     await assert.rejects(
       store.accept({
         ...value,
-        evaluation: draftFor(spec, invalid),
+        evaluation: invalidDraft(spec),
         submissionId: randomUUID(),
       }),
       /原文|证据/,

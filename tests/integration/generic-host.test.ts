@@ -114,7 +114,7 @@ test("Host accepts generic JSON and profiles replace prompt and schema together"
       },
     },
   ]);
-  const binding = workflow.bind(plan.tasks[0], plan.inputs, {}),
+  const binding = workflow.bind(plan.tasks[0], plan.inputs, {}, { tasks: plan.tasks }),
     audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
   assert(registry.prepare(binding).prompt.startsWith("Return the value as score."));
   assert.throws(() => registry.resolve(binding, { summary: "wrong profile" }, audit), /score/);
@@ -143,8 +143,9 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
     const dependentWorkflow: WorkflowDefinition = {
       ...workflow,
       plan: async () => dependentPlan,
-      bind(task, inputs, dependencies) {
-        const binding = workflow.bind(task, inputs, dependencies);
+      bind(task, inputs, dependencies, context) {
+        assert.deepEqual(context.tasks.map((item) => item.id), dependentPlan.tasks.map((item) => item.id));
+        const binding = workflow.bind(task, inputs, dependencies, context);
         if (task.dependencies.previous) {
           const receipt = dependencies.previous;
           assert.equal(receipt?.taskId, task.dependencies.previous);

@@ -1,7 +1,7 @@
 import path from "node:path";
 import * as sdk from "#pi-sdk";
-import type { AgentBackend, EngineIdentity } from "@eval/contracts";
-import { inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+import { object, type AgentBackend, type EngineIdentity } from "@eval/contracts";
+import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
 
 export function piBackend(identity: EngineIdentity): AgentBackend {
   return {
@@ -9,6 +9,9 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
     async createSession(options) {
       const { spec, workdir } = options,
         agentDir = path.join(workdir, ".agent");
+      const names = options.tools.map((tool) => tool.name);
+      let nextTool = contentToolName(spec.evaluation, Boolean(spec.recovery?.inspection));
+      let activeNames = activeToolNames({ content: [] }, names, nextTool);
       const secret = process.env[spec.model.apiKeyEnv];
       if (!secret) throw new Error(`Missing ${spec.model.apiKeyEnv}`);
       const runtime = await sdk.ModelRuntime.create({
@@ -39,7 +42,24 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         systemPrompt: spec.evaluation.systemPrompt,
         extensionFactories: [
           (api) => {
-            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation));
+            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation, activeNames));
+            if (spec.debug && spec.model.api === "openai-responses") api.on("provider_stream_event", (event) => {
+              if (event.api !== "openai-responses") return;
+              if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return;
+              const data = object(event.data);
+              if (data.type !== "response.completed" && data.type !== "response.incomplete") return;
+              if (!data.response || typeof data.response !== "object" || Array.isArray(data.response)) return;
+              const response = object(data.response);
+              if (!Array.isArray(response.output)) return;
+              const calls = response.output.flatMap(item => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                const call = object(item);
+                return call.type === "function_call" && typeof call.arguments === "string"
+                  ? [{ id: call.id, call_id: call.call_id, name: call.name, arguments: call.arguments }] : [];
+              });
+              if (calls.length) options.onEvent({ type: "provider_tool_arguments", response_id: response.id,
+                status: response.status, calls });
+            });
           },
         ],
       });
@@ -48,10 +68,14 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         name: tool.name,
         label: tool.name,
         description: tool.description,
-        parameters: inlineToolSchema(tool.inputSchema) as sdk.ToolDefinition["parameters"],
+        // Host owns complete submission validation; the SDK only checks the JSON object envelope.
+        parameters: (tool.name === "submit_evaluation" || (tool.name === "inspect_material" && !spec.evaluation.fileSubmission)
+          ? { type: "object" } : inlineToolSchema(tool.inputSchema)) as sdk.ToolDefinition["parameters"],
         executionMode: "sequential",
         async execute(_id, args, signal) {
           const result = await options.execute(tool.name, args, signal);
+          nextTool = (result.details as { next_tool?: string } | undefined)?.next_tool ?? nextTool;
+          activeNames = activeToolNames(result, names, nextTool);
           if (result.isError)
             throw new Error(
               result.content

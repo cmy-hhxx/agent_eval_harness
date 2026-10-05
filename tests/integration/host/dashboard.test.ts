@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -16,7 +17,7 @@ import { json, listen } from "@eval/runtime/http";
 import {
   attributionRow, buildPlan, caseResultView, listInputInventory, listRunCases, readCaseDetail,
   readRegisteredInput, readRunTasks, readTaskResult, writeRunState,
-  type Candidate, type TaskData,
+  type Candidate, type Checkpoint, type TaskData,
 } from "@eval/workflows/comparison";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
@@ -328,7 +329,11 @@ test("dashboard case results include comparison evaluations and preserve attribu
     assessments: { a_fast: { meets_core: true, summary: "s" } },
     verdicts: { a_fast__vs__b_fast: { result: "win" } },
   })!;
-  assert.deepEqual(comparison.evaluations, { a_fast: attributionResult() });
+  const expectedComparison = attributionResult();
+  for (const item of [...expectedComparison.correctness_evidence, ...expectedComparison.findings.flatMap(finding => finding.evidence)])
+    delete (item as Partial<typeof item>).evidence_id;
+  assert.deepEqual(comparison.evaluations, { a_fast: expectedComparison });
+  assert.ok(attributionResult().findings[0]!.evidence[0]!.evidence_id, "display projection preserves the stored program coordinate");
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
   assert.deepEqual(Object.keys(comparison).sort(), [
     "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "task_analysis", "verdicts",
@@ -338,6 +343,8 @@ test("dashboard case results include comparison evaluations and preserve attribu
   const attribution = caseResultView("attribution", { evaluation: source })!;
   const expected = structuredClone(source);
   expected.findings[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
+  for (const item of [...expected.correctness_evidence, ...expected.findings.flatMap(finding => finding.evidence)])
+    delete (item as Partial<typeof item>).evidence_id;
   assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
   assert.equal(caseResultView("attribution", undefined), null);
 });
@@ -564,11 +571,21 @@ test("dashboard problem library lists every configured model and recalls intact 
     ...(await readJson(fixture.configFile)), clustering: { ...fixture.config.clustering, enabled: false },
   });
   const otherRun = path.join(fixture.config.output.path, "run-two");
-  await writeJson(path.join(otherRun, "state.json"), { ...(await readJson(path.join(fixture.run, "state.json"))), runId: "run-two" });
-  await writeJsonl(path.join(otherRun, "results", "attribution.jsonl"), [fixture.row]);
+  const otherInputId = randomUUID();
+  const otherState = await readJson<Checkpoint>(path.join(fixture.run, "state.json"));
+  otherState.runId = "run-two";
+  // Each new run registers a fresh input UUID; only same-run continuation reuses it.
+  otherState.inputs[otherInputId] = otherState.inputs[fixture.task.inputIds.answer];
+  delete otherState.inputs[fixture.task.inputIds.answer];
+  for (const task of Object.values(otherState.tasks))
+    for (const [label, inputId] of Object.entries(task.inputIds))
+      if (inputId === fixture.task.inputIds.answer) task.inputIds[label] = otherInputId;
+  await writeJson(path.join(otherRun, "state.json"), otherState);
+  await writeJsonl(path.join(otherRun, "results", "attribution.jsonl"), [{ ...fixture.row, input_id: otherInputId }]);
   const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
   const stored = await readJson<ProblemLibrary>(libraryFile);
-  stored.occurrences.push({ ...stored.occurrences[0], id: "o3", run_id: "run-two", at: "2025-12-31T00:00:00.000Z" });
+  stored.occurrences.push({ ...stored.occurrences[0], id: "o3", run_id: "run-two", input_id: otherInputId,
+    at: "2025-12-31T00:00:00.000Z" });
   await writeJson(libraryFile, stored);
   const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
   try {
@@ -614,6 +631,8 @@ test("dashboard problem library lists every configured model and recalls intact 
     assert.deepEqual(classDetail.occurrences[1].recall,
       { available: false, reason: "result_missing", attribution_task_id: null, url: null });
     assert.equal(classDetail.occurrences[2].recall.available, true);
+    assert.equal(classDetail.occurrences[2].input_id, otherInputId);
+    assert.notEqual(classDetail.occurrences[2].input_id, classDetail.occurrences[0].input_id);
     assert.equal(new URL(classDetail.occurrences[2].recall.url, server.url).searchParams.get("run"), "run-two");
     assert(!("evaluation" in classDetail.occurrences[0]), "library projection retains coordinates, never formal result bodies");
     // Undeclared model files must not become browseable from the current configuration.
@@ -675,6 +694,7 @@ test("dashboard problem samples paginate in stable order and validate page numbe
   const library = await readJson<ProblemLibrary>(libraryFile);
   for (let index = 0; index < 50; index++) library.occurrences.push({
     ...library.occurrences[0], id: `o-extra-${String(index).padStart(2, "0")}`,
+    input_id: randomUUID(), case_id: `q-extra-${index}`,
     run_id: "removed-run", at: "2025-12-31T00:00:00.000Z",
   });
   await writeJson(libraryFile, library);
@@ -686,12 +706,59 @@ test("dashboard problem samples paginate in stable order and validate page numbe
     assert.equal(first.total, 52);
     assert.equal(first.page_size, 50);
     assert.equal(first.occurrences.length, 50);
+    assert.equal(second.total, first.total);
+    assert.equal(second.page_size, first.page_size);
+    assert.equal(second.occurrences.length, first.total - first.page_size);
     assert.deepEqual(second.occurrences.map((item: { id: string }) => item.id), ["o-extra-01", "o-extra-00"]);
+    assert.equal(new Set([...first.occurrences, ...second.occurrences].map((item: { input_id: string; finding_id: string }) =>
+      JSON.stringify([item.input_id, item.finding_id]))).size, first.total);
     assert(second.occurrences.every((item: { recall: { available: boolean; reason: string } }) =>
       !item.recall.available && item.recall.reason === "run_missing"));
     assert.equal((await (await fetch(`${route}?page=3`)).json()).occurrences.length, 0);
     for (const value of ["0", "-1", "1.5", "NaN", "9007199254740992"])
       assert.equal((await fetch(`${route}?page=${value}`)).status, 400);
+  } finally {
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard counts one finding across components and topics while retaining each class's sample recall", async () => {
+  const fixture = await setup(false, true);
+  const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
+  const library = await readJson<ProblemLibrary>(libraryFile);
+  library.classes.k1.category_paths = [["正确性", "数值"], ["数值可靠性"]];
+  library.components.c2 = { ...library.components.c1, id: "c2", label: "工具输出解读" };
+  library.classes.k3 = { ...library.classes.k1, id: "k3", component_id: "c2", label: "工具数值误读",
+    aliases: [], category_paths: [["正确性", "数值"], ["工具结果"]] };
+  library.occurrences.push(
+    { ...library.occurrences[0], id: "o-shared", class_id: "k3" },
+    { ...library.occurrences[0], id: "o-repeated", at: "2025-12-31T00:00:00.000Z" },
+  );
+  await writeJson(libraryFile, library);
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    const [model] = await (await fetch(`${server.url}/api/dashboard/library`)).json();
+    assert.deepEqual(model.totals, { components: 2, classes: 2, occurrences: 2 });
+    assert.deepEqual(model.components.map((component: { classes: { occurrences: number }[] }) =>
+      component.classes.map(problem => problem.occurrences)), [[2], [1]]);
+    const topic = model.categories.find((category: { path: string[] }) => JSON.stringify(category.path) === '["正确性","数值"]');
+    assert.deepEqual(topic.class_ids, ["k1", "k3"]);
+    assert.equal(topic.occurrences, 2);
+    for (const [classId, total] of [["k1", 2], ["k3", 1]] as const) {
+      const detail = await (await fetch(`${server.url}/api/dashboard/library/a_fast/classes/${classId}?page=1`)).json();
+      assert.equal(detail.total, total);
+      assert.equal(detail.page_size, 50);
+      assert.equal(detail.occurrences.length, total);
+      assert.equal(detail.occurrences[0].input_id, fixture.task.inputIds.answer);
+      assert.equal(detail.occurrences[0].finding_id, "f0");
+      assert.equal(detail.occurrences[0].recall.available, true);
+      assert.equal(detail.occurrences[0].recall.attribution_task_id, fixture.task.id);
+      assert.equal(new URL(detail.occurrences[0].recall.url, server.url).searchParams.get("finding"), "f0");
+      const next = await (await fetch(`${server.url}/api/dashboard/library/a_fast/classes/${classId}?page=2`)).json();
+      assert.equal(next.total, total);
+      assert.deepEqual(next.occurrences, []);
+    }
   } finally {
     await server.close();
     await rm(fixture.directory, { recursive: true, force: true });
@@ -967,7 +1034,7 @@ test("run-scoped settings are validated with the same model and execution config
     assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
     const defaults = editableDashboardSettings({ bindings: { comparison: { profile: "judge" } }, models: { judge: {} } });
     assert.equal(defaults.execution.concurrency, 8);
-    assert.equal(defaults.bindings.comparison.thinking, "high");
+    assert.equal(defaults.bindings.comparison.thinking, "xhigh");
     assert.equal(editableDashboardSettings({
       models: { judge: { thinking: "low" } },
       bindings: { comparison: { profile: "judge", thinking: "medium" } },

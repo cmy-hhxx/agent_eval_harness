@@ -1,14 +1,190 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError, type AgentRequest } from "@eval/contracts";
+import { AgentRegistry } from "@eval/host";
 import { clusteringAgent, clusteringProfile } from "./index.js";
-import type { ClusteringRequest, ClusteringResult } from "./types.js";
+import { categoryPathIssues } from "./organization.js";
+import type { ClusteringRequest, ClusteringResult, ClusteringSubmission } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 const request = () => structuredClone(example.request) as unknown as AgentRequest;
 const requestInput = (value: AgentRequest) => value.input as unknown as ClusteringRequest;
 const result = () => structuredClone(example.result) as unknown as ClusteringResult;
+const submission = (): ClusteringSubmission => {
+  const canonical = result();
+  const input = requestInput(request());
+  const classes = input.library.components.flatMap(component => component.classes);
+  const classReference = (id: string) => `C${classes.findIndex(entry => entry.id === id) + 1}`;
+  return {
+    assignments: canonical.assignments.map(({ item_id, class_id, new_class_key, ...entry }) => ({
+      ...entry,
+      item_id: `O${input.items.findIndex(item => item.id === item_id) + 1}`,
+      ...(class_id === undefined ? {} : { class_id: classReference(class_id) }),
+      ...(new_class_key === undefined ? {} : {
+        new_class_index: canonical.new_classes.findIndex(entry => entry.key === new_class_key),
+      }),
+    })),
+    new_classes: canonical.new_classes.map(({ key: _key, closest_existing, ...entry }) => ({
+      ...entry,
+      ...(closest_existing === null ? {} : { closest_existing: classReference(closest_existing) }),
+    })),
+    merges: canonical.merges.map(entry => ({ ...entry, into: classReference(entry.into), from: entry.from.map(classReference) })),
+  };
+};
+
+test("Clustering binds a new class by position and fills an empty component's comparison without model copying", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request(), input = requestInput(bound), draft = submission();
+  input.items = [input.items[1]!];
+  input.library.components = [];
+  input.budget.active_classes = 0;
+  input.budget.active_components = 0;
+  draft.assignments = [{ item_id: "O1", new_class_index: 0 }];
+  delete draft.new_classes[0]!.closest_existing;
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  const before = structuredClone({ bound, draft });
+  // A declaration's prose can change between repairs without breaking its assignment.
+  for (const label of ["风险提示开篇边界越位", "风险提示开篇开篇越位"]) {
+    draft.new_classes[0]!.label = label;
+    const resolved = registry.resolve(binding, draft, audit) as ClusteringResult;
+    registry.validate(binding, resolved, audit);
+    assert.deepEqual(resolved.assignments, [{ item_id: "o2", new_class_key: "n1" }]);
+    assert.equal(resolved.new_classes[0]!.key, "n1");
+    assert.equal(resolved.new_classes[0]!.closest_existing, null);
+    assert.equal(resolved.new_classes[0]!.component, draft.new_classes[0]!.component);
+    assert(!("new_class_index" in resolved.assignments[0]!));
+    assert(!("key" in draft.new_classes[0]!));
+  }
+  assert.deepEqual(bound, before.bound);
+  assert.equal(draft.assignments[0]!.new_class_index, 0);
+  assert(!("closest_existing" in draft.new_classes[0]!));
+  input.budget.max_new_classes = 0;
+  const resolved = registry.resolve(binding, draft, audit);
+  assert.throws(() => registry.validate(binding, resolved, audit), /超过本次预算/);
+});
+
+test("Clustering requires a real new-class position and offers only current declaration positions", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const binding = { agent: "clustering", profile: "default", request: request() };
+  const draft = submission();
+  draft.assignments[1]!.new_class_index = 1;
+  assert.throws(() => registry.resolve(binding, draft, audit), error => {
+    assert(error instanceof ValidationError);
+    assert.deepEqual(error.issues!.map(({ code, path }) => ({ code, path })), [
+      { code: "clustering_new_class_index", path: "/assignments/1/new_class_index" },
+    ]);
+    assert.deepEqual(error.issues![0]!.expected, { available_new_classes: [
+      { index: 0, component: "模型自身推理", label: "单位换算遗漏" },
+    ] });
+    return true;
+  });
+  for (const invalid of [-1, 0.5]) {
+    draft.assignments[1]!.new_class_index = invalid;
+    assert.throws(() => registry.resolve(binding, draft, audit), ValidationError);
+  }
+  draft.assignments[1]!.new_class_index = 0;
+  draft.new_classes = [];
+  assert.throws(() => registry.resolve(binding, draft, audit), error => {
+    assert(error instanceof ValidationError);
+    assert.deepEqual(error.issues![0]!.expected, { available_new_classes: [] });
+    return true;
+  });
+});
+
+test("Clustering keeps declaration positions through reorder and permits multiple observations to select one class", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request(), draft = submission();
+  draft.new_classes.push({ ...draft.new_classes[0]!, label: "来源核对遗漏", definition: "模型给出来源结论前未核对工具中的原始字段。" });
+  draft.assignments[0] = { item_id: "O1", new_class_index: 1 };
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  for (const reverse of [false, true]) {
+    if (reverse) draft.new_classes.reverse();
+    const resolved = registry.resolve(binding, draft, audit) as ClusteringResult;
+    registry.validate(binding, resolved, audit);
+    assert.equal(resolved.assignments[0]!.new_class_key, resolved.new_classes[1]!.key);
+    assert.equal(resolved.assignments[1]!.new_class_key, resolved.new_classes[0]!.key);
+    assert.equal(resolved.new_classes[1]!.label, draft.new_classes[1]!.label);
+  }
+  draft.new_classes = [draft.new_classes[0]!];
+  draft.assignments[0]!.new_class_index = 0;
+  const shared = registry.resolve(binding, draft, audit) as ClusteringResult;
+  registry.validate(binding, shared, audit);
+  assert.deepEqual(shared.assignments.map(entry => entry.new_class_key), ["n1", "n1"]);
+});
+
+test("Clustering cannot omit a closest class when its component has candidates, including aliases", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request(), input = requestInput(bound), draft = submission();
+  input.library.components[0]!.aliases = ["推理"];
+  input.library.components.push({ id: "component-tool", label: "搜索工具", definition: "", aliases: [],
+    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1 }] });
+  input.items[1]!.component = "推理";
+  draft.new_classes[0]!.component = " 推理 ";
+  delete draft.new_classes[0]!.closest_existing;
+  const before = structuredClone({ bound, draft });
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  assert.throws(() => registry.resolve(binding, draft, audit), error => {
+    assert(error instanceof ValidationError);
+    assert.equal(error.issues!.length, 1);
+    assert.equal(error.issues![0]!.code, "clustering_new_class_uncompared");
+    assert.equal(error.issues![0]!.path, "/new_classes/0/closest_existing");
+    assert.deepEqual(error.issues![0]!.expected, { available_classes: [
+      { id: "C1", label: "算术错误", component: "模型自身推理" },
+    ] });
+    return true;
+  });
+  assert.deepEqual({ bound, draft }, before);
+  draft.new_classes[0]!.closest_existing = "C1";
+  const resolved = registry.resolve(binding, draft, audit);
+  registry.validate(binding, resolved, audit);
+});
+
+test("Clustering fills null from this component's candidates rather than the whole library", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request(), input = requestInput(bound), draft = submission();
+  input.items = [input.items[1]!];
+  input.library.components[0]!.classes = [];
+  input.library.components.push({ id: "component-tool", label: "搜索工具", definition: "", aliases: [],
+    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1 }] });
+  draft.assignments = [{ item_id: "O1", new_class_index: 0 }];
+  delete draft.new_classes[0]!.closest_existing;
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  const resolved = registry.resolve(binding, draft, audit) as ClusteringResult;
+  registry.validate(binding, resolved, audit);
+  assert.equal(resolved.new_classes[0]!.closest_existing, null);
+  draft.new_classes[0]!.closest_existing = "C1";
+  assert.throws(() => registry.validate(binding, registry.resolve(binding, draft, audit), audit), /只能比较同组件/);
+});
+
+test("Clustering schema feedback shows string-only topic paths without converting an invalid draft", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request();
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  const draft = submission();
+  draft.new_classes[0]!.category_paths = [["指令遵循", { item: "风格禁令" }]] as unknown as string[][];
+  draft.class_updates = [{ class_id: "C1", category_paths: [[{ item: "数值可靠性" }]] as unknown as string[][], reason: "整理主题。" }];
+  const before = structuredClone({ bound, draft });
+  assert.throws(() => registry.resolve(binding, draft, audit), error => {
+    assert(error instanceof ValidationError);
+    const issues = error.issues!.filter(issue => issue.code === "schema_type");
+    assert.deepEqual(issues.map(issue => issue.path), ["/new_classes/0/category_paths/0/1", "/class_updates/0/category_paths/0/0"]);
+    for (const issue of issues) {
+      const expected = issue.expected as Record<string, unknown>;
+      assert.deepEqual(expected.category_paths_example, [["主题", "子主题", "具体方面"]]);
+      assert.equal(expected.type, "string");
+      assert.match(String(expected.category_paths_rule), /每级直接填写字符串/);
+      assert.equal(typeof issue.actual, "object");
+    }
+    return true;
+  });
+  assert.deepEqual({ bound, draft }, before);
+  draft.new_classes[0]!.category_paths = [["指令遵循", "遗漏", "单位换算"]];
+  draft.class_updates![0]!.category_paths = [["数值可靠性", "计算"]];
+  const resolved = registry.resolve(binding, draft, audit);
+  registry.validate(binding, resolved, audit);
+  assert.deepEqual((resolved as ClusteringResult).new_classes[0]!.category_paths, draft.new_classes[0]!.category_paths);
+});
 
 test("Clustering assigns every observation and caps new classes", () => {
   assert.deepEqual(Object.keys(clusteringAgent.profiles), ["default"]);
@@ -71,7 +247,11 @@ test("clustering keeps problem classes within their component", () => {
   const sameLabel = result();
   sameLabel.new_classes[0]!.component = "搜索工具";
   sameLabel.new_classes[0]!.label = "算术错误";
+  sameLabel.new_classes[0]!.closest_existing = null;
   clusteringProfile.validate!(differentTool, sameLabel, audit);
+
+  sameLabel.new_classes[0]!.closest_existing = "class-arithmetic";
+  assert.throws(() => clusteringProfile.validate!(differentTool, sameLabel, audit), /只能比较同组件/);
 
   const wrongComponent = result();
   wrongComponent.new_classes[0]!.component = "搜索工具";
@@ -121,9 +301,7 @@ test("clustering uses request-local references and persists exact identities for
   component.classes.push({ ...component.classes[0]!, id: second, label: "计算失误" });
   input.items[0]!.id = observed;
   const before = structuredClone(bound);
-  const draft = result();
-  draft.assignments[0] = { item_id: "O1", class_id: "C1" };
-  draft.assignments[1]!.item_id = "O2";
+  const draft = submission();
   draft.new_classes[0]!.closest_existing = "C2";
   draft.merges = [{ into: "C1", from: ["C2"], reason: "同一计算错误" }];
   const resolved = clusteringProfile.resolve!(bound, draft, audit) as ClusteringResult;
@@ -171,4 +349,140 @@ test("clustering uses request-local references and persists exact identities for
     assert(!JSON.stringify(error.issues).includes(observed), "repair feedback uses the same short references");
     return true;
   });
+});
+
+test("deferred observations require a real creation or support limit and remain exclusive", () => {
+  const bound = request(), draft = result();
+  requestInput(bound).budget.max_new_classes = 0;
+  draft.new_classes = [];
+  draft.assignments[1] = { item_id: "o2", deferred_reason: "本次新增类预算为零，已有算术类不涵盖漏查工具结果。" };
+  clusteringProfile.validate!(bound, draft, audit);
+  assert.throws(() => clusteringProfile.validate!(request(), draft, audit), /不能延期/);
+  requestInput(bound).budget.max_new_classes = 8;
+  requestInput(bound).budget.min_support = 5;
+  clusteringProfile.validate!(bound, draft, audit);
+  requestInput(bound).items[0]!.label = "计算错误";
+  draft.assignments[0] = { item_id: "o1", deferred_reason: "支持不足。" };
+  clusteringProfile.validate!(bound, draft, audit);
+  requestInput(bound).items[0]!.definition = requestInput(bound).library.components[0]!.classes[0]!.definition;
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /已有同名或别名/);
+  draft.assignments[0] = { item_id: "O1", class_id: "C1", deferred_reason: "预算不足。" };
+  draft.assignments[1]!.item_id = "O2";
+  assert.throws(() => clusteringProfile.resolve!(bound, draft, audit), ValidationError);
+});
+
+test("topics and directory maintenance use current class references without changing responsibility", () => {
+  const bound = request(), draft = submission();
+  draft.new_classes[0]!.category_paths = [["工具使用", "工具结果解释"], ["指令遵循", "遗漏"]];
+  draft.class_updates = [{ class_id: "C1", definition: "模型计算步骤与可核验数字不符。", category_paths: [["数值可靠性"]], reason: "界定结果偏差，不推断额外根因。" }];
+  const resolved = clusteringProfile.resolve!(bound, draft, audit) as ClusteringResult;
+  assert.equal(resolved.class_updates![0]!.class_id, "class-arithmetic");
+  clusteringProfile.validate!(bound, resolved, audit);
+  const repeat = structuredClone(resolved);
+  repeat.new_classes[0]!.category_paths = [["工具使用", "遗漏"], [" 工具使用 ", "遗漏"]];
+  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), /主题路径不能重复/);
+  repeat.new_classes[0]!.category_paths = [["工具使用", " 工具使用 "]];
+  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), /不能重复同一级/);
+  repeat.new_classes[0]!.category_paths = [["一", "二", "三", "四"]];
+  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), ValidationError);
+  const bad = structuredClone(draft) as unknown as Record<string, unknown>;
+  bad.class_updates = [{ class_id: "C1", component: "搜索工具", definition: "改归工具。", reason: "改责任。" }];
+  assert.throws(() => clusteringProfile.resolve!(bound, bad, audit), ValidationError);
+});
+
+test("persistent definitions reject current directory references but preserve business codes", () => {
+  const bound = request(), draft = result();
+  const component = requestInput(bound).library.components[0]!;
+  for (let index = 2; index <= 18; index++) component.classes.push({ id: `class-${index}`, label: `其他现象${index}`, definition: "d", aliases: [], occurrences: 1 });
+  draft.new_classes[0]!.definition = "型号 C18 与 C1 不同，错误码（C18）等问题应保留业务含义。";
+  clusteringProfile.validate!(bound, draft, audit);
+  for (const definition of ["不同于问题类 C18 的另一种问题。", "并非某种现象（C1）等问题。", "item_id: O2 的问题。"] ) {
+    draft.new_classes[0]!.definition = definition;
+    assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /临时编号/);
+  }
+});
+
+test("merging topics requires an explicit choice when the union exceeds the limit", () => {
+  const bound = request(), draft = result(), component = requestInput(bound).library.components[0]!;
+  component.classes[0]!.category_paths = [["一"], ["二"]];
+  component.classes.push({ id: "other-class", label: "近义计算错", definition: "d", aliases: [], occurrences: 1, category_paths: [["三"], ["四"]] });
+  draft.merges = [{ into: "class-arithmetic", from: ["other-class"], reason: "同一现象。" }];
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /超过三条/);
+  draft.class_updates = [{ class_id: "class-arithmetic", category_paths: [["数值可靠性", "计算"]], reason: "合并后统一主题。" }];
+  clusteringProfile.validate!(bound, draft, audit);
+  draft.class_updates.push({ class_id: "other-class", definition: "d", reason: "同时维护被合并类。" });
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /不能同时维护 from/);
+});
+
+test("Clustering rejects marked category names through public submission validation without sanitizing them", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const binding = { agent: "clustering", profile: "default", request: request() };
+  const draft = submission();
+  const marked = "]<]minimax[>[<来源可靠性";
+  draft.new_classes[0]!.category_paths = [[marked]];
+  draft.class_updates = [{ class_id: "C1", category_paths: [[marked]], reason: "整理主题。" }];
+  const before = structuredClone(draft);
+  assert.throws(() => registry.resolve(binding, draft, audit), error => {
+    assert(error instanceof ValidationError);
+    const issues = error.issues!.filter(issue => issue.code === "schema_pattern");
+    assert.deepEqual(issues.map(issue => issue.path), ["/new_classes/0/category_paths/0/0", "/class_updates/0/category_paths/0/0"]);
+    for (const issue of issues) {
+      assert.equal(issue.actual, marked);
+      assert.match(String((issue.expected as Record<string, unknown>).category_paths_action), /重新填写/);
+    }
+    return true;
+  });
+  assert.deepEqual(draft, before);
+});
+
+test("Category character rules cover requests, submissions, results and precise business feedback", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const binding = { agent: "clustering", profile: "default", request: request() };
+  const draft = submission();
+  const resolved = registry.resolve(binding, draft, audit) as ClusteringResult;
+  const forbidden = ["<", ">", "[", "]", "{", "}",
+    ...Array.from({ length: 32 }, (_, code) => String.fromCodePoint(code)),
+    ...Array.from({ length: 33 }, (_, code) => String.fromCodePoint(0x7f + code)), "\u2028", "\u2029"];
+  for (const character of forbidden) {
+    const marked = "主题" + character;
+    draft.new_classes[0]!.category_paths = [[marked]];
+    const invalidRequest = request();
+    requestInput(invalidRequest).library.components[0]!.classes[0]!.category_paths = [[marked]];
+    const invalidResult = structuredClone(resolved);
+    invalidResult.class_updates = [{ class_id: "class-arithmetic", category_paths: [[marked]], reason: "整理主题。" }];
+    for (const [operation, path] of [
+      [() => registry.prepare({ ...binding, request: invalidRequest }), "/library/components/0/classes/0/category_paths/0/0"],
+      [() => registry.resolve(binding, draft, audit), "/new_classes/0/category_paths/0/0"],
+      [() => registry.validate(binding, invalidResult, audit), "/class_updates/0/category_paths/0/0"],
+    ] as const) assert.throws(operation, error => {
+      assert(error instanceof ValidationError);
+      const issue = error.issues!.find(issue => issue.code === "schema_pattern" && issue.path === path);
+      assert(issue, JSON.stringify({ character, path }));
+      assert.equal(issue.actual, marked);
+      return true;
+    });
+    const paths = [["可用", marked]], before = structuredClone(paths);
+    const issue = categoryPathIssues(paths, "/category_paths")[0]!;
+    assert.equal(issue.code, "clustering_category_characters");
+    assert.equal(issue.path, "/category_paths/0/1");
+    assert.equal(issue.actual, marked);
+    assert.match(String((issue.expected as Record<string, unknown>).category_paths_action), /重新填写/);
+    assert.deepEqual(paths, before);
+  }
+});
+
+test("Category names allow arbitrary ordinary text without provider word filtering", () => {
+  const registry = new AgentRegistry([clusteringAgent]);
+  const bound = request();
+  const paths = [["minimax 语义 🧭 (输入/输出) — 12", "来源可靠性（多源）", "误解：单位转换"]];
+  requestInput(bound).library.components[0]!.classes[0]!.category_paths = structuredClone(paths);
+  const binding = { agent: "clustering", profile: "default", request: bound };
+  const draft = submission();
+  draft.new_classes[0]!.category_paths = structuredClone(paths);
+  draft.class_updates = [{ class_id: "C1", category_paths: structuredClone(paths), reason: "整理主题。" }];
+  const resolved = registry.resolve(binding, draft, audit) as ClusteringResult;
+  registry.validate(binding, resolved, audit);
+  assert.deepEqual(resolved.new_classes[0]!.category_paths, paths);
+  assert.deepEqual(resolved.class_updates![0]!.category_paths, paths);
+  assert.deepEqual(categoryPathIssues(paths, "/category_paths"), []);
 });

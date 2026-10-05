@@ -1,6 +1,6 @@
 import type { ProblemLibrary, RunState } from "@eval/contracts";
 import { problemLibraryFile, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary } from "@eval/data";
-import { applyClustering, emptyLibrary, type ClusteringResult } from "@eval/agents/clustering";
+import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, problemSampleKey, type ClusteringResult } from "@eval/agents/clustering";
 import type { EvalConfig, TaskData } from "./types.js";
 import { taskObservations } from "./observations.js";
 
@@ -46,7 +46,8 @@ export async function syncProblemLibrary(
       const saved = await readProblemLibrary(file);
       let library: ProblemLibrary = saved ?? emptyLibrary(model);
       if (library.model !== model) throw new Error(`问题库模型身份不一致：${model}`);
-      let applied = false, changed = false, assigned = 0, proposed = 0, merged = 0;
+      let applied = false, changed = false, proposed = 0, merged = 0;
+      const assigned = new Set<string>();
       for (const task of tasks) {
         const receipt = state.receipts[task.id];
         if (!receipt) continue;
@@ -65,10 +66,10 @@ export async function syncProblemLibrary(
           result,
         });
         changed ||= library !== before;
-        const counts = new Map(observations.map((observation) => [observation.id, observation.count]));
-        assigned += result.assignments.reduce(
-          (total, assignment) => total + (counts.get(assignment.item_id) ?? 0), 0,
-        );
+        const items = new Map(observations.map(observation => [observation.id, observation]));
+        for (const assignment of result.assignments)
+          if (assignment.deferred_reason === undefined)
+            for (const ref of items.get(assignment.item_id)?.refs ?? []) assigned.add(problemSampleKey(ref));
         proposed += result.new_classes.length;
         merged += result.merges.reduce((total, merge) => total + merge.from.length, 0);
         applied = true;
@@ -86,8 +87,8 @@ export async function syncProblemLibrary(
       stats[model] = {
         components,
         classes,
-        occurrences: library.occurrences.length,
-        assigned,
+        occurrences: countProblemSamples(effectiveProblemOccurrences(library)),
+        assigned: assigned.size,
         proposed_new_classes: proposed,
         merged_classes: merged,
       };

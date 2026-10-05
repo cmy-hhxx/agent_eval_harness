@@ -69,6 +69,11 @@ function optionalThinking(value: unknown, label: string): Thinking | undefined {
   if (!THINKING_LEVELS.includes(value as Thinking)) throw new Error(`Invalid ${label}`);
   return value as Thinking;
 }
+function optionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error(`Invalid ${label}`);
+  return value;
+}
 function optionalPositiveInteger(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`Invalid ${label}`);
@@ -264,6 +269,7 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
       throw new Error(`Invalid ${baseUrlEnv} for models.${name}`);
     const api = value.api;
     if (!API_KINDS.includes(api as ModelProfile["api"])) throw new Error(`Invalid models.${name}.api`);
+    const supportsDeveloperRole = optionalBoolean(value.supportsDeveloperRole, `models.${name}.supportsDeveloperRole`);
     models[name] = {
       provider,
       baseUrl,
@@ -271,6 +277,7 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
       apiKeyEnv: envName(value.apiKeyEnv, `models.${name}.apiKeyEnv`),
       model: optionalString(value.model, `models.${name}.model`),
       thinking: optionalThinking(value.thinking, `models.${name}.thinking`),
+      ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
       contextWindow: optionalPositiveInteger(value.contextWindow, `models.${name}.contextWindow`),
       maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `models.${name}.maxOutputTokens`),
     };

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { ValidationError, type PlannedTask, type RunState, type WorkflowDefinition } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
-import type { ComparisonResult, TaskData } from "./types.js";
+import type { ComparisonResult, TaskData, Candidate } from "./types.js";
 import { bindTask } from "./binding.js";
 
 /** Accepted answers are reused when their original standard is exactly the new shared standard. */
@@ -22,7 +22,7 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
         const check: PlannedTask = { ...original, inputIds: { answer: candidate.input_id }, dependencies: { criteria: task.id },
           data: { ...(original.data as TaskData), candidates: { A: candidate }, reference: data.reference } satisfies TaskData };
         try {
-          attributionProfile.validate!(bindTask(check, inputs, { criteria: receipt }).request, source.evaluation, source.audit);
+          attributionProfile.validate!(bindTask(check, inputs, { criteria: receipt }, { tasks: state.manifest.tasks }).request, source.evaluation, source.audit);
           continue;
         } catch (error) { if (!(error instanceof ValidationError)) throw error; }
       }
@@ -49,12 +49,20 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
   return { tasks, replace: [...replace.values()] };
 };
 
+/** Peer material is selected by the workflow, never guessed from a model's source label. */
+function reviewPeers(data: TaskData, candidate: Candidate, inputs: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(data.candidates).filter(([, peer]) => peer.input_id !== candidate.input_id &&
+    peer.batch_id === candidate.batch_id && peer.case_id === candidate.case_id && peer.question === candidate.question &&
+    inputs[candidate.input_id] && inputs[peer.input_id])
+    .map(([label, peer]) => ["peer_" + label, peer]));
+}
+
 /** One independent review; unresolved cases stay outside verdicts and the problem library. */
 export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state: RunState, inputs) => {
   if (task.stage === "criteria") return advanceCriteria(task, receipt, state, inputs);
   if (task.stage !== "comparison") return { tasks: [] };
   const data = task.data as TaskData, result = receipt.evaluation as ComparisonResult;
-  if (result.status !== "needs_review") return { tasks: [] };
+  if (data.verificationPending || result.status !== "needs_review") return { tasks: [] };
   const dependents = state.manifest.tasks.filter((item) =>
     item.stage === "clustering" && Object.values(item.dependencies).includes(task.id));
   const rewrites = state.manifest.tasks.filter((item) => item.stage === "rewrite" && item.dependencies.source === task.id);
@@ -64,10 +72,11 @@ export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, 
     const candidate = data.candidates[label]!;
     const reasons = result.review_requests.filter((request) => request.candidate === label).map((request) => request.reason);
     const originalId = task.dependencies[label]!;
+    const peers = reviewPeers(data, candidate, inputs);
     const review: PlannedTask = {
-      id: randomUUID(), stage: "attribution", inputIds: { answer: candidate.input_id },
-      dependencies: { criteria: task.dependencies.criteria! },
-      data: { stage: "attribution", candidates: { A: candidate }, reference: data.reference,
+      id: randomUUID(), stage: "attribution", inputIds: { answer: candidate.input_id, ...Object.fromEntries(Object.entries(peers).map(([key, peer]) => [key, peer.input_id])) },
+      dependencies: { criteria: task.dependencies.criteria!, previous_review: task.id },
+      data: { stage: "attribution", candidates: { A: candidate }, referenceCandidates: peers, reference: data.reference,
         criteriaScope: data.criteriaScope, initialContextChars: data.initialContextChars,
         reviewOf: { taskId: originalId, round: 1, reasons }, revision: 1 } satisfies TaskData,
     };
@@ -80,11 +89,19 @@ export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, 
     }
     dependencies[label] = review.id;
   }
-  const followup: PlannedTask = { ...task, id: randomUUID(), dependencies,
-    data: { ...data, comparisonId: "cmp_" + randomUUID(), supersededBy: undefined,
-      reviewOf: { taskId: task.id, round: 1, reasons: result.review_requests.map((request) => request.reason) }, revision: 1 } satisfies TaskData };
-  tasks.push(followup);
+  const { verificationOf: _verification, verificationPending: _pending, ...sourceData } = data;
+  const followupData: TaskData = { ...sourceData, comparisonId: "cmp_" + randomUUID(), supersededBy: undefined,
+    reviewOf: { taskId: task.id, round: 1, reasons: result.review_requests.map(request => request.reason) }, revision: 1 };
+  delete dependencies.draft;
+  dependencies.previous_review = task.id;
+  const draft: PlannedTask = { ...task, id: randomUUID(), dependencies,
+    data: { ...followupData, verificationPending: true } satisfies TaskData };
+  const followup: PlannedTask = { ...task, id: randomUUID(), dependencies: { ...dependencies, draft: draft.id },
+    data: { ...followupData, verificationOf: { taskId: draft.id } } satisfies TaskData };
+  tasks.push(draft, followup);
   const replace: PlannedTask[] = [{ ...task, data: { ...data, supersededBy: followup.id } }];
+  const originalDraft = data.verificationOf && state.manifest.tasks.find(item => item.id === data.verificationOf!.taskId);
+  if (originalDraft) replace.push({ ...originalDraft, data: { ...(originalDraft.data as TaskData), supersededBy: draft.id } });
   for (const item of rewrites) {
     const source = item.data as TaskData;
     replace.push({ ...item, dependencies: { source: followup.id }, data: { ...source,

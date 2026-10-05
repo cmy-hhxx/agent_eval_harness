@@ -1,3 +1,5 @@
+import { maskCitationMarkup } from "@eval/tools";
+
 /** Decimal arithmetic, avoiding binary floating-point errors at rounding boundaries. */
 function decimal(value: string): { coefficient: bigint; places: number } {
   const match = /^([+-]?\d+(?:\.\d+)?)(?:[eE]([+-]?\d{1,3}))?$/u.exec(value);
@@ -29,7 +31,7 @@ export function matchesReference(actual: string, expected: string, scale: string
 
 /** Match a complete numeric token, not a substring in a year, code or larger value. */
 export function containsNumber(text: string, value: string, preservePrecision = false): boolean {
-  const normalized = text.replaceAll(",", "").replace(/[−﹣－]/gu, "-")
+  const normalized = maskCitationMarkup(text).replaceAll(",", "").replace(/[−﹣－]/gu, "-")
     // Count words are literal quantities; do not match inside a compound numeral.
     .replace(/(?<![零〇一二两三四五六七八九十百千万亿])([一二两三四五六七八九十])(?=[只条家个项份次天]|交易日)/gu,
       (_, digit: string) => String({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }[digit]))

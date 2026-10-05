@@ -1,1 +1,1 @@
-提交当前工作目录内已有的 JSON 文件；path 使用相对路径，例如 evaluation-draft.json。文件内容遵循 submit_evaluation 的 schema；内容共享修正预算，文件加载错误最多三次。
+提交当前工作目录内已有的 JSON 文件；path 使用相对路径，例如 evaluation-draft.json。文件正文遵循工具描述附带的 file_content_schema，调用只传 path。内容共享修正预算，文件加载错误最多三次。内容拒绝后先按反馈成功写入修复草稿，再提交该文件；写稿失败时保留错误并使用真实剩余写稿额度，不再次提交未修改的旧文件。

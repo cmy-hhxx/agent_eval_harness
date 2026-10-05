@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { safeId, type ProblemLibrary, type ProblemLibraryTarget } from "@eval/contracts";
 import { exists, readJson, runLock, writeJson } from "./files.js";
 
-/** One file per model; the clustering stage is the only writer. */
+/** One file per model; clustering rules own classification and explicit review events. */
 export function problemLibraryFile(target: ProblemLibraryTarget, model: string): string {
   return path.join(target.path, `${safeId(model)}.json`);
 }

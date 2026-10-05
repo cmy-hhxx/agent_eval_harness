@@ -1,6 +1,7 @@
 import type { JsonObject } from "@eval/contracts";
+import { citationMarkers, type CitationMarker } from "@eval/tools";
 import type { Finding, RawInput } from "./types.js";
-import { strings } from "./input.js";
+import { citationInventory } from "./citations.js";
 
 const aliases: Record<string, string> = {
   search: "Search",
@@ -15,10 +16,9 @@ const aliases: Record<string, string> = {
 };
 const toolName = (value: unknown): string | undefined =>
   typeof value === "string" && value ? aliases[value.toLowerCase().replaceAll("-", "_")] || value : undefined;
-function traceRefs(text: string): string[] {
-  return [...text.matchAll(/<trace\b[^>]*(?:anchor|ref)\s*=\s*["']([^"']+)/gi)].map((m) => m[1]);
-}
-export function annotateFindings(raw: RawInput, findings: Finding[]): JsonObject[] {
+const citationKey = (marker: Pick<CitationMarker, "format" | "reference" | "attribute">) =>
+  marker.format === "trace" ? `trace:${marker.attribute}:${marker.reference}` : `${marker.format}:${marker.reference}`;
+function annotateLocalFindings(raw: RawInput, inputId: string, findings: Finding[]): JsonObject[] {
   const messages = raw.messages,
     calls = new Map<string, string>(),
     direct = new Map<number, string>();
@@ -43,56 +43,25 @@ export function annotateFindings(raw: RawInput, findings: Finding[]): JsonObject
   const candidates = [
     ...new Set([...direct].filter(([i]) => lastUser < i && i < final).map(([, name]) => name)),
   ].sort();
-  const citations = new Map<string, Set<number>>(),
-    anchors = new Map<string, Set<number>>();
-  const add = (map: Map<string, Set<number>>, key: string, index: number) => {
-    if (!map.has(key)) map.set(key, new Set());
-    map.get(key)!.add(index);
-  };
-  for (const [index] of direct) {
-    const message = messages[index];
-    if (
-      !(lastUser < index && index < final) ||
-      !["function_call_output", "tool_result"].includes(message.type || "")
-    )
-      continue;
-    for (const [location, text] of strings(message.output ?? message.content ?? "")) {
-      for (const match of text.matchAll(/<referencable-result>\s*ID:\s*(\d+)/gi))
-        add(citations, match[1], index);
-      const refs = [
-        ...traceRefs(text),
-        ...[
-          ...text.matchAll(
-            /\b(?:serial_number|trace_id|anchor|ref|uid|id)\\?["']?\s*:\s*\\?["']([^"'\\]+)/gi,
-          ),
-        ].map((m) => m[1]),
-      ];
-      if (
-        ["serial_number", "trace_id", "anchor", "ref", "uid", "id"].includes(location.split("/").at(-1) || "")
-      )
-        refs.push(text);
-      for (const ref of refs) add(anchors, ref, index);
-    }
-  }
+  const directory = new Map(citationInventory(raw, inputId, final).references.map(reference =>
+    [citationKey({ ...reference, attribute: citationMarkers(reference.occurrences[0].quote)[0]?.attribute }), reference]));
   return findings.map((finding) => {
     const evidence = new Set<number>(),
       cited = new Set<number>(),
-      refs = new Set<string>(),
-      traces = new Set<string>();
+      refs = new Set<string>();
     for (const item of finding.evidence) {
       evidence.add(item.message_index);
       if (direct.has(item.message_index)) cited.add(item.message_index);
-      for (const match of item.quote.matchAll(/\[\^(\d+)\]/g)) refs.add(match[1]);
-      traceRefs(item.quote).forEach((ref) => traces.add(ref));
+      for (const marker of citationMarkers(item.quote)) refs.add(citationKey(marker));
     }
-    const resolved = [
-      ...[...refs].map((ref) => citations.get(ref) || new Set<number>()),
-      ...[...traces].map((ref) => anchors.get(ref) || new Set<number>()),
-    ];
     const sources = new Set(cited);
     let ambiguous = false;
-    for (const indices of resolved) {
-      if (new Set([...indices].map((i) => direct.get(i))).size === 1) indices.forEach((i) => sources.add(i));
+    for (const key of refs) {
+      const reference = directory.get(key);
+      const indices = reference?.sources.filter(source => source.origin === "tool_return" &&
+        lastUser < source.message_index && source.message_index < final).map(source => source.message_index) ?? [];
+      if (reference?.status === "resolved" && indices.length && indices.every(index => direct.has(index)) &&
+        new Set(indices.map(index => direct.get(index))).size === 1) indices.forEach(index => sources.add(index));
       else ambiguous = true;
     }
     const tools = [...new Set([...sources].map((i) => direct.get(i)!))].sort();
@@ -112,6 +81,35 @@ export function annotateFindings(raw: RawInput, findings: Finding[]): JsonObject
         .sort((a, b) => a - b)
         .map((i) => ({ message_index: i, tool_name: direct.get(i) || null })),
       ...(confidence !== "high" && candidates.length ? { candidate_tools: candidates } : {}),
+    };
+  });
+}
+
+/** Foreign grader evidence keeps its physical input identity throughout trace annotation. */
+export function annotateFindings(raw: RawInput, inputId: string, findings: Finding[], inputs: Record<string, unknown> = {}): JsonObject[] {
+  return findings.map(finding => {
+    const own = finding.evidence.filter(item => !item.source_input_id);
+    const foreign = new Map<string, Finding["evidence"]>();
+    for (const item of finding.evidence) if (item.source_input_id) {
+      const entries = foreign.get(item.source_input_id) ?? [];
+      entries.push(item); foreign.set(item.source_input_id, entries);
+    }
+    if (!foreign.size) return annotateLocalFindings(raw, inputId, [finding])[0];
+    const portions = [...(own.length ? [{ annotation: annotateLocalFindings(raw, inputId, [{ ...finding, evidence: own }])[0], inputId: undefined }] : []),
+      ...[...foreign].map(([inputId, evidence]) => {
+        const peer = inputs[inputId] as RawInput | undefined;
+        if (!peer) throw new Error("归因证据来源输入不可定位：" + inputId);
+        return { annotation: annotateLocalFindings(peer, inputId, [{ ...finding, evidence }])[0], inputId };
+      })];
+    const tools = [...new Set(portions.flatMap(({ annotation }) => annotation.tools as string[]))].sort();
+    const confidence = portions.every(({ annotation }) => annotation.confidence === "high") ? "high"
+      : portions.some(({ annotation }) => annotation.confidence !== "none") ? "medium" : "none";
+    return { tools, confidence,
+      source: portions.some(({ annotation }) => annotation.source === "evidence_message") ? "evidence_message"
+        : tools.length ? "quote_reference" : "none",
+      locations: portions.flatMap(({ annotation, inputId }) => (annotation.locations as JsonObject[])
+        .map(location => ({ ...location, ...(inputId ? { source_input_id: inputId } : {}) }))),
+      ...(confidence !== "high" ? { candidate_tools: [...new Set(portions.flatMap(({ annotation }) => annotation.candidate_tools as string[] ?? []))].sort() } : {}),
     };
   });
 }

@@ -14,6 +14,7 @@ import {
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateEvaluation } from "../../fixtures/services.js";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, criteriaResult, raw } from "../../fixtures/comparison.js";
+import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
 
 function comparisonTask(plan: TaskPlan): PlannedTask {
   return plan.tasks.find((task) => task.stage === "comparison")!;
@@ -25,7 +26,7 @@ function attributionReceipts(task: PlannedTask, correct: boolean | Record<string
       taskId: id,
       attemptId: `a-${label}`,
       submissionId: randomUUID(),
-      evaluation: label === "criteria" ? criteriaResult() : attributionResult(typeof correct === "boolean" ? correct : correct[label] ?? true, "2+2=4", (task.data as TaskData).reference !== null),
+      evaluation: label === "criteria" ? criteriaResult() : attributionResult(typeof correct === "boolean" ? correct : correct[label] ?? true, "2+2=4", (task.data as TaskData).reference !== null, task.inputIds[label]),
       evaluatorVersion: fakeEvaluatorVersion,
       judge: fakeJudge,
       audit: emptyAudit(),
@@ -148,8 +149,9 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
   const { directory, config } = await fixtureConfig([[first], [], [second], []]);
   try {
     const plan = await buildPlan(config),
-      task = comparisonTask(plan),
-      receipts = attributionReceipts(task),
+      task = plan.tasks.find(item => item.stage === "comparison" && (item.data as TaskData).verificationOf)!,
+      draft = plan.tasks.find(item => item.id === task.dependencies.draft)!,
+      receipts = attributionReceipts(draft),
       run = path.join(directory, "run"),
       labels = Object.keys((task.data as TaskData).candidates);
     const state = {
@@ -189,16 +191,34 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
       status: "succeeded",
       acceptedAt: 0,
     };
+    state.receipts[draft.id] = { ...state.receipts[task.id], taskId: draft.id,
+      attemptId: "draft", submissionId: randomUUID(), evaluation: structuredClone(evaluation) };
     await createResultWriter(run, plan.inputs)(state);
+    const draftRows = (await readFile(path.join(run, "results", "comparison-draft.jsonl"), "utf8")).trim().split("\n");
+    const formalRows = (await readFile(path.join(run, "results", "comparison.jsonl"), "utf8")).trim().split("\n");
+    assert.equal(draftRows.length, 1);
+    assert.equal(formalRows.length, 1, "only the independent check enters formal comparison results");
     await writeRunState(run, state);
     for (const version of config.inputs.versions)
       await rm(path.join(directory, version.id + ".jsonl"));
+    const eris = new LocalAnalysisData(directory);
+    eris.raw = async () => { throw new Error("Formal standings must not read original answer sources"); };
+    const erisDirectory = await eris.list({ runId: "run", limit: 1 });
+    assert(erisDirectory.kind === "inputs");
+    assert.equal(erisDirectory.summary.formalComparisonStats.formalResultCount, 1);
+    assert.equal(erisDirectory.summary.formalComparisonStats.comparisonCount, 1);
+    assert.deepEqual(erisDirectory.summary.formalComparisonStats.tiers[0]!.outcomes, { win: 0, both_good: 1, both_bad: 0 });
+    const erisResult = await eris.read({ runId: "run", taskId: task.id });
+    assert.equal((erisResult.comparisonScope as { comparisonTier: string }).comparisonTier, "Fast");
+    assert.deepEqual(erisResult.result, state.receipts[task.id]!.exported!.row, "the business scope does not replace or rewrite the full formal result");
+    assert(!Object.hasOwn(await eris.read({ runId: "run", taskId: draft.id }), "comparisonScope"), "an accepted workflow draft is not projected as a formal comparison");
     const summary = await reportRun(run);
     assert.equal(summary.completed_comparisons, 1);
-    const standings = summary.standings as Record<string, { entered: number; first_tier: number }>;
+    const standings = summary.standings as Record<string, { entered: number; core_decidable_count: number; meets_core: number }>;
     assert.equal(standings.a_fast!.entered, 1);
     assert.equal(standings.b_fast!.entered, 1);
-    assert.equal(standings.a_fast!.first_tier, 1);
+    assert.equal(standings.a_fast!.core_decidable_count, 1);
+    assert.equal(standings.a_fast!.meets_core, 1);
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert.match(markdown, /## 同项对比/);
     assert.match(markdown, /\| 比较点 \| 重要性 \|/);

@@ -1,7 +1,7 @@
 import type {AssistantModelDirectory,AssistantModelEntry,AssistantModelSelection,ModelConfig} from '@eval/contracts';
 import {readAssistantFavorites,writeAssistantFavorites} from '@eval/data';
 import {discoverAssistantModels} from '@eval/runtime/assistant';
-const efforts: ModelConfig['thinking'][] = ['off','minimal','low','medium','high','xhigh'];
+const efforts: ModelConfig['thinking'][] = ['off','minimal','low','medium','high','xhigh','max'];
 /** Application-owned gateway configuration, with user-scoped common-model choices. */
 export class GatewayAssistantModels implements AssistantModelDirectory {
   private loading?: Promise<AssistantModelEntry[]>;

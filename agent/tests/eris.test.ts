@@ -19,11 +19,15 @@ test("Eris's public definition includes every tool resource and validates before
   assert.deepEqual(eris.tools.map((tool) => `${tool.name}.md`).sort(), readdirSync(new URL("tools/", resources)).sort());
   for (const tool of eris.tools) assert.equal(tool.description, readFileSync(new URL(`tools/${tool.name}.md`, resources), "utf8").trim());
   const list = eris.tools.find((tool) => tool.name === "list_data")!;
+  assert.match(JSON.stringify(list.inputSchema), /字面文本筛选词.*不是数据类别/);
   const context = { scope: { userId: "alice", sessionId: "session" }, callId: "list", signal: new AbortController().signal, progress() {} };
   await assert.rejects(list.execute({ limit: 0 }, context));
+  await assert.rejects(list.execute({ runId: "run", query: "" }, context));
   assert.deepEqual(received, []);
   const listed = await list.execute({ limit: 5 }, context);
   assert.equal(listed.details, undefined, "business JSON is stored only once");
+  await list.execute({ runId: "run" }, context);
+  await list.execute({ runId: "run", query: "A组Fast" }, context);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input", taskId: "task" } }, context), /oneOf/);
   await assert.rejects(read.execute({ reference: { runId: "run" } }, context), /required/);
@@ -39,7 +43,7 @@ test("Eris's public definition includes every tool resource and validates before
   const summary = eris.tools.find(tool => tool.name === "save_summary")!;
   await assert.rejects(summary.execute({ markdown: "summary", references: [{ reference: { runId: "run", inputId: "input" } }] }, context), /additional properties/);
   await assert.rejects(summary.execute({ markdown: "summary", references: [{ reference: { runId: "run", taskId: "task" }, operationId: request.operationId }] }, context), /oneOf/);
-  assert.deepEqual(received, [{ limit: 5 }]);
+  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }], "full directories omit the optional text filter; business filters are forwarded unchanged");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });

@@ -1,0 +1,56 @@
+import type { TaskAnalysis } from "@eval/contracts";
+import type { RawInput } from "./types.js";
+
+interface FocusMaterial {
+  question: string;
+  final_message_index: number;
+  final_answer: string;
+  deferred_final_material: unknown[];
+}
+
+/** Only applicable original rules are shown; indices still address the full trusted arrays. */
+export function taskAnalysisPresentation(analysis: TaskAnalysis, candidates: Record<string, string>) {
+  const present = (criterion: TaskAnalysis["requirements"][number]) => {
+    const applicable_candidates = Object.entries(candidates).flatMap(([label,id]) =>
+      !criterion.applies_to.length || criterion.applies_to.includes(id) ? [label] : []);
+    const { applies_to: _ids, acceptance_rule, ...rule } = criterion;
+    return { ...rule, ...(acceptance_rule === criterion.text ? {} : { acceptance_rule }), applicable_candidates };
+  };
+  const visible = (criterion: TaskAnalysis["requirements"][number]) =>
+    !criterion.applies_to.length || Object.values(candidates).some(id => criterion.applies_to.includes(id));
+  return { task_type: analysis.task_type, goal: analysis.goal,
+    requirements: analysis.requirements.flatMap((criterion, requirement_index) => visible(criterion) ? [{ ...present(criterion), requirement_index }] : []),
+    scoring_points: analysis.scoring_points.filter(visible).map(present),
+    red_flags: analysis.red_flags.filter(visible).map(present) };
+}
+
+/** Repeat complete, bounded task facts before the full view; never summarize source text. */
+export function taskFocus(
+  materials: Record<string, FocusMaterial>,
+  analysis: TaskAnalysis,
+  groundTruth: { available: boolean; value: unknown },
+  scopeCandidateIds: string[],
+  originals: Record<string, RawInput>,
+) {
+  return {
+    question: Object.values(materials)[0]!.question,
+    goal: analysis.goal,
+    ground_truth: groundTruth,
+    common_requirements: analysis.requirements.flatMap((requirement, requirement_index) => {
+      const common = !requirement.applies_to.length || (scopeCandidateIds.length > 1 &&
+        scopeCandidateIds.every(id => requirement.applies_to.includes(id)));
+      return common ? [{ id: requirement.id, requirement_index,
+        ...(requirement.text.length <= 1000 ? { text: requirement.text } : {}),
+      }] : [];
+    }),
+    answers: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
+      const lastUser = originals[label]!.messages.findLast(message => message.role === "user");
+      return [label, {
+        question_timestamp: typeof lastUser?.timestamp === "string" ? lastUser.timestamp : null,
+        final_message_index: material.final_message_index,
+        ...(material.final_answer.length <= 16000 ? { final_answer: material.final_answer } : {}),
+        deferred_final_material: material.deferred_final_material,
+      }];
+    })),
+  };
+}

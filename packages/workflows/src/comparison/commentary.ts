@@ -90,6 +90,13 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
     ...result.merges.map((item, index) => ({
       id: `merges.${index}.reason`, label: "合并理由", text: item.reason,
     })),
+    ...result.assignments.flatMap((item, index) => item.deferred_reason === undefined ? [] : [{
+      id: `assignments.${index}.deferred_reason`, label: "延期归类理由", text: item.deferred_reason,
+    }]),
+    ...(result.class_updates ?? []).flatMap((item, index) => [
+      ...(item.definition === undefined ? [] : [{ id: `class_updates.${index}.definition`, label: "维护后的类定义", text: item.definition }]),
+      { id: `class_updates.${index}.reason`, label: "类维护理由", text: item.reason },
+    ]),
   ];
 }
 export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {

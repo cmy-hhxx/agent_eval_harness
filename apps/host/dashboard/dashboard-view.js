@@ -133,7 +133,8 @@ export function createDashboardViews({
     meets_core: "满足核心要求", decision_basis: "判决依据", tradeoff: "权衡", decisive_findings: "决定性发现",
     ground_truth: "标准答案", available: "可用", value: "答案", verdicts: "两两判决",
     result: "结果", winner: "胜出候选", winner_name: "胜出名称", winner_version: "胜出版本",
-    rewritten: "改写后", assignments: "归类", new_classes: "新建类", merges: "合并",
+    rewritten: "改写后", assignments: "归类", new_classes: "新建类", merges: "合并", class_updates: "类维护",
+    category_paths: "主题路径", deferred_reason: "延期理由",
     item_id: "问题条目", class_id: "问题类", new_class_key: "新类", key: "标识", closest_existing: "最接近的已有类", novelty: "新建理由", into: "合入类", from: "来源类",
   };
   const valueLabels = {
@@ -167,7 +168,7 @@ export function createDashboardViews({
       if (key === "component")
         return `<span class="finding-tags">${value.map((component) => `<span>${escapeHtml(component)}</span>`).join("")}</span>`;
       if (key === "evidence" || key === "correctness_evidence")
-        return `<ul class="evidence-list">${value.map((item, index) => `<li><span class="evidence-location">消息 #${escapeHtml(item.message_index)}</span>${textHtml(item.quote, `${path}.${index}.quote`)}</li>`).join("")}</ul>`;
+        return `<ul class="evidence-list">${value.map((item, index) => `<li><span class="evidence-location">${item.source_input_id ? `核验来源 ${escapeHtml(item.source || item.source_input_id)} · ` : ""}消息 #${escapeHtml(item.message_index)}</span>${textHtml(item.quote, `${path}.${index}.quote`)}</li>`).join("")}</ul>`;
       if (key === "decisive_findings")
         return `<ul class="schema-list">${value.map((item) => `<li>${escapeHtml(item.candidate)} · findings[${escapeHtml(item.finding_index)}]</li>`).join("")}</ul>`;
       return `<ol class="schema-list"${key === "requirements" ? ' start="0"' : ""}>${value.map((item, index) => `<li>${Array.isArray(item) ? textHtml(item.join(" · "), `${path}.${index}`) : valueHtml(item, `${path}.${index}`, key, rewrites)}</li>`).join("")}</ol>`;

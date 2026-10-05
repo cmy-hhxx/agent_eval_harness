@@ -1,1 +1,1 @@
-在当前任务可读取的消息中搜索逐字子串，返回配对的原文 quote 和 evidence_id；先核对原文是否支持判断，再逐字复制对应 evidence_id，不要自行拼接或改写。每页按工具输出预算返回完整的证据条目；has_more 为 true 时，保持 candidate、query 不变，将 next_offset 原样作为下一次的 offset。
+在当前任务可读取的消息中搜索逐字子串，返回配对的原文 quote 和 reference；先核对原文是否支持判断，再选择对应 reference.evidence_index 作为提交引用。不复制展示的 message_index、quote 或 path，也不自行计算、拼接或虚构证据编号。每页按工具输出预算返回完整的证据条目；has_more 为 true 时，保持 candidate、query 不变，将 next_offset 原样作为下一次的 offset。 来源和完整坐标由程序维护，提交只填已提供的 evidence_index，不另填 source。

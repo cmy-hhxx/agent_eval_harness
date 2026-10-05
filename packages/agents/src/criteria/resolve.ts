@@ -3,18 +3,18 @@ import { canonical, schemaIssues, ValidationError, type AgentRequest, type Crite
 import { criteriaText } from "@eval/prompts";
 import requestSchema from "../../../../schemas/criteria/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/criteria/submission.schema.json" with { type: "json" };
-import { criteriaSources, type CriterionSource } from "./sources.js";
+import { criteriaSources, eligibleCriterionSource, type CriterionSource } from "./sources.js";
+import { criteriaGroups, criterionIdentity } from "./identity.js";
 
 export interface CriteriaSubmission {
-  requirements: { id: string; source_ids: string[] }[];
-  scoring_points: { id: string; source_ids: string[] }[];
-  red_flags: { id: string; source_ids: string[] }[];
+  requirements: { source_indices: number[] }[];
+  scoring_points: { source_indices: number[] }[];
+  red_flags: { source_indices: number[] }[];
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validateRequest = ajv.compile<unknown>(requestSchema);
 const validateSubmission = ajv.compile<unknown>(submissionSchema);
-const groups = ["requirements", "scoring_points", "red_flags"] as const;
 
 function scope(input: CriteriaInput, sources: CriterionSource[]): string[] {
   return input.candidates.map((candidate) => candidate.candidate_id).filter((candidate) =>
@@ -31,43 +31,51 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
   if (!validateSubmission(draft)) throw new ValidationError(schemaIssues(validateSubmission.errors, draft));
   const input = request.input as unknown as CriteriaInput;
   const value = draft as CriteriaSubmission;
-  const catalogue = criteriaSources(input);
-  const lookup = new Map(catalogue.map((source) => [source.id, source]));
+  const catalogue = criteriaSources(input).filter(eligibleCriterionSource);
+  const lookup = new Map(catalogue.map((source) => [source.source_index, source]));
   const errors: ValidationIssue[] = [];
-  const required = new Map<string, Set<string>>();
-  const criteria = new Map<string, { id: string; path: string }>();
+  const count = criteriaGroups.reduce((total, group) => total + value[group].length, 0);
+  if (count > 24) errors.push({
+    category: "decision", code: "criteria_budget_exceeded", path: "/",
+    message: "requirements、scoring_points 和 red_flags 的原始选择合计最多 24 条", actual: count, expected: 24,
+  });
+  const required = new Set<number>();
+  const entries: { group: typeof criteriaGroups[number]; sourceIndices: number[]; criterion: TaskCriterion }[] = [];
   const output: TaskAnalysis = { task_type: criteriaText("task_type"), goal: input.question, requirements: [], scoring_points: [], red_flags: [] };
-  for (const group of groups) value[group].forEach((criterion, index) => {
-    const sources = criterion.source_ids.flatMap((id) => {
+  for (const group of criteriaGroups) value[group].forEach((criterion, index) => {
+    const sources = criterion.source_indices.flatMap((id) => {
       const source = lookup.get(id);
-      if (!source) errors.push({ category: "decision", code: "criterion_source_unknown", path: `/${group}/${index}/source_ids`,
-        message: "source_ids 只能引用 source_catalog 中已有的完整原文，不得自行编写或拼接新标准", actual: id, expected: [...lookup.keys()] });
+      if (!source) errors.push({ category: "decision", code: "criterion_source_unknown", path: `/${group}/${index}/source_indices`,
+        message: "source_indices 只能选择 source_catalog 中已有的数字编号，不得自行编写或拼接新标准", actual: id, expected: [...lookup.keys()] });
       return source ? [source] : [];
     });
-    if (sources.length !== criterion.source_ids.length) return;
+    if (sources.length !== criterion.source_indices.length) return;
     const applies = scope(input, sources);
-    if (!applies.length) errors.push({ category: "decision", code: "criterion_source_scope_empty", path: `/${group}/${index}/source_ids`,
-      message: "合并来源必须有共同适用候选；相反或不同候选的专有约束分别列出", actual: criterion.source_ids });
-    if (group === "requirements") for (const source of sources) {
-      const covered = required.get(source.id) ?? new Set<string>();
-      for (const candidate of applies) covered.add(candidate);
-      required.set(source.id, covered);
-    }
-    const resolved = { id: criterion.id, text: [...new Set(sources.map((source) => source.text))].join("\n\n"),
+    if (!applies.length) errors.push({ category: "decision", code: "criterion_source_scope_empty", path: `/${group}/${index}/source_indices`,
+      message: "合并来源必须有共同适用候选；相反或不同候选的专有约束分别列出", actual: criterion.source_indices });
+    if (group === "requirements" && applies.length === input.candidates.length)
+      for (const source of sources) required.add(source.source_index);
+    const resolved = { id: "", text: [...new Set(sources.map((source) => source.text))].join("\n\n"),
       applies_to: applies.length === input.candidates.length ? [] : applies, acceptance_rule: rule(sources) };
-    const key = canonical({ text: resolved.text, applies_to: resolved.applies_to, acceptance_rule: resolved.acceptance_rule });
-    const duplicate = criteria.get(key);
-    if (duplicate) errors.push({ category: "decision", code: "criterion_duplicate", path: `/${group}/${index}`,
-      message: "相同原文、作用域和验收规则只能保留一条判据；合并重复的来源选择，不因分组或ID不同重复评审", actual: criterion.id, expected: duplicate });
-    else criteria.set(key, { id: criterion.id, path: `/${group}/${index}` });
-    output[group].push(resolved);
+    entries.push({ group, sourceIndices: criterion.source_indices, criterion: resolved });
   });
   for (const source of catalogue.filter((source) => source.kind === "question" || source.kind === "reference"))
-    for (const candidate of input.candidates) if (!required.get(source.id)?.has(candidate.candidate_id)) errors.push({
-      category: "decision", code: "criterion_required_source_missing", path: "/requirements", candidate: candidate.candidate_id,
-      message: `${source.id} 未覆盖此候选；已出现在仅适用于部分候选的条款中也不算覆盖。请在 requirements 为该来源单独新增一条公共要求，source_ids 只填该来源 ID，即可覆盖全部候选；不要与候选专属来源合并，也不要降为加分项/红线。`,
-      actual: source.id, expected: { source_ids: [source.id] } });
+    if (!required.has(source.source_index)) errors.push({
+      category: "decision", code: "criterion_required_source_missing", path: "/requirements",
+      message: `${source.kind} 来源 ${source.source_index} 必须至少出现在一条适用于全部候选的 requirements 中；多条私有要求的作用域并集不算公共覆盖。请在 requirements 为该来源单独新增一条公共要求，source_indices 只填该来源编号，即可覆盖全部候选；也可与真正共同适用的来源合并，但整条仍须覆盖全部候选，不得降为加分项或红线。`,
+      actual: source.source_index, expected: { source_indices: [source.source_index] } });
   if (errors.length) throw new ValidationError(errors);
+  const sourceSets = new Set<string>(), generated = new Set<string>();
+  for (const entry of entries) {
+    const sources = canonical([...entry.sourceIndices].sort((a, b) => a - b)), identity = criterionIdentity(entry.criterion);
+    const duplicate = sourceSets.has(sources) || generated.has(identity);
+    sourceSets.add(sources);
+    generated.add(identity);
+    if (!duplicate) {
+      const prefix = { requirements: "r", red_flags: "f", scoring_points: "s" }[entry.group];
+      output[entry.group].push({ ...entry.criterion, id: `${prefix}${output[entry.group].length + 1}` });
+    }
+  }
   return output;
 }
 

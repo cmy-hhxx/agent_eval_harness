@@ -42,7 +42,7 @@ for (const engine of ["pi", "prime"] as const)
       for (const [index, toolNames] of [[], [], ["read_trace"]].entries()) {
         const spec: AttemptSpec = {
           runId: "cache-test", taskId: `task-${index}`, attemptId: `attempt-${index}`, inputRevision: 1,
-          engine: backend.identity,
+          engine: backend.identity, evidenceBank: [],
           evaluation: { id: "fixture", profile: "default", systemPrompt: "Preserve these exact rules.",
             outputSchema: { type: "object" }, toolNames, fileSubmission: false, toolDescriptions: {}, submissionNudge: "Submit." },
           model: { provider: "fixture", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,

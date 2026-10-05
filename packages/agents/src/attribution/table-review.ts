@@ -1,22 +1,26 @@
 import { canonical, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { compareTraceTableRows, evidenceSources, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
+import { compareTraceTableRows, displayEvidence, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
 import type { AttributionResult, Evidence } from "./types.js";
+import { ownEvidence } from "./source-evidence.js";
 
 const codeHeaders = new Set(["代码", "股票代码", "证券代码", "基金代码", "code", "ticker"]);
 const nameHeaders = new Set(["名称", "简称", "公司名称", "公司简称", "企业名称", "企业简称", "股票名称", "股票简称", "证券名称", "证券简称", "基金名称", "基金简称", "name"]);
 const header = (value: string) => value.replace(/\s/gu, "").toLowerCase();
+const entityText = (value: string) => maskCitationMarkup(value).replace(/\s+/gu, " ").trim();
 function columns(table: TraceTable) {
   const code = table.headers.flatMap((value, index) => codeHeaders.has(header(value)) ? [index] : []);
   const name = table.headers.flatMap((value, index) => nameHeaders.has(header(value)) ? [index] : []);
   return code.length === 1 && name.length === 1 ? { code: code[0], name: name[0] } : undefined;
 }
 function sameCode(left: string, right: string): boolean {
+  left = entityText(left); right = entityText(right);
   if (left === right) return true;
   const pattern = /^(\d{6})(?:\.(SH|SZ|BJ))?$/iu;
   const a = pattern.exec(left), b = pattern.exec(right);
   return !!a && !!b && a[1] === b[1] && (!a[2] || !b[2] || a[2].toUpperCase() === b[2].toUpperCase());
 }
 function literalPairStatement(text: string, name: string, code: string): boolean {
+  text = entityText(text); name = entityText(name); code = entityText(code);
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const expression = new RegExp(`^(?:查询(?:结果|返回)\\s*[:：]\\s*)?${escape(name)}(?:的)?(?:股票|证券)?代码\\s*(?:为|是|[:：=])\\s*([A-Za-z0-9][A-Za-z0-9_.-]*?)[。.!]?$`, "u");
   const match = expression.exec(text.trim());
@@ -61,8 +65,10 @@ function independentReturnText(messages: unknown[], index: number): string[] {
 }
 
 /** Only explicit code/name tables with comparable earlier tool tables require this bounded check. */
-export function attributionTablePlan(raw: { messages: unknown[] }, finalIndex: number): TableCheckRequest[] {
-  const tables = parseTraceTables(raw);
+export function attributionTablePlan(raw: { messages: unknown[] }, inputId: string, finalIndex: number): TableCheckRequest[] {
+  return tablePlans(raw, parseTraceTables(raw, inputId), finalIndex);
+}
+function tablePlans(raw: { messages: unknown[] }, tables: TraceTable[], finalIndex: number): TableCheckRequest[] {
   const sources = tables.filter(table => {
     const message = raw.messages[table.message_index] as { role?: string; type?: string };
     return table.message_index < finalIndex && columns(table) &&
@@ -74,7 +80,7 @@ export function attributionTablePlan(raw: { messages: unknown[] }, finalIndex: n
     const related = sources.flatMap(source => {
       const s = columns(source)!;
       if (!answer.rows.some(row => source.rows.some(other =>
-        row.cells[a.name] === other.cells[s.name] || sameCode(row.cells[a.code] ?? "", other.cells[s.code] ?? "")))) return [];
+        entityText(row.cells[a.name] ?? "") === entityText(other.cells[s.name] ?? "") || sameCode(row.cells[a.code] ?? "", other.cells[s.code] ?? "")))) return [];
       return [{ table_id: source.table_id, key_columns: [{ answer: a.name, source: s.name }],
         value_columns: [{ answer: a.code, source: s.code }] }];
     });
@@ -83,9 +89,18 @@ export function attributionTablePlan(raw: { messages: unknown[] }, finalIndex: n
 }
 
 /** Summarize every normalized row and retain full evidence for doubts; this records no model call or read. */
-export function attributionTableChecks(raw: { messages: unknown[] }, finalIndex: number): TableCheckResult[] {
-  return attributionTablePlan(raw, finalIndex).map(plan => {
-    const checked = compareTraceTableRows(raw, plan);
+export function attributionTableChecks(raw: { messages: unknown[] }, inputId: string, finalIndex: number): TableCheckResult[] {
+  const tables = parseTraceTables(raw, inputId);
+  const plans = new Map(tablePlans(raw, tables, finalIndex).map(plan => [plan.answer_table_id, plan]));
+  return tables.filter(table => table.message_index === finalIndex && columns(table) && table.rows.length).map(answer => {
+    const plan = plans.get(answer.table_id);
+    if (!plan) return {
+      answer_table_id: answer.table_id,
+      rows: answer.rows.map(row => ({ row_index: row.row_index, status: "unverified" as const,
+        answer: { cells: row.cells, evidence: row.evidence }, sources: [] })),
+      summary: { matched: 0, conflict: 0, unverified: answer.rows.length, ambiguous: 0 },
+    };
+    const checked = compareTraceTableRows(raw, plan, inputId);
     const summary: TableCheckResult["summary"] = { matched: 0, conflict: 0, unverified: 0, ambiguous: 0 };
     const rows = checked.rows.flatMap(row => {
       const status = rowStatus(row, plan);
@@ -97,38 +112,46 @@ export function attributionTableChecks(raw: { messages: unknown[] }, finalIndex:
 }
 function supports(evidence: Evidence[], row: TableRowCheck): boolean {
   const contains = (expected: { message_index: number; quote: string }) => evidence.some(item =>
-    item.message_index === expected.message_index && item.quote.includes(expected.quote));
+    ownEvidence(item) && item.message_index === expected.message_index && item.quote.includes(expected.quote));
   return contains(row.answer.evidence) && row.sources.some(source => contains(source.evidence));
 }
 function rowStatus(row: TableRowCheck, plan: TableCheckRequest): TableRowCheck["status"] {
   if (row.status === "unverified") return row.status;
   const matches = row.sources.map(source => {
     const mapping = plan.sources.find(item => item.table_id === source.table_id)!;
-    return mapping.key_columns.every(pair => row.answer.cells[pair.answer] === source.cells[pair.source]) &&
+    return mapping.key_columns.every(pair => entityText(row.answer.cells[pair.answer] ?? "") === entityText(source.cells[pair.source] ?? "")) &&
       mapping.value_columns.every(pair => sameCode(row.answer.cells[pair.answer] ?? "", source.cells[pair.source] ?? ""));
   });
   if (matches.length && matches.every(Boolean)) return "matched";
   return matches.some(Boolean) ? "ambiguous" : row.status;
 }
 
+export interface TableReviewConcern {
+  kind: "unverified" | "unresolved_conflict";
+  table_id: string;
+  row_index: number;
+  reason: string;
+}
+
 /** Recompute from source records, never trust a model-supplied comparison verdict. */
 export function attributionTableReview(request: AgentRequest, result: AttributionResult, options: { accepted?: boolean } = {}) {
   const raw = request.sources.answer.value as { messages: unknown[] };
+  const inputId = request.sources.answer.id;
   const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
-  const plans = attributionTablePlan(raw, finalIndex);
-  const fullChecks = plans.map(plan => compareTraceTableRows(raw, plan));
-  const material = attributionTableChecks(raw, finalIndex);
-  const errors: ValidationIssue[] = [], reasons: string[] = [];
+  const plans = attributionTablePlan(raw, inputId, finalIndex);
+  const fullChecks = plans.map(plan => compareTraceTableRows(raw, plan, inputId));
+  const material = attributionTableChecks(raw, inputId, finalIndex);
+  const errors: ValidationIssue[] = [], concerns: TableReviewConcern[] = [];
+  const confirmedConflicts: { table_id: string; row_index: number; finding_indices: number[] }[] = [];
   const provided = (request.input.answer as { table_check_results?: unknown }).table_check_results;
   if (!Array.isArray(provided) || canonical(provided) !== canonical(material)) {
     errors.push({ category: "evidence", code: Array.isArray(provided) ? "table_check_results_mismatch" : "table_check_results_missing",
       path: "/answer/table_check_results", message: "请求中的表格对应核验材料必须完整且与原始材料重算结果一致。",
       expected: material, actual: provided });
-    reasons.push("最终代码/名称表的对应核验材料缺失或与原始材料不一致。");
   }
   const resolutions = new Map<string, NonNullable<AttributionResult["table_resolutions"]>[number]>();
   const hasEvidence = (evidence: Evidence[], target: { message_index: number; quote: string }) => evidence.some(item =>
-    item.message_index === target.message_index && item.quote.includes(target.quote));
+    ownEvidence(item) && item.message_index === target.message_index && item.quote.includes(target.quote));
   for (const [index, resolution] of (result.table_resolutions ?? []).entries()) {
     const key = `${resolution.table_id}:${resolution.row_index}`;
     const planIndex = plans.findIndex(plan => plan.answer_table_id === resolution.table_id);
@@ -155,9 +178,16 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         const name = row.answer.cells[nameColumn], code = row.answer.cells[codeColumn];
         // A later positive statement can fill a missing source row, but cannot
         // erase an already observed conflict. Keep each returned leaf intact.
-        const originalSupport = status === "unverified" && resolution.evidence.some(item =>
-          item.message_index < finalIndex && independentReturnText(raw.messages, item.message_index).some(text =>
-            text.trim() === item.quote.trim() && literalPairStatement(text, name, code)));
+        const originalSupport = status === "unverified" && resolution.evidence.some(item => {
+          const peer = item.source === undefined ? undefined : record((request.input.reference_materials as Record<string, unknown> | undefined)?.[item.source]);
+          const source = item.source === undefined ? undefined : request.sources[item.source];
+          const chosen = ownEvidence(item) ? { raw, finalIndex } : peer?.grader_only === true && source &&
+            item.source_input_id === source.id && peer.source_input_id === source.id && record(source.value) &&
+            Array.isArray(record(source.value)!.messages) && typeof peer.final_message_index === "number"
+            ? { raw: source.value as { messages: unknown[] }, finalIndex: peer.final_message_index } : undefined;
+          return !!chosen && item.message_index < chosen.finalIndex && independentReturnText(chosen.raw.messages, item.message_index).some(text =>
+            text.trim() === item.quote.trim() && literalPairStatement(text, name, code));
+        });
         const completeEvidence = hasEvidence(resolution.evidence, row.answer.evidence) &&
           row.sources.every(source => hasEvidence(resolution.evidence, source.evidence));
         const supportedProblem = result.findings.some(finding => finding.type === "problem" &&
@@ -172,18 +202,26 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         // A textual placeholder does not assert an identifier. Whether an unknown
         // value satisfies the task remains a criterion judgment, not a source mismatch.
         const asserted = plan.sources[0].value_columns.some(pair =>
-          /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(row.answer.cells[pair.answer] ?? ""));
+          /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(entityText(row.answer.cells[pair.answer] ?? "")));
         if (!asserted) continue;
-        reasons.push(`${location}缺少可匹配的来源行；这不证明答案错误，需要核对来源截断、对象与范围。`);
+        concerns.push({ kind: "unverified", table_id: plan.answer_table_id, row_index: row.row_index,
+          reason: `${location}缺少可匹配的来源行；这不证明答案错误，需要核对来源截断、对象与范围。` });
         continue;
       }
       const findings = result.findings.filter(finding => finding.type === "problem" && supports(finding.evidence, row));
+      if (status === "conflict") {
+        const findingIndices = result.findings.flatMap((finding, index) => finding.type === "problem" &&
+          finding.assessment.evidence_status === "established" && supports(finding.evidence, row) ? [index] : []);
+        if (findingIndices.length) confirmedConflicts.push({ table_id: plan.answer_table_id,
+          row_index: row.row_index, finding_indices: findingIndices });
+      }
       if (!findings.length) errors.push({ category: "evidence", code: "table_conflict_unreported", path: "/findings",
         message: `${location}与来源存在字面对应冲突，须引用两侧原文在 finding 中说明事实、别名/范围或不确定性，不能遗漏。`,
-        expected: { status, suggested_evidence: [row.answer.evidence, ...row.sources.map(source => source.evidence)] } });
+        expected: { status, suggested_evidence: [row.answer.evidence, ...row.sources.map(source => source.evidence)].map(displayEvidence) } });
       if (!resolved && (status === "ambiguous" || !findings.some(finding => finding.assessment.evidence_status === "established")))
-        reasons.push(`${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。`);
+        concerns.push({ kind: "unresolved_conflict", table_id: plan.answer_table_id, row_index: row.row_index,
+          reason: `${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。` });
     }
   }
-  return { plans, errors, reasons: [...new Set(reasons)] };
+  return { plans, errors, concerns, confirmed_conflicts: confirmedConflicts };
 }

@@ -5,14 +5,40 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
+import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
+
+test("draft collection uses loaded JSON for either current submission mode and skips non-evaluation calls", async () => {
+  const direct = { summary: "direct" }, file = { summary: "loaded before the path was overwritten" };
+  const events = [
+    { type: "tool_start", data: { name: "submit_evaluation", args: direct } },
+    { type: "submission", data: { content_loaded: true, evaluation: direct } },
+    { seq: 3, type: "tool_end", data: { name: "submit_evaluation", result: { isError: true } } },
+    { type: "tool_start", data: { name: "submit_evaluation_file", args: { path: "draft.json" } } },
+    { type: "submission", data: { content_loaded: true, evaluation: file } },
+    { seq: 6, type: "tool_end", data: { name: "submit_evaluation_file", result: { isError: true } } },
+    { type: "tool_start", data: { name: "submit_evaluation_file", args: { path: "missing.json" } } },
+    { type: "tool_end", data: { name: "submit_evaluation_file", result: { isError: true } } },
+    { type: "submission", data: { content_loaded: true, inspection: true, evaluation: { checks: [] } } },
+    { type: "tool_end", data: { name: "inspect_material", result: { isError: true } } },
+    { type: "tool_start", data: { name: "submit_evaluation_file", args: { path: "accepted.json" } } },
+    { type: "submission", data: { content_loaded: true, evaluation: { summary: "accepted" } } },
+    { type: "tool_end", data: { name: "submit_evaluation_file", result: {} } },
+    { type: "tool_end", data: { name: "submit_evaluation", result: { isError: true }, malformed_arguments: true } },
+  ];
+  const captured = [];
+  for await (const value of rejectedEvaluationDrafts(events)) captured.push(value);
+  assert.deepEqual(captured.map(({ event, draft }) => [event.seq, draft]), [[3, direct], [6, file]]);
+});
+
+const inputIds = { a: "11111111-1111-4111-8111-111111111111", b: "22222222-2222-4222-8222-222222222222", c: "33333333-3333-4333-8333-333333333333" };
 
 function row(caseId = "one", versions = ["a", "b"], winner = null) {
   const evaluations = Object.fromEntries(versions.map((version) => [version, {
     is_correct: null, correctness_reason: "", correctness_evidence: [], numeric_checks: [], summary: "完成查询",
-    criterion_assessments: [{ criterion_id: "answer", status: "met", evidence_status: "established", summary: "核心可用", evidence: [{ message_index: 1, quote: "4" }] }],
+    criterion_assessments: [{ criterion_id: "answer", status: "met", evidence_status: "established", summary: "核心可用", evidence: [{ evidence_id: `ev_${inputIds[version]}_1_text_0_1_/content`, message_index: 1, quote: "4" }] }],
     core_assessment: { meets_core: true, reason: "核心可用", criterion_ids: ["answer"] },
     findings: [{ finding_id: "11111111-1111-4111-8111-111111111111", type: "strength", dimension: "correctness", stage: "final_answer", importance: "high",
-      text: "给出结果", reason: "符合所求", evidence: [{ message_index: 1, quote: "4" }], problem: null,
+      text: "给出结果", reason: "符合所求", evidence: [{ evidence_id: `ev_${inputIds[version]}_1_text_0_1_/content`, message_index: 1, quote: "4" }], problem: null,
       assessment: { requirement_index: 0, observation: "4", evidence_status: "established", impact: "核心可用" } }],
   }]));
   const verdicts = {};

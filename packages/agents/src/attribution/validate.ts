@@ -8,12 +8,16 @@ import {
   type TaskAnalysis,
   type ValidationIssue,
 } from "@eval/contracts";
-import { images, traceReadCoverage, validateTraceEvidence } from "@eval/tools";
+import { images, traceReadCoverage } from "@eval/tools";
 import type { AttributionResult } from "./types.js";
-import { containsNumber, matchesReference } from "./numeric.js";
-import { numericUnitIssue, scalarReference } from "./units.js";
 import { attributionTableReview } from "./table-review.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
+import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
+import { instructionEvidenceIssues, instructionSubmissionIssues } from "./instructions.js";
+import { submissionEvidenceIssues } from "./submission-evidence.js";
+import { correctnessEvidenceScopeIssues, foreignActualIssues, ownEvidence, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
+import { numericLedgerIssues } from "./numeric-ledger.js";
+import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
 
 interface Input {
   candidate_id: string;
@@ -27,199 +31,311 @@ interface Input {
 }
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
-export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
-  if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
-  const input = request.input as unknown as Input;
-  const value = result as AttributionResult;
-  const repairErrors: ValidationIssue[] = [];
-  repairErrors.push(...attributionTableReview(request, value).errors);
-  const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
-    repairErrors.push({ category: "decision", code, path, message, actual, expected });
+const object = (value: unknown): Record<string, unknown> | undefined =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+const strings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+const statuses = ["met", "partial", "unmet", "unknown", "not_applicable"];
+const knownTopLevelFields = new Set([...Object.keys(schema.properties), ...Object.keys(submissionSchema.properties)]);
 
-  if (canonical(value.task_analysis) !== canonical(input.task_analysis))
-    issue("task_analysis_mismatch", "/task_analysis", "task_analysis 必须镜像请求中的共享判据，不能按回答改写", value.task_analysis, input.task_analysis);
+/** Final-image coverage depends only on trusted source material and this attempt's audit. */
+function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): ValidationIssue[] {
+  const input = request.input as unknown as Input;
+  const index = input.answer.final_message_index;
+  const raw = request.sources.answer.value as { messages: unknown[] };
+  return images(raw.messages[index]).length && !audit.viewedImages.includes(`answer:${index}`)
+    ? [{ category: "decision", code: "final_image_not_viewed", path: "/findings",
+      message: `最终回答含图片，必须先 view_image(candidate="answer", message_index=${index}) 再判交付是否缺失；表格/名单可能在图片里。` }]
+    : [];
+}
+
+/** Business rules that can be checked before evidence references are resolved. */
+export function validateSubmission(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
+  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
+    ...instructionSubmissionIssues(request, draft, audit)];
+}
+
+/** Native actuals may use JSON numbers; uncertain precision still requires an exact string. */
+export function numericSubmissionIssues(draft: unknown): ValidationIssue[] {
+  const checks = object(draft)?.numeric_checks;
+  if (!Array.isArray(checks)) return [];
+  return checks.flatMap((check, index) => {
+    const actual = object(check)?.actual;
+    if (typeof actual !== "number" || Number.isFinite(actual) && (!Number.isInteger(actual) || Number.isSafeInteger(actual))) return [];
+    return [{ category: "structure", code: "numeric_actual_unsafe", path: `/numeric_checks/${index}/actual`,
+      message: "actual 的 JSON number 必须有限，整数须在安全整数范围内；大整数请保留最终回答中的原十进制字符串，不能提交已失去精度的数值。",
+      actual, expected: { finite_number: true, safe_integer: true } } as ValidationIssue];
+  });
+}
+
+/** Presence and ownership are determined by the trusted standard-answer flag. */
+export function correctnessSubmissionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
+  const value = object(draft);
+  if (!value) return [];
+  const available = (request.input.ground_truth as unknown as Input["ground_truth"]).available;
+  return ["is_correct", "correctness_reason", "correctness_evidence"].flatMap((field) => {
+    const present = Object.hasOwn(value, field);
+    if (present === available) return [];
+    const code = field === "is_correct" ? "correctness" : field;
+    return [{ category: "decision" as const, code: `${code}_${available ? "required" : "forbidden"}`,
+      path: `/${field}`, actual: value[field],
+      expected: available ? { required_field: field } : { remove_fields: [field] },
+      message: available
+        ? `有标准答案时必须提交 ${field}，按实际核对结果填写，不由程序代判。`
+        : `无标准答案时请删除 ${field} 字段；程序生成 is_correct=null、correctness_reason=""、correctness_evidence=[]，不要提交这些空值。`,
+    }];
+  });
+}
+
+/** The model selects original requirement positions; persisted IDs remain program-owned. */
+export function submissionCoreRequirements(request: AgentRequest, draft: unknown) {
+  const indices = object(object(draft)?.core_assessment)?.requirement_indices;
+  const identified = Array.isArray(indices) && indices.every(index => Number.isSafeInteger(index) && index >= 0);
+  const criterionIds: string[] = [], issues: ValidationIssue[] = [];
+  if (!identified) return { criterionIds, issues, identified };
+  const input = request.input as unknown as Input;
+  const requirements = input.task_analysis.requirements;
+  const applicable = (criterion: TaskAnalysis["requirements"][number]) =>
+    !criterion.applies_to.length || criterion.applies_to.includes(input.candidate_id);
+  const expected = requirements.flatMap((criterion, index) => applicable(criterion) ? [index] : []);
+  indices.forEach((selection, index) => {
+    const criterion = requirements[selection];
+    if (!criterion || !applicable(criterion)) issues.push({ category: "decision",
+      code: criterion ? "core_requirement_not_applicable" : "core_requirement_index_invalid",
+      path: `/core_assessment/requirement_indices/${index}`, actual: selection, expected,
+      message: "核心依据只选择本方适用 requirements 的原全局零起始 requirement_index；从 expected 选择，不按过滤后位置编号，也不选择 scoring_points、red_flags 或 finding。" });
+    else criterionIds.push(criterion.id);
+  });
+  return { criterionIds, issues, identified };
+}
+
+/** The submitted assessments cover applicable criteria; resolved assessments cover the complete rubric. */
+export function validateCriterionAssessments(request: AgentRequest, draft: unknown, representation: "submission" | "result") {
+  const value = object(draft);
+  const assessmentMap = new Map<string, Record<string, unknown>>();
+  if (!value) return { issues: [] as ValidationIssue[], assessmentMap, identifiedAssessments: false };
+  const input = request.input as unknown as Input;
+  const errors: ValidationIssue[] = [];
+  const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
+    errors.push({ category: "decision", code, path, message, actual, expected });
   const applicable = (criterion: TaskAnalysis["requirements"][number]) =>
     !criterion.applies_to.length || criterion.applies_to.includes(input.candidate_id);
   const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
   const criterionMap = new Map(criteria.map((criterion) => [criterion.id, criterion]));
-  const assessmentMap = new Map(value.criterion_assessments.map((assessment) => [assessment.criterion_id, assessment]));
+  const assessments = Array.isArray(value.criterion_assessments) ? value.criterion_assessments : undefined;
+  const identifiedAssessments = assessments?.every((assessment) => typeof object(assessment)?.criterion_id === "string");
   const assessmentIds = new Set<string>();
-  value.criterion_assessments.forEach((assessment, index) => {
+  assessments?.forEach((entry, index) => {
+    const assessment = object(entry);
+    if (!assessment || typeof assessment.criterion_id !== "string") return;
     const location = `/criterion_assessments/${index}`;
     const criterion = criterionMap.get(assessment.criterion_id);
     if (assessmentIds.has(assessment.criterion_id))
       issue("criterion_assessment_duplicate", `${location}/criterion_id`, "每条共享判据必须且只能评审一次", assessment.criterion_id);
     assessmentIds.add(assessment.criterion_id);
+    assessmentMap.set(assessment.criterion_id, assessment);
     if (!criterion) {
       issue("criterion_assessment_unknown", `${location}/criterion_id`, "criterion_id 必须引用共享判据", assessment.criterion_id);
       return;
     }
-    if ((assessment.status === "not_applicable") !== !applicable(criterion))
+    if (representation === "submission" && !applicable(criterion))
+      issue("criterion_out_of_scope", `${location}/criterion_id`,
+        "模型只提交当前候选适用的判据；删除本条完整评审，程序按可信 applies_to 生成不适用结果，不填写占位证据。",
+        assessment.criterion_id, { candidate_id: input.candidate_id, applies_to: [...criterion.applies_to], target_path: location });
+    if (representation === "result" && typeof assessment.status === "string" && statuses.includes(assessment.status) &&
+      (assessment.status === "not_applicable") !== !applicable(criterion))
       issue("criterion_applicability_mismatch", `${location}/status`, "只有 applies_to 不包含当前候选时才能且必须填 not_applicable；[] 适用于全部候选", assessment.status, applicable(criterion));
-    if (assessment.status === "unknown" && assessment.evidence_status !== "uncertain")
+    if (assessment.status === "unknown" && assessment.evidence_status === "established")
       issue("criterion_unknown_established", `${location}/evidence_status`, "unknown 表示证据不足，evidence_status 必须为 uncertain");
-    if (assessment.status === "not_applicable" && assessment.evidence.length)
-      issue("criterion_not_applicable_evidence", `${location}/evidence`, "不适用由共享 scope 确定，不填写回答证据");
-    if (["met", "partial", "unmet"].includes(assessment.status) && assessment.evidence_status === "established" && !assessment.evidence.length)
-      issue("criterion_evidence_required", `${location}/evidence`, "已确认的适用判据结论必须引用支持判断的原文或已查看图片");
-    if (!assessment.summary.trim())
+    if (representation === "result" && assessment.status === "not_applicable" && assessment.evidence_status !== "established")
+      issue("criterion_scope_uncertain", `${location}/evidence_status`, "正式不适用结果由可信 applies_to 确定，evidence_status 必须为 established");
+    if (Array.isArray(assessment.evidence)) {
+      if (representation === "result" && assessment.status === "not_applicable" && assessment.evidence.length)
+        issue("criterion_not_applicable_evidence", `${location}/evidence`, "不适用由共享 scope 确定，不填写回答证据");
+      if (typeof assessment.status === "string" && ["met", "partial", "unmet"].includes(assessment.status) &&
+        assessment.evidence_status === "established" && !assessment.evidence.length)
+        issue("criterion_evidence_required", `${location}/evidence`, "已确认的适用判据结论必须引用支持判断的原文或已查看图片");
+    }
+    if (typeof assessment.summary === "string" && !assessment.summary.trim())
       issue("criterion_summary_empty", `${location}/summary`, "逐项评审说明不能为空");
   });
-  for (const criterion of criteria) if (!assessmentIds.has(criterion.id))
-    issue("criterion_assessment_missing", "/criterion_assessments", "共享判据必须全部覆盖，含不适用判据", criterion.id);
+  if (identifiedAssessments) for (const criterion of criteria) if ((representation === "result" || applicable(criterion)) && !assessmentIds.has(criterion.id)) {
+    // Suggest only one exact-ID object outside the contract; derived formal fields are never aliases.
+    const misplaced = Object.entries(value).filter(([key, entry]) =>
+      !knownTopLevelFields.has(key) && object(entry)?.criterion_id === criterion.id);
+    const sourcePath = misplaced.length === 1 ? `/${misplaced[0]![0].replace(/~/g, "~0").replace(/\//g, "~1")}` : undefined;
+    const targetPath = "/criterion_assessments/-";
+    const applies = applicable(criterion);
+    issue("criterion_assessment_missing", "/criterion_assessments",
+      `共享判据 ${criterion.id} 缺失，${representation === "submission" ? "当前候选的适用判据必须全部评审" : "正式结果必须覆盖全部判据"}。` +
+      (sourcePath ? `从 ${sourcePath} 移动完整条目到 ${targetPath}，删除错误的顶层字段 ${sourcePath}；` : `向 ${targetPath} 追加完整条目；`) +
+      "补齐必填字段 criterion_id、status、evidence_status、summary、evidence，按 expected.criterion 核对原判据和 applies_to。" +
+      (applies ? "当前候选适用，按实际证据评审，不能填 not_applicable。" : "当前候选不适用，status 必须为 not_applicable，evidence 必须为 []。"),
+      criterion.id, {
+        criterion_id: criterion.id, criterion: structuredClone(criterion), candidate_id: input.candidate_id, applicable: applies,
+        target_path: targetPath, ...(sourcePath ? { source_path: sourcePath } : {}),
+        required_fields: [...submissionSchema.properties.criterion_assessments.items.required],
+        ...(!applies ? { status: "not_applicable", evidence: [] } : {}),
+      });
+  }
+  return { issues: errors, assessmentMap, identifiedAssessments };
+}
 
-  const requirements = new Map(input.task_analysis.requirements.map((criterion) => [criterion.id, criterion]));
-  const coreEvidence = value.core_assessment.criterion_ids.flatMap((id, index) => {
-    const criterion = requirements.get(id);
-    if (!criterion || !applicable(criterion)) {
-      issue("core_criterion_invalid", `/core_assessment/criterion_ids/${index}`, "核心可用性只能引用适用于当前候选的 requirements", id);
-      return [];
+function validateIndependentRules(request: AgentRequest, draft: unknown, representation: "submission" | "result"): ValidationIssue[] {
+  const value = object(draft);
+  if (!value) return [];
+  const input = request.input as unknown as Input;
+  const { issues: errors, assessmentMap, identifiedAssessments } = validateCriterionAssessments(request, draft, representation);
+  if (representation === "submission") errors.push(...correctnessSubmissionIssues(request, draft));
+  const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
+    errors.push({ category: "decision", code, path, message, actual, expected });
+  const applicable = (criterion: TaskAnalysis["requirements"][number]) =>
+    !criterion.applies_to.length || criterion.applies_to.includes(input.candidate_id);
+
+  const core = object(value.core_assessment);
+  const coreEvidence: Record<string, unknown>[] = [];
+  let evidenceStatesValid = false;
+  const selection = representation === "submission" ? submissionCoreRequirements(request, draft) : undefined;
+  if (selection) errors.push(...selection.issues);
+  const criterionIds = selection ? selection.identified ? selection.criterionIds : undefined
+    : strings(core?.criterion_ids) ? core.criterion_ids : undefined;
+  if (core && criterionIds) {
+    const requirements = new Map(input.task_analysis.requirements.map((criterion) => [criterion.id, criterion]));
+    criterionIds.forEach((id, index) => {
+      const criterion = requirements.get(id);
+      if (!criterion || !applicable(criterion))
+        issue("core_criterion_invalid", `/core_assessment/criterion_ids/${index}`, "核心可用性只能引用适用于当前候选的 requirements；从 expected 列出的 ID 选择，不能引用 scoring_points、red_flags 或 finding_id", id,
+          input.task_analysis.requirements.filter(applicable).map((item) => item.id));
+      else {
+        const assessment = assessmentMap.get(id);
+        if (assessment) coreEvidence.push(assessment);
+      }
+    });
+    evidenceStatesValid = !!identifiedAssessments && !selection?.issues.length && criterionIds.every((id) => {
+      const criterion = requirements.get(id);
+      return !!criterion && applicable(criterion) && assessmentMap.has(id);
+    }) && coreEvidence.every((assessment) =>
+      typeof assessment.status === "string" && statuses.includes(assessment.status) &&
+      (assessment.evidence_status === "established" || assessment.evidence_status === "uncertain"));
+    if (evidenceStatesValid) {
+      if (core.meets_core === false && !coreEvidence.some((assessment) =>
+        assessment.evidence_status === "established" && (assessment.status === "unmet" || assessment.status === "partial")))
+        issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");
+      if (core.meets_core === null && !coreEvidence.some((assessment) =>
+        assessment.status === "unknown" || assessment.evidence_status === "uncertain"))
+        issue("core_unknown_unsupported", "/core_assessment", "核心可用性为 null 时必须引用证据不足的适用 requirement");
+      if (core.meets_core === true && !coreEvidence.some((assessment) =>
+        assessment.evidence_status === "established" && (assessment.status === "met" || assessment.status === "partial")))
+        issue("core_success_unsupported", "/core_assessment", "判核心可用必须引用适用 requirement 已确认的 met 或 partial，并说明仍可用的独立结果");
     }
-    const assessment = assessmentMap.get(id);
-    return assessment ? [assessment] : [];
-  });
-  if (!value.core_assessment.reason.trim())
+  }
+  if (typeof core?.reason === "string" && !core.reason.trim())
     issue("core_reason_empty", "/core_assessment/reason", "必须说明核心结果的独立用途、缺口和影响");
-  if (value.core_assessment.meets_core === false && !coreEvidence.some((assessment) =>
-    assessment.evidence_status === "established" && ["unmet", "partial"].includes(assessment.status)))
-    issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");
-  if (value.core_assessment.meets_core === null && !coreEvidence.some((assessment) =>
-    assessment.status === "unknown" || assessment.evidence_status === "uncertain"))
-    issue("core_unknown_unsupported", "/core_assessment", "核心可用性为 null 时必须引用证据不足的适用 requirement");
-  if (value.core_assessment.meets_core === true && !coreEvidence.some((assessment) =>
-    assessment.evidence_status === "established" && ["met", "partial"].includes(assessment.status)))
-    issue("core_success_unsupported", "/core_assessment", "判核心可用必须引用适用 requirement 已确认的 met 或 partial，并说明仍可用的独立结果");
-
-  if (value.has_standard_answer !== input.ground_truth.available)
-    issue(
-      "standard_answer_mismatch",
-      "/has_standard_answer",
-      "has_standard_answer 必须与本题是否有标准答案一致",
-      value.has_standard_answer,
-      input.ground_truth.available,
-    );
   const correctnessPendingReview = input.ground_truth.available && value.is_correct === null &&
-    value.core_assessment.meets_core === null && coreEvidence.some((assessment) =>
+    core?.meets_core === null && coreEvidence.some((assessment) =>
       assessment.status === "unknown" || assessment.evidence_status === "uncertain");
   if (input.ground_truth.available) {
-    if (typeof value.is_correct !== "boolean" && !correctnessPendingReview)
+    if (value.is_correct === null && !correctnessPendingReview && evidenceStatesValid &&
+      (core?.meets_core === null || typeof core?.meets_core === "boolean"))
       issue("correctness_required", "/is_correct", "有标准答案时须判定is_correct；无法核实时仅可保留null，并同时将核心状态设为null、引用unknown/uncertain的适用requirement以请求独立复核。", value.is_correct);
-    if (!value.correctness_reason.trim())
+    if (typeof value.correctness_reason === "string" && !value.correctness_reason.trim())
       issue("correctness_reason_required", "/correctness_reason", "有标准答案时必须给出核对理由");
-    if (!value.correctness_evidence.length)
+    if (Array.isArray(value.correctness_evidence) && !value.correctness_evidence.length)
       issue("correctness_evidence_required", "/correctness_evidence", "有标准答案时必须给出最终回答证据");
   } else {
-    if (value.is_correct !== null)
+    if (representation === "result" && typeof value.is_correct === "boolean")
       issue("correctness_forbidden", "/is_correct", "无标准答案时 is_correct 必须为 null", value.is_correct);
-    if (value.correctness_reason)
+    if (representation === "result" && typeof value.correctness_reason === "string" && value.correctness_reason)
       issue("correctness_reason_forbidden", "/correctness_reason", "无标准答案时 correctness_reason 必须为空");
-    if (value.correctness_evidence.length)
+    if (representation === "result" && Array.isArray(value.correctness_evidence) && value.correctness_evidence.length)
       issue("correctness_evidence_forbidden", "/correctness_evidence", "无标准答案时不得给出对错证据");
+    if (Array.isArray(value.numeric_checks) && value.numeric_checks.length)
+      issue("numeric_checks_without_reference", "/numeric_checks", "没有标准答案时数值核对表必须为空");
   }
 
+  const tools = new Set(input.answer.catalog.flatMap((message) =>
+    message.name && (["function_call", "function_call_output", "tool_call", "tool_result"].includes(message.type) || message.role === "tool") ? [message.name] : [],
+  ));
+  const findingIds = new Set<string>();
+  const findingEntries = representation === "submission" ? submissionFindingEntries(draft)
+    : Array.isArray(value.findings) ? value.findings.map((finding, index) => ({ finding, path: `/findings/${index}` })) : [];
+  findingEntries.forEach(({ finding: entry, path: location }, index) => {
+    const finding = object(entry);
+    if (!finding) return;
+    if (representation === "result" && typeof finding.finding_id === "string") {
+      if (findingIds.has(finding.finding_id))
+        issue("finding_id_duplicate", `${location}/finding_id`, "每个 finding_id 必须在本条回答内唯一", finding.finding_id);
+      findingIds.add(finding.finding_id);
+    }
+    const originalAssessment = object(finding.assessment);
+    const assessment = representation === "submission" && finding.dimension === "instruction_following"
+      ? { ...originalAssessment, requirement_index: Number.isSafeInteger(finding.norm_index) && Number(finding.norm_index) >= 0
+        ? attributionNormDirectory(request)[Number(finding.norm_index)]?.requirement_index : null } : originalAssessment;
+    if (typeof assessment?.requirement_index === "number" && Number.isInteger(assessment.requirement_index) && assessment.requirement_index >= 0) {
+      const requirement = input.task_analysis.requirements[assessment.requirement_index];
+      if (assessment.requirement_index >= input.task_analysis.requirements.length)
+        issue("requirement_index_invalid", `${location}/assessment/requirement_index`, "发现关联了不存在的任务要求", assessment.requirement_index, input.task_analysis.requirements.length);
+      if (requirement && !applicable(requirement))
+        issue("finding_requirement_not_applicable", `${location}/assessment/requirement_index`, "finding 不能关联不适用于当前候选的共享 requirement", assessment.requirement_index);
+      const criterionAssessment = requirement && assessmentMap.get(requirement.id);
+      if (finding.type === "problem" && (representation === "submission" || assessment.evidence_status === "established") &&
+        requirement && applicable(requirement) && criterionAssessment?.status === "met" && criterionAssessment.evidence_status === "established")
+        issue("finding_requirement_conflict", `${location}/assessment/requirement_index`,
+          `finding_index=${index}（零起始）${typeof finding.finding_id === "string" ? `、finding_id=${finding.finding_id}` : ""} 的 problem 显式关联 requirement ${requirement.id}，但同一判据却声明已确认 met。新提交不能仅把 problem 改为 uncertain 来保留这组冲突，任何 dimension 都不能绕过。请按原要求和实际证据核对：确实违反同一 requirement 时，将该判据改为 partial 或 unmet；该条证据确实不足时保留 uncertain，不能同时声明已确认 met；实际关联其他 requirement 时，填写其正确的 requirement_index；只是原要求之外的附加观察或自身规范未入 requirements 中时填 null。若没有真实问题则修正 finding，不能为消除反馈删去真实缺陷或将仍属同条规则的问题脱去关联。程序不根据索引证明违规，也不自动改动判据事实或核心可用性。`,
+          assessment.requirement_index, { criterion_id: requirement.id, status: criterionAssessment.status,
+            evidence_status: criterionAssessment.evidence_status, finding_index: index,
+            ...(typeof finding.finding_id === "string" ? { finding_id: finding.finding_id } : {}),
+            criterion_status_path: `/criterion_assessments/${(value.criterion_assessments as unknown[]).findIndex(entry => entry === criterionAssessment)}/status` });
+    }
+    const problem = object(finding.problem);
+    if (finding.type === "strength" && (representation === "submission" ? Object.hasOwn(finding, "problem") : finding.problem !== null))
+      issue("strength_problem_forbidden", `${location}/problem`, representation === "submission"
+        ? "本条 type=strength，请删除 problem 字段；程序会在正式结果中生成 null，不提交 null、空字符串或对象。"
+        : "正式结果中 type=strength 的 problem 必须为 null", finding.problem);
+    if (finding.type === "problem" && !problem)
+      issue("problem_required", `${location}/problem`, representation === "submission"
+        ? "type=problem 必须提交 problem 对象，填写 model_responsible、tool_evidence_indices、label、definition"
+        : "type=problem 必须有包含 component、label、definition 的正式问题对象");
+    if (!problem) return;
+    if (typeof problem.label === "string" && !problem.label.trim())
+      issue("problem_label_empty", `${location}/problem/label`, "问题名称不能为空");
+    if (typeof problem.definition === "string" && !problem.definition.trim())
+      issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
+    if (representation === "submission" || !strings(problem.component)) return;
+    problem.component.forEach((component, componentIndex) => {
+      if (component !== "模型自身推理" && !tools.has(component))
+        issue("problem_component_not_tool", `${location}/problem/component/${componentIndex}`, "正式 problem.component 每项必须是该回答调用链中的工具名，或「模型自身推理」", component);
+    });
+  });
+  return errors;
+}
+
+export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
+  if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
+  const input = request.input as unknown as Input;
+  const value = result as AttributionResult;
+  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result")];
+  repairErrors.push(...attributionTableReview(request, value).errors);
+  repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));
+  const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
+    repairErrors.push({ category: "decision", code, path, message, actual, expected });
+
+  if (canonical(value.task_analysis) !== canonical(input.task_analysis))
+    issue("task_analysis_mismatch", "/task_analysis", "task_analysis 必须镜像请求中的共享判据，不能按回答改写", value.task_analysis, input.task_analysis);
+  if (value.has_standard_answer !== input.ground_truth.available)
+    issue("standard_answer_mismatch", "/has_standard_answer", "has_standard_answer 必须与本题是否有标准答案一致", value.has_standard_answer, input.ground_truth.available);
+  repairErrors.push(...numericLedgerIssues(request, value, "result"));
   const toolMessages = new Set(["function_call", "function_call_output", "tool_call", "tool_result"]);
-  if (!input.ground_truth.available && value.numeric_checks.length)
-    issue("numeric_checks_without_reference", "/numeric_checks", "没有标准答案时数值核对表必须为空");
-  const scalar = input.ground_truth.available ? scalarReference(input.ground_truth.value) : null;
-  if (scalar !== null && !correctnessPendingReview && !value.numeric_checks.some((check) => containsNumber(scalar, check.expected, true)))
-    issue("numeric_reference_unchecked", "/numeric_checks",
-      `标准答案含可明确识别的单一目标数值${scalar}，必须核对并保留原精度；不能通过空表跳过。回答未提供值时填actual=null、matches=false。`, scalar);
-  for (const [index, check] of value.numeric_checks.entries()) {
-    const location = `/numeric_checks/${index}`;
-    const evidence = value.correctness_evidence[check.evidence_index];
-    let matches: boolean;
-    let unitIssue: ReturnType<typeof numericUnitIssue>;
-    try {
-      unitIssue = numericUnitIssue(input.ground_truth.value, evidence?.quote ?? "", check,
-        (request.sources.answer.value as { messages: unknown[] }).messages[input.answer.final_message_index]);
-      matches = check.actual !== null && matchesReference(check.actual, check.expected, check.scale, check.mode);
-      if (unitIssue?.code === "numeric_unit_mismatch") {
-        matches = false;
-        if (!matchesReference(check.scale, "1", "1", "exact"))
-          issue("numeric_scale_mismatch", `${location}/scale`, "不同维度没有单位等价倍率；保留scale=1、matches=false，并在correctness_reason说明差异。");
-      }
-    }
-    catch (error) {
-      issue("numeric_invalid", location, (error as Error).message);
-      continue;
-    }
-    if (check.matches !== matches)
-      issue(unitIssue?.code === "numeric_unit_mismatch" ? unitIssue.code : "numeric_rounding_mismatch", `${location}/matches`,
-        unitIssue?.code === "numeric_unit_mismatch" ? `${unitIssue.message} matches 必须为false。` :
-        `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
-    if (!containsNumber(JSON.stringify(input.ground_truth.value), check.expected, true))
-      issue("numeric_reference_missing", `${location}/expected`, "expected 必须来自标准答案，保留原有小数位和科学计数法指数；例如1.13018E+12须原样填写，不能展开为整数、换算标准或编造容差。自算值不能放expected；分数或复合单位请在correctness_reason说明推导并移除此数值表项");
-    if (unitIssue && unitIssue.code !== "numeric_unit_mismatch") issue(unitIssue.code, `${location}/scale`, unitIssue.message);
-    if (!evidence || (check.actual !== null && !containsNumber(evidence.quote, check.actual)))
-      issue("numeric_answer_missing", `${location}/evidence_index`,
-        `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；` +
-        `选最终消息 ${input.answer.final_message_index} 的原文加入 correctness_evidence，并填写其零起始 evidence_index。` +
-        `有值时用 search_trace(candidate="answer", query="${check.actual}") 定位。actual 必须照抄原文数值及正负号，不能先换算；例如原文2900万、标准以元计，则actual="2900"、scale="10000"，不能填29000000。未提供值用 actual=null、matches=false，不能补0或自己拼证据ID。复合单位、数名单或图表解码得到的派生值请在correctness_reason保留证据和计算过程，并移除此数值表项；不要把派生值伪装成原文字面值。请逐字核对 actual.quote 返回的真实原文，observation 中自行声称出现的数值不是原文证据。`,
-        { number: check.actual, quote: evidence?.quote ?? null });
-    if (value.is_correct === true && !matches)
-      issue("numeric_correctness_contradiction", "/is_correct", "存在未通过的标准数值核对，不能判全部正确；先核查数值、单位、口径是否选对");
-    if (value.is_correct === null && !matches)
-      issue("numeric_uncertainty_contradiction", "/is_correct", "数值核对已确认缺失、不等价或不同量纲时必须明确判false，不能把已知错误改写成待核实。");
-  }
   const tools = new Set(input.answer.catalog.flatMap((message) =>
     message.name && (toolMessages.has(message.type) || message.role === "tool") ? [message.name] : [],
   ));
-  const toolNames = [...tools];
   const toolLocations = new Map(input.answer.catalog
     .filter((message) => message.name && (toolMessages.has(message.type) || message.role === "tool"))
     .map((message) => [message.message_index, message.name]));
-  const findingIds = new Set<string>();
   value.findings.forEach((finding, index) => {
-    if (findingIds.has(finding.finding_id))
-      issue(
-        "finding_id_duplicate",
-        `/findings/${index}/finding_id`,
-        "每个 finding_id 必须在本条回答内唯一",
-        finding.finding_id,
-      );
-    findingIds.add(finding.finding_id);
-    if (finding.assessment.requirement_index !== null &&
-      finding.assessment.requirement_index >= input.task_analysis.requirements.length)
-      issue(
-        "requirement_index_invalid",
-        `/findings/${index}/assessment/requirement_index`,
-        "发现关联了不存在的任务要求",
-        finding.assessment.requirement_index,
-        input.task_analysis.requirements.length,
-      );
-    const requirement = finding.assessment.requirement_index === null ? undefined :
-      input.task_analysis.requirements[finding.assessment.requirement_index];
-    if (requirement && !applicable(requirement))
-      issue("finding_requirement_not_applicable", `/findings/${index}/assessment/requirement_index`,
-        "finding 不能关联不适用于当前候选的共享 requirement", finding.assessment.requirement_index);
-    if (finding.type === "strength" && finding.problem !== null)
-      issue(
-        "strength_problem_forbidden",
-        `/findings/${index}/problem`,
-        "优势的 problem 必须为 null",
-        finding.problem,
-      );
-    if (finding.type === "problem" && finding.problem === null)
-      issue("problem_required", `/findings/${index}/problem`, "问题型发现必须描述问题");
-    if (finding.problem && !finding.problem.label.trim())
-      issue("problem_label_empty", `/findings/${index}/problem/label`, "问题名称不能为空");
-    if (finding.problem && !finding.problem.definition.trim())
-      issue("problem_definition_empty", `/findings/${index}/problem/definition`, "问题定义不能为空");
-    if (finding.problem?.component.length &&
-      /(?:不能|无法|未能)[^。；\n]{0,15}(?:确定|确认|定位|查明)[^。；\n]{0,60}(?:具体根因|根本原因|责任归属)|(?:根因|责任归属)(?:仍|尚|还)?(?:不明|未知|待查|待定位)/u.test(finding.problem.definition))
-      issue("unresolved_component", `/findings/${index}/problem/component`,
-        "定义仍称根因或责任待定位，不能同时列责任组件；没有独立错误证据就填 []。如已有证据证明某组件独立失误，应明确该失误并将未知部分与已知责任分开描述。");
-    for (const [componentIndex, component] of (finding.problem?.component ?? []).entries()) {
-      if (component !== "模型自身推理" && !tools.has(component))
-        issue(
-          "problem_component_not_tool",
-          `/findings/${index}/problem/component/${componentIndex}`,
-          "problem.component 每项必须是该回答调用链中的工具名，或「模型自身推理」；不要用阶段/能力名",
-          component,
-          toolNames.join(", ") || "模型自身推理",
-        );
+    for (const component of finding.problem?.component ?? []) {
       if (tools.has(component) &&
-        !finding.evidence.some((item) => toolLocations.get(item.message_index) === component))
+        !finding.evidence.some((item) => ownEvidence(item) && toolLocations.get(item.message_index) === component))
         issue(
           "problem_component_evidence_missing",
           `/findings/${index}/evidence`,
@@ -229,8 +345,6 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     }
   });
 
-  const candidate = input.answer;
-  const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   input.answer.deferred_final_material.forEach((material, index) => {
     const coverage = traceReadCoverage(audit, {
       candidate: "answer", message_index: material.message_index, kind: "text", path: material.path,
@@ -242,39 +356,34 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       actual: coverage.missing, expected: { message_index: material.message_index, path: material.path, start: 0, end: material.total_chars },
     });
   });
-  if (images(raw.messages[candidate.final_message_index]).length &&
-      !audit.viewedImages.includes(`answer:${candidate.final_message_index}`))
-    issue("final_image_not_viewed", "/findings",
-      `最终回答含图片，必须先 view_image(candidate="answer", message_index=${candidate.final_message_index}) 再判交付是否缺失；表格/名单可能在图片里。`);
+  repairErrors.push(...finalImageReadIssues(request, audit));
+  repairErrors.push(...correctnessEvidenceScopeIssues(request, value.correctness_evidence, value.numeric_checks));
   repairErrors.push(
-    ...validateTraceEvidence(
-      raw,
+    ...validateAttributionEvidence(
+      request,
       value.correctness_evidence.map((item, i) => ({ item, location: `correctness_evidence[${i}]` })),
-      "answer",
       audit,
-      candidate.final_message_index,
     ),
   );
   value.findings.forEach((finding, i) =>
     repairErrors.push(
-      ...validateTraceEvidence(
-        raw,
+      ...validateAttributionEvidence(
+        request,
         finding.evidence.map((item, j) => ({ item, location: `findings[${i}].evidence[${j}]` })),
-        "answer",
         audit,
         undefined,
       ),
     ),
   );
   value.criterion_assessments.forEach((assessment, i) => repairErrors.push(
-    ...validateTraceEvidence(raw, assessment.evidence.map((item, j) => ({
+    ...validateAttributionEvidence(request, assessment.evidence.map((item, j) => ({
       item, location: `criterion_assessments[${i}].evidence[${j}]`,
-    })), "answer", audit),
+    })), audit),
   ));
   value.table_resolutions?.forEach((resolution, i) => repairErrors.push(
-    ...validateTraceEvidence(raw, resolution.evidence.map((item, j) => ({
+    ...validateAttributionEvidence(request, resolution.evidence.map((item, j) => ({
       item, location: `table_resolutions[${i}].evidence[${j}]`,
-    })), "answer", audit),
+    })), audit),
   ));
   if (repairErrors.length) throw new ValidationError(repairErrors);
 }

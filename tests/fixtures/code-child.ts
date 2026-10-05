@@ -9,6 +9,7 @@ const runtime = new ToolRuntime(
     attemptId: "orphan-test",
     workdir,
     inputs: new Map(),
+    inputIds: new Map(),
     policy: DEFAULT_POLICY,
     audit: { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] },
     artifacts: new ArtifactStore(path.join(workdir, "artifacts")),

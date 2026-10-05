@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { containsNumber, matchesReference } from "./numeric.js";
 
+test("citation identifiers do not supply numeric answer values", () => {
+  assert.equal(containsNumber("没有提供值[^12]", "12"), false);
+  assert.equal(containsNumber('未提供<trace ref="1234567"/>', "1234567"), false);
+  assert.equal(containsNumber("耗时12天[^12]", "12"), true);
+  assert.equal(containsNumber("普通编号[12]", "12"), true);
+});
+
 test("reference precision uses decimal rounding, including units and negative ties", () => {
   for (const [actual, expected, scale, matches] of [
     ["9.36", "9.4", "1", true], ["10.14", "10.1", "1", true],

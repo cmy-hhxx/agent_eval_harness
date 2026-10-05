@@ -1,3 +1,4 @@
+import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError } from "@eval/contracts";
@@ -11,7 +12,7 @@ function fixture(reference: string, answer: string, checks: AttributionResult["n
   request.input.ground_truth.value = reference;
   request.sources.answer.value.messages[1]!.content = answer;
   const result = structuredClone(example.result) as AttributionResult;
-  result.correctness_evidence = [{ message_index: 1, quote: answer }];
+  result.correctness_evidence = [canonicalEvidence(example.request.sources.answer.id, 1, answer)];
   result.criterion_assessments.forEach((item) => { item.evidence = result.correctness_evidence; });
   result.findings = [];
   result.numeric_checks = checks;
@@ -22,6 +23,14 @@ function check(expected: string, actual: string | null, scale = "1"): Attributio
 }
 const code = (wanted: string) => (error: unknown) => error instanceof ValidationError &&
   !!error.issues?.some((issue) => issue.code === wanted);
+
+test("citation numbers cannot borrow a table header unit to replace missing data", () => {
+  const answer = "| 名称 | 耗时(天) |\n|---|---|\n| 测试 | 未提供[^12] |";
+  assert.throws(fixture("耗时为12天", answer, [check("12", "12")]).validate,
+    code("numeric_answer_context_missing"));
+  fixture("耗时为12天", "| 名称 | 耗时(天) |\n|---|---|\n| 测试 | 12[^12] |",
+    [check("12", "12")]).validate();
+});
 
 test("a single explicit reference quantity cannot disappear from the numeric ledger", () => {
   for (const reference of ["总销量为1087.4万千升", "−0.6个百分点", "1.13018E+12元", "-0.6"])
@@ -77,18 +86,19 @@ test("missing scalar result remains explicit and cannot be called correct", () =
 
 test("a cropped numeric quote cannot hide the original final answer's unit", () => {
   const cropped = fixture("1087.4万千升", "总销量为1087.4万吨。", [check("1087.4", "1087.4")]);
-  cropped.result.correctness_evidence[0].quote = "1087.4";
+  cropped.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", 4);
+  cropped.result.criterion_assessments.forEach(item => { item.evidence = cropped.result.correctness_evidence; });
   assert.throws(cropped.validate, code("numeric_unit_mismatch"));
   cropped.result.numeric_checks[0].matches = false;
   cropped.result.is_correct = false;
   cropped.validate();
   const repeated = fixture("1087.4万千升", "销量1087.4万千升；重量1087.4万吨。", [check("1087.4", "1087.4")]);
-  repeated.result.correctness_evidence[0].quote = "1087.4";
+  repeated.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", 2);
   assert.throws(repeated.validate, code("numeric_unit_ambiguous"));
-  repeated.result.correctness_evidence[0].quote = "销量1087.4";
+  repeated.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "销量1087.4");
   repeated.validate();
   const substring = fixture("1087.4万千升", "销量21087.4万千升", [check("1087.4", "1087.4")]);
-  substring.result.correctness_evidence[0].quote = "1087.4";
+  substring.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", 3);
   assert.throws(substring.validate, code("numeric_answer_context_missing"));
 });
 
@@ -96,15 +106,15 @@ test("a unit-bearing table header is tied to the cited target cell's column", ()
   const table = "| 指标 | 销量（千升） |\n| --- | --- |\n| 总销量 | 10874000 |";
   const valid = fixture("1087.4万千升", table, [check("1087.4", "10874000", "0.0001")]);
   valid.validate();
-  valid.result.correctness_evidence[0].quote = "10874000";
+  valid.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "10874000", "/content", table.indexOf("10874000"));
   valid.validate();
-  valid.result.correctness_evidence[0].quote = JSON.stringify(valid.request.sources.answer.value.messages[1], null, 2);
+  valid.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, JSON.stringify(valid.request.sources.answer.value.messages[1], null, 2), "", 0, "json");
   valid.validate();
   const otherColumn = fixture("1087.4万千升", "| 指标 | 数值 | 重量（千升） |\n| --- | --- | --- |\n| 总销量 | 10874000 | 1 |",
     [check("1087.4", "10874000", "0.0001")]);
   assert.throws(otherColumn.validate, code("numeric_scale_unverified"));
   const wrong = fixture("1087.4万千升", "| 指标 | 重量（万吨） |\n| --- | --- |\n| 总销量 | 1087.4 |", [check("1087.4", "1087.4")]);
-  wrong.result.correctness_evidence[0].quote = "1087.4";
+  wrong.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", wrong.request.sources.answer.value.messages[1].content.indexOf("1087.4"));
   assert.throws(wrong.validate, code("numeric_unit_mismatch"));
 });
 

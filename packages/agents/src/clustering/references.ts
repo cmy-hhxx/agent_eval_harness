@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { schemaIssues, ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import type { ClusteringRequest, ClusteringResult } from "./types.js";
+import type { ClusteringRequest, ClusteringResult, ClusteringSubmission } from "./types.js";
+import { normalizeLabel } from "./library.js";
 import schema from "../../../../schemas/clustering/submission.schema.json" with { type: "json" };
 
 const validate = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -34,25 +35,49 @@ export function resolveSubmission(request: AgentRequest, draft: unknown): Cluste
       message: "编号不在本次材料中，请选择本次给出的编号", actual: value, expected: [...choices.keys()] });
     return value;
   };
-  const value = draft as ClusteringResult;
+  const value = draft as ClusteringSubmission;
+  const newClassKey = (index: number) => `n${index + 1}`;
+  const componentIds = new Map(input.library.components.flatMap(component =>
+    [component.label, ...component.aliases].map(label => [normalizeLabel(label), component.id] as const)));
+  const classChoices = (component: string) => input.library.components
+    .filter(entry => entry.id === componentIds.get(normalizeLabel(component)))
+    .flatMap(entry => entry.classes.map(({ id, label }) => ({ id, label, component: entry.label })));
   const result: ClusteringResult = {
-    assignments: value.assignments.map((entry, index) => ({
-      ...entry,
-      item_id: resolve(entry.item_id, refs.itemIds, `/assignments/${index}/item_id`),
-      ...(entry.class_id === undefined ? {} : {
-        class_id: resolve(entry.class_id, refs.classIds, `/assignments/${index}/class_id`),
-      }),
-    })),
-    new_classes: value.new_classes.map((entry, index) => ({
-      ...entry,
-      closest_existing: entry.closest_existing === null ? null
-        : resolve(entry.closest_existing, refs.classIds, `/new_classes/${index}/closest_existing`),
-    })),
+    assignments: value.assignments.map(({ new_class_index, ...entry }, index) => {
+      if (new_class_index !== undefined && new_class_index >= value.new_classes.length)
+        errors.push({ category: "decision", code: "clustering_new_class_index", path: `/assignments/${index}/new_class_index`,
+          message: "请选择本次 new_classes 数组中实际存在的位置，位置从 0 开始。", actual: new_class_index,
+          expected: { available_new_classes: value.new_classes.map(({ component, label }, index) => ({ index, component, label })) } });
+      return {
+        ...entry,
+        item_id: resolve(entry.item_id, refs.itemIds, `/assignments/${index}/item_id`),
+        ...(entry.class_id === undefined ? {} : {
+          class_id: resolve(entry.class_id, refs.classIds, `/assignments/${index}/class_id`),
+        }),
+        ...(new_class_index === undefined ? {} : { new_class_key: newClassKey(new_class_index) }),
+      };
+    }),
+    new_classes: value.new_classes.map((entry, index) => {
+      const choices = classChoices(entry.component);
+      if (entry.closest_existing === undefined && choices.length)
+        errors.push({ category: "decision", code: "clustering_new_class_uncompared", path: `/new_classes/${index}/closest_existing`,
+          message: "同组件已有问题类，必须选择最接近的已有类并说明实质差异。",
+          expected: { available_classes: refs.project(choices) } });
+      return {
+        ...entry,
+        key: newClassKey(index),
+        closest_existing: entry.closest_existing == null ? null
+          : resolve(entry.closest_existing, refs.classIds, `/new_classes/${index}/closest_existing`),
+      };
+    }),
     merges: value.merges.map((entry, index) => ({
       ...entry,
       into: resolve(entry.into, refs.classIds, `/merges/${index}/into`),
       from: entry.from.map((ref, offset) => resolve(ref, refs.classIds, `/merges/${index}/from/${offset}`)),
     })),
+    ...(value.class_updates ? { class_updates: value.class_updates.map((entry, index) => ({ ...entry,
+      class_id: resolve(entry.class_id, refs.classIds, `/class_updates/${index}/class_id`),
+    })) } : {}),
   };
   if (errors.length) throw new ValidationError(errors);
   return result;

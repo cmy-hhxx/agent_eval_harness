@@ -527,6 +527,9 @@ export async function processResponsesStream<TApi extends Api>(
 					: (response?.service_tier ?? options.serviceTier);
 				options.applyServiceTierPricing(output.usage, serviceTier);
 			}
+			// Save the terminal reason before strict decoding can reject a completed call.
+			const incompleteReason = response.incomplete_details?.reason;
+			output.stopReasonRaw = incompleteReason ? `${response.status}.${incompleteReason}` : response.status;
 			output.stopReason = mapStopReason(response?.status);
 			// Some gateways end an empty item before its arguments arrive. Only
 			// finalize from the matching terminal item or a complete item.done.
@@ -559,11 +562,11 @@ export async function processResponsesStream<TApi extends Api>(
 					args = JSON.parse(rawArguments);
 				} catch {
 					throw new Error(
-						`Invalid OpenAI Responses tool arguments: ${call.item.id}; expected complete JSON object`,
+						`Invalid OpenAI Responses tool arguments: ${call.item.name} (${call.item.call_id}|${call.item.id}); expected complete JSON object`,
 					);
 				}
 				if (args === null || typeof args !== "object" || Array.isArray(args)) {
-					throw new Error(`Invalid OpenAI Responses tool arguments: ${call.item.id}; expected JSON object`);
+					throw new Error(`Invalid OpenAI Responses tool arguments: ${call.item.name} (${call.item.call_id}|${call.item.id}); expected JSON object`);
 				}
 				completedCalls.push({
 					block: call.block,
@@ -585,9 +588,6 @@ export async function processResponsesStream<TApi extends Api>(
 			slots.clear();
 			if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 				output.stopReason = "toolUse";
-			}
-			if (output.stopReason === "error" && response?.status) {
-				output.stopReasonRaw = response.status;
 			}
 		} else if (event.type === "error") {
 			throw new StreamFailureError(`Error Code ${event.code}: ${event.message}`, {

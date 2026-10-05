@@ -6,19 +6,54 @@ import {
 } from "@eval/contracts";
 import { images, traceReadCoverage } from "@eval/tools";
 import type { ComparisonInput, ComparisonResult, CriterionAssessment } from "./types.js";
-import { comparisonCellState } from "./resolve.js";
+import { comparisonCoreFailureRefs } from "./resolve.js";
+import { criterionAppliesToPair } from "./pair-scope.js";
+import { comparisonCellState, comparisonCellCriterionIds, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonReferenceIssues } from "./submission-checks.js";
 import schema from "../../../../schemas/comparison/result.schema.json" with { type: "json" };
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
-export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
+/** Share the source-owned final-image gate between early feedback and formal validation. */
+export function comparisonFinalImageIssues(request: AgentRequest, audit: ToolAudit): ValidationIssue[] {
+  const input = request.input as unknown as ComparisonInput;
+  return Object.entries(input.candidates).flatMap(([label, candidate]) => {
+    const raw = request.sources[label]?.value as { messages?: unknown[] } | undefined;
+    return images(raw?.messages?.[candidate.final_message_index]).length &&
+      !audit.viewedImages.includes(`${label}:${candidate.final_message_index}`)
+      ? [{ category: "evidence" as const, code: "final_image_not_viewed", path: `/candidates/${label}`, candidate: label,
+        message: `最终回答含图片，必须先 view_image(candidate="${label}", message_index=${candidate.final_message_index}) 查看完整交付。` }]
+      : [];
+  });
+}
+
+/** The same exact full-read coverage applies before material disclosure and final acceptance. */
+export function comparisonDeferredFinalIssues(request: AgentRequest, audit: ToolAudit): ValidationIssue[] {
+  const input = request.input as unknown as ComparisonInput, errors: ValidationIssue[] = [];
+  for (const [label, candidate] of Object.entries(input.candidates)) {
+    for (const [index, material] of candidate.deferred_final_material.entries()) {
+      const coverage = traceReadCoverage(audit, {
+        candidate: label, message_index: material.message_index, kind: "text", path: material.path,
+        start: 0, end: material.total_chars,
+      });
+      if (!coverage.covered) errors.push({
+        category: "evidence", code: "deferred_final_material_not_read", path: `/candidates/${label}/deferred_final_material/${index}`,
+        candidate: label, message: "未完整读取延后展示的最终材料；按缺口用 read_trace 补读并继续 next_offset。", actual: coverage.missing,
+      });
+    }
+  }
+  return errors;
+}
+
+export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit, inspectionReviews: ComparisonResult["review_requests"] = []): void {
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as ComparisonInput;
   const value = result as ComparisonResult;
-  const errors: ValidationIssue[] = [];
-  const issue = (code: string, path: string, message: string, candidate?: string, actual?: unknown) =>
-    errors.push({ category: "decision", code, path, message, candidate, actual });
+  const errors: ValidationIssue[] = [...comparisonReferenceIssues(request, value), ...comparisonFinalImageIssues(request, audit), ...comparisonDeferredFinalIssues(request, audit)];
+  const issue = (code: string, path: string, message: string, candidate?: string, actual?: unknown, expected?: unknown) =>
+    errors.push({ category: "decision", code, path, message, candidate, actual, ...(expected !== undefined ? { expected } : {}) });
   const labels = Object.keys(input.candidates);
   const labelHelp = `合法候选标识为 ${JSON.stringify(labels)}，所有候选键和引用必须原样使用这些标识。`;
+  const advantageRepair = "保留当前程序槽位，better_candidate=null，summary 写清已核对事实与未知范围；不修改程序关联或删除必填槽。";
   if (labels.length !== 2 || !labels.includes("A") || !labels.includes("B"))
     issue("pair_candidates_invalid", "/candidates", "每次 Comparison 必须只比较 A、B 两个候选。");
   if (!isDeepStrictEqual(value.task_analysis, input.task_analysis))
@@ -36,9 +71,10 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const sourceFacts = new Map<string, Map<string, CriterionAssessment>>();
   const hasReview = (label: string, id?: string) => value.status === "needs_review" && value.review_requests.some((review) =>
     review.candidate === label && (!id || review.criterion_ids.includes(id)));
-  for (const [label, reasons] of Object.entries(input.source_review ?? {}))
-    if (reasons.length && !hasReview(label))
-      issue("source_review_required", "/review_requests", "来源核验存在未解决冲突或缺项，必须 needs_review 并请求该候选独立归因复核，不能直接排名。", label, reasons);
+  if (value.status === "needs_review") for (const [label, concerns] of Object.entries(input.source_review ?? {}))
+    if (concerns.some(concern => concern.requires_review) && !hasReview(label))
+      issue("source_review_required", "/review_requests", "来源核验存在影响判定的未解决冲突或缺项，必须 needs_review 并请求该候选独立归因复核，不能直接排名。", label,
+        concerns.filter(concern => concern.requires_review));
   const findingHelp = (label: string) => !labels.includes(label) ? labelHelp : `该候选合法索引：${(input.attributions[label]?.findings ?? [])
     .map((finding, index) => `${index}=${finding.text}`).join("；") || "无"}。只复制该候选现有索引；没有对应 finding 时填 []。`;
   const assessed = Object.keys(value.assessments);
@@ -63,40 +99,36 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const assessment = value.assessments[label];
     if (assessment) {
       const sourceCore = attribution.core_assessment;
+      const privateFailures = sourceCore.criterion_ids.filter(id => {
+        const criterion = input.task_analysis.requirements.find(item => item.id === id);
+        const fact = facts.get(id);
+        return criterion && !criterionAppliesToPair(input, criterion) && applicable(label, id) &&
+          fact?.evidence_status === "established" && ["unmet", "partial"].includes(fact.status);
+      });
+      if (sourceCore.meets_core === false && !comparisonCoreFailureRefs(input, label).length &&
+        privateFailures.some(id => !hasReview(label, id)))
+        issue("core_failure_scope_review_required", "/review_requests",
+          "来源仅由专有要求失败支持核心不可用，不能跨候选扣分；必须 needs_review 并定位这些 criterion_ids，独立重看共同交付，不得自动改判通过。",
+          label, privateFailures);
       if (assessment.meets_core === null && !hasReview(label))
         issue("assessment_review_required", "/review_requests", "核心状态未决，必须请求该候选独立复核，不能只复核另一方。", label);
-      if (sourceCore.meets_core === null && (!hasReview(label) || sourceCore.criterion_ids.some(id => !hasReview(label, id))))
+      if (value.status === "needs_review" && sourceCore.meets_core === null && (!hasReview(label) || sourceCore.criterion_ids.some(id => !hasReview(label, id))))
         issue("core_review_required", "/review_requests", "来源核心状态未决，必须请求该候选及其核心判据的独立复核，不能只复核另一方。", label, sourceCore.criterion_ids);
       if (assessment.meets_core !== sourceCore.meets_core && !(value.status === "needs_review" && assessment.meets_core === null))
         issue("core_assessment_changed", `/assessments/${label}/meets_core`, "核心通过状态只能照录来源 core_assessment；发现冲突须 needs_review，不能自行改判。", label);
       if (assessment.meets_core === false) {
         const refs = assessment.core_failure_refs;
-        if (!refs.length || !isDeepStrictEqual([...refs].sort(), [...sourceCore.criterion_ids].sort()))
-          issue("core_failure_refs_mismatch", `/assessments/${label}/core_failure_refs`, "核心失败须明确照录来源 core_assessment.criterion_ids。", label, refs);
+        if (!refs.length || !isDeepStrictEqual([...refs].sort(), comparisonCoreFailureRefs(input, label).sort()))
+          issue("core_failure_refs_mismatch", `/assessments/${label}/core_failure_refs`, "核心失败引用须为来源 core_assessment.criterion_ids 中适用于本对局双方且已证实的 unmet/partial requirements，至少一项；缺少此类证据须 needs_review 请求来源复核。", label, refs);
         for (const id of refs) {
           const fact = facts.get(id);
-          if (!input.task_analysis.requirements.some((criterion) => criterion.id === id) || !applicable(label, id) ||
+          if (!input.task_analysis.requirements.some((criterion) => criterion.id === id && criterionAppliesToPair(input, criterion)) || !applicable(label, id) ||
             fact?.evidence_status !== "established" || !["unmet", "partial"].includes(fact?.status ?? ""))
-            issue("core_failure_unproven", `/assessments/${label}/core_failure_refs`, "核心失败只可引用适用 requirements 中已证实的 unmet/partial。", label, id);
+            issue("core_failure_unproven", `/assessments/${label}/core_failure_refs`, "核心失败只可引用本对局双方共同适用 requirements 中已证实的 unmet/partial。", label, id);
         }
       } else if (assessment.core_failure_refs.length)
         issue("core_failure_refs_unexpected", `/assessments/${label}/core_failure_refs`, "核心通过或证据不足时 core_failure_refs 必须为空。", label);
     }
-    const candidate = input.candidates[label];
-    const raw = request.sources[label]?.value as { messages?: unknown[] } | undefined;
-    for (const [index, material] of candidate.deferred_final_material.entries()) {
-      const coverage = traceReadCoverage(audit, {
-        candidate: label, message_index: material.message_index, kind: "text", path: material.path,
-        start: 0, end: material.total_chars,
-      });
-      if (!coverage.covered) errors.push({
-        category: "evidence", code: "deferred_final_material_not_read", path: `/candidates/${label}/deferred_final_material/${index}`,
-        candidate: label, message: "未完整读取延后展示的最终材料；按缺口用 read_trace 补读并继续 next_offset。", actual: coverage.missing,
-      });
-    }
-    if (images(raw?.messages?.[candidate.final_message_index]).length && !audit.viewedImages.includes(`${label}:${candidate.final_message_index}`))
-      errors.push({ category: "evidence", code: "final_image_not_viewed", path: `/candidates/${label}`, candidate: label,
-        message: `最终回答含图片，必须先 view_image(candidate="${label}", message_index=${candidate.final_message_index}) 查看完整交付。` });
   }
   const ranked = value.ranking.flat();
   const tierOf = (label: string) => value.ranking.findIndex((tier) => tier.includes(label));
@@ -114,14 +146,12 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const path = `/review_requests/${index}`;
     if (!review.reason.trim()) issue("review_reason_empty", `${path}/reason`, "复核原因不能为空，须说明需要核实的具体问题。", review.candidate);
     if (!labels.includes(review.candidate)) issue("review_candidate_invalid", path, "复核请求须引用本组候选。" + labelHelp);
-    if (!review.criterion_ids.length && !review.finding_indices.length)
+    if (!review.criterion_ids.length && !review.finding_indices.length && !inspectionReviews.some(item => isDeepStrictEqual(item, review)) && !requiredSourceReviews(request).some(item => isDeepStrictEqual(item, review)))
       issue("review_reference_missing", path, "复核请求须定位至少一个标准或既有 finding；疑似漏项引用相关 criterion_id。");
     for (const id of review.criterion_ids) if (!byId.has(id)) issue("criterion_missing", path, "复核请求引用未知标准。", review.candidate, id);
     for (const index of review.finding_indices) if (!input.attributions[review.candidate]?.findings[index])
       issue("finding_missing", path, "复核请求只能引用该候选既有 finding。" + findingHelp(review.candidate), review.candidate, index);
   }
-  const covered = new Map(labels.map((label) => [label, new Set<number>()]));
-  const criteriaCovered = new Map(labels.map((label) => [label, new Set<string>()]));
   for (const [index, row] of value.decision_basis.comparisons.entries()) {
     const path = `/decision_basis/comparisons/${index}`;
     const compared = Object.keys(row.assessments);
@@ -129,14 +159,14 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("comparison_incomplete", `${path}/assessments`, "每个比较点必须在同一行包含全部候选的表现。" + labelHelp, undefined, compared);
     for (const id of row.criterion_ids) if (!byId.has(id)) issue("criterion_missing", `${path}/criterion_ids`, "比较行只能引用共享标准 ID。", undefined, id);
     if (row.better_candidates.some((label) => !labels.includes(label)) || row.better_candidates.length >= labels.length)
-      issue("comparison_advantage_invalid", `${path}/better_candidates`, "优势候选必须属于本组；共同优点或无已证实优势时填空数组。" + labelHelp, undefined, row.better_candidates);
+      issue("comparison_advantage_invalid", `${path}/better_candidates`, "优势候选必须属于本组；共同优点或无已证实优势时填空数组。" + advantageRepair + labelHelp, undefined, row.better_candidates);
     for (const [label, cell] of Object.entries(row.assessments)) {
-      const facts = row.criterion_ids.filter((id) => applicable(label, id)).flatMap((id) => {
-        criteriaCovered.get(label)?.add(id);
+      const criterionIds = comparisonCellCriterionIds(input, label, row.criterion_ids, cell.finding_indices);
+      const facts = criterionIds.filter((id) => applicable(label, id)).flatMap((id) => {
         const fact = sourceFacts.get(label)?.get(id); return fact ? [fact] : [];
       });
-      if (row.criterion_ids.length) {
-        const missing = row.criterion_ids.some((id) => applicable(label, id) && !sourceFacts.get(label)?.has(id));
+      if (criterionIds.length) {
+        const missing = criterionIds.some((id) => applicable(label, id) && !sourceFacts.get(label)?.has(id));
         const derived = comparisonCellState(input, label, row.criterion_ids, cell.finding_indices);
         const { status, evidence_status: evidence } = derived;
         const downgraded = (facts.length > 0 || missing) && cell.status === "unknown" && cell.evidence_status === "uncertain";
@@ -153,37 +183,24 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       for (const findingIndex of cell.finding_indices) {
         if (!input.attributions[label]?.findings[findingIndex])
           issue("finding_missing", `${path}/assessments/${label}/finding_indices`, "比较点只能引用该候选的既有 finding。" + findingHelp(label), label, findingIndex);
-        else covered.get(label)?.add(findingIndex);
         if (input.attributions[label]?.findings[findingIndex]?.assessment.evidence_status === "uncertain" && cell.evidence_status === "established")
           issue("finding_evidence_strengthened", `${path}/assessments/${label}/evidence_status`, "引用 uncertain finding 的格必须保留 uncertain，不得升级确证。", label, findingIndex);
       }
-      if (!row.criterion_ids.length && !cell.finding_indices.length && cell.evidence_status === "established") {
-        const candidate = input.candidates[label];
-        const timed = candidate?.original_answer_timing?.finish_seconds;
-        const tokens = candidate?.original_answer_usage?.total_tokens;
-        if (!(typeof timed === "number" && Number.isFinite(timed) && timed >= 0) &&
-          !(typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0 && !candidate.original_answer_usage.issues.length))
+      if (!criterionIds.length && !cell.finding_indices.length && cell.evidence_status === "established") {
+        if (!Object.values(comparisonResourceMetrics(input,label)).some(value => value !== null))
           issue("unlinked_observation_unproven", `${path}/assessments/${label}`, "无 criterion 或 finding 的比较格只能依据有效原始资源指标，否则应保留 unknown/uncertain。", label);
       }
     }
     if (row.better_candidates.length) {
-      if (row.criterion_ids.some((id) => !labels.every((label) => applicable(label, id))))
-        issue("comparison_advantage_scope_mismatch", `${path}/better_candidates`, "相对优势行的标准必须共同适用于双方；候选专有约束单独展示，不跨候选扣分。");
-      if (labels.some((label) => !row.assessments[label] || row.assessments[label].evidence_status !== "established" || ["unknown", "not_applicable"].includes(row.assessments[label].status)))
-        issue("comparison_advantage_unproven", `${path}/better_candidates`, "相对优势需要两方同一适用方面的 established 事实；未知或不适用不能当作落后。");
+      if (!row.criterion_ids.length && Object.values(row.assessments).every(cell => !cell.finding_indices.length) &&
+        !comparisonResourcesComparable(input))
+        issue("comparison_resource_incomparable", `${path}/better_candidates`, "资源优势须有双方同种有效指标，耗时不能与 token 数相互比较。" + advantageRepair);
+      if (labels.some(label => !row.assessments[label]) || !comparisonAdvantageCandidates(row.assessments).length)
+        issue("comparison_advantage_unproven", `${path}/better_candidates`, "相对优势需要两方同一适用方面的 established 事实；未知或不适用不能当作落后。" + advantageRepair + "在未知候选格的 summary 说明证据不足，不适用候选格说明此条仅评审来源候选、现有材料未提供本方同等约束。");
       if (labels.some((label) => row.assessments[label]?.finding_indices.some((i) => input.attributions[label]?.findings[i]?.assessment.evidence_status === "uncertain")))
-        issue("comparison_advantage_uncertain_finding", `${path}/better_candidates`, "含 uncertain finding 的比较行不能用于确证优势；需先请求归因复核。");
+        issue("comparison_advantage_uncertain_finding", `${path}/better_candidates`, "含 uncertain finding 的比较行不能用于确证优势。" + advantageRepair + "在对应候选格的 summary 保留证据未确认的范围；确需确认优势时请求归因复核。");
     }
   }
-  for (const label of value.status === "decided" ? labels : []) for (const criterion of criteria)
-    if (applicable(label, criterion.id) && !criteriaCovered.get(label)?.has(criterion.id))
-      issue("comparison_criterion_uncovered", "/decision_basis/comparisons", "逐项对照必须覆盖每个候选的全部适用标准，不能只列有 finding 的方面。", label, criterion.id);
-  const materialProblems = Object.entries(input.attributions).flatMap(([candidate, attribution]) =>
-    attribution.findings.flatMap((finding, finding_index) => finding.type === "problem" && finding.importance !== "low" ? [{ candidate, finding_index }] : []));
-  for (const ref of value.status === "decided" ? [...input.strength_checks, ...materialProblems, ...value.decision_basis.decisive_findings] : [])
-    if (input.attributions[ref.candidate]?.findings[ref.finding_index] && !covered.get(ref.candidate)?.has(ref.finding_index))
-      issue("comparison_finding_uncovered", "/decision_basis/comparisons",
-        `逐项对照必须覆盖全部待核对优点、中高重要性问题和决定性发现。漏项为 ${ref.candidate}.findings[${ref.finding_index}]。将索引加入对应行 assessments.${ref.candidate}.finding_indices；索引从0开始。`, ref.candidate, ref.finding_index);
   for (const [index, ref] of value.decision_basis.decisive_findings.entries()) {
     const finding = input.attributions[ref.candidate]?.findings[ref.finding_index];
     if (!finding) issue("finding_missing", `/decision_basis/decisive_findings/${index}`, "决定性发现必须引用归因结果中的既有 finding。" + findingHelp(ref.candidate), ref.candidate, ref.finding_index);
@@ -192,10 +209,22 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
   if (value.status === "decided" && labels.every((label) => value.assessments[label]?.meets_core === true)) {
     const [first, second] = labels;
-    const advantage = (a: string) => value.decision_basis.comparisons.some((row) => row.importance !== "low" && row.better_candidates.includes(a));
+    const advantage = (a: string) => value.decision_basis.comparisons.some((row, index) => {
+      const path = `/decision_basis/comparisons/${index}`;
+      return row.importance !== "low" && row.better_candidates.includes(a) &&
+        !errors.some(error => error.path === path || error.path.startsWith(path + "/"));
+    });
+    const confirmed = labels.filter(advantage);
+    const expected = { ranking: confirmed.length === 1
+      ? [[confirmed[0]], [labels.find(label => label !== confirmed[0])!]] : [labels] };
+    if (tierOf(first) !== tierOf(second)) {
+      const leader = tierOf(first) < tierOf(second) ? first : second;
+      if (!advantage(leader)) issue("ranking_unproven", "/ranking",
+        "双方共同交付均可用时，分层须由领先方已确认的中高重要性共同优势支持；清空专有或未证实优势后不能保留无依据的胜者，合规点评仍保留。expected.ranking 按当前有效优势给出；修复无效优势时同时修正排名。", undefined, value.ranking, expected);
+    }
     if (advantage(first) !== advantage(second)) {
       const better = advantage(first) ? first : second; const worse = better === first ? second : first;
-      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好或把优势方排后；应根据实质差异分胜负。");
+      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好或把优势方排后；应根据实质差异分胜负。expected.ranking 给出与当前有效优势一致的排名。", undefined, value.ranking, expected);
     }
   }
   if (errors.length) throw new ValidationError(errors);

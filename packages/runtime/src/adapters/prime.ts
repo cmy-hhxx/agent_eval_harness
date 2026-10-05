@@ -1,7 +1,7 @@
 import path from "node:path";
 import * as sdk from "#prime-sdk";
 import type { AgentBackend, EngineIdentity } from "@eval/contracts";
-import { inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
 
 export function primeBackend(identity: EngineIdentity): AgentBackend {
   return {
@@ -9,6 +9,9 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
     async createSession(options) {
       const { spec, workdir } = options,
         agentDir = path.join(workdir, ".agent");
+      const names = options.tools.map((tool) => tool.name);
+      let nextTool = contentToolName(spec.evaluation, Boolean(spec.recovery?.inspection));
+      let activeNames = activeToolNames({ content: [] }, names, nextTool);
       const secret = process.env[spec.model.apiKeyEnv];
       if (!secret) throw new Error(`Missing ${spec.model.apiKeyEnv}`);
       const auth = sdk.AuthStorage.create(path.join(agentDir, "auth.json"));
@@ -38,7 +41,7 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
         systemPrompt: spec.evaluation.systemPrompt,
         extensionFactories: [
           (api) => {
-            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation));
+            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation, activeNames));
           },
         ],
       });
@@ -47,9 +50,13 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
         name: tool.name,
         label: tool.name,
         description: tool.description,
-        parameters: inlineToolSchema(tool.inputSchema) as sdk.ToolDefinition["parameters"],
+        // Host owns complete submission validation; the SDK only checks the JSON object envelope.
+        parameters: (tool.name === "submit_evaluation" || (tool.name === "inspect_material" && !spec.evaluation.fileSubmission)
+          ? { type: "object" } : inlineToolSchema(tool.inputSchema)) as sdk.ToolDefinition["parameters"],
         async execute(_id, args, signal) {
           const result = await options.execute(tool.name, args, signal);
+          nextTool = (result.details as { next_tool?: string } | undefined)?.next_tool ?? nextTool;
+          activeNames = activeToolNames(result, names, nextTool);
           return {
             ...result,
             content: sdkContent(result.content),

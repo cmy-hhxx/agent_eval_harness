@@ -12,6 +12,7 @@ const primaryColor = 'var(--eris-chart-ink, #191919)';
 const textColor = 'var(--eris-chart-muted, #676767)';
 const borderColor = 'var(--eris-chart-grid, #E5E5E5)';
 const paperColor = 'var(--eris-chart-paper, #FFFFFF)';
+const chartMaxWidth = 560;
 const visuallyHidden = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
   clip: 'rect(0, 0, 0, 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap', border: 0 };
 const numberFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 20 });
@@ -120,11 +121,11 @@ export const TurnCharts = memo(function TurnCharts({ turn, useChat }) {
 
 function useWidth() {
   const ref = useRef(null);
-  const [width, setWidth] = useState(600);
+  const [width, setWidth] = useState(chartMaxWidth);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const measure = () => { if (element.clientWidth > 0) setWidth(element.clientWidth); };
+    const measure = () => { if (element.clientWidth > 0) setWidth(Math.min(element.clientWidth, chartMaxWidth)); };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
@@ -200,7 +201,7 @@ function svg(chart, width, height, marks, template, interaction = {}) {
 function ComparisonChart({ chart, width, english }) {
   const identities = seriesIndexes(chart);
   const plotWidth = Math.max(1, width), compact = plotWidth < 500, marks = [], rows = [];
-  const valueWidth = Math.min(220, Math.max(48, ...chart.series.flatMap(series => series.values.map(value => labelWidth(value === null ? (english ? 'Unknown' : '未知') : formatNumber(value), 18) + 8))));
+  const valueWidth = Math.min(220, Math.max(44, ...chart.series.flatMap(series => series.values.map(value => labelWidth(value === null ? (english ? 'Unknown' : '未知') : formatNumber(value), 16) + 8))));
   const labelColumn = compact ? 0 : Math.min(180, Math.max(100, plotWidth * 0.26));
   const left = compact ? 1 : labelColumn + 16, right = compact ? plotWidth - 1 : plotWidth - valueWidth - 12;
   const { position: x, ticks } = numericScale(chart, left, right, true, Math.max(2, Math.min(5, Math.floor((right - left) / 70) + 1)));
@@ -209,38 +210,38 @@ function ComparisonChart({ chart, width, english }) {
     if (compact) {
       if (chart.series.length > 1) {
         marks.push(svgLabel(category, 0, offset + 15, plotWidth, { key: `category-${categoryIndex}`, 'data-chart-label': 'category', fontWeight: 600 }));
-        offset += wrappedLines(category, plotWidth).length * 20 + 6;
+        offset += wrappedLines(category, plotWidth).length * 20 + 4;
       }
       chart.series.forEach((series, seriesIndex) => {
         const value = series.values[categoryIndex], valueText = value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
         const label = chart.series.length === 1 ? category : series.name;
         const numberColumn = Math.min(valueWidth, plotWidth * 0.6), labelSpace = Math.max(14, plotWidth - numberColumn - 12);
-        const headerHeight = Math.max(wrappedLines(label, labelSpace).length * 20, wrappedLines(valueText, numberColumn, 18).length * 26);
+        const headerHeight = Math.max(wrappedLines(label, labelSpace).length * 20, wrappedLines(valueText, numberColumn, 16).length * 23);
         marks.push(svgLabel(label, 0, offset + 15, labelSpace, { key: `label-${categoryIndex}-${seriesIndex}`, 'data-chart-label': chart.series.length === 1 ? 'category' : 'series' }));
-        marks.push(svgLabel(valueText, plotWidth, offset + 18, numberColumn, { key: `value-${categoryIndex}-${seriesIndex}`,
-          textAnchor: 'end', fontSize: 18, fontWeight: 500, 'data-chart-value': value === null ? undefined : true, 'data-chart-unknown': value === null ? true : undefined }));
+        marks.push(svgLabel(valueText, plotWidth, offset + 16, numberColumn, { key: `value-${categoryIndex}-${seriesIndex}`,
+          textAnchor: 'end', fontSize: 16, fontWeight: 500, 'data-chart-value': value === null ? undefined : true, 'data-chart-unknown': value === null ? true : undefined }));
         rows.push({ category, series, categoryIndex, seriesIndex, value, top: offset + headerHeight + 2, height: 10 });
-        offset += headerHeight + 28;
+        offset += headerHeight + 20;
       });
-      offset += 8;
+      offset += 4;
     } else {
-      const categoryLines = wrappedLines(category, labelColumn), groupHeight = Math.max(categoryLines.length * 20 + 12,
-        chart.series.length * Math.max(42, ...chart.series.map(series => wrappedLines(series.values[categoryIndex] === null ? (english ? 'Unknown' : '未知') : formatNumber(series.values[categoryIndex]), valueWidth, 18).length * 26 + 8)));
+      const categoryLines = wrappedLines(category, labelColumn), groupHeight = Math.max(categoryLines.length * 20 + 8,
+        chart.series.length * Math.max(30, ...chart.series.map(series => wrappedLines(series.values[categoryIndex] === null ? (english ? 'Unknown' : '未知') : formatNumber(series.values[categoryIndex]), valueWidth, 16).length * 23 + 7)));
       marks.push(svgLabel(category, 0, offset + (groupHeight - categoryLines.length * 20) / 2 + 15, labelColumn,
         { key: `category-${categoryIndex}`, 'data-chart-label': 'category' }));
       chart.series.forEach((series, seriesIndex) => {
         const value = series.values[categoryIndex], valueText = value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
         const center = offset + groupHeight * (seriesIndex + 0.5) / chart.series.length;
-        const valueLines = wrappedLines(valueText, valueWidth, 18);
-        marks.push(svgLabel(valueText, right + 12, center - (valueLines.length - 1) * 13 + 6, valueWidth,
-          { key: `value-${categoryIndex}-${seriesIndex}`, fontSize: 18, fontWeight: 500, 'data-chart-value': value === null ? undefined : true,
+        const valueLines = wrappedLines(valueText, valueWidth, 16);
+        marks.push(svgLabel(valueText, right + 12, center - (valueLines.length - 1) * 11.5 + 5, valueWidth,
+          { key: `value-${categoryIndex}-${seriesIndex}`, fontSize: 16, fontWeight: 500, 'data-chart-value': value === null ? undefined : true,
             'data-chart-unknown': value === null ? true : undefined }));
         rows.push({ category, series, categoryIndex, seriesIndex, value, top: center - 5, height: 10 });
       });
-      offset += groupHeight + 14;
+      offset += groupHeight + 8;
     }
   });
-  const bottom = offset + 4, zero = coordinates(x(0));
+  const bottom = offset + 2, zero = coordinates(x(0));
   const backgrounds = [];
   for (const tick of ticks) {
     const spans = compact ? rows.map(row => [row.top - 3, row.top + row.height + 3]) : [[0, bottom - 8]];
@@ -258,7 +259,7 @@ function ComparisonChart({ chart, width, english }) {
       fill: barColor(chart, category, seriesIndex, identities[seriesIndex]) }, h('title', null, `${category} · ${series.name}：${formatNumber(value)} ${chart.unit}`)));
     if (value === 0) marks.push(h('line', { key: `zero-value-${categoryIndex}-${seriesIndex}`, x1: zero, x2: zero, y1: coordinates(top), y2: coordinates(top + height), stroke: barColor(chart, category, seriesIndex, identities[seriesIndex]), strokeWidth: 2 }));
   });
-  return svg(chart, plotWidth, bottom + 28, [...backgrounds, ...marks], compact ? 'comparison-compact' : 'comparison');
+  return svg(chart, plotWidth, bottom + 24, [...backgrounds, ...marks], compact ? 'comparison-compact' : 'comparison');
 }
 
 function separatedLabels(labels, top, bottom, spacing) {
@@ -288,14 +289,14 @@ function TrendChart({ chart, width, english }) {
   }));
   const labelHeights = chart.series.map(series => series.values.some(value => value !== null)
     ? compact ? 44 : wrappedLines(series.name, tailSpace - 18).length * 20 + 24 : 0);
-  const bottom = top + (compact ? 204 : Math.max(204, labelHeights.reduce((sum, height) => sum + height, 0) + 12 * (labelHeights.filter(Boolean).length - 1)));
+  const bottom = top + (compact ? 168 : Math.max(168, labelHeights.reduce((sum, height) => sum + height, 0) + 8 * (labelHeights.filter(Boolean).length - 1)));
   const sameYear = chart.categories.every(date => date.slice(0, 4) === chart.categories[0].slice(0, 4));
   const dateLabels = chart.categories.map(date => compact && date.length > 4
     ? sameYear ? [date.slice(5)] : [date.slice(0, 4), date.slice(5)] : [date]);
   const dateWidth = lines => Math.max(...lines.map(line => labelWidth(line)));
   const minimumPlot = Math.max(compact ? 100 : 180, dateWidth(dateLabels[0]) + dateWidth(dateLabels.at(-1)) + 24);
   const plotWidth = Math.max(width, tickSpace + minimumPlot + tailSpace);
-  const plotHeight = bottom + (dateLabels.some(lines => lines.length > 1) ? 64 : 44);
+  const plotHeight = bottom + (dateLabels.some(lines => lines.length > 1) ? 56 : 38);
   const left = tickSpace, right = plotWidth - tailSpace;
   const { position: y, ticks } = numericScale(chart, bottom, top, false);
   const times = chart.categories.map(dateTime), start = times[0], duration = times.at(-1) - start;
@@ -341,7 +342,7 @@ function TrendChart({ chart, width, english }) {
     });
     if (last) labels.push(last);
   });
-  if (!compact) separatedLabels(labels, top, bottom, 12).forEach(label => {
+  if (!compact) separatedLabels(labels, top, bottom, 8).forEach(label => {
     marks.push(h('path', { key: 'leader-' + label.seriesIndex, 'data-chart-leader': true, 'data-series': label.series.name,
       d: `M ${label.x} ${label.y} L ${coordinates(right + 6)} ${coordinates(label.labelY)} L ${coordinates(right + 10)} ${coordinates(label.labelY)}`,
       stroke: label.color, strokeWidth: 1, fill: 'none' }));
@@ -370,13 +371,13 @@ function TrendChart({ chart, width, english }) {
   const active = observations.find(point => point.key === activeKey);
   const readout = active ? `${active.date} · ${observations.filter(point => point.x === active.x && point.y === active.y)
     .map(point => `${point.series} · ${formatNumber(point.value)} ${chart.unit}`).join(' / ')}` : '';
-  return h('div', null,
+  return h('div', { style: { position: 'relative' } },
     h('div', { style: { overflowX: 'auto', maxWidth: '100%' } }, svg(chart, plotWidth, plotHeight,
       [...marks.filter(mark => mark.type !== 'circle'), ...paths, ...marks.filter(mark => mark.type === 'circle'), ...hits], 'trend', {
         onPointerMove: selectPoint, onPointerDown: selectPoint,
         onPointerLeave: event => { if (event.pointerType !== 'touch') setActiveKey(null); },
       })),
-    compact ? h('div', { 'data-chart-tails': true, style: { display: 'grid', gap: 8, marginTop: 10 } }, labels.map(label => {
+    compact ? h('div', { 'data-chart-tails': true, style: { display: 'grid', gap: 6, marginTop: 6 } }, labels.map(label => {
       const valueText = formatNumber(label.value), stack = labelWidth(valueText, 15) > width * .45;
       return h('div', {
       key: label.seriesIndex, style: { display: 'grid', gridTemplateColumns: stack ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) minmax(0, .8fr)', gap: stack ? 4 : 12, alignItems: 'baseline' },
@@ -385,7 +386,8 @@ function TrendChart({ chart, width, english }) {
         borderTopWidth: 2, borderTopStyle: lineStyle(label.series.name, identities[label.seriesIndex]), borderTopColor: label.color } }), label.series.name),
     h('strong', { 'data-chart-value': true, 'data-series': label.series.name, 'data-endpoint-x': label.x, 'data-endpoint-y': label.y,
       style: { color: primaryColor, fontSize: 15, fontWeight: 600, maxWidth: '100%', overflowWrap: 'anywhere', textAlign: stack ? 'left' : 'right' } }, valueText)); })) : null,
-    h('div', { 'data-chart-readout': true, role: 'status', 'aria-live': 'polite', style: { minHeight: 22, marginTop: 6, color: primaryColor,
+    h('div', { 'data-chart-readout': true, role: 'status', 'aria-live': 'polite', style: { position: 'absolute', top: 0, left: 0, maxWidth: '100%', boxSizing: 'border-box',
+      zIndex: 1, padding: '3px 6px', border: `1px solid ${borderColor}`, background: paperColor, color: primaryColor, pointerEvents: 'none',
       fontSize: 13, lineHeight: 1.6, fontVariantNumeric: 'tabular-nums', visibility: active ? 'visible' : 'hidden' } },
     readout),
     unknown.length ? h('div', { 'data-chart-no-values': true, style: { marginTop: 4, color: textColor, fontSize: 13 } },
@@ -396,7 +398,8 @@ function CompositionChart({ chart, width, english }) {
   const values = chart.series[0].values, total = values.reduce((sum, value) => sum + value, 0);
   const outer = 92, inner = 64;
   const palette = compositionColors(chart.categories), totalText = formatNumber(total);
-  const compact = width < 500, longTotal = totalText.length > 12;
+  const ringSize = 132, centerInset = 28, totalFontSize = totalText.length > 4 ? 20 : 26;
+  const compact = width < 500, longTotal = labelWidth(totalText, totalFontSize) > ringSize - centerInset * 2;
   // A divider wider than a small arc erases real data; omit dividers for the whole ring in that case.
   const divider = values.some(value => value > 0 && value / total * Math.PI * 2 * outer < 3) ? 0 : 1.5;
   const point = (radius, angle) => `${coordinates(100 + radius * Math.cos(angle))} ${coordinates(100 + radius * Math.sin(angle))}`;
@@ -417,20 +420,20 @@ function CompositionChart({ chart, width, english }) {
   });
   const columns = compact ? 'minmax(0, 1fr) minmax(56px, max-content)' : 'minmax(0, 1fr) minmax(0, .7fr) minmax(56px, .55fr)';
   const totalValue = h('strong', { 'data-chart-total': true, style: { display: 'block', color: primaryColor, fontWeight: 500,
-    fontSize: longTotal ? 14 : totalText.length > 8 ? 22 : 28, lineHeight: longTotal ? 1.6 : 1.15,
+    fontSize: longTotal ? 14 : totalFontSize, lineHeight: longTotal ? 1.6 : 1.15,
     maxWidth: '100%', overflowWrap: 'anywhere', textAlign: 'center', fontVariantNumeric: 'tabular-nums' } }, numberText(totalText));
-  return h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '20px 28px', margin: '8px 0' } },
-    h('div', { style: { width: 180, flex: '0 0 180px', maxWidth: '100%' } }, h('div', { style: { position: 'relative', height: 180 } },
+  return h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px 20px', margin: 0 } },
+    h('div', { style: { width: ringSize, flex: `0 0 ${ringSize}px`, maxWidth: '100%' } }, h('div', { style: { position: 'relative', height: ringSize } },
       h('svg', { role: 'img', 'aria-label': `${chart.title}，总数 ${formatNumber(total)} ${chart.unit}`, 'data-chart-type': 'pie', 'data-chart-template': compact ? 'composition-compact' : 'composition',
-        width: 180, height: 180, viewBox: '0 0 200 200', style: { display: 'block', maxWidth: '100%' } }, h('title', null, chart.title), wedges),
-      h('div', { 'data-chart-denominator': true, style: { position: 'absolute', inset: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, textAlign: 'center', fontVariantNumeric: 'tabular-nums' } },
+        width: ringSize, height: ringSize, viewBox: '0 0 200 200', style: { display: 'block', maxWidth: '100%' } }, h('title', null, chart.title), wedges),
+      h('div', { 'data-chart-denominator': true, style: { position: 'absolute', inset: centerInset, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, textAlign: 'center', fontVariantNumeric: 'tabular-nums' } },
         h('span', { style: { color: textColor, fontSize: 12 } }, english ? 'Total' : '合计'),
         longTotal ? null : totalValue)), longTotal ? totalValue : null),
-    h('div', { style: { flex: '1 1 260px', minWidth: 0, fontVariantNumeric: 'tabular-nums' } },
-      h('div', { 'aria-hidden': true, style: { display: 'grid', gridTemplateColumns: columns, gap: 12, paddingBottom: 8, fontSize: 12, color: textColor } },
+    h('div', { style: { flex: '1 1 220px', minWidth: 0, fontVariantNumeric: 'tabular-nums' } },
+      h('div', { 'aria-hidden': true, style: { display: 'grid', gridTemplateColumns: columns, gap: 12, paddingBottom: 6, fontSize: 12, color: textColor } },
         compact ? null : h('span', null, english ? 'Category' : '类别'), h('span', { style: { textAlign: compact ? 'left' : 'right' } }, chart.unit), h('span', { style: { textAlign: 'right' } }, english ? 'Share' : '占比')),
       h('ul', { 'data-chart-composition': true, style: { listStyle: 'none', margin: 0, padding: 0 } }, chart.categories.map((category, index) => h('li', {
-        key: index, style: { display: 'grid', gridTemplateColumns: columns, gap: '6px 12px', alignItems: 'baseline', padding: '9px 0', borderTop: `1px solid ${borderColor}` },
+        key: index, style: { display: 'grid', gridTemplateColumns: columns, gap: '4px 12px', alignItems: 'baseline', padding: '6px 0', borderTop: `1px solid ${borderColor}` },
       }, h('span', { style: { gridColumn: compact ? '1 / -1' : undefined, color: primaryColor, overflowWrap: 'anywhere', fontSize: 14 } }, h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 7, height: 7, marginRight: 8, background: palette[index] } }), category),
       h('strong', { 'data-chart-composition-value': true, style: { color: primaryColor, fontSize: formatNumber(values[index]).length > 12 ? 14 : 16,
         textAlign: compact ? 'left' : 'right', paddingLeft: compact ? 15 : 0,
@@ -457,17 +460,17 @@ export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh
   const identities = seriesIndexes(chart);
   const english = !language.startsWith('zh');
   return h('figure', { ref, 'data-analysis-chart': chart.type, style: {
-    position: 'relative', margin: '24px 0', minWidth: 0, maxWidth: '100%', padding: '20px 0 0', boxSizing: 'border-box', background: paperColor,
+    position: 'relative', margin: '16px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px 0 0', boxSizing: 'border-box', background: paperColor,
     borderTop: `1px solid ${borderColor}`,
     color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
   } }, h('figcaption', null,
-    h('h3', { style: { margin: '0 0 7px', color: primaryColor, fontSize: 20, lineHeight: 1.35, fontWeight: 600 } }, chart.title),
+    h('h3', { style: { margin: '0 0 4px', color: primaryColor, fontSize: 18, lineHeight: 1.35, fontWeight: 600 } }, chart.title),
     h('div', { style: { fontSize: 13, lineHeight: 1.6 } }, `${chart.scope} · ${english ? 'Unit' : '单位'}：${chart.unit}`)),
-  chart.type === 'bar' && chart.series.length > 1 ? h('div', { 'data-chart-legend': true, style: { display: 'flex', flexWrap: 'wrap', gap: '8px 18px', marginTop: 12 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor } },
+  chart.type === 'bar' && chart.series.length > 1 ? h('div', { 'data-chart-legend': true, style: { display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 8 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor } },
     h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8,
       borderRadius: '50%', marginRight: 8, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-  h('div', { style: { marginTop: 22 } }, chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
+  h('div', { style: { marginTop: 12 } }, chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
     : chart.type === 'bar' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
-  h('footer', { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6 } }, `${english ? 'Source' : '来源'}：${chart.source}`),
+  h('footer', { style: { marginTop: 8, fontSize: 12, lineHeight: 1.6 } }, `${english ? 'Source' : '来源'}：${chart.source}`),
   h(NumberTable, { chart, english }));
 });

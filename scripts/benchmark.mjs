@@ -10,6 +10,7 @@ import { services, agents } from "@eval/host-app/composition";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { runEvaluation } from "@eval/host";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
+import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
 
 const {
   values,
@@ -79,7 +80,7 @@ async function loadFixtures(file) {
 
 function evaluate(fixture) {
   try {
-    const binding = services.workflow.bind(fixture.task, fixture.inputs, fixture.dependencies);
+    const binding = services.workflow.bind(fixture.task, fixture.inputs, fixture.dependencies, { tasks: [fixture.task, ...fixture.dependencyTasks] });
     const result = agents.resolve(binding, structuredClone(fixture.draft), fixture.audit);
     agents.validate(binding, result, fixture.audit);
     return { accepted: true, codes: [] };
@@ -162,16 +163,7 @@ if (command === "collect") {
           (await exists(path.join(base, "events.jsonl.gz"))) ? "events.jsonl.gz" : "events.jsonl",
         );
         if (!(await exists(file))) continue;
-        let draft;
-        for await (const event of readJsonl(file)) {
-          if (event.type === "tool_start" && event.data.name === "submit_evaluation") draft = event.data.args;
-          if (
-            event.type !== "tool_end" ||
-            event.data.name !== "submit_evaluation" ||
-            !event.data.result?.isError ||
-            !draft
-          )
-            continue;
+        for await (const { event, draft } of rejectedEvaluationDrafts(readJsonl(file))) {
           const dependencyTasks = Object.values(task.dependencies).map((id) =>
             state.manifest.tasks.find((t) => t.id === id),
           );
@@ -196,7 +188,6 @@ if (command === "collect") {
           };
           fixture.expected = evaluate(fixture);
           candidates.push(fixture);
-          draft = undefined;
         }
       }
     }

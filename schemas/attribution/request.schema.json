@@ -38,7 +38,8 @@
         "input_file",
         "original_answer_timing",
         "table_check_results",
-        "note"
+        "note",
+        "norm_directory"
       ],
       "properties": {
         "identity": {
@@ -200,6 +201,58 @@
           "items": {
             "$ref": "#/$defs/tableCheckResult"
           }
+        },
+        "instruction_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instructionSource"
+          }
+        },
+        "citation_inventory": {
+          "$ref": "#/$defs/citationInventory"
+        },
+        "criterion_instruction_sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id",
+                "message_index",
+                "path",
+                "quote"
+              ],
+              "properties": {
+                "message_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "answer_generation": {
+          "$ref": "#/$defs/answer_generation"
+        },
+        "norm_directory": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attributionNorm"
+          }
         }
       }
     },
@@ -264,11 +317,80 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "concerns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "requirement_indices",
+              "reason",
+              "answer_evidence",
+              "source_evidence"
+            ],
+            "properties": {
+              "requirement_indices": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "answer_evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/reviewEvidence"
+                }
+              },
+              "source_evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/reviewEvidence"
+                }
+              }
+            }
+          }
         }
+      }
+    },
+    "reference_materials": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "const": "answer"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/reference_material"
       }
     }
   },
   "$defs": {
+    "reviewEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observation": {}
+      }
+    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -447,6 +569,622 @@
               "type": "integer",
               "minimum": 0
             }
+          }
+        }
+      }
+    },
+    "instructionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_index",
+        "path",
+        "role",
+        "content",
+        "evidence"
+      ],
+      "properties": {
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "system",
+            "developer"
+          ]
+        },
+        "content": {},
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "citationInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocols",
+        "references",
+        "document_groups"
+      ],
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "footnote",
+              "trace",
+              "vis-html"
+            ]
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reference",
+              "format",
+              "status",
+              "occurrences",
+              "sources"
+            ],
+            "properties": {
+              "reference": {
+                "type": "string",
+                "minLength": 1
+              },
+              "format": {
+                "enum": [
+                  "footnote",
+                  "trace",
+                  "vis-html"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "resolved",
+                  "ambiguous",
+                  "unknown"
+                ]
+              },
+              "occurrences": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/citationOccurrence"
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/citationSource"
+                }
+              }
+            }
+          }
+        },
+        "document_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "url",
+              "references"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "references": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "format",
+                    "reference"
+                  ],
+                  "properties": {
+                    "format": {
+                      "enum": [
+                        "footnote",
+                        "trace",
+                        "vis-html"
+                      ]
+                    },
+                    "reference": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "citationOccurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "context"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/evidence/properties/evidence_id"
+        },
+        "message_index": {
+          "$ref": "#/$defs/evidence/properties/message_index"
+        },
+        "quote": {
+          "$ref": "#/$defs/evidence/properties/quote"
+        },
+        "context": {
+          "$ref": "#/$defs/citationContext"
+        }
+      }
+    },
+    "citationContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "read_request",
+        "end_offset"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/evidence/properties/evidence_id"
+        },
+        "message_index": {
+          "$ref": "#/$defs/evidence/properties/message_index"
+        },
+        "quote": {
+          "$ref": "#/$defs/evidence/properties/quote"
+        },
+        "read_request": {
+          "$ref": "#/$defs/citationSource/properties/read_request"
+        },
+        "end_offset": {
+          "$ref": "#/$defs/citationSource/properties/end_offset"
+        }
+      }
+    },
+    "citationSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "origin",
+        "read_request",
+        "end_offset"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "enum": [
+            "tool_return",
+            "model_visible"
+          ]
+        },
+        "end_offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "read_request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_index",
+            "path",
+            "offset",
+            "max_chars"
+          ],
+          "properties": {
+            "message_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16000
+            }
+          }
+        },
+        "document_url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "reference_material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question",
+        "final_message_index",
+        "final_answer",
+        "final_evidence",
+        "deferred_final_material",
+        "initial_material",
+        "catalog",
+        "input_file",
+        "original_answer_timing",
+        "table_check_results",
+        "note",
+        "source_input_id",
+        "original_user_timestamp",
+        "grader_only"
+      ],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version_id",
+            "display_name",
+            "answer_model"
+          ],
+          "properties": {
+            "version_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "answer_model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final_message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "final_answer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "final_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "deferred_final_material": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_index",
+              "path",
+              "total_chars"
+            ],
+            "properties": {
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "total_chars": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "initial_material": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_index",
+              "value",
+              "evidence"
+            ],
+            "properties": {
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "value": {},
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              }
+            }
+          }
+        },
+        "catalog": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_index",
+              "type",
+              "chars"
+            ],
+            "properties": {
+              "message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "call_message_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "chars": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "input_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original_answer_timing": {
+          "type": "object",
+          "required": [
+            "finish_seconds"
+          ],
+          "properties": {
+            "finish_seconds": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        },
+        "table_check_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tableCheckResult"
+          }
+        },
+        "citation_inventory": {
+          "$ref": "#/$defs/citationInventory"
+        },
+        "source_input_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "original_user_timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grader_only": {
+          "const": true
+        },
+        "answer_generation": {
+          "$ref": "#/$defs/answer_generation"
+        }
+      }
+    },
+    "answer_generation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "available",
+            "message_type",
+            "message_index",
+            "captured_final_message_index",
+            "matches_captured_final",
+            "blocks"
+          ],
+          "properties": {
+            "available": {
+              "const": true
+            },
+            "message_type": {
+              "const": "llm_turn"
+            },
+            "message_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "captured_final_message_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matches_captured_final": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "blocks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "total_chars",
+                  "text",
+                  "reference",
+                  "read_request"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "total_chars": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "reference": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidence_id"
+                    ],
+                    "properties": {
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "read_request": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "message_index",
+                      "path",
+                      "offset",
+                      "max_chars"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "offset": {
+                        "const": 0
+                      },
+                      "max_chars": {
+                        "const": 16000
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "attributionNorm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "norm_index",
+        "roles",
+        "requirement_index",
+        "evidence"
+      ],
+      "properties": {
+        "norm_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "user",
+              "system",
+              "developer"
+            ]
+          }
+        },
+        "requirement_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
           }
         }
       }

@@ -3,11 +3,11 @@ import { mkdir, open, readFile, realpath, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult, TraceRead } from "@eval/contracts";
+import type { JsonSchema, ToolContent, ToolContext, ToolDefinition, ToolResult, TraceRead, ValidationIssue } from "@eval/contracts";
 import { fileURLToPath } from "node:url";
-import { canonical, errorText, object, schemaIssues, ValidationError } from "@eval/contracts";
+import { canonical, errorText, object, presentSource, projectEvidenceReferences, schemaIssues, toolBudgetMetadataChars, validateEvidenceBank, ValidationError } from "@eval/contracts";
 
-import { cite, evidenceId, evidenceSources, imagePlaceholder } from "./evidence.js";
+import { cite, displayEvidence, evidenceId, evidenceSources, overlapsImagePlaceholder, selectEvidenceSource } from "./evidence.js";
 import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
 import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
@@ -29,6 +29,12 @@ function record(ctx: ToolContext, candidate: string): { messages: unknown[] } {
   const value = ctx.inputs.get(candidate);
   if (!value || !Array.isArray(object(value).messages)) throw new Error("只能访问本任务材料");
   return value as { messages: unknown[] };
+}
+function registeredInputId(ctx: ToolContext, candidate: string): string {
+  const id = ctx.inputIds.get(candidate);
+  if (!ctx.inputs.has(candidate) || !id) throw new Error("只能访问本任务登记的材料与 input UUID");
+  evidenceId(id, 0, "image");
+  return id;
 }
 function message(ctx: ToolContext, candidate: string, i: number): unknown {
   const value = record(ctx, candidate).messages[i];
@@ -156,17 +162,23 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
     outputArtifacts.push(artifact);
   }
   const workspace = await realpath(ctx.workdir);
-  for (const name of args.outputs || []) {
-    const file = await realpath(path.resolve(ctx.workdir, name));
-    if (!file.startsWith(workspace + path.sep)) throw new Error("产物必须位于任务工作目录");
-    if ((await stat(file)).size > 32 * 1024 * 1024) throw new Error("单个产物不能超过 32 MiB");
-    const artifact = await ctx.artifacts.put(path.relative(workspace, file), await readFile(file));
-    ctx.audit.artifacts.push(artifact);
-    outputArtifacts.push(artifact);
+  const errors: ValidationIssue[] = [];
+  for (const [index, name] of (args.outputs || []).entries()) {
+    try {
+      const file = await realpath(path.resolve(ctx.workdir, name));
+      if (!file.startsWith(workspace + path.sep)) throw new Error("产物必须位于任务工作目录");
+      if ((await stat(file)).size > 32 * 1024 * 1024) throw new Error("单个产物不能超过 32 MiB");
+      const artifact = await ctx.artifacts.put(path.relative(workspace, file), await readFile(file));
+      ctx.audit.artifacts.push(artifact);
+      outputArtifacts.push(artifact);
+    } catch (error) {
+      errors.push({ category: "file", code: "code_output_invalid", path: `/outputs/${index}`,
+        actual: (error as NodeJS.ErrnoException).code || null, message: errorText(error) });
+    }
   }
   const out = (await readFile(outPath, "utf8")).slice(0, ctx.policy.maxOutputChars),
     err = (await readFile(errPath, "utf8")).slice(0, ctx.policy.maxOutputChars);
-  return textResult({
+  return { ...textResult({
     exit_code: exitCode,
     timed_out: timedOut,
     cancelled: signal.aborted,
@@ -174,18 +186,25 @@ async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal
     stdout: out,
     stderr: err,
     artifacts: outputArtifacts,
-  });
+    ...(errors.length ? { errors } : {}),
+  }), ...(exitCode !== 0 || timedOut || signal.aborted || errors.length > 0 ? { isError: true } : {}) };
 }
 export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
+  { name: "inspect_material",
+    inputSchema: schema({ path: str }),
+    async execute(context, value, signal) {
+      if (!context.inspectMaterial) throw new Error("当前任务未配置结构化材料核查");
+      return context.inspectMaterial(value, signal);
+    } },
   {
     name: "check_table",
     inputSchema: schema({
       candidate: str,
-      answer_table_id: str,
+      answer_table_index: { type: "integer", minimum: 1 },
       sources: { type: "array", minItems: 1, items: schema({
-        table_id: str,
+        table_index: { type: "integer", minimum: 1 },
         key_columns: { type: "array", minItems: 1, items: schema({ answer: index, source: index }) },
         value_columns: { type: "array", minItems: 1, items: schema({ answer: index, source: index }) },
       }) },
@@ -193,15 +212,26 @@ export const builtinTools: ExecutableTool[] = [
       offset: index,
     }, ["candidate"]),
     async execute(ctx, value) {
-      const args = value as Partial<TableCheckRequest> & { candidate: string; message_index?: number; offset?: number };
+      const args = value as { candidate: string; answer_table_index?: number;
+        sources?: (Omit<TableCheckRequest["sources"][number], "table_id"> & { table_index: number })[];
+        message_index?: number; offset?: number };
       const raw = record(ctx, args.candidate), offset = args.offset ?? 0;
-      if ((args.answer_table_id === undefined) !== (args.sources === undefined))
-        throw new Error("核验时必须同时提供 answer_table_id 和 sources；只传 candidate 可先获取表格目录");
-      if (args.answer_table_id === undefined) {
-        const all = parseTraceTables(raw).filter((table) => args.message_index === undefined || table.message_index === args.message_index);
+      // Number the full source-owned inventory before filtering or pagination, so selections never shift.
+      const tables = parseTraceTables(raw, registeredInputId(ctx, args.candidate));
+      const tableIndices = new Map(tables.map((table, index) => [table.table_id, index + 1]));
+      const selectedTable = (index: number) => {
+        if (!Number.isSafeInteger(index) || index < 1 || index > tables.length)
+          throw new Error("表格编号不在本候选固定目录中；请先获取表格目录并选择已有的正整数 table_index");
+        return tables[index - 1];
+      };
+      if ((args.answer_table_index === undefined) !== (args.sources === undefined))
+        throw new Error("核验时必须同时提供 answer_table_index 和 sources；只传 candidate 可先获取表格目录");
+      if (args.answer_table_index === undefined) {
+        const all = tables.map((table, index) => ({ table, table_index: index + 1 }))
+          .filter(({ table }) => args.message_index === undefined || table.message_index === args.message_index);
         if (offset > all.length) throw new Error("offset 超出表格目录范围");
-        const shown = all.slice(offset, offset + 20).map((table) => ({
-          table_id: table.table_id, message_index: table.message_index, path: table.path,
+        const shown = all.slice(offset, offset + 20).map(({ table, table_index }) => ({
+          table_index, message_index: table.message_index, path: table.path,
           headers: table.headers, row_count: table.rows.length,
           preview: table.rows.slice(0, 2).map((row) => ({ row_index: row.row_index,
             cells: row.cells.slice(0, 6).map((cell) => cell.slice(0, 80)),
@@ -217,11 +247,12 @@ export const builtinTools: ExecutableTool[] = [
           throw new Error("maxOutputChars 太小，无法完整返回一张表的目录；请增大工具输出预算");
         return result;
       }
-      if (args.message_index !== undefined) throw new Error("message_index 仅用于表格目录，核验直接使用 table_id");
-      const request: TableCheckRequest = { answer_table_id: args.answer_table_id, sources: args.sources! };
-      const checked = compareTraceTableRows(raw, request);
+      if (args.message_index !== undefined) throw new Error("message_index 仅用于表格目录，核验直接使用 table_index");
+      const request: TableCheckRequest = { answer_table_id: selectedTable(args.answer_table_index).table_id,
+        sources: args.sources!.map(({ table_index, ...mapping }) => ({ ...mapping, table_id: selectedTable(table_index).table_id })) };
+      const checked = compareTraceTableRows(raw, request, registeredInputId(ctx, args.candidate));
       if (offset > checked.rows.length) throw new Error("offset 超出回答表行范围");
-      const evidence = (item: ReturnType<typeof cite>) => ({ evidence_id: item.evidence_id,
+      const evidence = (item: ReturnType<typeof cite>) => displayEvidence({ evidence_id: item.evidence_id,
         message_index: item.message_index, quote_preview: item.quote.slice(0, 600), has_more: item.quote.length > 600 });
       const answerColumns = [...request.sources[0].key_columns, ...request.sources[0].value_columns];
       const sourceSpecs = new Map(request.sources.map((source) => [source.table_id, source]));
@@ -232,12 +263,12 @@ export const builtinTools: ExecutableTool[] = [
             evidence: evidence(row.answer.evidence) },
           sources: row.sources.map((source) => {
             const mapping = sourceSpecs.get(source.table_id)!;
-            return { table_id: source.table_id, row_index: source.row_index, matched_by: source.matched_by,
+            return { table_index: tableIndices.get(source.table_id)!, row_index: source.row_index, matched_by: source.matched_by,
               cells: [...mapping.key_columns, ...mapping.value_columns].map((column) => ({ column: column.source,
                 value: source.cells[column.source] })), evidence: evidence(source.evidence) };
           }),
         });
-      const page = () => textResult({ answer_table_id: checked.answer_table_id, summary: checked.summary,
+      const page = () => textResult({ answer_table_index: args.answer_table_index, summary: checked.summary,
         rows: shown, total: checked.rows.length, offset, next_offset: offset + shown.length,
         has_more: offset + shown.length < checked.rows.length });
       let result = page();
@@ -275,27 +306,29 @@ export const builtinTools: ExecutableTool[] = [
         source_offset?: number;
       };
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
-      const source = args.path !== undefined
-        ? sources.find((item) => item.kind === "text" && item.path === args.path)
-        : sources.find((item) => item.kind === "json");
-      if (!source) throw new Error("文本路径不存在；先省略 path 读取该消息的 text_sources，再选择其中的路径");
+      const selected = selectEvidenceSource(sources, args.path);
+      if (!selected) throw new Error("路径不存在；先省略 path 读取该消息，再选择真实字段路径");
+      const { source, start, end: selectionEnd } = selected;
+      const totalChars = selectionEnd - start;
       if (args.path !== undefined && args.source_offset !== undefined) throw new Error("source_offset 仅用于整条消息的文本路径目录");
       const offset = args.offset ?? 0;
-      if (offset > source.text.length) throw new Error(`offset 超出当前来源长度 ${source.text.length}，请使用上次返回的 next_offset`);
+      if (offset > totalChars) throw new Error(`offset 超出当前来源长度 ${totalChars}，请使用上次返回的 next_offset`);
       const paths = sources.filter((item) => item.kind === "text");
       const sourceOffset = args.source_offset ?? 0;
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
-      const shownPaths = source.kind === "json" ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
+      const showDirectory = args.path === undefined;
+      const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
       const page = (end: number) => {
-        const evidence = cite(args.message_index, source, offset, end);
-        const quotable = !!evidence.quote && !evidence.quote.includes(imagePlaceholder);
+        const evidence = cite(registeredInputId(ctx, args.candidate), args.message_index, source, start + offset, start + end);
+        const quotable = !!evidence.quote && !overlapsImagePlaceholder(source.text, start + offset, start + end);
         return {
           source: { kind: source.kind, path: source.path },
-          evidence: quotable ? [evidence] : [],
+          ...(args.path !== undefined ? { selection_path: args.path } : {}),
+          evidence: quotable ? [displayEvidence(evidence)] : [],
           // Text is shown once, paired with its ID; image placeholders have no evidence ID.
           ...(!quotable ? { text: evidence.quote } : {}),
-          offset, next_offset: end, total_chars: source.text.length, has_more: end < source.text.length,
-          ...(source.kind === "json" ? { text_sources: shownPaths, text_sources_total: paths.length,
+          offset, next_offset: end, total_chars: totalChars, has_more: end < totalChars,
+          ...(showDirectory ? { text_sources: shownPaths, text_sources_total: paths.length,
             text_sources_next_offset: sourceOffset + shownPaths.length,
             text_sources_has_more: sourceOffset + shownPaths.length < paths.length } : {}),
         };
@@ -303,7 +336,7 @@ export const builtinTools: ExecutableTool[] = [
       let fitted;
       for (;;) {
         try {
-          fitted = fitStringPage({ totalChars: source.text.length, offset, maxChars: args.max_chars ?? 16000,
+          fitted = fitStringPage({ totalChars, offset, maxChars: args.max_chars ?? 16000,
             maxOutputChars: ctx.policy.maxOutputChars, build: page });
           break;
         } catch (error) {
@@ -314,7 +347,7 @@ export const builtinTools: ExecutableTool[] = [
       const end = fitted.end, result = textResult(fitted.value);
       if (end > offset) ctx.audit.traceReads.push({
         candidate: args.candidate, message_index: args.message_index,
-        kind: source.kind, path: source.path, start: offset, end,
+        kind: source.kind, path: source.path, start: start + offset, end: start + end,
       });
       return result;
     },
@@ -345,12 +378,12 @@ export const builtinTools: ExecutableTool[] = [
             position: number;
           while ((position = text.indexOf(args.query, start)) >= 0) {
             const evidence = cite(
-              i,
+              registeredInputId(ctx, args.candidate), i,
               source,
               Math.max(0, position - 100),
               Math.min(text.length, position + args.query.length + 200),
             );
-            if (!evidence.quote.includes(imagePlaceholder)) {
+            if (!overlapsImagePlaceholder(text, Math.max(0, position - 100), Math.min(text.length, position + args.query.length + 200))) {
               if (total >= offset && matches.length < 20) matches.push({ path: location, evidence, read: {
               candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
               start: Math.max(0, position - 100), end: Math.min(text.length, position + args.query.length + 200),
@@ -364,7 +397,7 @@ export const builtinTools: ExecutableTool[] = [
       if (offset > total) throw new Error("offset 超出检索结果范围");
       const shown = matches;
       const page = () => textResult({
-        matches: shown.map(({ path, evidence }) => ({ path, evidence })),
+        matches: shown.map(({ path, evidence }) => ({ path, evidence: displayEvidence(evidence) })),
         total,
         next_offset: offset + shown.length,
         has_more: offset + shown.length < total,
@@ -390,7 +423,7 @@ export const builtinTools: ExecutableTool[] = [
       const id = `${args.candidate}:${args.message_index}`;
       const metadata = JSON.stringify({
         message: `原始消息 ${id}，${content.length} 张图片`,
-        evidence_id: evidenceId(args.message_index, "image"),
+        reference: { evidence_id: evidenceId(registeredInputId(ctx, args.candidate), args.message_index, "image") },
       });
       if (metadata.length > ctx.policy.maxOutputChars)
         throw new Error("maxOutputChars 太小，无法完整返回图片元数据；请增大工具输出预算");
@@ -445,6 +478,7 @@ export const builtinTools: ExecutableTool[] = [
   },
   {
     name: "execute_code",
+    fileWriter: true,
     inputSchema: schema(
       {
         language: { enum: ["python", "shell"] },
@@ -528,50 +562,55 @@ export class ToolRuntime {
   private readonly validators;
   private readonly reads = new Map<string, ToolResult>();
   private readonly required: RequiredReadBudget;
+  private readonly budgetMetadataChars: number;
+  private readonly writerNames: string[];
+  private draftWriteCalls = 0;
+  private draftWriteRemaining = 0;
   constructor(context: ToolContext, tools: ExecutableTool[]) {
+    if (context.inputIds.size !== context.inputs.size || [...context.inputs.keys()].some(key => !context.inputIds.has(key)) ||
+      new Set(context.inputIds.values()).size !== context.inputIds.size) throw new RangeError("Tool sources require distinct registered input UUIDs");
+    context.audit.evidenceBank ??= [];
+    validateEvidenceBank(context.audit.evidenceBank);
     this.context = context;
-    this.required = new RequiredReadBudget(context.inputs, context.requiredReads ?? [], context.policy.maxOutputChars);
+    this.budgetMetadataChars = toolBudgetMetadataChars(tools.map(tool => tool.name));
+    this.writerNames = tools.filter(tool => tool.fileWriter === true).map(tool => tool.name);
+    this.required = new RequiredReadBudget(context.inputs, context.inputIds, context.requiredReads ?? [], context.policy.maxOutputChars, this.budgetMetadataChars);
     this.definitions = new Map(tools.map((t) => [t.name, t]));
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     this.validators = new Map(tools.map((t) => [t.name, ajv.compile(t.inputSchema)]));
   }
-  async execute(
-    name: string,
-    args: unknown,
-    signal: AbortSignal,
-    maxCalls = this.context.policy.maxToolCalls,
-  ): Promise<ToolResult> {
-    try {
-      signal.throwIfAborted();
-      const tool = this.definitions.get(name),
-        validate = this.validators.get(name);
-      if (!tool || !validate) throw new Error("Unknown tool");
-      const valid = validate(args);
-      const mandatory = valid && name === "read_trace" && this.required.isRequired(args, this.context.audit);
-      if (this.context.audit.calls - this.context.audit.requiredReadCalls >= maxCalls && !mandatory)
-        throw new Error("探索工具预算已耗尽；尚未读取的必读正文仍可按 next_offset 继续读取，然后提交");
-      this.context.audit.calls++;
-      if (!valid) throw new ValidationError(schemaIssues(validate.errors, args));
-      const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
-        key = canonical([name, args]);
-      const cached = this.reads.get(key);
-      const before = { traceReads: [...this.context.audit.traceReads] };
-      // Keep the cached data independent of the live invocation budget. All tools
-      // receive the same reserved space, including pages loaded from artifacts.
-      const outputChars = Math.max(1, this.context.policy.maxOutputChars - 200);
-      const result = cacheable && cached ? structuredClone(cached) : await tool.execute({
-        ...this.context, policy: { ...this.context.policy, maxOutputChars: outputChars },
-      }, args, signal);
-      if (mandatory && !cached && !result.isError) {
-        const returned = this.context.audit.traceReads.at(-1);
-        if (returned && this.required.charge(args, returned, before)) this.context.audit.requiredReadCalls++;
-      }
+  /** Reserve one nonaccumulating writer call; failed writes still count toward the total cap. */
+  reserveDraftWrite(): void {
+    this.draftWriteRemaining = this.writerNames.length > 0 && this.draftWriteCalls < 1 + this.context.policy.repairAttempts ? 1 : 0;
+  }
+  clearDraftWrite(): void {
+    this.draftWriteRemaining = 0;
+  }
+  budget(maxCalls = this.context.policy.maxToolCalls) {
+    const used = this.context.audit.calls - this.context.audit.requiredReadCalls - this.draftWriteCalls;
+    return {
+      exploration: { used, remaining: Math.max(0, maxCalls - used) },
+      required_reads: { used: this.required.used, remaining: this.required.remaining,
+        covered: this.required.covered(this.context.audit) },
+      draft_writes: { used: this.draftWriteCalls, remaining: this.draftWriteRemaining, tools: this.writerNames },
+    };
+  }
+  withBudget(result: ToolResult, maxCalls = this.context.policy.maxToolCalls): ToolResult {
+    const details = result.details && typeof result.details === "object" ? result.details as Record<string, unknown> : {};
+    const previous = details.budget, content = [...result.content];
+    if (previous && content.at(-1)?.text === JSON.stringify({ budget: previous })) content.pop();
+    const budget = { ...(previous && typeof previous === "object" ? previous : {}), ...this.budget(maxCalls) };
+    return { ...result, details: { ...details, budget },
+      content: [...content, { type: "text", text: JSON.stringify({ budget }) }] };
+  }
+  /** Paginate large delegated tool responses without charging an exploration call. */
+  async present(result: ToolResult, outputChars = Math.max(1, this.context.policy.maxOutputChars - this.budgetMetadataChars)): Promise<ToolResult> {
       const text = result.content
         .filter((c) => c.type === "text")
         .map((c) => c.text || "")
         .join("\n");
       if (text.length > outputChars) {
-        const artifact = await this.context.artifacts.put(`${name}-result.json`, canonical(result));
+        const artifact = await this.context.artifacts.put("delegated-result.json", canonical(result));
         this.context.audit.artifacts.push(artifact);
         const page = fitStringPage({ totalChars: text.length, maxChars: text.length,
           maxOutputChars: outputChars, build: (end) => ({ preview: text.slice(0, end), artifact, truncated: true }) });
@@ -581,19 +620,87 @@ export class ToolRuntime {
         ];
         result.details = { artifact, truncated: true };
       }
+    return result;
+  }
+  private evidenceQueue: Promise<void> = Promise.resolve();
+  execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
+    if (!["read_trace", "search_trace", "view_image", "check_table", "inspect_material"].includes(name))
+      return this.executeOne(name, args, signal, maxCalls);
+    // Revealing new directories and registering tool choices share one task-local order.
+    const pending = this.evidenceQueue.then(() => this.executeOne(name, args, signal, maxCalls));
+    this.evidenceQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+  /** Charge a registered call before execution; absent SDK arguments never qualify for mandatory reads. */
+  chargeCall(name: string, maxCalls = this.context.policy.maxToolCalls, args?: unknown) {
+    const tool = this.definitions.get(name), validate = this.validators.get(name);
+    if (!tool || !validate) throw new Error("Unknown tool");
+    const valid = validate(args);
+    const mandatory = args !== undefined && valid && name === "read_trace" && this.required.isRequired(args, this.context.audit);
+    const exhausted = this.budget(maxCalls).exploration.remaining === 0;
+    const draftWrite = exhausted && !mandatory && tool.fileWriter === true && this.draftWriteRemaining > 0;
+    if (exhausted && !mandatory && !draftWrite)
+      throw new Error(this.required.covered(this.context.audit)
+        ? "探索工具预算已耗尽；必读正文已覆盖。可使用剩余写稿额度准备当前阶段 JSON，并调用当前内容工具；内容提交不占探索或写稿工具额度"
+        : "探索工具预算已耗尽；尚未读取的必读正文仍可按 next_offset 继续读取。可使用剩余写稿额度准备当前阶段 JSON，并调用当前内容工具；内容提交不占探索或写稿工具额度");
+    if (draftWrite) {
+      this.draftWriteRemaining--;
+      this.draftWriteCalls++;
+    }
+    this.context.audit.calls++;
+    return { tool, validate, valid, mandatory, draftWrite };
+  }
+  private async executeOne(
+    name: string,
+    args: unknown,
+    signal: AbortSignal,
+    maxCalls = this.context.policy.maxToolCalls,
+  ): Promise<ToolResult> {
+    let draftWrite = false;
+    try {
+      signal.throwIfAborted();
+      const charged = this.chargeCall(name, maxCalls, args);
+      draftWrite = charged.draftWrite;
+      const { tool, validate, valid, mandatory } = charged;
+      if (!valid) throw new ValidationError(schemaIssues(validate.errors, args));
+      const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
+        key = canonical([name, args]);
+      const cached = this.reads.get(key);
+      const before = { traceReads: [...this.context.audit.traceReads] };
+      // Keep the cached data independent of the live invocation budget. All tools
+      // receive the same reserved space, including pages loaded from artifacts.
+      const outputChars = Math.max(1, this.context.policy.maxOutputChars - this.budgetMetadataChars);
+      const result = cacheable && cached ? structuredClone(cached) : await tool.execute({
+        ...this.context, policy: { ...this.context.policy, maxOutputChars: outputChars },
+      }, args, signal);
+      if (mandatory && !cached && !result.isError) {
+        const returned = this.context.audit.traceReads.at(-1);
+        if (returned && this.required.charge(args, returned, before)) this.context.audit.requiredReadCalls++;
+      }
+      // Register only the committed page after pagination; source text is carried as strings.
+      // Delegated tools and arbitrary artifacts are excluded because their objects are not generated evidence envelopes.
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+        const bank = this.context.audit.evidenceBank!;
+        for (const content of result.content) if (content.type === "text" && content.text)
+          content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank));
+        if (result.details !== undefined) result.details = projectEvidenceReferences(result.details, bank);
+        await this.context.persistEvidenceBank?.([...bank]);
+      }
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+        const candidate = (args as { candidate?: string }).candidate;
+        const presentation = candidate && this.context.sourcePresentations?.get(candidate);
+        if (presentation) {
+          for (const content of result.content) if (content.type === "text" && content.text)
+            content.text = JSON.stringify(presentSource(JSON.parse(content.text), presentation));
+          if (result.details !== undefined) result.details = presentSource(result.details, presentation);
+        }
+      }
+      await this.present(result, outputChars);
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));
-      const budget = {
-        exploration: { used: this.context.audit.calls - this.context.audit.requiredReadCalls,
-          remaining: Math.max(0, maxCalls - (this.context.audit.calls - this.context.audit.requiredReadCalls)) },
-        required_reads: { used: this.required.used, remaining: this.required.remaining },
-      };
-      result.details = {
-        ...(result.details && typeof result.details === "object" ? result.details : {}),
-        budget,
-      };
-      result.content.push({ type: "text", text: JSON.stringify({ budget }) });
-      return result;
+      if (draftWrite && result.isError) this.reserveDraftWrite();
+      return this.withBudget(result, maxCalls);
     } catch (error) {
+      if (draftWrite) this.reserveDraftWrite();
       const errors =
         error instanceof ValidationError
           ? error.issues
@@ -607,18 +714,24 @@ export class ToolRuntime {
                 message: errorText(error),
               },
             ];
-      return {
+      return this.withBudget({
         ...textResult({ errors, message: errorText(error) }),
         isError: true,
-      };
+      }, maxCalls);
     }
   }
 }
 
 export * from "./evidence.js";
+export * from "./evidence-coverage.js";
+export * from "./instructions.js";
 export * from "./validation.js";
 export * from "./trace-audit.js";
 export * from "./table-correspondence.js";
+export * from "./citation-markup.js";
 export * from "./serper.js";
 export * from "./web-reader.js";
 export { calculate } from "./decimal.js";
+export * from "./source-blocks.js";
+
+export * from "./trace-identity.js";

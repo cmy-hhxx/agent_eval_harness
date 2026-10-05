@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r74",
+  "evaluatorVersion": "r122",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -87,9 +87,9 @@
       "baseUrlEnv": "EVAL_BASE_URL",
       "api": "openai-responses",
       "apiKeyEnv": "EVAL_API_KEY",
-      "thinking": "high",
+      "thinking": "xhigh",
       "contextWindow": 524288,
-      "maxOutputTokens": 8192
+      "maxOutputTokens": 32768
     }
   },
   "bindings": {

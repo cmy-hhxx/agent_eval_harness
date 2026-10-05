@@ -5,7 +5,7 @@ export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" 
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
-  "read_artifact", "check_table", ...submissionToolNames(true),
+  "read_artifact", "check_table", "inspect_material", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 
 function resource(path: string): string {
@@ -15,6 +15,8 @@ function resource(path: string): string {
 }
 
 const material = resource("shared/material.md");
+const evidence = resource("shared/evidence.md");
+const taskFocus = resource("shared/task-focus.md");
 const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
@@ -23,10 +25,11 @@ const descriptions = new Map<string, string>(
 );
 
 /** The only source of model-facing text for the built-in evaluation profiles. */
-export function agentPrompt(stage: PromptStage, toolNames: string[]) {
-  const systemPrompt = resource(`${stage}/default/system.md`);
-  const instructions = resource(`${stage}/default/instructions.md`);
-  const fileSubmission = toolNames.includes("execute_code");
+export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "default") {
+  if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
+  const systemPrompt = resource(`${stage}/${profile}/system.md`);
+  const instructions = resource(`${stage}/${profile}/instructions.md`);
+  const fileSubmission = false;
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
@@ -42,7 +45,11 @@ export function agentPrompt(stage: PromptStage, toolNames: string[]) {
     fileSubmission,
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
-      return instructions + `\n${material}\n` + canonical(input) +
+      const { task_focus, ...complete } = input;
+      const focus = task_focus === undefined ? "" : `${taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
+      const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
+        ? `\n${evidence}\n` : "";
+      return focus + instructions + evidenceGuide + `\n${material}\n` + canonical(task_focus === undefined ? input : complete) +
         (policy ? `\n\n${budget}${JSON.stringify(policy)}。` : "") +
         (failure ? `\n${recovery}\n${JSON.stringify({
           ...(!failure.stopped ? { draft: failure.draft } : {}), errors: failure.errors,
@@ -57,7 +64,7 @@ export function criteriaText(name: "task_type" | "source_rule" | "reference_rule
 }
 
 /** Fixed wording for a review request; it never claims a comparison outcome. */
-export function comparisonText(name: "review_pending"): string {
+export function comparisonText(name: "review_pending" | "not_applicable"): string {
   return resource(`comparison/default/${name}.md`);
 }
 

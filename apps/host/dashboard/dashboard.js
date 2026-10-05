@@ -18,7 +18,7 @@ const statusLabels = {
   running: "运行中", finished: "已结束", interrupted: "已中断", pending: "排队",
   succeeded: "已接受", failed: "失败", timed_out: "超时", blocked: "阻塞", cancelled: "取消",
 };
-const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const escapeHtml = (value) => String(value ?? "")
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
@@ -660,6 +660,8 @@ async function preview() {
     const stats = [
       value.resuming ? `未完成 ${value.remaining || 0}` : `任务 ${value.tasks || 0}`,
       `样本 ${summary.cases || 0}`,
+      `对局 ${summary.comparison_tasks || 0}`,
+      `独立核验 ${summary.comparison_verification_tasks || 0}`,
       ...(state.sampleInfo?.size ? [`抽样 ${(state.sampledCases || []).length} / 可用 ${state.sampleInfo.available}`] : []),
       `有效输入 ${summary.valid_inputs || 0}`,
       `输入异常 ${summary.issues_count || 0}`,

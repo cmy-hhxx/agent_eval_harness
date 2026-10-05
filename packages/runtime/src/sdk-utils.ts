@@ -1,4 +1,4 @@
-import type { EvaluationSpec, ModelConfig, ToolContent } from "@eval/contracts";
+import type { EvaluationSpec, ModelConfig, ToolContent, ToolResult } from "@eval/contracts";
 import { object } from "@eval/contracts";
 
 export function inlineToolSchema(schema: Record<string, unknown> | boolean): Record<string, unknown> | boolean {
@@ -82,15 +82,15 @@ export function providerConfig(config: ModelConfig) {
         id: config.model,
         name: config.model,
         reasoning: config.thinking !== "off",
-        // Declare xhigh so SDKs pass it through instead of clamping to high.
-        thinkingLevelMap: { xhigh: "xhigh" },
+        // Declare explicit upper levels so SDKs preserve the configured effort.
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
         input: ["text", "image"] as ("text" | "image")[],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: config.contextWindow,
         maxTokens: config.maxOutputTokens,
         compat: {
           supportsStore: false,
-          supportsDeveloperRole: true,
+          supportsDeveloperRole: config.supportsDeveloperRole ?? true,
           supportsReasoningEffort: true,
           maxTokensField: "max_completion_tokens" as const,
         },
@@ -101,14 +101,35 @@ export function providerConfig(config: ModelConfig) {
 export function transformPayload(
   value: unknown,
   config: ModelConfig,
-  evaluation?: Pick<EvaluationSpec, "toolNames">,
+  evaluation?: Pick<EvaluationSpec, "toolNames" | "outputSchema" | "inspectionSchema" | "fileSubmission">,
+  activeNames?: readonly string[],
 ): unknown {
   const payload = object(value);
+  if (config.supportsDeveloperRole === false) {
+    // Some endpoints accept developer messages but treat them as user content.
+    const messages = config.api === "openai-completions" ? payload.messages : payload.input;
+    if (Array.isArray(messages)) for (const message of messages)
+      if (message !== null && typeof message === "object" && !Array.isArray(message) && message.role === "developer")
+        message.role = "system";
+  }
   if (config.api === "openai-completions") {
     delete payload.max_tokens;
     payload.max_completion_tokens = config.maxOutputTokens;
   } else payload.max_output_tokens = config.maxOutputTokens;
   payload.parallel_tool_calls = false;
+  if (evaluation && Array.isArray(payload.tools)) {
+    // Keep the full model-facing contract while the SDK dispatches raw submission fields to Host.
+    for (const value of payload.tools) {
+      const tool = config.api === "openai-completions" ? object(object(value).function) : object(value);
+      const schema = tool.name === "submit_evaluation" ? evaluation.outputSchema :
+        tool.name === "inspect_material" && !evaluation.fileSubmission ? evaluation.inspectionSchema : undefined;
+      if (schema) tool.parameters = inlineToolSchema(schema);
+    }
+  }
+  if (activeNames && Array.isArray(payload.tools))
+    payload.tools = payload.tools.filter((value) => activeNames.includes(String(
+      (config.api === "openai-completions" ? object(object(value).function) : object(value)).name,
+    )));
   if (evaluation && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
     // Cache accounting belongs to the evaluation workload, not an ephemeral SDK session.
     payload.prompt_cache_key = "evaluation";
@@ -134,4 +155,20 @@ export function sdkContent(content: ToolContent[]) {
           mimeType: c.mimeType || "image/png",
         },
   );
+}
+export function contentToolName(evaluation: Pick<EvaluationSpec, "inspectionSchema" | "fileSubmission">, inspected: boolean): string {
+  return evaluation.inspectionSchema && !inspected ? "inspect_material"
+    : evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
+}
+
+export function activeToolNames(result: ToolResult, names: string[], nextTool: string): string[] {
+  const budget = (result.details as { budget?: {
+    exploration?: { remaining?: number }; required_reads?: { covered?: boolean };
+    draft_writes?: { remaining: number; tools: string[] };
+  } } | undefined)?.budget;
+  const current = names.filter(name => !["inspect_material", "submit_evaluation", "submit_evaluation_file"].includes(name) || name === nextTool);
+  if (budget?.exploration?.remaining !== 0) return current;
+  return current.filter((name) => name === nextTool ||
+    (name === "read_trace" && budget.required_reads?.covered === false) ||
+    (budget.draft_writes !== undefined && budget.draft_writes.remaining > 0 && budget.draft_writes.tools.includes(name)));
 }

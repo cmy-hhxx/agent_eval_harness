@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
-import {setTimeout as delay} from 'node:timers/promises';
+import {waitForTestState} from '../fixtures/wait.js';
 import {GatewayAssistantModels} from '../../apps/host/src/assistant-models.js';
 import {AssistantSessions} from '@eval/runtime/assistant';
 import type {ModelConfig} from '@eval/contracts';
@@ -22,10 +22,15 @@ test('gateway catalog, scoped favorites and durable model/effort switching reach
   await models.favorites('alice',['analysis-b']);assert.deepEqual((await models.list('alice')).favorites,['analysis-b']);assert.deepEqual((await models.list('bob')).favorites,['analysis-a']);
   await assert.rejects(models.favorites('alice',['unknown']),/可用/);await assert.rejects(models.resolve({provider:'outside',model:'analysis-b'}),/网关/);
   const {sessionId}=await sessions.create('alice'),scope={userId:'alice',sessionId};
-  const send=async()=>{const requestId=randomUUID();await sessions.prompt('alice',{sessionId,requestId,mode:'queue',content:[{type:'text',text:'test'}]});for(let i=0;i<100;i++){if((await sessions.list('alice'))[0].requests[requestId]==='completed')return;await delay(10);}throw new Error('not completed');};
+  const send=async()=>{
+   const requestId=randomUUID();
+   await sessions.prompt('alice',{sessionId,requestId,mode:'queue',content:[{type:'text',text:'test'}]});
+   await waitForTestState(()=>sessions.list('alice'),items=>items[0].requests[requestId]==='completed',`Assistant model request ${requestId} did not complete`);
+  };
   await send();assert.equal(used[0].model,'analysis-b');
-  await sessions.selectModel(scope,{provider:'gateway',model:'analysis-a',reasoningEffort:'high'});await send();assert.equal(used[1].model,'analysis-a');assert.equal(used[1].thinking,'high');
-  await sessions.dispose();sessions=new AssistantSessions(options);await send();assert.equal(used[2].thinking,'high');
+  assert((await models.list('alice')).models.every(model=>model.reasoning?.efforts.some(effort=>effort.id==='max')));
+  await sessions.selectModel(scope,{provider:'gateway',model:'analysis-a',reasoningEffort:'max'});await send();assert.equal(used[1].model,'analysis-a');assert.equal(used[1].thinking,'max');
+  await sessions.dispose();sessions=new AssistantSessions(options);await send();assert.equal(used[2].thinking,'max');
   assert.deepEqual(requests,['/models']);
  }finally{await sessions.dispose();await new Promise<void>(resolve=>server.close(()=>resolve()));delete process.env.ASSISTANT_MODEL_TEST_KEY;await rm(directory,{recursive:true,force:true});}
 });

@@ -1,8 +1,9 @@
 import { canonical, type CriteriaInput } from "@eval/contracts";
+import { sourceTextBlocks } from "@eval/tools";
 
-/** Source IDs address this request's source catalogue, never generated requirements. */
+/** Positive indices select entries in this request's fixed source catalogue. */
 export interface CriterionSource {
-  id: string;
+  source_index: number;
   kind: "question" | "reference" | "instruction" | "context";
   text: string;
   applies_to: string[];
@@ -10,32 +11,48 @@ export interface CriterionSource {
   role?: "system" | "developer" | "user";
 }
 
-function sourceText(value: unknown): string {
-  return typeof value === "string" ? value : canonical(value);
+function sourceText(value: unknown, messageContent = false): string {
+  if (typeof value === "string") return value;
+  if (messageContent) {
+    const textParts = (part: unknown): string[] => {
+      if (typeof part === "string") return [part];
+      if (Array.isArray(part)) return part.flatMap(textParts);
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return [part.text];
+      return [];
+    };
+    const parts = textParts(value);
+    if (parts.length) return parts.join("\n");
+  }
+  return canonical(value);
 }
 
-/** Keep complete paragraphs: a model cannot select a substring that drops a condition or negation. */
+/** Keep complete original blocks: Markdown headings retain their governing prose and exceptions. */
 export function criteriaSources(input: CriteriaInput): CriterionSource[] {
-  const sources: CriterionSource[] = [{ id: "question", kind: "question", text: input.question, applies_to: [], paths: ["/question"] }];
+  const sources: CriterionSource[] = [{ source_index: 1, kind: "question", text: input.question, applies_to: [], paths: ["/question"] }];
   if (input.ground_truth.available) sources.push({
-    id: "reference", kind: "reference", text: sourceText(input.ground_truth.value), applies_to: [], paths: ["/ground_truth/value"],
+    source_index: sources.length + 1, kind: "reference", text: sourceText(input.ground_truth.value), applies_to: [], paths: ["/ground_truth/value"],
   });
   input.candidates.forEach((candidate, candidateIndex) => {
     for (const field of ["instructions", "context"] as const) candidate[field].forEach((message, messageIndex) => {
-      const text = sourceText(message.content);
-      const paragraphs = text.split(/\n[\t ]*\n+/u).map((paragraph) => paragraph.trim()).filter(Boolean);
+      const text = sourceText(message.content, true);
+      const paragraphs = sourceTextBlocks(text).map(block => block.quote);
       paragraphs.forEach((paragraph, paragraphIndex) => {
         const kind = field === "instructions" ? "instruction" : "context";
-        const path = `/candidates/${candidateIndex}/${field}/${messageIndex}/content#paragraph=${paragraphIndex}`;
+        const path = `/candidates/${candidateIndex}/${field}/${messageIndex}/content#block=${paragraphIndex}`;
         const same = sources.find((source) => source.kind === kind && source.role === message.role && source.text === paragraph);
         if (same) {
           if (!same.applies_to.includes(candidate.candidate_id)) same.applies_to.push(candidate.candidate_id);
           same.paths.push(path);
-        } else sources.push({ id: `source${sources.length + 1}`, kind, role: message.role, text: paragraph,
+        } else sources.push({ source_index: sources.length + 1, kind, role: message.role, text: paragraph,
           applies_to: [candidate.candidate_id], paths: [path] });
       });
     });
   });
   for (const source of sources) if (source.applies_to.length === input.candidates.length) source.applies_to = [];
   return sources;
+}
+
+/** Selection is separate from provenance: complete own SYS/DEV still ground accepted results. */
+export function eligibleCriterionSource(source: CriterionSource): boolean {
+  return source.role !== "system" && source.role !== "developer";
 }

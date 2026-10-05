@@ -12,7 +12,9 @@ import { adapt, candidateKey, taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
-import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult } from "./results.js";
+import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult, acceptedRewriteProjection } from "./results.js";
+import { acceptedAttributionView } from "./accepted-attribution.js";
+import { bindAcceptedAttribution } from "./binding.js";
 import { taskObservations } from "./observations.js";
 import { deliveryCoverage, type DeliveryRequirements } from "./delivery.js";
 
@@ -89,18 +91,17 @@ export async function validateRun(
     const receipt = receipts.get(task.id);
     if (!receipt) continue;
     try {
-      if (Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id)))
-        validate(
-          bindTask(
+      if (Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id))) {
+        const binding = task.stage === "attribution" ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks }) : bindTask(
             task,
             inputs,
             Object.fromEntries(
               Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
             ),
-          ),
-          receipt.evaluation,
-          receipt.audit,
-        );
+            { tasks: manifest.tasks },
+          );
+        validate(binding, task.stage === "attribution" ? acceptedAttributionView(receipt, binding.request) : receipt.evaluation, receipt.audit);
+      }
     } catch (error) {
       (task.stage === "rewrite" ? rewriteErrors : evidenceErrors).push(`${task.id}: ${errorText(error)}`);
     }
@@ -124,7 +125,7 @@ export async function validateRun(
     .map((task) => (task.data as TaskData).rewriteOf?.taskId ?? task.id));
   for (const task of manifest.tasks) {
     const receipt = receipts.get(task.id);
-    if (task.stage !== "comparison" || !receipt?.exported) continue;
+    if (task.stage !== "comparison" || (task.data as TaskData).verificationPending || !receipt?.exported) continue;
     if (selectedSources && !selectedSources.has(task.id)) continue;
     const data = task.data as TaskData;
     const stored = stageResult("comparison", receipt.exported.row).rewritten as { rewrites: { id: string; text: string }[] } | undefined;
@@ -134,7 +135,7 @@ export async function validateRun(
         comparisonRewriteScope: scope as "items" | "verdicts",
         rewriteOf: { stage: "comparison", taskId: task.id, resultId: data.comparisonId! },
         rewriteNames: Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) => [label, names[candidate.version]!])),
-      } satisfies TaskData }, {}, { source: receipt });
+      } satisfies TaskData }, {}, { source: receipt }, { tasks: manifest.tasks });
       const ids = new Set((binding.request.input.items as { id: string }[]).map((item) => item.id));
       try {
         validate(binding, { rewrites: stored?.rewrites.filter((item) => ids.has(item.id)) ?? [] }, receipt.audit);
@@ -145,7 +146,7 @@ export async function validateRun(
     if (receipts.has(task.id)) {
       try {
         const receipt = receipts.get(task.id)!;
-        if (task.stage === "criteria" || (receipt.evaluation as ComparisonResult).status === "needs_review") {
+        if (task.stage === "criteria" || (task.data as TaskData).verificationPending || (receipt.evaluation as ComparisonResult).status === "needs_review") {
           const exported = encodeResult(task, state, inputs);
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));
@@ -154,7 +155,7 @@ export async function validateRun(
         if (task.stage === "attribution") {
           const row = receipt.exported?.row || attributionRow(task, receipt);
           if (
-            !attributionValidator(row.evaluation) ||
+            (!receipt.exported && !attributionValidator(row.evaluation)) ||
             canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt))
           )
             throw new Error("归因结果结构或收据不一致");
@@ -164,13 +165,17 @@ export async function validateRun(
           continue;
         }
         if (task.stage === "rewrite") {
-          const row = receipt.exported ? stageResult((task.data as TaskData).rewriteOf!.stage, receipt.exported.row).rewritten : rewrittenResult(receipt);
-          if (!rewrittenValidator(row))
+          const source = (task.data as TaskData).rewriteOf!, owned = rewrittenResult(receipt);
+          const projection = acceptedRewriteProjection(state, source.taskId)!;
+          const row = receipt.exported ? stageResult(source.stage, receipt.exported.row).rewritten : projection.rewritten;
+          if (!rewrittenValidator(owned) || !rewrittenValidator(row))
             throw new Error("改写结果结构或收据不一致");
           const stored = row as { evaluator_version: string; rewrites: { id: string; text: string }[] };
-          const owned = rewrittenResult(receipt) as typeof stored;
           if (new Set(stored.rewrites.map((item) => item.id)).size !== stored.rewrites.length ||
-            canonical({ ...stored, rewrites: owned.rewrites.map((item) => stored.rewrites.find((saved) => saved.id === item.id)) }) !== canonical(owned))
+            stored.rewrites.length !== projection.owners.size || stored.rewrites.some(item => !projection.owners.has(item.id)) ||
+            stored.evaluator_version !== projection.rewritten.evaluator_version ||
+            (owned as typeof stored).rewrites.some(item => projection.owners.get(item.id) === task.id &&
+              canonical(stored.rewrites.find(saved => saved.id === item.id)) !== canonical(item)))
             throw new Error("改写结果结构或收据不一致");
           continue;
         }

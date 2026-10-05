@@ -3,7 +3,7 @@
     "judge": {
       "model": "your-gateway-model-id",
       "api": "openai-responses",
-      "thinking": "high"
+      "thinking": "xhigh"
     }
   }
 }

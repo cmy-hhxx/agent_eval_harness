@@ -5,7 +5,6 @@
     "ground_truth",
     "candidates",
     "attributions",
-    "strength_checks",
     "task_analysis"
   ],
   "properties": {
@@ -168,6 +167,18 @@
           "candidate_id": {
             "type": "string",
             "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "instruction_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/instructionSource"
+            }
+          },
+          "citation_inventory": {
+            "$ref": "#/$defs/citationInventory"
+          },
+          "answer_generation": {
+            "$ref": "#/$defs/answer_generation"
           }
         }
       },
@@ -232,6 +243,7 @@
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
+                      "evidence_id",
                       "message_index",
                       "quote"
                     ],
@@ -243,7 +255,27 @@
                       "quote": {
                         "type": "string",
                         "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_input_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
                       }
+                    },
+                    "dependentRequired": {
+                      "source": [
+                        "source_input_id"
+                      ],
+                      "source_input_id": [
+                        "source"
+                      ]
                     }
                   }
                 }
@@ -329,37 +361,6 @@
         }
       }
     },
-    "strength_checks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "candidate",
-          "finding_index",
-          "counterparts"
-        ],
-        "properties": {
-          "candidate": {
-            "type": "string",
-            "minLength": 1
-          },
-          "finding_index": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "counterparts": {
-            "type": "array",
-            "minItems": 1,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
     "task_analysis": {
       "type": "object",
       "additionalProperties": false,
@@ -408,8 +409,126 @@
       "additionalProperties": {
         "type": "array",
         "items": {
-          "type": "string",
-          "minLength": 1
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reason",
+            "requires_review"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "unverified",
+                "unresolved_conflict",
+                "invalid_material"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requires_review": {
+              "type": "boolean"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "unresolved_conflict",
+                      "invalid_material"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "requires_review": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "pending_concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate",
+          "criterion_ids",
+          "answer_evidence",
+          "source_evidence",
+          "reason"
+        ],
+        "properties": {
+          "candidate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "criterion_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "answer_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "source_evidence": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
         }
       }
     }
@@ -444,6 +563,400 @@
         "acceptance_rule": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "instructionSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_index",
+        "path",
+        "role",
+        "content",
+        "evidence"
+      ],
+      "properties": {
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "system",
+            "developer"
+          ]
+        },
+        "content": {},
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "citationInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocols",
+        "references",
+        "document_groups"
+      ],
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "footnote",
+              "trace",
+              "vis-html"
+            ]
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reference",
+              "format",
+              "status",
+              "occurrences",
+              "sources"
+            ],
+            "properties": {
+              "reference": {
+                "type": "string",
+                "minLength": 1
+              },
+              "format": {
+                "enum": [
+                  "footnote",
+                  "trace",
+                  "vis-html"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "resolved",
+                  "ambiguous",
+                  "unknown"
+                ]
+              },
+              "occurrences": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/citationOccurrence"
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/citationSource"
+                }
+              }
+            }
+          }
+        },
+        "document_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "url",
+              "references"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "references": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "format",
+                    "reference"
+                  ],
+                  "properties": {
+                    "format": {
+                      "enum": [
+                        "footnote",
+                        "trace",
+                        "vis-html"
+                      ]
+                    },
+                    "reference": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "citationOccurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "context"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/evidence/properties/evidence_id"
+        },
+        "message_index": {
+          "$ref": "#/$defs/evidence/properties/message_index"
+        },
+        "quote": {
+          "$ref": "#/$defs/evidence/properties/quote"
+        },
+        "context": {
+          "$ref": "#/$defs/citationContext"
+        }
+      }
+    },
+    "citationContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "read_request",
+        "end_offset"
+      ],
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/evidence/properties/evidence_id"
+        },
+        "message_index": {
+          "$ref": "#/$defs/evidence/properties/message_index"
+        },
+        "quote": {
+          "$ref": "#/$defs/evidence/properties/quote"
+        },
+        "read_request": {
+          "$ref": "#/$defs/citationSource/properties/read_request"
+        },
+        "end_offset": {
+          "$ref": "#/$defs/citationSource/properties/end_offset"
+        }
+      }
+    },
+    "citationSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index",
+        "quote",
+        "origin",
+        "read_request",
+        "end_offset"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "enum": [
+            "tool_return",
+            "model_visible"
+          ]
+        },
+        "end_offset": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "read_request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "message_index",
+            "path",
+            "offset",
+            "max_chars"
+          ],
+          "properties": {
+            "message_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16000
+            }
+          }
+        },
+        "document_url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "answer_generation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "available",
+        "message_type",
+        "message_index",
+        "captured_final_message_index",
+        "matches_captured_final",
+        "blocks"
+      ],
+      "properties": {
+        "available": {
+          "const": true
+        },
+        "message_type": {
+          "const": "llm_turn"
+        },
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captured_final_message_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matches_captured_final": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "total_chars",
+              "text",
+              "reference",
+              "read_request"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "total_chars": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reference": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "evidence_id"
+                ],
+                "properties": {
+                  "evidence_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "read_request": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "message_index",
+                  "path",
+                  "offset",
+                  "max_chars"
+                ],
+                "properties": {
+                  "message_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "max_chars": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

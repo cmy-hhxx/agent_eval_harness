@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { PlannedTask, RunState } from "@eval/contracts";
-import { runLock } from "@eval/data";
+import { problemLibraryFile, readProblemLibrary, runLock } from "@eval/data";
+import { emptyLibrary, projectLibrary, type ClusteringResult } from "@eval/agents/clustering";
 import { comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
-import { readRunState, writeRunState } from "./run-data.js";
+import { pendingTaskProgress, readRunState, writeRunState } from "./run-data.js";
 import { stageResult } from "./results.js";
 import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
 
@@ -18,6 +19,98 @@ export interface RewriteSelection extends RepairSelection {
   slotIds?: string[];
   all?: boolean;
 }
+export interface DeferredClusteringSelection {
+  taskIds?: string[];
+  all?: boolean;
+  apply?: boolean;
+}
+
+/** Reclassify accepted deferred observations using today's directory, preserving every receipt. */
+export async function prepareDeferredClustering(run: string, selection: DeferredClusteringSelection) {
+  if (!selection.all && !selection.taskIds?.length) throw new Error("重新归类必须选择 --task 或显式 --all");
+  if (selection.all && selection.taskIds?.length) throw new Error("--all 不能与任务选择同时使用");
+  const release = await runLock(run);
+  try {
+    const state = await readRunState(run), tasks = state.manifest.tasks;
+    const chosen = new Set(selection.taskIds), config = state.manifest.config as EvalConfig;
+    for (const id of chosen)
+      if (!tasks.some(task => task.id === id && task.stage === "clustering")) throw new Error("未知聚类任务：" + id);
+    const eligible = (task: PlannedTask): boolean => {
+      if (selection.all) return true;
+      const seen = new Set<string>();
+      let current: PlannedTask | undefined = task;
+      while (current && !seen.has(current.id)) {
+        if (chosen.has(current.id)) return true;
+        seen.add(current.id);
+        const parentId: string | undefined = (current.data as TaskData).reclassifyOf?.task_id;
+        current = parentId ? tasks.find(task => task.id === parentId) : undefined;
+      }
+      return false;
+    };
+    const clustering = tasks.filter(task => task.stage === "clustering");
+    const pending = clustering.filter(task => eligible(task) && (task.data as TaskData).reclassifyOf && !state.receipts[task.id]);
+    const plans = clustering.flatMap(source => {
+      const receipt = state.receipts[source.id];
+      if (!receipt || !eligible(source)) return [];
+      // A child owns its selected observations even when it defers again; only leaf work is new.
+      const claimed = new Set(clustering.flatMap(task => {
+        const data = task.data as TaskData;
+        return data.reclassifyOf?.task_id === source.id ? data.reclassifyOf.item_ids : [];
+      }));
+      const itemIds = (receipt.evaluation as ClusteringResult).assignments
+        .filter(item => item.deferred_reason !== undefined && !claimed.has(item.item_id)).map(item => item.item_id);
+      return itemIds.length ? [{ source, itemIds }] : [];
+    });
+    const models = [...new Set(plans.map(plan => (plan.source.data as TaskData).scope!.version))];
+    const projections = new Map(await Promise.all(models.map(async model => {
+      const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model)) ?? emptyLibrary(model);
+      if (library.model !== model) throw new Error("问题库模型身份不一致：" + model);
+      return [model, projectLibrary(library)] as const;
+    })));
+    const selected = pending.map(task => ({ source_task_id: (task.data as TaskData).reclassifyOf!.task_id,
+      task_id: task.id as string | null, item_ids: (task.data as TaskData).reclassifyOf!.item_ids }));
+    const created: PlannedTask[] = [];
+    for (const [index, plan] of plans.entries()) {
+      const data = plan.source.data as TaskData, scope = data.scope!, projection = projections.get(scope.version)!;
+      const siblings = plans.filter(plan => (plan.source.data as TaskData).scope!.version === scope.version);
+      const position = siblings.indexOf(plan), activeClasses = projection.components.reduce((sum, entry) => sum + entry.classes.length, 0);
+      const reserved = clustering.filter(task => !state.receipts[task.id] && (task.data as TaskData).scope!.version === scope.version);
+      const share = (cap: number, active: number, field: "max_new_classes" | "max_new_components") => {
+        const headroom = Math.max(0, cap - active - reserved.reduce((sum, task) => sum + (task.data as TaskData).scope!.budget[field], 0));
+        return Math.floor(headroom / siblings.length) + Number(position < headroom % siblings.length);
+      };
+      const task: PlannedTask = { id: randomUUID(), stage: "clustering", inputIds: {}, dependencies: { ...plan.source.dependencies },
+        data: { stage: "clustering", candidates: {}, reference: null, projection,
+          reclassifyOf: { task_id: plan.source.id, item_ids: plan.itemIds },
+          scope: { ...scope, shard: Math.max(...clustering.filter(task => (task.data as TaskData).scope!.version === scope.version &&
+            (task.data as TaskData).scope!.batch_id === scope.batch_id).map(task => (task.data as TaskData).scope!.shard), 0) + index + 1,
+            budget: { active_classes: activeClasses, max_classes: config.clustering.maxClassesPerModel,
+              max_new_classes: Math.min(config.clustering.maxNewClassesPerTask, share(config.clustering.maxClassesPerModel, activeClasses, "max_new_classes")),
+              active_components: projection.components.length, max_components: config.clustering.maxComponentsPerModel,
+              max_new_components: share(config.clustering.maxComponentsPerModel, projection.components.length, "max_new_components"),
+              consolidate: activeClasses >= config.clustering.consolidateAt, min_support: config.clustering.minSupport } },
+        } satisfies TaskData };
+      selected.push({ source_task_id: plan.source.id, task_id: selection.apply ? task.id : null, item_ids: plan.itemIds });
+      created.push(task);
+      if (config.rewrite.clustering) created.push({ id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: task.id },
+        data: { stage: "rewrite", candidates: {}, reference: null,
+          rewriteOf: { stage: "clustering", taskId: task.id, resultId: task.id },
+          rewriteScope: { batch_id: scope.batch_id, model: config.inputs.versions.find(version => version.id === scope.version)!.name },
+        } satisfies TaskData });
+    }
+    if (selection.apply && selected.length) {
+      tasks.push(...created);
+      const pendingIds = new Set(pending.map(task => task.id));
+      const presentation = tasks.filter(task => task.stage === "rewrite" && !state.receipts[task.id] &&
+        pendingIds.has((task.data as TaskData).rewriteOf?.taskId ?? ""));
+      const ids = [...pendingIds, ...presentation.map(task => task.id), ...created.map(task => task.id)];
+      for (const id of ids) state.manifest.states[id] = pendingTaskProgress(state.manifest.states[id]);
+      await freeze(run, state, ids);
+    }
+    return { applied: !!selection.apply, count: selected.length,
+      protected_accepted: Object.keys(state.receipts).length, selected };
+  } finally { await release(); }
+}
 
 function selectedTasks(state: RunState, selection: RepairSelection): Set<string> | undefined {
   const selected = new Set<string>();
@@ -26,7 +119,7 @@ function selectedTasks(state: RunState, selection: RepairSelection): Set<string>
     selected.add(id);
   }
   for (const id of selection.resultIds ?? []) {
-    const task = state.manifest.tasks.find((task) => task.stage === "comparison" && (task.data as TaskData).comparisonId === id);
+    const task = state.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending && (task.data as TaskData).comparisonId === id);
     if (!task) throw new Error("未知对比结果：" + id);
     selected.add(task.id);
   }
@@ -100,7 +193,7 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
     const sources = new Set<string>();
     for (const id of chosen ?? []) {
       const task = tasks.find((task) => task.id === id)!, data = task.data as TaskData;
-      if (task.stage === "comparison") sources.add(id);
+      if (task.stage === "comparison" && !(task.data as TaskData).verificationPending) sources.add(id);
       else if (data.rewriteOf?.stage === "comparison") sources.add(data.rewriteOf.taskId);
       else throw new Error("只能选择对比或对比改写任务：" + id);
     }
@@ -109,7 +202,7 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
     if (selection.slotIds && (!requested.size || requested.size !== selection.slotIds.length))
       throw new Error("槽位选择不能为空或重复");
     for (const source of tasks) {
-      if (source.stage !== "comparison" || (chosen && !sources.has(source.id))) continue;
+      if (source.stage !== "comparison" || (source.data as TaskData).verificationPending || (chosen && !sources.has(source.id))) continue;
       const receipt = state.receipts[source.id];
       if (!receipt) {
         if (chosen) throw new Error("对比尚未接受，先补跑失败任务：" + source.id);
@@ -128,16 +221,21 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
       const slots = available.filter((item) => (!requested.size || requested.has(item.id)) &&
         (selection.mode === "refresh" || !filled.has(item.id))).map((item) => item.id);
       if (!slots.length) continue;
-      const rewrites = tasks.filter((task) => task.stage === "rewrite" && (task.data as TaskData).rewriteOf?.taskId === source.id);
-      if (rewrites.length > 1) throw new Error("重复的对比改写任务：" + source.id);
+      const rewrites = tasks.filter((task) => {
+        const data = task.data as TaskData;
+        const scope = data.comparisonRewriteScope ?? "verdicts";
+        const owned = data.rewriteSlotIds ?? comparisonSlots(receipt.evaluation as ComparisonResult, scope).map(item => item.id);
+        return task.stage === "rewrite" && data.rewriteOf?.taskId === source.id && !state.receipts[task.id] &&
+          scope === selection.scope && owned.length === slots.length && slots.every(id => owned.includes(id));
+      });
+      if (rewrites.length > 1) throw new Error("重复的未完成对比改写槽位任务：" + source.id);
       plans.push({ source, rewrite: rewrites[0], slots });
     }
     const selected = plans.map(({ source, rewrite, slots }) => ({
       source_task_id: source.id, result_id: (source.data as TaskData).comparisonId!,
       rewrite_task_id: rewrite?.id ?? null, slots,
     }));
-    const replaced = new Set(plans.map((item) => item.rewrite?.id));
-    const protectedAccepted = Object.keys(state.receipts).filter((id) => !replaced.has(id)).length;
+    const protectedAccepted = Object.keys(state.receipts).length;
     if (selection.apply && plans.length) {
       const scope: string[] = [];
       const config = state.manifest.config as EvalConfig;
@@ -158,8 +256,7 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
         if (!plan.rewrite) tasks.push(rewrite);
         (rewrite.data as TaskData).comparisonRewriteScope = selection.scope;
         (rewrite.data as TaskData).rewriteSlotIds = plan.slots;
-        delete state.receipts[rewrite.id];
-        state.manifest.states[rewrite.id] = { status: "pending", attempts: state.manifest.states[rewrite.id]?.attempts ?? 0 };
+        state.manifest.states[rewrite.id] = pendingTaskProgress(state.manifest.states[rewrite.id]);
         scope.push(rewrite.id);
         selected[index]!.rewrite_task_id = rewrite.id;
       }

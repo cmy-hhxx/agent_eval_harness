@@ -49,7 +49,7 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
     (saved.config as typeof config).rewrite.comparisonItems = true;
     comparisonRewrite.data.comparisonRewriteScope = "all";
     assert.equal(publishableComparisons(saved).size, 2);
-    const comparison = Object.values(saved.tasks).find((task) => task.stage === "comparison")!;
+    const comparison = Object.values(saved.tasks).find((task) => task.stage === "comparison" && !(task.data as { verificationPending?: boolean }).verificationPending)!;
     comparison.data.supersededBy = "independent-review";
     assert.equal(publishableComparisons(saved).size, 1, "a superseded comparison cannot be published again");
     delete comparison.data.supersededBy;

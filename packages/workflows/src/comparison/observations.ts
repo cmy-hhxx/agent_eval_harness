@@ -18,7 +18,7 @@ export interface ProblemSource {
 }
 
 /**
- * Collapse problem findings into one observation per normalized `(component, label)`. The agent
+ * Collapse identical proposal descriptions per `(component, label, definition)`. The agent
  * sees how often the problem occurred; each occurrence keeps its exact finding coordinates so the
  * workflow can expand assignments back after acceptance.
  */
@@ -36,7 +36,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
     for (const finding of source.findings) {
       if (finding.type !== "problem" || !finding.problem) continue;
       for (const component of finding.problem.component) {
-        const key = `${normalizeLabel(component)}\u0000${normalizeLabel(finding.problem.label)}`;
+        const key = canonical([normalizeLabel(component), normalizeLabel(finding.problem.label), finding.problem.definition]);
         const group = groups.get(key) ?? {
           component: component,
           label: finding.problem.label,
@@ -45,7 +45,10 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
         };
         if (!group.definition && finding.problem.definition.trim())
           group.definition = finding.problem.definition;
-        const evidence = finding.evidence[0];
+        // The sample belongs to this answer. Peer facts stay in the full attribution;
+        // their physical coordinates must never be stored against the owner's input.
+        const evidence = finding.evidence.find(item => item.source === undefined && item.source_input_id === undefined);
+        if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.finding_id}`);
         group.entries.push({
           ref: {
             input_id: source.input_id,
@@ -53,8 +56,8 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             source: source.source,
             finding_id: finding.finding_id,
             evidence_status: finding.assessment.evidence_status,
-            message_index: evidence?.message_index ?? -1,
-            quote: evidence?.quote ?? "",
+            message_index: evidence.message_index,
+            quote: evidence.quote,
           },
           example: {
             finding: finding.text,
@@ -69,7 +72,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
       }
     }
   return [...groups.values()]
-    .sort((a, b) => (canonical([a.component, a.label]) < canonical([b.component, b.label]) ? -1 : 1))
+    .sort((a, b) => (canonical([a.component, a.label, a.definition]) < canonical([b.component, b.label, b.definition]) ? -1 : 1))
     .map((group, index) => {
       const entries = group.entries.sort((a, b) =>
         canonical([a.ref.case_id, a.ref.finding_id]) < canonical([b.ref.case_id, b.ref.finding_id]) ? -1 : 1,
@@ -97,7 +100,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
     });
 }
 
-export function observationsFor(
+function observationsFor(
   scope: ClusteringScope,
   receipt: (inputId: string) => { evaluation?: unknown } | undefined,
 ): ClusteringObservation[] {
@@ -116,7 +119,9 @@ export function observationsFor(
 export function taskObservations(task: PlannedTask, receipt: ReceiptLookup): ClusteringObservation[] {
   const scope = (task.data as TaskData).scope;
   if (!scope) throw new Error("clustering task is missing its scope");
-  return observationsFor(scope, (inputId) => receipt(task.dependencies[inputId]!));
+  const observations = observationsFor(scope, (inputId) => receipt(task.dependencies[inputId]!));
+  const selected = (task.data as TaskData).reclassifyOf?.item_ids;
+  return selected ? observations.filter(item => selected.includes(item.id)) : observations;
 }
 
 /** Request items are observations without the local occurrence coordinates. */

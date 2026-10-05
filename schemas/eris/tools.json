@@ -5,11 +5,13 @@
     "properties": {
       "runId": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "省略时列出评测运行及 currentRun 的完整 summary，当前数量和进度直接使用它；提供时列出该运行的回答输入、任务引用及完整 summary。"
       },
       "query": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "可选的字面文本筛选词，用于匹配运行名或输入目录内容；不是数据类别。查看完整输入目录时省略，不传 inputs、tasks 或空字符串。空筛选结果不代表该运行没有数据。"
       },
       "offset": {
         "type": "integer",

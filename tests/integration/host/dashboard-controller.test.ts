@@ -92,7 +92,7 @@ test("dashboard preserves totals while displaying failures, blocked tasks and ca
   } finally { page.dom.window.close(); }
 });
 
-test("dashboard renders gateway models with eight-way concurrency, high thinking and all rewrites", async () => {
+test("dashboard renders gateway models with eight-way concurrency, xhigh thinking and all rewrites", async () => {
   const source = await readConfigSources(path.join(ROOT, "configs/host.json"));
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);
   const page = await controller(() => ({
@@ -114,8 +114,10 @@ test("dashboard renders gateway models with eight-way concurrency, high thinking
       assert.deepEqual([...select.options].map((option) => option.value), ["", "claude-4", "gpt-5.6"]);
       assert.equal(select.value, "claude-4");
     }
-    for (const select of page.document.querySelectorAll("[data-thinking-stage]"))
-      assert.equal(select.value, "high");
+    for (const select of page.document.querySelectorAll("[data-thinking-stage]")) {
+      assert.equal(select.value, "xhigh");
+      assert([...select.options].some(option => option.value === "max"));
+    }
     for (const stage of ["attribution", "comparison", "clustering"])
       assert.equal(page.document.querySelector(`#rewrite-${stage}`).checked, true);
   } finally { page.dom.window.close(); }

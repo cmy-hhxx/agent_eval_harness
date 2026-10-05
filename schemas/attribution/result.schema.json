@@ -33,6 +33,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "evidence_id",
           "message_index",
           "quote"
         ],
@@ -44,7 +45,27 @@
           "quote": {
             "type": "string",
             "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_input_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+          },
+          "evidence_id": {
+            "type": "string",
+            "minLength": 1
           }
+        },
+        "dependentRequired": {
+          "source": [
+            "source_input_id"
+          ],
+          "source_input_id": [
+            "source"
+          ]
         }
       }
     },
@@ -97,7 +118,6 @@
     },
     "findings": {
       "type": "array",
-      "maxItems": 8,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -167,6 +187,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "evidence_id",
                 "message_index",
                 "quote"
               ],
@@ -178,7 +199,27 @@
                 "quote": {
                   "type": "string",
                   "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
               }
             }
           },
@@ -394,6 +435,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "evidence_id",
                 "message_index",
                 "quote"
               ],
@@ -405,7 +447,27 @@
                 "quote": {
                   "type": "string",
                   "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
               }
             }
           }
@@ -481,6 +543,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "evidence_id",
                 "message_index",
                 "quote"
               ],
@@ -492,7 +555,27 @@
                 "quote": {
                   "type": "string",
                   "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
               }
             }
           }

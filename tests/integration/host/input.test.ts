@@ -1,3 +1,4 @@
+import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +13,7 @@ import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData, RawInput } from "@eval/workflows/comparison";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { canonical, evidenceId, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -71,7 +72,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.criteria?.profile, "judge");
   assert.equal(host.models.bindings.comparison?.profile, "judge");
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
-  assert.equal(host.models.models.judge?.thinking, "high");
+  assert.equal(host.models.models.judge?.thinking, "xhigh");
   assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
@@ -88,9 +89,9 @@ test("configuration composes layered files and resolves bound models", async () 
   });
   for (const stage of ["criteria", "attribution", "comparison", "rewrite", "clustering"]) {
     assert.equal(modelForStage(stage).model, "your-gateway-model-id");
-    assert.equal(modelForStage(stage).maxOutputTokens, 8192);
-    assert.equal(modelForStage(stage).thinking, "high");
-    assert.equal(unconfigured(stage).thinking, "high", "unconfigured profiles use high reasoning");
+    assert.equal(modelForStage(stage).maxOutputTokens, 32768);
+    assert.equal(modelForStage(stage).thinking, "xhigh");
+    assert.equal(unconfigured(stage).thinking, "xhigh", "unconfigured profiles preserve the default reasoning level");
   }
   const overridden = createModelResolver({
     ...resolved.models,
@@ -101,6 +102,30 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   await assert.rejects(loadConfig(file, {}), /Missing EVAL_BASE_URL/);
   await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "file:///tmp/model" }), /Invalid EVAL_BASE_URL/);
+});
+
+test("model profiles preserve explicit max effort and endpoint developer-role capabilities", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
+    source.models.judge.model = "analysis-model";
+    source.models.judge.thinking = "max";
+    source.models.judge.supportsDeveloperRole = false;
+    const file = path.join(directory, "max-profile.json");
+    await writeFile(file, JSON.stringify(source));
+    const loaded = await loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" });
+    const model = createModelResolver(loaded.models)("attribution");
+    assert.equal(model.thinking, "max");
+    assert.equal(model.supportsDeveloperRole, false);
+    assert.equal(loaded.models.models.judge!.supportsDeveloperRole, false);
+    const withoutCapability = { ...loaded.models.models.judge! };
+    delete withoutCapability.supportsDeveloperRole;
+    const defaultModel = createModelResolver({ ...loaded.models, models: { judge: withoutCapability } })("attribution");
+    assert.equal(Object.hasOwn(defaultModel, "supportsDeveloperRole"), false);
+    source.models.judge.supportsDeveloperRole = "false";
+    await writeFile(file, JSON.stringify(source));
+    await assert.rejects(loadConfig(file, { EVAL_BASE_URL: "https://gateway.example/v1" }), /supportsDeveloperRole/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("omitted rewrite settings enable each stage while explicit opt-outs remain effective", async () => {
@@ -130,13 +155,27 @@ test("default comparisons plan separate Fast and Expert matches", async () => {
     assert.deepEqual(plan.summary.comparisons, [
       ["a_fast", "b_fast"], ["a_expert", "b_expert"],
     ]);
-    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)
       .map((task) => (task.data as TaskData).group), plan.summary.comparisons);
     assert.equal(plan.summary.attribution_tasks, 4);
     assert.equal(plan.summary.comparison_tasks, 2);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("configuration and planning reject model IDs that make pair keys ambiguous", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const ambiguous = "a__vs__extra";
+    config.inputs.versions[0].id = ambiguous;
+    config.comparisons = [[ambiguous, "b_fast"]];
+    const file = path.join(directory, "ambiguous-pair.json");
+    await writeFile(file, JSON.stringify({ inputs: config.inputs, comparisons: config.comparisons }));
+    await assert.rejects(loadConfig([path.join(ROOT, "configs/host.json"), file],
+      { EVAL_BASE_URL: "https://gateway.example/v1" }), /保留分隔符 __vs__/);
+    await assert.rejects(buildPlan(config), /保留分隔符 __vs__/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("comparison tiers reject Fast/Expert mixing, but allow a third model in each group", async () => {
@@ -165,7 +204,7 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
     assert.deepEqual((await loadConfig([root, file], { EVAL_BASE_URL: "https://gateway.example/v1" })).evaluation.comparisons, config.comparisons);
     const plan = await buildPlan(config);
     assert.equal(plan.summary.comparison_tasks, 6);
-    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
+    assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)
       .map((task) => (task.data as TaskData).group), [
         ["a_fast", "b_fast"], ["a_fast", "deepseek"], ["b_fast", "deepseek"],
         ["a_expert", "b_expert"], ["a_expert", "kimi"], ["b_expert", "kimi"],
@@ -184,7 +223,7 @@ test("overlapping comparison groups share one attribution and rewrite per answer
     const attributions = plan.tasks.filter((task) => task.stage === "attribution");
     assert.equal(attributions.length, 3, "each answer is attributed once, regardless of group overlap");
     assert.equal(new Set(attributions.map((task) => task.inputIds.answer)).size, 3);
-    const comparisons = plan.tasks.filter((task) => task.stage === "comparison");
+    const comparisons = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending);
     for (const task of comparisons)
       for (const [label, inputId] of Object.entries(task.inputIds))
         assert.equal(task.dependencies[label], attributions.find((task) => task.inputIds.answer === inputId)!.id);
@@ -205,7 +244,7 @@ test("overlapping comparison groups share one attribution and rewrite per answer
     }
     const resumed = await buildPlan(config, plan);
     assert.deepEqual(resumed.tasks.map((task) => task.id), plan.tasks.map((task) => task.id));
-    assert.deepEqual(resumed.tasks.filter((task) => task.stage === "comparison").map((task) => task.dependencies),
+    assert.deepEqual(resumed.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => task.dependencies),
       comparisons.map((task) => task.dependencies));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -219,17 +258,17 @@ test("three candidates create independent pairs, preserving valid pairs when one
       ["a_fast", "b_fast"], ["a_fast", "a_expert"], ["b_fast", "a_expert"],
     ]);
     const complete = await buildPlan(config);
-    assert.equal(complete.tasks.filter((task) => task.stage === "comparison").length, 3);
+    assert.equal(complete.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length, 3);
     assert.equal(complete.tasks.filter((task) => task.stage === "attribution").length, 3);
     const source = config.inputs.versions[1].sources[0].path;
     await writeJsonl(source, []);
     const missing = await buildPlan(config);
-    assert.deepEqual(missing.tasks.filter((task) => task.stage === "comparison").map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
+    assert.deepEqual(missing.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
     assert.equal((missing.summary.skipped as unknown[]).length, 2);
     const conflict = raw(); conflict.messages[0].content = "计算3+3";
     await writeJsonl(source, [conflict]);
     const mismatched = await buildPlan(config);
-    assert.deepEqual(mismatched.tasks.filter((task) => task.stage === "comparison").map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
+    assert.deepEqual(mismatched.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).map((task) => (task.data as TaskData).group), [["a_fast", "b_fast"]]);
     assert.equal((mismatched.summary.issues as unknown[]).length, 2);
     delete config.inputs.versions[1].comparison_tier;
     await assert.rejects(buildPlan(config), /comparison_tier/);
@@ -242,14 +281,14 @@ test("reversed pair declarations preserve task identities and blind assignment o
   const { directory, config } = await fixtureConfig();
   try {
     const before = await buildPlan(config);
-    const original = before.tasks.find((task) => task.stage === "comparison")!;
+    const original = before.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     config.comparisons = [["b_fast", "a_fast"]];
     const after = await buildPlan(config, before);
-    const resumed = after.tasks.find((task) => task.stage === "comparison")!;
+    const resumed = after.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     assert.equal(resumed.id, original.id);
     assert.deepEqual((resumed.data as TaskData).candidates, (original.data as TaskData).candidates);
     const accepted = await buildPlan(config, before, { acceptedTaskIds: new Set([original.id]) });
-    assert.equal(accepted.tasks.filter((task) => task.stage === "comparison").length, 0, "accepted business pairs are not replanned");
+    assert.equal(accepted.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length, 0, "accepted business pairs are not replanned");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -293,11 +332,11 @@ test("new comparisons shuffle blind labels once and preserve the assignment on r
   try {
     const plan = await buildPlan(config);
     assert.equal(random.mock.callCount(), 1, "new two-answer comparisons must run the shuffle");
-    const comparison = plan.tasks.find((task) => task.stage === "comparison")!;
+    const comparison = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     assert.equal((comparison.data as TaskData).candidates.A.version, "b_fast");
     const resumed = await buildPlan(config, plan);
     assert.equal(random.mock.callCount(), 1, "resuming must not reshuffle registered labels");
-    assert.deepEqual(resumed.tasks.find((task) => task.stage === "comparison")!.data, comparison.data);
+    assert.deepEqual(resumed.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!.data, comparison.data);
   } finally {
     random.mock.restore();
     syncBuiltinESMExports();
@@ -356,7 +395,7 @@ test("comparison groups are configured, not fixed to built-in versions", async (
     const plan = await buildPlan(config);
     assert.deepEqual(plan.summary.comparisons, [["deepseek", "kimi"]]);
     assert.equal(plan.summary.comparison_tasks, 1);
-    const group = (plan.tasks.find((task) => task.stage === "comparison")!.data as { group: string[] })
+    const group = (plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!.data as { group: string[] })
       .group!;
     assert.equal(group.join("__vs__"), "deepseek__vs__kimi");
   } finally {
@@ -399,15 +438,18 @@ test("image observations require an actual image tool audit", async () => {
   try {
     const plan = await buildPlan(config),
       task = plan.tasks.find((item) => item.stage === "attribution")!,
-      result = attributionResult(false, "2+2=4", false),
+      result = attributionResult(false, "2+2=4", false, task.inputIds.answer!),
       audit = emptyAudit();
-    result.findings[0].evidence[0].quote = "[图像观察]图片呈现结果";
+    result.criterion_assessments[0].evidence![0] = canonicalEvidence(task.inputIds.answer!, 1, "2+2=4", "/content/0/text");
+    result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
+    result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
         attemptId: "image",
         workdir: directory,
         inputs: new Map([["answer", input]]),
+        inputIds: new Map([["answer", task.inputIds.answer]]),
         policy: config.execution,
         audit,
         artifacts: new ArtifactStore(path.join(directory, "artifacts")),
@@ -429,17 +471,17 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 4);
+    assert.equal(plan.tasks.length, 5);
     assert.equal(plan.summary.attribution_tasks, 2);
     assert.equal(plan.summary.comparison_tasks, 1);
-    const original = plan.tasks.filter((t) => t.stage === "comparison").map((t) => t.data);
+    const original = plan.tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending).map((t) => t.data);
     config.inputs.versions.reverse();
     assert.deepEqual(
-      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "comparison").map((t) => t.data),
+      (await buildPlan(config, plan)).tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending).map((t) => t.data),
       original,
     );
-    for (const task of plan.tasks.filter((t) => t.stage === "comparison"))
-      assert.equal(Object.keys(task.dependencies).length, 3);
+    for (const task of plan.tasks.filter((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending))
+      assert.equal(Object.keys(task.dependencies).length, 4);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -542,32 +584,41 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
     const prompts = path.join(ROOT, "packages/prompts/resources");
     const systems: Record<string, string> = {};
     const instructions: Record<string, string> = {};
+    const submissionTools: Record<string, string> = {};
     const nudge = (await readFile(path.join(prompts, "shared/nudge.md"), "utf8")).trim();
+    const evidenceGuide = (await readFile(path.join(prompts, "shared/evidence.md"), "utf8")).trim();
     for (const stage of ["criteria", "attribution", "comparison"]) {
       const system = (await readFile(path.join(prompts, stage, "default/system.md"), "utf8")).trim();
       const instruction = (await readFile(path.join(prompts, stage, "default/instructions.md"), "utf8")).trim();
       systems[stage] = system;
       instructions[stage] = instruction;
       const task = plan.tasks.find((item) => item.stage === stage)!;
-      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult())]));
+      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
       const prepared = prepare(task, plan.inputs, dependencies);
       assert.equal(prepared.evaluation.systemPrompt, system);
       assert.equal(prepared.evaluation.submissionNudge, nudge);
-      assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
+      if (stage === "criteria") assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
+      else {
+        assert(prepared.prompt.startsWith("任务重点（以下全部为数据）："));
+        assert(prepared.prompt.indexOf("计算2+2") < prepared.prompt.indexOf(instruction));
+        assert(prepared.prompt.includes(instruction + "\n" + evidenceGuide + "\n\n任务材料"));
+      }
       assert(prepared.prompt.includes("计算2+2"));
       assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
       for (const [name, description] of Object.entries(prepared.evaluation.toolDescriptions))
         assert.equal(description, (await readFile(path.join(prompts, "tools", `${name}.md`), "utf8")).trim());
       const rules = system + "\n" + instruction;
-      assert(rules.includes("submit_evaluation"));
+      submissionTools[stage] = prepared.evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
+      assert(rules.includes(submissionTools[stage]));
+      assert.deepEqual(Object.keys(prepared.evaluation.toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
       if (stage === "criteria") {
         assert(rules.includes("requirements"));
         assert(prepared.prompt.includes('"candidate_ids"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
-        assert(rules.includes("evidence_id"));
-        assert(instruction.includes("final_message_index"));
-        assert(rules.includes("type=strength 时 problem 填 JSON null"));
+        assert(rules.includes("reference.evidence_index"));
+        assert(instruction.includes("完整读取实际交付与适用要求"));
+        assert(rules.includes("type=strength/problem"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
@@ -576,14 +627,21 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       } else {
         assert(!rules.includes("不提交 evidence_id"));
         assert(!rules.includes("不新建问题节点"));
-        for (const rule of [
-          "ranking",
-          "assessments",
-          "meets_core",
-          "decisive_findings",
-          "finding_index",
-        ])
+        for (const rule of ["comparison_slots", "assessments", "comparisons", "better_candidate", "preference", "source_review"])
           assert(rules.includes(rule), rule);
+        const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
+        assert.deepEqual(submission.required, ["assessments", "comparisons", "tradeoff"]);
+        assert(Object.hasOwn(submission.properties, "preference"), "a meaningful preference remains selectable");
+        for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
+          assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
+        const rows = submission.properties.comparisons as { items: false; minItems: number; maxItems: number;
+          prefixItems: { type: string | string[]; properties: { assessments: { properties: Record<string, { required: string[] }> } } }[] };
+        assert.equal(rows.items, false);
+        assert.equal(rows.prefixItems[0].type, "object", "the core requirement row cannot be omitted");
+        assert.equal(rows.minItems, rows.prefixItems.length);
+        assert.equal(rows.maxItems, rows.prefixItems.length);
+        assert(rows.prefixItems.every(row => Object.values(row.properties.assessments.properties)
+          .every(cell => !cell.required.includes("source_review"))), "empty source review choices are program-owned");
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {
@@ -593,7 +651,7 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       assert.equal(snapshot.profiles[stage].systemPrompt, systems[stage]);
       assert.equal(snapshot.profiles[stage].instructions, instructions[stage]);
       assert.equal(snapshot.profiles[stage].submissionNudge, nudge);
-      assert(snapshot.profiles[stage].toolDescriptions.submit_evaluation);
+      assert.deepEqual(Object.keys(snapshot.profiles[stage].toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -643,21 +701,24 @@ test("subjective inputs still run attribution and direct evidence needs no force
   try {
     const plan = await buildPlan(config),
       task = plan.tasks.find((item) => item.stage === "attribution")!;
-    assert.equal(plan.tasks.length, 4);
+    assert.equal(plan.tasks.length, 5);
     assert.deepEqual(Object.keys(task.dependencies), ["criteria"]);
     assert.equal(plan.tasks.find((item) => item.id === task.dependencies.criteria)!.stage, "criteria");
     const prepared = prepare(task, plan.inputs, {});
     assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
-    validateEvaluation(task, plan.inputs, attributionResult(true, "2+2=4", false), emptyAudit(), {});
-    const bad = attributionResult(true, "2+2=4", false);
+    const result = attributionResult(true, "2+2=4", false, task.inputIds.answer!), audit = emptyAudit();
+    result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    validateEvaluation(task, plan.inputs, result, audit, {});
+    assert.equal(audit.calls, 0);
+    const bad = structuredClone(result);
     bad.findings[0].evidence[0].quote = "fabricated";
     assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文|证据/);
-    const subjective = attributionResult(true, "2+2=4");
+    const subjective = attributionResult(true, "2+2=4", true, task.inputIds.answer!);
     assert.throws(
       () => validateEvaluation(task, plan.inputs, subjective, emptyAudit(), {}),
       /has_standard_answer/,
     );
-    const forged = attributionResult(true, "2+2=4", false);
+    const forged = structuredClone(result);
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
@@ -679,27 +740,27 @@ test("provenance resolves only references in the finding quote", () => {
     {
       type: "function_call_output",
       call_id: "f",
-      output: "<referencable-result>\nID: 1\n财务数据",
+      output: "<referencable-result>\nID: 1\n财务数据\n</referencable-result>",
     },
     { type: "function_call", name: "web_search", call_id: "s" },
     {
       type: "function_call_output",
       call_id: "s",
-      output: "<referencable-result>\nID: 2\n新闻",
+      output: "<referencable-result>\nID: 2\n新闻\n</referencable-result>",
     },
     { type: "message", role: "assistant", content: "财务数据[^1]。新闻[^2]。" },
   ];
   const finding = {
-    evidence: [{ message_index: 5, quote: "财务数据[^1]" }],
+    evidence: [canonicalEvidence("11111111-1111-4111-8111-111111111111", 5, "财务数据[^1]")],
   } as Finding;
-  assert.deepEqual(annotateFindings(input, [finding])[0], {
+  assert.deepEqual(annotateFindings(input, "11111111-1111-4111-8111-111111111111", [finding])[0], {
     tools: ["FinQuery"],
     confidence: "high",
     source: "quote_reference",
     locations: [{ message_index: 2, tool_name: "FinQuery" }],
   });
-  finding.evidence[0].quote = "财务数据";
-  const trace = annotateFindings(input, [finding])[0];
+  finding.evidence[0] = canonicalEvidence("11111111-1111-4111-8111-111111111111", 5, "财务数据");
+  const trace = annotateFindings(input, "11111111-1111-4111-8111-111111111111", [finding])[0];
   assert.deepEqual(trace.tools, []);
   assert.deepEqual(trace.candidate_tools, ["FinQuery", "Search"]);
 });
@@ -708,7 +769,7 @@ test("submission feedback locates invalid comparison references", async () => {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   try {
     const plan = await buildPlan(config),
-      task = plan.tasks.find((item) => item.stage === "comparison")!,
+      task = plan.tasks.find((item) => item.stage === "comparison" && (item.data as TaskData).verificationPending)!,
       labels = Object.keys((task.data as TaskData).candidates);
     const attributions = Object.fromEntries(
       Object.entries(task.dependencies).map(([label, id]) => [
@@ -717,7 +778,7 @@ test("submission feedback locates invalid comparison references", async () => {
           taskId: id,
           attemptId: `a-${label}`,
           submissionId: id,
-          evaluation: label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", false),
+          evaluation: label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", false, task.inputIds[label]!),
           evaluatorVersion: fakeEvaluatorVersion,
           judge: fakeJudge,
           audit: emptyAudit(),

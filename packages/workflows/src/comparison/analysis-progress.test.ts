@@ -1,0 +1,63 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { analysisProgress, analysisTaskPurpose } from "./analysis-progress.js";
+import type { Checkpoint } from "./codec.js";
+
+type Task = Checkpoint["tasks"][string];
+const task = (stage: Task["stage"], status: Task["status"], data: Task["data"] = { reference: null }, inputIds: Task["inputIds"] = {}, file?: string): Task => ({
+  stage, status, data, inputIds, dependencies: {}, attempts: 1,
+  ...(file !== undefined ? { receipt: { exported: { ...(file ? { file } : {}), comparisonId: "comparison" } } as Task["receipt"] } : {}),
+});
+
+test("whole-run progress counts business identities and accepted outputs without counting peers, drafts or replaced reviews", () => {
+  const saved = {
+    runId: "run", status: "finished", startedAt: 10, finishedAt: 20,
+    config: { inputs: { versions: [
+      { id: "a_fast", name: "A", display_name: "A组Fast", comparison_tier: "Fast" },
+      { id: "a_expert", name: "A Expert", comparison_tier: "Expert" },
+      { id: "b_fast", name: "B Fast" },
+    ] } },
+    inputs: {
+      own: { version: "a_fast", batch_id: "batch-one", case_id: "same-case" },
+      expert: { version: "a_expert", batch_id: "batch-one", case_id: "same-case" },
+      peer: { version: "b_fast", batch_id: "batch-one", case_id: "same-case" },
+      otherBatch: { version: "a_fast", batch_id: "batch-two", case_id: "same-case" },
+    },
+    tasks: {
+      criteria: task("criteria", "pending"),
+      attribution: task("attribution", "succeeded", { reference: null }, { answer: "own", peer_B: "peer" }, "attribution.jsonl"),
+      repeatedAttribution: task("attribution", "succeeded", { reference: null }, { answer: "own" }, "attribution.jsonl"),
+      timedOut: task("attribution", "timed_out"),
+      draft: task("comparison", "succeeded", { reference: null, verificationPending: true }, {}, "comparison-draft.jsonl"),
+      acceptedVerification: task("comparison", "succeeded", { reference: null, verificationOf: { taskId: "draft" } }, {}, ""),
+      failedVerification: task("comparison", "failed", { reference: null, verificationOf: { taskId: "draft-two" } }),
+      pendingReview: task("comparison", "succeeded", { reference: null, verificationOf: { taskId: "draft-three" } }, {}, "comparison-review.jsonl"),
+      replacedReview: task("comparison", "succeeded", { reference: null, supersededBy: "pendingReview" }, {}, "comparison-review.jsonl"),
+      directComparison: task("comparison", "running"),
+      rewrite: task("rewrite", "blocked"),
+      clustering: task("clustering", "cancelled"),
+    },
+  } as unknown as Parameters<typeof analysisProgress>[0];
+  const before = structuredClone(saved), summary = analysisProgress(saved);
+  assert.equal(summary.inputCount, 4);
+  assert.equal(summary.evaluatedInputCount, 1, "successful review of one answer does not evaluate its factual peer; repeated reviews do not create more answers");
+  assert.equal(summary.caseCount, 2, "both tiers share the same question; the same case ID in another batch is another question");
+  assert.deepEqual(summary.models.map(({ modelName, comparisonTier, inputCount, caseCount }) => ({ modelName, comparisonTier, inputCount, caseCount })), [
+    { modelName: "A组Fast", comparisonTier: "Fast", inputCount: 2, caseCount: 2 },
+    { modelName: "A Expert", comparisonTier: "Expert", inputCount: 1, caseCount: 1 },
+    { modelName: "B Fast", comparisonTier: null, inputCount: 1, caseCount: 1 },
+  ]);
+  assert.equal(summary.tasks.total, 12);
+  assert.deepEqual(summary.tasks.states, { pending: 1, running: 1, succeeded: 6, failed: 1, blocked: 1, cancelled: 1, timed_out: 1 });
+  assert.equal(summary.tasks.byPurpose.comparison_draft.total, 1);
+  assert.equal(summary.tasks.byPurpose.comparison_verification.total, 3);
+  assert.equal(summary.tasks.byPurpose.comparison_formal.total, 2);
+  assert.equal(summary.formalComparisonsAccepted, 1);
+  assert.deepEqual(summary.formalComparisonReferences, [{ runId: "run", taskId: "acceptedVerification" }]);
+  assert.equal(summary.comparisonsPendingReview, 1);
+  assert.deepEqual(summary.comparisonReviewReferences, [{ runId: "run", taskId: "pendingReview" }]);
+  assert.equal(summary.startedAt, 10);
+  assert.equal(summary.finishedAt, 20);
+  assert.equal(analysisTaskPurpose(saved.tasks.acceptedVerification!), "comparison_verification");
+  assert.deepEqual(saved, before, "the projection neither modifies the checkpoint nor copies its source material");
+});

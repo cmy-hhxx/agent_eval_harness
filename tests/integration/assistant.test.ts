@@ -11,14 +11,15 @@ import { assistantDirectory } from "@eval/data";
 import { object, type AssistantPrompt, type JsonObject, type ModelConfig } from "@eval/contracts";
 import { createEris } from "@eval/assistant";
 import { createSerperSearch } from "@eval/tools";
+import { waitForTestState } from "../fixtures/wait.js";
 
 async function settled(sessions: AssistantSessions, id: string, requestId: string) {
-  for (let attempt = 0; attempt < 300; attempt++) {
-    const state = (await sessions.list("alice")).find((s) => s.sessionId === id)!;
-    if (["completed", "interrupted"].includes(state.requests[requestId])) return state;
-    await delay(20);
-  }
-  throw new Error("Assistant did not settle");
+  return waitForTestState(
+    async () => (await sessions.list("alice")).find((s) => s.sessionId === id)!,
+    state => ["completed", "interrupted"].includes(state.requests[requestId]),
+    `Assistant request ${requestId} did not settle`,
+    6000,
+  );
 }
 
 test("stopping during conversation preparation never starts a model turn", { timeout: 10000 }, async (t) => {

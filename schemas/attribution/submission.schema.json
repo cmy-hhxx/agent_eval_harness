@@ -3,9 +3,6 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "is_correct",
-    "correctness_reason",
-    "correctness_evidence",
     "summary",
     "findings",
     "numeric_checks",
@@ -48,7 +45,6 @@
     },
     "findings": {
       "type": "array",
-      "maxItems": 8,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -60,9 +56,7 @@
           "text",
           "reason",
           "evidence",
-          "assessment",
-          "finding_id",
-          "problem"
+          "assessment"
         ],
         "properties": {
           "type": {
@@ -108,7 +102,6 @@
           },
           "evidence": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -131,7 +124,6 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "requirement_index",
               "observation",
               "evidence_status",
               "impact"
@@ -160,33 +152,30 @@
               }
             }
           },
-          "finding_id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64
-          },
           "problem": {
-            "description": "type=strength 时填 JSON null；type=problem 时填写责任组件与问题描述。",
-            "type": [
-              "object",
-              "null"
-            ],
+            "description": "仅 type=problem 时必填，描述责任组件与问题；type=strength 时禁止提交此字段。",
+            "type": "object",
             "additionalProperties": false,
             "required": [
-              "component",
+              "model_responsible",
+              "tool_evidence_indices",
               "label",
               "definition"
             ],
             "properties": {
-              "component": {
+              "model_responsible": {
+                "type": "boolean",
+                "description": "是否有具体证据支持模型自身的独立责任；引用工具返回本身不代表工具有责任。"
+              },
+              "tool_evidence_indices": {
                 "type": "array",
                 "minItems": 0,
                 "uniqueItems": true,
                 "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "type": "integer",
+                  "minimum": 0
                 },
-                "description": "有证据支持的责任组件；使用确切工具名或模型自身推理，逐个在 definition 中说明责任；根因尚未定位时为空数组，在 definition 说明已知来源和待查原因。"
+                "description": "本 finding 原提交 evidence 数组中证明本方工具自身失误的零起始位置；程序按实际调用绑定工具名。不能选择仅作正确来源或反证的工具；未定位时与 model_responsible=false 一同留空。"
               },
               "label": {
                 "type": "string",
@@ -197,25 +186,116 @@
                 "minLength": 1
               }
             }
+          },
+          "norm_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "仅 instruction_following 选择本方 norm_directory 的 norm_index；未知规范用 null 且 uncertain，requirement_index由程序绑定。"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "problem"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "problem"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "strength"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "problem": false
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "dimension": {
+                  "const": "instruction_following"
+                }
+              },
+              "required": [
+                "dimension"
+              ]
+            },
+            "then": {
+              "required": [
+                "norm_index"
+              ],
+              "properties": {
+                "assessment": {
+                  "properties": {
+                    "requirement_index": false
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "norm_index": false
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "stage": {
+                  "const": "final_answer"
+                }
+              },
+              "required": [
+                "stage"
+              ]
+            },
+            "else": {
+              "properties": {
+                "evidence": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "numeric_checks": {
       "type": "array",
       "maxItems": 64,
-      "description": "逐项核对标准答案的数值。所有同口径数值均列出，不能仅列错误项；无标准或非数值任务填空数组；所需指标未交付时保留 actual=null、matches=false 的核对项。明确区间/容差任务用 correctness_reason 单独说明。",
+      "description": "仅核对 numeric_references 目录中的标准数值；选择原零起始 reference_index，不提交 expected 或 matches。目录为空时必须为空数组。工具或自算数值只在理由中保留证据与计算。",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "label",
-          "expected",
           "actual",
           "scale",
-          "matches",
           "mode",
-          "evidence_index"
+          "evidence_index",
+          "reference_index"
         ],
         "properties": {
           "label": {
@@ -223,15 +303,10 @@
             "minLength": 1,
             "maxLength": 100
           },
-          "expected": {
-            "type": "string",
-            "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
-            "maxLength": 80,
-            "description": "标准中的原数值，保留小数位与科学计数法指数，不展开或改写精度"
-          },
           "actual": {
             "type": [
               "string",
+              "number",
               "null"
             ],
             "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
@@ -244,10 +319,6 @@
             "maxLength": 80,
             "description": "回答单位转换到标准单位的正比例，同单位填1"
           },
-          "matches": {
-            "type": "boolean",
-            "description": "actual*scale 按 expected 的末位精度四舍五入后是否相等，由程序复算"
-          },
           "mode": {
             "enum": [
               "rounded",
@@ -259,12 +330,18 @@
             "type": "integer",
             "minimum": 0,
             "description": "包含actual的 correctness_evidence 条目的零起始索引，证据必须指向最终回答"
+          },
+          "reference_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "numeric_references 中程序提供的零起始标准数值位置"
           }
         }
       }
     },
     "criterion_assessments": {
       "type": "array",
+      "description": "只提交 task_analysis 中适用于当前 candidate_id 的条款（applies_to=[] 或包含该候选）；不提交其他候选的条款或 not_applicable，程序据可信 scope 生成正式不适用结果。",
       "minItems": 1,
       "maxItems": 24,
       "items": {
@@ -287,8 +364,7 @@
               "met",
               "partial",
               "unmet",
-              "unknown",
-              "not_applicable"
+              "unknown"
             ]
           },
           "evidence_status": {
@@ -330,7 +406,7 @@
       "required": [
         "meets_core",
         "reason",
-        "criterion_ids"
+        "requirement_indices"
       ],
       "properties": {
         "meets_core": {
@@ -343,12 +419,12 @@
           "type": "string",
           "minLength": 1
         },
-        "criterion_ids": {
+        "requirement_indices": {
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -361,16 +437,16 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "table_id",
+          "table_index",
           "row_index",
           "outcome",
           "reason",
           "evidence"
         ],
         "properties": {
-          "table_id": {
-            "type": "string",
-            "minLength": 1
+          "table_index": {
+            "type": "integer",
+            "minimum": 1
           },
           "row_index": {
             "type": "integer",

@@ -1,13 +1,13 @@
-import type { RewrittenResult, TaskAnalysis } from "@eval/contracts";
+import type { ResolvedEvidence, RewrittenResult, TaskAnalysis } from "@eval/contracts";
 import type { JsonObject } from "@eval/contracts";
 export type { TaskAnalysis } from "@eval/contracts";
 
 export type CriterionStatus = "met" | "partial" | "unmet" | "unknown" | "not_applicable";
 export type EvidenceStatus = "established" | "uncertain";
 
-export interface Evidence {
-  message_index: number;
-  quote: string;
+export interface Evidence extends ResolvedEvidence {
+  source?: string;
+  source_input_id?: string;
 }
 export interface Finding {
   type: "strength" | "problem";
@@ -39,12 +39,19 @@ export interface CriterionAssessment {
   evidence_status: EvidenceStatus;
   summary: string;
 }
+export interface SourceReviewItem {
+  kind: "unverified" | "unresolved_conflict" | "invalid_material";
+  reason: string;
+  requires_review: boolean;
+}
 export interface ComparisonInput {
-  source_review?: Record<string, string[]>;
+  source_review?: Record<string, SourceReviewItem[]>;
   task_analysis: TaskAnalysis;
   candidates: Record<string, {
     candidate_id: string;
     final_message_index: number;
+    answer_generation?: { available: true; message_type: "llm_turn"; matches_captured_final: boolean | null; message_index: number; captured_final_message_index: number;
+      blocks: { path: string; total_chars: number }[] } | null;
     deferred_final_material: { message_index: number; path: string; total_chars: number }[];
     original_answer_timing: { finish_seconds: number | null };
     original_answer_usage: { total_tokens: number | null; issues: string[] };
@@ -55,7 +62,40 @@ export interface ComparisonInput {
     criterion_assessments: CriterionAssessment[];
     core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
   }>;
-  strength_checks: FindingRef[];
+}
+export interface ComparisonVerificationInput extends ComparisonInput {
+  comparison_draft: ComparisonResult;
+  /** Unclosed original discoveries from the accepted parent verification, revealed only after fresh inspection. */
+  pending_concerns?: ComparisonMaterialInspection["concerns"];
+}
+/** A source-grounded check of a program-bound applicable requirement, without a new attribution or verdict. */
+export interface ComparisonVerificationCheck {
+  candidate: string;
+  criterion_id: string;
+  result: "supported" | "contradicted" | "unverified" | "not_applicable";
+  /** Program-bound complete actual review scope; specific counterevidence remains in concerns. */
+  answer_evidence: { evidence_id: string; observation?: unknown }[];
+  source_evidence: ComparisonVerificationCheck["answer_evidence"];
+  observation: string;
+}
+export interface ComparisonMaterialInspection {
+  checks: ComparisonVerificationCheck[];
+  /** Empty criterion_ids denote a proof-bound own SYS/DEV norm outside the fixed requirements, never a new common standard. */
+  concerns: { candidate: string; criterion_ids: string[]; answer_evidence: ComparisonVerificationCheck["answer_evidence"];
+    source_evidence: ComparisonVerificationCheck["answer_evidence"]; reason: string }[];
+}
+export interface ComparisonConcernMatch {
+  concern_index: number;
+  finding_indices: number[];
+  observation: string;
+}
+export interface ComparisonVerificationSubmission {
+  concern_matches: ComparisonConcernMatch[];
+  /** Only carried concerns may be refuted, with actual original evidence rather than a new source judgment. */
+  concern_refutations: { concern_index: number; answer_evidence: ComparisonVerificationCheck["answer_evidence"];
+    source_evidence: ComparisonVerificationCheck["source_evidence"]; observation: string }[];
+  /** Only nonempty review choices are submitted; the program owns the full row associations. */
+  source_reviews: { slot_index: number; candidate: string; reason: string }[];
 }
 /** Reference to a finding owned by the attribution stage. */
 export interface FindingRef {
@@ -94,18 +134,23 @@ export interface ComparisonResult {
   };
 }
 
-export interface SubmittedComparison extends Omit<AlignedComparison, "assessments"> {
-  assessments: Record<string, { summary: string; finding_indices: number[] }>;
+export interface ComparisonSlot {
+  aspect: string;
+  criterion_ids: string[];
+  shared: boolean;
+  kind: "criterion" | "finding" | "resource";
+  optional: boolean;
+  finding_indices: Record<string, number[]>;
 }
-/** The model supplies prose and decision references; source states are resolved by the profile. */
-export type ComparisonSubmission = {
-  status: "needs_review";
+export interface SubmittedComparison {
+  importance: "high" | "medium" | "low";
+  better_candidate?: string | null;
+  assessments: Record<string, { summary: string; source_review?: string | null }>;
+}
+/** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
+export interface ComparisonSubmission {
   assessments: Record<string, { summary: string }>;
-  review_requests: ComparisonResult["review_requests"];
-} | {
-  status: "decided";
-  assessments: Record<string, { summary: string }>;
-  review_requests: ComparisonResult["review_requests"];
-  ranking: string[][];
-  decision_basis: Omit<ComparisonResult["decision_basis"], "comparisons"> & { comparisons: SubmittedComparison[] };
-};
+  comparisons: (SubmittedComparison | null)[];
+  preference?: string | null;
+  tradeoff: string;
+}

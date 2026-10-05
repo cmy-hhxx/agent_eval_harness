@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ValidationError } from "@eval/contracts";
 import type {
   JsonObject,
   ProblemClass,
@@ -9,9 +10,19 @@ import type {
   ProblemProjection,
 } from "@eval/contracts";
 import type { ClusteringResult } from "./types.js";
+import { categoryPathIssues, unionCategoryPaths } from "./organization.js";
+import { effectiveProblemOccurrences } from "./occurrence-review.js";
 
 export const normalizeLabel = (label: string): string =>
   label.trim().replace(/\s+/gu, " ").toLowerCase();
+
+/** One finding may have several responsible components or appear under several topics. */
+export const problemSampleKey = (sample: { input_id: string; finding_id: string }): string =>
+  `${sample.input_id}\u0000${sample.finding_id}`;
+
+export function countProblemSamples(samples: Iterable<{ input_id: string; finding_id: string }>): number {
+  return new Set(Array.from(samples, problemSampleKey)).size;
+}
 
 export function emptyLibrary(model: string): ProblemLibrary {
   return {
@@ -26,9 +37,12 @@ export function emptyLibrary(model: string): ProblemLibrary {
 
 /** Active component directory with active classes and how many samples each class has. */
 export function projectLibrary(library: ProblemLibrary): ProblemProjection {
-  const counts = new Map<string, number>();
-  for (const occurrence of library.occurrences)
-    counts.set(occurrence.class_id, (counts.get(occurrence.class_id) ?? 0) + 1);
+  const counts = new Map<string, Set<string>>();
+  for (const occurrence of effectiveProblemOccurrences(library)) {
+    const samples = counts.get(occurrence.class_id) ?? new Set<string>();
+    samples.add(problemSampleKey(occurrence));
+    counts.set(occurrence.class_id, samples);
+  }
   const active = Object.values(library.classes).filter((problem) => problem.status === "active");
   return {
     components: Object.values(library.components).map((component) => ({
@@ -43,7 +57,8 @@ export function projectLibrary(library: ProblemLibrary): ProblemProjection {
           label: problem.label,
           definition: problem.definition,
           aliases: problem.aliases,
-          occurrences: counts.get(problem.id) ?? 0,
+          ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths.map(path => [...path]) }),
+          occurrences: counts.get(problem.id)?.size ?? 0,
         })),
     })),
   };
@@ -133,13 +148,16 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
     classes: Object.fromEntries(
       Object.entries(library.classes).map(([id, problem]) => [
         id,
-        { ...problem, aliases: [...problem.aliases] },
+        { ...problem, aliases: [...problem.aliases],
+          ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths.map(path => [...path]) }) },
       ]),
     ),
     occurrences: library.occurrences.map((occurrence) => ({ ...occurrence })),
     events: [...library.events],
   };
   let changed = false;
+  const updateApplied = (classId: string) => next.events.some(event => event.type === "class_updated" &&
+    event.detail.submission_id === input.submission_id && event.detail.class_id === classId);
   const event = (type: ProblemEventType, detail: JsonObject) => {
     changed = true;
     next.events.push({ id: randomUUID(), type, at, detail });
@@ -158,7 +176,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       event("class_created", { component_id: created.id, kind: "component" });
       return created;
     })();
-  const createClass = (componentId: string, label: string, definition: string, origin: ProblemOrigin): ProblemClass => {
+  const createClass = (componentId: string, label: string, definition: string, origin: ProblemOrigin, paths?: string[][]): ProblemClass => {
     const created: ProblemClass = {
       id: randomUUID(),
       component_id: componentId,
@@ -168,13 +186,14 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       status: "active",
       merged_into: null,
       first_seen: origin,
+      ...(paths === undefined ? {} : { category_paths: paths.map(path => [...path]) }),
     };
     next.classes[created.id] = created;
     event("class_created", { class_id: created.id, component_id: componentId, kind: "class" });
     return created;
   };
 
-  for (const merge of input.result.merges) {
+  for (const [mergeIndex, merge] of input.result.merges.entries()) {
     const target = resolveActiveClass(next, merge.into);
     if (!target) continue;
     for (const fromId of merge.from) {
@@ -185,6 +204,15 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       source.status = "merged";
       source.merged_into = target.id;
       target.aliases = [...new Set([...target.aliases, source.label, ...source.aliases])];
+      const explicitPaths = updateApplied(target.id) ? undefined :
+        input.result.class_updates?.find(update => update.class_id === target.id)?.category_paths;
+      const paths = unionCategoryPaths(target.category_paths, source.category_paths);
+      const categoryIssues = categoryPathIssues(explicitPaths ?? paths, `/merges/${mergeIndex}/category_paths`);
+      if (categoryIssues.length) throw new ValidationError(categoryIssues);
+      if (paths.length > 3 && explicitPaths === undefined)
+        throw new Error("合并主题路径超过上限；需要明确维护目标类的 category_paths");
+      if (target.category_paths !== undefined || source.category_paths !== undefined || explicitPaths !== undefined)
+        target.category_paths = paths.map(path => [...path]);
       for (const occurrence of next.occurrences)
         if (occurrence.class_id === source.id) {
           occurrence.previous_class_id = source.id;
@@ -193,6 +221,29 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       event("class_merged", { from: source.id, into: target.id, reason: merge.reason });
       event("occurrence_moved", { from: source.id, into: target.id });
     }
+  }
+
+  for (const [updateIndex, update] of (input.result.class_updates ?? []).entries()) {
+    // Replaying an old accepted receipt must never roll back later directory maintenance.
+    if (updateApplied(update.class_id)) continue;
+    const categoryIssues = categoryPathIssues(update.category_paths, `/class_updates/${updateIndex}/category_paths`);
+    if (categoryIssues.length) throw new ValidationError(categoryIssues);
+    const problem = next.classes[update.class_id];
+    if (!problem || problem.status !== "active") throw new Error("维护目标必须仍是活跃问题类：" + update.class_id);
+    const before: JsonObject = { label: problem.label, definition: problem.definition,
+      category_paths: problem.category_paths ?? [] };
+    if (update.label !== undefined && update.label !== problem.label) {
+      const collision = Object.values(next.classes).find(other => other.id !== problem.id &&
+        other.status === "active" && other.component_id === problem.component_id && matchesLabel(other, update.label!));
+      if (collision) throw new Error("维护名称与同组件活跃问题类冲突：" + collision.id);
+      problem.aliases = [...new Set([...problem.aliases, problem.label])].filter(alias => normalizeLabel(alias) !== normalizeLabel(update.label!));
+      problem.label = update.label;
+    }
+    if (update.definition !== undefined) problem.definition = update.definition;
+    if (update.category_paths !== undefined) problem.category_paths = update.category_paths.map(path => [...path]);
+    event("class_updated", { class_id: problem.id, submission_id: input.submission_id,
+      task_id: input.task_id, run_id: input.run_id, reason: update.reason, before,
+      after: { label: problem.label, definition: problem.definition, category_paths: problem.category_paths ?? [] } });
   }
 
   const observations = new Map(input.observations.map((observation) => [observation.id, observation]));
@@ -204,13 +255,17 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
     if (observation) firstObservation.set(key, observation);
   }
   const createdClasses = new Map<string, { problem: ProblemClass; created: boolean }>();
-  for (const entry of input.result.new_classes) {
+  for (const [newClassIndex, entry] of input.result.new_classes.entries()) {
     const origin = originFor(input, firstObservation.get(entry.key)?.refs[0], at);
     const component = componentFor(entry.component, origin);
     const existing = Object.values(next.classes).find(
       (problem) => problem.status === "active" && problem.component_id === component.id && matchesLabel(problem, entry.label),
     );
-    const problem = existing ?? createClass(component.id, entry.label, entry.definition, origin);
+    if (!existing) {
+      const categoryIssues = categoryPathIssues(entry.category_paths, `/new_classes/${newClassIndex}/category_paths`);
+      if (categoryIssues.length) throw new ValidationError(categoryIssues);
+    }
+    const problem = existing ?? createClass(component.id, entry.label, entry.definition, origin, entry.category_paths);
     createdClasses.set(entry.key, { problem, created: !existing });
   }
 

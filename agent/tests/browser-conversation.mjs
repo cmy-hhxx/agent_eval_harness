@@ -166,7 +166,7 @@ try{
  const plotBounds=await chart.locator('svg').boundingBox();
  for(const label of await chart.locator('[data-chart-label=category], [data-chart-value]').all()){
   const bounds=await label.boundingBox();assert(bounds && bounds.x>=plotBounds.x-1 && bounds.x+bounds.width<=plotBounds.x+plotBounds.width+1,'both full group labels and exact values fit the narrow plot');
-  assert.equal(await label.getAttribute('font-size'),await label.getAttribute('data-chart-value')!==null?'18':'14','narrow layouts retain the label and value hierarchy');
+  assert.equal(await label.getAttribute('font-size'),await label.getAttribute('data-chart-value')!==null?'16':'14','narrow layouts retain the compact label and value hierarchy');
  }
  const narrowBars=await chart.locator('[data-chart-mark=bar]').evaluateAll(nodes=>nodes.map(node=>({y:Number(node.getAttribute('y')),width:Number(node.getAttribute('width'))})));
  assert(narrowBars[1].y>narrowBars[0].y,'both groups have independent visible rows');

@@ -6,7 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
+import { waitForTestState } from "../fixtures/wait.js";
 import { RemoteStreamCarrierError, RemoteStreamMuxClient } from "../../packages/runtime/src/deepseek.js";
 import { type JsonObject, object } from "@eval/contracts";
 
@@ -24,7 +24,6 @@ async function rpc(url: string, user: string, method: string, request: JsonObjec
   const response = await fetch(`${url}/u/${user}/api/${method}`, {method:"POST",signal:AbortSignal.timeout(5000),headers:{"content-type":"application/json"},body:JSON.stringify({type:"client-request",rpcId:randomUUID(),method,payload:{args:{request}}})});
   const result = object(object(await response.json()).result); assert.equal(result.ok, true, JSON.stringify(result)); return object(result.value);
 }
-async function until(fn: () => Promise<boolean>) { for (let n=0;n<200;n++){ if(await fn())return; await delay(20); } throw new Error("Timed out"); }
 
 test("two local processes forward one Session, deduplicate UUIDs and replace a dead owner", {timeout:30000}, async()=>{
  const directory=await mkdtemp(path.join(tmpdir(),"assistant-replicas-"));
@@ -37,7 +36,7 @@ test("two local processes forward one Session, deduplicate UUIDs and replace a d
   await Promise.all([rpc(b.url,"alice","session/prompt",request),rpc(a.url,"alice","session/prompt",request)]);
 
   const address={kind:"session",sessionId:id};
-  await until(async()=>(object(await rpc(b.url,"alice","session/page",{address})).records as {event:{type:string}}[]).some(r=>r.event.type==="tool/result"));
+  await waitForTestState(()=>rpc(b.url,"alice","session/page",{address}),page=>(page.records as {event:{type:string}}[]).some(r=>r.event.type==="tool/result"),"Replica did not receive the owner's tool result");
   const page=await rpc(b.url,"alice","session/page",{address});
   assert.equal((page.records as {event:{type:string}}[]).filter(r=>r.event.type==="user/message").length,1);
   assert.deepEqual((await rpc(b.url,"bob","session/list")).items,[]);
@@ -62,7 +61,7 @@ test("two local processes forward one Session, deduplicate UUIDs and replace a d
   assert(JSON.stringify(restored).includes('"kind":"interrupted"'));
   await rpc(b.url,"alice","session/prompt",request);
   await rpc(b.url,"alice","session/prompt",{...request,requestId:randomUUID(),content:[{type:"text",text:"continue"}]});
-  await until(async()=>JSON.stringify(await rpc(b.url,"alice","session/page",{address})).includes("reply:continue"));
+  await waitForTestState(()=>rpc(b.url,"alice","session/page",{address}),page=>JSON.stringify(page).includes("reply:continue"),"Recovered replica did not complete the continuation");
   const final=await rpc(b.url,"alice","session/page",{address});
   assert.equal((final.records as {event:{type:string}}[]).filter(r=>r.event.type==="user/message").length,2);
  }finally{await relay?.close();await kill(a.child,"SIGTERM");await kill(b.child,"SIGTERM");await rm(directory,{recursive:true,force:true});}

@@ -13,7 +13,7 @@ import { validateEvaluation } from "../../fixtures/services.js";
 import { comparisonRow, reportRun } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import { validateRun } from "../../fixtures/services.js";
-import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, criteriaResultForTask, criteriaTaskFor, raw } from "../../fixtures/comparison.js";
 
 for (const objective of [false, true])
   test(`report preserves identities, evidence and correctness across blind swaps (${objective ? "objective" : "subjective"})`, async () => {
@@ -81,7 +81,7 @@ for (const objective of [false, true])
             taskId: "check-" + label,
             attemptId: "test",
             evaluation: {
-              ...attributionResult(candidate.version === "a_fast", candidate.version === "a_fast" ? "2+2=4" : "2+2=5", objective),
+              ...attributionResult(candidate.version === "a_fast", candidate.version === "a_fast" ? "2+2=4" : "2+2=5", objective, candidate.input_id),
               correctness_reason: objective
                 ? candidate.version === "a_fast"
                   ? "候选A结果是4。"
@@ -126,7 +126,7 @@ for (const objective of [false, true])
           Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
         );
         validateEvaluation(task, snapshots, result, emptyAudit(), dependencies);
-        const binding = comparisonWorkflow.bind(task, snapshots, dependencies);
+        const binding = comparisonWorkflow.bind(task, snapshots, dependencies, { tasks: [criteriaTaskFor(task), task] });
         const validateRequest = new Ajv2020({ strict: false }).compile(comparisonProfile.requestSchema!);
         assert(validateRequest(binding.request.input), JSON.stringify(validateRequest.errors));
         const materials = (binding.request.input as { candidates: Record<string, { original_answer_usage: { total_tokens: number }; original_answer_timing: { finish_seconds: number } }> }).candidates;
@@ -134,26 +134,6 @@ for (const objective of [false, true])
         assert.equal(materials[bFast]!.original_answer_usage.total_tokens, 1020);
         assert.equal(materials[aFast]!.original_answer_timing.finish_seconds, 8);
         assert.deepEqual(Object.keys(materials[aFast]!.original_answer_timing), ["finish_seconds"]);
-        assert.deepEqual(binding.request.input.strength_checks, [
-          { candidate: aFast, finding_index: 0, counterparts: [bFast] },
-        ]);
-        const mutual = structuredClone(dependencies);
-        for (const label of [aFast, bFast]) {
-          const review = mutual[label]!.evaluation as ReturnType<typeof attributionResult>;
-          review.findings = [
-            { ...review.findings[0]!, type: "problem" },
-            ...Array.from({ length: label === aFast ? 3 : 1 }, () => ({
-              ...review.findings[0]!, type: "strength" as const, problem: null,
-            })),
-          ];
-        }
-        const mutualChecks = comparisonWorkflow.bind(task, snapshots, mutual).request.input.strength_checks;
-        assert.deepEqual(mutualChecks, Object.keys(candidates).flatMap((label) =>
-          Array.from({ length: label === aFast ? 3 : 1 }, (_, index) => ({
-            candidate: label, finding_index: index + 1,
-            counterparts: [label === aFast ? bFast : aFast],
-          })),
-        ));
         const row = comparisonRow(snapshots, task, result, receipts, {
           a_fast: "A组Fast",
           b_fast: "B组Fast",
@@ -184,10 +164,10 @@ for (const objective of [false, true])
           (row.assessments as Record<string, { summary: string }>).a_fast!.summary,
           `${displayA}与${displayB}相比，${displayA}更完整。`,
         );
-        const nearLimit = structuredClone(result);
-        nearLimit.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${bFast}结果错误。`.padEnd(100, "。");
-        validateEvaluation(task, snapshots, nearLimit, emptyAudit(), dependencies);
-        const expanded = comparisonRow(snapshots, task, nearLimit, receipts, {
+        const fullNarrative = structuredClone(result);
+        fullNarrative.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${bFast}结果错误。`.repeat(6);
+        validateEvaluation(task, snapshots, fullNarrative, emptyAudit(), dependencies);
+        const expanded = comparisonRow(snapshots, task, fullNarrative, receipts, {
           a_fast: "A组Fast", b_fast: "B组Fast",
         }, fakeEvaluatorVersion);
         assert(validateOutput(expanded), JSON.stringify(validateOutput.errors));

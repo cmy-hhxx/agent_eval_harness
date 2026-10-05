@@ -1,6 +1,8 @@
+export { presentSource, type SourcePresentation } from "./source-presentation.js";
 export type Engine = "pi" | "prime";
-export { evidenceId } from "./evidence.js";
-export { mergeRequiredReadRanges, requiredReadCallLimit } from "./required-reading.js";
+export { evidenceId, evidenceSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
+export * from "./evidence-selection.js";
+export { mergeRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars } from "./required-reading.js";
 export * from "./automations.js";
 export type * from "./criteria.js";
 export type * from "./publication.js";
@@ -30,7 +32,9 @@ export interface ModelConfig {
   api: "openai-completions" | "openai-responses";
   apiKeyEnv: string;
   model: string;
-  thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** Explicit endpoint capability; false preserves system instructions as system messages. */
+  supportsDeveloperRole?: boolean;
   contextWindow: number;
   maxOutputTokens: number;
 }
@@ -38,10 +42,12 @@ export interface EvaluationSpec {
   id: string;
   profile: string;
   systemPrompt: string;
-  /** Worker-facing copy of AgentProfile.submissionSchema. */
+  /** Model-facing submission schema, projected from the trusted request when supplied by the Profile. */
   outputSchema: JsonSchema;
+  /** Optional structured material inspection, sharing the final submission content budget. */
+  inspectionSchema?: JsonSchema;
   toolNames: string[];
-  /** Whether this profile can create and repair JSON files in the task workspace. */
+  /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
   /** Model-facing descriptions for exactly the selected and submission tools. */
   toolDescriptions: Record<string, string>;
@@ -49,13 +55,15 @@ export interface EvaluationSpec {
   submissionNudge: string;
   /** Exact material ranges that must be read before this task can be accepted. */
   requiredReads?: TraceRead[];
+  /** Display-only source rules; evidence always resolves against original inputs. */
+  sourcePresentations?: Record<string, import("./source-presentation.js").SourcePresentation>;
 }
 export interface InputRef {
   id: string;
   name: string;
 }
 export function submissionToolNames(fileSubmission: boolean): string[] {
-  return fileSubmission ? ["submit_evaluation", "submit_evaluation_file"] : ["submit_evaluation"];
+  return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];
 }
 export interface EngineIdentity {
   engine: Engine;
@@ -65,6 +73,7 @@ export interface EngineIdentity {
 }
 export interface AttemptSpec {
   runId: string;
+  debug?: boolean;
   taskId: string;
   attemptId: string;
   inputRevision: number;
@@ -73,6 +82,8 @@ export interface AttemptSpec {
   model: ModelConfig;
   policy: Policy;
   prompt: string;
+  /** Private program coordinates; never included verbatim in a model prompt. */
+  evidenceBank: import("./evidence-selection.js").EvidenceBank;
   inputs: InputRef[];
   hostUrl: string;
   deadline: number;
@@ -123,6 +134,8 @@ export interface TableCheckSpec {
   }[];
 }
 export interface ToolAudit {
+  /** Task-local coordinate directory; non-evidence profiles may leave it absent. */
+  evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   calls: number;
   /** Successful new mandatory pages; other calls consume the exploration budget. */
   requiredReadCalls: number;
@@ -131,6 +144,7 @@ export interface ToolAudit {
   calculations: unknown[];
   artifacts: Artifact[];
   tableChecks?: TableCheckSpec[];
+  inspection?: InspectionCheckpoint;
 }
 export interface Submission {
   submissionId: string;
@@ -199,6 +213,8 @@ export interface ProblemClass {
   status: "active" | "merged";
   merged_into: string | null;
   first_seen: ProblemOrigin | null;
+  /** Optional free topic paths; they organize classes and do not establish causes. */
+  category_paths?: string[][];
 }
 export interface ProblemOccurrence {
   id: string;
@@ -221,14 +237,14 @@ export interface ProblemOccurrence {
   previous_class_id: string | null;
   at: string;
 }
-export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved";
+export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected";
 export interface ProblemEvent {
   id: string;
   type: ProblemEventType;
   at: string;
   detail: JsonObject;
 }
-/** Append-only per-model problem library maintained by the clustering stage. */
+/** Append-only per-model problem library maintained by clustering rules and explicit source-review events. */
 export interface ProblemLibrary {
   model: string;
   updated_at: string;
@@ -250,6 +266,7 @@ export interface ProblemProjection {
       definition: string;
       aliases: string[];
       occurrences: number;
+      category_paths?: string[][];
     }[];
   }[];
 }
@@ -263,12 +280,43 @@ export interface SubmissionReceipt extends Submission {
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
 }
+/** A copied self-contained registered source coordinate. */
+export interface EvidenceReference {
+  evidence_id: string;
+  observation?: unknown;
+}
+/** A resolved source coordinate and its exact display text; neither replaces the other. */
+export interface ResolvedEvidence {
+  evidence_id: string;
+  message_index: number;
+  quote: string;
+}
+/** A successful read-only inspection; proof is retained for request-bound validation on resume. */
+export interface InspectionCheckpoint {
+  id: string;
+  value: JsonObject;
+  proof: { viewedImages: string[]; traceReads: TraceRead[] };
+}
+export interface MaterialInspection {
+  inspectionId: string;
+  attemptId: string;
+  taskId: string;
+  value: JsonObject;
+  audit: ToolAudit;
+  contentSubmissions: number;
+}
 export interface ToolContext {
   execution?: { python: string };
   attemptId: string;
   workdir: string;
   inputs: Map<string, unknown>;
+  /** Immutable registered input UUIDs, keyed exactly like inputs. */
+  inputIds: ReadonlyMap<string, string>;
+  sourcePresentations?: ReadonlyMap<string, import("./source-presentation.js").SourcePresentation>;
   audit: ToolAudit;
+  /** Delegated by the Worker; validation belongs to the registered Profile. */
+  persistEvidenceBank?(bank: import("./evidence-selection.js").EvidenceBank): Promise<void>;
+  inspectMaterial?(value: unknown, signal: AbortSignal): Promise<ToolResult>;
   policy: Policy;
   requiredReads?: TraceRead[];
   artifacts: {
@@ -278,6 +326,8 @@ export interface ToolContext {
 }
 export interface ToolDefinition {
   name: string;
+  /** This registered tool can write a file for submission; reserved repair calls remain bounded. */
+  fileWriter?: boolean;
   description: string;
   inputSchema: JsonSchema;
   execute(context: ToolContext, arguments_: unknown, signal: AbortSignal): Promise<ToolResult>;
@@ -311,6 +361,8 @@ export interface AttemptStatus {
   failure?: FailureContext;
 }
 export interface AttemptRecord {
+  /** Latest private coordinate directory, including additions after the initial attempt spec. */
+  evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   spec: AttemptSpec;
   status?: AttemptStatus;
   metrics?: { usage: Usage; audit: ToolAudit };
@@ -334,7 +386,7 @@ export interface TaskPlan {
 }
 export interface AgentRequest {
   input: JsonObject;
-  sources: Record<string, { id: string; value: unknown }>;
+  sources: Record<string, { id: string; value: unknown; presentation?: import("./source-presentation.js").SourcePresentation }>;
 }
 export interface AgentProfile {
   id: string;
@@ -342,6 +394,20 @@ export interface AgentProfile {
   requestSchema: JsonSchema;
   /** Schema for the JSON submitted by the model. */
   submissionSchema: JsonSchema;
+  /** Model-facing parameter schema; Host validation keeps the static schema and request-bound business rules. */
+  modelSubmissionSchema?(request: AgentRequest): JsonSchema;
+  /** Model references are task-local choices; canonical schemas and stored results retain coordinates. */
+  evidenceSelections?: boolean;
+  /** A mandatory read-only inspection before the trusted secondary material is revealed. */
+  inspection?: {
+    /** Canonical schema also used when restoring an accepted checkpoint. */
+    schema: JsonSchema;
+    modelSchema?: JsonSchema;
+    resolve?(request: AgentRequest, value: unknown, audit: ToolAudit): unknown;
+    validate(request: AgentRequest, value: unknown, audit: ToolAudit): void;
+    /** Profile-owned read-only context, revealed only after canonical inspection validation. */
+    materialContext?(request: AgentRequest, value: unknown, audit: ToolAudit): JsonObject;
+  };
   /** Schema for the accepted result after optional submission resolution. */
   resultSchema?: JsonSchema;
   systemPrompt: string;
@@ -353,6 +419,10 @@ export interface AgentProfile {
   /** Task material on its own for inspection; policy and recovery are added per attempt. */
   renderPrompt(input: JsonObject, policy?: Policy, recovery?: FailureContext): string;
   requiredReads?(request: AgentRequest): TraceRead[];
+  /** Independent checks that safely inspect partial or structurally invalid submissions. */
+  validateSubmission?(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[];
+  /** Read-only repair context merged into expected; checks, constraints and submitted values stay unchanged. */
+  validationIssueContext?(request: AgentRequest, value: unknown, issue: ValidationIssue): JsonObject | undefined;
   resolve?(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown;
   validate?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
 }
@@ -364,6 +434,12 @@ export interface AgentBinding {
   agent: string;
   profile: string;
   request: AgentRequest;
+  /** Explicit model-facing projection; validation and evidence resolution keep using request. */
+  modelInput?: JsonObject;
+  /** Secondary model material, disclosed only after a valid structured inspection. */
+  inspectionInput?: JsonObject;
+  /** Workflow-owned projection of generated evidence envelopes; exclude all original source values. */
+  projectModelInput?(input: JsonObject, bank: import("./evidence-selection.js").EvidenceBank): JsonObject;
 }
 export interface WorkflowDefinition {
   id: string;
@@ -373,6 +449,7 @@ export interface WorkflowDefinition {
     task: PlannedTask,
     inputs: Record<string, unknown>,
     dependencies: Record<string, SubmissionReceipt | undefined>,
+    context: { tasks: readonly PlannedTask[] },
   ): AgentBinding;
   /** Synchronous, business-owned follow-up planning after a validated receipt. */
   advance?(task: PlannedTask, receipt: SubmissionReceipt, state: RunState, inputs: Readonly<Record<string, unknown>>): {
@@ -493,7 +570,10 @@ export interface ValidationIssue {
   category: FailureCategory;
 }
 export interface FailureContext {
+  /** Keep prior choices stable even when the last draft or inspection failed. */
+  evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   draft?: unknown;
+  inspection?: InspectionCheckpoint;
   errors: ValidationIssue[];
   contentSubmissions: number;
   fileErrors: number;
@@ -509,4 +589,11 @@ export type * from "./assistant.js";
 export interface RewrittenResult {
   evaluator_version: string;
   rewrites: { id: string; text: string }[];
+}
+
+/** Worker progress, separate from model content submissions and immutable inspections. */
+export interface EvidenceBankUpdate {
+  taskId: string;
+  attemptId: string;
+  evidenceBank: import("./evidence-selection.js").EvidenceBank;
 }

@@ -7,6 +7,7 @@ const MAX_PAGE_CHARS = 16000;
 type ReadAudit = Pick<ToolAudit, "traceReads">;
 interface RequiredRange {
   target: TraceRead;
+  inputId: string;
   text: string;
 }
 interface ReadArguments {
@@ -39,7 +40,7 @@ export class RequiredReadBudget {
   private readonly ranges: RequiredRange[];
   private readonly chargedReads: TraceRead[] = [];
 
-  constructor(inputs: ReadonlyMap<string, unknown>, requiredReads: readonly TraceRead[] | undefined, maxOutputChars: number) {
+  constructor(inputs: ReadonlyMap<string, unknown>, inputIds: ReadonlyMap<string, string>, requiredReads: readonly TraceRead[] | undefined, maxOutputChars: number, budgetMetadataChars: number) {
     const ranges: RequiredRange[] = [];
     for (const read of requiredReads ?? []) {
       if (!read || read.kind !== "text" || typeof read.candidate !== "string" || !read.candidate ||
@@ -51,14 +52,19 @@ export class RequiredReadBudget {
         throw new RangeError("Required trace source is unavailable");
       const source = evidenceSources(input.messages[read.message_index]).find((item) => item.kind === "text" && item.path === read.path);
       if (!source || read.end > source.text.length) throw new RangeError("Required trace range is outside its source");
-      ranges.push({ target: { ...read }, text: source.text });
+      const inputId = inputIds.get(read.candidate);
+      if (!inputId) throw new RangeError("Required trace input identity is unavailable");
+      ranges.push({ target: { ...read }, inputId, text: source.text });
     }
     this.ranges = mergeRequiredReadRanges(ranges);
-    this.limit = requiredReadCallLimit(this.ranges, maxOutputChars);
+    this.limit = requiredReadCallLimit(this.ranges, maxOutputChars, budgetMetadataChars);
   }
 
   get used(): number { return this.count; }
   get remaining(): number { return Math.max(0, this.limit - this.count); }
+  covered(audit: ReadAudit): boolean {
+    return this.ranges.every(({ target }) => traceReadCoverage(audit, target).covered);
+  }
 
   private nextRange(args: ReadArguments, audit: ReadAudit): RequiredRange | undefined {
     const coverage = { traceReads: [...audit.traceReads, ...this.chargedReads] };

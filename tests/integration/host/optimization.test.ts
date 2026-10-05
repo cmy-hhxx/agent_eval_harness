@@ -3,20 +3,25 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { readFile, rm } from "node:fs/promises";
-import { emptyUsage, type AgentBackend, type ModelConfig, type RunState, type TaskPlan, type PlannedTask } from "@eval/contracts";
+import { emptyUsage, resolveEvidenceSelection, type AgentBackend, type ModelConfig, type RunState, type TaskPlan, type PlannedTask } from "@eval/contracts";
 import { fileSourceReader, readJson, writeJsonl } from "@eval/data";
 import { buildPlan, comparisonWorkflow } from "@eval/workflows/comparison";
 import { createResultWriter } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/comparison";
-import { evidenceId, evidenceSources, cite, resolveEvidence } from "@eval/tools";
+import { evidenceSources, cite, resolveEvidence } from "@eval/tools";
+import { waitForTestState } from "../../fixtures/wait.js";
+import { canonicalEvidence } from "../../fixtures/evidence.js";
 import type { EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
+import { agentPrompt } from "@eval/prompts";
 import { validateRun } from "../../fixtures/services.js";
 import { startWorker } from "@eval/runtime/worker";
-import {
+import { submitFor, inspectFor,
+  inspectedReceiptFor,
   attributionResult,
   draftFor,
+  invalidDraft,
   emptyAudit,
   fakeEvaluatorVersion,
   fakeIdentity,
@@ -24,14 +29,31 @@ import {
   comparisonResult,
   criteriaResultForTask,
   fixtureConfig,
+  parsedMaterial,
   raw,
   taskResult,
 } from "../../fixtures/comparison.js";
 
-function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
-  const accepted = plan.tasks.filter((task) => ["criteria", "attribution", "comparison"].includes(task.stage));
+async function stateFor(config: EvalConfig, plan: TaskPlan, acceptVerifications = true): Promise<RunState> {
+  const accepted = plan.tasks.filter((task) => ["criteria", "attribution", "comparison"].includes(task.stage) &&
+    (acceptVerifications || !(task.data as TaskData).verificationOf));
   const acceptedIds = new Set(accepted.map((task) => task.id));
-  return {
+  const attributionFor = (task: PlannedTask) => {
+    const inputId = task.inputIds.answer;
+    const input = plan.inputs[inputId] as RawInput;
+    const finalIndex = (task.data as TaskData).candidates.A.final_index;
+    const final = evidenceSources(input.messages[finalIndex]).find(source => source.kind === "text" && source.path.startsWith("/content") && source.text.length)!;
+    const userIndex = input.messages.findIndex(message => message.role === "user");
+    const question = evidenceSources(input.messages[userIndex]).find(source => source.kind === "text" && source.path === "/content")!;
+    const result = attributionResult(true, final.text, (task.data as TaskData).reference !== null, inputId);
+    const actual = canonicalEvidence(inputId, finalIndex, final.text, final.path);
+    const norm = canonicalEvidence(inputId, userIndex, question.text, question.path);
+    result.correctness_evidence = result.has_standard_answer ? [actual] : [];
+    result.criterion_assessments.forEach(item => { item.evidence = [actual, norm]; });
+    result.findings[0]!.evidence = [actual];
+    return result;
+  };
+  const state: RunState = {
     manifest: {
       format: "evaluation-run",
       debug: false,
@@ -62,7 +84,7 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
           judge: fakeJudge,
           acceptedAt: 2,
           evaluation: task.stage === "criteria" ? criteriaResultForTask(task, plan.inputs) : task.stage === "attribution"
-            ? attributionResult(true, "2+2=4", (task.data as TaskData).reference !== null)
+            ? attributionFor(task)
             : comparisonResult(undefined, criteriaResultForTask(task, plan.inputs)),
           audit: emptyAudit(),
           usage: emptyUsage(),
@@ -72,6 +94,9 @@ function stateFor(config: EvalConfig, plan: TaskPlan): RunState {
     usage: { ...emptyUsage(), totalTokens: 123 },
     recordedAttempts: accepted.length,
   };
+  for (const task of accepted.filter(task => (task.data as TaskData).verificationOf))
+    state.receipts[task.id] = await inspectedReceiptFor(task, state, plan.inputs);
+  return state;
 }
 function dependenciesFor(task: PlannedTask, state: RunState) {
   return Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, state.receipts[id]]));
@@ -100,14 +125,6 @@ function optionsFor(
     modelForStage,
   };
 }
-async function until(check: () => boolean | Promise<boolean>) {
-  for (let i = 0; i < 200; i++) {
-    if (await check()) return;
-    await new Promise((r) => setTimeout(r, 15));
-  }
-  throw new Error("Condition did not settle");
-}
-
 test("attribution reads identity while comparison worker sees only its blind prompt and trace", async () => {
   const first = raw("q", "4 来自 secret-model");
   first.messages[0]!.content = "计算2+2；请核查 a_fast 和 b_fast 的结果";
@@ -118,37 +135,44 @@ test("attribution reads identity while comparison worker sees only its blind pro
   second.messages[0]!.content = first.messages[0]!.content;
   second.messages[1]!.model = "other-model";
   const { directory, config, modelForStage } = await fixtureConfig([[first], [], [second], []]);
+  const plan = await buildPlan(config);
   const stages: string[] = [];
   const worker = await startWorker({
     identity: fakeIdentity,
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           const stage = options.spec.evaluation.id;
           stages.push(stage);
           const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
           if (stage === "criteria") {
             assert(!options.spec.prompt.includes('"final_answer"'), "criteria are fixed before answers are exposed");
-            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           } else if (stage === "attribution") {
             assert.match(options.spec.prompt, /version_id/);
             assert.equal(options.spec.inputs[0]!.name, "answer");
             assert.equal(input.messages[1]!.model, options.spec.prompt.includes('"version_id":"a_fast"') ? "secret-model" : "other-model");
             const result = taskResult(options.spec) as { summary: string };
             result.summary = "a_fast 或 b_fast 的有效计算";
-            await options.execute("submit_evaluation", draftFor(options.spec, result));
+            await submitFor(options, draftFor(options.spec, result));
           } else {
             assert.equal(stage, "comparison");
             assert.equal(options.spec.inputs.length, 2);
             const unbound = await fetch(`${options.spec.hostUrl}/api/inputs/${options.spec.inputs[0]!.id}`);
             assert.equal(unbound.status, 404, "the worker cannot bypass its bound blind view");
-            assert.equal(input.meta, undefined);
-            assert.equal(input.messages[1]!.model, undefined);
+            const original = plan.inputs[options.spec.inputs[0]!.id] as RawInput;
+            assert.deepEqual(input, original, "Worker-owned source files retain the exact original evidence material");
             for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"]) {
               assert(!options.spec.prompt.includes(identity), `prompt leaks ${identity}`);
-              assert(!JSON.stringify(input).includes(identity), `trace leaks ${identity}`);
             }
-            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            for (const source of options.spec.inputs) {
+              const read = await options.execute("read_trace", { candidate: source.name, message_index: 1 });
+              assert.equal(read.isError, undefined, JSON.stringify(read));
+              for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"])
+                assert(!JSON.stringify(read).includes(identity), `model-visible trace leaks ${identity}`);
+            }
+            await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           }
         },
         async abort() {},
@@ -157,17 +181,17 @@ test("attribution reads identity while comparison worker sees only its blind pro
     },
   }, path.join(directory, "worker"));
   try {
-    const result = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
+    const result = await runEvaluation(optionsFor(config, modelForStage, plan, [worker.url]));
     const saved = await readRunState(path.join(config.output.path, "test"));
     assert.equal(result.completed_comparisons, 1, JSON.stringify(saved.manifest.states));
-    const comparison = saved.manifest.tasks.find((task) => task.stage === "comparison")!;
+    const comparison = saved.manifest.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     const row = saved.receipts[comparison.id]!.exported!.row as {
       ground_truth: { value: string };
       evaluations: Record<string, { summary: string }>;
     };
     assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
     assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
-    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "comparison", "criteria"]);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -216,7 +240,7 @@ test("accepted work survives narrower selection, changed or missing inputs; new 
   const { directory, config } = await fixtureConfig([rows, [raw("q", null)], rows, []]);
   try {
     const plan = await buildPlan(config),
-      state = stateFor(config, plan),
+      state = await stateFor(config, plan),
       run = path.join(directory, "run");
     await createResultWriter(run, plan.inputs)(state);
     await writeRunState(run, state);
@@ -303,15 +327,35 @@ test("each answer retains its own full system and developer constraints beyond t
   config.execution.initialContextChars = 1;
   try {
     const plan = await buildPlan(config);
-    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage))) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, stateFor(config, plan)));
-      const input = bound.request.input as { answer?: { initial_material: { message_index: number; value: unknown }[] }; candidates?: Record<string, { initial_material: { message_index: number; value: unknown }[] }> };
+    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage) && !(task.data as TaskData).verificationOf)) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
+      type Material = { initial_material: { message_index: number; value: unknown }[]; instruction_sources: {
+        message_index: number; path: string; role: string; content: unknown; evidence: ReturnType<typeof cite>[];
+      }[] };
+      const input = bound.request.input as { answer?: Material; candidates?: Record<string, Material> };
       const materials = input.answer ? { answer: input.answer } : input.candidates!;
+      type ShownMaterial = { instruction_sources: { content: unknown; evidence: { reference: { evidence_index: number } }[] }[] };
+      const prepared = services.agents.prepare(bound);
+      const shown = parsedMaterial(prepared) as { answer?: ShownMaterial; candidates?: Record<string, ShownMaterial> };
+      const shownMaterials = shown.answer ? { answer: shown.answer } : shown.candidates!;
       for (const [label, material] of Object.entries(materials)) {
         const source = plan.inputs[task.inputIds[label]] as RawInput;
-        const constraints = material.initial_material.filter((m) => m.message_index < 2);
+        const constraints = material.instruction_sources.filter((m) => m.message_index < 2);
         assert.equal(constraints.length, 2);
-        assert.deepEqual(constraints.map((m) => m.value), source.messages.slice(0, 2));
+        assert.deepEqual(constraints.map((m) => m.role), ["system", "developer"]);
+        assert.deepEqual(constraints.map((m) => m.path), ["/content", "/content"]);
+        assert.deepEqual(constraints.map((m) => m.content), source.messages.slice(0, 2).map((message) => message.content));
+        assert.equal(material.initial_material.filter((m) => m.message_index < 2).length, 0);
+        assert.deepEqual(shownMaterials[label]!.instruction_sources.map((m) => m.content), constraints.map((m) => m.content));
+        constraints.forEach((constraint, index) => {
+          assert.equal(constraint.evidence.length, 1);
+          assert.equal(resolveEvidence(source, constraint.evidence[0]!, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
+          const selection = shownMaterials[label]!.instruction_sources[index]!.evidence[0]!.reference;
+          assert.deepEqual(Object.keys(selection), ["evidence_index"]);
+          const reference = resolveEvidenceSelection(prepared.evidenceBank, selection, "/instruction_sources/" + index + "/evidence/0");
+          assert.deepEqual(reference, { evidence_id: constraint.evidence[0]!.evidence_id });
+          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
+        });
       }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -328,8 +372,8 @@ test("oversized final-answer blocks are deferred without duplicating their paylo
   const { directory, config } = await fixtureConfig([[row], [], [row], []]);
   try {
     const plan = await buildPlan(config);
-    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage))) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, stateFor(config, plan)));
+    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage) && !(task.data as TaskData).verificationOf)) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
       const input = bound.request.input as any;
       services.agents.prepare(bound);
       for (const [label, material] of Object.entries(input.answer ? { answer: input.answer } : input.candidates) as [string, any][]) {
@@ -342,13 +386,74 @@ test("oversized final-answer blocks are deferred without duplicating their paylo
         const source = bound.request.sources[label].value as RawInput;
         assert.equal((source.messages[1].content as any[])[1].text, chart);
         for (const evidence of material.final_evidence)
-          assert.equal(resolveEvidence(source, evidence, label, [], "/evidence").quote, evidence.quote);
+          assert.equal(resolveEvidence(source, evidence, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, evidence.quote);
       }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("planning a shared reference change increments dependent task revisions while preserving IDs", async () => {
+test("model materials expose copyable references while business materials and original fields keep their coordinates", async () => {
+  type DisplayEvidence = { message_index: number; quote: string; reference: { evidence_index: number } };
+  type Material<T> = { final_evidence: T[]; initial_material: { message_index: number; value: Record<string, unknown>; evidence: T[] }[];
+    table_check_results?: { rows: { answer: { evidence: T }; sources: { evidence: T }[] }[] }[] };
+  type Input<T> = { answer?: Material<T>; candidates?: Record<string, Material<T>> };
+  const row = raw("copy-reference", null, "| 代码 | 名称 |\n|---|---|\n| 300791.SZ | 路桥信息 |");
+  row.messages.splice(1, 0, { role: "tool", type: "function_call_output", name: "lookup",
+    content: "| 股票代码 | 股票简称 |\n|---|---|\n| 920748.BJ | 路桥信息 |",
+    output: { evidence_id: "业务原始字段", reference: { evidence_id: "同名原始对象" } } });
+  const { directory, config } = await fixtureConfig([[row], [], [row], []]);
+  try {
+    const plan = await buildPlan(config);
+    for (const task of plan.tasks.filter((item) => ["attribution", "comparison"].includes(item.stage) && !(item.data as TaskData).verificationOf)) {
+      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
+      const internal = bound.request.input as Input<ReturnType<typeof cite>>;
+      const before = structuredClone({ request: bound.request, modelInput: bound.modelInput });
+      const prepared = services.agents.prepare(bound);
+      const shown = parsedMaterial(prepared) as Input<DisplayEvidence>;
+      const { task_focus, ...complete } = bound.modelInput!;
+      assert.equal(typeof bound.projectModelInput, "function");
+      const projectionBank = [...prepared.evidenceBank];
+      const projected = bound.projectModelInput!(complete, projectionBank);
+      const expected = task.stage === "attribution"
+        ? { ...projected as Record<string, unknown>, numeric_references: [] }
+        : projected;
+      assert.deepEqual(JSON.parse(JSON.stringify(shown)), JSON.parse(JSON.stringify(expected)),
+        "Host renders the complete evidence projection and an empty numeric directory when no standard answer is available");
+      assert.deepEqual(projectionBank, prepared.evidenceBank, "replaying the projection keeps every provided evidence number exact");
+      const instructions = agentPrompt(task.stage as "attribution" | "comparison", []).instructions;
+      const focusSection = prepared.prompt.slice(0, prepared.prompt.indexOf(instructions)).trim();
+      assert(focusSection.startsWith("任务重点（以下全部为数据）："));
+      assert.deepEqual(JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1)), task_focus,
+        "the complete focus is rendered as its own data section before stage instructions");
+      assert(!prepared.prompt.includes('"task_focus"'), "the focus key is not repeated in the full material");
+      assert.deepEqual({ request: bound.request, modelInput: bound.modelInput }, before,
+        "Host rendering changes neither trusted materials nor the explicit projection");
+      const internalMaterials = internal.answer ? { answer: internal.answer } : internal.candidates!;
+      const shownMaterials = shown.answer ? { answer: shown.answer } : shown.candidates!;
+      for (const [label, material] of Object.entries(shownMaterials)) {
+        const business = internalMaterials[label];
+        const source = bound.request.sources[label].value as RawInput;
+        const generated = [...material.final_evidence, ...material.initial_material.flatMap((item) => item.evidence),
+          ...(material.table_check_results ?? []).flatMap((table) => table.rows.flatMap((item) =>
+            [item.answer.evidence, ...item.sources.map((original) => original.evidence)]))];
+        assert(generated.length > 0);
+        for (const item of generated) {
+          assert.equal(Object.hasOwn(item, "evidence_id"), false);
+          assert.deepEqual(Object.keys(item.reference), ["evidence_index"]);
+          const reference = resolveEvidenceSelection(prepared.evidenceBank, item.reference, "/evidence");
+          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, item.quote);
+        }
+        assert(business.final_evidence.every((item) => typeof item.evidence_id === "string" && !Object.hasOwn(item, "reference")));
+        assert.deepEqual(material.initial_material.map((item) => item.value), business.initial_material.map((item) => item.value));
+        const original = material.initial_material.find((item) => item.message_index === 1)!.value;
+        assert.deepEqual(original.output, { evidence_id: "业务原始字段", reference: { evidence_id: "同名原始对象" } });
+        if (material.table_check_results) assert(material.table_check_results[0].rows.length > 0, "table evidence uses the same display projection");
+      }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("shared reference revisions preserve task IDs and paid content while invalidating stale recovery material", async () => {
   const { directory, config } = await fixtureConfig([
     [raw()],
     [raw("q1", null)],
@@ -358,13 +463,39 @@ test("planning a shared reference change increments dependent task revisions whi
   try {
     const first = await buildPlan(config);
     await writeJsonl(config.inputs.versions[0].sources[0].path, [raw("q1", "updated")]);
-    const next = await buildPlan(config, first);
-    assert.equal(next.tasks.length, 4);
+    const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+      format: "evaluation-run", debug: false, runId: "revised", status: "interrupted", evaluatorVersion: fakeEvaluatorVersion,
+      engine: fakeIdentity, config, tasks: first.tasks, inputCatalog: first.catalog, inputs: {}, preflight: first.summary, startedAt: 1,
+      states: Object.fromEntries(first.tasks.map(task => [task.id, { status: "failed", attempts: 2, revision: 1, durationMs: 17000,
+        reason: "old material failed", attemptId: "last-attempt", nextRetryAt: 100,
+        failure: { contentSubmissions: 3, fileErrors: 2, errors: [{ category: "evidence", code: "old", path: "/", message: "old" }],
+          repeatedErrors: 1, stopped: true, attemptId: "last-attempt", draft: { stale: true },
+          evidenceBank: { stale: true }, inspection: { stale: true } },
+      }])),
+    } } as unknown as RunState;
+    const uncertain = first.tasks[0].id;
+    const ledgerIssue = { category: "transport" as const, code: "submission_ledger_unavailable", path: "/", message: "final ledger unknown" };
+    state.manifest.states[uncertain].failure!.contentSubmissions = 1;
+    state.manifest.states[uncertain].failure!.errors.push(ledgerIssue);
+    const next = await reconcileRun(directory, state, config);
+    assert.equal(next.tasks.length, 5);
     assert.deepEqual(
       next.tasks.map((t) => t.id),
       first.tasks.map((t) => t.id),
     );
     assert(next.tasks.every((t) => (t.data as TaskData).revision === 2));
+    for (const task of next.tasks) {
+      const progress = state.manifest.states[task.id];
+      assert.equal(progress.status, "pending");
+      assert.equal(progress.attempts, 2);
+      assert.equal(progress.durationMs, 17000);
+      assert.equal(progress.failure!.contentSubmissions, task.id === uncertain ? 1 : 3);
+      assert.equal(progress.failure!.fileErrors, 2);
+      assert.deepEqual(progress.failure!.errors, task.id === uncertain ? [ledgerIssue] : [],
+        "source changes invalidate material feedback but cannot erase an unknown execution ledger");
+      for (const field of ["draft", "evidenceBank", "inspection"]) assert(!Object.hasOwn(progress.failure!, field));
+      for (const field of ["attemptId", "reason", "nextRetryAt"]) assert(!Object.hasOwn(progress, field));
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -381,10 +512,11 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
       async createSession(options) {
         return {
           async run() {
+            await inspectFor(options);
             const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
             if (options.spec.evaluation.id === "attribution") calls.push(input.case_id!);
             if (options.spec.evaluation.id === "attribution" && input.case_id === "todo" && !resumed) throw new Error("stop before submission");
-            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
           async dispose() {},
@@ -431,7 +563,7 @@ test("skip-failed resume streams healthy comparisons and rewrites before the att
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []], true);
   config.rewrite.attribution = false;
   const plan = await buildPlan(config);
-  const saved = stateFor(config, plan);
+  const saved = await stateFor(config, plan);
   saved.receipts = {};
   for (const state of Object.values(saved.manifest.states)) state.status = "pending";
   const failed = plan.tasks.find((task) => task.stage === "attribution" &&
@@ -445,8 +577,9 @@ test("skip-failed resume streams healthy comparisons and rewrites before the att
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           started.push({ id: options.spec.taskId, stage: options.spec.evaluation.id });
-          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {},
         async dispose() {},
@@ -476,8 +609,9 @@ for (const busyProbe of [1, 2]) test(`external worker recovers from busy health 
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           started.push(options.spec.taskId);
-          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {}, async dispose() {},
       };
@@ -513,8 +647,9 @@ test("an interrupted model stream receives one bounded transport retry", async (
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           if (!interrupted) { interrupted = true; throw new Error("Stream ended without finish_reason"); }
-          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {}, async dispose() {},
       };
@@ -536,10 +671,11 @@ test("retry backoff releases its worker slot for healthy tasks and preserves the
   const errors: { message: string; context: import("@eval/contracts").LogContext }[] = [];
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     return { async run() {
+      await inspectFor(options);
       const id = options.spec.taskId;
       order.push(id);
       if (id === first) throw new Error("Stream ended without finish_reason");
-      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
     }, async abort() {}, async dispose() {} };
   } }, path.join(directory, "worker"));
   try {
@@ -562,7 +698,7 @@ test("retry backoff releases its worker slot for healthy tasks and preserves the
 test("failed dependencies are checkpointed as one batch", async () => {
   const rows = Array.from({ length: 12 }, (_, i) => raw(String(i), null));
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
-  const plan = await buildPlan(config), saved = stateFor(config, plan);
+  const plan = await buildPlan(config), saved = await stateFor(config, plan);
   saved.receipts = Object.fromEntries(plan.tasks.filter((task) => task.stage === "criteria").map((task) => [task.id, saved.receipts[task.id]]));
   for (const task of plan.tasks) saved.manifest.states[task.id].status = task.stage === "criteria" ? "succeeded" : task.stage === "attribution" ? "failed" : "pending";
   await createResultWriter(path.join(config.output.path, "test"), plan.inputs)(saved);
@@ -574,7 +710,7 @@ test("failed dependencies are checkpointed as one batch", async () => {
       repository: { ...services.repository, async writeRun(...args) { writes++; return services.repository.writeRun(...args); } },
     });
     const after = await readRunState(path.join(config.output.path, "test"));
-    assert.equal(Object.values(after.manifest.states).filter(state => state.status === "blocked").length, 12);
+    assert.equal(Object.values(after.manifest.states).filter(state => state.status === "blocked").length, 24);
     assert(writes <= 3, `dependency handling saved the whole run ${writes} times`);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -586,9 +722,10 @@ test("a dependency waiting for its transport retry does not permanently block do
   const failureSaved = new Promise<void>(resolve => { release = resolve; });
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
+      await inspectFor(options);
       if (options.spec.taskId === first && !failed) { failed = true; throw new Error("Stream ended without finish_reason"); }
       if (plan.tasks.find(task => task.id === options.spec.taskId)?.stage === "attribution" && options.spec.taskId !== first) await failureSaved;
-      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
     }, async abort() {}, async dispose() {} };
   } };
   const workers = await Promise.all([0, 1].map(index => startWorker(backend, path.join(directory, 'worker-' + index))));
@@ -605,55 +742,6 @@ test("a dependency waiting for its transport retry does not permanently block do
   } finally { await Promise.all(workers.map(worker => worker.close())); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("raw strings, Markdown and JSON pages resolve exactly; unknown sources and indexes fail", () => {
-  const input = {
-    messages: [
-      {
-        role: "tool",
-        content: '**收益**\n"中文"\\path',
-        data: { value: 0.9957, count: 12 },
-      },
-    ],
-  };
-  for (const source of evidenceSources(input.messages[0])) {
-    for (let start = 0; start < source.text.length; start += 7) {
-      const evidence = cite(0, source, start, Math.min(start + 7, source.text.length));
-      assert.equal(
-        resolveEvidence(input, evidence, "A", [], "/evidence").quote,
-        source.text.slice(start, start + 7),
-      );
-    }
-  }
-  assert.equal(evidenceId(10, "text", "/content/0/text", 0, 2410), "ev_10_text_0_2410_/content/0/text");
-  assert.equal(evidenceId(6, "image"), "ev_6_image");
-  assert.throws(
-    () => resolveEvidence(input, { evidence_id: "ev_not-a-coordinate" }, "A", [], "/evidence"),
-    /无法解析/,
-  );
-  assert.throws(
-    () => resolveEvidence(input, { evidence_id: evidenceId(1, "json", "", 0, 2) }, "A", [], "/evidence"),
-    /索引/,
-  );
-  assert.throws(
-    () => resolveEvidence(input, { evidence_id: evidenceId(0, "text", "/data/value", 0, 6) }, "A", [], "/evidence"),
-    /原文位置/,
-  );
-  const hint = (evidence: { evidence_id: string }) => {
-    try {
-      resolveEvidence(input, evidence, "A", [], "/evidence");
-    } catch (error) {
-      return (error as { issues?: { message: string }[] }).issues![0]!.message;
-    }
-    throw new Error("expected evidence rejection");
-  };
-  assert.match(hint({ evidence_id: "ev_0_text_0_1_3_/role" }), /证据原文位置无效/);
-  assert.match(hint({ evidence_id: "ev_0_text_0_99_/role" }), /文本长度为 4/);
-  assert.match(hint({ evidence_id: "ev_0_text_0_4_/data/tool" }), /值为「tool」的路径是 \/role/);
-  assert.match(hint({ evidence_id: "ev_0_text_0_6_/missing" }), /可引用路径：\/role、\/content/);
-  assert.match(hint({ evidence_id: evidenceId(0, "text", "/role", 2, 99) }), /文本长度为 4，起止应为 0 ≤ 起 < 止 ≤ 4/);
-  assert.match(hint({ evidence_id: "ev_0_text_0_99_100_/role" }), /可引用路径：\/role、\/content/);
-});
-
 test("normal runs persist drafts before cleanup, carry them to one repair attempt, then clear them", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
   let calls = 0,
@@ -665,25 +753,25 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
       async createSession(options) {
         return {
           async run() {
+            await inspectFor(options);
             calls++;
             if (options.spec.evaluation.id === "attribution") firstTask ??= options.spec.taskId;
             const attempt = (attempts.get(options.spec.taskId) || 0) + 1;
             attempts.set(options.spec.taskId, attempt);
             if (attempt === 1 && options.spec.taskId === firstTask) {
-              const invalid = taskResult(options.spec) as { findings: { evidence: { quote: string }[] }[] };
-              invalid.findings[0].evidence[0].quote = "wrong";
-              await options.execute("submit_evaluation", draftFor(options.spec, invalid));
+              const rejected = await submitFor(options, invalidDraft(options.spec));
+              assert.equal(rejected.isError, true, "the invalid draft reaches content validation before recovery");
               const state = await readRunState(path.join(config.output.path, "test"));
               assert(state.manifest.states[options.spec.taskId].failure?.draft);
             } else {
               if (attempt > 1 && options.spec.taskId === firstTask) {
                 assert(options.spec.recovery?.draft);
                 assert.deepEqual(
-                  await readJson(path.join(options.workdir, "evaluation-draft.json")),
+                  await readJson(path.join(options.workdir, "submission-rejected.json")),
                   options.spec.recovery.draft,
                 );
               }
-              await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+              await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
             }
           },
           async abort() {},
@@ -695,7 +783,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 5);
+    assert.equal(calls, 6);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(state.manifest.states[firstTask!].failure?.draft, undefined);
@@ -712,7 +800,8 @@ test("a responsive external worker is not discarded after a one-second health de
     identity: fakeIdentity,
     async createSession(options) {
       return {
-        async run() { await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec))); },
+        async run() {
+      await inspectFor(options); await submitFor(options, draftFor(options.spec, taskResult(options.spec))); },
         async abort() {}, async dispose() {},
       };
     },
@@ -745,8 +834,9 @@ test(`a status observation ${kind} keeps the original worker attempt running`, a
       launches++;
       return {
         async run() {
+          await inspectFor(options);
           await delay(100);
-          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {}, async dispose() {},
       };
@@ -809,9 +899,10 @@ test("live concurrency prepares only available slots and shrinking lets healthy 
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           started.push(options.spec.taskId);
           await new Promise<void>((resolve) => releases.set(options.spec.taskId, resolve));
-          await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {
           aborted++;
@@ -834,7 +925,8 @@ test("live concurrency prepares only available slots and shrinking lets healthy 
         workers.map((w) => w.url),
       ),
     );
-    await until(() => started.length === 1);
+    await waitForTestState(async () => [...started], tasks => tasks.length === 1,
+      "initial concurrency starts one task", 3000);
     assert.equal(prepared.mock.callCount(), 1, "a full scheduler must not prepare the rest of the batch");
     const lock = await readJson<{ url: string; token: string }>(
       path.join(config.output.path, "test", ".run-lock"),
@@ -851,7 +943,8 @@ test("live concurrency prepares only available slots and shrinking lets healthy 
       assert.equal(response.status, 200);
     };
     await adjust(3);
-    await until(() => started.length === 3);
+    await waitForTestState(async () => [...started], tasks => tasks.length === 3,
+      "increased concurrency starts three tasks", 3000);
     assert.equal(prepared.mock.callCount(), 3, "growing concurrency prepares only the newly available slots");
     await adjust(1);
     const autoRelease = setInterval(() => {
@@ -859,14 +952,9 @@ test("live concurrency prepares only available slots and shrinking lets healthy 
     }, 10);
     releases.get(started[0])!();
     releases.get(started[1])!();
-    await until(
-      async () =>
-        (
-          (await (await fetch(lock.url + "/api/progress")).json()) as {
-            running: number;
-          }
-        ).running === 1,
-    );
+    await waitForTestState(async () => (await (await fetch(lock.url + "/api/progress")).json()) as {
+      running: number;
+    }, progress => progress.running === 1, "reduced concurrency drains to one running task", 3000);
     assert.equal(started.length, 3);
     assert.equal(aborted, 0);
     await execution;
@@ -889,12 +977,13 @@ test("enabling debug and missing optional artifacts never remove accepted receip
       async createSession(options) {
         return {
           async run() {
+            await inspectFor(options);
             calls++;
             await options.execute("execute_code", {
               language: "python",
               code: "print('artifact')",
             });
-            await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
           async dispose() {},
@@ -920,7 +1009,7 @@ test("enabling debug and missing optional artifacts never remove accepted receip
     await writeJsonl(file, [row]);
     assert.equal((await validateRun(run)).valid, false);
     assert.equal(Object.keys(before.receipts).length, options.plan.tasks.length);
-    const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison")!;
+    const comparisonTask = before.manifest.tasks.find((t) => t.stage === "comparison" && !(t.data as TaskData).verificationPending)!;
     await writeJsonl(file, [before.receipts[comparisonTask.id].exported!.row]);
     const inputFile = (before.manifest.tasks[0].data as TaskData).candidates.A.source;
     await writeJsonl(inputFile, [raw("another-case", null)]);

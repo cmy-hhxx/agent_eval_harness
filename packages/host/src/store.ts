@@ -1,4 +1,4 @@
-import { HttpError, canonical, safeId, requiredReadCallLimit, mergeRequiredReadRanges } from "@eval/contracts";
+import { ValidationError, HttpError, canonical, safeId, requiredReadCallLimit, mergeRequiredReadRanges, toolBudgetMetadataChars, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
 import { internalPath, writeJson } from "@eval/data";
 import type {
   AttemptSpec,
@@ -13,6 +13,8 @@ import type {
   LogSink,
   TaskState,
   TraceRead,
+  ToolAudit,
+  MaterialInspection,
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
@@ -57,7 +59,8 @@ function requiredReadRanges(spec: AttemptSpec, inputs: Record<string, unknown>) 
       }
     }
     if (typeof text !== "string") throw new Error("Required trace source is unavailable");
-    return { target, text };
+    if (!id) throw new Error("Required trace input identity is unavailable");
+    return { target, inputId: id, text };
   }));
 }
 
@@ -118,6 +121,7 @@ export class RunStore {
   readonly inputs: Record<string, unknown>;
   readonly services: EvaluationServices;
   readonly attempts = new Map<string, AttemptSpec>();
+  private readonly evidenceSources = new Map<string, ReadonlyMap<string, unknown>>();
   private writes = Promise.resolve();
   private queuedWrite?: Promise<void>;
   private readonly submissions = new Map<string, Promise<void>>();
@@ -214,11 +218,22 @@ export class RunStore {
     const state = this.manifest.states[spec.taskId];
     if (!state || (await this.receipt(spec.taskId))) throw new Error("Task already completed or unknown");
     if (spec.inputRevision !== (state.revision || 1)) throw new HttpError(409, "Input revision superseded");
-    if (state.attemptId) this.attempts.delete(state.attemptId);
+    const task = this.manifest.tasks.find(task => task.id === spec.taskId)!;
+    const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
+    const sources = new Map(spec.inputs.map(input => {
+      const source = binding.request.sources[input.name];
+      if (!source || source.id !== input.id) throw new HttpError(400, "Evidence bank source does not match the active task binding");
+      return [input.id, source.value] as const;
+    }));
+    this.validateBank(spec, spec.evidenceBank, state.failure?.evidenceBank ?? [], sources);
+    if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); }
     state.status = "running";
     state.attemptId = spec.attemptId;
     state.attempts++;
     state.reason = undefined;
+    state.failure = { errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false,
+      ...(state.failure ?? {}), attemptId: spec.attemptId, evidenceBank: [...spec.evidenceBank] };
+    this.evidenceSources.set(spec.attemptId, sources);
     this.attempts.set(spec.attemptId, spec);
     if (this.manifest.debug)
       await writeJson(
@@ -245,6 +260,7 @@ export class RunStore {
       state.reason = reason;
       await this.save();
       this.attempts.delete(spec.attemptId);
+      this.evidenceSources.delete(spec.attemptId);
     });
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
@@ -254,14 +270,103 @@ export class RunStore {
       return commit;
     });
   }
+  private validateBank(spec: AttemptSpec, bank: unknown, prefix: readonly string[] = spec.evidenceBank,
+    sources = this.evidenceSources.get(spec.attemptId)): asserts bank is EvidenceBank {
+    validateEvidenceBank(bank, prefix);
+    if (!sources) throw new HttpError(409, "Evidence bank requires an active trusted task binding");
+    validateEvidenceBankSources(bank, sources, prefix.length);
+  }
+  registerEvidenceBank(value: EvidenceBankUpdate): Promise<{ evidenceBank: EvidenceBank }> {
+    return this.exclusive(value.taskId, async () => {
+      const state = this.manifest.states[value.taskId], spec = this.attempts.get(value.attemptId);
+      if (!state || state.status !== "running" || state.attemptId !== value.attemptId || !spec || spec.deadline < Date.now())
+        throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
+      this.validateBank(spec, value.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
+      if (canonical(state.failure?.evidenceBank) !== canonical(value.evidenceBank)) {
+        state.failure = { errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false,
+          ...(state.failure ?? {}), attemptId: value.attemptId, evidenceBank: [...value.evidenceBank] };
+        await this.save();
+      }
+      return { evidenceBank: [...value.evidenceBank] };
+    });
+  }
   async checkpoint(taskId: string, failure: FailureContext): Promise<void> {
     return this.exclusive(taskId, async () => {
       const state = this.manifest.states[taskId];
       if (!state || state.attemptId !== failure.attemptId || state.status !== "running")
         throw new HttpError(409, "Attempt is cancelled or superseded");
-      state.failure = failure;
+      if (failure.inspection && (!state.failure?.inspection || canonical(state.failure.inspection) !== canonical(failure.inspection)))
+        throw new HttpError(409, "Only a successful Host inspection can create its checkpoint");
+      if (!Number.isSafeInteger(failure.contentSubmissions) || failure.contentSubmissions < 0)
+        throw new HttpError(400, "Invalid content submission count");
+      const spec = this.attempts.get(failure.attemptId);
+      if (!spec) throw new HttpError(409, "Unknown attempt");
+      this.validateBank(spec, failure.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
+      state.failure = { ...failure, evidenceBank: [...failure.evidenceBank], contentSubmissions: Math.max(failure.contentSubmissions, state.failure?.contentSubmissions ?? 0),
+        ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}) };
       await this.save();
     });
+  }
+  inspect(value: MaterialInspection) {
+    return this.exclusive(value.taskId, async () => {
+      const task = this.manifest.tasks.find(item => item.id === value.taskId);
+      const state = this.manifest.states[value.taskId], spec = this.attempts.get(value.attemptId);
+      safeId(value.inspectionId);
+      if (!task || !state || state.status !== "running" || state.attemptId !== value.attemptId || !spec ||
+        spec.inputRevision !== (state.revision || 1) || spec.deadline < Date.now())
+        throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
+      if (!Number.isSafeInteger(value.contentSubmissions) || value.contentSubmissions <= (spec.recovery?.contentSubmissions ?? 0) ||
+        value.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts)
+        throw new HttpError(400, "Invalid shared content submission count");
+      this.validateAudit(spec, value.audit);
+      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
+      const canonicalValue = this.services.agents.resolveInspection(binding, value.value, value.audit);
+      const checkpoint = { id: value.inspectionId, value: canonicalValue,
+        proof: { traceReads: structuredClone(value.audit.traceReads), viewedImages: [...value.audit.viewedImages] } };
+      const previous = state.failure?.inspection;
+      if (!previous && value.contentSubmissions <= Math.max(spec.recovery?.contentSubmissions ?? 0, state.failure?.contentSubmissions ?? 0))
+        throw new HttpError(400, "Inspection must advance the shared content submission count");
+      if (previous && canonical(previous) !== canonical(checkpoint))
+        throw new HttpError(409, "A successful inspection cannot be replaced after revealing conclusions");
+      if (!previous) this.validateBank(spec, value.audit.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
+      const evidenceBank = [...(previous ? state.failure!.evidenceBank! : value.audit.evidenceBank!)];
+      const revealed = this.services.agents.inspectCanonical(binding, checkpoint.value, value.audit);
+      const material = this.services.agents.projectMaterial(binding, revealed, evidenceBank);
+      this.validateBank(spec, evidenceBank, previous ? state.failure!.evidenceBank! : value.audit.evidenceBank!);
+      if (!previous) {
+        state.failure = { errors: [], contentSubmissions: value.contentSubmissions, fileErrors: state.failure?.fileErrors ?? 0,
+          repeatedErrors: 0, stopped: false, attemptId: value.attemptId, inspection: checkpoint, evidenceBank };
+        await this.save();
+      }
+      return { inspection: checkpoint, material, evidenceBank };
+    });
+  }
+  private validateAudit(spec: AttemptSpec, audit: ToolAudit): void {
+    this.validateBank(spec, audit?.evidenceBank);
+    const required = requiredReadRanges(spec, this.inputs);
+    if (
+      !audit ||
+      !Number.isSafeInteger(audit.calls) ||
+      audit.calls < 0 ||
+      !Number.isSafeInteger(audit.requiredReadCalls) || audit.requiredReadCalls < 0 ||
+      audit.requiredReadCalls > audit.calls ||
+      audit.requiredReadCalls > availableRequiredReadCalls(audit.traceReads, required) ||
+      audit.requiredReadCalls > requiredReadCallLimit(required, spec.policy.maxOutputChars, toolBudgetMetadataChars(spec.evaluation.toolNames)) ||
+      audit.calls - audit.requiredReadCalls > spec.policy.maxToolCalls + 3 * spec.policy.repairAttempts +
+        Number(spec.evaluation.fileSubmission || Boolean(spec.evaluation.inspectionSchema)) * (1 + spec.policy.repairAttempts) ||
+      !Array.isArray(audit.viewedImages) ||
+      !Array.isArray(audit.traceReads) ||
+      audit.traceReads.some((read) => !read ||
+        typeof read.candidate !== "string" || !spec.inputs.some((input) => input.name === read.candidate) ||
+        !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
+        (read.kind !== "text" && read.kind !== "json") || typeof read.path !== "string" ||
+        (read.kind === "json" && read.path !== "") ||
+        !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
+      !Array.isArray(audit.calculations) ||
+      !Array.isArray(audit.artifacts) ||
+      !validTableChecks(audit.tableChecks, spec.inputs)
+    )
+      throw new HttpError(400, "Invalid tool audit");
   }
   private async acceptExclusive(value: Submission): Promise<SubmissionReceipt> {
     const task = this.manifest.tasks.find((t) => t.id === value.taskId);
@@ -290,32 +395,22 @@ export class RunStore {
       spec.deadline < Date.now()
     )
       throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
-    const required = requiredReadRanges(spec, this.inputs);
-    if (
-      !value.audit ||
-      !Number.isSafeInteger(value.audit.calls) ||
-      value.audit.calls < 0 ||
-      !Number.isSafeInteger(value.audit.requiredReadCalls) || value.audit.requiredReadCalls < 0 ||
-      value.audit.requiredReadCalls > value.audit.calls ||
-      value.audit.requiredReadCalls > availableRequiredReadCalls(value.audit.traceReads, required) ||
-      value.audit.requiredReadCalls > requiredReadCallLimit(required, spec.policy.maxOutputChars) ||
-      value.audit.calls - value.audit.requiredReadCalls > spec.policy.maxToolCalls + spec.policy.repairAttempts ||
-      !Array.isArray(value.audit.viewedImages) ||
-      !Array.isArray(value.audit.traceReads) ||
-      value.audit.traceReads.some((read) => !read ||
-        typeof read.candidate !== "string" || !spec.inputs.some((input) => input.name === read.candidate) ||
-        !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
-        (read.kind !== "text" && read.kind !== "json") || typeof read.path !== "string" ||
-        (read.kind === "json" && read.path !== "") ||
-        !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
-      !Array.isArray(value.audit.calculations) ||
-      !Array.isArray(value.audit.artifacts) ||
-      !validTableChecks(value.audit.tableChecks, spec.inputs)
-    )
-      throw new HttpError(400, "Invalid tool audit");
+    this.validateAudit(spec, value.audit);
+    this.validateBank(spec, value.audit.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
+    if (spec.evaluation.inspectionSchema && !state.failure?.inspection)
+      throw new ValidationError([{ category: "decision", code: "inspection_required", path: "/",
+        message: "先调用 inspect_material 独立核查当前原材料；成功揭示判词后再提交最终核验。",
+        expected: { next_action: "inspect_material" } }]);
+    if (spec.evaluation.inspectionSchema && canonical(state.failure!.inspection) !== canonical(value.audit.inspection))
+      throw new ValidationError([{ category: "interruption", code: "inspection_checkpoint_mismatch", path: "/audit/inspection",
+        message: "Worker 未保留已经成功的原材料核查 checkpoint；须从 Host 已保存状态恢复，模型不需复制或修补 checkpoint。" }]);
+    if (spec.evaluation.inspectionSchema && (!Number.isSafeInteger(value.submissionStats?.contentSubmissions) ||
+      value.submissionStats!.contentSubmissions <= (state.failure?.contentSubmissions ?? 0) ||
+      value.submissionStats!.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts))
+      throw new HttpError(422, "材料核查与最终提交必须共用本次剩余内容预算，最终提交仍计一稿");
     let evaluation: unknown;
     try {
-      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task));
+      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
       this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {
@@ -381,6 +476,7 @@ export class RunStore {
       throw error;
     }
     this.attempts.delete(value.attemptId);
+    this.evidenceSources.delete(value.attemptId);
     return receipt;
   }
 }

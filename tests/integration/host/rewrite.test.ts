@@ -1,3 +1,4 @@
+import { canonicalEvidence } from "../../fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, readdir } from "node:fs/promises";
@@ -6,10 +7,10 @@ import type { AgentBackend, JsonObject, EvaluationLog } from "@eval/contracts";
 import { readJsonl, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
-import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult, prepareComparisonRewrites, writeRunState, createResultWriter } from "@eval/workflows/comparison";
+import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult, prepareComparisonRewrites } from "@eval/workflows/comparison";
 import type { TaskData, AttributionResult } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial, raw } from "../../fixtures/comparison.js";
+import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial, raw } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -21,7 +22,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
   const { directory, config, modelForStage } = await fixtureConfig(
     clustering ? Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]) : undefined, true, clustering,
   );
-  const expectedCalls = clustering ? 11 : 7;
+  const expectedCalls = clustering ? 12 : 8;
   const expectedRewrites = clustering ? 5 : 3;
   let calls = 0;
   const logged: EvaluationLog[] = [];
@@ -30,6 +31,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           calls++;
           if (options.spec.evaluation.id === "rewrite") {
             const input = parsedMaterial(options.spec) as { case?: Record<string, unknown>; items: { label: string; text: string }[] };
@@ -37,10 +39,12 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             assert(!input.items.some((item) => /候选[A-Z]/.test(item.label + item.text)));
           }
           const evaluation = taskResult(options.spec);
+          if (options.spec.evaluation.id === "rewrite")
+            for (const item of (evaluation as { rewrites: { text: string }[] }).rewrites) item.text += `（润色${calls}）`;
           if (clustering && options.spec.evaluation.id === "attribution") {
             const attribution = evaluation as AttributionResult;
             const material = parsedMaterial(options.spec) as { answer: { final_message_index: number; final_answer: string } };
-            const evidence = [{ message_index: material.answer.final_message_index, quote: material.answer.final_answer }];
+            const evidence = [canonicalEvidence(options.spec.inputs.find(input => input.name === "answer")!.id, material.answer.final_message_index, material.answer.final_answer)];
             attribution.is_correct = false;
             attribution.correctness_reason = "最终结果5与标准结果4不符。";
             attribution.correctness_evidence = evidence;
@@ -57,10 +61,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
             finding.problem = { component: ["模型自身推理"], label: "计算错误", definition: "计算与事实不符。" };
           }
-          const result = await options.execute(
-            "submit_evaluation",
-            draftFor(options.spec, evaluation),
-          );
+          const result = await submitFor(options, draftFor(options.spec, evaluation));
           assert.equal(result.isError, undefined, JSON.stringify(result));
         },
         async abort() {},
@@ -74,7 +75,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(plan.summary.rewrite_tasks, expectedRewrites);
     assert.deepEqual(
       plan.tasks.map((task) => task.stage).sort(),
-      ["criteria", "attribution", "attribution", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
+      ["criteria", "attribution", "attribution", "comparison", "comparison", "rewrite", "rewrite", "rewrite", ...(clustering ? ["clustering", "clustering", "rewrite", "rewrite"] : [])].sort(),
     );
     for (const task of plan.tasks.filter((task) => task.stage === "rewrite")) {
       assert.deepEqual(task.inputIds, {}, "rewrite tasks must not fetch input material");
@@ -112,14 +113,18 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     );
     const attributions = await rows(path.join(run, "results", "attribution.jsonl"));
     assert.equal(attributions.length, 2);
-    const comparisonTask = plan.tasks.find((task) => task.stage === "comparison")!;
+    const comparisonTask = plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     const dashboard = (await readTaskResult(run, comparisonTask.id))!.result!;
     const evaluations = dashboard.evaluations as Record<string, JsonObject>;
     for (const attribution of attributions) {
       const version = String(attribution.version);
       const source = attribution.evaluation as JsonObject;
       assert.deepEqual(evaluations[version].task_analysis, source.task_analysis);
-      assert.deepEqual(evaluations[version].correctness_evidence, source.correctness_evidence);
+      const formalEvidence = source.correctness_evidence as { evidence_id: string; message_index: number; quote: string }[];
+      assert(formalEvidence.every(item => item.evidence_id.startsWith("ev_")), "formal evidence keeps the program's canonical coordinate");
+      assert.deepEqual(evaluations[version].correctness_evidence,
+        formalEvidence.map(({ evidence_id: _coordinate, ...visible }) => visible),
+        "the dashboard displays source quotes while formal results retain canonical coordinates");
       const rewritten = evaluations[version].rewritten as { rewrites: { path: string; text: string }[] };
       assert(rewritten.rewrites.some((item) => item.path === "findings.0.text" && item.text.startsWith("精简：")));
     }
@@ -179,16 +184,15 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     const existing = await readRunState(run);
     const cmp = existing.receipts[comparisonTask.id]!;
     const cmpRewrite = existing.manifest.tasks.find((task) => task.stage === "rewrite" && (task.data as TaskData).rewriteOf?.taskId === comparisonTask.id)!;
-    const untouched = { id: "assessment.A.summary", text: "保留已有的其他文案" };
-    (existing.receipts[cmpRewrite.id]!.evaluation as { rewrites: { text: string }[] }).rewrites[0]!.text = "双方都完成了核心要求，未见共同遗漏。";
-    (existing.receipts[cmpRewrite.id]!.evaluation as { rewrites: { id: string; text: string }[] }).rewrites.push(untouched);
-    await createResultWriter(run, {})(existing);
-    await writeRunState(run, existing);
+    const originalPolish = structuredClone(existing.receipts[cmpRewrite.id]!);
     const prior = await rows(comparisonFile);
     const originalJudge = structuredClone(cmp.evaluation);
-    assert.equal((await prepareComparisonRewrites(run, { scope: "verdicts", mode: "refresh", all: true, apply: true })).count, 1);
-    assert(!((await readRunState(run)).receipts[cmpRewrite.id]));
-    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    const preferenceRefresh = await prepareComparisonRewrites(run, { scope: "verdicts", mode: "refresh", all: true, apply: true });
+    assert.equal(preferenceRefresh.count, 1);
+    const preferenceRewriteId = preferenceRefresh.selected[0]!.rewrite_task_id!;
+    assert.notEqual(preferenceRewriteId, cmpRewrite.id);
+    assert.deepEqual((await readRunState(run)).receipts[cmpRewrite.id]!.evaluation, originalPolish.evaluation);
+    await runEvaluation({ ...options, evaluatorVersion: "refreshed-polish", plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 1, "only one rewrite executes; accepted judgments stay accepted");
     const refreshed = await readRunState(run);
     assert.deepEqual(refreshed.receipts[comparisonTask.id]!.evaluation, originalJudge);
@@ -197,18 +201,28 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     const newSlot = (newRows[0]!.rewritten as any).rewrites.find((item: any) => item.id.startsWith("verdict."));
     assert.notEqual(newSlot.text, oldSlot.text);
     oldSlot.text = newSlot.text;
+    (prior[0]!.rewritten as JsonObject).evaluator_version = "refreshed-polish";
     assert.deepEqual(newRows[0], prior[0], "only the requested verdict reason changes");
-    assert.deepEqual((newRows[0]!.rewritten as any).rewrites.find((item: any) => item.id === untouched.id), untouched);
     assert.equal((refreshed.receipts[cmpRewrite.id]!.evaluation as any).rewrites.length, 1);
-    assert((await readFile(path.join(run, "task_summaries.md"), "utf8")).includes(untouched.text), "reports retain untouched presentation slots");
-    assert(!(await readFile(path.join(run, "state.json"), "utf8")).includes("核对了结果及具体交付"), "accepted rewrite text remains only in JSONL");
+    assert.deepEqual(refreshed.receipts[cmpRewrite.id]!.evaluation, originalPolish.evaluation);
+    assert.equal(refreshed.receipts[cmpRewrite.id]!.evaluatorVersion, originalPolish.evaluatorVersion);
+    assert((await readFile(path.join(run, "task_summaries.md"), "utf8")).includes(newSlot.text), "reports prefer the latest accepted presentation");
+    const refreshedCheckpoint = JSON.parse(await readFile(path.join(run, "state.json"), "utf8"));
+    assert.equal(refreshedCheckpoint.tasks[cmpRewrite.id].receipt.evaluation, undefined);
+    assert.equal(refreshedCheckpoint.tasks[preferenceRewriteId].receipt.evaluation, undefined);
+    assert.equal(refreshedCheckpoint.tasks[preferenceRewriteId].receipt.evaluationPatch, undefined, "latest text is read from JSONL");
+    assert.deepEqual(refreshedCheckpoint.tasks[cmpRewrite.id].receipt.evaluationPatch,
+      [{ path: ["rewrites", "0", "text"], value: (originalPolish.evaluation as any).rewrites[0].text }],
+      "the compact checkpoint retains exactly the overridden historical text");
     const refreshedValidation = await validateRun(run);
     assert.equal(refreshedValidation.valid, true, JSON.stringify(refreshedValidation));
 
     // Refresh table cells without changing a single accepted preference or judge field.
     const beforeItems = structuredClone(newRows);
-    assert.equal((await prepareComparisonRewrites(run, { scope: "items", mode: "refresh", all: true, apply: true })).count, 1);
-    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    const itemRefresh = await prepareComparisonRewrites(run, { scope: "items", mode: "refresh", all: true, apply: true });
+    assert.equal(itemRefresh.count, 1);
+    const itemRewriteId = itemRefresh.selected[0]!.rewrite_task_id!;
+    await runEvaluation({ ...options, evaluatorVersion: "refreshed-items", plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 2);
     const afterItems = await rows(comparisonFile);
     const cells = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => item.id.startsWith("comparison."));
@@ -216,10 +230,13 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert(cells.length > 0);
     assert(cells.every((item: any) => item.text.startsWith("精简：")));
     (afterItems[0]!.rewritten as any).rewrites = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => !item.id.startsWith("comparison."));
+    (beforeItems[0]!.rewritten as JsonObject).evaluator_version = "refreshed-items";
     assert.deepEqual(afterItems, beforeItems, "only comparison cell text is added");
     const itemState = await readRunState(run);
     assert.deepEqual(itemState.receipts[comparisonTask.id]!.evaluation, originalJudge);
-    assert.equal((itemState.manifest.tasks.find((task) => task.id === cmpRewrite.id)!.data as TaskData).comparisonRewriteScope, "items");
+    assert.equal((itemState.manifest.tasks.find((task) => task.id === itemRewriteId)!.data as TaskData).comparisonRewriteScope, "items");
+    assert.equal((itemState.manifest.tasks.find((task) => task.id === cmpRewrite.id)!.data as TaskData).comparisonRewriteScope,
+      (cmpRewrite.data as TaskData).comparisonRewriteScope, "historical task keeps its original scope");
     assert.equal((await validateRun(run)).valid, true);
     await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 2, "accepted cell rewrites are not rerun");
@@ -229,7 +246,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 2);
     const disabled = await readRunState(run);
-    assert.equal(disabled.manifest.tasks.filter((task) => task.stage === "rewrite").length, expectedRewrites);
+    assert.equal(disabled.manifest.tasks.filter((task) => task.stage === "rewrite").length, expectedRewrites + 2);
     assert.equal((await validateRun(run)).valid, true);
   } finally {
     await worker.close();

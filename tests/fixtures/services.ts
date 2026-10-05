@@ -7,7 +7,7 @@ import { attributionAgent } from "@eval/agents/attribution";
 import { rewriteAgent } from "@eval/agents/rewrite";
 import { clusteringAgent } from "@eval/agents/clustering";
 import { criteriaAgent } from "@eval/agents/criteria";
-import { criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeJudge } from "./comparison.js";
+import { criteriaResultForTask, criteriaTaskFor, emptyAudit, fakeEvaluatorVersion, fakeJudge } from "./comparison.js";
 import {
   comparisonWorkflow,
   comparisonRepository,
@@ -39,13 +39,17 @@ export const prepare = (
   task: PlannedTask,
   inputs: Record<string, unknown>,
   dependencies: Record<string, SubmissionReceipt>,
-) => agents.prepare(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies)));
+) => agents.prepare(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies), {
+  tasks: task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task],
+}));
 export const validateEvaluation = (
   task: PlannedTask,
   inputs: Record<string, unknown>,
   result: unknown,
   audit: ToolAudit,
   dependencies: Record<string, SubmissionReceipt | undefined>,
-) => agents.validate(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies)), result, audit);
+) => agents.validate(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies), {
+  tasks: task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task],
+}), result, audit);
 export const validateRun = (run: string) =>
   validateStoredRun(run, (binding, result, audit) => agents.validate(binding, result, audit));

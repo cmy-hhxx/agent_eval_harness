@@ -2,10 +2,10 @@ import type { TraceRead } from "./index.js";
 import { evidenceId } from "./evidence.js";
 
 const MAX_PAGE_CHARS = 16000;
-const BUDGET_METADATA_CHARS = 200;
 const SURROGATE_BOUNDARY_CHARS = 10;
 interface RequiredRange {
   target: TraceRead;
+  inputId: string;
   text: string;
 }
 
@@ -20,12 +20,13 @@ export function mergeRequiredReadRanges(ranges: readonly RequiredRange[]): Requi
       !Number.isSafeInteger(target.start) || !Number.isSafeInteger(target.end) || target.start < 0 || target.end < target.start ||
       typeof range.text !== "string" || target.end > range.text.length)
       throw new RangeError("Invalid required trace range");
+    evidenceId(range.inputId, target.message_index, "text", target.path, target.start, target.end);
     if (target.start === target.end) continue;
     const key = JSON.stringify([target.candidate, target.message_index, target.path]);
     const sourceRanges = grouped.get(key) ?? [];
-    if (sourceRanges[0] && sourceRanges[0].text !== range.text)
+    if (sourceRanges[0] && (sourceRanges[0].text !== range.text || sourceRanges[0].inputId !== range.inputId))
       throw new RangeError("Required trace ranges disagree on their source text");
-    sourceRanges.push({ target: { ...target }, text: range.text });
+    sourceRanges.push({ target: { ...target }, inputId: range.inputId, text: range.text });
     grouped.set(key, sourceRanges);
   }
   return [...grouped.values()].flatMap((sourceRanges) => {
@@ -55,12 +56,23 @@ function escapedCharacterCost(text: string, offset: number): number {
   return 1;
 }
 
-function pageLimit({ target, text }: RequiredRange, maxOutputChars: number): number {
+/** A shared serialized upper bound; any registered tool name may declare the writer capability. */
+export function toolBudgetMetadataChars(toolNames: readonly string[]): number {
+  const counter = Number.MAX_SAFE_INTEGER;
+  return JSON.stringify({ budget: {
+    exploration: { used: counter, remaining: counter },
+    required_reads: { used: counter, remaining: counter, covered: false },
+    draft_writes: { used: counter, remaining: counter, tools: toolNames },
+  } }).length + 1;
+}
+
+function pageLimit({ target, inputId, text }: RequiredRange, maxOutputChars: number, budgetMetadataChars: number): number {
   const longestOffset = text.length;
   const metadata = JSON.stringify({
     source: { kind: "text", path: target.path },
+    selection_path: target.path,
     evidence: [{
-      evidence_id: evidenceId(target.message_index, "text", target.path, longestOffset, longestOffset),
+      reference: { evidence_id: evidenceId(inputId, target.message_index, "text", target.path, longestOffset, longestOffset) },
       message_index: target.message_index,
       quote: "",
     }],
@@ -69,7 +81,7 @@ function pageLimit({ target, text }: RequiredRange, maxOutputChars: number): num
     total_chars: text.length,
     has_more: false,
   }).length;
-  const available = maxOutputChars - BUDGET_METADATA_CHARS - metadata - SURROGATE_BOUNDARY_CHARS;
+  const available = maxOutputChars - budgetMetadataChars - metadata - SURROGATE_BOUNDARY_CHARS;
   let pages = 0, offset = target.start;
   while (offset < target.end) {
     let end = offset, cost = 0;
@@ -89,7 +101,8 @@ function pageLimit({ target, text }: RequiredRange, maxOutputChars: number): num
 }
 
 /** Derive the same finite mandatory-page allowance in Host and Worker from actual source text. */
-export function requiredReadCallLimit(ranges: readonly { target: TraceRead; text: string }[], maxOutputChars: number): number {
+export function requiredReadCallLimit(ranges: readonly RequiredRange[], maxOutputChars: number, budgetMetadataChars: number): number {
   if (!Number.isSafeInteger(maxOutputChars) || maxOutputChars <= 0) throw new RangeError("Invalid tool output budget");
-  return mergeRequiredReadRanges(ranges).reduce((total, range) => total + pageLimit(range, maxOutputChars), 0);
+  if (!Number.isSafeInteger(budgetMetadataChars) || budgetMetadataChars <= 0) throw new RangeError("Invalid tool budget metadata allowance");
+  return mergeRequiredReadRanges(ranges).reduce((total, range) => total + pageLimit(range, maxOutputChars, budgetMetadataChars), 0);
 }

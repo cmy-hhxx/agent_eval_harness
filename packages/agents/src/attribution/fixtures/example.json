@@ -23,7 +23,23 @@
           "finish_seconds": null
         },
         "note": "完整回答已展示；其余材料可在 inputs/ 查看。",
-        "table_check_results": []
+        "table_check_results": [],
+        "norm_directory": [
+          {
+            "norm_index": 0,
+            "roles": [
+              "user"
+            ],
+            "requirement_index": null,
+            "evidence": [
+              {
+                "evidence_id": "ev_11111111-1111-4111-8111-111111111111_0_text_0_5_/content",
+                "message_index": 0,
+                "quote": "计算2+2"
+              }
+            ]
+          }
+        ]
       },
       "candidate_id": "11111111-1111-4111-8111-111111111111",
       "task_analysis": {
@@ -89,7 +105,8 @@
     "correctness_evidence": [
       {
         "message_index": 1,
-        "quote": "2+2=4"
+        "quote": "2+2=4",
+        "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
       }
     ],
     "task_analysis": {
@@ -123,7 +140,7 @@
     "summary": "直接给出正确结果。",
     "findings": [
       {
-        "finding_id": "f1",
+        "finding_id": "f0",
         "type": "strength",
         "dimension": "correctness",
         "stage": "final_answer",
@@ -133,7 +150,8 @@
         "evidence": [
           {
             "message_index": 1,
-            "quote": "2+2=4"
+            "quote": "2+2=4",
+            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
           }
         ],
         "assessment": {
@@ -155,7 +173,8 @@
         "evidence": [
           {
             "message_index": 1,
-            "quote": "2+2=4"
+            "quote": "2+2=4",
+            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
           }
         ]
       },
@@ -167,7 +186,8 @@
         "evidence": [
           {
             "message_index": 1,
-            "quote": "2+2=4"
+            "quote": "2+2=4",
+            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
           }
         ]
       },
@@ -179,7 +199,8 @@
         "evidence": [
           {
             "message_index": 1,
-            "quote": "2+2=4"
+            "quote": "2+2=4",
+            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
           }
         ]
       }

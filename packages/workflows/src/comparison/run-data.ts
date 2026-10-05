@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
   errorText,
   ValidationError,
   type RunManifest,
   type RunState,
+  type TaskState,
   type TaskPlan,
   type ValidationIssue,
 } from "@eval/contracts";
@@ -15,6 +17,21 @@ import { comparisonSlots } from "./commentary.js";
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
+
+/** Preparing unfinished work never refunds calls already charged to its UUID. */
+export function pendingTaskProgress(previous?: TaskState, materialChanged = false): TaskState {
+  const next: TaskState = { ...previous, status: "pending", attempts: previous?.attempts ?? 0 };
+  delete next.attemptId;
+  delete next.reason;
+  delete next.nextRetryAt;
+  if (materialChanged && next.failure) {
+    const { draft: _draft, evidenceBank: _bank, inspection: _inspection, ...paid } = next.failure;
+    next.failure = { ...paid,
+      errors: paid.errors.filter(issue => issue.code === "submission_ledger_unavailable"),
+      repeatedErrors: 0, stopped: false };
+  }
+  return next;
+}
 export async function loadRunInputs(
   manifest: RunManifest,
   issues?: ValidationIssue[],
@@ -139,7 +156,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       if (!selected.rewrite[target]) continue;
     }
     if (task.stage === "clustering" && !state.receipts[task.id] && !selected.clustering.enabled) continue;
-    if (state.receipts[task.id] || !tasks.has(task.id) || (task.data as TaskData).reviewOf ||
+    if (task.stage === "rewrite" || state.receipts[task.id] || !tasks.has(task.id) || (task.data as TaskData).reviewOf ||
       (task.data as TaskData).supersededBy || Object.values(task.dependencies).some((id) =>
         previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
   }
@@ -177,13 +194,15 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
   plan.summary.criteria_tasks = plan.tasks.filter((task) => task.stage === "criteria").length;
-  plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison").length;
+  plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length;
+  plan.summary.comparison_verification_tasks = plan.tasks.filter(task => !!(task.data as TaskData).verificationOf).length;
   plan.summary.rewrite_tasks = plan.tasks.filter((task) => task.stage === "rewrite").length;
   plan.summary.clustering_tasks = plan.tasks.filter((task) => task.stage === "clustering").length;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
     const selected = plan.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch);
     counts.attribution_tasks = selected.filter((task) => task.stage === "attribution").length;
-    counts.comparison_tasks = selected.filter((task) => task.stage === "comparison").length;
+    counts.comparison_verification_tasks = selected.filter(task => !!(task.data as TaskData).verificationOf).length;
+    counts.comparison_tasks = selected.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending).length;
   }
   const catalog = new Map((plan.catalog as Candidate[]).map((c) => [c.input_id, c]));
   for (const task of plan.tasks)
@@ -199,37 +218,44 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       old = state.manifest.states[task.id];
     if (!state.receipts[task.id] && (!old || (old.revision || 1) !== revision))
       state.manifest.states[task.id] = {
-        status: "pending",
-        attempts: old?.attempts || 0,
+        ...pendingTaskProgress(old, true),
         revision,
       };
   }
   state.manifest.config = selected;
   state.manifest.tasks = plan.tasks;
   if (selected.rewrite.comparison && selected.rewrite.comparisonItems) {
+    const bySource = new Map<string, typeof plan.tasks>();
     for (const task of plan.tasks) {
       const data = task.data as TaskData;
       if (data.rewriteOf?.stage !== "comparison") continue;
-      const source = state.receipts[data.rewriteOf.taskId];
+      const id = data.rewriteOf.taskId;
+      bySource.set(id, [...(bySource.get(id) ?? []), task]);
+    }
+    for (const [sourceId, rewrites] of bySource) {
+      const source = state.receipts[sourceId];
       if (!source) continue;
       const stored = source.exported && stageResult("comparison", source.exported.row).rewritten as
         { rewrites: { id: string; text: string }[] } | undefined;
       const filled = new Set(stored?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
       const missing = comparisonSlots(source.evaluation as ComparisonResult, "all").filter((item) => !filled.has(item.id));
-      const accepted = state.receipts[task.id];
-      data.comparisonRewriteScope = "all";
-      if (!missing.length) {
-        // A targeted refresh may own only part of the complete, merged source row.
-        if (accepted) data.rewriteSlotIds = (accepted.evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id);
-        continue;
-      }
-      data.rewriteSlotIds = missing.map((item) => item.id);
-      if (accepted) {
-        // Preserve accepted evaluations and stored prose; request only missing presentation slots.
-        delete state.receipts[task.id];
-        state.manifest.states[task.id] = { status: "pending", attempts: state.manifest.states[task.id].attempts };
-      }
+      const claimed = new Set(rewrites.filter(task => !state.receipts[task.id]).flatMap(task => {
+        const data = task.data as TaskData;
+        return data.rewriteSlotIds ?? comparisonSlots(source.evaluation as ComparisonResult,
+          data.comparisonRewriteScope ?? "verdicts").map(item => item.id);
+      }));
+      const slots = missing.filter(item => !claimed.has(item.id)).map(item => item.id);
+      if (!slots.length) continue;
+      // Accepted text work stays immutable; filling other slots is a distinct task.
+      const template = rewrites[0], data = template.data as TaskData;
+      const supplemental = { id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: sourceId },
+        data: { stage: "rewrite", candidates: {}, reference: null, rewriteOf: data.rewriteOf,
+          case: data.case, rewriteNames: data.rewriteNames, comparisonRewriteScope: "all", rewriteSlotIds: slots,
+        } satisfies TaskData };
+      plan.tasks.push(supplemental);
+      state.manifest.states[supplemental.id] = pendingTaskProgress();
     }
+    plan.summary.rewrite_tasks = plan.tasks.filter(task => task.stage === "rewrite").length;
   }
   state.manifest.inputCatalog = plan.catalog;
   state.manifest.inputs = Object.fromEntries(

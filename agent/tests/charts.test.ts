@@ -105,12 +105,34 @@ test("chart metadata and the accessible number table remain text without executi
   assert.equal(document.querySelectorAll("thead th[scope=col]").length, 2);
   assert.equal(document.querySelectorAll("tbody th[scope=row]").length, 2);
   const svg = document.querySelector("svg")!;
-  assert.equal(svg.getAttribute("width"), "600", "the SVG retains a pixel coordinate system instead of shrinking its text");
-  assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "600");
+  assert.equal(svg.getAttribute("width"), "560", "the bounded chart retains a pixel coordinate system instead of shrinking its text");
+  assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "560");
   assert.equal(document.querySelector('[data-chart-legend]'), null, 'a single series does not repeat a redundant legend');
   assert.equal(document.querySelector('footer')!.textContent, `来源：${attack}`);
   assert.equal(document.querySelector<HTMLElement>('footer')!.style.borderTop, '', 'the source has no extra footer divider');
   assert(!document.querySelector('figure')!.getAttribute('style')!.includes('border-radius'), 'the research frame has no rounded card');
+});
+
+test('short chart summaries stay compact without losing actual values, scope or source', () => {
+  const composition = render({ ...base, type: 'pie', title: '17 次运行中 6 次完成', scope: '17 次运行的当前状态',
+    categories: ['已完成', '中断'], series: [{ name: '运行', values: [6, 11] }] });
+  const ring = composition.querySelector('svg')!;
+  assert(Number(ring.getAttribute('width')) <= 144 && Number(ring.getAttribute('height')) <= 144, 'a two-category summary does not occupy a large plot');
+  assert.equal(composition.querySelector('[data-chart-total]')!.textContent, '17');
+  assert.deepEqual([...composition.querySelectorAll('[data-chart-composition-value]')].map(node => node.textContent), ['6', '11']);
+  assert.deepEqual([...composition.querySelectorAll('[data-chart-share]')].map(node => node.textContent), ['35.29%', '64.71%']);
+  assert(composition.querySelector('figcaption')!.textContent!.includes('17 次运行的当前状态'));
+  assert.equal(composition.querySelector('footer')!.textContent, `来源：${base.source}`);
+  const bars = render({ ...base, type: 'bar', categories: ['覆盖', '已完成', '中断', '未知'],
+    series: [{ name: '数量', values: [17, 6, 11, null] }] });
+  assert(Number(bars.querySelector('svg')!.getAttribute('height')) <= 200, 'four short rows fit a compact reading area');
+  assert.deepEqual([...bars.querySelectorAll('[data-chart-value]')].map(node => node.textContent), ['17', '6', '11']);
+  assert.equal(bars.querySelector('[data-chart-unknown]')!.textContent, '未知');
+  const wideTotal = render({ ...base, type: 'pie', series: [{ name: '数量', values: [60000, 60000] }] });
+  const total = wideTotal.querySelector('[data-chart-total]')!;
+  assert.equal(total.textContent, '120,000');
+  assert.equal(total.closest('[data-chart-denominator]'), null, 'even a six-digit total moves below the smaller ring when it would collide with its centre');
+  assert.match(wideTotal.querySelector('table')!.textContent!, /50% \(60,000\/120,000\)/);
 });
 
 test('comparison labels wrap without dropping text and identity colours do not track the winner or input order', () => {
@@ -245,6 +267,7 @@ test('a narrow trend reserves exact scientific labels and exposes keyboard and p
     assert(targets.every(target => target.getAttribute('tabindex') === '0' && Number(target.getAttribute('r')) >= 22), 'exact readings have keyboard and 44px pointer targets');
     const readout = dom.window.document.querySelector<HTMLElement>('[data-chart-readout]')!;
     assert.equal(readout.style.visibility, 'hidden');
+    assert.equal(readout.style.position, 'absolute', 'inactive point readings reserve no empty row under the plot');
     await act(async () => { targets[1].focus(); });
     assert.equal(readout.style.visibility, 'visible');
     assert.equal(readout.textContent, `2026-01-21 · A组Fast · ${label.textContent} 示例值`);
@@ -295,7 +318,7 @@ test('nearby representable line values retain finite geometry within the plot an
       const points = [...document.querySelectorAll('[data-chart-mark=point]')];
       for (const point of points) {
         const y = Number(point.getAttribute('cy'));
-        assert(Number.isFinite(y) && y >= 22 && y <= 226, 'a sub-ULP alignment never collapses the domain or moves a recorded point outside it');
+        assert(Number.isFinite(y) && y >= 22 && y <= 190, 'a sub-ULP alignment never collapses the domain or moves a recorded point outside the compact plot');
       }
       assert.notEqual(points[0].getAttribute('cy'), points[1].getAttribute('cy'), 'distinct stored numbers remain distinct positions');
       const ticks = [...document.querySelectorAll('[data-axis-tick]')].map(node => node.textContent);

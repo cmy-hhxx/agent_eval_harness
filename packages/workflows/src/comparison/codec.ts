@@ -3,7 +3,7 @@ import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState } 
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
-import { originalResultRow, stageResult, resultFile } from "./results.js";
+import { originalResultRow, stageResult, resultFile, acceptedRewrites } from "./results.js";
 
 type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
 type Patch = { path: string[]; value?: unknown }[];
@@ -18,7 +18,7 @@ type SavedTask = TaskState & {
   stage: Stage;
   inputIds: Record<string, string>;
   dependencies: Record<string, string>;
-  data: Omit<TaskData, "candidates" | "stage" | "revision">;
+  data: Omit<TaskData, "candidates" | "referenceCandidates" | "stage" | "revision">;
   receipt?: SavedReceipt;
 };
 export interface Checkpoint extends Omit<RunManifest, "tasks" | "states" | "inputs" | "inputCatalog"> {
@@ -81,7 +81,7 @@ function encodeState(state: RunState): Checkpoint {
   };
   const saved = Object.fromEntries(
     tasks.map((task) => {
-      const { candidates: _candidates, stage: _stage, revision, ...data } = task.data as TaskData;
+      const { candidates: _candidates, referenceCandidates: _peers, stage: _stage, revision, ...data } = task.data as TaskData;
       const value: SavedTask = {
         ...states[task.id],
         revision: revision || 1,
@@ -96,7 +96,7 @@ function encodeState(state: RunState): Checkpoint {
         const rewriteIds = task.stage === "rewrite"
           ? (evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id) : undefined;
         const reference = exported && {
-          ...(task.stage === "comparison" ? { comparisonId: exported.id } : { taskId: exported.id }),
+          ...(task.stage === "comparison" && !(task.data as TaskData).verificationPending && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
         };
         const evaluationPatch = exported
@@ -168,7 +168,7 @@ function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]
   }
   row = originalResultRow(data.stage, row);
   if (data.stage === "attribution") return row.evaluation;
-  if (data.stage === "criteria" || row.evaluation_type === "comparison_review") return row.result;
+  if (data.stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type))) return row.result;
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
 }
@@ -182,9 +182,9 @@ function decodeState(
   if (metadata.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
   if (typeof metadata.evaluatorVersion !== "string" || !metadata.evaluatorVersion.trim())
     throw new Error("运行状态缺少评测器版本");
-  const resultRow = (receipt: SavedReceipt, ref: ResultReference, rewrittenStage?: string) => {
+  const resultRow = (receipt: SavedReceipt, ref: ResultReference, rewritten?: { stage: string; evaluatorVersion: string }) => {
     const row = getRow(ref);
-    if ((rewrittenStage ? (stageResult(rewrittenStage, row).rewritten as JsonObject)?.evaluator_version : row.evaluator_version) !== receipt.evaluatorVersion)
+    if ((rewritten ? (stageResult(rewritten.stage, row).rewritten as JsonObject)?.evaluator_version : row.evaluator_version) !== (rewritten?.evaluatorVersion ?? receipt.evaluatorVersion))
       throw new Error("结果评测器版本与收据不一致：" + ref.id);
     return row;
   };
@@ -202,8 +202,13 @@ function decodeState(
       ...t.data,
       stage: t.stage,
       revision: t.revision || 1,
+      ...(t.stage === "attribution" && Object.keys(t.inputIds).some(key => key !== "answer") ? { referenceCandidates: Object.fromEntries(
+        Object.entries(t.inputIds).filter(([key]) => key !== "answer").map(([key, id]) => {
+          if (!candidates[id]) throw new Error("事实复核输入引用缺失：" + id);
+          return [key, candidates[id]];
+        })) } : {}),
       candidates: Object.fromEntries(
-        Object.entries(t.inputIds).map(([label, id]) => {
+        Object.entries(t.inputIds).filter(([label]) => t.stage !== "attribution" || label === "answer").map(([label, id]) => {
           if (!candidates[id]) throw new Error("输入引用缺失：" + id);
           return [t.stage === "attribution" ? "A" : label, candidates[id]];
         }),
@@ -222,6 +227,7 @@ function decodeState(
     usage,
     recordedAttempts,
   };
+  const savedReceipts = Object.fromEntries(Object.entries(savedTasks).map(([id, task]) => [id, task.receipt]));
   for (const task of plan) {
     const saved = savedTasks[task.id];
     if (!saved) throw new Error("任务状态缺失：" + task.id);
@@ -245,11 +251,15 @@ function decodeState(
       continue;
     }
     const data = task.data as TaskData;
-    if (data.stage === "criteria" || receipt.exported.file === "comparison-review.jsonl") {
+    if (data.stage === "criteria" || data.verificationPending || receipt.exported.file === "comparison-review.jsonl") {
       const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
+      if (data.verificationPending && (receipt.exported.taskId !== task.id || receipt.exported.file !== "comparison-draft.jsonl"))
+        throw new Error("比较草稿结果引用与任务不一致：" + task.id);
       const row = resultRow(receipt, { id: resultId, file: receipt.exported.file ?? resultFile(data.stage) });
-      if (row.task_id !== task.id || row.evaluation_type !== (data.stage === "criteria" ? "criteria" : "comparison_review"))
+      if (row.task_id !== task.id || row.evaluation_type !== (data.stage === "criteria" ? "criteria" : data.verificationPending ? "comparison_draft" : "comparison_review"))
         throw new Error("阶段结果身份不一致：" + task.id);
+      if (data.verificationPending && (row.comparison_id !== data.comparisonId || row.evaluator_version !== receipt.evaluatorVersion))
+        throw new Error("比较草稿来源身份不一致：" + task.id);
       const evaluation = restore(row.result, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
@@ -287,7 +297,8 @@ function decodeState(
       if (receipt.exported.taskId !== source.resultId)
         throw new Error("改写结果引用与源任务不一致：" + task.id);
       const file = receipt.exported.file || resultFile(source.stage);
-      const row = resultRow(receipt, { id: receipt.exported.taskId, file }, source.stage);
+      const latest = acceptedRewrites(plan, savedReceipts, source.taskId).filter(item => item.receipt.exported).at(-1)!.receipt;
+      const row = resultRow(receipt, { id: receipt.exported.taskId, file }, { stage: source.stage, evaluatorVersion: latest.evaluatorVersion });
       if (
         (row.task_id ?? row.comparison_id) !== source.resultId ||
         (data.rewriteScope

@@ -528,14 +528,20 @@ test('判决树四种正式路径与不交付路径可选择，按 Escape 恢复
   assert.equal(nextButton.getAttribute('aria-pressed'), 'true', '重复销毁旧控制器不能丢失当前实例，后续重挂载必须释放当前事件');
 });
 
-test('提示词快照对应当前评测器和资源，案例版本保持各自的正式记录', async t => {
+test('历史提示词快照保留独立版本、完整资源和来源定位，案例版本保持各自的正式记录', t => {
   const page = environment(t);
   const api = page.window.ReportPrompts;
-  const config = JSON.parse(await readFile(join(directory, '..', 'configs/host.json'), 'utf8'));
-  assert.equal(api.evaluatorVersion, config.evaluatorVersion);
+  assert.equal(api.evaluatorVersion, 'r74');
   assert.equal(page.window.EvaluationReportData.meta.evaluator, 'r73');
+  const groups = ['criteria', 'attribution', 'comparison', 'clustering', 'rewrite', 'shared', 'tools'];
+  assert.deepEqual([...new Set(api.data.map(resource => resource.group))], groups);
+  assert.equal(new Set(api.data.map(resource => resource.path)).size, api.data.length);
   for (const resource of api.data) {
-    assert.equal(resource.text, await readFile(join(directory, '..', resource.path), 'utf8'), `${resource.id} 与当前资源逐字一致`);
+    const [group, name] = resource.id.split('/');
+    assert.equal(group, resource.group);
+    assert.match(name, /^[a-z_]+$/);
+    assert.equal(resource.path, `packages/prompts/resources/${group}/${groups.slice(0, 5).includes(group) ? 'default/' : ''}${name}.md`);
+    assert.ok(resource.name.trim() && resource.text.trim(), `${resource.id} 保留历史原文和名称`);
   }
 });
 

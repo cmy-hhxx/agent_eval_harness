@@ -1,8 +1,10 @@
 # 可编排评测 Host
 
-TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Criteria、Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
+TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Criteria、Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；Clustering 支持自由主题组织、明确类维护和受预算限制的延期重归类。默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
 
 **当前契约优先：**项目快速迭代，不设置未确定的版本号；结果只记录显式声明的 `evaluatorVersion`，用于区分不同评测器产出的判词，不是 Schema 版本。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
+
+每场 Comparison 先生成草稿，再由独立上下文的 `verification` 从原材料核验；确认后进入正式对局。流程、未决处理与科学边界见[评测质量](docs/quality.md#流程与科学边界)，任务与预算见[数据契约](docs/contract.md#归因与判决)。
 
 ## Agent 开发导航
 
@@ -26,11 +28,9 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 
 ## 离线评测汇报
 
-开发预览打开 [evaluation-report/index.html](evaluation-report/index.html)。流程页展示 `eval-20261003-002216` 中 r73 的 10 个真实案例，包含 3 道客观题、7 道主观题。完整问句、验收清单、独立核验、逐项优劣与原判取舍直接展示在同一机制图；69 条正式比较归并为 60 行有来源的图内摘要，区分优势、专属约束、待核实项和已知疑点。支持下拉选择、前后翻页、连线高亮和仅改变代号的 A/B 交换，没有缩放或浮层。底部按 A/B 展示真实问题归因的组件与问题名称，保留待核实状态。判决规则使用完整决策树，提示词的关键摘录与 28 份原文通过七个入口阅读。实验页仅保留空结构，尚未启动新的对比实验。
+打开 [evaluation-report/index.html](evaluation-report/index.html) 查看流程案例、判决规则和提示词；执行 `node evaluation-report/build.mjs` 生成可单文件离线展示的 [report.html](evaluation-report/report.html)。源码、交互、构建与来源说明见[模块文档](evaluation-report/README.md)。
 
-源码、内容、样式和交互在 [evaluation-report](evaluation-report/README.md) 内独立维护。执行 `node evaluation-report/build.mjs` 将 4 份 CSS 和 8 份 JS 内联为 [evaluation-report/report.html](evaluation-report/report.html)，可单文件离线展示；页面不提供下载或导出入口，不在运行时读取业务文件。
-
-案例保留 r73 已接受评测记录的静态快照，不保证全部语义判断正确；提示词阅读器对应当前 r74。具体来源与已发现的案例问题见模块文档；更新时核对原始记录，不修改生产统计契约、输入或正式结果。
+案例与提示词分别保留 r73、r74 的历史快照，包含已知语义疑点；页面换位仅改变展示代号，不代表重新盲测或当前方法验证。更新快照须核对原始记录，保留生产统计契约、输入和正式结果。
 
 ## 最短运行路径
 

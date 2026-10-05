@@ -63,7 +63,7 @@ test("reference storage lists actual result files and keeps rewrites embedded in
     const section = [...document.querySelectorAll(".reference-section")].find((element: any) => element.querySelector("h2").textContent === "保存位置")!;
     const cells = new Map([...section.querySelectorAll("tbody tr")].map((row: any) => [row.cells[0].textContent, row.cells[1]]));
     assert.deepEqual([...cells.get("对比").querySelectorAll("code")].map((element: any) => element.textContent),
-      ["comparison.jsonl", "comparison-review.jsonl"].map((file) => `${reference.storage.runs}/<run-id>/results/${file}`));
+      ["comparison-draft.jsonl", "comparison.jsonl", "comparison-review.jsonl"].map((file) => `${reference.storage.runs}/<run-id>/results/${file}`));
     assert.equal(cells.get("改写").textContent, "源结果的 rewritten 字段");
     assert.equal(cells.get("改写").querySelector("code"), null, "rewrites do not have a separate result file");
     assert.match(document.querySelector("#reference-content").textContent, /该分片归因与涉及对局裁决完成/);

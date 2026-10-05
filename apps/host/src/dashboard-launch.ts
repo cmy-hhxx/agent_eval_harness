@@ -117,6 +117,7 @@ function summarize(summary: JsonObject) {
     valid_inputs: summary.valid_inputs,
     attribution_tasks: summary.attribution_tasks,
     comparison_tasks: summary.comparison_tasks,
+    comparison_verification_tasks: summary.comparison_verification_tasks,
     rewrite_tasks: summary.rewrite_tasks,
     clustering_tasks: summary.clustering_tasks,
     issues_count: (summary.issues as unknown[]).length,

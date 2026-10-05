@@ -5,9 +5,9 @@ import type { JsonObject, PlannedTask, SubmissionReceipt, Usage } from "@eval/co
 import { atomicWrite, exists, internalPath, locateRun, readJson, writeJson, writeJsonl } from "@eval/data";
 import { canonical } from "@eval/contracts";
 import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
-import { toRewrites, type RewriteResult, type Rewrites } from "@eval/agents/rewrite";
+import { toRewrites, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
-import { comparisonRow, stageResult } from "./results.js";
+import { comparisonRow, acceptedRewriteProjection } from "./results.js";
 import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
@@ -22,8 +22,6 @@ interface HeadToHeadStats {
 interface Standing {
   entered: number;
   meets_core: number;
-  first_tier: number;
-  tier_sum: number;
   wins: number;
   both_good: number;
   both_bad: number;
@@ -39,7 +37,7 @@ export function summarizeResults(
 ) {
   const cases = new Set([
     ...tasks
-      .filter((task) => task.stage === "attribution" || task.stage === "comparison")
+      .filter((task) => task.stage === "attribution" || task.stage === "comparison" && !(task.data as TaskData).verificationPending)
       .map((task) => {
         const c = taskCase(task.data as TaskData);
         return canonical([c.batch_id, c.case_id]);
@@ -62,8 +60,6 @@ export function summarizeResults(
     (standings[version] ??= {
       entered: 0,
       meets_core: 0,
-      first_tier: 0,
-      tier_sum: 0,
       wins: 0,
       both_good: 0,
       both_bad: 0,
@@ -83,13 +79,6 @@ export function summarizeResults(
       let core = coreCases.get(key);
       if (!core) coreCases.set(key, core = { ...identity, version, rows: [] });
       core.rows.push({ comparison_id: row.comparison_id, value: typeof assessment?.meets_core === "boolean" ? assessment.meets_core : null });
-      if (assessment) {
-        stats.first_tier += Number(
-          (row.ranking as string[][]).some((tier, index) => index === 0 && tier.includes(version)),
-        );
-        const tier = (row.ranking as string[][]).findIndex((tier) => tier.includes(version));
-        if (tier >= 0) stats.tier_sum += tier;
-      }
     }
     for (const [name, verdict] of Object.entries((row.verdicts as Record<string, JsonObject>) || {})) {
       const stats = (headToHead[name] ??= {
@@ -217,7 +206,6 @@ export function summarizeResults(
         ...stats,
         meets_core_rate: stats.core_decidable_count ? stats.meets_core / stats.core_decidable_count : null,
         core_decidable_coverage: stats.core_case_count ? stats.core_decidable_count / stats.core_case_count : null,
-        average_tier: stats.entered ? Math.round((stats.tier_sum / stats.entered) * 1e6) / 1e6 : null,
       },
     ]),
   );
@@ -246,7 +234,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const receipts = new Map<string, SubmissionReceipt>();
   const needsInputs = manifest.tasks.some(
-    (task) => task.stage === "comparison" && state.receipts[task.id] &&
+    (task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending && state.receipts[task.id] &&
       (state.receipts[task.id].evaluation as ComparisonResult).status === "decided" && !state.receipts[task.id].exported,
   );
   const inputs = needsInputs ? await loadRunInputs(manifest) : {};
@@ -263,12 +251,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   for (const task of manifest.tasks) {
     if (task.stage !== "rewrite") continue;
     const source = (task.data as TaskData).rewriteOf!;
-    const receipt = receipts.get(task.id);
-    const exported = receipt?.exported ?? receipts.get(source.taskId)?.exported;
-    const stored = exported ? stageResult(source.stage, exported.row).rewritten as RewriteResult | undefined : undefined;
-    const evaluation = receipt?.evaluation as RewriteResult | undefined;
-    if (stored || evaluation)
-      commentaryBySource.set(source.taskId, toRewrites({ rewrites: [...(stored?.rewrites ?? []), ...(evaluation?.rewrites ?? [])] }));
+    if (commentaryBySource.has(source.taskId)) continue;
+    const projection = acceptedRewriteProjection(state, source.taskId);
+    if (projection) commentaryBySource.set(source.taskId, toRewrites(projection.rewritten));
   }
   const commentary: CommentaryLookup = { of: (sourceTaskId) => commentaryBySource.get(sourceTaskId || "") };
   // Persist accepted stages before compacting the ledger, including checkpoint-only recovery.
@@ -295,7 +280,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       reason: manifest.states[task.id]?.reason || null,
     });
     // Rewrite and clustering receipts feed the report view, not the per-case result sections.
-    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria") continue;
+    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || data.verificationPending) continue;
     if (!receipt) {
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
@@ -428,7 +413,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         if (trace?.tools.length)
           markdown.push(`工具回溯：${trace.tools.join("、")}（${trace.confidence}）`, "");
         for (const evidence of finding.evidence)
-          markdown.push(`> 原始消息 #${evidence.message_index}：${evidence.quote.replaceAll("\n", " ")}`, "");
+          markdown.push(`> ${evidence.source_input_id ? "事实核验来源 " + evidence.source_input_id + " " : ""}原始消息 #${evidence.message_index}：${evidence.quote.replaceAll("\n", " ")}`, "");
       }
     }
     markdown.push(
@@ -549,7 +534,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   );
   const resultArtifacts = ["results/attribution.jsonl"];
   if (manifest.tasks.some((task) => task.stage === "criteria" && receipts.has(task.id))) resultArtifacts.push("results/criteria.jsonl");
-  if (manifest.tasks.some((task) => task.stage === "comparison" &&
+  if (manifest.tasks.some((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending &&
     (receipts.get(task.id)?.evaluation as ComparisonResult | undefined)?.status === "needs_review")) resultArtifacts.push("results/comparison-review.jsonl");
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
   if (manifest.tasks.some((task) => task.stage === "clustering" && receipts.has(task.id)))
@@ -621,7 +606,7 @@ export async function writeOverview(
   );
   const skipped = (summary.planned as JsonObject).skipped_groups;
   const headToHead = summary.head_to_head as Record<string, HeadToHeadStats>;
-  const standings = summary.standings as Record<string, Standing & { meets_core_rate: number | null; average_tier: number | null }>;
+  const standings = summary.standings as ReturnType<typeof summarizeResults>["standings"];
   const problemLibrary = (summary.problem_library || {}) as Record<string, ProblemLibraryStats>;
   const batches = Object.entries(
     (summary.by_batch || {}) as Record<
@@ -648,11 +633,11 @@ export async function writeOverview(
         : "") +
       `\n\n累计 Token：${(summary.tokens as Usage).totalTokens}；缺少最终用量的尝试：${summary.attempts_without_final_metrics}。[统计与缓存命中](stats.json)\n\n` +
       "## 模型总览\n\n" +
-      "| 版本 | 参赛 | 完成核心要求 | 首位 | 平均层 | 胜出 | 都好 | 都差 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n" +
+      "| 版本 | 对局数 | 核心可判题数 | 完成核心要求 | 核心待定题数 | 胜出 | 都好 | 都差 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n" +
       Object.entries(standings)
         .map(
           ([version, s]) =>
-            `| ${cell(version)} | ${s.entered} | ${s.meets_core} | ${s.first_tier} | ${s.average_tier ?? "-"} | ${s.wins} | ${s.both_good} | ${s.both_bad} |`,
+            `| ${cell(version)} | ${s.entered} | ${s.core_decidable_count} | ${s.meets_core} | ${s.core_undetermined} | ${s.wins} | ${s.both_good} | ${s.both_bad} |`,
         )
         .join("\n") +
       (Object.keys(problemLibrary).length

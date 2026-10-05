@@ -1,1 +1,1 @@
-在本任务工作目录执行 Python 或 shell。当前任务可用材料位于 inputs/。可以写脚本和中间文件；outputs 声明需要保存的产物。
+在本任务工作目录执行 Python 或 shell，用于计算、定位材料、写脚本和中间文件。当前任务可用材料位于 inputs/；用相对文件名保存中间产物，outputs 声明需要保存的产物。评测和首查 JSON 直接交给当前阶段的内容工具，程序负责落盘。代码输出不生成证据引用；定位到消息和字段后，用 read_trace 或 search_trace 取得程序提供的 reference，提交只选择已提供的 evidence_index，不在脚本中拼接坐标或虚构编号。执行非零退出、超时、取消或声明产物读取失败均返回错误标记；反馈保留 exit_code、stdout、stderr，产物错误按 outputs 的索引单列，按真实错误修正计算或探索。

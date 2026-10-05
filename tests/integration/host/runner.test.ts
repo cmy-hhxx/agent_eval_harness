@@ -1,18 +1,20 @@
-import { draftFor, invalidResult, taskResult } from "../../fixtures/comparison.js";
+import { submitFor, draftFor, invalidDraft, taskResult } from "../../fixtures/comparison.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import type { AgentBackend, AttemptRecord, JsonObject } from "@eval/contracts";
 import { createFileLogger, exists, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/comparison";
 import { startWorker } from "@eval/runtime/worker";
+import { body, listen } from "@eval/runtime/http";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../../fixtures/services.js";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
-import { fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
+import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
 
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
@@ -28,6 +30,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     async createSession(options) {
       return {
         async run() {
+          await inspectFor(options);
           calls++;
           options.onEvent({
             type: "message_end",
@@ -42,13 +45,10 @@ test("two workers execute dependency graph, archive receipts and reuse only same
               },
             },
           });
-          const submitted = await options.execute(
-            "submit_evaluation",
-            draftFor(options.spec, taskResult(options.spec)),
-          );
+          const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
           assert.equal(submitted.terminate, true);
-          if ("decision_basis" in (options.spec.evaluation.outputSchema.properties as object)) {
+          if (options.spec.evaluation.profile === "verification") {
             const file = path.join(
               config.output.path,
               options.spec.runId,
@@ -95,23 +95,23 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     await assert.rejects(runEvaluation({ ...options, evaluatorVersion: " " }), /evaluatorVersion/);
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls, 7);
+    assert.equal(calls, 9);
     const businessLog = path.join(directory, "log/evaluation.log");
     const logged = (await readFile(businessLog, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.equal(logged.length, 7);
+    assert.equal(logged.length, 9);
     assert.equal(logged.filter((row) => row.stage === "criteria").length, 1);
     assert.equal(logged.filter((row) => row.stage === "attribution").length, 4);
-    assert.equal(logged.filter((row) => row.stage === "comparison").length, 2);
+    assert.equal(logged.filter((row) => row.stage === "comparison").length, 4);
     assert.equal(await readFile(path.join(directory, "log/runtime.log"), "utf8"), "");
     assert.deepEqual(summary.tokens, {
-      input: 70,
-      output: 35,
-      cacheRead: 210,
-      cacheWrite: 70,
-      totalTokens: 385,
+      input: 90,
+      output: 45,
+      cacheRead: 270,
+      cacheWrite: 90,
+      totalTokens: 495,
     });
     assert.deepEqual(summary.cache, {
       model_input: { hit_rate: 0.6 },
@@ -182,15 +182,15 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.equal((await readJson(path.join(run, "stats.json"))).validation, undefined);
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：尚未校验/);
     await runEvaluation(options);
-    assert.equal(calls, 7, "same-run resume repeats none of the accepted five-stage tasks");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 7);
+    assert.equal(calls, 9, "same-run resume repeats none of the accepted five-stage tasks");
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 9);
     const cached = await runEvaluation({ ...options, runId: "second" });
-    assert.equal(calls, 14, "a new run must evaluate independently");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 14);
+    assert.equal(calls, 18, "a new run must evaluate independently");
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 18);
     assert.deepEqual(cached.cache, {
       model_input: { hit_rate: 0.6 },
     });
-    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 385);
+    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 495);
     assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
   } finally {
     await Promise.all(workers.map((w) => w.close()));
@@ -208,8 +208,9 @@ test("different runs and batches evaluate independently", async () => {
       async createSession(options) {
         return {
           async run() {
+            await inspectFor(options);
             calls++;
-            const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
             assert.equal(result.isError, undefined);
           },
           async abort() {},
@@ -242,7 +243,7 @@ test("different runs and batches evaluate independently", async () => {
         plan: await buildPlan(config),
       });
       assert.equal(stats.completed_comparisons, 1);
-      assert.equal(calls, (index + 1) * 4, "another batch must invoke the evaluator even for the same question");
+      assert.equal(calls, (index + 1) * 5, "another batch must invoke the evaluator even for the same question");
     }
     config.inputs.batches = days;
     const combined = await runEvaluation({
@@ -250,7 +251,7 @@ test("different runs and batches evaluate independently", async () => {
       runId: "combined",
       plan: await buildPlan(config),
     });
-    assert.equal(calls, 16);
+    assert.equal(calls, 20);
     assert.equal(combined.completed_comparisons, 2);
     assert.deepEqual(Object.keys(combined.by_batch as object), days);
     assert.equal((await validateRun(path.join(config.output.path, "combined"))).valid, true);
@@ -268,8 +269,9 @@ for (const missingArtifact of [false, true])
       async createSession(options) {
         return {
           async run() {
+            await inspectFor(options);
             if (options.spec.evaluation.id === "criteria") {
-              const submitted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+              const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
               assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
               return;
             }
@@ -288,10 +290,8 @@ for (const missingArtifact of [false, true])
               const artifacts = path.join(directory, "worker", options.spec.attemptId, "artifacts");
               await rm(path.join(artifacts, (await readdir(artifacts))[0]));
             }
-            const invalid = invalidResult(options.spec) as any;
-            invalid.findings[0].evidence[0].quote = "invented";
             assert.equal(
-              (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
+              (await submitFor(options, invalidDraft(options.spec))).isError,
               true,
             );
             throw new Error("Agent ended without an accepted submission", {
@@ -328,7 +328,7 @@ for (const missingArtifact of [false, true])
         workerUrls: [worker.url],
       });
       assert.equal(summary.completed_comparisons, 0);
-      assert.deepEqual(summary.task_statuses, { succeeded: 1, failed: 2, blocked: 1 });
+      assert.deepEqual(summary.task_statuses, { succeeded: 1, failed: 2, blocked: 2 });
       const runtimeLog = (await readFile(path.join(directory, "log/runtime.log"), "utf8"))
         .trim()
         .split("\n")
@@ -388,11 +388,9 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       workdirs.add(options.workdir);
       return {
         async run() {
+          await inspectFor(options);
           calls[engine]++;
-          await options.execute(
-            "submit_evaluation",
-            draftFor(options.spec, taskResult(options.spec)),
-          );
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {},
         async dispose() {},
@@ -426,8 +424,8 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       workerUrls: workers.map((w) => w.url),
     });
     assert.equal(summary.completed_comparisons, 2);
-    assert.deepEqual(calls, { pi: 3, prime: 4 });
-    assert.equal(workdirs.size, 7);
+    assert.deepEqual(calls, { pi: 4, prime: 5 });
+    assert.equal(workdirs.size, 9);
     const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
       "report.md",
@@ -457,12 +455,13 @@ test("stopping concurrent attempts never trips the stage circuit and the same ru
       let release = () => {};
       return {
         async run() {
+          await inspectFor(options);
           if (!resume) {
             const stopped = new Promise<void>((resolve) => { release = resolve; });
             if (++started === 2) controller.abort();
             await stopped;
           } else {
-            const submitted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+            const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
             assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
           }
         },
@@ -502,11 +501,12 @@ for (const stop of [false, true]) test(`Host persists its actual retry deadline 
   let calls = 0, deadline = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     return { async run() {
+      await inspectFor(options);
       if (++calls === 1) options.onEvent({ type: "message_end", message: {
         role: "assistant", stopReason: "error", errorMessage: "Connection error.",
       } });
       else {
-        const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         assert.equal(result.isError, undefined, JSON.stringify(result));
       }
     }, async abort() {}, async dispose() {} };
@@ -534,18 +534,21 @@ for (const stop of [false, true]) test(`Host persists its actual retry deadline 
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const exhausted of [false, true]) test(`SDK malformed Responses arguments ${exhausted ? "stop at" : "recover within"} the configured retry budget`, async () => {
+for (const exhausted of [false, true]) test(`completed SDK malformed arguments ${exhausted ? "stop at" : "recover within"} the shared content budget in one Host attempt`, async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
+  const contentBudget = 1 + config.execution.repairAttempts;
+  assert.equal(contentBudget, 3, "the default permits one draft and two repairs");
   let targetId: string | undefined, targetCalls = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     targetId ??= options.spec.taskId;
     return { async run() {
+      await inspectFor(options);
       if (options.spec.taskId === targetId && (++targetCalls === 1 || exhausted)) {
-        options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error",
-          errorMessage: "Invalid OpenAI Responses tool arguments: submit_evaluation (call_retry|fc_retry); expected complete JSON object" } });
+        options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error", rawStopReason: "completed",
+          errorMessage: `Invalid OpenAI Responses tool arguments: ${options.spec.evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation"} (call_retry|fc_retry); expected complete JSON object` } });
         return;
       }
-      const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       assert.equal(result.isError, undefined, JSON.stringify(result));
     }, async abort() {}, async dispose() {} };
   } }, path.join(directory, "worker"));
@@ -555,15 +558,19 @@ for (const exhausted of [false, true]) test(`SDK malformed Responses arguments $
       plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
       policy: config.execution, concurrency: 1, retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url] });
     const saved = await readRunState(path.join(config.output.path, runId));
-    assert.equal(targetCalls, 2, "one initial request and exactly one retry; no unbounded SDK fallback");
-    assert.equal(saved.manifest.states[targetId!].attempts, 2);
+    assert.equal(targetCalls, exhausted ? contentBudget : 2, "invalid arguments consume the same configured content allowance");
+    assert.equal(saved.manifest.states[targetId!].attempts, 1, "parameter feedback continues the same session without a transport attempt");
     assert.equal(saved.manifest.states[targetId!].status, exhausted ? "failed" : "succeeded");
     assert.equal(summary.completed_comparisons, exhausted ? 0 : 1);
     if (exhausted) {
       assert.equal(saved.receipts[targetId!], undefined);
-      assert.equal(saved.manifest.states[targetId!].failure?.errors[0].category, "transport");
-      assert.equal(saved.manifest.states[targetId!].failure?.contentSubmissions, 0, "incomplete arguments never reach content validation");
-    } else assert(saved.receipts[targetId!], "only the valid retry produces an accepted evaluation");
+      assert.equal(saved.manifest.states[targetId!].failure?.errors[0].code, "tool_arguments_invalid");
+      assert.equal(saved.manifest.states[targetId!].failure?.contentSubmissions, contentBudget);
+      assert.equal(saved.manifest.states[targetId!].failure?.draft, undefined, "unknown malformed JSON cannot manufacture a draft");
+    } else {
+      assert(saved.receipts[targetId!], "only the valid resubmission produces an accepted evaluation");
+      assert.equal(saved.receipts[targetId!].submissionStats?.contentSubmissions, 2);
+    }
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -580,12 +587,13 @@ for (const reason of ["no-submission", "idle"] as const)
         if (targeted) starts.push(Date.now());
         let release = () => {};
         return { async run() {
+          await inspectFor(options);
           if (targeted) targetRuns++;
           if (fail) {
             if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
             return;
           }
-          const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+          const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           assert.equal(result.isError, undefined, JSON.stringify(result));
         }, async abort() { release(); }, async dispose() {} };
       } }, path.join(directory, "worker"));
@@ -632,25 +640,32 @@ for (const reason of ["no-submission", "idle"] as const)
 test("a repair attempt that makes no submission retains its draft and counters for explicit resume", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   let targetId: string | undefined, attempts = 0, resumed = false;
+  let freshVerificationStarted = false;
   let draft: unknown;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     if (options.spec.evaluation.id === "attribution") targetId ??= options.spec.taskId;
     const targeted = options.spec.taskId === targetId;
     if (targeted) attempts++;
     return { async run() {
+      await inspectFor(options);
       if (targeted && !resumed) {
         if (attempts === 1) {
-          draft = draftFor(options.spec, invalidResult(options.spec));
-          assert.equal((await options.execute("submit_evaluation", draft)).isError, true);
-        } else assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draft);
+          draft = invalidDraft(options.spec);
+          assert.equal((await submitFor(options, draft)).isError, true);
+        } else assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
         return;
       }
       if (targeted) {
+        assert.equal(options.spec.policy.repairAttempts, 1, "the resumed task has two submissions left within its cumulative cap of three");
         assert.deepEqual(options.spec.recovery?.draft, draft);
         assert.equal(options.spec.recovery?.contentSubmissions, 1);
-        assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), draft);
+        assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
       }
-      const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      if (resumed && options.spec.evaluation.inspectionSchema) {
+        freshVerificationStarted = true;
+        assert.equal(options.spec.policy.repairAttempts, 2, "a fresh verification task retains all three submissions");
+      }
+      const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       assert.equal(result.isError, undefined, JSON.stringify(result));
     }, async abort() {}, async dispose() {} };
   } }, path.join(directory, "worker"));
@@ -672,8 +687,178 @@ test("a repair attempt that makes no submission retains its draft and counters f
     const complete = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
     assert.equal(complete.completed_comparisons, 1);
     assert.equal(attempts, 3);
+    assert.equal(freshVerificationStarted, true);
     assert.deepEqual((await readRunState(path.join(config.output.path, options.runId))).receipts[targetId!].submissionStats,
       { contentSubmissions: 2, fileErrors: 0 });
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+for (const interruption of ["content", "transport"] as const)
+  test(`automatic ${interruption} attempts and explicit resume share the cumulative task content cap`, async () => {
+    const input = raw(`shared-content-${interruption}`, null);
+    const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
+    config.execution.repairAttempts = 3;
+    const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "attribution")!;
+    let attempts = 0, submissions = 0, resumed = false;
+    const repairBudgets: number[] = [];
+    const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+      const targeted = options.spec.taskId === target.id;
+      if (targeted) { attempts++; repairBudgets.push(options.spec.policy.repairAttempts); }
+      return { async run() {
+        await inspectFor(options);
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings?: { importance: string }[] };
+        if (!targeted || resumed) {
+          if (targeted) {
+            assert.equal(options.spec.recovery?.contentSubmissions, 4, "resume preserves historical submission costs");
+            submissions++;
+          }
+          const accepted = await submitFor(options, draft);
+          assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+          return;
+        }
+        const count = attempts === 1 ? 3 : 1;
+        for (let index = 0; index < count; index++) {
+          draft.findings![0].importance = `invalid-${++submissions}`;
+          const rejected = await submitFor(options, draft);
+          assert.equal(rejected.isError, true, "changing the actual error does not trip the identical-error stop");
+        }
+        if (interruption === "transport" && attempts === 1) throw new Error("Connection error.");
+      }, async abort() {}, async dispose() {} };
+    } }, path.join(directory, "worker"));
+    try {
+      const runId = `shared-content-${interruption}`;
+      const options = { ...services, runId, output: config.output, config, plan,
+        modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+        policy: config.execution, concurrency: 1, retries: 3, retryDelaySeconds: 0, workerUrls: [worker.url] };
+      const failed = await runEvaluation(options);
+      assert.equal(failed.completed_comparisons, 0);
+      const run = path.join(config.output.path, runId), saved = await readRunState(run);
+      assert.equal(attempts, 2, "exhausting content stops automatic attempts even when transport retries remain");
+      assert.equal(submissions, 4, "the initial submission and three repairs are shared across automatic attempts");
+      assert.deepEqual(repairBudgets, [3, 0], "the second attempt gets only the final remaining submission");
+      assert.equal(saved.manifest.states[target.id].failure!.contentSubmissions, 4);
+      assert.equal(saved.manifest.states[target.id].failure!.repeatedErrors, 1);
+      assert.equal(saved.receipts[target.id], undefined);
+      resumed = true;
+      const stillFailed = await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+      assert.equal(stillFailed.completed_comparisons, 0);
+      assert.equal(attempts, 2, "an exhausted task never creates a session on same-budget resume");
+      const retained = await readRunState(run);
+      assert.deepEqual(retained.manifest.states[target.id].failure, saved.manifest.states[target.id].failure,
+        "resume preserves the exhausted draft, errors and cumulative count");
+      config.execution.repairAttempts = 4;
+      const complete = await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+      assert.equal(complete.completed_comparisons, 1);
+      assert.equal(attempts, 3);
+      assert.deepEqual(repairBudgets, [3, 0, 0], "raising the cumulative cap grants exactly one remaining submission");
+      const accepted = (await readRunState(run)).receipts[target.id];
+      assert.equal(accepted.submissionStats!.contentSubmissions, 5, "the cost ledger includes the previous invocation");
+      assert.equal((await validateRun(run)).valid, true);
+    } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+  });
+
+test("an unknown final submission ledger stops automatic retries and permits explicit same-run resume", async (t) => {
+  const input = raw("unknown-content-ledger", null);
+  const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
+  config.execution.repairAttempts = 3;
+  const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "attribution")!;
+  let attempts = 0, submissions = 0, resumed = false, hideLedger = false;
+  let failedAttemptId: string | undefined;
+  const repairBudgets: number[] = [];
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    const targeted = options.spec.taskId === target.id;
+    if (targeted) { attempts++; repairBudgets.push(options.spec.policy.repairAttempts); }
+    return { async run() {
+      await inspectFor(options);
+      const draft = draftFor(options.spec, taskResult(options.spec)) as { findings?: { importance: string }[] };
+      if (!targeted || resumed || attempts > 1) {
+        if (targeted) submissions++;
+        const accepted = await submitFor(options, draft);
+        assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+        return;
+      }
+      failedAttemptId = options.spec.attemptId;
+      for (let index = 0; index < 3; index++) {
+        draft.findings![0].importance = `invalid-${++submissions}`;
+        assert.equal((await submitFor(options, draft)).isError, true);
+      }
+      submissions++;
+      const unacknowledged = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(unacknowledged.isError, true);
+      assert.match(unacknowledged.content[0]!.text!, /HTTP 503/);
+      hideLedger = true;
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new URL(String(url));
+    if (!resumed && init?.method === "POST" && request.pathname === "/api/submissions") {
+      const submission = JSON.parse(String(init.body));
+      if (submission.taskId === target.id && submission.submissionStats.contentSubmissions === 4)
+        return Response.json({ error: "HTTP 503 submission connection unavailable" }, { status: 503 });
+    }
+    if (!resumed && hideLedger && request.origin === worker.url &&
+      [ `/api/attempts/${failedAttemptId}`, `/api/attempts/${failedAttemptId}/record` ].includes(request.pathname) &&
+      (!init?.method || init.method === "GET"))
+      return Response.json({ error: "HTTP 503 final ledger unavailable" }, { status: 503 });
+    return fetch(url, init);
+  });
+  try {
+    const options = { ...services, runId: "unknown-content-ledger", output: config.output, config, plan,
+      modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 3, retryDelaySeconds: 0, workerUrls: [worker.url],
+      signal: AbortSignal.timeout(20_000) };
+    const failed = await runEvaluation(options);
+    assert.equal(attempts, 1, "an unobservable fourth submission cannot create an automatic fifth submission");
+    assert.equal(submissions, 4);
+    assert.equal(failed.completed_comparisons, 0);
+    const run = path.join(config.output.path, options.runId), saved = await readRunState(run);
+    const state = saved.manifest.states[target.id];
+    assert.equal(state.failure?.contentSubmissions, 3, "only acknowledged checkpoints are recorded as known costs");
+    assert(state.failure?.errors.some((issue) => issue.code === "submission_ledger_unavailable"));
+    assert.match(state.reason!, /无法确认剩余内容额度/);
+    assert.equal(saved.receipts[target.id], undefined);
+    resumed = true;
+    const complete = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
+    assert.equal(complete.completed_comparisons, 1);
+    assert.equal(attempts, 2);
+    assert.deepEqual(repairBudgets, [3, 0], "explicit resume spends only the allowance left after acknowledged historical submissions");
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a rejected worker start with no registered attempt can retry without spending content", async (t) => {
+  const input = raw("rejected-worker-start", null);
+  const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
+  const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "criteria")!;
+  let starts = 0, sessions = 0;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    if (options.spec.taskId === target.id) sessions++;
+    return { async run() {
+      await inspectFor(options);
+      const accepted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new URL(String(url));
+    if (request.origin === worker.url && request.pathname === "/api/attempts" && init?.method === "POST" &&
+      JSON.parse(String(init.body)).taskId === target.id && ++starts === 1)
+      return Response.json({ error: "Worker busy" }, { status: 409 });
+    return fetch(url, init);
+  });
+  try {
+    const runId = "rejected-worker-start";
+    const complete = await runEvaluation({ ...services, runId, output: config.output, config, plan,
+      modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url],
+      signal: AbortSignal.timeout(20_000) });
+    assert.equal(starts, 2, "explicit pre-execution rejection preserves the normal transport retry");
+    assert.equal(sessions, 1, "the rejected attempt never starts an agent session");
+    assert.equal(complete.completed_comparisons, 1);
+    const saved = await readRunState(path.join(config.output.path, runId));
+    assert.equal(saved.manifest.states[target.id].attempts, 2);
+    assert.equal(saved.receipts[target.id].submissionStats?.contentSubmissions, 1);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -684,11 +869,12 @@ test("a task deadline without a submission does not consume the automatic retry 
     targetId ??= options.spec.taskId;
     let release = () => {};
     return { async run() {
+      await inspectFor(options);
       if (options.spec.taskId === targetId) {
         attempts++;
         await new Promise<void>((resolve) => { release = resolve; });
       } else {
-        const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         assert.equal(result.isError, undefined, JSON.stringify(result));
       }
     }, async abort() { release(); }, async dispose() {} };
@@ -724,6 +910,7 @@ for (const debug of [false, true])
         let release: () => void = () => {};
         return {
           async run() {
+            await inspectFor(options);
             calls[id] = (calls[id] || 0) + 1;
             if (Object.keys(calls).length === 2 && !resume) {
               controller.abort();
@@ -731,7 +918,7 @@ for (const debug of [false, true])
                 release = r;
               });
             } else {
-              const submitted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+              const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
               assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
               assert.equal(submitted.terminate, true);
             }
@@ -807,7 +994,7 @@ for (const debug of [false, true])
         criteria: ["changed-model", "fixture"], attribution: ["changed-model"], comparison: ["changed-model"],
       });
       assert.equal(await exists(failureFile), false, "a successful resume has no failure export");
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);
@@ -836,12 +1023,12 @@ for (const debug of [false, true])
             : [],
         );
       const appendedPlan = await buildPlan(config);
-      assert.equal(appendedPlan.tasks.length, 12);
+      assert.equal(appendedPlan.tasks.length, 15);
       const unchanged = await runEvaluation({ ...options, plan: appendedPlan });
       assert.equal(unchanged.completed_comparisons, 2);
       assert.equal((unchanged.planned as { cases: number }).cases, 2);
       assert.deepEqual(Object.keys(unchanged.by_batch as object), ["2026-09-23", "2026-09-24"]);
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
       const validation = await validateRun(run);
       assert.equal(validation.results.valid, true);
       assert.equal(
@@ -854,3 +1041,160 @@ for (const debug of [false, true])
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+
+for (const reportedContent of [0, undefined]) test(`a worker's ${reportedContent === undefined ? "missing" : "lower"} final ledger cannot authorize another draft after a Host-confirmed inspection`, async (t) => {
+  const input = raw("inspection-final-ledger", null);
+  const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
+  config.execution.repairAttempts = 3;
+  const plan = await buildPlan(config), target = plan.tasks.find(task => (task.data as TaskData).verificationOf)!;
+  let attempts = 0, resumed = false, targetAttempt: string | undefined;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    const targeted = options.spec.taskId === target.id;
+    if (targeted) { attempts++; targetAttempt = options.spec.attemptId; }
+    return { async run() {
+      if (targeted && !resumed && attempts === 1) {
+        for (let index = 0; index < 2; index++)
+          assert.equal((await inspectMaterials(options, { checks: [], concerns: [] })).isError, true);
+        await inspectFor(options);
+        throw new Error("Connection error after Host acknowledged inspection.");
+      }
+      await inspectFor(options);
+      if (targeted && resumed) assert.equal(options.spec.policy.repairAttempts, 0,
+        "a confirmed inspection at count three leaves exactly one final submission within the cap of four");
+      const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new URL(String(url)), response = await fetch(url, init);
+    if (!resumed && targetAttempt && request.origin === worker.url && response.ok &&
+      [`/api/attempts/${targetAttempt}`, `/api/attempts/${targetAttempt}/record`].includes(request.pathname) &&
+      (!init?.method || init.method === "GET")) {
+      const value = await response.json() as { failure?: { contentSubmissions?: number }; status?: { failure?: { contentSubmissions?: number } } };
+      for (const failure of [value.failure, value.status?.failure]) if (failure) {
+        if (reportedContent === undefined) delete failure.contentSubmissions;
+        else failure.contentSubmissions = reportedContent;
+      }
+      return Response.json(value);
+    }
+    return response;
+  });
+  try {
+    const options = { ...services, runId: "inspection-final-ledger", output: config.output, config, plan,
+      modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 3, retryDelaySeconds: 0, workerUrls: [worker.url],
+      signal: AbortSignal.timeout(20_000) };
+    const failed = await runEvaluation(options), run = path.join(config.output.path, options.runId), saved = await readRunState(run);
+    assert.equal(attempts, 1, "a final count below the known Host count is incomplete, so no automatic extra draft is allowed");
+    assert.equal(failed.completed_comparisons, 0);
+    const state = saved.manifest.states[target.id];
+    assert.equal(state.failure!.contentSubmissions, 3, "preserve only the acknowledged historical count without inventing unknown costs");
+    assert(state.failure!.inspection); assert(state.failure!.errors.some(issue => issue.code === "submission_ledger_unavailable"));
+    assert.equal(saved.receipts[target.id], undefined);
+    resumed = true;
+    const complete = await runEvaluation({ ...options, signal: AbortSignal.timeout(20_000) });
+    assert.equal(complete.completed_comparisons, 1); assert.equal(attempts, 2);
+    const recovered = (await readRunState(run)).receipts[target.id];
+    assert.equal(recovered.submissionStats!.contentSubmissions, 4);
+    assert.equal(recovered.audit.inspection!.id, state.failure!.inspection!.id, "explicit resume preserves the real inspection rather than creating a new one");
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("terminal archival drains the actual worker event sequence before compressing", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  const plan = await buildPlan(config);
+  plan.tasks = plan.tasks.filter(task => task.stage === "criteria");
+  let calls = 0;
+  const worker = await startWorker({
+    identity: fakeIdentity,
+    async createSession(options) {
+      return {
+        async run() {
+          calls++;
+          for (let index = 0; index < 2200; index++) options.onEvent({ type: "text_delta", delta: "x" });
+          await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+        },
+        async abort() {}, async dispose() {},
+      };
+    },
+  }, path.join(directory, "worker"));
+  try {
+    await runEvaluation({
+      runId: "event-backlog", debug: true, output: config.output, engine: "pi", identity: fakeIdentity,
+      evaluatorVersion: fakeEvaluatorVersion, config, ...services, plan, policy: config.execution,
+      modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url],
+      onEvent() {
+        // A deterministic slow durable consumer recreates the terminal poll outrunning its sink.
+        const until = performance.now() + 1; while (performance.now() < until) {}
+      },
+    });
+    assert.equal(calls, 1);
+    const task = plan.tasks[0]!;
+    const attempt = path.join(config.output.path, "event-backlog", "_internal", "tasks", task.id, "attempt-001");
+    const record = await readJson<AttemptRecord>(path.join(attempt, "attempt.json"));
+    const events: { seq: number; type: string }[] = [];
+    for await (const event of readJsonl(path.join(attempt, "events.jsonl.gz"))) events.push(event as { seq: number; type: string });
+    assert.equal(events.at(-1)?.seq, record.status!.lastSeq, "terminal archive must reach its authoritative worker lastSeq");
+    assert.equal(events.at(-1)?.type, "finished");
+    assert.deepEqual(await readdir(path.join(directory, "worker")), [], "release requires the complete durable archive");
+  } finally {
+    await worker.close(); await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("incomplete terminal SSE preserves the worker and reports a missing archive without reevaluating", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  config.execution.idleTimeoutSeconds = 1;
+  const plan = await buildPlan(config);
+  plan.tasks = plan.tasks.filter(task => task.stage === "criteria");
+  const calls = new Map<string, number>();
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1); await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  const proxy = await listen(async (req, res, url) => {
+    if (url.pathname.endsWith("/events")) {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (url.searchParams.get("after") !== "0") { res.end(); return; }
+      const upstream = await fetch(worker.url + url.pathname + url.search);
+      const reader = upstream.body!.getReader(); let first = "";
+      while (!first.includes("\n\n")) {
+        const next = await reader.read(); if (next.done) break;
+        first += new TextDecoder().decode(next.value);
+      }
+      res.end(first.slice(0, first.indexOf("\n\n") + 2)); await reader.cancel(); return;
+    }
+    const upstream = await fetch(worker.url + url.pathname + url.search, { method: req.method,
+      ...(req.method === "POST" ? { body: JSON.stringify(await body(req)), headers: { "content-type": "application/json" } } : {}) });
+    res.writeHead(upstream.status, { "content-type": "application/json" }); res.end(await upstream.text());
+  });
+  const options = {
+    runId: "incomplete-events", debug: true, output: config.output, engine: "pi" as const, identity: fakeIdentity,
+    evaluatorVersion: fakeEvaluatorVersion, config, ...services, plan, policy: config.execution,
+    modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [proxy.url],
+    logger: createFileLogger({ directory: path.join(directory, "log"), lockDirectory: path.join(directory, "locks") }),
+  };
+  try {
+    await runEvaluation(options);
+    const task = plan.tasks[0]!;
+    const run = path.join(config.output.path, "incomplete-events");
+    const attempt = path.join(run, "_internal", "tasks", task.id, "attempt-001");
+    const record = await readJson<AttemptRecord>(path.join(attempt, "attempt.json"));
+    assert.match(record.artifactError!, /Terminal event archive incomplete/);
+    assert.equal(await exists(path.join(attempt, "events.jsonl")), true);
+    assert.equal(await exists(path.join(attempt, "events.jsonl.gz")), false, "a known prefix must never become a compressed terminal archive");
+    const state = await readRunState(run);
+    assert.equal(state.manifest.states[task.id]!.status, "succeeded", "accepted evaluation survives a missing debug archive");
+    assert.equal(state.manifest.states[task.id]!.artifactStatus?.status, "missing");
+    assert.deepEqual(await readdir(path.join(directory, "worker")), [record.spec.attemptId]);
+    assert.match(await readFile(path.join(directory, "log/runtime.log"), "utf8"), /event_archive_incomplete/);
+    await runEvaluation(options); assert.equal(calls.get(task.id), 1, "resume may add pending workflow tasks but must not reevaluate the committed task to repair debug output");
+  } finally {
+    await proxy.close(); await worker.close(); await rm(directory, { recursive: true, force: true });
+  }
+});

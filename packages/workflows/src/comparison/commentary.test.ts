@@ -1,3 +1,4 @@
+import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { JsonObject, PlannedTask } from "@eval/contracts";
@@ -51,7 +52,7 @@ const attribution: AttributionResult = {
   is_correct: true,
   correctness_reason: "与标准答案一致。",
   numeric_checks: [],
-  correctness_evidence: [{ message_index: 1, quote: "2+2=4" }],
+  correctness_evidence: [canonicalEvidence("11111111-1111-4111-8111-111111111111", 1, "2+2=4")],
   task_analysis: structuredClone(comparison.task_analysis),
   summary: "回答正确。",
   findings: [],
@@ -195,4 +196,9 @@ test("clustering polish selects descriptions without changing class identities o
   ]);
   assert.deepEqual(result, before);
   assert.deepEqual(clusteringSlots({ assignments: [{ item_id: "item1", class_id: "old" }], new_classes: [], merges: [] }), []);
+  const maintenance = { assignments: [{ item_id: "item2", deferred_reason: "本次新增预算为零。" }], new_classes: [], merges: [],
+    class_updates: [{ class_id: "old", definition: "依据真实来源映射。", reason: "修正错误的编号判断。", category_paths: [["溯源"]] }] };
+  assert.deepEqual(clusteringSlots(maintenance).map(item => item.id), [
+    "assignments.0.deferred_reason", "class_updates.0.definition", "class_updates.0.reason",
+  ]);
 });

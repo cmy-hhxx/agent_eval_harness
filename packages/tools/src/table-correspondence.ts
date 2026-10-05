@@ -2,6 +2,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfm } from "micromark-extension-gfm";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { cite, evidenceSources } from "./evidence.js";
+import { maskCitationMarkup } from "./citation-markup.js";
 
 type TableEvidence = ReturnType<typeof cite>;
 export interface TraceTableRow {
@@ -51,7 +52,7 @@ const visibleText = (node: MarkdownNode): string => node.value ?? (node.type ===
 const normalizeCell = (text: string) => text.replace(/\s+/gu, " ").trim();
 
 /** Inventory actual message content/returns, never copied input_messages or model-authored call arguments. */
-export function parseTraceTables(raw: { messages: unknown[] }): TraceTable[] {
+export function parseTraceTables(raw: { messages: unknown[] }, inputId: string): TraceTable[] {
   const tables: TraceTable[] = [];
   raw.messages.forEach((message, messageIndex) => {
     if (!message || typeof message !== "object") return;
@@ -70,13 +71,13 @@ export function parseTraceTables(raw: { messages: unknown[] }): TraceTable[] {
           const nodes = node.children ?? [];
           const headers = (nodes[0]?.children ?? []).map((cell) => normalizeCell(visibleText(cell)));
           if (headers.length < 2) return;
-          const evidence = cite(messageIndex, source, start, end);
+          const evidence = cite(inputId, messageIndex, source, start, end);
           const rows = nodes.slice(1).flatMap((row, rowIndex) => {
             const from = row.position?.start.offset, to = row.position?.end.offset;
             if (from === undefined || to === undefined) return [];
             const cells = (row.children ?? []).map((cell) => normalizeCell(visibleText(cell)));
             // Preserve short/long rows as given. Missing selected cells are unverified, not empty facts.
-            return [{ row_index: rowIndex, cells, evidence: cite(messageIndex, source, from, to) }];
+            return [{ row_index: rowIndex, cells, evidence: cite(inputId, messageIndex, source, from, to) }];
           });
           tables.push({ table_id: `table_${evidence.evidence_id}`, message_index: messageIndex,
             path: source.path, headers, rows, evidence });
@@ -99,21 +100,24 @@ function orderedColumns(columns: TableColumnPair[], answer: TraceTable, source: 
   return [...columns].sort((a, b) => a.answer - b.answer);
 }
 const tuple = (row: TraceTableRow, columns: TableColumnPair[], side: "answer" | "source") => {
-  const values = columns.map((column) => row.cells[column[side]]);
+  const values = columns.map((column) => {
+    const value = row.cells[column[side]];
+    return typeof value === "string" ? normalizeCell(maskCitationMarkup(value)) : value;
+  });
   return values.every((value) => typeof value === "string" && value.length) ? JSON.stringify(values) : null;
 };
 
 /** Compare declared columns in both directions; no fuzzy names, suffix removal, unit conversion or completeness inference. */
-export function compareTraceTableRows(raw: { messages: unknown[] }, request: TableCheckRequest): TableCheckResult {
-  const tables = new Map(parseTraceTables(raw).map((table) => [table.table_id, table]));
+export function compareTraceTableRows(raw: { messages: unknown[] }, request: TableCheckRequest, inputId: string): TableCheckResult {
+  const tables = new Map(parseTraceTables(raw, inputId).map((table) => [table.table_id, table]));
   const answer = tables.get(request.answer_table_id);
-  if (!answer) throw new Error("回答表不存在；请先用 check_table 获取当前材料的 table_id");
+  if (!answer) throw new Error("回答表不属于本方原始表格目录");
   if (!request.sources.length) throw new Error("至少指定一个来源表；缺少来源时不能伪造对应核验");
   if (new Set(request.sources.map((source) => source.table_id)).size !== request.sources.length)
     throw new Error("来源表不得重复");
   const sources = request.sources.map((spec) => {
     const table = tables.get(spec.table_id);
-    if (!table) throw new Error("来源表不存在；请先用 check_table 获取当前材料的 table_id");
+    if (!table) throw new Error("来源表不属于本方原始表格目录");
     if (table.message_index >= answer.message_index) throw new Error("来源表必须先于回答表所在消息，不能用回答自证");
     const keys = orderedColumns(spec.key_columns, answer, table), values = orderedColumns(spec.value_columns, answer, table);
     if (keys.some((key) => values.some((value) => key.answer === value.answer || key.source === value.source)))

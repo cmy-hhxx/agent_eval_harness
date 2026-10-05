@@ -17,18 +17,20 @@
     "directory": "vendor/prime-agent",
     "local_changes": [
       "Application SDK builds skip bundled model/MCP catalog asset download and fixture generation in copy-assets. Official compiled fallbacks remain; the evaluation adapter explicitly registers gateway models and Worker PI_OFFLINE disables runtime catalog refresh.",
+      "Responses preserve the terminal status and incomplete reason before strict function-argument decoding. Invalid completed arguments report the actual tool name and call/item identity so Runtime can provide bounded repair feedback; incomplete calls remain undispatched and authoritative JSON parsing/identity validation are unchanged.",
       "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities and malformed, empty, mismatched or unfinished calls cannot execute, while usage and completed item.done arguments are preserved."
     ]
   },
   "deepseek": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "commit": "639ed015397290b3745d163aafe02ffee4aa3f84",
+    "commit": "5badb15009ae1756c3afe0ae0cef1faafc290ccc",
     "directory": "vendor/deepseek",
     "license": "MIT; component-specific licenses retained in copied package directories",
     "local_changes": [
+      "AssistantMarkdown renders consecutive provider text fragments as one Markdown document with a stable first-block key. Authored newlines and non-text boundaries remain intact; split emphasis, tables and links render correctly in both streaming and restored replies. Regression tests exercise the actual assistant component with the Eris fragment pattern.",
       "Original attachment MessageImages/ImageGallery and lightbox are reused for source-reference tool inspection; bytes are resolved by the application only on expansion. Attachment presentation and CSS are unchanged, and upstream image behavior tests are retained.",
       "Web-only source composition: UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies. A staged refresh replaces the selected source graph without retaining deleted files. Aliases and source exports are recorded in sources.json; ordinary builds do not use the adjacent repository, Desktop carriers, native addons or Windows packaging.",
-      "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold/render algorithms are unchanged; CSS only removes the unused official running-whale animation rules.",
+      "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold algorithms are unchanged; CSS only removes the unused official running-whale animation rules.",
       "Official logo/wordmark and running-whale artwork, exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-owned Eris artwork and name occupy the brand slots, including a running-status icon slot; upstream isolated clock, text shimmer and accessibility behavior are retained. The hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",
       "Server bundle substitutes the original llm package manifest version literal for createRequire relative lookup; no protocol version or algorithm change.",
       "ModelSelect's parameterized test uses the identical expected string with toBe, because the repository's Vitest runner does not allow inline snapshots inside it.each.",

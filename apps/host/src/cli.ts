@@ -7,7 +7,7 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareFailedTasks } from "@eval/workflows/comparison";
+import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
 import { reportRun } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
@@ -45,6 +45,7 @@ async function main(): Promise<void> {
       slot: { type: "string", multiple: true },
       all: { type: "boolean" },
       apply: { type: "boolean" },
+      "review-file": { type: "string" },
       "discover-inputs": { type: "boolean" },
       "resume-stage": { type: "string", multiple: true },
       "require-rewrite": { type: "string", multiple: true },
@@ -59,7 +60,7 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (values.run ? path.basename(path.resolve(values.run)) : undefined);
   if (values.help || !command) {
     console.log(
-      `eval index|preflight|run|status|validate|report|retry-failed|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
+      `eval index|preflight|run|status|validate|report|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
 run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
@@ -73,9 +74,11 @@ status/validate/report: --run data/runs/comparison/ID
 validate: [--require-rewrite items|verdicts ...] [--require-batch ID ...] [--selected]
 report: [--details] 为 debug 运行导出逐题 JSON 与任务状态
 retry-failed: --run PATH [--task ID ...|--result ID ...] [--apply]
+recluster: --run PATH [--task ID ...|--all] [--apply] 重新归类已接受的延期观察
+review-problem-occurrences: --review-file FILE [--apply] 默认只读预览，--apply 仅追加明确来源复核事件
 rewrite-comparisons: --run PATH [--scope items|verdicts] [--mode missing|refresh]
   [--task ID ...|--result ID ...|--all] [--slot ID ...] [--apply]
-修复命令默认仅预览；--apply 保存固定任务范围，随后同 run-id 续跑
+任务修复命令默认仅预览；--apply 保存固定任务范围，随后同 run-id 续跑
 rewrite-review: --run PATH [--result ID ...] [--limit-cases N] 输出原文和改写供语义验收
 concurrency: --run PATH --value N
 progress: --run PATH
@@ -110,9 +113,12 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (values[flag] && command !== "validate") throw new Error(`--${flag} 仅用于 validate`);
   if (values.result && !["rewrite-comparisons", "retry-failed", "rewrite-review"].includes(command))
     throw new Error("--result 仅用于修复或 rewrite-review");
-  for (const flag of ["task", "apply"] as const)
-    if (values[flag] && !["rewrite-comparisons", "retry-failed"].includes(command)) throw new Error(`--${flag} 仅用于修复命令`);
-  for (const flag of ["mode", "slot", "all"] as const)
+  if (values["review-file"] && command !== "review-problem-occurrences") throw new Error("--review-file 仅用于 review-problem-occurrences");
+  if (values.apply && !["rewrite-comparisons", "retry-failed", "recluster", "review-problem-occurrences"].includes(command)) throw new Error("--apply 仅用于修复或问题样本复核命令");
+  for (const flag of ["task"] as const)
+    if (values[flag] && !["rewrite-comparisons", "retry-failed", "recluster"].includes(command)) throw new Error(`--${flag} 仅用于修复命令`);
+  if (values.all && !["rewrite-comparisons", "recluster"].includes(command)) throw new Error("--all 仅用于 rewrite-comparisons 或 recluster");
+  for (const flag of ["mode", "slot"] as const)
     if (values[flag] && command !== "rewrite-comparisons") throw new Error(`--${flag} 仅用于 rewrite-comparisons`);
   if (values["skip-failed"] && command !== "run") throw new Error("--skip-failed 仅用于 run");
   if (values["dashboard-settings"] && command !== "run") throw new Error("--dashboard-settings 仅用于 run");
@@ -142,6 +148,13 @@ dashboard: --port 4173 在本机启动控制看板`,
     return;
   }
   if (values.scope && command !== "rewrite-comparisons") throw new Error("--scope 仅用于 rewrite-comparisons");
+  if (command === "recluster") {
+    if (!values.run) throw new Error("--run required");
+    console.log(JSON.stringify(await prepareDeferredClustering(path.resolve(values.run), {
+      taskIds: values.task, all: values.all, apply: values.apply,
+    }), null, 2));
+    return;
+  }
   if (command === "rewrite-review") {
     if (!values.run) throw new Error("--run required");
     const run = path.resolve(values.run), release = await runLock(run);
@@ -199,6 +212,16 @@ dashboard: --port 4173 在本机启动控制看板`,
     process.env,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
+  if (command === "review-problem-occurrences") {
+    if (!values["review-file"]) throw new Error("--review-file required");
+    if (values.run || values["run-id"] || values.input || values.output || values.batch || values.case || values["limit-cases"])
+      throw new Error("问题样本复核使用配置和原登记来源，不接受运行或输入选择覆盖");
+    const decision = await readJson<import("@eval/agents/clustering").ProblemOccurrenceReviewDecision>(path.resolve(values["review-file"]));
+    console.log(JSON.stringify(await reviewProblemOccurrences(host.evaluation, decision, {
+      apply: values.apply, evaluatorVersion: host.evaluatorVersion,
+    }), null, 2));
+    return;
+  }
   let config = host.evaluation;
   if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
   const resuming = command === "run" && !!values["run-id"] &&

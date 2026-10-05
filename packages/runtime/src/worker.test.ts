@@ -1,4 +1,6 @@
-import { draftFor } from "../../../tests/fixtures/comparison.js";
+import { draftFor, submitFor } from "../../../tests/fixtures/comparison.js";
+import { canonicalEvidence } from "../../../tests/fixtures/evidence.js";
+import { waitForTestState } from "../../../tests/fixtures/wait.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, symlink, writeFile } from "node:fs/promises";
@@ -9,7 +11,10 @@ import {
   DEFAULT_POLICY,
   emptyUsage,
   HttpError,
+  ValidationError,
   type AgentBackend,
+  type AgentProfile,
+  type MaterialInspection,
   type AttemptSpec,
   type AttemptStatus,
   type FailureContext,
@@ -19,158 +24,210 @@ import {
   type SubmissionReceipt,
   type TaskPlan,
   type TraceRead,
+  type ValidationIssue,
   type WorkerEvent,
 } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
 import { createRunRepository, exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
-import { services, prepare } from "../../../tests/fixtures/services.js";
-import { buildPlan } from "@eval/workflows/comparison";
+import { services } from "../../../tests/fixtures/services.js";
+import { attributionAgent } from "@eval/agents/attribution";
+import { buildPlan, type AttributionResult } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import {
   fakeIdentity,
   emptyAudit,
   fixtureConfig,
-  invalidResult,
+  invalidDraft,
+  inspectMaterials,
   raw,
   taskResult,
   criteriaResult,
+  parsedMaterial,
 } from "../../../tests/fixtures/comparison.js";
+
+interface WorkerHarnessOptions {
+  policy?: Partial<typeof DEFAULT_POLICY>;
+  dropAck?: boolean;
+  material?: string;
+  profile?: Partial<AgentProfile>;
+  dropInspectionAck?: boolean;
+  revealedInput?: import("@eval/contracts").JsonObject;
+}
+
+const fileProfile: Partial<AgentProfile> = {
+  fileSubmission: true,
+  toolDescriptions: {
+    ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions)
+      .filter(([name]) => name !== "submit_evaluation")),
+    submit_evaluation_file: "Submit the complete evaluation JSON file.",
+  },
+};
 
 async function harness(
   create: AgentBackend["createSession"],
-  policy: Partial<typeof DEFAULT_POLICY> = {},
-  dropAck = false,
-  genericMaterial?: string,
+  { policy = {}, dropAck = false, material, profile, dropInspectionAck = false,
+    revealedInput = { upstream: "hidden conclusion" } }: WorkerHarnessOptions = {},
 ) {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  const plan: TaskPlan = genericMaterial === undefined ? await buildPlan(config) : {
-    tasks: [{ id: "material-task", stage: "material", inputIds: { answer: "material-input" }, dependencies: {}, data: {} }],
-    inputs: { "material-input": { messages: [{ content: genericMaterial }, { content: "非必读正文" }] } },
-    summary: {},
-  };
-  const task = plan.tasks.find((item) => item.stage === "attribution") ?? plan.tasks[0],
-    criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria);
-  const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
-    taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
-    acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
-  };
-  const evaluationServices: EvaluationServices = genericMaterial === undefined ? services : {
-    repository: createRunRepository<RunState>({
-      encode: (state) => structuredClone(state), references: () => [], resultId: (row) => String(row.id), decode: (state) => state,
-    }, (item, state) => ({ id: item.id, file: "material.jsonl", row: { id: item.id, result: state.receipts[item.id].evaluation } })),
-    taskSource: {
-      id: "material",
-      bind(item, inputs) {
-        const id = item.inputIds.answer;
-        return { agent: "material", profile: "default", request: { input: {}, sources: { answer: { id, value: inputs[id] } } } };
-      },
-    },
-    agents: new AgentRegistry([{ id: "material", profiles: { default: {
-      id: "default", systemPrompt: "Read the material.", instructions: "Submit JSON.", submissionNudge: "Submit JSON.",
-      toolNames: ["read_trace", "calculate"], fileSubmission: false,
-      toolDescriptions: { read_trace: "Read source text.", calculate: "Calculate exactly.", submit_evaluation: "Submit JSON." },
-      renderPrompt: () => "Read the material and submit JSON.", requestSchema: { type: "object" },
-      submissionSchema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { const: true } } },
-      requiredReads: () => [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: genericMaterial.length }],
-    } } }]),
-  };
-  const manifest: RunManifest = {
-    format: "evaluation-run",
-    debug: false,
-    runId: "test",
-    status: "running",
-    engine: fakeIdentity,
-    evaluatorVersion: "fixture",
-    config,
-    tasks: criteria ? [criteria, task] : [task],
-    inputs: {},
-    states: { ...(criteria ? { [criteria.id]: { status: "succeeded" as const, attempts: 1 } } : {}),
-      [task.id]: { status: "pending", attempts: 0 } },
-    preflight: plan.summary,
-    startedAt: Date.now(),
-  };
-  const store = new RunStore(
-    path.join(directory, "run"),
-    { manifest, receipts: criteria ? { [criteria.id]: criteriaReceipt! } : {}, usage: emptyUsage(), recordedAttempts: 0 },
-    plan.inputs,
-    evaluationServices,
-  );
-  let posts = 0,
-    lookups = 0;
-  const host = await listen(async (req, res, url) => {
-    if (url.pathname.endsWith("/checkpoint")) {
-      await store.checkpoint(task.id, (await body(req)) as FailureContext);
-      return json(res, { saved: true });
-    }
-    if (req.method === "POST") {
-      posts++;
-      const receipt = await store.accept((await body(req)) as Submission);
-      if (dropAck && posts === 1) res.destroy();
-      else json(res, receipt);
-    } else if (url.pathname.includes("/submissions/")) {
-      lookups++;
-      json(res, await store.findSubmission(url.pathname.split("/").at(-1)!));
-    } else json(res, plan.inputs[url.pathname.split("/").at(-1)!]);
-  });
-  const worker = await startWorker(
-    { identity: fakeIdentity, createSession: create },
-    path.join(directory, "worker"),
-  );
-  const prepared = genericMaterial === undefined ? prepare(task, plan.inputs, { criteria: criteriaReceipt! }) :
-    evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs, {}));
-  const attemptPolicy = { ...DEFAULT_POLICY, ...policy };
-  const spec: AttemptSpec = {
-    inputRevision: 1,
-    runId: "test",
-    taskId: task.id,
-    attemptId: "attempt",
-    engine: fakeIdentity,
-    evaluation: prepared.evaluation,
-    prompt: prepared.renderAttempt(attemptPolicy),
-    model: {
-      provider: "fixture",
-      baseUrl: "http://127.0.0.1",
-      api: "openai-completions",
-      apiKeyEnv: "FIXTURE_KEY",
-      model: "fixture",
-      thinking: "off",
-      contextWindow: 10000,
-      maxOutputTokens: 1000,
-    },
-    policy: attemptPolicy,
-    inputs: Object.entries(task.inputIds).map(([name, id]) => ({
-      id,
-      name,
-    })),
-    hostUrl: host.url,
-    deadline: Date.now() + 10000,
-  };
-  return {
-    directory,
-    spec,
-    worker,
-    store,
-    counts: () => ({ posts, lookups }),
-    async start() {
-      await store.activate(spec);
-      await request(worker.url + "/api/attempts", "POST", spec);
-    },
-    async done() {
-      for (let i = 0; i < 200; i++) {
-        const status = await request<AttemptStatus>(worker.url + "/api/attempts/attempt");
-        if (status.state !== "running") return status;
-        await new Promise((r) => setTimeout(r, 25));
+  let closeHost: (() => Promise<void>) | undefined;
+  let closeWorker: (() => Promise<void>) | undefined;
+  const close = async () => {
+    try {
+      await closeWorker?.();
+    } finally {
+      try {
+        await closeHost?.();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
       }
-      throw new Error("Worker did not settle");
-    },
-    async close() {
-      await worker.close();
-      await host.close();
-      await rm(directory, { recursive: true, force: true });
-    },
+    }
   };
+  try {
+    const plan: TaskPlan = material === undefined ? await buildPlan(config) : {
+      tasks: [{ id: "material-task", stage: "material", inputIds: { answer: "11111111-1111-4111-8111-111111111111" }, dependencies: {}, data: {} }],
+      inputs: { "11111111-1111-4111-8111-111111111111": { messages: [{ content: material }, { content: "非必读正文" }] } },
+      summary: {},
+    };
+    const task = plan.tasks.find((item) => item.stage === "attribution") ?? plan.tasks[0],
+      criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria);
+    const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
+      taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
+      acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
+    };
+    const evaluationServices: EvaluationServices = material === undefined ? {
+      ...services,
+      ...(profile ? { agents: new AgentRegistry([{ ...attributionAgent, profiles: {
+        default: { ...attributionAgent.profiles.default, ...profile },
+      } }]) } : {}),
+    } : {
+      repository: createRunRepository<RunState>({
+        encode: (state) => structuredClone(state), references: () => [], resultId: (row) => String(row.id), decode: (state) => state,
+      }, (item, state) => ({ id: item.id, file: "material.jsonl", row: { id: item.id, result: state.receipts[item.id].evaluation } })),
+      taskSource: {
+        id: "material",
+        bind(item, inputs) {
+          const id = item.inputIds.answer;
+          return { agent: "material", profile: "default", request: { input: {}, sources: { answer: { id, value: inputs[id] } } }, ...(profile?.inspection ? { modelInput: { primary: "original facts" }, inspectionInput: revealedInput } : {}) };
+        },
+      },
+      agents: new AgentRegistry([{ id: "material", profiles: { default: {
+        id: "default", systemPrompt: "Read the material.", instructions: "Submit JSON.", submissionNudge: "Submit JSON.",
+        toolNames: ["read_trace", "calculate"], fileSubmission: false,
+        toolDescriptions: { read_trace: "Read source text.", calculate: "Calculate exactly.", submit_evaluation: "Submit JSON." },
+        renderPrompt: () => "Read the material and submit JSON.", requestSchema: { type: "object" },
+        submissionSchema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { const: true } } },
+        requiredReads: () => [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length }],
+        ...profile,
+      } } }]),
+    };
+    const manifest: RunManifest = {
+      format: "evaluation-run",
+      debug: false,
+      runId: "test",
+      status: "running",
+      engine: fakeIdentity,
+      evaluatorVersion: "fixture",
+      config,
+      tasks: criteria ? [criteria, task] : [task],
+      inputs: {},
+      states: { ...(criteria ? { [criteria.id]: { status: "succeeded" as const, attempts: 1 } } : {}),
+        [task.id]: { status: "pending", attempts: 0 } },
+      preflight: plan.summary,
+      startedAt: Date.now(),
+    };
+    const store = new RunStore(
+      path.join(directory, "run"),
+      { manifest, receipts: criteria ? { [criteria.id]: criteriaReceipt! } : {}, usage: emptyUsage(), recordedAttempts: 0 },
+      plan.inputs,
+      evaluationServices,
+    );
+    const prepared = evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs,
+      criteria ? { criteria: criteriaReceipt! } : {}, { tasks: plan.tasks }));
+    let posts = 0, inspectionPosts = 0,
+      lookups = 0;
+    const host = await listen(async (req, res, url) => {
+      if (url.pathname === "/api/evidence-bank") return json(res, await store.registerEvidenceBank((await body(req)) as unknown as import("@eval/contracts").EvidenceBankUpdate));
+      if (url.pathname === "/api/inspections") {
+        const payload = (await body(req)) as unknown as MaterialInspection; inspectionPosts++;
+        const result = await store.inspect(payload);
+        if (dropInspectionAck && inspectionPosts === 1) res.destroy(); else json(res, result);
+        return;
+      }
+      if (url.pathname.endsWith("/checkpoint")) {
+        await store.checkpoint(task.id, (await body(req)) as FailureContext);
+        return json(res, { saved: true });
+      }
+      if (req.method === "POST") {
+        posts++;
+        const receipt = await store.accept((await body(req)) as Submission);
+        if (dropAck && posts === 1) res.destroy();
+        else json(res, receipt);
+      } else if (url.pathname.includes("/submissions/")) {
+        lookups++;
+        json(res, await store.findSubmission(url.pathname.split("/").at(-1)!));
+      } else json(res, plan.inputs[url.pathname.split("/").at(-1)!]);
+    });
+    closeHost = () => host.close();
+    const worker = await startWorker(
+      { identity: fakeIdentity, createSession: create },
+      path.join(directory, "worker"),
+    );
+    closeWorker = () => worker.close();
+    const attemptPolicy = { ...DEFAULT_POLICY, ...policy };
+    const spec: AttemptSpec = {
+      inputRevision: 1,
+      runId: "test",
+      taskId: task.id,
+      attemptId: "attempt",
+      engine: fakeIdentity,
+      evaluation: prepared.evaluation,
+      prompt: prepared.renderAttempt(attemptPolicy),
+      evidenceBank: [...prepared.evidenceBank],
+      model: {
+        provider: "fixture",
+        baseUrl: "http://127.0.0.1",
+        api: "openai-completions",
+        apiKeyEnv: "FIXTURE_KEY",
+        model: "fixture",
+        thinking: "off",
+        contextWindow: 10000,
+        maxOutputTokens: 1000,
+      },
+      policy: attemptPolicy,
+      inputs: Object.entries(task.inputIds).map(([name, id]) => ({
+        id,
+        name,
+      })),
+      hostUrl: host.url,
+      deadline: Date.now() + 10000,
+    };
+    return {
+      directory,
+      spec,
+      prepared,
+      worker,
+      store,
+      counts: () => ({ posts, lookups }),
+      inspectionPosts: () => inspectionPosts,
+      async start(currentSpec = spec) {
+        await store.activate(currentSpec);
+        await request(worker.url + "/api/attempts", "POST", currentSpec);
+      },
+      async done(attemptId = spec.attemptId) {
+        return waitForTestState(
+          () => request<AttemptStatus>(worker.url + "/api/attempts/" + attemptId),
+          status => status.state !== "running",
+          `Worker attempt ${attemptId} did not settle`,
+        );
+      },
+      close,
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }
 test("Host rejects malformed trace-read audits before accepting a submission", async () => {
   const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }));
@@ -186,7 +243,7 @@ test("Host rejects malformed trace-read audits before accepting a submission", a
       [{ ...read, kind: "json" }],
     ]) await assert.rejects(fixture.store.accept({
       submissionId: "invalid-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
-      evaluation: {}, audit: { ...emptyAudit(), traceReads } as Submission["audit"], usage: emptyUsage(),
+      evaluation: {}, audit: { ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank], traceReads } as Submission["audit"], usage: emptyUsage(),
     }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit");
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally { await fixture.close(); }
@@ -197,7 +254,7 @@ test("Host rejects malformed table-check audit specs at the submission boundary"
     await fixture.store.activate(fixture.spec);
     const source = { table_id: "table-source", key_columns: [{ answer: 0, source: 0 }], value_columns: [{ answer: 1, source: 1 }] };
     const spec = { candidate: "answer", answer_table_id: "table-final", sources: [source] };
-    const audit = (tableChecks: unknown) => ({ ...emptyAudit(), tableChecks }) as Submission["audit"];
+    const audit = (tableChecks: unknown) => ({ ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank], tableChecks }) as Submission["audit"];
     const submit = (audit: Submission["audit"]) => request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
       submissionId: "invalid-table-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
       evaluation: {}, audit, usage: emptyUsage(),
@@ -238,7 +295,7 @@ test("a burst of model events is persisted in batches with complete ordered repl
   const fixture = await harness(async (options) => ({
     async run() {
       for (let i = 0; i < 200; i++) options.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: String(i) } });
-      await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
     }, async abort() {}, async dispose() {},
   }));
   try {
@@ -262,14 +319,12 @@ test("lost submission acknowledgement is recovered by ID; SSE replay is contiguo
   const fixture = await harness(
     async (options) => ({
       async run() {
-        const accepted = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        const accepted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         assert.equal(accepted.terminate, true);
       },
       async abort() {},
       async dispose() {},
-    }),
-    {},
-    true,
+    }), { dropAck: true },
   );
   try {
     await fixture.start();
@@ -330,7 +385,7 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
           messages: [partial, finalMessage],
           willRetry: false,
         });
-        await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+        await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       },
       async abort() {},
       async dispose() {},
@@ -372,6 +427,152 @@ test("stream log keeps deltas and final messages without repeated snapshots; rel
     await fixture.close();
   }
 });
+test("Host returns independent business errors with structure errors before a three-submission evidence repair completes", async () => {
+  const feedback: ValidationIssue[][] = [];
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (const draft of [
+        { value: "wrong", satisfies: false, proof: "unknown" },
+        { value: 1, satisfies: true, proof: "unknown" },
+      ]) {
+        const rejected = await submitFor(options, draft);
+        assert.equal(rejected.isError, true);
+        feedback.push(JSON.parse(rejected.content[0]!.text!).errors);
+      }
+      assert.deepEqual(feedback.map((issues) => issues.map((issue) => issue.code)), [
+        ["schema_type", "requirement_unmet"], ["proof_invalid"],
+      ], "independent business errors are visible in the first feedback instead of a later repair");
+      const accepted = await submitFor(options, { value: 1, satisfies: true, proof: "source" });
+      assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+      assert.equal(accepted.terminate, true);
+    }, async abort() {}, async dispose() {},
+  }), { policy: { repairAttempts: 2 }, material: "source", profile: {
+    submissionSchema: { type: "object", additionalProperties: false, required: ["value", "satisfies", "proof"],
+      properties: { value: { type: "number" }, satisfies: { type: "boolean" }, proof: { type: "string" } } },
+    requiredReads: () => [],
+    validateSubmission(_request, draft) {
+      if (!draft || typeof draft !== "object" || Array.isArray(draft) || (draft as { satisfies?: unknown }).satisfies !== false) return [];
+      return [{ category: "decision", code: "requirement_unmet", path: "/satisfies", actual: false, message: "Requirement is unmet." }];
+    },
+    resolve(_request, draft) {
+      if ((draft as { proof: string }).proof !== "source") throw new ValidationError([
+        { category: "evidence", code: "proof_invalid", path: "/proof", actual: (draft as { proof: string }).proof, message: "Proof is invalid." },
+      ]);
+      return draft;
+    },
+  } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.deepEqual(fixture.counts(), { posts: 3, lookups: 0 }, "every complete draft reaches the same Host validation entry point");
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions, 3);
+  } finally { await fixture.close(); }
+});
+
+test("parallel file preparations and submissions share one bounded content ledger", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const results = await Promise.all(Array.from({ length: 6 }, (_, index) => {
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
+        draft.findings[0].importance = `invalid-${index}`;
+        return submitFor(options, draft);
+      }));
+      assert(results.every((result) => result.isError));
+    }, async abort() {}, async dispose() {},
+  }), { profile: fileProfile, policy: { repairAttempts: 3 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.equal(status.failure?.contentSubmissions, 4, "parallel callers cannot pass the same pre-load budget check");
+    const events = (await readFile(path.join(fixture.directory, "worker/attempt/events.jsonl"), "utf8"))
+      .trim().split("\n").map(line => JSON.parse(line) as WorkerEvent);
+    const loaded = events.filter(event => event.type === "submission" && object(event.data).content_loaded);
+    assert.equal(loaded.length, 4, "remaining callers cannot load a hidden fifth draft");
+    const last = object(loaded.at(-1)!.data).evaluation as { findings: { importance: string }[] };
+    assert.equal(status.failure?.errors[0].actual, last.findings[0]!.importance,
+      "the terminal error belongs to the actual last serialized submission, independent of file-write order");
+    assert.equal(status.failure?.repeatedErrors, 1);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+
+test("parallel file submissions load at most one file when only one content submission remains", async (t) => {
+  let fileReads = 0;
+  const originalReadFile = fs.readFile;
+  t.mock.method(fs, "readFile", async (...args: Parameters<typeof originalReadFile>) => {
+    if (["final-a.json", "final-b.json"].includes(path.basename(String(args[0])))) fileReads++;
+    return originalReadFile(...args);
+  });
+  syncBuiltinESMExports();
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (let index = 0; index < 3; index++) {
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
+        draft.findings[0].importance = `invalid-${index}`;
+        assert.equal((await submitFor(options, draft)).isError, true);
+      }
+      for (const name of ["final-a.json", "final-b.json"]) {
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
+        draft.findings[0].importance = name;
+        await writeFile(path.join(options.workdir, name), JSON.stringify(draft));
+      }
+      const results = await Promise.all(["final-a.json", "final-b.json"].map((name) =>
+        options.execute("submit_evaluation_file", { path: name }),
+      ));
+      assert(results.every((result) => result.isError));
+    }, async abort() {}, async dispose() {},
+  }), { profile: fileProfile, policy: { repairAttempts: 3 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.equal(status.failure?.contentSubmissions, 4);
+    assert.equal(fileReads, 1, "serialization covers loading as well as content validation");
+    assert.equal(status.failure?.errors[0].actual, "final-a.json");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally {
+    await fixture.close();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test("unacknowledged final submission updates cumulative content costs without replacing rejected-draft feedback", async (t) => {
+  let lastRejected: unknown;
+  const fixture = await harness(async (options) => ({
+    async run() {
+      for (let index = 0; index < 3; index++) {
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
+        draft.findings[0].importance = `invalid-${index}`;
+        lastRejected = structuredClone(draft);
+        assert.equal((await submitFor(options, draft)).isError, true);
+      }
+      const unacknowledged = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(unacknowledged.isError, true);
+      assert.match(unacknowledged.content[0]!.text!, /HTTP 503/);
+    }, async abort() {}, async dispose() {},
+  }), { policy: { repairAttempts: 3 } });
+  const accept = fixture.store.accept.bind(fixture.store);
+  t.mock.method(fixture.store, "accept", async (submission: Submission) => {
+    if ((submission.evaluation as { findings: { importance: string }[] }).findings[0].importance !== "high") return accept(submission);
+    throw new HttpError(503, "HTTP 503 Connection error.");
+  });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "failed");
+    assert.equal(status.failure?.contentSubmissions, 4, "the final complete submission consumes content even when POST and lookup fail");
+    assert.deepEqual(status.failure?.draft, lastRejected);
+    assert.equal(status.failure?.errors[0].actual, "invalid-2");
+    assert.equal(status.failure?.repeatedErrors, 1);
+    assert.equal(status.failure?.stopped, false);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+    assert.deepEqual(fixture.counts(), { posts: 6, lookups: 3 }, "each complete draft reaches Host, and retransmission uses one logical submission cost");
+  } finally { await fixture.close(); }
+});
+
 test("exhausted exploration budget still permits submission and two repairs", async () => {
   const fixture = await harness(
     async (options) => ({
@@ -389,28 +590,35 @@ test("exhausted exploration budget still permits submission and two repairs", as
           ).isError,
           true,
         );
-        const invalid = invalidResult(options.spec) as any;
-        invalid.findings[0].evidence[0].quote = "invented";
+        const invalid = invalidDraft(options.spec);
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, invalid))).isError,
+          (await submitFor(options, invalid)).isError,
           true,
         );
-        assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, {}))).isError, true);
+        const useRepairCalls = async () => {
+          for (let index = 0; index < 3; index++)
+            assert.equal((await options.execute("calculate", { operation: "add", operands: ["2", "2"] })).isError, undefined);
+          const exhausted = await options.execute("calculate", { operation: "add", operands: ["2", "2"] });
+          assert.equal(exhausted.isError, true);
+          assert.match(exhausted.content[0]!.text!, /探索工具预算已耗尽/);
+        };
+        await useRepairCalls();
+        assert.equal((await submitFor(options, draftFor(options.spec, {}))).isError, true);
+        await useRepairCalls();
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+          (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
           true,
         );
       },
       async abort() {},
       async dispose() {},
-    }),
-    { maxToolCalls: 1, repairAttempts: 2 },
+    }), { policy: { maxToolCalls: 1, repairAttempts: 2 } },
   );
   try {
     await fixture.start();
     assert.equal((await fixture.done()).state, "succeeded");
     const receipt = await fixture.store.receipt(fixture.spec.taskId);
-    assert.equal(receipt?.audit.calls, 1);
+    assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
     assert.deepEqual(receipt?.audit.traceReads, [{
       candidate: "answer", message_index: 1, kind: "json", path: "", start: 0,
       end: JSON.stringify(raw("q", null).messages[1], null, 2).length,
@@ -463,10 +671,10 @@ test("generic required text stays readable beyond twelve pages after exploration
       } while (offset < material.length);
       assert.equal(recovered, material);
       assert(pages > 12);
-      assert.equal((await options.execute("submit_evaluation", { ok: true })).terminate, true);
+      assert.equal((await submitFor(options, { ok: true })).terminate, true);
     },
     async abort() {}, async dispose() {},
-  }), { maxToolCalls: 12, repairAttempts: 2 }, false, material);
+  }), { policy: { maxToolCalls: 12, repairAttempts: 2 }, material: material });
   try {
     await fixture.start();
     const status = await fixture.done();
@@ -481,15 +689,16 @@ test("generic required text stays readable beyond twelve pages after exploration
 });
 
 test("Host refuses forged required-read counts without matching new declared reads", async () => {
-  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), {}, false, "材料".repeat(1000));
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), { material: "材料".repeat(1000) });
   const read: TraceRead = fixture.spec.evaluation.requiredReads![0];
+  const explorationLimit = fixture.spec.policy.maxToolCalls + 3 * fixture.spec.policy.repairAttempts;
   const audits = [
     { ...emptyAudit(), requiredReadCalls: undefined },
     { ...emptyAudit(), calls: 1, requiredReadCalls: -1 },
     { ...emptyAudit(), calls: 1, requiredReadCalls: 0.5 },
     { ...emptyAudit(), calls: 1, requiredReadCalls: 2 },
-    { ...emptyAudit(), calls: 15 },
-    { ...emptyAudit(), calls: 15, requiredReadCalls: 1 },
+    { ...emptyAudit(), calls: explorationLimit + 1 },
+    { ...emptyAudit(), calls: explorationLimit + 2, requiredReadCalls: 1 },
     { ...emptyAudit(), calls: 1, requiredReadCalls: 1, traceReads: [{ ...read, kind: "json" as const, path: "", end: 1 }] },
     { ...emptyAudit(), calls: 1, requiredReadCalls: 1, traceReads: [{ ...read, message_index: 1, end: 2 }] },
     { ...emptyAudit(), calls: 2, requiredReadCalls: 2, traceReads: [read, read] },
@@ -502,28 +711,81 @@ test("Host refuses forged required-read counts without matching new declared rea
     for (const [index, audit] of audits.entries())
       await assert.rejects(request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
         submissionId: `invalid-required-audit-${index}`, attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
-        evaluation: { ok: true }, audit, usage: emptyUsage(),
+        evaluation: { ok: true }, audit: { ...audit, evidenceBank: [...fixture.spec.evidenceBank] }, usage: emptyUsage(),
       }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit", JSON.stringify(audit));
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally { await fixture.close(); }
 });
 
 test("a task without declared required material cannot claim a reading allowance", async () => {
-  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), {}, false, "材料");
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), { material: "材料" });
   fixture.spec.evaluation.requiredReads = [];
   try {
     await fixture.store.activate(fixture.spec);
     await assert.rejects(request(`${fixture.spec.hostUrl}/api/submissions`, "POST", {
       submissionId: "undeclared-required-audit", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
       evaluation: { ok: true }, usage: emptyUsage(),
-      audit: { ...emptyAudit(), calls: 15, requiredReadCalls: 1,
+      audit: { ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank], calls: 15, requiredReadCalls: 1,
         traceReads: [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 2 }] },
     }), (error: unknown) => error instanceof HttpError && error.status === 400 && error.message === "Invalid tool audit");
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally { await fixture.close(); }
 });
 
-test("file submission repairs a rejected evidence ID after exploration is exhausted", async () => {
+test("a rejected file submission preserves the model working file for the next file submission", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const valid = draftFor(options.spec, taskResult(options.spec));
+      const working = path.join(options.workdir, "evaluation-draft.json");
+      await writeFile(working, JSON.stringify(valid));
+      const invalid = { ...(structuredClone(valid) as Record<string, unknown>),
+        item: { criterion_id: "r4", status: "met" } };
+      const rejected = await submitFor(options, invalid);
+      assert.equal(rejected.isError, true);
+      assert.deepEqual(await readJson(working), valid, "Worker cannot overwrite the model's valid working file with a different rejected draft");
+      const feedback = JSON.parse(rejected.content[0]!.text!);
+      assert.equal(feedback.draft_file, "submission-rejected.json");
+      assert.match(feedback.message, /submission-rejected\.json/);
+      assert.deepEqual(await readJson(path.join(options.workdir, feedback.draft_file)), invalid,
+        "the program snapshot contains the exact rejected submission");
+      assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" })).terminate, true);
+    }, async abort() {}, async dispose() {},
+  }), { profile: fileProfile, policy: { repairAttempts: 1 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(fixture.counts().posts, 2);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions, 2);
+  } finally { await fixture.close(); }
+});
+test("loaded file submissions retain exact rejected JSON after the same path is overwritten", async () => {
+  let rejectedObject: unknown, acceptedObject: unknown;
+  const fixture = await harness(async options => ({ async run() {
+    acceptedObject = draftFor(options.spec,taskResult(options.spec));
+    rejectedObject = { ...(structuredClone(acceptedObject) as Record<string,unknown>), unexpected: true };
+    const file = path.join(options.workdir,"submission-rejected.json");
+    await writeFile(file,JSON.stringify(rejectedObject));
+    assert.equal((await options.execute("submit_evaluation_file",{path:"submission-rejected.json"})).isError,true);
+    await writeFile(file,JSON.stringify(acceptedObject));
+    assert.equal((await options.execute("submit_evaluation_file",{path:"submission-rejected.json"})).terminate,true);
+  }, async abort() {}, async dispose() {} }), { profile: fileProfile, policy: {repairAttempts:1} });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state,"succeeded");
+    const events=(await readFile(path.join(fixture.directory,"worker/attempt/events.jsonl"),"utf8")).trim().split("\n")
+      .map(line=>JSON.parse(line) as WorkerEvent);
+    const loaded=events.filter(event=>event.type==="submission" &&
+      (event.data as {content_loaded?:boolean}).content_loaded).map(event=>event.data as {
+        accepted:boolean; evaluation:unknown; contentSubmissions:number;
+      });
+    assert.equal(loaded.length,2); assert(loaded.every(event=>event.accepted===false));
+    assert.deepEqual(loaded[0].evaluation,rejectedObject);
+    assert.deepEqual(loaded[1].evaluation,acceptedObject);
+    assert.deepEqual(loaded.map(event=>event.contentSubmissions),[1,2]);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,2);
+  } finally {await fixture.close();}
+});
+test("file submission repairs evidence through locating, reading and editing after exploration is exhausted", async () => {
   const fixture = await harness(
     async (options) => ({
       async run() {
@@ -532,60 +794,117 @@ test("file submission repairs a rejected evidence ID after exploration is exhaus
           message_index: 1,
         });
         const invalid = draftFor(options.spec, taskResult(options.spec)) as any;
-        invalid.findings[0].evidence[0].evidence_id = "ev_1_text_0_8192_/content";
-        const rejected = await options.execute("submit_evaluation", invalid);
+        invalid.findings[0].evidence[0] = { evidence_index: Number.MAX_SAFE_INTEGER };
+        const rejected = await submitFor(options, invalid);
         assert.equal(rejected.isError, true);
         const feedback = JSON.parse(rejected.content[0]!.text!);
-        assert.equal(feedback.draft_file, "evaluation-draft.json");
-        const issue = feedback.errors.find((item: { code: string }) => item.code === "evidence_range_invalid");
+        assert.equal(feedback.draft_file, "submission-rejected.json");
+        const issue = feedback.errors.find((item: { code: string }) => item.code === "evidence_selection_invalid");
         assert(issue, "Host rejection must preserve actionable evidence feedback through Worker");
-        const replacement = issue.expected.suggested_evidence.find((item: { quote: string }) => item.quote === "2+2=4");
-        assert(replacement, "repair must select a source-backed quote from feedback");
         assert.deepEqual(
-          await readJson(path.join(options.workdir, "evaluation-draft.json")),
+          await readJson(path.join(options.workdir, "submission-rejected.json")),
           invalid,
         );
+        const searched = await options.execute("search_trace", { candidate: "answer", query: "2+2=4" });
+        assert.equal(searched.isError, undefined, JSON.stringify(searched));
+        const located = JSON.parse(searched.content[0]!.text!).matches.find(
+          (item: { path: string; evidence: { message_index: number } }) => item.path === "/content" && item.evidence.message_index === 1,
+        );
+        assert(located, "repair first locates the original source instead of inventing a replacement coordinate");
+        const read = await options.execute("read_trace", {
+          candidate: "answer", message_index: located.evidence.message_index, path: located.path,
+        });
+        assert.equal(read.isError, undefined, JSON.stringify(read));
+        const replacement = JSON.parse(read.content[0]!.text!).evidence.find((item: { quote: string }) => item.quote === "2+2=4");
+        assert(replacement, "repair reads the supporting original quote before selecting its reference");
         const fixed = await options.execute("execute_code", {
           language: "python",
-          code: "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]['evidence_id']=VALID_ID\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
-            "VALID_ID",
-            JSON.stringify(replacement.evidence_id),
+          code: "import json\nfrom pathlib import Path\np=Path('submission-rejected.json')\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]=json.loads(VALID_REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
+            "VALID_REFERENCE",
+            JSON.stringify(JSON.stringify(replacement.reference)),
           ),
         });
         assert.notEqual(fixed.isError, true);
-        assert.equal(
-          (
-            await options.execute("read_trace", {
-              candidate: "B",
-              message_index: 1,
-            })
-          ).isError,
-          true,
-        );
-        assert.equal(
-          (
-            await options.execute("submit_evaluation_file", {
-              path: "evaluation-draft.json",
-            })
-          ).terminate,
-          true,
-        );
+        const exhausted = await options.execute("read_trace", { candidate: "answer", message_index: 1 });
+        assert.equal(exhausted.isError, true);
+        assert.match(exhausted.content[0]!.text!, /探索工具预算已耗尽/);
+        const submitted = await options.execute("submit_evaluation_file", { path: "submission-rejected.json" });
+        assert.equal(submitted.terminate, true, JSON.stringify(submitted));
       },
       async abort() {},
       async dispose() {},
-    }),
-    { maxToolCalls: 1, repairAttempts: 1 },
+    }), { profile: fileProfile, policy: { maxToolCalls: 1, repairAttempts: 1 } },
   );
   try {
     await fixture.start();
     const status = await fixture.done();
-    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(status.state, "succeeded", JSON.stringify(status));
     const receipt = await fixture.store.receipt(fixture.spec.taskId);
-    assert.deepEqual(receipt?.evaluation, taskResult(fixture.spec));
-    assert.equal(receipt?.audit.calls, 2);
+    const source = await request<{ messages: { role: string; content: string }[] }>(
+      `${fixture.spec.hostUrl}/api/inputs/${fixture.spec.inputs.find(input => input.name === "answer")!.id}`,
+    );
+    assert.equal(source.messages[0]!.role, "user");
+    const expected = taskResult(fixture.spec) as AttributionResult;
+    const task = fixture.store.manifest.tasks.find(item => item.id === fixture.spec.taskId)!;
+    const trustedAnalysis = fixture.store.state.receipts[task.dependencies.criteria]!.evaluation as AttributionResult["task_analysis"];
+    const shown = parsedMaterial(fixture.spec) as { task_analysis: { requirements: { requirement_index: number }[] } };
+    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [0],
+      "the model view displays the global requirement index");
+    assert(trustedAnalysis.requirements.every(item => !Object.hasOwn(item, "requirement_index")),
+      "the accepted Criteria remains the undecorated business analysis");
+    expected.task_analysis = structuredClone(trustedAnalysis);
+    expected.criterion_assessments[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
+    expected.findings[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
+    assert.deepEqual(receipt?.evaluation, expected);
+    assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
   } finally {
     await fixture.close();
   }
+});
+test("a content repair can write its fixed file after all three repair exploration calls are spent", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      await options.execute("read_trace", { candidate: "answer", message_index: 1 });
+      const invalid = draftFor(options.spec, taskResult(options.spec)) as any;
+      invalid.findings[0].evidence[0] = { evidence_index: Number.MAX_SAFE_INTEGER };
+      const rejected = await submitFor(options, invalid);
+      assert.equal(rejected.isError, true);
+      const feedback = JSON.parse(rejected.content[0]!.text!);
+      let reference: unknown;
+      for (let i = 0; i < 3; i++) {
+        const searched = await options.execute("search_trace", { candidate: "answer", query: "2+2=4" });
+        assert.equal(searched.isError, undefined, JSON.stringify(searched));
+        reference = JSON.parse(searched.content[0]!.text!).matches.find(
+          (item: { path: string; evidence: { message_index: number } }) => item.path === "/content" && item.evidence.message_index === 1,
+        )?.evidence.reference;
+      }
+      assert(reference, "the replacement is selected from a real source result");
+      assert.equal((await options.execute("search_trace", { candidate: "answer", query: "2+2=4" })).isError, true);
+      const fixed = await options.execute("execute_code", {
+        language: "python",
+        code: "import json\nfrom pathlib import Path\np=Path(SNAPSHOT)\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]=json.loads(REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))"
+          .replace("SNAPSHOT", JSON.stringify(feedback.draft_file))
+          .replace("REFERENCE", JSON.stringify(JSON.stringify(reference))),
+      });
+      assert.notEqual(fixed.isError, true, "the bounded writer allowance survives exhausted repair exploration");
+      const budget = JSON.parse(fixed.content.at(-1)!.text!).budget;
+      assert.deepEqual(budget.exploration, { used: 4, remaining: 0 });
+      assert.deepEqual(budget.draft_writes, { used: 1, remaining: 0, tools: ["execute_code"] });
+      const extra = await options.execute("execute_code", { language: "python", code: "raise AssertionError('must not run')" });
+      assert.equal(extra.isError, true, "one rejection reserves only one writer call");
+      const submitted = await options.execute("submit_evaluation_file", { path: feedback.draft_file });
+      assert.equal(submitted.terminate, true, JSON.stringify(submitted));
+    },
+    async abort() {}, async dispose() {},
+  }), { profile: fileProfile, policy: { maxToolCalls: 1, repairAttempts: 1 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", JSON.stringify(status));
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt?.submissionStats?.contentSubmissions, 2);
+    assert.equal(receipt?.audit.calls, 5, "the reserved writer remains part of the total real tool audit");
+  } finally { await fixture.close(); }
 });
 test("file loading errors do not consume content repairs", async () => {
   const fixture = await harness(
@@ -602,11 +921,10 @@ test("file loading errors do not consume content repairs", async () => {
           ).isError,
           true,
         );
-        const invalid = invalidResult(options.spec) as any;
-        invalid.findings[0].evidence[0].quote = "invented";
+        const invalid = invalidDraft(options.spec);
         await writeFile(
           path.join(options.workdir, "invalid.json"),
-          JSON.stringify(draftFor(options.spec, invalid)),
+          JSON.stringify(invalid),
         );
         assert.equal(
           (
@@ -617,14 +935,13 @@ test("file loading errors do not consume content repairs", async () => {
           true,
         );
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+          (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
           true,
         );
       },
       async abort() {},
       async dispose() {},
-    }),
-    { repairAttempts: 1 },
+    }), { profile: fileProfile, policy: { repairAttempts: 1 } },
   );
   try {
     await fixture.start();
@@ -639,31 +956,60 @@ test("file loading errors do not consume content repairs", async () => {
     await fixture.close();
   }
 });
-test("a missing submission file does not invent a saved repair draft", async () => {
+test("file profiles retain their JSON schema and expose no direct submission fallback", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    assert(!options.tools.some(tool => tool.name === "submit_evaluation"));
+    const tool = options.tools.find(tool => tool.name === "submit_evaluation_file")!;
+    assert.deepEqual(tool.inputSchema, { type: "object", additionalProperties: false, required: ["path"],
+      properties: { path: { type: "string", minLength: 1 } } });
+    const data = JSON.parse(tool.description.slice(tool.description.indexOf('\n{"file_content_schema":') + 1));
+    assert.deepEqual(data.file_content_schema, options.spec.evaluation.outputSchema);
+    const unavailable = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+    assert.equal(unavailable.isError, true);
+    assert.match(unavailable.content[0]!.text!, /Unknown tool/);
+    assert.equal((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate, true);
+  }, async abort() {}, async dispose() {} }), { profile: fileProfile });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 1);
+  } finally { await fixture.close(); }
+});
+
+test("exhausted exploration permits correcting a failed draft writer using the current directory", async () => {
   const fixture = await harness(async (options) => ({
     async run() {
-      const rejected = await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" });
-      assert.equal(rejected.isError, true);
-      const feedback = JSON.parse(rejected.content[0]!.text!);
-      assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false);
-      assert.equal(Object.hasOwn(feedback, "draft_file"), false);
-      assert.doesNotMatch(feedback.message, /已保存/);
-      assert.match(feedback.message, /submit_evaluation/);
-      assert.equal(
-        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
-        true,
-      );
+      for (let i = 0; i < 24; i++)
+        assert.equal((await options.execute("calculate", { operation: "add", operands: ["1", "1"] })).isError, undefined);
+      const wrongPath = path.join(options.workdir, "wrong-run", "evaluation.json");
+      const create = await options.execute("execute_code", { language: "python",
+        code: `from pathlib import Path\nPath(${JSON.stringify(wrongPath)}).write_text('{"ok":true}')`, outputs: ["evaluation.json"] });
+      assert.equal(JSON.parse(create.content[0]!.text!).exit_code, 1, "the initial draft allowance reaches the real writer");
+      assert.match(JSON.parse(create.content[0]!.text!).stderr, /FileNotFoundError/);
+      assert.deepEqual(object(object(create.details).budget).draft_writes, { used: 1, remaining: 1, tools: ["execute_code"] });
+      assert.equal(await exists(path.join(options.workdir, "evaluation.json")), false);
+      assert(!options.tools.some(tool => tool.name === "submit_evaluation"));
+      const unavailable = await options.execute("read_trace", { candidate: "answer", message_index: 1 });
+      assert.equal(unavailable.isError, true, "a failed writer unlocks no exploration allowance");
+      assert.match(unavailable.content[0]!.text!, /探索工具预算已耗尽/);
+      const corrected = await options.execute("execute_code", { language: "python",
+        code: "from pathlib import Path\nPath('evaluation.json').write_text('{\"ok\":true}')", outputs: ["evaluation.json"] });
+      assert.equal(corrected.isError, undefined, JSON.stringify(corrected));
+      assert.deepEqual(object(object(corrected.details).budget).draft_writes, { used: 2, remaining: 0, tools: ["execute_code"] });
+      assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation.json" })).terminate, true);
     },
     async abort() {}, async dispose() {},
-  }), { repairAttempts: 0 });
+  }), { policy: { maxToolCalls: 24, repairAttempts: 2 }, material: "original facts",
+    profile: { fileSubmission: true, requiredReads: () => [], toolNames: ["read_trace", "calculate", "execute_code"],
+      toolDescriptions: { read_trace: "Read original source.", calculate: "Calculate exactly.", execute_code: "Write JSON.", submit_evaluation_file: "Submit JSON file." } } });
   try {
     await fixture.start();
     const status = await fixture.done();
     assert.equal(status.state, "succeeded", status.error);
     assert.deepEqual((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats, {
       contentSubmissions: 1,
-      fileErrors: 1,
+      fileErrors: 0,
     });
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.audit.calls, 26);
   } finally { await fixture.close(); }
 });
 test("a rejected draft without file submission capability requests a complete direct submission", async () => {
@@ -675,24 +1021,25 @@ test("a rejected draft without file submission capability requests a complete di
       assert.equal(unavailable.isError, true);
       assert.match(unavailable.content[0]!.text!, /Unknown tool/);
       assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false);
-      const invalid = draftFor(options.spec, invalidResult(options.spec));
-      const rejected = await options.execute("submit_evaluation", invalid);
+      const invalid = invalidDraft(options.spec);
+      const rejected = await submitFor(options, invalid);
       assert.equal(rejected.isError, true);
       const feedback = JSON.parse(rejected.content[0]!.text!);
-      assert.deepEqual(await readJson(path.join(options.workdir, "evaluation-draft.json")), invalid);
+      assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), invalid);
       assert.equal(Object.hasOwn(feedback, "draft_file"), false);
       assert.match(feedback.message, /完整 JSON/);
       assert.match(feedback.message, /submit_evaluation/);
       assert.equal(
-        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
         true,
       );
     },
     async abort() {}, async dispose() {},
-  }), { repairAttempts: 1 });
+  }), { policy: { repairAttempts: 1 } });
   fixture.spec.evaluation.fileSubmission = false;
   fixture.spec.evaluation.toolDescriptions = { ...fixture.spec.evaluation.toolDescriptions };
   delete fixture.spec.evaluation.toolDescriptions.submit_evaluation_file;
+  fixture.spec.evaluation.toolDescriptions.submit_evaluation = "Submit the complete JSON using submit_evaluation.";
   try {
     await fixture.start();
     const status = await fixture.done();
@@ -719,8 +1066,7 @@ test("three file loading failures stop independently of the content budget", asy
       },
       async abort() {},
       async dispose() {},
-    }),
-    { repairAttempts: 0 },
+    }), { profile: fileProfile, policy: { repairAttempts: 0 } },
   );
   try {
     await fixture.start();
@@ -742,12 +1088,12 @@ test("different invalid field values do not count as repeated identical errors",
         };
         draft.findings[0].importance = invalid;
         assert.equal(
-          (await options.execute("submit_evaluation", draftFor(options.spec, draft))).isError,
+          (await submitFor(options, draftFor(options.spec, draft))).isError,
           true,
         );
       }
       assert.equal(
-        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
         true,
       );
     },
@@ -761,67 +1107,160 @@ test("different invalid field values do not count as repeated identical errors",
     await fixture.close();
   }
 });
-test("an unchanged error stops repair even when another field was fixed", async () => {
+test("Attribution can repair coverage and remaining identical problem errors within three repairs", async () => {
+  const feedback: ValidationIssue[][] = [];
   const fixture = await harness(async (options) => ({
     async run() {
-      const invalid = invalidResult(options.spec) as any;
-      invalid.findings[0].evidence[0].quote = "wrong-a";
-      invalid.findings.push({
-        ...structuredClone(invalid.findings[0]),
-        finding_id: "extra",
-        evidence: [{ quote: "wrong-b" }],
-      });
-      await options.execute("submit_evaluation", draftFor(options.spec, invalid));
-      invalid.findings[1].evidence[0].quote = "2+2=4";
-      await options.execute("submit_evaluation", draftFor(options.spec, invalid));
+      // Repairing coverage must preserve opportunities to fix the remaining invalid strength fields.
+      const draft = draftFor(options.spec, taskResult(options.spec)) as {
+        findings: { problem?: unknown }[];
+        criterion_assessments: unknown[];
+      };
+      draft.findings = Array.from({ length: 4 }, () => ({
+        ...structuredClone(draft.findings[0]!), problem: "",
+      }));
+      const assessments = draft.criterion_assessments;
+      draft.criterion_assessments = [];
+      for (let submission = 0; submission < 3; submission++) {
+        if (submission === 1) draft.criterion_assessments = assessments;
+        if (submission === 2) {
+          delete draft.findings[0]!.problem;
+          delete draft.findings[1]!.problem;
+        }
+        const rejected = await submitFor(options, draft);
+        assert.equal(rejected.isError, true);
+        const response = JSON.parse(rejected.content[0]!.text!);
+        feedback.push(response.errors);
+        assert.equal(response.budget.content_remaining, 3 - submission);
+      }
+      assert.deepEqual(feedback.map((errors) => errors.filter((error) => error.code === "strength_problem_forbidden").length), [4, 4, 2]);
+      assert(feedback.every((errors) => errors.some((error) => error.code.startsWith("schema_"))));
+      assert(feedback[0]!.some((error) => error.code === "criterion_assessment_missing"));
+      assert(!feedback[1]!.some((error) => error.code === "criterion_assessment_missing"));
+      draft.findings.forEach((finding) => { delete finding.problem; });
+      assert.equal((await submitFor(options, draft)).terminate, true);
     },
     async abort() {},
     async dispose() {},
-  }));
+  }), { policy: { repairAttempts: 3 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(fixture.counts().posts, 4, "partial progress uses the initial submission plus all three repairs");
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions, 4);
+  } finally { await fixture.close(); }
+});
+test("identical invalid drafts retain the remaining repairs and stop at the cumulative content cap", async () => {
+  const remaining: number[] = [];
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const draft = invalidDraft(options.spec) as Record<string, unknown>;
+      for (let index = 0; index < 4; index++) {
+        // Object-key order changes formatting, not the submitted content.
+        const response = await submitFor(options, index % 2 ? Object.fromEntries(Object.entries(draft).reverse()) : draft);
+        assert.equal(response.isError, true);
+        remaining.push(JSON.parse(response.content[0]!.text!).budget.content_remaining);
+      }
+    }, async abort() {}, async dispose() {},
+  }), { policy: { repairAttempts: 3 } });
   try {
     await fixture.start();
     const status = await fixture.done();
     assert.equal(status.state, "failed");
-    assert.equal(status.failure?.repeatedErrors, 2);
-    assert.equal(status.failure?.stopped, true);
+    assert.equal(status.failure?.repeatedErrors, 4);
+    assert.equal(status.failure?.contentSubmissions, 4);
+    assert.equal(fixture.counts().posts, 4);
+    assert.deepEqual(remaining, [3, 2, 1, 0]);
     assert.equal(status.retryable, false, "repeated business errors must not become retryable interruptions");
-    assert.match(status.error || "", /Repeated validation errors/);
+    assert.equal(status.error, "Submission repair budget exhausted");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally {
     await fixture.close();
   }
 });
-test("resuming a failed draft gets a repair opportunity within the new attempt", async () => {
-  let recovery: FailureContext | undefined;
-  const failed = await harness(async (options) => ({
+test("a substantive third submission can repair two identical rejections", async () => {
+  const fixture = await harness(async (options) => ({
     async run() {
-      const draft = draftFor(options.spec, invalidResult(options.spec));
-      await options.execute("submit_evaluation", draft);
-      await options.execute("submit_evaluation", draft);
+      const draft = invalidDraft(options.spec);
+      for (let index = 0; index < 2; index++) {
+        const response = await submitFor(options, draft);
+        assert.equal(response.isError, true);
+        const feedback = JSON.parse(response.content[0]!.text!);
+        assert.equal(feedback.budget.content_remaining, 3 - index);
+        if (index) assert.match(feedback.message, /与上一稿相同/);
+      }
+      assert.equal((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate, true);
+    }, async abort() {}, async dispose() {},
+  }), { policy: { repairAttempts: 3 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(fixture.counts().posts, 3);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions, 3);
+  } finally { await fixture.close(); }
+});
+test("changed drafts with the same errors retain repair opportunities without resetting the content cap", async () => {
+  const feedback: { errors: ValidationIssue[]; budget: { content_remaining: number } }[] = [];
+  const writerRemaining: number[] = [];
+  const fixture = await harness(async (options) => ({
+    async run() {
+      const draft = invalidDraft(options.spec) as { summary: string };
+      for (let submission = 0; submission < 4; submission++) {
+        draft.summary = `修正描述 ${submission}`;
+        const rejected = await submitFor(options, draft);
+        assert.equal(rejected.isError, true);
+        feedback.push(JSON.parse(rejected.content[0]!.text!));
+        writerRemaining.push((rejected.details as { budget: { draft_writes: { remaining: number } } }).budget.draft_writes.remaining);
+      }
+    }, async abort() {}, async dispose() {},
+  }), { policy: { repairAttempts: 3 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(fixture.counts().posts, 4);
+    assert.deepEqual(feedback.map((item) => item.errors), Array(4).fill(feedback[0]!.errors));
+    assert.deepEqual(feedback.map((item) => item.budget.content_remaining), [3, 2, 1, 0]);
+    assert.deepEqual(writerRemaining, [0, 0, 0, 0], "direct JSON repairs never reserve a file writer");
+    assert.equal(status.failure?.contentSubmissions, 4);
+    assert.equal(status.failure?.repeatedErrors, 1);
+    assert.equal(status.failure?.stopped, false);
+    assert.equal(status.error, "Submission repair budget exhausted");
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+test("resuming an unfinished invalid draft preserves its repair file and cumulative content count", async () => {
+  const fixture = await harness(async (options) => ({
+    async run() {
+      if (!options.spec.recovery) {
+        const draft = invalidDraft(options.spec);
+        await submitFor(options, draft);
+        await submitFor(options, draft);
+        return;
+      }
+      assert.equal(await exists(path.join(options.workdir, "submission-rejected.json")), true,
+        "a recoverable draft remains available while its cumulative repair budget remains");
+      assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), options.spec.recovery.draft);
+      assert.equal((await submitFor(options, invalidDraft(options.spec))).isError, true);
+      assert.equal((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate, true);
     },
     async abort() {}, async dispose() {},
   }));
   try {
-    await failed.start();
-    const status = await failed.done();
-    assert.equal(status.state, "failed");
-    assert.equal(status.failure?.repeatedErrors, 2);
-    recovery = { ...status.failure!, attemptId: "previous-attempt" };
-  } finally { await failed.close(); }
-  const resumed = await harness(async (options) => ({
-    async run() {
-      assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), false,
-        "a stopped draft must not be offered as a repair file in a fresh attempt");
-      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, invalidResult(options.spec)))).isError, true);
-      assert.equal((await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate, true);
-    },
-    async abort() {}, async dispose() {},
-  }));
-  resumed.spec.recovery = recovery;
-  try {
-    await resumed.start();
-    assert.equal((await resumed.done()).state, "succeeded");
-    assert.equal(resumed.counts().posts, 2);
-  } finally { await resumed.close(); }
+    await fixture.start();
+    const first = await fixture.done();
+    assert.equal(first.state, "failed");
+    assert.equal(first.failure!.repeatedErrors, 2);
+    await fixture.store.endAttempt(fixture.spec, "failed", first.error!);
+    const policy = { ...fixture.spec.policy, repairAttempts: 1 };
+    const spec = { ...fixture.spec, attemptId: "resumed", policy, recovery: first.failure,
+      prompt: fixture.prepared.renderAttempt(policy, first.failure), evidenceBank: [...fixture.prepared.evidenceBank], deadline: Date.now() + 10000 };
+    await fixture.start(spec);
+    assert.equal((await fixture.done(spec.attemptId)).state, "succeeded");
+    assert.equal(fixture.counts().posts, 4);
+    assert.equal((await fixture.store.receipt(spec.taskId))?.submissionStats?.contentSubmissions, 4);
+  } finally { await fixture.close(); }
 });
 
 test("a session that stops before submitting gets one nudge and can still succeed", async () => {
@@ -831,7 +1270,7 @@ test("a session that stops before submitting gets one nudge and can still succee
       prompts.push(prompt);
       if (prompts.length === 1) return;
       assert.equal(
-        (await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)))).terminate,
+        (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
         true,
       );
     },
@@ -843,7 +1282,7 @@ test("a session that stops before submitting gets one nudge and can still succee
     assert.equal((await fixture.done()).state, "succeeded");
     assert.equal(prompts.length, 2);
     assert.match(prompts[0]!, /任务材料/);
-    assert.match(prompts[1]!, /没有收到通过校验的提交/);
+    assert.equal(prompts[1], fixture.spec.evaluation.submissionNudge);
   } finally {
     await fixture.close();
   }
@@ -879,11 +1318,11 @@ for (const reason of ["no-submission", "idle"] as const)
       let release = () => {};
       const fixture = await harness(async (options) => ({
         async run() {
-          assert.equal(await exists(path.join(options.workdir, "evaluation-draft.json")), !stopped);
+          assert.equal(await exists(path.join(options.workdir, "submission-rejected.json")), !stopped);
           if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
         },
         async abort() { release(); }, async dispose() {},
-      }), { idleTimeoutSeconds: reason === "idle" ? 1 : 10 });
+      }), { policy: { idleTimeoutSeconds: reason === "idle" ? 1 : 10 } });
       fixture.spec.recovery = {
         draft, errors: [issue], contentSubmissions: 2, fileErrors: 1, repeatedErrors: 2, stopped, attemptId: "previous-attempt",
       };
@@ -919,17 +1358,15 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
         async dispose() {
           disposed = true;
         },
-      }),
-      { idleTimeoutSeconds: reason === "idle" ? 1 : 10 },
+      }), { policy: { idleTimeoutSeconds: reason === "idle" ? 1 : 10 } },
     );
     try {
       // Allow session setup IO under load before testing deadline-driven disposal.
       if (reason === "deadline") fixture.spec.deadline = Date.now() + 2000;
       await fixture.start();
       if (reason === "cancel") {
-        for (let i = 0; i < 200 && !running; i++)
-          await new Promise((r) => setTimeout(r, 25));
-        assert.equal(running, true, "cancel only after the session exists");
+        await waitForTestState(async () => ({ running, disposed }), state => state.running,
+          "cancel only after the session exists");
         await request(fixture.worker.url + "/api/attempts/attempt/cancel", "POST", {});
       }
       const status = await fixture.done();
@@ -995,7 +1432,7 @@ test("malformed required-material specs are refused before creating a model sess
   const fixture = await harness(async () => {
     sessions++;
     throw new Error("Must not start");
-  }, {}, false, "材料");
+  }, { material: "材料" });
   const read = fixture.spec.evaluation.requiredReads![0];
   try {
     for (const requiredReads of [
@@ -1038,8 +1475,7 @@ test("token budget aborts at the model response boundary", async () => {
         aborted = true;
       },
       async dispose() {},
-    }),
-    { maxTokens: 10 },
+    }), { policy: { maxTokens: 10 } },
   );
   try {
     await fixture.start();
@@ -1060,8 +1496,8 @@ for (const [message, retryable] of [
   ['evaluation-gateway API error (529): {"message":"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)","code":"server_error"}', true],
   ["HTTP 503 Service Unavailable", true],
   ["HTTP/2 500 Internal Server Error", true],
-  ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_01a0fc93466c7cd2907ddcf5|070ed59d2f624fb64934837f33bc1803_fc_0); expected complete JSON object", true],
-  ["Invalid OpenAI Responses tool arguments: fc_123; expected JSON object", true],
+  ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_01a0fc93466c7cd2907ddcf5|070ed59d2f624fb64934837f33bc1803_fc_0); expected complete JSON object", false],
+  ["Invalid OpenAI Responses tool arguments: fc_123; expected JSON object", false],
   ["Evaluation validation failed: Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object", false],
   ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object; wrong business criteria", false],
   ["Evaluation validation failed: expected 529 characters", false],
@@ -1108,17 +1544,222 @@ test("an ordinary thrown error cannot impersonate an SDK malformed-arguments res
   } finally { await fixture.close(); }
 });
 
+const malformedArguments = (name: string) =>
+  `Invalid OpenAI Responses tool arguments: ${name} (call_invalid|fc_invalid); expected complete JSON object`;
+const emitMalformedArguments = (options: Parameters<AgentBackend["createSession"]>[0], name: string) =>
+  options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error", rawStopReason: "completed",
+    errorMessage: malformedArguments(name) } });
+
+test("SDK malformed submission receives phase feedback and shares the real Host content checkpoint", async () => {
+  let runs = 0;
+  const fixture = await harness(async options => ({ async run(prompt) {
+    if (++runs === 1) { emitMalformedArguments(options, "submit_evaluation"); return; }
+    const feedback = JSON.parse(prompt);
+    assert.equal(feedback.failed_tool, "submit_evaluation");
+    assert.equal(feedback.next_tool, "submit_evaluation");
+    assert.equal(feedback.errors[0].code, "tool_arguments_invalid");
+    assert.equal(feedback.budget.content_remaining, 3);
+    assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 1);
+    assert.equal(fixture.counts().posts, 0, "malformed JSON never reaches Host acceptance");
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content", offset: 0 });
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts" });
+  try {
+    fixture.spec.model.api = "openai-responses";
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(runs, 2); assert.equal(fixture.counts().posts, 1);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 2);
+    const events = (await readFile(path.join(fixture.directory,"worker/attempt/events.jsonl"),"utf8")).trim().split("\n")
+      .map(line => JSON.parse(line) as WorkerEvent);
+    const malformed = events.filter(event => event.type === "tool_start" &&
+      (event.data as { malformed_arguments?: boolean }).malformed_arguments);
+    assert.equal(malformed.length,1);
+    assert.equal((malformed[0].data as { argument_object_available: boolean }).argument_object_available,false);
+    assert(!Object.hasOwn(malformed[0].data as object,"args"),"the event must not manufacture a JSON object");
+    assert.equal(events.filter(event => event.type === "tool_start" &&
+      (event.data as { name?: string }).name === "submit_evaluation").length,2,"replay ledger counts both attempts");
+  } finally { await fixture.close(); }
+});
+
+test("four malformed SDK submissions exhaust content repairs without a draft or transport retry", async () => {
+  let runs = 0;
+  const fixture = await harness(async options => ({ async run() { runs++; emitMalformedArguments(options, "submit_evaluation"); },
+    async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts" });
+  try {
+    fixture.spec.model.api = "openai-responses";
+    await fixture.start(); const status = await fixture.done();
+    assert.equal(status.state, "failed"); assert.equal(status.retryable, false);
+    assert.equal(runs, 4); assert.equal(status.failure!.contentSubmissions, 4);
+    assert.equal(status.failure!.draft, undefined);
+    assert.equal(status.failure!.errors[0].code, "tool_arguments_invalid");
+    assert.equal(fixture.counts().posts, 0); assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+
+test("malformed arguments preserve an older real draft without diagnosing identical JSON", async () => {
+  let runs = 0;
+  const original = { ok: false };
+  const fixture = await harness(async options => ({ async run(prompt) {
+    runs++;
+    if (runs === 1) {
+      assert.equal((await submitFor(options, original)).isError,true);
+      emitMalformedArguments(options,"submit_evaluation"); return;
+    }
+    const checkpoint = fixture.store.state.manifest.states[fixture.spec.taskId].failure!;
+    assert.equal(checkpoint.repeatedErrors,0,"absent argument objects cannot be compared");
+    assert.deepEqual(checkpoint.draft,original);
+    assert.deepEqual(JSON.parse(await readFile(path.join(options.workdir,"submission-rejected.json"),"utf8")),original);
+    assert(!prompt.includes("完整 JSON 与上一稿相同"));
+    if (runs === 2) { emitMalformedArguments(options,"submit_evaluation"); return; }
+    await options.execute("read_trace",{candidate:"answer",message_index:0,path:"/content",offset:0});
+    assert.equal((await submitFor(options, {ok:true})).isError,undefined);
+  }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts" });
+  try {
+    fixture.spec.model.api="openai-responses";
+    await fixture.start(); assert.equal((await fixture.done()).state,"succeeded");
+    assert.equal(runs,3); assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,4);
+  } finally { await fixture.close(); }
+});
+
+test("malformed SDK reads consume exploration only and stop at its existing cap", async () => {
+  let runs = 0;
+  const fixture = await harness(async options => ({ async run() { runs++; emitMalformedArguments(options, "read_trace"); },
+    async abort() {}, async dispose() {} }), { policy: { maxToolCalls: 2 }, material: "original facts" });
+  try {
+    fixture.spec.model.api = "openai-responses";
+    await fixture.start(); const status = await fixture.done();
+    assert.equal(status.state, "failed"); assert.equal(status.retryable, false);
+    assert.equal(runs, 3); assert.equal(status.failure!.contentSubmissions, 0); assert.equal(fixture.counts().posts, 0);
+    const record = await readJson<{ metrics: { audit: { calls: number } } }>(path.join(fixture.directory,"worker/attempt/attempt.json"));
+    assert.equal(record.metrics.audit.calls, 2);
+  } finally { await fixture.close(); }
+});
+
+test("malformed SDK writers can correct arguments within the protected total cap without executing them", async () => {
+  let runs = 0;
+  const fixture = await harness(async options => ({ async run(prompt) {
+    runs++;
+    if (runs === 1) {
+      await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+    } else {
+      const feedback = JSON.parse(prompt);
+      assert.equal(feedback.failed_tool, "execute_code");
+      assert.equal(feedback.errors[0].code, "tool_arguments_invalid");
+      assert.equal(feedback.budget.content_remaining, 3);
+      assert.deepEqual(feedback.budget.exploration, { used: 1, remaining: 0 });
+      assert.deepEqual(feedback.budget.draft_writes, { used: runs - 1, remaining: runs <= 3 ? 1 : 0, tools: ["execute_code"] });
+      assert.equal(await exists(path.join(options.workdir, ".execution")), false,
+        "absent SDK arguments must never be manufactured or passed to the script executor");
+    }
+    emitMalformedArguments(options, "execute_code");
+  }, async abort() {}, async dispose() {} }), { policy: { maxToolCalls: 1, repairAttempts: 2 }, material: "original facts",
+    profile: { fileSubmission: true, toolNames: ["calculate", "execute_code"], requiredReads: () => [],
+      toolDescriptions: { calculate: "Calculate exactly.", execute_code: "Write JSON.", submit_evaluation_file: "Submit JSON file." } } });
+  try {
+    fixture.spec.model.api = "openai-responses";
+    await fixture.start(); const status = await fixture.done();
+    assert.equal(runs, 4, "three protected malformed calls receive feedback; a fourth cannot extend the total cap");
+    assert.equal(status.state, "failed"); assert.equal(status.retryable, false);
+    assert.equal(status.failure!.contentSubmissions, 0); assert.equal(status.failure!.fileErrors, 0);
+    assert.equal(fixture.counts().posts, 0);
+    const record = await readJson<{ metrics: { audit: { calls: number } } }>(path.join(fixture.directory, "worker/attempt/attempt.json"));
+    assert.equal(record.metrics.audit.calls, 4, "exploration and all three protected failed writers each count once");
+  } finally { await fixture.close(); }
+});
+
+test("malformed inspection and later malformed final preserve the immutable inspection and bank", async () => {
+  let runs = 0;
+  let before: FailureContext;
+  const fixture = await harness(async options => ({ async run(prompt) {
+    runs++;
+    if (runs === 1) { emitMalformedArguments(options,"inspect_material"); return; }
+    const feedback = JSON.parse(prompt);
+    if (runs === 2) {
+      assert.equal(feedback.next_tool,"inspect_material");
+      await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content", offset: 0 });
+      await inspectMaterials(options,{actual:"original facts"});
+      before = structuredClone(fixture.store.state.manifest.states[fixture.spec.taskId].failure!);
+      emitMalformedArguments(options,"submit_evaluation"); return;
+    }
+    assert.equal(feedback.next_tool,"submit_evaluation");
+    const checkpoint = fixture.store.state.manifest.states[fixture.spec.taskId].failure!;
+    assert(checkpoint.inspection); assert(before.evidenceBank!.length > 0);
+    assert.deepEqual(checkpoint.evidenceBank,before.evidenceBank);
+    assert.deepEqual(checkpoint.inspection,before.inspection);
+    assert.equal(checkpoint.contentSubmissions,3);
+    assert.equal((await submitFor(options, {ok:true})).isError,undefined);
+  }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts", profile: inspectionProfile });
+  try {
+    fixture.spec.model.api="openai-responses";
+    await fixture.start(); assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(runs,3); assert.equal(fixture.inspectionPosts(),1); assert(receipt.audit.inspection);
+    assert.equal(receipt.submissionStats!.contentSubmissions,4);
+  } finally { await fixture.close(); }
+});
+
+for (const [name, rawStopReason, api] of [
+  ["unregistered_network_tool", "completed", "openai-responses"],
+  ["submit_evaluation", "incomplete.max_output_tokens", "openai-responses"],
+  ["submit_evaluation", "failed", "openai-responses"],
+  ["submit_evaluation", "completed", "openai-completions"],
+] as const)
+  test(`SDK argument repair rejects untrusted phase ${name}/${rawStopReason}/${api}`, async () => {
+    let runs = 0;
+    const fixture = await harness(async options => ({ async run() {
+      runs++;
+      options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error", rawStopReason,
+        errorMessage: malformedArguments(name) } });
+    }, async abort() {}, async dispose() {} }), { material: "original facts" });
+    try {
+      fixture.spec.model.api = api;
+      await fixture.start(); const status = await fixture.done();
+      assert.equal(status.state,"failed"); assert.equal(status.retryable,false);
+      assert.equal(runs,1); assert.equal(status.failure!.contentSubmissions,0); assert.equal(fixture.counts().posts,0);
+    } finally { await fixture.close(); }
+  });
+
+test("same-run recovery counts a malformed final without repeating an accepted inspection", async () => {
+  let resumed = 0;
+  const fixture = await harness(async options => ({ async run(prompt) {
+    if (options.spec.attemptId === "attempt") {
+      await options.execute("read_trace",{candidate:"answer",message_index:0,path:"/content",offset:0});
+      await inspectMaterials(options,{actual:"original facts"});
+      throw new Error("fixture connection lost after inspection");
+    }
+    if (++resumed === 1) { emitMalformedArguments(options,"submit_evaluation"); return; }
+    const feedback=JSON.parse(prompt);
+    assert.equal(feedback.next_tool,"submit_evaluation");
+    assert.equal(feedback.budget.content_remaining,1);
+    assert.equal((await submitFor(options, {ok:true})).isError,undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
+  try {
+    fixture.spec.model.api="openai-responses";
+    await fixture.start(); const first=await fixture.done(); assert(first.failure!.inspection);
+    await fixture.store.checkpoint(fixture.spec.taskId,first.failure!);
+    await fixture.store.endAttempt(fixture.spec,"failed",first.error!);
+    const policy={...fixture.spec.policy,repairAttempts:1};
+    const spec={...fixture.spec,attemptId:"resumed-malformed",policy,recovery:first.failure,
+      prompt:fixture.prepared.renderAttempt(policy,first.failure),evidenceBank:[...first.failure!.evidenceBank!],deadline:Date.now()+10000};
+    await fixture.start(spec); const second=await fixture.done(spec.attemptId);
+    assert.equal(second.state,"succeeded"); assert.equal(resumed,2); assert.equal(fixture.inspectionPosts(),1);
+    const receipt=(await fixture.store.receipt(spec.taskId))!;
+    assert.equal(receipt.submissionStats!.contentSubmissions,3);
+    assert.deepEqual(receipt.audit.inspection,first.failure!.inspection);
+    assert.deepEqual(receipt.audit.evidenceBank,first.failure!.evidenceBank);
+  } finally { await fixture.close(); }
+});
+
 test("repair exhaustion preserves its cause instead of a generic SDK abort", async () => {
   const fixture = await harness(
     async (options) => ({
       async run() {
-        await options.execute("submit_evaluation", draftFor(options.spec, {}));
+        await submitFor(options, draftFor(options.spec, {}));
         throw new Error("This operation was aborted");
       },
       async abort() {},
       async dispose() {},
-    }),
-    { repairAttempts: 0 },
+    }), { policy: { repairAttempts: 0 } },
   );
   try {
     await fixture.start();
@@ -1128,4 +1769,380 @@ test("repair exhaustion preserves its cause instead of a generic SDK abort", asy
   } finally {
     await fixture.close();
   }
+});
+
+const inspectionProfile: Partial<AgentProfile> = {
+  toolNames: ["read_trace", "inspect_material"],
+  toolDescriptions: { read_trace: "Read source text.", inspect_material: "Independently inspect original materials.", submit_evaluation: "Submit JSON." },
+  renderPrompt: input => JSON.stringify(input),
+  inspection: { schema: { type: "object", additionalProperties: false, required: ["actual"], properties: { actual: { type: "string" } } },
+    validate(_request, value) {
+      if ((value as { actual: string }).actual !== "original facts") throw new ValidationError([
+        { category: "evidence", code: "actual_mismatch", path: "/actual", message: "Use the actual original facts." },
+      ]);
+    } },
+};
+
+for (const inspect of [false, true])
+  test(`failed first drafting and the revealed phase share a bounded writer allowance (${inspect})`, async () => {
+    const write = (value: unknown) => ({ language: "python", code:
+      `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(value))}, encoding='utf-8')` });
+    const fixture = await harness(async options => ({
+      async run() {
+        await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+        const spent = await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+        const budget = object(object(spent.details).budget);
+        assert.equal(object(budget.exploration).remaining, 0);
+        const failed = await options.execute("execute_code", { language: "python", code: "raise AssertionError('first writer failed')" });
+        assert.equal(failed.isError, true);
+        assert.deepEqual(object(object(failed.details).budget).draft_writes, { used: 1, remaining: 1, tools: ["execute_code"] });
+        const contentTool = inspect ? "inspect_material" : "submit_evaluation_file";
+        const missing = await options.execute(contentTool, { path: "missing.json" });
+        assert.equal(missing.isError, true);
+        const written = await options.execute("execute_code", write(inspect ? { actual: "original facts" } : { ok: true }));
+        assert.notEqual(written.isError, true, "the first file must remain writable after all exploration calls are spent");
+        const submitted = await options.execute(contentTool, { path: "evaluation.json" });
+        assert.notEqual(submitted.isError, true, JSON.stringify(submitted));
+        if (inspect) {
+          for (let index = 0; index < 3; index++) {
+            const calculated = await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+            assert.notEqual(calculated.isError, true);
+          }
+          const final = await options.execute("execute_code", write({ ok: true }));
+          assert.notEqual(final.isError, true, "revealing the verdict must reserve its own final draft write");
+          assert.deepEqual(object(object(final.details).budget).draft_writes, { used: 3, remaining: 0, tools: ["execute_code"] });
+          const extra = await options.execute("execute_code", write({ ok: true }));
+          assert.equal(extra.isError, true, "the initial failure, corrected inspection and final writer share the original cap");
+          assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation.json" })).terminate, true);
+        } else assert.equal(submitted.terminate, true);
+      }, async abort() {}, async dispose() {},
+    }), { material: "original facts", policy: { maxToolCalls: 1, repairAttempts: 2 }, profile: {
+      ...(inspect ? inspectionProfile : {}), fileSubmission: true,
+      toolNames: ["read_trace", "calculate", "execute_code", ...(inspect ? ["inspect_material"] : [])],
+      toolDescriptions: { read_trace: "Read source text.", calculate: "Calculate exactly.", execute_code: "Write JSON.",
+        ...(inspect ? { inspect_material: "Inspect JSON." } : {}), submit_evaluation_file: "Submit a JSON file." },
+    } });
+    try {
+      await fixture.start();
+      const status = await fixture.done();
+      assert.equal(status.state, "succeeded", status.error);
+      const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+      assert.deepEqual(receipt.submissionStats, { contentSubmissions: inspect ? 2 : 1, fileErrors: 1 });
+      assert.equal(receipt.audit.calls, inspect ? 8 : 4, "mandatory reads and all successful or failed writers remain real audited calls");
+      assert.equal(fixture.inspectionPosts(), Number(inspect));
+    } finally { await fixture.close(); }
+  });
+
+for (const fileSubmission of [false, true])
+test(`inspection preserves original JSON fields at the Host (file submission: ${fileSubmission})`, async () => {
+  const original = { checks: [{ answer_evidence: [], source_evidence: [], detail: {} }], concerns: [],
+    source_reviews: [{}, { nested: [{}, { text: 'quoted "text"\\path\nline' }] }],
+    ...JSON.parse('{"__proto__":{"preserved":true},"constructor":{},"prototype":[]}') };
+  const profile: Partial<AgentProfile> = { ...inspectionProfile, fileSubmission,
+    toolDescriptions: { read_trace: "Read source text.", inspect_material: "Independently inspect original materials.",
+      ...(fileSubmission ? { submit_evaluation_file: "Submit JSON file." } : { submit_evaluation: "Submit JSON." }) }, inspection: {
+    schema: { type: "object" }, validate(_request, value) { assert.deepEqual(value, original); },
+  } };
+  const fixture = await harness(async options => ({ async run() {
+    const inspectionTool = options.tools.find(tool => tool.name === "inspect_material")!;
+    assert.deepEqual(inspectionTool.inputSchema, fileSubmission ? { type: "object", additionalProperties: false,
+      required: ["path"], properties: { path: { type: "string", minLength: 1 } } } : profile.inspection!.schema);
+    assert.equal(inspectionTool.description.includes('"file_content_schema"'), fileSubmission);
+    const inspected = await inspectMaterials(options, original);
+    assert.equal(inspected.isError, undefined, JSON.stringify(inspected));
+    assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), original);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: profile });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.deepEqual(receipt.audit.inspection!.value, original);
+    assert.equal(receipt.submissionStats!.contentSubmissions, 2);
+    assert.equal(fixture.inspectionPosts(), 1);
+    const events = (await readFile(path.join(fixture.directory, "worker/attempt/events.jsonl"), "utf8"))
+      .trim().split("\n").map(line => JSON.parse(line) as WorkerEvent);
+    const started = events.find(event => event.type === "tool_start" && object(event.data).name === "inspect_material")!;
+    assert.deepEqual(object(started.data).args, fileSubmission ? { path: "inspection.json" } : original);
+    const submitted = events.filter(event => event.type === "submission" && object(event.data).inspection === true);
+    assert.equal(submitted.length, 1);
+    assert.deepEqual(object(submitted[0]!.data).evaluation, original);
+    assert.equal(object(submitted[0]!.data).content_loaded, true);
+    assert.equal(object(submitted[0]!.data).contentSubmissions, 1);
+  } finally { await fixture.close(); }
+});
+
+for (const kind of ["body", "missing", "malformed", "outside", "symlink"] as const)
+  test(`inspection file ${kind} errors spend file budget without revealing or spending content`, async () => {
+    const fixture = await harness(async options => ({ async run() {
+      let args: unknown = { path: "missing-inspection.json" };
+      if (kind === "body") args = { actual: "original facts" };
+      else if (kind === "malformed") {
+        await writeFile(path.join(options.workdir, "invalid-inspection.json"), '{"actual":');
+        args = { path: "invalid-inspection.json" };
+      } else if (kind === "outside" || kind === "symlink") {
+        const outside = path.join(options.workdir, "..", "outside-inspection.json");
+        await writeFile(outside, JSON.stringify({ actual: "original facts" }));
+        if (kind === "outside") args = { path: "../outside-inspection.json" };
+        else {
+          await symlink(outside, path.join(options.workdir, "inspection-link.json"));
+          args = { path: "inspection-link.json" };
+        }
+      }
+      const rejected = await options.execute("inspect_material", args);
+      assert.equal(rejected.isError, true);
+      const feedback = rejected.details as { errors: ValidationIssue[]; next_tool: string; message: string; instructions: string;
+        budget: { content_remaining: number; file_errors_remaining: number } };
+      assert.equal(feedback.errors[0]!.code, "submission_file_invalid");
+      assert.equal(feedback.next_tool, "inspect_material");
+      assert.equal(feedback.message, inspectionProfile.toolDescriptions!.inspect_material);
+      assert.equal(feedback.instructions, inspectionProfile.toolDescriptions!.inspect_material);
+      assert(!JSON.stringify(feedback).includes("hidden conclusion"));
+      assert.equal(feedback.budget.content_remaining, 3); assert.equal(feedback.budget.file_errors_remaining, 2);
+      assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 0);
+      assert.equal(fixture.inspectionPosts(), 0);
+      const inspected = await inspectMaterials(options, { actual: "original facts" });
+      assert.equal(inspected.isError, undefined);
+      assert.equal((inspected.details as { next_tool: string }).next_tool, "submit_evaluation_file");
+      assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+    }, async abort() {}, async dispose() {} }), { material: "original facts", profile: {
+      ...inspectionProfile, fileSubmission: true, toolDescriptions: {
+        read_trace: "Read source text.", inspect_material: "Independently inspect original materials.",
+        submit_evaluation_file: "Submit JSON file.",
+      },
+    } });
+    try {
+      await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+      const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+      assert.deepEqual(receipt.submissionStats, { contentSubmissions: 2, fileErrors: 1 });
+      assert.equal(fixture.inspectionPosts(), 1);
+    } finally { await fixture.close(); }
+  });
+
+for (const fileSubmission of [false, true])
+  test(`inspection and final feedback retain their actual phase (file submission: ${fileSubmission})`, async () => {
+    const fixture = await harness(async options => ({ async run() {
+      const wrong = await inspectMaterials(options, { actual: "wrong" });
+      const before = wrong.details as { next_tool: string; message: string; instructions: string };
+      assert.equal(before.next_tool, "inspect_material");
+      assert.equal(before.message, inspectionProfile.toolDescriptions!.inspect_material);
+      assert.equal(before.instructions, before.message);
+      assert(!JSON.stringify(before).includes("hidden conclusion"));
+      assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 1);
+      const inspected = await inspectMaterials(options, { actual: "original facts" });
+      assert.equal(inspected.isError, undefined);
+      assert.equal((inspected.details as { next_tool: string }).next_tool,
+        fileSubmission ? "submit_evaluation_file" : "submit_evaluation");
+      const finalRejected = await submitFor(options, { ok: false });
+      assert.equal(finalRejected.isError, true);
+      assert.equal((finalRejected.details as { next_tool: string }).next_tool,
+        fileSubmission ? "submit_evaluation_file" : "submit_evaluation");
+      assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+    }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts", profile: {
+      ...inspectionProfile, fileSubmission, toolDescriptions: {
+        read_trace: "Read source text.", inspect_material: "Independently inspect original materials.",
+        ...(fileSubmission ? { submit_evaluation_file: "Submit JSON file." } : { submit_evaluation: "Submit JSON." }) },
+    } });
+    try {
+      await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+      assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 4);
+    } finally { await fixture.close(); }
+  });
+
+for (const fileSubmission of [false, true])
+test(`inspection and final submission preserve one content queue (file submission: ${fileSubmission})`, async () => {
+  const fixture = await harness(async options => ({ async run() {
+    if (fileSubmission) {
+      await writeFile(path.join(options.workdir, "wrong-inspection.json"), JSON.stringify({ actual: "wrong" }));
+      await writeFile(path.join(options.workdir, "inspection.json"), JSON.stringify({ actual: "original facts" }));
+    }
+    const [wrong, inspected, final] = await Promise.all([
+      options.execute("inspect_material", fileSubmission ? { path: "wrong-inspection.json" } : { path: "inspection.json" }),
+      options.execute("inspect_material", fileSubmission ? { path: "inspection.json" } : { actual: "original facts" }),
+      submitFor(options, { ok: true }),
+    ]);
+    assert.equal(wrong.isError, true); assert.equal(inspected.isError, undefined); assert.equal(final.isError, undefined);
+    if (!fileSubmission) assert((wrong.details as { errors: ValidationIssue[] }).errors.every(error => error.category !== "file"),
+      "a path object in direct mode is submitted as JSON, never loaded as a file");
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: {
+    ...inspectionProfile, fileSubmission, toolDescriptions: {
+      read_trace: "Read source text.", inspect_material: "Independently inspect original materials.",
+      ...(fileSubmission ? { submit_evaluation_file: "Submit JSON file." } : { submit_evaluation: "Submit JSON." }),
+    },
+  } });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(receipt.submissionStats!.contentSubmissions, 3);
+    assert.equal(receipt.submissionStats!.fileErrors, 0);
+    assert.deepEqual(receipt.audit.inspection!.value, { actual: "original facts" });
+    assert.equal(fixture.inspectionPosts(), 2);
+  } finally { await fixture.close(); }
+});
+
+test("material inspection and final submission share the same content counter and real Host checkpoint", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    assert(!options.spec.prompt.includes("hidden conclusion"));
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    const spent = await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+    assert.equal(object(object(object(spent.details).budget).exploration).remaining, 0);
+    assert.deepEqual(object(object(spent.details).budget).draft_writes, { used: 0, remaining: 0, tools: ["execute_code"] });
+    const blocked = await options.execute("execute_code", { language: "python", code: "raise AssertionError('must not execute')" });
+    assert.equal(blocked.isError, true, "direct inspection does not reserve a writer after exploration is spent");
+    const inspected = await inspectMaterials(options, { actual: "original facts" });
+    assert.equal(inspected.isError, undefined); assert(JSON.stringify(inspected).includes("hidden conclusion"));
+    assert.equal((inspected.details as { budget: { content_remaining: number } }).budget.content_remaining, 1);
+    assert.equal(object(object(object(inspected.details).budget).draft_writes).remaining, 0);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { policy: { maxToolCalls: 1, repairAttempts: 1 }, material: "original facts", profile: {
+    ...inspectionProfile, toolNames: ["read_trace", "calculate", "execute_code", "inspect_material"],
+    toolDescriptions: { ...inspectionProfile.toolDescriptions, calculate: "Calculate exactly.", execute_code: "Calculate with Python." },
+  } });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt!.submissionStats!.contentSubmissions, 2); assert.equal(receipt!.audit.calls, 2);
+    assert.deepEqual(receipt!.audit.inspection!.value, { actual: "original facts" });
+    assert.deepEqual(fixture.counts(), { posts: 1, lookups: 0 }); assert.equal(fixture.inspectionPosts(), 1);
+  } finally { await fixture.close(); }
+});
+
+test("three failed inspections plus a valid fourth cannot obtain a hidden fifth final submission", async () => {
+  let finalAttempted = false;
+  const fixture = await harness(async options => ({ async run() {
+    for (let i = 0; i < 3; i++) assert.equal((await inspectMaterials(options, { actual: "wrong" })).isError, true);
+    const success = await inspectMaterials(options, { actual: "original facts" });
+    assert.equal(success.isError, undefined); assert.equal((success.details as { budget: { content_remaining: number } }).budget.content_remaining, 0);
+    finalAttempted = true; await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts", profile: inspectionProfile });
+  try {
+    await fixture.start(); const status = await fixture.done(); assert.equal(status.state, "failed");
+    assert.equal(finalAttempted, true); assert.equal(status.failure!.contentSubmissions, 4);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+    assert.equal(fixture.counts().posts, 0); assert.equal(fixture.inspectionPosts(), 4);
+    assert(status.failure!.inspection, "successful fourth inspection stays recoverable despite exhausted final space");
+  } finally { await fixture.close(); }
+});
+
+test("same-payload transport retry does not consume another inspection draft", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    assert.equal((await inspectMaterials(options, { actual: "original facts" })).isError, undefined);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile, dropInspectionAck: true });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(fixture.inspectionPosts(), 2);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 2);
+  } finally { await fixture.close(); }
+});
+
+test("final submission before inspection is rejected and consumes the shared content budget", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    const rejected = await submitFor(options, { ok: true });
+    assert.equal(rejected.isError, true);
+    assert(JSON.stringify(rejected).includes("inspection_required"));
+    assert(JSON.stringify(rejected).includes("inspect_material"));
+    assert.equal((await inspectMaterials(options, { actual: "original facts" })).isError, undefined);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
+  try { await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 3);
+  } finally { await fixture.close(); }
+});
+
+test("inspection checkpoint is request-bound, idempotent and cannot be erased by a later failure", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
+  try {
+    await fixture.store.activate(fixture.spec);
+    const payload: MaterialInspection = { taskId: fixture.spec.taskId, attemptId: fixture.spec.attemptId, inspectionId: "first-inspection",
+      value: { actual: "original facts" }, audit: { ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank] }, contentSubmissions: 1 };
+    const initial = await fixture.store.inspect(payload), repeat = await fixture.store.inspect(payload); assert.deepEqual(initial, repeat);
+    await assert.rejects(fixture.store.inspect({ ...payload, inspectionId: "replaced-inspection" }), /cannot be replaced/);
+    await assert.rejects(fixture.store.inspect({ ...payload, attemptId: "other" }), /cancelled/);
+    await fixture.store.checkpoint(fixture.spec.taskId, { errors: [], evidenceBank: [...initial.evidenceBank], attemptId: fixture.spec.attemptId, contentSubmissions: 2,
+      fileErrors: 0, repeatedErrors: 0, stopped: false });
+    assert.deepEqual(fixture.store.manifest.states[fixture.spec.taskId]!.failure!.inspection, initial.inspection);
+  } finally { await fixture.close(); }
+});
+
+
+test("a session ending after successful inspection gets one bounded final-submission nudge", async () => {
+  let calls = 0;
+  const fixture = await harness(async options => ({ async run() {
+    if (++calls === 1) await inspectMaterials(options, { actual: "original facts" });
+    else await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
+  try { await fixture.start(); assert.equal((await fixture.done()).state, "succeeded"); assert.equal(calls, 2);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 2);
+  } finally { await fixture.close(); }
+});
+
+
+test("a recovered successful inspection restores actual proof and revealed context without another inspection draft", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    if (options.spec.attemptId === "attempt") {
+      await options.execute("read_trace", { candidate: "answer", message_index: 0, offset: 0, max_chars: 14, path: "/content" });
+      await inspectMaterials(options, { actual: "original facts" });
+      throw new Error("fixture disconnect after inspection");
+    }
+    assert(options.spec.prompt.includes("hidden conclusion"));
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
+  try {
+    await fixture.start(); const first = await fixture.done(); assert.equal(first.state, "failed"); assert(first.failure!.inspection);
+    await fixture.store.checkpoint(fixture.spec.taskId, first.failure!);
+    await fixture.store.endAttempt(fixture.spec, "failed", first.error!);
+    const policy = { ...fixture.spec.policy, repairAttempts: 2 }, spec = { ...fixture.spec, attemptId: "resumed-inspection", policy,
+      recovery: first.failure, prompt: fixture.prepared.renderAttempt(policy, first.failure), evidenceBank: [...fixture.prepared.evidenceBank], deadline: Date.now() + 10000 };
+    await fixture.store.activate(spec); await request(fixture.worker.url + "/api/attempts", "POST", spec);
+    const second = await fixture.done(spec.attemptId);
+    assert.equal(second.state, "succeeded"); assert.equal(fixture.inspectionPosts(), 1);
+    const receipt = await fixture.store.receipt(spec.taskId); assert.equal(receipt!.submissionStats!.contentSubmissions, 2);
+    assert.deepEqual(receipt!.audit.inspection, first.failure!.inspection);
+    assert(receipt!.audit.traceReads.some(read => read.path === "/content" && read.start === 0 && read.end === 14));
+  } finally { await fixture.close(); }
+});
+
+
+test("ordinary recovery checkpoint cannot forge inspection or reduce an already spent content count", async () => {
+  const fixture = await harness(async () => ({ async run() {}, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts", profile: inspectionProfile });
+  try {
+    await fixture.store.activate(fixture.spec);
+    const forged = { id: "forged", value: { actual: "original facts" }, proof: { traceReads: [], viewedImages: [] } };
+    const failure: FailureContext = { errors: [], evidenceBank: [...fixture.spec.evidenceBank], attemptId: fixture.spec.attemptId, contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: false };
+    await assert.rejects(fixture.store.checkpoint(fixture.spec.taskId, { ...failure, inspection: forged }), /successful Host inspection/);
+    await assert.rejects(fixture.store.accept({ submissionId: "forged-final", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+      evaluation: { ok: true }, audit: { ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank], inspection: forged }, usage: emptyUsage(),
+      submissionStats: { contentSubmissions: 1, fileErrors: 0 } }), /先调用 inspect_material/);
+    assert.equal(fixture.inspectionPosts(), 0); assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+    await fixture.store.checkpoint(fixture.spec.taskId, { ...failure, contentSubmissions: 3 });
+    const payload: MaterialInspection = { taskId: fixture.spec.taskId, attemptId: fixture.spec.attemptId, inspectionId: "real-inspection",
+      value: forged.value, audit: { ...emptyAudit(), evidenceBank: [...fixture.spec.evidenceBank] }, contentSubmissions: 1 };
+    await assert.rejects(fixture.store.inspect(payload), /advance the shared/);
+    const successful = await fixture.store.inspect({ ...payload, contentSubmissions: 4 });
+    await fixture.store.checkpoint(fixture.spec.taskId, { ...failure, contentSubmissions: 0 });
+    assert.equal(fixture.store.manifest.states[fixture.spec.taskId]!.failure!.contentSubmissions, 4);
+    const audit = { ...emptyAudit(), evidenceBank: [...successful.evidenceBank], inspection: successful.inspection };
+    await assert.rejects(fixture.store.accept({ submissionId: "hidden-fifth", attemptId: fixture.spec.attemptId, taskId: fixture.spec.taskId,
+      evaluation: { ok: true }, audit, usage: emptyUsage(), submissionStats: { contentSubmissions: 5, fileErrors: 0 } }), /共用本次剩余内容预算/);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+  } finally { await fixture.close(); }
+});
+
+test("successful inspection delivers the complete Host context beyond ordinary tool-output limits", async () => {
+  const upstream = "hidden conclusion:" + "x".repeat(32000) + "REVEALED_CONTEXT_TAIL";
+  const fixture = await harness(async options => ({ async run() {
+    const inspection = await inspectMaterials(options, { actual: "original facts" });
+    assert.equal(inspection.isError, undefined);
+    assert.equal((inspection.details as { accepted?: boolean }).accepted, true);
+    const revealed = JSON.parse(inspection.content[0]!.text!) as { material: { upstream: string } };
+    assert.equal(revealed.material.upstream, upstream, "all later findings and verdict fields must reach the model");
+    assert.equal(fixture.inspectionPosts(), 1);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile, revealedInput: { upstream } });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt!.submissionStats!.contentSubmissions, 2);
+    assert.equal(receipt!.audit.artifacts.length, 0, "revealed task context does not need an unread delegated artifact");
+  } finally { await fixture.close(); }
 });

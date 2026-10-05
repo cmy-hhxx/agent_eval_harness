@@ -6,6 +6,7 @@ import { buildPlan, contentText, locateRecordStream, type PlanOptions } from "./
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 import { verdictSlotId } from "./commentary.js";
+import { countProblemSamples, effectiveProblemOccurrences, problemSampleKey, projectLibrary } from "@eval/agents/clustering";
 
 /** Read-only workflow projection: the dashboard never interprets blind labels or result files. */
 async function checkpoint(run: string): Promise<Checkpoint> {
@@ -154,7 +155,7 @@ const clipEvidence = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map((item) => {
         const entry = (item ?? {}) as JsonObject;
-        return { message_index: entry.message_index, quote: clip(entry.quote, 4000) };
+        return { ...(entry.source_input_id ? { source: entry.source, source_input_id: entry.source_input_id } : {}), message_index: entry.message_index, quote: clip(entry.quote, 4000) };
       })
     : value;
 /** Sample-view projection of accepted rows, including each comparison model's attribution. */
@@ -265,7 +266,7 @@ export async function readCaseDetail(run: string, batch: string, caseId: string)
   const saved = await checkpoint(run);
   const taskIds = Object.entries(saved.tasks).flatMap(([id, task]) => {
     // Clustering tasks cover a whole model × batch; they belong to the run overview, not a single case.
-    if (task.stage === "clustering" || task.data.rewriteOf?.stage === "clustering") return [];
+    if (task.stage === "clustering" || task.data.verificationPending || task.data.rewriteOf?.stage === "clustering") return [];
     const candidate = Object.values(task.inputIds)
       .map((inputId) => saved.inputs[inputId])
       .find(Boolean);
@@ -316,7 +317,7 @@ function taskDetails(saved: Checkpoint, id: string, rewriteIds: Map<string, stri
     last_progress_at: status.lastProgressAt ?? null,
     duration_ms: status.durationMs ?? null,
     versions: scope ? [scope.version]
-      : Object.values(task.inputIds).flatMap((inputId) => saved.inputs[inputId]?.version ?? []),
+      : Object.entries(task.inputIds).filter(([label]) => task.stage !== "attribution" || label === "answer").flatMap(([, inputId]) => saved.inputs[inputId]?.version ?? []),
     ...(scope ? { batch_id: scope.batch_id, shard: scope.shard } : {}),
     rewrite_submission_ids: [id, ...(task.stage === "comparison" ? Object.values(task.dependencies) : [])]
       .flatMap((source) => rewriteIds.get(source) ?? []),
@@ -336,13 +337,13 @@ export async function listClusteringTasks(run: string) {
 export async function readTaskResult(run: string, taskId: string) {
   const saved = await checkpoint(run);
   const task = saved.tasks[taskId];
-  if (!task) return undefined;
+  if (!task || task.data.verificationPending) return undefined;
   // Repository decoding checks the accepted reference against its authoritative JSONL row.
   const dependencies = task.stage === "comparison" ? Object.values(task.dependencies) : [];
   const state = await readRunTasks(run, [taskId, ...dependencies]);
   let row = state.receipts[taskId]?.exported?.row;
   if (row && task.stage === "comparison") {
-    const evaluations = Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => label !== "criteria").map(([label, id]) => {
+    const evaluations = Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => Object.hasOwn(task.inputIds, label)).map(([label, id]) => {
       const attribution = state.receipts[id]?.exported?.row;
       if (!attribution) throw new Error(`缺少归因任务结果：${id}`);
       return [saved.inputs[task.inputIds[label]].version, attribution.evaluation];
@@ -418,6 +419,12 @@ export interface ProblemClassView {
   aliases: string[];
   occurrences: number;
   first_seen: ProblemOrigin | null;
+  category_paths?: string[][];
+}
+export interface ProblemCategoryView {
+  path: string[];
+  class_ids: string[];
+  occurrences: number;
 }
 export interface ProblemMergeView {
   id: string;
@@ -438,7 +445,26 @@ export interface ProblemLibraryView {
     classes: ProblemClassView[];
   }[];
   merged: ProblemMergeView[];
+  categories: ProblemCategoryView[];
   totals: { components: number; classes: number; occurrences: number };
+}
+
+/** Prefix topic views share class IDs; counts always refer to distinct source findings. */
+export function problemCategories(library: ProblemLibrary): ProblemCategoryView[] {
+  const groups = new Map<string, { path: string[]; classes: Set<string> }>();
+  for (const problem of Object.values(library.classes)) {
+    if (problem.status !== "active") continue;
+    for (const path of problem.category_paths ?? [])
+      for (let length = 1; length <= path.length; length++) {
+        const prefix = path.slice(0, length), key = JSON.stringify(prefix.map(segment => segment.trim().replace(/\s+/gu, " ").toLowerCase()));
+        const group = groups.get(key) ?? { path: prefix, classes: new Set<string>() };
+        group.classes.add(problem.id);
+        groups.set(key, group);
+      }
+  }
+  return [...groups.values()].map(group => ({ path: group.path, class_ids: [...group.classes],
+    occurrences: countProblemSamples(effectiveProblemOccurrences(library).filter(sample => group.classes.has(sample.class_id))) }))
+    .sort((a, b) => JSON.stringify(a.path).localeCompare(JSON.stringify(b.path)));
 }
 
 function mergedClasses(library: ProblemLibrary): ProblemMergeView[] {
@@ -464,38 +490,23 @@ export async function listConfiguredProblemLibrary(config: EvalConfig): Promise<
     const model = version.id;
     const name = version.display_name || version.name;
     const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model));
-    if (!library) return { model, name, updated_at: null, components: [], merged: [],
+    if (!library) return { model, name, updated_at: null, components: [], merged: [], categories: [],
       totals: { components: 0, classes: 0, occurrences: 0 } };
-    const counts = new Map<string, number>();
-    for (const occurrence of library.occurrences)
-      counts.set(occurrence.class_id, (counts.get(occurrence.class_id) ?? 0) + 1);
     const active = Object.values(library.classes).filter((problem) => problem.status === "active");
     return {
       model,
       name,
       updated_at: library.updated_at,
-      components: Object.values(library.components).map((component) => ({
-        id: component.id,
-        label: component.label,
-        definition: component.definition,
-        aliases: component.aliases,
-        classes: active
-          .filter((problem) => problem.component_id === component.id)
-          .map((problem) => ({
-            id: problem.id,
-            label: problem.label,
-            definition: problem.definition,
-            aliases: problem.aliases,
-            occurrences: counts.get(problem.id) ?? 0,
-            first_seen: problem.first_seen,
-          }))
+      components: projectLibrary(library).components.map(component => ({ ...component,
+        classes: component.classes.map(problem => ({ ...problem, first_seen: library.classes[problem.id]!.first_seen }))
           .sort((a, b) => b.occurrences - a.occurrences || a.label.localeCompare(b.label)),
       })),
       merged: mergedClasses(library),
+      categories: problemCategories(library),
       totals: {
         components: Object.keys(library.components).length,
         classes: active.length,
-        occurrences: library.occurrences.length,
+        occurrences: countProblemSamples(effectiveProblemOccurrences(library)),
       },
     };
   }));
@@ -595,9 +606,16 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
   const problem = library?.classes[classId];
   if (!library || !problem) return undefined;
   const component = library.components[problem.component_id];
-  const occurrences = library.occurrences
+  const seenSamples = new Set<string>();
+  const occurrences = effectiveProblemOccurrences(library)
     .filter((occurrence) => occurrence.class_id === classId)
-    .sort((a, b) => (a.at === b.at ? b.id.localeCompare(a.id) : a.at < b.at ? 1 : -1));
+    .sort((a, b) => (a.at === b.at ? b.id.localeCompare(a.id) : a.at < b.at ? 1 : -1))
+    .filter(occurrence => {
+      const key = problemSampleKey(occurrence);
+      if (seenSamples.has(key)) return false;
+      seenSamples.add(key);
+      return true;
+    });
   const selected = occurrences.slice((page - 1) * pageSize, page * pageSize);
   const recalls = await sampleRecalls(config, selected);
   const related = new Set([classId]);
@@ -619,6 +637,7 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
       status: problem.status,
       merged_into: problem.merged_into,
       first_seen: problem.first_seen,
+      ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths }),
     },
     component: component
       ? { id: component.id, label: component.label, definition: component.definition }

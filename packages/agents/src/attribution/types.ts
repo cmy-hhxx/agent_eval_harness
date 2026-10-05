@@ -1,8 +1,9 @@
-import type { RewrittenResult, TaskAnalysis } from "@eval/contracts";
+import type { ResolvedEvidence, RewrittenResult, TaskAnalysis } from "@eval/contracts";
 export type { TaskAnalysis, TaskCriterion } from "@eval/contracts";
-export interface Evidence {
-  message_index: number;
-  quote: string;
+export interface Evidence extends ResolvedEvidence {
+  /** Foreign review fact source; both fields are absent on the answer's own evidence. */
+  source?: string;
+  source_input_id?: string;
 }
 export interface Finding {
   type: "strength" | "problem";
@@ -48,6 +49,13 @@ export interface CoreAssessment {
 export interface ProblemProposal {
   /** Evidence-backed responsible tools and/or 模型自身推理; definition explains each role; empty when responsibility is unresolved. */
   component: string[];
+  label: string;
+  definition: string;
+}
+/** Model choices bind responsibility to original selected evidence; canonical components are program-owned. */
+export interface ProblemSubmission {
+  model_responsible: boolean;
+  tool_evidence_indices: number[];
   label: string;
   definition: string;
 }

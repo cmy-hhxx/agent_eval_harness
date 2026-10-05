@@ -1,29 +1,38 @@
 # 评测提示词
 
-此模块是专业 Agent 的评测指令与工具描述、Eris 提示词与工具描述的唯一来源。五阶段系统/任务规则、任务材料/预算/恢复文案及内置评测工具描述在此装配；`packages/agents` 选择所需工具并组装 Profile，Tools 只负责执行，Host / Worker 不维护第二份规则正文。
+此模块是专业 Agent 和 Eris 的模型可见指令、共用材料文案与工具描述的唯一来源。`packages/agents` 选择工具并组装 Profile；Tools 负责执行，Host / Worker 接收装配好的文本。字段形状、业务校验与证据协议以[数据契约](../../docs/contract.md)和[Schema](../../schemas/README.md)为准，不在本页重复定义。
 
-专业阶段规则位于 `resources/<stage>/default/`，评测工具描述位于 `resources/tools/<tool>.md`；Eris 的系统规则、恢复文案和工具描述集中在 `resources/eris/system.md`、`resources/eris/recovery.md` 和 `resources/eris/tools/<tool>.md`。组装顺序见 `src/index.ts`；`shared/` 集中材料边界、预算、恢复及无提交时的补交提示，不包含阶段判定规则。
+## 资源与装配
 
-Profile 通过 `fileSubmission` 声明能否创建和修复提交文件。内置 Criteria、Rewrite、Clustering 仅暴露 `submit_evaluation`；Attribution、Comparison 配有 `execute_code`，同时暴露 `submit_evaluation_file`。Host 和 Worker 严格核对该能力与工具描述，补交提示统一引导直接提交完整 JSON。文件读取失败没有草稿时，不返回草稿路径或声称已经保存；无文件提交能力时，校验反馈引导修正完整 JSON 后直接重交。
+| 位置 | 内容 |
+|---|---|
+| `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 的系统和任务规则 |
+| `resources/comparison/verification/` | Comparison 独立首查及揭示后的核验规则 |
+| `resources/tools/<tool>.md` | 内置评测工具描述 |
+| `resources/shared/` | 材料边界、任务焦点、预算、恢复与无提交补交说明 |
+| `resources/eris/` | Eris 系统、恢复及工具规则 |
+| [src/index.ts](src/index.ts) | 资源加载、工具清单和提示词渲染 |
 
-Criteria 的模型材料是完整原文来源目录，提交只选择 `source_ids`；程序用集中资源生成固定验收规则与目标，不允许模型自由重写标准。Attribution 在评审入口先确定无标准答案时的固定字段，并直接检查请求中程序预计算的 `table_check_results`，额外探索可用 `check_table`，Comparison 对 `source_review` 中未解决事项走独立复核；待复核提交只含 status、点评 assessments、review_requests，Host 生成空排名与空比较矩阵，固定待核说明由本模块提供。完整比较矩阵仅用于正式判决。Comparison 的核心状态、失败判据与比较格 status/evidence_status 由程序从既有归因派生，模型只提交点评、标准/finding 引用、优势与取舍。必读延后正文声明在 Profile 的 requiredReads 中，独立于探索调用额度。
+Workflow 提供 `task_focus` 时，先用 `shared/task-focus.md` 呈现，再放阶段 instructions 与完整材料；展示材料移去重复键，可信输入保持原样。focus 只重复原问、目标、真实标准、可见最终回答、原用户时刻和共同要求，不代替完整材料或改变证据。
+
+内置 Profile 固定 `fileSubmission=false`，通过 `submit_evaluation` 直接提交完整 JSON；核验首查用 `inspect_material` 直接提交核查 JSON，成功后才提供最终提交工具，两阶段共用内容预算。`execute_code` 用于计算和探索。泛型自定义 Profile 可显式启用文件模式，用已有工作目录 JSON 的 path 提交；工具描述附程序给出的 `file_content_schema`。完整阶段、文件错误与预算规则见[归因与判决](../../docs/contract.md#归因与判决)和[工具架构](../../docs/architecture.md#新工具)。
+
+阶段提示词只写实际材料下的判断动作。Criteria 选择原文来源，Attribution 核查本方交付及归责，Comparison 核验既有归因并在固定槽比较，verification 先隐藏上游判词再揭示，Rewrite 只润色文本槽，Clustering 维护问题类。模型选择数字证据或来源编号，程序保存真实坐标、关联和正式结果；详细提交形状见[各阶段契约](../../docs/contract.md#输入与输出的分层)。
 
 ## 提示词写法
 
-恢复提示携带校验错误和仍可修复的草稿，要求逐项修复并检查关联字段；草稿已连续校验失败而停止时，仅保留错误，要求根据原材料重新评测。不向模型发送上次 attempt 的停止状态或已消耗预算。候选标识错误由 Comparison 校验反馈列出本组合法键，沿用当前请求中的原始标识；核心未达标缺少归因依据时，提醒按该候选自身的系统约束与权限限制复核。
+- **简短、直接**：同一规则只写一次，工具用法放工具描述，字段形状交给 Schema；共用片段不包含阶段判定规则。
+- **材料对应**：先核对本阶段实际输入和可用工具，不提尚未出现的回答、材料或能力。
+- **具体动作**：使用请求/结果字段名、真实工具名和普通语言，不另造阶段、角色、框架或分类。
 
-连续失败的草稿也不会写入新 attempt 的工作目录；校验失败的数值反馈携带实际解析的引用原文，便于区分原文与模型自行填写的 observation。
+恢复文案携带当前结构化错误及可修复草稿，反馈须指向实际字段和本方可选证据；停止后不向新 attempt 发送旧停止状态、已消耗预算或不可修稿。连续失败草稿不写入新工作目录，文件未加载时不反馈不存在的草稿路径。错误本身及工具执行结果由校验器、Tools 与 Runtime 生成，不在提示词中维护第二套判断逻辑。
 
-- **简短、直接：**只写当前任务需要的判断步骤和输出要求；同一规则只写一次，工具用法放在工具描述，字段形状交给 Schema。
-- **禁止提及未出现的事：**先核对本阶段实际输入和可用工具。没有其他回答，就不要提比较；没有材料或工具，就不要写「看不到它」「不要使用它」之类的预防句。
-- **禁止另造抽象概念：**用请求/结果中的字段名、实际工具名和普通语言说明具体动作，不引入材料中没有的阶段、角色、框架或分类。
+## 修改与验证
 
-启动时读取并检查：缺失或空文件、未知工具描述均报错。修改后运行 `npm run build:app` 并重启 Host；运行中的 Worker 不热读文件。已接受任务不因提示词变化重评，同 run ID 的新 attempt 使用本次启动的文本。
+启动时拒绝缺失、空资源或未知工具描述。修改后运行 `npm run build:app` 并重启 Host；运行中的 Worker 不热读文件。已接受任务保留，同 run 的未完成任务使用本次启动文本。
 
-技术性校验错误与工具执行结果仍由相应校验器、工具和 Runtime 按实际失败生成，不属于可独立调整的评测提示词。现有 `packages/agents/src/<stage>/fixtures/example.json` 仅为单元测试输入，**不会进入模型上下文**；专家示例目前未启用。不依赖 Pi / Prime 原生 skills，不按运行样本自动检索，也不把原始输入复制进 run。
+影响判词的规则、工具描述、材料组装或专家示例变更须人工更新 `evaluatorVersion`；纯搬迁且实际模型文本不变无需更新。不用摘要代替人工声明。验证要求见[开发指南](../../docs/development.md#验证)，语义复核见[评测质量](../../docs/quality.md#真实模型复核)。`--debug` 保存本次启动契约与 attempt 快照；看板只显示运行应用的公开 Profile。
 
-改动规则、工具描述、材料组装或启用专家示例等可能影响判词的内容时，人工更新配置中的 `evaluatorVersion`。纯文件搬迁且模型实际接收的文本不变不需要更新标识；禁止用摘要代替人工声明。调试时使用 `--debug` 的契约与 attempt 快照，当前看板也只显示运行应用的公开 Profile 定义。
+`packages/agents/src/<stage>/fixtures/example.json` 只用于单元测试，不进入模型上下文，专家示例尚未启用。不按运行样本自动检索，也不复制原始输入进 run；不依赖 Pi / Prime 原生 skills。
 
-Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，再由 Host 注入数据源、外部搜索、公开原文读取和专业网关。Eris 通过引用请求专业结论，不取代专业 Agent 的判词规则；面向用户的表达与引用存储规则见 [Eris 能力与数据](../../agent/README.md#能力与数据)，具体修改位置见 [Eris 定义](../../agent/README.md#修改-eris)。
-
-对比文案可按偏好或逐项点评分别改写；自动化在一次请求中同时改写两者，每个槽位继续遵守各自的事实和对照边界。都差时由 Comparison 在原裁决中确定有依据的相对优劣，Rewrite 保留其主体、理由与限定；原裁决未作取舍时不自行选优，正式判决与统计仍为都差。逐项点评以本格原文为边界，同项其他候选放在只读context中，仅作对照，不能复制为点评前缀；写法直接、具体，保留本项优势与不确定性，不为了整场胜者改动局部结论。
+Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，由 Host 注入数据源、搜索、原文读取和专业网关。能力与数据见[Eris 说明](../../agent/README.md#能力与数据)，修改位置见[Eris 定义](../../agent/README.md#修改-eris)；专业判词仍由对应 Agent 产生。

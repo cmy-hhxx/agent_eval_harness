@@ -122,12 +122,29 @@ export function summarize(checkpoints: Checkpoint[], requireItems = true): Evalu
 }
 
 const temporary = (category: string) => category === "transport" || category === "interruption";
-export function automaticResumeStages(state: Checkpoint): string[] {
+function exhaustedContentReason(states: Checkpoint[], repairAttempts: number): string | undefined {
+  const cap = 1 + repairAttempts;
+  const exhausted = states.flatMap(state => Object.entries(state.tasks).flatMap(([id, task]) => {
+    const count = task.failure?.contentSubmissions;
+    return isAutomationTask(task) && !task.receipt && Number.isSafeInteger(count) && count! >= cap
+      ? [`${state.runId ?? "run"}/${id}: content submissions ${count}/${cap}`] : [];
+  }));
+  return exhausted.length ? `Content submission budget exhausted: ${exhausted.join("; ")}. Adjust the cumulative cap or resolve the unfinished work.` : undefined;
+}
+function unavailableLedgerReason(states: Checkpoint[]): string | undefined {
+  const unknown = states.flatMap(state => Object.entries(state.tasks).filter(([, task]) =>
+    isAutomationTask(task) && !task.receipt && task.failure?.errors.some(issue => issue.code === "submission_ledger_unavailable"))
+    .map(([id]) => `${state.runId ?? "run"}/${id}`));
+  return unknown.length ? `Final content submission ledger is unavailable: ${unknown.join(", ")}; explicit recovery is required.` : undefined;
+}
+export function automaticResumeStages(state: Checkpoint, repairAttempts: number): string[] {
+  if (exhaustedContentReason([state], repairAttempts) || unavailableLedgerReason([state])) return [];
   return automationPauses(state).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
 }
 
 /** Authority comes from Host receipts and failure categories, never the dashboard's old error text. */
-export function checkpointRecovery(states: Checkpoint[]): "interrupted" | "transient" | undefined {
+export function checkpointRecovery(states: Checkpoint[], repairAttempts: number): "interrupted" | "transient" | undefined {
+  if (exhaustedContentReason(states, repairAttempts) || unavailableLedgerReason(states)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
   const tasks = states.flatMap((state) => Object.values(state.tasks).filter(isAutomationTask));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
@@ -145,7 +162,51 @@ function incompleteReason(states: Checkpoint[], summary: EvaluationSummary): str
     .map(([name, stage]) => `${name}: ${stage.completed}/${stage.total}, failed=${stage.failed}, interrupted=${stage.cancelled}, blocked=${stage.blocked}`).join("; ");
 }
 
-export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob) {
+/** Final accepted uncertainty only stops retries when every unfinished task is its blocked descendant. */
+function terminalReviewReason(states: Checkpoint[]): string | undefined {
+  const reviews: string[] = [];
+  for (const state of states) {
+    const entries = Object.entries(state.tasks);
+    const final = entries.filter(([, task]) => task.stage === "comparison" && !task.data.verificationPending && !task.data.supersededBy &&
+      (task.data.reviewOf?.round ?? 0) >= 1 && task.status === "succeeded" && task.receipt?.status === "succeeded" &&
+      task.receipt.exported?.file === "comparison-review.jsonl");
+    const descendants = new Set(final.map(([id]) => id));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [id, task] of entries) {
+        if (!descendants.has(id) && Object.values(task.dependencies ?? {}).some((parent) => descendants.has(parent))) {
+          descendants.add(id); changed = true;
+        }
+      }
+    }
+    if (entries.some(([id, task]) => isAutomationTask(task) && (task.status !== "succeeded" || !task.receipt) &&
+      (task.status !== "blocked" || !descendants.has(id)))) return;
+    reviews.push(...final.map(([id]) => id));
+  }
+  return reviews.length ? `Independent review is unresolved after the final review: ${reviews.join(", ")}` : undefined;
+}
+
+export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, repairAttempts: number, empty = false): EvaluationOutcome {
+  const blocked = exhaustedContentReason(states, repairAttempts) ?? unavailableLedgerReason(states);
+  if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
+  const review = terminalReviewReason(states);
+  if (review) return { status: "blocked", summary, transient: false, error: review };
+  const pauses = states.flatMap(automationPauses);
+  if (pauses.length) {
+    const transient = pauses.every((pause) => temporary(pause.category));
+    return { status: transient ? "retry" : "blocked", summary, transient,
+      error: incompleteReason(states, summary) };
+  }
+  if (Object.values(summary.stages).some((stage) => stage.completed !== stage.total))
+    return { status: "retry", summary, transient: checkpointRecovery(states, repairAttempts) !== undefined,
+      error: incompleteReason(states, summary) };
+  if (empty || !summary.stages.comparison?.total || summary.skipped || summary.issues)
+    return { status: "waiting_inputs", summary };
+  return { status: "completed", summary };
+}
+
+export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob, repairAttempts: number) {
   job.runIds = [`${config.runPrefix}${job.date}`];
   const saved = await checkpoint(output, job.runIds[0]);
   if (!saved) return;
@@ -153,14 +214,28 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !limited.tasks[id]) &&
       !automationPauses(limited).some((pause) => !temporary(pause.category))) return "interrupted";
   job.summary = summarize([saved]);
+  const exhausted = exhaustedContentReason([saved], repairAttempts), unknown = unavailableLedgerReason([saved]);
+  if (exhausted || unknown && !job.resumePaused) {
+    job.evaluation = "blocked"; job.nextEvaluationAt = 0;
+    job.evaluationError = exhausted ?? unknown;
+    return;
+  }
+  if (unknown && job.resumePaused) return "interrupted";
   const selection = saved.config as EvalConfig;
   if (job.mongo?.synced && Object.values(saved.tasks).some((task) =>
     task.data.rewriteOf?.stage === "comparison" && task.data.comparisonRewriteScope !== "all"))
     delete job.mongo.synced;
   if (["completed", "waiting_inputs"].includes(job.evaluation) &&
       REMOTE_MODELS.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
+  const review = terminalReviewReason([saved]);
+  if (review) {
+    job.evaluation = "blocked"; job.nextEvaluationAt = 0;
+    job.evaluationError = review;
+    return;
+  }
   const complete = publishableComparisons(saved, true);
-  if (job.summary.stages.comparison?.completed > complete.size &&
+  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationPending && !task.data.supersededBy);
+  if (finalComparisons.length > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
   if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
     job.evaluation = job.summary.skipped || job.summary.issues || !job.summary.stages.comparison?.total ? "waiting_inputs" : "completed";
@@ -168,7 +243,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     delete job.evaluationError;
     return;
   }
-  const recovery = checkpointRecovery([saved]);
+  const recovery = checkpointRecovery([saved], repairAttempts);
   if (recovery === "transient" || automationPauses(saved).length) job.evaluationError = incompleteReason([saved], job.summary);
   return recovery;
 }
@@ -227,32 +302,21 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       concurrency: evaluation.execution.concurrency, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
       discoverInputs: true, signal,
-      resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable)) : [],
+      resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable, evaluation.execution.repairAttempts)) : [],
     });
     signal.throwIfAborted();
     checkpoints.push((await checkpoint(output, runId))!);
   }
   const summary = summarize(checkpoints);
   summary.skipped += skipped; summary.issues += issues;
-  const pauses = checkpoints.flatMap(automationPauses);
-  if (pauses.length) {
-    const transient = pauses.every((pause) => temporary(pause.category));
-    return { status: transient ? "retry" : "blocked", summary, transient,
-      error: incompleteReason(checkpoints, summary) };
-  }
-  if (Object.values(summary.stages).some((stage) => stage.completed !== stage.total))
-    return { status: "retry", summary, transient: checkpointRecovery(checkpoints) !== undefined,
-      error: incompleteReason(checkpoints, summary) };
-  if (empty || !summary.stages.comparison?.total || summary.skipped || summary.issues)
-    return { status: "waiting_inputs", summary };
-  return { status: "completed", summary };
+  return evaluationOutcome(checkpoints, summary, host.evaluation.execution.repairAttempts, empty);
 }
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], runs: Map<string, Checkpoint[]>, limit: number) {
   const dates = Object.values(state.jobs).map((job) => {
     const planned = expandComparisonPairs((runs.get(job.date) ?? []).flatMap((run) => [
       ...(run.config as EvalConfig).comparisons,
-      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && task.receipt && task.data.group ? [task.data.group] : []),
+      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationPending && task.receipt && task.data.group ? [task.data.group] : []),
     ]));
     const pairName = (group: string[]) => [...group].sort().join("__vs__");
     const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
@@ -270,7 +334,7 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
       // A queued date may still hold its unlimited plan until the evaluator reaches it.
       const run = limitedCheckpoint(saved, limit);
       for (const task of Object.values(run.tasks)) {
-        if (task.stage !== "comparison" || task.data.supersededBy) continue;
+        if (task.stage !== "comparison" || task.data.verificationPending || task.data.supersededBy) continue;
         const input = run.inputs[Object.values(task.inputIds)[0]];
         if (input) add(task.data.group!, input.batch_id, input.case_id,
           task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);

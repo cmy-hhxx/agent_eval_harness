@@ -79,7 +79,7 @@ export class LocalSpecialists implements SpecialistGateway {
         throw new Error("Comparison inputs must share question, case, batch and reference answer");
       const candidates: Record<string, Candidate> = Object.fromEntries(loaded.map(({ locator }, index) => [String.fromCharCode(65 + index), locator.candidate]));
       const inputs = Object.fromEntries(loaded.map(({ locator, raw }) => [locator.inputId, raw]));
-      const retained = new Map<string, { receipt: SubmissionReceipt; task: PlannedTask }>();
+      const retained = new Map<string, { receipt: SubmissionReceipt; task: PlannedTask; tasks: PlannedTask[] }>();
       for (const reference of request.attributions ?? []) {
         if (!Object.hasOwn(inputs, reference.inputId)) throw new Error("Attribution reference is outside the selected inputs");
         if (reference.operationId ? !!reference.runId || !!reference.taskId : !reference.runId || !reference.taskId)
@@ -90,8 +90,11 @@ export class LocalSpecialists implements SpecialistGateway {
         const task = accepted.manifest.tasks.find((item) => item.id === taskId), receipt = accepted.receipts[taskId];
         if (!receipt || receipt.status !== "succeeded" || task?.stage !== "attribution" || task.inputIds.answer !== reference.inputId)
           throw new Error("Attribution reference is not an accepted result for this input");
-        retained.set(reference.inputId, { receipt, task });
+        retained.set(reference.inputId, { receipt, task, tasks: accepted.manifest.tasks });
       }
+      const sourceTasks = (current: readonly PlannedTask[]) => [...new Map(
+        [...retained.values()].flatMap(source => source.tasks).concat([...current]).map(task => [task.id, task]),
+      ).values()];
       const reusable = new Map<string, SubmissionReceipt>();
       const context = { reference: first.reference, initialContextChars: this.config.evaluation.execution.initialContextChars, criteriaScope: request.operationId };
       const attributionTask = (candidate: Candidate, criteria: PlannedTask, id: string, original?: SubmissionReceipt): PlannedTask => ({
@@ -107,7 +110,7 @@ export class LocalSpecialists implements SpecialistGateway {
           if (!source || !original || canonical((source.task.data as TaskData).reference) !== canonical(first.reference) ||
             canonical((original.evaluation as { task_analysis: unknown }).task_analysis) !== canonical(receipt.evaluation)) continue;
           const check = attributionTask(candidate, criteria, randomUUID());
-          try { agents.validate(bindTask(check, inputs, { criteria: receipt }), original.evaluation, original.audit); }
+          try { agents.validate(bindTask(check, inputs, { criteria: receipt }, { tasks: [criteria, check] }), original.evaluation, original.audit); }
           catch (error) { if (error instanceof ValidationError) continue; throw error; }
           reusable.set(candidate.input_id, original);
         }
@@ -126,7 +129,10 @@ export class LocalSpecialists implements SpecialistGateway {
       };
       const taskSource: RunOptions["taskSource"] = {
         id: "comparison",
-        bind(task, input, dependencies) { const effective = injected(task, dependencies); return bindTask(effective.task, input, effective.dependencies); },
+        bind(task, input, dependencies, context) {
+          const effective = injected(task, dependencies);
+          return bindTask(effective.task, input, effective.dependencies, { ...context, tasks: sourceTasks(context.tasks) });
+        },
         async reconcile(_run, state) {
           const criteria = state.manifest.tasks.find((task) => task.stage === "criteria");
           if (!criteria) throw new Error("Specialist run is missing its criteria task");
@@ -190,7 +196,10 @@ export class LocalSpecialists implements SpecialistGateway {
       const repository = createRunRepository(comparisonCodec, (task, state, input) => {
         const effective = injected(task, {});
         const external = Object.fromEntries([...reusable.values()].map((receipt) => [receipt.taskId, receipt]));
-        return encodeResult(effective.task, { ...state, receipts: { ...external, ...state.receipts } }, input);
+        return encodeResult(effective.task, { ...state,
+          manifest: { ...state.manifest, tasks: sourceTasks(state.manifest.tasks) },
+          receipts: { ...external, ...state.receipts },
+        }, input);
       });
       await runEvaluation({ runId: request.operationId, ...this.execution,
         plan: { tasks: [criteria], inputs, catalog: Object.values(candidates), summary: { inputs: loaded.length, comparisons: request.kind === "comparison" ? loaded.length * (loaded.length - 1) / 2 : 0 } },

@@ -8,13 +8,13 @@ import { exists, readJsonl } from "@eval/data";
 import { object } from "@eval/contracts";
 import { createModelResolver } from "@eval/host-app/config";
 import { attributionProfile } from "@eval/agents/attribution";
-import { comparisonProfile } from "@eval/agents/comparison";
+import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
 import { criteriaProfile } from "@eval/agents/criteria";
-import { buildPlan } from "@eval/workflows/comparison";
-import { services } from "../fixtures/services.js";
+import { buildPlan, readRunState, type TaskData } from "@eval/workflows/comparison";
+import { prepare, services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
-import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult } from "../fixtures/comparison.js";
+import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult, inspectionDraft } from "../fixtures/comparison.js";
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
@@ -24,10 +24,13 @@ for (const engine of ["pi", "prime"] as Engine[])
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
       // This mock implements Chat Completions, independently of the production gateway protocol.
       models.models.judge!.api = "openai-completions";
+      const plan = await buildPlan(config);
+      const attributionSpecs = new Map(plan.tasks.filter(task => task.stage === "attribution")
+        .map(task => [task.inputIds.answer, prepare(task, plan.inputs, {})]));
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
-      const stageRequests = { criteria: 0, attribution: 0, comparison: 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 2 };
+      const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 2 };
       const gateway = await listen(async (req, res) => {
         try {
           assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
@@ -36,37 +39,44 @@ for (const engine of ["pi", "prime"] as Engine[])
           const tools = payload.tools as {
             function: { name: string; description: string; parameters: { properties: object } };
           }[];
-          const submit = tools.find((t) => t.function.name === "submit_evaluation")!;
-          assert(submit);
-          assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(submit.function.parameters)), "model-visible parameters must contain inline schemas");
+          const submit = tools.find((t) => t.function.name === "submit_evaluation");
+          const inspect = tools.find(t => t.function.name === "inspect_material");
+          const contentSchema = (submit ?? inspect)!.function.parameters;
+          const schemaProperties = object(contentSchema.properties);
+          assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(tools.map(tool => tool.function.parameters))), "model-visible parameters must contain inline schemas");
           assert(!tools.some((t) => t.function.name === "set_task_contract"));
           const messages = payload.messages as {
             role: string;
             name?: string;
             content: unknown;
           }[];
-          const ranCode = messages.some((m) => m.role === "tool");
-          const attribution = "is_correct" in submit.function.parameters.properties;
-          const criteria = "requirements" in submit.function.parameters.properties;
+          const attribution = "criterion_assessments" in schemaProperties;
+          const criteria = "requirements" in schemaProperties;
+          const verification = !!inspect || "concern_matches" in schemaProperties;
           if (criteria) {
-            const requirements = object(object(submit.function.parameters.properties).requirements);
+            const requirements = object(schemaProperties.requirements);
             const criterion = object(requirements.items), properties = object(criterion.properties);
-            const sourceIds = object(properties.source_ids);
+            const sourceIndices = object(properties.source_indices);
             assert.equal(criterion.additionalProperties, false);
-            assert.deepEqual(criterion.required, ["id", "source_ids"]);
-            assert.equal(sourceIds.type, "array");
-            assert.equal(object(sourceIds.items).type, "string");
-            assert.equal(sourceIds.uniqueItems, true);
+            assert.deepEqual(criterion.required, ["source_indices"]);
+            assert.equal(properties.id, undefined);
+            assert.equal(sourceIndices.type, "array");
+            assert.equal(object(sourceIndices.items).type, "integer");
+            assert.equal(object(sourceIndices.items).minimum, 1);
+            assert.equal(sourceIndices.uniqueItems, true);
             assert.equal(properties.acceptance_rule, undefined);
           }
-          const stage = criteria ? "criteria" : attribution ? "attribution" : "comparison";
+          const stage = criteria ? "criteria" : attribution ? "attribution" : verification ? "verification" : "comparison";
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
-          const profile = criteria ? criteriaProfile : attribution ? attributionProfile : comparisonProfile;
+          const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
           const descriptions = profile.toolDescriptions;
-          assert.equal(tools.some((t) => t.function.name === "submit_evaluation_file"), !criteria);
+          assert(!tools.some(t => t.function.name === "submit_evaluation_file"), "built-in profiles submit JSON directly");
           if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
-          for (const tool of tools)
+          for (const tool of tools) {
             assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
+            if (tool.function.name === "inspect_material")
+              assert.deepEqual(Object.keys(object(tool.function.parameters.properties)), ["checks", "concerns"]);
+          }
           const prompt = messages
             .flatMap((m) =>
               typeof m.content === "string"
@@ -79,60 +89,56 @@ for (const engine of ["pi", "prime"] as Engine[])
           const material = JSON.parse(
             prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0],
           ) as {
-            answer?: { final_evidence: { evidence_id: string }[] };
-            candidates?: Record<string, { final_evidence: { evidence_id: string }[] }>;
+            candidate_id?: string;
+            answer?: { final_evidence: { reference: { evidence_index: number } }[]; norm_directory: unknown[] };
+            candidates?: Record<string, { candidate_id: string; final_evidence: { reference: { evidence_index: number } }[] }>;
           };
-          const evidenceFor = () => ({
-            evidence_id: material.answer!.final_evidence[0]!.evidence_id,
-          });
+          if (attribution) {
+            assert.equal(typeof material.candidate_id, "string", "the current material preserves its registered own input UUID");
+            assert(Array.isArray(material.answer!.norm_directory), "the program supplies the current original norm directory");
+            const finding = object(object(schemaProperties.findings).items);
+            assert(Object.hasOwn(object(finding.properties), "norm_index"), "instruction findings select their norm in the flat collection");
+            const core = object(schemaProperties.core_assessment);
+            const properties = object(core.properties), indices = object(properties.requirement_indices);
+            assert.deepEqual(core.required, ["meets_core", "reason", "requirement_indices"]);
+            assert.equal(properties.criterion_ids, undefined);
+            assert.equal(indices.type, "array");
+            assert.equal(object(indices.items).type, "integer");
+            assert.equal(object(indices.items).minimum, 0);
+          }
           const spec = {
-            prompt, inputs: [], evaluation: { id: stage, profile: profile.id,
-              systemPrompt: profile.systemPrompt, outputSchema: profile.submissionSchema,
+            prompt, evidenceBank: attribution ? [...attributionSpecs.get(material.candidate_id!)!.evidenceBank] : [],
+            inputs: attribution ? [{ name: "answer", id: material.candidate_id! }]
+              : Object.entries(material.candidates ?? {}).map(([name, candidate]) => ({ name, id: candidate.candidate_id })),
+            evaluation: { id: verification ? "comparison" : stage, profile: profile.id,
+              systemPrompt: profile.systemPrompt, outputSchema: contentSchema,
               toolNames: profile.toolNames, fileSubmission: profile.fileSubmission, toolDescriptions: profile.toolDescriptions,
               submissionNudge: profile.submissionNudge },
           };
-          const evaluation = draftFor(spec, taskResult(spec));
+          const disclosed = verification ? messages.filter(message => message.role === "tool" && typeof message.content === "string")
+            .flatMap(message => (message.content as string).split("\n").flatMap(text => {
+              try { const reply = JSON.parse(text) as { accepted?: boolean; material?: unknown };
+                return reply.accepted && reply.material ? [reply.material] : []; } catch { return []; }
+            })).at(-1) : undefined;
+          if (verification) {
+            assert.equal((material as { sections: unknown[] }).sections.length, 2, "initial verification request remains blind");
+            assert.equal(JSON.stringify(material).includes("comparison_draft"), false);
+            assert.equal(Boolean(inspect), !disclosed, "inspection is published only before its immutable checkpoint");
+            assert.equal(Boolean(submit), Boolean(disclosed), "final submission is published only after inspection");
+          }
+          const evaluation = verification && !disclosed ? undefined : draftFor(spec, taskResult(spec, disclosed), disclosed);
           const rejected = messages.some(
-            (m) => m.role === "tool" && String(m.content).includes("evidence_id_invalid"),
-          );
-          const repaired = messages.some(
-            (m) => m.role === "tool" && String(m.content).includes("fixed-evaluation-file"),
+            (m) => m.role === "tool" && String(m.content).includes("evidence_selection_invalid"),
           );
           let name: string, args: unknown;
-          if (criteria) {
-            name = "submit_evaluation";
-            args = evaluation;
-          } else if (!ranCode) {
-            name = "execute_code";
-            args = {
-              language: "python",
-              code:
-                engine === "pi"
-                  ? "print(2+2)"
-                  : `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(evaluation))})`,
-            };
-          } else if (attribution && engine === "pi" && !rejected) {
-            name = "submit_evaluation";
-            const result = structuredClone(evaluation) as { correctness_evidence: { evidence_id: string }[] };
-            result.correctness_evidence[0]!.evidence_id = "invented";
-            args = result;
-          } else if (attribution && engine === "pi" && !repaired) {
-            name = "execute_code";
-            args = {
-              language: "python",
-              code:
-                "import json\nfrom pathlib import Path\np=Path('evaluation-draft.json')\nr=json.loads(p.read_text())\nr['correctness_evidence'][0]['evidence_id']=" +
-                JSON.stringify(evidenceFor().evidence_id) +
-                "\np.write_text(json.dumps(r,ensure_ascii=False))\nprint('fixed-evaluation-file')",
-            };
-          } else if (attribution) {
-            name = "submit_evaluation_file";
-            args = {
-              path: engine === "pi" ? "evaluation-draft.json" : "evaluation.json",
-            };
+          if (verification && !disclosed) {
+            name = "inspect_material";
+            args = inspectionDraft(spec);
           } else {
             name = "submit_evaluation";
             args = evaluation;
+            if (attribution && engine === "pi" && !rejected)
+              (args as { correctness_evidence: { evidence_index: number }[] }).correctness_evidence[0]!.evidence_index = 999999;
           }
           const event = {
             id: "fixture-" + requests.length,
@@ -197,7 +203,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           evaluatorVersion: fakeEvaluatorVersion,
           config,
           ...services,
-          plan: await buildPlan(config),
+          plan,
           policy: config.execution,
           modelForStage,
           concurrency: 2,
@@ -214,12 +220,12 @@ for (const engine of ["pi", "prime"] as Engine[])
         const failures = (await exists(failureFile)) ? await readFile(failureFile, "utf8") : "";
         assert.equal(summary.completed_comparisons, 1, failures);
         assert.deepEqual(stageRequests, expectedStageRequests);
-        const expectedRequests = engine === "pi" ? 11 : 7;
-        assert.equal(
-          requests.length,
-          expectedRequests,
-          "submit must terminate without another model request",
-        );
+        const state = await readRunState(path.join(config.output.path, options.runId));
+        const verificationTask = state.manifest.tasks.find(task => (task.data as TaskData).verificationOf)!;
+        assert.equal(state.receipts[verificationTask.id].submissionStats!.contentSubmissions, 2,
+          "the actual inspection and final submission both consume content budget");
+        assert(state.receipts[verificationTask.id].audit.inspection);
+        const acceptedRequestCount = requests.length;
         if (engine === "pi") {
           const task = options.plan.tasks.find((task) => task.stage === "attribution")!;
           const events: WorkerEvent[] = [];
@@ -246,11 +252,11 @@ for (const engine of ["pi", "prime"] as Engine[])
         const validation = await validateRun(path.join(config.output.path, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));
         await runEvaluation(options);
-        assert.equal(requests.length, expectedRequests);
+        assert.equal(requests.length, acceptedRequestCount, "resume must not issue a request for any accepted task");
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
           assert.equal(payload.reasoning_effort, "xhigh");
-          assert.equal(String(payload.max_completion_tokens), "8192");
+          assert.equal(String(payload.max_completion_tokens), "32768");
         }
       } finally {
         if (previous === undefined) delete process.env.EVAL_API_KEY;

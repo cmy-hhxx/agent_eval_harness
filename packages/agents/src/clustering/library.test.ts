@@ -8,6 +8,7 @@ import {
   type ApplyClusteringInput,
   type ClusteringObservation,
 } from "./library.js";
+import { ValidationError } from "@eval/contracts";
 import type { ClusteringResult } from "./types.js";
 
 const observation = (id: string, component: string, label: string, inputId: string): ClusteringObservation => ({
@@ -55,6 +56,11 @@ const receipt = (
   result,
   at: "2026-01-01T00:00:00.000Z",
 });
+
+const topicLibrary = () => applyClustering(emptyLibrary("model"), receipt([], { assignments: [], merges: [], new_classes: [
+  { key: "n1", component: "模型自身推理", label: "现象一", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["有效主题"]] },
+  { key: "n2", component: "模型自身推理", label: "现象二", definition: "近义定义。", closest_existing: null, novelty: "首例", category_paths: [["其他主题"]] },
+] }));
 
 test("clustering creates components and classes and keeps occurrence lineage", () => {
   let library = emptyLibrary("a_fast");
@@ -247,4 +253,161 @@ test("a merged label resolves to the surviving class instead of creating a dupli
     "the merged alias reuses the surviving class",
   );
   assert.equal(library.occurrences.filter((item) => item.class_id === keep!.id).length, 3);
+});
+
+test("directory updates preserve UUID, source samples and an idempotent before/after audit", () => {
+  const original = applyClustering(emptyLibrary("a_fast"), receipt([observation("o1", "模型自身推理", "旧标签", "in-1")], {
+    assignments: [{ item_id: "o1", new_class_key: "new" }],
+    new_classes: [{ key: "new", component: "模型自身推理", label: "旧标签", definition: "旧定义", closest_existing: null, novelty: "首例", category_paths: [["可靠性", "引用"]] }], merges: [],
+  }));
+  const id = Object.keys(original.classes)[0]!, before = structuredClone(original), occurrence = original.occurrences[0]!;
+  const update = receipt([], { assignments: [], new_classes: [], merges: [],
+    class_updates: [{ class_id: id, label: "引用无法解析", definition: "依据真实来源标识判断映射，来源支持主张另行核查。", category_paths: [["来源溯源", "映射"]], reason: "调用次数不能证明来源编号错误。" }] });
+  update.submission_id = "maintenance-1";
+  const changed = applyClustering(original, update), problem = changed.classes[id]!;
+  assert.deepEqual(original, before, "copy-on-write preserves the input directory");
+  assert.equal(problem.component_id, original.classes[id]!.component_id);
+  assert.deepEqual(problem.first_seen, original.classes[id]!.first_seen);
+  assert.deepEqual(changed.occurrences[0], occurrence);
+  assert(problem.aliases.includes("旧标签"));
+  const event = changed.events.find(event => event.type === "class_updated")!;
+  assert.deepEqual(event.detail.before, { label: "旧标签", definition: "旧定义", category_paths: [["可靠性", "引用"]] });
+  assert.equal((event.detail.after as { definition: string }).definition, problem.definition);
+  assert.equal(event.detail.reason, "调用次数不能证明来源编号错误。");
+  assert.equal(applyClustering(changed, update), changed);
+  const later = applyClustering(changed, { ...update, submission_id: "maintenance-2", at: "2026-01-03T00:00:00.000Z", result: {
+    assignments: [], new_classes: [], merges: [], class_updates: [{ class_id: id, definition: "后续独立复核后的边界。", reason: "再次维护。" }],
+  } });
+  assert.equal(applyClustering(later, update), later, "old replay cannot roll back a later accepted maintenance");
+});
+
+test("deferred assignments record no class or occurrence and do not refresh the library", () => {
+  const library = emptyLibrary("a_fast");
+  assert.equal(applyClustering(library, receipt([observation("o1", "模型自身推理", "新现象", "in-1")], {
+    assignments: [{ item_id: "o1", deferred_reason: "新增预算为零。" }], new_classes: [], merges: [],
+  })), library);
+});
+
+test("merge organization preserves the full pre-update topic union in its audit", () => {
+  let library = applyClustering(emptyLibrary("model"), receipt([
+    observation("o1", "模型自身推理", "现象一", "in-1"), observation("o2", "模型自身推理", "现象二", "in-2"),
+  ], { assignments: [{ item_id: "o1", new_class_key: "n1" }, { item_id: "o2", new_class_key: "n2" }], merges: [], new_classes: [
+    { key: "n1", component: "模型自身推理", label: "现象一", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["一"], ["二"]] },
+    { key: "n2", component: "模型自身推理", label: "现象二", definition: "近义定义。", closest_existing: null, novelty: "首例", category_paths: [["三"], ["四"]] },
+  ] }));
+  const [first, second] = Object.values(library.classes);
+  const merge = { ...receipt([], { assignments: [], new_classes: [], merges: [{ into: first!.id, from: [second!.id], reason: "同义合并。" }],
+    class_updates: [{ class_id: first!.id, category_paths: [["统一主题"]], reason: "合并后的四条路径统一整理。" }] }), submission_id: "organized-merge" };
+  library = applyClustering(library, merge);
+  const event = library.events.find(event => event.type === "class_updated")!;
+  assert.deepEqual((event.detail.before as { category_paths: string[][] }).category_paths, [["一"], ["二"], ["三"], ["四"]]);
+  assert.deepEqual((event.detail.after as { category_paths: string[][] }).category_paths, [["统一主题"]]);
+  assert.equal((event.detail.before as { definition: string }).definition, "原定义。");
+  assert.deepEqual(library.classes[first!.id]!.category_paths, [["统一主题"]]);
+  assert.equal(library.classes[second!.id]!.status, "merged");
+  assert.equal(applyClustering(library, merge), library);
+});
+
+test("Applying a receipt rejects invalid new and updated category names before directory changes", () => {
+  const original = applyClustering(emptyLibrary("model"), receipt([observation("o1", "模型自身推理", "原类", "in-1")], {
+    assignments: [{ item_id: "o1", new_class_key: "n1" }], merges: [], new_classes: [
+      { key: "n1", component: "模型自身推理", label: "原类", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["可靠性"]] },
+    ],
+  }));
+  const id = Object.keys(original.classes)[0]!, marked = "主题<[标记]>{", before = structuredClone(original);
+  const create = receipt([], { assignments: [], merges: [], new_classes: [
+    { key: "n2", component: "新增组件", label: "新增类", definition: "新定义。", closest_existing: null, novelty: "首例", category_paths: [[marked]] },
+  ], class_updates: [{ class_id: id, label: "修改标签", reason: "先修改目录。" }] });
+  const update = receipt([], { assignments: [], merges: [], new_classes: [],
+    class_updates: [{ class_id: id, label: "修改标签", category_paths: [[marked]], reason: "整理主题。" }] });
+  for (const [input, path] of [[create, "/new_classes/0/category_paths/0/0"], [update, "/class_updates/0/category_paths/0/0"]] as const) {
+    const submitted = structuredClone(input);
+    assert.throws(() => applyClustering(original, input), error => {
+      assert(error instanceof ValidationError);
+      assert.deepEqual(error.issues!.map(issue => issue.path), [path]);
+      assert.deepEqual(error.issues!.map(issue => issue.actual), [marked]);
+      return true;
+    });
+    assert.deepEqual(original, before);
+    assert.deepEqual(input, submitted);
+  }
+});
+
+test("Merge guards only resulting topic paths and allows explicit correction without rewriting unrelated history", () => {
+  const original = topicLibrary();
+  const [keep, drop] = Object.values(original.classes);
+  // Previously stored material remains readable; only paths proposed for this write are checked.
+  drop!.category_paths = [["历史<标记>"]];
+  const before = structuredClone(original);
+  const unrelated = applyClustering(original, { ...receipt([], { assignments: [], new_classes: [], merges: [],
+    class_updates: [{ class_id: keep!.id, definition: "精确的新定义。", reason: "核对边界。" }] }), submission_id: "unrelated" });
+  assert.deepEqual(unrelated.classes[drop!.id]!.category_paths, drop!.category_paths);
+  const merge = receipt([], { assignments: [], new_classes: [], merges: [{ into: keep!.id, from: [drop!.id], reason: "同义合并。" }] });
+  assert.throws(() => applyClustering(original, merge), error => {
+    assert(error instanceof ValidationError);
+    assert.equal(error.issues![0]!.path, "/merges/0/category_paths/1/0");
+    assert.equal(error.issues![0]!.actual, "历史<标记>");
+    return true;
+  });
+  assert.deepEqual(original, before);
+  merge.result.class_updates = [{ class_id: keep!.id, category_paths: [["统一主题"]], reason: "明确整理合并目录。" }];
+  const corrected = applyClustering(original, merge);
+  assert.deepEqual(corrected.classes[keep!.id]!.category_paths, [["统一主题"]]);
+  assert.equal(corrected.classes[drop!.id]!.status, "merged");
+  assert.deepEqual(original, before);
+});
+
+
+test("Already applied directory updates skip old invalid paths without rolling back current topics", () => {
+  const library = topicLibrary(), id = Object.keys(library.classes)[0]!;
+  const replay = receipt([], { assignments: [], new_classes: [], merges: [], class_updates: [
+    { class_id: id, definition: "旧定义。", category_paths: [["旧<标记>"]], reason: "旧维护。" },
+  ] });
+  library.events.push({ id: "old-maintenance", type: "class_updated", at: replay.at!,
+    detail: { submission_id: replay.submission_id, class_id: id } });
+  const before = structuredClone(library);
+  assert.equal(applyClustering(library, replay), library);
+  assert.deepEqual(library, before);
+});
+
+test("Reusing an existing class alias ignores unwritten topic paths in an old creation receipt", () => {
+  const library = topicLibrary();
+  Object.values(library.classes)[0]!.aliases.push("旧同义名");
+  const before = structuredClone(library);
+  const replay = receipt([], { assignments: [], merges: [], new_classes: [
+    { key: "old", component: "模型自身推理", label: "旧同义名", definition: "旧定义。", closest_existing: null, novelty: "旧建类。", category_paths: [["旧<标记>"]] },
+  ] });
+  assert.equal(applyClustering(library, replay), library);
+  assert.deepEqual(library, before);
+});
+
+test("An already applied explicit update cannot bypass dirty topic union validation during a new merge", () => {
+  const library = topicLibrary(), [keep, drop] = Object.values(library.classes);
+  drop!.category_paths = [["历史<标记>"]];
+  const replay = receipt([], { assignments: [], new_classes: [], merges: [{ into: keep!.id, from: [drop!.id], reason: "合并现象。" }],
+    class_updates: [{ class_id: keep!.id, category_paths: [["已应用的有效主题"]], reason: "旧维护。" }] });
+  library.events.push({ id: "old-maintenance", type: "class_updated", at: replay.at!,
+    detail: { submission_id: replay.submission_id, class_id: keep!.id } });
+  const before = structuredClone(library);
+  assert.throws(() => applyClustering(library, replay), error => {
+    assert(error instanceof ValidationError);
+    assert.equal(error.issues![0]!.path, "/merges/0/category_paths/1/0");
+    assert.equal(error.issues![0]!.actual, "历史<标记>");
+    return true;
+  });
+  assert.deepEqual(library, before);
+});
+
+
+test("An already applied invalid explicit update is skipped while a clean merge union is retained", () => {
+  const library = topicLibrary(), [keep, drop] = Object.values(library.classes);
+  const replay = receipt([], { assignments: [], new_classes: [], merges: [{ into: keep!.id, from: [drop!.id], reason: "合并现象。" }],
+    class_updates: [{ class_id: keep!.id, category_paths: [["旧<标记>"]], reason: "旧维护。" }] });
+  library.events.push({ id: "old-maintenance", type: "class_updated", at: replay.at!,
+    detail: { submission_id: replay.submission_id, class_id: keep!.id } });
+  const before = structuredClone(library), changed = applyClustering(library, replay);
+  assert.deepEqual(changed.classes[keep!.id]!.category_paths, [["有效主题"], ["其他主题"]]);
+  assert.equal(changed.classes[drop!.id]!.status, "merged");
+  assert.deepEqual(library, before);
+  assert.equal(applyClustering(changed, replay), changed);
 });

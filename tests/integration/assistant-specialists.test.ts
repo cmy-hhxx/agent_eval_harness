@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { buildPlan, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { buildPlan, readRunState, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
@@ -11,15 +11,17 @@ import { LocalSpecialists } from "../../apps/host/src/assistant-specialists.js";
 import { LocalAnalysisData } from "../../apps/host/src/assistant-data.js";
 import { loadConfig } from "@eval/host-app/config";
 import { services, ROOT } from "../fixtures/services.js";
-import { fixtureConfig, fakeIdentity, taskResult, draftFor, parsedMaterial, raw } from "../fixtures/comparison.js";
+import { submitFor, inspectFor, fixtureConfig, fakeIdentity, taskResult, draftFor, parsedMaterial, raw } from "../fixtures/comparison.js";
 import { createEris } from "@eval/assistant";
 import type { AnalysisReference, TaskAnalysis } from "@eval/contracts";
 import type { CriteriaSubmission, CriterionSource } from "@eval/agents/criteria";
+import { canonicalEvidence } from "../fixtures/evidence.js";
 
 test("standalone Attribution and Comparison share material, validation, accepted results and resume", {timeout:30000}, async()=>{
  const fixture=await fixtureConfig();
  let calls=0, interruptComparison=false;
- const worker=await startWorker({identity:fakeIdentity,async createSession(options){return {async run(){calls++;if(interruptComparison&&options.spec.evaluation.id==="comparison"){interruptComparison=false;throw new Error("fixture comparison interrupted");}const result=await options.execute("submit_evaluation",draftFor(options.spec,taskResult(options.spec)));assert.equal(result.isError,undefined,JSON.stringify(result));},async abort(){},async dispose(){}};}},path.join(fixture.directory,"worker"));
+ const worker=await startWorker({identity:fakeIdentity,async createSession(options){return {async run(){
+      await inspectFor(options);calls++;if(interruptComparison&&options.spec.evaluation.id==="comparison"){interruptComparison=false;throw new Error("fixture comparison interrupted");}const result=await submitFor(options, draftFor(options.spec,taskResult(options.spec)));assert.equal(result.isError,undefined,JSON.stringify(result));},async abort(){},async dispose(){}};}},path.join(fixture.directory,"worker"));
  try {
   const config=await loadConfig(path.join(ROOT,"configs/host.json"),{EVAL_BASE_URL:"http://127.0.0.1:1/v1"});
   config.evaluation=fixture.config;config.models=fixture.models;
@@ -98,22 +100,46 @@ test("standalone Attribution and Comparison share material, validation, accepted
 
 test("three-model specialist runs share one criteria task and return all three real pair references", { timeout: 30000 }, async () => {
  const fixture = await fixtureConfig();
+ const privateRules = ["仅本候选采用简短句式。", "仅本候选采用完整句式。", "仅本候选采用分句式。"];
+ const withRule = (index: number) => { const value = raw(); value.messages.unshift({ type: "message", role: "system", content: privateRules[index]! }); return value; };
+ for (const [index, versionId] of ["a_fast", "b_fast"].entries()) {
+  const source = fixture.config.inputs.versions.find(version => version.id === versionId)!.sources[0];
+  assert.equal(source.kind, "file");
+  await writeJsonl((source as { path: string }).path, [withRule(index)]);
+ }
  const third = { ...fixture.config.inputs.versions.find(version => version.id === "a_fast")!,
   id: "c_fast", name: "C组Fast", sources: [{ kind: "file" as const, path: path.join(fixture.directory, "c_fast.jsonl") }] };
  fixture.config.inputs.versions.push(third);
  fixture.config.comparisons = [["a_fast", "b_fast", "c_fast"]];
- await writeJsonl(third.sources[0].path, [raw()]);
- const stages: string[] = [], standards: TaskAnalysis[] = [];
+ await writeJsonl(third.sources[0].path, [withRule(2)]);
+ type ModelCriterion = { id: string; text: string; acceptance_rule?: string; applicable_candidates: string[]; requirement_index?: number };
+ type ModelAnalysis = { task_type: string; goal: string; requirements: ModelCriterion[]; scoring_points: ModelCriterion[]; red_flags: ModelCriterion[] };
+ const stages: string[] = [], standards: { analysis: ModelAnalysis; owners: Record<string, string> }[] = [];
  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
   async run() {
+   await inspectFor(options);
    const stage = options.spec.evaluation.id; stages.push(stage);
-   const material = parsedMaterial(options.spec) as { task_analysis?: TaskAnalysis; candidate_ids?: string[]; source_catalog?: CriterionSource[] };
+   const material = parsedMaterial(options.spec) as { task_analysis?: ModelAnalysis; candidate_ids?: string[]; source_catalog?: CriterionSource[];
+    candidate_id?: string; candidates?: Record<string, { candidate_id: string }>; answer?: { final_message_index: number; final_answer: string } };
    if (stage === "criteria") {
     assert(!("task_analysis" in material));
     assert.equal(material.candidate_ids!.length, 3);
     assert(material.source_catalog!.filter(source => source.kind === "context").every(source => source.role === "user"));
-   } else standards.push(material.task_analysis!);
-   const result = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+    assert(material.source_catalog!.every(source => source.role !== "system" && source.role !== "developer"),
+     "own SYS/DEV cannot become common or private task criteria");
+    assert(!material.source_catalog!.some(source => privateRules.includes(source.text)));
+   } else standards.push({ analysis: material.task_analysis!, owners: stage === "attribution"
+    ? { answer: material.candidate_id! } : Object.fromEntries(Object.entries(material.candidates!).map(([label, candidate]) => [label, candidate.candidate_id])) });
+   const output = taskResult(options.spec);
+   if (stage === "attribution") {
+    const result = output as { correctness_evidence: { message_index: number; quote: string }[];
+     findings: { evidence: { message_index: number; quote: string }[] }[] };
+    const final = canonicalEvidence(options.spec.inputs.find(input => input.name === "answer")!.id,
+      material.answer!.final_message_index, material.answer!.final_answer);
+    result.correctness_evidence = [final];
+    result.findings.forEach(finding => { finding.evidence = [final]; });
+   }
+   const result = await submitFor(options, draftFor(options.spec, output));
    assert.equal(result.isError, undefined, JSON.stringify(result));
   }, async abort() {}, async dispose() {},
  }; } }, path.join(fixture.directory, "worker"));
@@ -134,11 +160,35 @@ test("three-model specialist runs share one criteria task and return all three r
   const accepted = await gateway.invoke(scope, request, signal);
   assert.equal(accepted.state, "succeeded", JSON.stringify(accepted));
   assert.deepEqual(stages.sort(), ["attribution", "attribution", "attribution", "comparison", "comparison", "comparison", "criteria"]);
-  assert(standards.every(analysis => JSON.stringify(analysis) === JSON.stringify(standards[0])));
+  const execution = path.join(fixture.directory, "assistant/users/alice/sessions", scope.sessionId, "operations", operationId, "execution");
+  const state = await readRunState(path.join(execution, operationId));
+  const criteriaTasks = state.manifest.tasks.filter(task => task.stage === "criteria");
+  assert.equal(criteriaTasks.length, 1);
+  const canonical = state.receipts[criteriaTasks[0]!.id]!.evaluation as TaskAnalysis;
+  assert.equal(canonical.scoring_points.length, 0, "own SYS stays outside the common task rubric");
+  assert(!canonical.requirements.some(criterion => privateRules.includes(criterion.text)));
+  for (const task of state.manifest.tasks.filter(task => ["attribution", "comparison"].includes(task.stage)))
+   assert.deepEqual((state.receipts[task.id]!.evaluation as { task_analysis: TaskAnalysis }).task_analysis, canonical,
+    "every accepted result retains exactly the same formal shared rubric");
+  for (const { analysis, owners } of standards) {
+   assert.equal(analysis.task_type, canonical.task_type);
+   assert.equal(analysis.goal, canonical.goal);
+   for (const group of ["requirements", "scoring_points", "red_flags"] as const) {
+    const expected = canonical[group].flatMap((criterion, index) => {
+     const applicable_candidates = Object.entries(owners).flatMap(([label, id]) =>
+      !criterion.applies_to.length || criterion.applies_to.includes(id) ? [label] : []);
+     return applicable_candidates.length ? [{ id: criterion.id, text: criterion.text, acceptance_rule: criterion.acceptance_rule,
+      applicable_candidates, ...(group === "requirements" ? { requirement_index: index } : {}) }] : [];
+    });
+    assert.deepEqual(analysis[group].map(criterion => ({ ...criterion, acceptance_rule: criterion.acceptance_rule ?? criterion.text })), expected,
+     "model materials preserve common original rules and indices and reveal private rules only to their actual candidate or pair");
+   }
+   assert.equal(analysis.scoring_points.length, 0);
+  }
   const comparisons = (accepted.result as { comparisons: { reference: AnalysisReference; result: { models: Record<string, unknown> } }[] }).comparisons;
   assert.equal(comparisons.length, 3);
   assert.equal(new Set(comparisons.map(item => item.reference.taskId)).size, 3);
-  const formal = new LocalAnalysisData(path.join(fixture.directory, "assistant/users/alice/sessions", scope.sessionId, "operations", operationId, "execution"));
+  const formal = new LocalAnalysisData(execution);
   const pairs: string[] = [];
   for (const item of comparisons) {
    assert.equal(item.reference.runId, operationId);
@@ -162,16 +212,17 @@ test("incompatible accepted attributions are independently reassessed without ch
  const stages: string[] = [];
  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
   async run() {
+   await inspectFor(options);
    stages.push(options.spec.evaluation.id);
    const output = taskResult(options.spec);
    if (revised && options.spec.evaluation.id === "criteria")
     (output as CriteriaSubmission).requirements = [
-     { id: "r1", source_ids: ["question"] }, { id: "r2", source_ids: ["reference"] },
+     { source_indices: [1] }, { source_indices: [2] },
     ];
    if (revised && options.spec.evaluation.id === "attribution")
     assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,
      ["已有归因与本次共享判据、标准答案或当前验证要求不一致，按本次判据独立重新核验。"]);
-   const result = await options.execute("submit_evaluation", draftFor(options.spec, output));
+   const result = await submitFor(options, draftFor(options.spec, output));
    assert.equal(result.isError, undefined, JSON.stringify(result));
   }, async abort() {}, async dispose() {},
  }; } }, path.join(fixture.directory, "worker"));

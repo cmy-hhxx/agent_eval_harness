@@ -208,7 +208,8 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 }
 function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
-  if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
+  const comparisonRole = data.verificationPending ? "draft" : data.verificationOf ? "verification" : "standalone";
+  if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version), ...(data.stage === "comparison" ? [comparisonRole] : [])]);
   if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);
   if (data.stage === "clustering")
     return canonical([data.scope!.batch_id, "clustering", data.scope!.version, data.scope!.shard]);
@@ -219,7 +220,7 @@ function taskKey(task: PlannedTask): string {
     data.stage === "rewrite"
       ? ["rewrite", data.rewriteOf!.taskId]
       : data.group ? [...data.group].sort() : [data.candidates.A.version];
-  return canonical([c.batch_id, c.case_id, task.stage, selector, ...(data.stage === "attribution" && data.criteriaScope ? [data.criteriaScope] : [])]);
+  return canonical([c.batch_id, c.case_id, task.stage, selector, ...(data.stage === "attribution" && data.criteriaScope ? [data.criteriaScope] : []), ...(data.stage === "comparison" ? [comparisonRole] : [])]);
 }
 /** Batch identity for every stage, including clustering tasks that span cases. */
 export function taskIdentity(data: TaskData): { batch_id: string; case_id: string | null } {
@@ -230,6 +231,8 @@ export function taskIdentity(data: TaskData): { batch_id: string; case_id: strin
 }
 /** Prevent a comparison task from ranking answers of different declared size classes. */
 export function assertComparableGroups(config: Pick<EvalConfig, "inputs" | "comparisons">): void {
+  for (const version of config.inputs.versions)
+    if (version.id.includes("__vs__")) throw new Error("输入版本 ID 不能包含对局保留分隔符 __vs__：" + version.id);
   const tiers = new Map(config.inputs.versions.map((version) => [version.id, version.comparison_tier]));
   for (const group of config.comparisons) {
     if (group.length < 2 || group.length > 3 || new Set(group).size !== group.length)
@@ -350,7 +353,11 @@ export async function buildPlan(
   const accepted = options.acceptedTaskIds ?? new Set<string>();
   assertComparableGroups(config);
   const comparisonPairs = expandComparisonPairs(config.comparisons);
-  const acceptedPairs = new Set((previous?.tasks ?? []).filter((task) => task.stage === "comparison" && accepted.has(task.id))
+  // A persisted standalone task remains an executable current definition. Reconciliation
+  // retains it; planning a second definition for its pair would duplicate formal delivery.
+  const retainedPairs = new Set((previous?.tasks ?? []).filter(task => task.stage === "comparison" &&
+    !(task.data as TaskData).verificationPending &&
+    (accepted.has(task.id) || (!(task.data as TaskData).verificationOf && !(task.data as TaskData).supersededBy)))
     .flatMap((task) => {
       const data = task.data as TaskData, identity = taskCase(data), group = data.group!;
       return group.flatMap((first, index) => group.slice(index + 1).map((second) =>
@@ -581,6 +588,7 @@ export async function buildPlan(
         valid_inputs: 0,
         attribution_tasks: 0,
         comparison_tasks: 0,
+        comparison_verification_tasks: 0,
         skipped_groups: 0,
         input_issues: 0,
       });
@@ -608,7 +616,7 @@ export async function buildPlan(
     };
     for (const group of comparisonPairs) {
       if (!group.every((v) => config.inputs.versions.some((item) => item.id === v))) continue;
-      if (acceptedPairs.has(canonical([batch, id, [...group].sort()]))) continue;
+      if (retainedPairs.has(canonical([batch, id, [...group].sort()]))) continue;
       const values = group.map((v) => records.get(canonical([batch, id, v])));
       const present = values.filter((value): value is Candidate => !!value);
       const refs = new Map(present.map(scopeOf).map((scope) => [canonical(scope.reference), scope.reference]));
@@ -628,7 +636,8 @@ export async function buildPlan(
         });
         continue;
       }
-      const groupKey = canonical([batch, id, "comparison", [...group].sort()]);
+      const groupKey = canonical([batch, id, "comparison", [...group].sort(), "draft"]);
+      const verificationKey = canonical([batch, id, "comparison", [...group].sort(), "verification"]);
       const oldGroup = oldTasks.get(groupKey),
         oldData = oldGroup?.data as TaskData | undefined;
       let ordered: Candidate[] = [];
@@ -727,6 +736,7 @@ export async function buildPlan(
       }
       const data: TaskData = {
         stage: "comparison",
+        verificationPending: true,
         candidates,
         reference,
         criteriaScope,
@@ -750,10 +760,15 @@ export async function buildPlan(
         inputIds: Object.fromEntries(Object.entries(candidates).map(([k, r]) => [k, r.input_id])),
         data,
       };
-      tasks.push(comparisonTask);
+      const oldVerification = oldTasks.get(verificationKey);
+      const { verificationPending: _pending, ...verificationData } = data;
+      const verification: PlannedTask = { ...comparisonTask, id: oldVerification?.id || randomUUID(),
+        dependencies: { ...dependencies, draft: comparisonTask.id },
+        data: { ...verificationData, verificationOf: { taskId: comparisonTask.id } } satisfies TaskData };
+      tasks.push(comparisonTask, verification);
       addRewrite(
         "comparison",
-        comparisonTask.id,
+        verification.id,
         data.comparisonId!,
         { case: { batch_id: batch, case_id: id, question: ordered[0]!.question } },
         data.revision || 1,
@@ -762,6 +777,7 @@ export async function buildPlan(
       const name = group.join("+");
       groupCounts[name] = (groupCounts[name] || 0) + 1;
       stats.comparison_tasks++;
+      stats.comparison_verification_tasks++;
     }
   }
   // Clustering groups the batch's attribution receipts per model; shards bound prompt and output size.
@@ -782,6 +798,14 @@ export async function buildPlan(
       cases: CasePlan[];
     }
     const grouped = new Map<string, { version: string; batch_id: string; cases: CasePlan[] }>();
+    // Retained pairs do not appear in this planning pass's local tasks. Their active
+    // current definitions still gate new clustering shards, including a pending followup.
+    const activeComparisons = [...new Map([...(previous?.tasks ?? []), ...tasks]
+      .filter(task => task.stage === "comparison").map(task => [task.id, task])).values()]
+      .filter(task => !(task.data as TaskData).verificationPending && !(task.data as TaskData).supersededBy);
+    const referencedAttributions = new Set(activeComparisons.flatMap(task => Object.keys((task.data as TaskData).candidates)
+      .map(label => task.dependencies[label])));
+    const comparedInputs = new Set(activeComparisons.flatMap(task => Object.values(task.inputIds)));
     const acceptedClusters = (previous?.tasks ?? []).filter((task) => task.stage === "clustering" && accepted.has(task.id));
     const covered = new Set(acceptedClusters.flatMap((task) => Object.values(task.dependencies)));
     const retained = (previous?.tasks ?? []).filter((task) => task.stage === "attribution" && accepted.has(task.id));
@@ -790,6 +814,7 @@ export async function buildPlan(
       if (covered.has(task.id)) continue;
       const data = task.data as TaskData,
         candidate = data.candidates.A;
+      if (comparedInputs.has(candidate.input_id) && !referencedAttributions.has(task.id)) continue;
       const key = canonical([candidate.version, candidate.batch_id]);
       const entry = grouped.get(key) ?? {
         version: candidate.version,
@@ -846,7 +871,7 @@ export async function buildPlan(
         stage: "clustering",
         dependencies: Object.fromEntries([
           ...shard.cases.map((entry) => [entry.input_id, entry.task_id]),
-          ...tasks.filter((comparison) => shard.cases.some((entry) => Object.values(comparison.dependencies).includes(entry.task_id)))
+          ...activeComparisons.filter(comparison => shard.cases.some(entry => Object.values(comparison.inputIds).includes(entry.input_id)))
             .map((comparison) => ["comparison:" + comparison.id, comparison.id]),
         ]),
         inputIds: {},
@@ -939,7 +964,8 @@ export async function buildPlan(
       cases: selected.length,
       criteria_tasks: criteriaTasks.size,
       attribution_tasks: checks.size,
-      comparison_tasks: tasks.length,
+      comparison_tasks: tasks.filter(task => !(task.data as TaskData).verificationPending).length,
+      comparison_verification_tasks: tasks.filter(task => !!(task.data as TaskData).verificationOf).length,
       rewrite_tasks: rewrites.size,
       clustering_tasks: clusteringTasks.length,
       comparisons: config.comparisons,

@@ -77,11 +77,22 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     if (groupPart === 'reasoning' && block.kind !== 'reasoning') continue
     if (groupPart === 'response' && block.kind === 'reasoning') continue
     switch (block.kind) {
-      case 'text':
+      case 'text': {
+        // Provider text items can split anywhere, including inside a word or
+        // Markdown delimiter. Only authored newlines divide their document;
+        // a transport block boundary must not create a paragraph or end bold.
+        const start = i
+        let text = block.text
+        while (i + 1 < blocks.length) {
+          const next = blocks[i + 1]
+          if (next?.kind !== 'text') break
+          text += next.text
+          i += 1
+        }
         rendered.push(
           <MarkdownText
-            key={i}
-            text={block.text}
+            key={start}
+            text={text}
             streaming={streaming}
             labels={labels}
             fileMentions={mentions}
@@ -89,6 +100,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           />,
         )
         break
+      }
       case 'reasoning':
         rendered.push(
           <ProcessReasoning

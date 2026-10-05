@@ -2,8 +2,43 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { ModelConfig } from "@eval/contracts";
-import { inlineToolSchema, transformPayload } from "./sdk-utils.js";
+import type { ModelConfig, ToolResult } from "@eval/contracts";
+import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, transformPayload } from "./sdk-utils.js";
+
+test("initial and restored checkpoints select the current content tool without a file fallback", () => {
+  assert.equal(contentToolName({ fileSubmission: false }, false), "submit_evaluation");
+  assert.equal(contentToolName({ fileSubmission: true }, false), "submit_evaluation_file");
+  for (const fileSubmission of [false, true]) {
+    assert.equal(contentToolName({ fileSubmission, inspectionSchema: {} }, false), "inspect_material");
+    assert.equal(contentToolName({ fileSubmission, inspectionSchema: {} }, true),
+      fileSubmission ? "submit_evaluation_file" : "submit_evaluation");
+  }
+});
+
+test("published tools intersect the current content phase with exploration and reserved budgets", () => {
+  const names = ["search_trace", "read_trace", "execute_code", "inspect_material", "submit_evaluation_file"];
+  const feedback = (remaining: number, covered = true): ToolResult => ({ content: [], details: { budget: {
+    exploration: { remaining }, required_reads: { covered }, draft_writes: { remaining: 1, tools: ["execute_code"] },
+  } } });
+  assert.deepEqual(activeToolNames(feedback(2), names, "inspect_material"), names.filter(name => name !== "submit_evaluation_file"));
+  assert.deepEqual(activeToolNames(feedback(0), names, "inspect_material"), ["execute_code", "inspect_material"]);
+  assert.deepEqual(activeToolNames(feedback(0, false), names, "inspect_material"), ["read_trace", "execute_code", "inspect_material"]);
+  assert.deepEqual(activeToolNames(feedback(2), names, "submit_evaluation_file"), names.filter(name => name !== "inspect_material"));
+  assert.deepEqual(activeToolNames(feedback(0), names, "submit_evaluation_file"), ["execute_code", "submit_evaluation_file"]);
+});
+
+test("SDK keeps only registered reserved writers, submissions and uncovered mandatory reads after exploration runs out", () => {
+  const names = ["search_trace", "read_trace", "execute_code", "save_draft", "submit_evaluation"];
+  const feedback = (remaining: number, covered: boolean): ToolResult => ({ content: [], details: { budget: {
+    exploration: { remaining: 0 }, required_reads: { covered },
+    draft_writes: { used: 0, remaining, tools: ["save_draft", "unregistered_writer"] },
+  } } });
+  assert.deepEqual(activeToolNames(feedback(1, true), names, "submit_evaluation"), ["save_draft", "submit_evaluation"]);
+  assert.deepEqual(activeToolNames(feedback(1, false), names, "submit_evaluation"), ["read_trace", "save_draft", "submit_evaluation"]);
+  assert.deepEqual(activeToolNames(feedback(0, true), names, "submit_evaluation"), ["submit_evaluation"]);
+  assert.deepEqual(activeToolNames(feedback(0, false), names, "submit_evaluation"), ["read_trace", "submit_evaluation"]);
+  assert.deepEqual(activeToolNames({ content: [], details: { budget: { exploration: { remaining: 1 } } } }, names, "submit_evaluation"), names);
+});
 
 test("tool schema inlining preserves real Criteria validation, array types and the original schema", () => {
   const source = JSON.parse(readFileSync("schemas/criteria/result.schema.json", "utf8"));
@@ -106,6 +141,25 @@ const model: ModelConfig = {
   apiKeyEnv: "FIXTURE_KEY", model: "gpt-6-luna", thinking: "high",
   contextWindow: 200000, maxOutputTokens: 8192,
 };
+test("provider capabilities preserve explicit max reasoning and opt-out of developer roles", () => {
+  const defaultProvider = providerConfig(model).models[0]!;
+  assert.deepEqual(defaultProvider.thinkingLevelMap, { xhigh: "xhigh", max: "max" });
+  assert.equal(defaultProvider.compat.supportsDeveloperRole, true);
+  assert.equal(providerConfig({ ...model, thinking: "max", supportsDeveloperRole: false }).models[0]!.compat.supportsDeveloperRole, false);
+  for (const api of ["openai-completions", "openai-responses"] as const) {
+    const field = api === "openai-completions" ? "messages" : "input";
+    const payload = { [field]: [{ role: "developer", content: "system contract" }, { role: "user", content: "task" },
+      { type: "function_call", name: "read", arguments: "{}" }] };
+    const original = structuredClone(payload);
+    transformPayload(payload, { ...model, api });
+    assert.deepEqual(payload, { ...original, parallel_tool_calls: false,
+      ...(api === "openai-completions" ? { max_completion_tokens: 8192 } : { max_output_tokens: 8192 }) },
+    "omitted capabilities preserve the SDK's role choices");
+    transformPayload(payload, { ...model, api, supportsDeveloperRole: false });
+    assert.deepEqual(payload[field], [{ role: "system", content: "system contract" }, original[field]![1], original[field]![2]]);
+  }
+});
+const evaluation = (toolNames: string[]) => ({ toolNames, outputSchema: { type: "object" }, fileSubmission: false });
 const request = () => ({
   model: model.model,
   input: [
@@ -118,10 +172,36 @@ const request = () => ({
   prompt_cache_retention: "24h",
 });
 
+test("both provider APIs retain the current inspection and final model schemas without changing history", () => {
+  const inspectionSchema = { type: "object", required: ["checks"], properties: { checks: {
+    type: "array", items: { $ref: "#/$defs/check" },
+  } }, $defs: { check: { type: "object", required: ["actual"], properties: { actual: { type: "string" } } } } };
+  const outputSchema = { type: "object", required: ["ok"], properties: { ok: { const: true } } };
+  const pathSchema = { type: "object", additionalProperties: false, required: ["path"],
+    properties: { path: { type: "string", minLength: 1 } } };
+  for (const api of ["openai-completions", "openai-responses"] as const) for (const fileSubmission of [false, true]) {
+    const contract = { toolNames: ["inspect_material"], fileSubmission, inspectionSchema, outputSchema };
+    const before = structuredClone(contract);
+    const history = [{ role: "user", content: "Original facts" },
+      { role: "assistant", content: JSON.stringify({ detail: {}, text: 'quoted "text"\\path\nline' }) }];
+    const names = ["inspect_material", fileSubmission ? "submit_evaluation_file" : "submit_evaluation"];
+    const tools = names.map(name => api === "openai-completions"
+      ? { type: "function", function: { name, parameters: fileSubmission ? pathSchema : { type: "object" } } }
+      : { type: "function", name, parameters: fileSubmission ? pathSchema : { type: "object" } });
+    const payload = { tools, ...(api === "openai-completions" ? { messages: structuredClone(history) } : { input: structuredClone(history) }) };
+    transformPayload(payload, { ...model, api }, contract);
+    const parameters = payload.tools.map(tool => api === "openai-completions"
+      ? (tool as { function: { parameters: unknown } }).function.parameters : (tool as { parameters: unknown }).parameters);
+    assert.deepEqual(parameters, fileSubmission ? [pathSchema, pathSchema] : [inlineToolSchema(inspectionSchema), outputSchema]);
+    assert.deepEqual("messages" in payload ? payload.messages : payload.input, history);
+    assert.deepEqual(contract, before);
+  }
+});
+
 test("evaluation caching changes only request controls, preserving content and generation settings", () => {
   const payload = request();
   const before = structuredClone(payload);
-  const result = transformPayload(payload, model, { toolNames: [] });
+  const result = transformPayload(payload, model, evaluation([]));
   const { prompt_cache_retention: _retention, ...expected } = before;
   assert.deepEqual(result, {
     ...expected, prompt_cache_key: "evaluation", prompt_cache_options: { mode: "explicit" },
@@ -129,12 +209,12 @@ test("evaluation caching changes only request controls, preserving content and g
   });
   const another = request();
   another.prompt_cache_key = "another-sdk-session";
-  assert.deepEqual(transformPayload(another, model, { toolNames: [] }), result);
+  assert.deepEqual(transformPayload(another, model, evaluation([])), result);
 });
 
 test("material-reading tasks and submission repairs retain multi-turn history caching", () => {
   for (const modelId of ["gpt-5.6-luna", "gpt-6-luna", "gpt-6.1-sol"]) {
-    assert.equal((transformPayload(request(), { ...model, model: modelId }, { toolNames: ["read_trace"] }) as
+    assert.equal((transformPayload(request(), { ...model, model: modelId }, evaluation(["read_trace"])) as
       { prompt_cache_options: { mode: string } }).prompt_cache_options.mode, "implicit");
   }
   for (const history of [
@@ -145,7 +225,7 @@ test("material-reading tasks and submission repairs retain multi-turn history ca
   ]) {
     const payload = { ...request(), input: [...request().input, history] };
     const before = structuredClone(payload.input);
-    const result = transformPayload(payload, model, { toolNames: [] }) as Record<string, unknown>;
+    const result = transformPayload(payload, model, evaluation([])) as Record<string, unknown>;
     assert.deepEqual(result.prompt_cache_options, { mode: "implicit" });
     assert.deepEqual(result.input, before);
   }
@@ -158,8 +238,10 @@ test("assistant sessions, other models and Chat Completions keep their SDK cache
     { ...model, model: "gpt-60" },
     { ...model, api: "openai-completions" as const },
   ]) {
-    const payload = request();
-    transformPayload(payload, config, { toolNames: [] });
+    const payload: Record<string, unknown> = request();
+    if (config.api === "openai-completions")
+      payload.tools = [{ type: "function", function: { name: "submit_evaluation", parameters: { type: "object" } } }];
+    transformPayload(payload, config, evaluation([]));
     assert.equal(payload.prompt_cache_key, "random-sdk-session");
     assert.equal(payload.prompt_cache_retention, "24h");
     assert(!Object.hasOwn(payload, "prompt_cache_options"));

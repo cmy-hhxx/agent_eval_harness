@@ -28,6 +28,11 @@
           "new_class_key": {
             "type": "string",
             "minLength": 1
+          },
+          "deferred_reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
           }
         },
         "oneOf": [
@@ -39,6 +44,11 @@
           {
             "required": [
               "new_class_key"
+            ]
+          },
+          {
+            "required": [
+              "deferred_reason"
             ]
           }
         ]
@@ -85,6 +95,23 @@
           "novelty": {
             "type": "string",
             "minLength": 1
+          },
+          "category_paths": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^(?![\\s\\S]*[<>\\[\\]{}\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029])"
+              }
+            }
           }
         }
       }
@@ -154,6 +181,71 @@
             }
           }
         }
+      }
+    },
+    "class_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "class_id",
+          "reason"
+        ],
+        "properties": {
+          "class_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category_paths": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^(?![\\s\\S]*[<>\\[\\]{}\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029])"
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "label"
+            ]
+          },
+          {
+            "required": [
+              "definition"
+            ]
+          },
+          {
+            "required": [
+              "category_paths"
+            ]
+          }
+        ]
       }
     }
   }

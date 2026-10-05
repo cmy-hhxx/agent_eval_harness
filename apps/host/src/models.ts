@@ -1,8 +1,8 @@
 import type { ModelConfig } from "@eval/contracts";
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
-export const DEFAULT_THINKING: Thinking = "high";
+export const DEFAULT_THINKING: Thinking = "xhigh";
 
 /** A reusable model profile: gateway identity plus default parameters. */
 export interface ModelProfile {
@@ -12,6 +12,8 @@ export interface ModelProfile {
   apiKeyEnv: string;
   model?: string;
   thinking?: Thinking;
+  /** Gateway capability, independent of the model name and endpoint URL. */
+  supportsDeveloperRole?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
 }
@@ -61,6 +63,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       apiKeyEnv: profile.apiKeyEnv,
       model,
       thinking,
+      ...(profile.supportsDeveloperRole !== undefined ? { supportsDeveloperRole: profile.supportsDeveloperRole } : {}),
       contextWindow,
       maxOutputTokens,
     };

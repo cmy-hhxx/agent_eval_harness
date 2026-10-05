@@ -86,8 +86,7 @@
           },
           "summary": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 160
+            "minLength": 1
           },
           "core_failure_refs": {
             "type": "array",
@@ -111,8 +110,7 @@
       "properties": {
         "tradeoff": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 100
+          "minLength": 1
         },
         "comparisons": {
           "type": "array",
@@ -162,8 +160,7 @@
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "minLength": 1,
-                      "maxLength": 160
+                      "minLength": 1
                     },
                     "finding_indices": {
                       "type": "array",

@@ -7,6 +7,16 @@ import { ROOT } from "../../tests/fixtures/services.js";
 
 const { analysisToolModel } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/tool-model.js")).href);
 
+test("data query summaries use full-run counts and distinguish historical runs from answers", () => {
+  const summary = { inputCount: 26, caseCount: 10 };
+  assert.equal(analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "runs", total: 26, currentRun: { summary }, items: [] }) }).summary,
+    "最近一轮 · 26 条回答 · 10 道题");
+  assert.equal(analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "inputs", total: 0, summary, items: [] }) }).summary,
+    "本轮 · 26 条回答 · 10 道题");
+  assert.equal(analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "runs", total: 0, items: [] }) }).summary,
+    "找到 0 次运行");
+});
+
 test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
   assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "bar" } }) }),
     { summary: "显示柱形图 · 已完成" });

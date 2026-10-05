@@ -1,0 +1,67 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import type { JsonObject } from "@eval/contracts";
+import type { EvalConfig } from "./types.js";
+import { analysisComparisonScope, analysisComparisonStats, readAnalysisComparisonStats } from "./analysis-comparison.js";
+
+const config = { inputs: { versions: [
+  { id: "a", name: "A", comparison_tier: "Fast" }, { id: "b", name: "B", comparison_tier: "Fast" }, { id: "c", name: "C", comparison_tier: "Fast" },
+] } } as EvalConfig;
+const name = (model: string) => model.toUpperCase() + " Expert";
+const row = (first = "a", second = "b", winner: string | null = "a"): JsonObject => ({
+  evaluation_type: "group_model_comparison", status: "decided", case: { batch_id: "batch", case_id: "question" },
+  models: Object.fromEntries([first, second].map(model => [model, { version: name(model) }])),
+  assessments: Object.fromEntries([first, second].map(model => [model, { meets_core: true, summary: model + "的正式点评。" }])),
+  decision_basis: { tradeoff: "C的表述更简洁，但不改变正式判决。" },
+  verdicts: { [first + "__vs__" + second]: { result: winner ? "win" : "both_good", winner_version: winner,
+    winner_name: winner ? name(winner) : null, reason: winner ? "这项要求有实质优势。" : "双方均好。" } },
+});
+
+test("Eris counts three models as three independent formal pairs without treating display names as tiers", () => {
+  const originals = [row(), row("a", "c"), row("b", "c", null)], before = structuredClone(originals);
+  const records = originals.map((original, index) => ({ reference: { runId: "run", taskId: "task" + index },
+    question: "原问。", scope: analysisComparisonScope(original, config)! }));
+  assert(records.every(({ scope }) => scope.comparisonTier === "Fast"), "Expert in a display name cannot override the recorded declaration");
+  assert(records.every(({ scope }) => scope.comparisons.length === 1));
+  assert.equal(records[2]!.scope.comparisons[0]!.result, "both_good");
+  const stats = analysisComparisonStats(records);
+  assert.equal(stats.formalResultCount, 3);
+  assert.equal(stats.comparisonCount, 3);
+  assert.equal(stats.tiers[0]!.caseCount, 1, "correlated pairs are still one business case");
+  assert.deepEqual(stats.tiers[0]!.outcomes, { win: 2, both_good: 1, both_bad: 0 });
+  assert.deepEqual(stats.tiers[0]!.models.map(({ model, wins, losses, both_good }) => ({ model, wins, losses, both_good })).sort((a, b) => a.model.localeCompare(b.model)), [
+    { model: "a", wins: 2, losses: 0, both_good: 0 }, { model: "b", wins: 0, losses: 1, both_good: 1 }, { model: "c", wins: 0, losses: 1, both_good: 1 },
+  ]);
+  assert.deepEqual(stats.tiers[0]!.references, records.map(record => record.reference));
+  assert.deepEqual(originals, before, "the projection preserves the formal verdict and commentary");
+});
+
+test("Eris keeps undeclared tiers unknown, preserves both-bad outcomes and rejects broken formal references", () => {
+  const unknown = structuredClone(config);
+  unknown.inputs.versions.forEach((version) => { delete version.comparison_tier; });
+  const source = row();
+  source.verdicts = Object.fromEntries(Object.keys(source.verdicts as JsonObject).map((key) => [key, { result: "both_bad", winner_version: null, winner_name: null, reason: "均未完成核心要求。" }]));
+  Object.values(source.assessments as Record<string, { meets_core: boolean }>).forEach(assessment => { assessment.meets_core = false; });
+  const scope = analysisComparisonScope(source, unknown)!;
+  assert.equal(scope.comparisonTier, null);
+  const stats = analysisComparisonStats([{ reference: { runId: "run", taskId: "task" }, question: "原问。", scope }]);
+  assert.deepEqual(stats.tiers[0]!.outcomes, { win: 0, both_good: 0, both_bad: 1 });
+  assert(stats.tiers[0]!.models.every((model) => model.both_bad === 1 && model.wins === 0));
+  const mixed = structuredClone(config);
+  mixed.inputs.versions[0]!.comparison_tier = "Expert";
+  assert.throws(() => analysisComparisonScope(row(), mixed), /不同档位/);
+  const missing = row();
+  delete (missing.verdicts as JsonObject).a__vs__b;
+  assert.throws(() => analysisComparisonScope(missing, config), /缺失或重复/);
+  const extra = row();
+  (extra.verdicts as JsonObject).a__vs__c = (extra.verdicts as JsonObject).a__vs__b!;
+  assert.throws(() => analysisComparisonScope(extra, config), /未登记/);
+  assert.throws(() => analysisComparisonStats([stats.records[0]!, stats.records[0]!]), /引用重复/);
+  assert.equal(analysisComparisonScope({ ...row(), status: "pending_review" }, config), null, "a review receipt remains readable without formal outcome coordinates");
+  assert.equal(analysisComparisonScope({ evaluation_type: "single_model_attribution" }, config), null);
+});
+
+test("Eris rejects duplicate formal task references before reading any result", async () => {
+  await assert.rejects(readAnalysisComparisonStats("unused-run", ["same-task", "same-task"]), /引用重复/);
+  assert.deepEqual(await readAnalysisComparisonStats("unused-run", []), { formalResultCount: 0, comparisonCount: 0, records: [], tiers: [] });
+});

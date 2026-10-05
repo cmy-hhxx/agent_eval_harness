@@ -1,7 +1,7 @@
 import { canonical, type RunState, type TaskPlan } from "@eval/contracts";
 import { comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
-import { display, stageResult } from "./results.js";
+import { display, stageResult, sourceRewriteTasks } from "./results.js";
 import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
 
 export interface DeliveryRequirements {
@@ -14,16 +14,15 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
   if ([...scopes].some((scope) => scope !== "items" && scope !== "verdicts"))
     throw new Error("require-rewrite must be items or verdicts");
   const errors: string[] = [], keys = new Set<string>();
-  const rewritesBySource = new Map(state.manifest.tasks.filter((task) => task.stage === "rewrite")
-    .map((task) => [(task.data as TaskData).rewriteOf!.taskId, task]));
   const selected = requirements.selectedOnly ? new Set(state.manifest.executionScope) : undefined;
   if (requirements.selectedOnly && !state.manifest.executionScope) throw new Error("Run has no frozen execution scope");
   const missingSlots: { task_id: string; result_id: string; slot_ids: string[] }[] = [];
   const byBatch: Record<string, { planned: number; accepted: number; delivered: number }> = {};
   let requiredSlots = 0, filledSlots = 0;
   for (const task of state.manifest.tasks) {
-    if (task.stage !== "comparison") continue;
-    if (selected && !selected.has(task.id) && !selected.has(rewritesBySource.get(task.id)?.id ?? "")) continue;
+    if (task.stage !== "comparison" || (task.data as TaskData).verificationPending) continue;
+    const rewrites = sourceRewriteTasks(state.manifest.tasks, task.id);
+    if (selected && !selected.has(task.id) && !rewrites.some(rewrite => selected.has(rewrite.id))) continue;
     const data = task.data as TaskData, batch = taskCase(data).batch_id;
     if (data.supersededBy) continue;
     const counts = byBatch[batch] ??= { planned: 0, accepted: 0, delivered: 0 };
@@ -49,9 +48,13 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
     requiredSlots += expected.length;
     filledSlots += expected.length - missing.length;
     // A prepared refresh remains outstanding even if old text still fills the JSONL.
-    const rewrite = rewritesBySource.get(task.id);
-    const rewriteScope = (rewrite?.data as TaskData | undefined)?.comparisonRewriteScope ?? "verdicts";
-    const outstanding = rewrite && (rewriteScope === "all" ? scopes.size > 0 : scopes.has(rewriteScope)) && !state.receipts[rewrite.id];
+    const requiredIds = new Set(expected.map(item => item.id));
+    const outstanding = rewrites.some(rewrite => {
+      if (state.receipts[rewrite.id]) return false;
+      const data = rewrite.data as TaskData, scope = data.comparisonRewriteScope ?? "verdicts";
+      return data.rewriteSlotIds ? data.rewriteSlotIds.some(id => requiredIds.has(id))
+        : scope === "all" ? scopes.size > 0 : scopes.has(scope);
+    });
     if (missing.length) missingSlots.push({ task_id: task.id, result_id: data.comparisonId!, slot_ids: missing.map((item) => item.id) });
     if (outstanding) errors.push(`${task.id}: requested rewrite not completed`);
     if (!missing.length && !outstanding) counts.delivered++;
@@ -70,7 +73,7 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
 export function pilotTaskIds(plan: TaskPlan, count: number): string[] {
   if (!Number.isInteger(count) || count < 1) throw new Error("pilot-cases must be positive");
   const groups = new Map<string, string[]>();
-  for (const task of plan.tasks) if (task.stage === "comparison") {
+  for (const task of plan.tasks) if (task.stage === "comparison" && !(task.data as TaskData).verificationPending) {
     const data = task.data as TaskData, key = canonical([taskCase(data).batch_id, data.group]);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(task.id);
@@ -101,7 +104,7 @@ export function pilotTaskIds(plan: TaskPlan, count: number): string[] {
 /** Source and polished text side by side; this does not claim semantic approval. */
 export function comparisonRewriteReview(state: RunState, resultIds: string[] | undefined, limit: number) {
   if (!Number.isInteger(limit) || limit < 1) throw new Error("review limit must be positive");
-  const tasks = state.manifest.tasks.filter((task) => task.stage === "comparison");
+  const tasks = state.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending);
   for (const id of resultIds ?? [])
     if (!tasks.some((task) => (task.data as TaskData).comparisonId === id)) throw new Error("未知对比结果：" + id);
   const versions = (state.manifest.config as EvalConfig).inputs.versions;

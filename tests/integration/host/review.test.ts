@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import type { AgentBackend } from "@eval/contracts";
+import type { SourceReviewItem } from "@eval/agents/comparison";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { buildPlan, deliveryCoverage, readRunState, type ComparisonResult, type TaskData } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, taskResult } from "../../fixtures/comparison.js";
+import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, taskResult } from "../../fixtures/comparison.js";
 
 async function experiment(unresolved = false) {
   const setup = await fixtureConfig([[raw()], [], [raw()], []], false, true);
@@ -16,13 +17,14 @@ async function experiment(unresolved = false) {
   let comparisons = 0, reviews = 0;
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
-      const material = parsedMaterial(options.spec) as { review_context?: unknown };
+      await inspectFor(options);
+      const material = parsedMaterial(options.spec) as { review_context?: unknown; };
       if (material.review_context) reviews++;
       let result: unknown;
       if (options.spec.evaluation.id === "comparison") {
         comparisons++;
         if (comparisons === 1 || unresolved) {
-          // No ranking or criterion matrix is prepared just to request independent review.
+          // The fixture projects the existing source review into its fixed candidate cell.
           result = {
             status: "needs_review",
             assessments: {
@@ -34,9 +36,12 @@ async function experiment(unresolved = false) {
         } else result = taskResult(options.spec);
       } else result = taskResult(options.spec);
       const draft = draftFor(options.spec, result) as Record<string, unknown>;
-      if (draft.status === "needs_review")
-        assert.deepEqual(Object.keys(draft).sort(), ["assessments", "review_requests", "status"]);
-      const response = await options.execute("submit_evaluation", draft);
+      if (options.spec.evaluation.id === "comparison" && options.spec.evaluation.profile !== "verification") {
+        assert.deepEqual(Object.keys(draft).sort(), ["assessments", "comparisons", "preference", "tradeoff"]);
+        const rows = draft.comparisons as ({ assessments: Record<string, { source_review: string | null }> } | null)[];
+        assert(rows.every(row => row === null || Object.values(row.assessments).every(cell => Object.hasOwn(cell,"source_review"))));
+      }
+      const response = await submitFor(options, draft);
       assert.equal(response.isError, undefined, JSON.stringify(response));
     }, async abort() {}, async dispose() {} };
   } };
@@ -52,10 +57,10 @@ test("independent review preserves the source, persists lineage and gates formal
   try {
     const summary = await runEvaluation(run.options);
     assert.equal(summary.completed_comparisons, 1);
-    assert.deepEqual(run.counts(), { comparisons: 2, reviews: 1 });
+    assert.deepEqual(run.counts(), { comparisons: 4, reviews: 1 });
     const directory = path.join(run.config.output.path, "review");
     const state = await readRunState(directory);
-    const original = run.plan.tasks.find((task) => task.stage === "comparison")!;
+    const original = run.plan.tasks.find((task) => task.stage === "comparison" && !(task.data as TaskData).verificationPending)!;
     const stored = state.manifest.tasks.find((task) => task.id === original.id)!;
     const followup = state.manifest.tasks.find((task) => task.id === (stored.data as TaskData).supersededBy)!;
     assert.equal((state.receipts[original.id].evaluation as ComparisonResult).status, "needs_review");
@@ -75,7 +80,7 @@ test("independent review preserves the source, persists lineage and gates formal
     const validation = await validateRun(directory);
     assert(validation.valid, JSON.stringify(validation));
     await runEvaluation({ ...run.options, plan: { ...run.plan, tasks: state.manifest.tasks } });
-    assert.deepEqual(run.counts(), { comparisons: 2, reviews: 1 }, "resume never repeats accepted source or review tasks");
+    assert.deepEqual(run.counts(), { comparisons: 4, reviews: 1 }, "resume never repeats accepted source or review tasks");
   } finally { await run.worker.close(); await rm(run.directory, { recursive: true, force: true }); }
 });
 
@@ -84,9 +89,9 @@ test("a second unresolved verdict stops review and excludes verdicts and problem
   try {
     const summary = await runEvaluation(run.options);
     assert.equal(summary.completed_comparisons, 0);
-    assert.deepEqual(run.counts(), { comparisons: 2, reviews: 1 });
+    assert.deepEqual(run.counts(), { comparisons: 4, reviews: 1 });
     const state = await readRunState(path.join(run.config.output.path, "review"));
-    assert.equal(state.manifest.tasks.filter((task) => task.stage === "comparison").length, 2);
+    assert.equal(state.manifest.tasks.filter((task) => task.stage === "comparison").length, 4);
     assert(!deliveryCoverage(state).valid);
     const formal = await readFile(path.join(run.config.output.path, "review/results/comparison.jsonl"), "utf8").catch(error => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -104,7 +109,7 @@ test("a second unresolved verdict stops review and excludes verdicts and problem
       assert.equal(state.receipts[task.id], undefined);
     }
     await runEvaluation(run.options);
-    assert.deepEqual(run.counts(), { comparisons: 2, reviews: 1 });
+    assert.deepEqual(run.counts(), { comparisons: 4, reviews: 1 });
     const resumed = await readRunState(path.join(run.config.output.path, "review"));
     for (const task of resumed.manifest.tasks.filter((task) => task.stage === "clustering"))
       assert.equal(resumed.manifest.states[task.id].status, "blocked", "ordinary resume cannot admit unresolved observations");
@@ -122,30 +127,28 @@ test("recomputed table uncertainty forces the existing bounded review loop witho
   let comparisons = 0, reviews = 0, prevented = 0;
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
+      await inspectFor(options);
       const material = parsedMaterial(options.spec) as { review_context?: unknown;
-        answer?: { final_message_index: number; table_check_results: { answer_table_id: string }[] }; source_review?: Record<string, string[]> };
+        answer?: { final_message_index: number; table_check_results: { answer_table_index: number }[] }; source_review?: Record<string, SourceReviewItem[]> };
       if (material.review_context) reviews++;
       const result = taskResult(options.spec) as Record<string, unknown>;
       if (material.answer) {
         assert(material.answer.table_check_results.length > 0, "the complete deterministic checks are provided before assessment");
         result.findings = [];
       }
-      if ("decision_basis" in result) {
+      if ("decision_basis" in result && options.spec.evaluation.profile !== "verification") {
         comparisons++;
         const value = result as unknown as ComparisonResult;
         value.decision_basis.decisive_findings = [];
         for (const row of value.decision_basis.comparisons)
           for (const assessment of Object.values(row.assessments)) assessment.finding_indices = [];
         assert.deepEqual(Object.keys(material.source_review!).sort(), ["A", "B"]);
-        const rejected = await options.execute("submit_evaluation", draftFor(options.spec, value));
-        assert.equal(rejected.isError, true);
-        assert.match(JSON.stringify(rejected), /source_review_required/);
+        assert(material.source_review!.A.some(item => item.requires_review));
+        assert(material.source_review!.B.some(item => item.requires_review));
         prevented++;
-        value.status = "needs_review"; value.ranking = [];
-        value.review_requests = ["A", "B"].map(candidate => ({ candidate, criterion_ids: ["r1"], finding_indices: [],
-          reason: material.source_review![candidate].join(" ") }));
+
       }
-      const accepted = await options.execute("submit_evaluation", draftFor(options.spec, result));
+      const accepted = await submitFor(options, draftFor(options.spec, result));
       assert.notEqual(accepted.isError, true, JSON.stringify(accepted));
     }, async abort() {}, async dispose() {} };
   } };
@@ -180,11 +183,12 @@ test("independent table review resolves an unverified row using original tool pr
   let comparisons = 0, reviews = 0, prevented = 0;
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
+      await inspectFor(options);
       const material = parsedMaterial(options.spec) as { review_context?: unknown;
-        answer?: { final_message_index: number; table_check_results: { answer_table_id: string; rows: { row_index: number; status: string; answer: { evidence: { evidence_id: string } } }[] }[] };
-        source_review?: Record<string, string[]> };
+        answer?: { final_message_index: number; table_check_results: { answer_table_index: number; rows: { row_index: number; status: string; answer: { evidence: { reference: { evidence_index: number } } } }[] }[] };
+        source_review?: Record<string, SourceReviewItem[]> };
       const result = taskResult(options.spec) as Record<string, unknown>;
-      const resolutions: { table_id: string; row_index: number; outcome: string; reason: string; evidence: { evidence_id: string }[] }[] = [];
+      const resolutions: { table_index: number; row_index: number; outcome: string; reason: string; evidence: { evidence_index: number }[] }[] = [];
       if (material.answer) {
         if (material.review_context) reviews++;
         result.findings = [];
@@ -195,16 +199,16 @@ test("independent table review resolves an unverified row using original tool pr
             const searched = await options.execute("search_trace", { candidate: "answer", query: support });
             assert.notEqual(searched.isError, true, JSON.stringify(searched));
             const matches = JSON.parse(searched.content.find(item => item.type === "text")!.text!) as {
-              matches: { path: string; evidence: { evidence_id: string; message_index: number; quote: string } }[] };
+              matches: { path: string; evidence: { reference: { evidence_index: number }; message_index: number; quote: string } }[] };
             const original = matches.matches.find(item => item.path === "/content" && item.evidence.message_index === 2)!.evidence;
             assert.equal(original.quote, support);
-            resolutions.push({ table_id: table.answer_table_id, row_index: unresolved.row_index, outcome: "supported",
+            resolutions.push({ table_index: table.answer_table_index, row_index: unresolved.row_index, outcome: "supported",
               reason: "原查询表只展示首行，另一条原始工具返回明确给出缺失行的名称和代码对应，已与最终行逐字核对。",
-              evidence: [{ evidence_id: unresolved.answer!.evidence.evidence_id }, { evidence_id: original.evidence_id }] });
+              evidence: [unresolved.answer!.evidence.reference, original.reference] });
           }
         }
       }
-      if ("decision_basis" in result) {
+      if ("decision_basis" in result && options.spec.evaluation.profile !== "verification") {
         comparisons++;
         const value = result as unknown as ComparisonResult;
         value.decision_basis.decisive_findings = [];
@@ -212,13 +216,10 @@ test("independent table review resolves an unverified row using original tool pr
           for (const assessment of Object.values(row.assessments)) assessment.finding_indices = [];
         if (comparisons === 1) {
           assert.deepEqual(Object.keys(material.source_review!).sort(), ["A", "B"]);
-          const rejected = await options.execute("submit_evaluation", draftFor(options.spec, value));
-          assert.equal(rejected.isError, true);
-          assert.match(JSON.stringify(rejected), /source_review_required/);
+          assert(material.source_review!.A.some(item => item.requires_review));
+          assert(material.source_review!.B.some(item => item.requires_review));
           prevented++;
-          value.status = "needs_review"; value.ranking = [];
-          value.review_requests = ["A", "B"].map(candidate => ({ candidate, criterion_ids: ["r1"], finding_indices: [],
-            reason: material.source_review![candidate].join(" ") }));
+
         } else {
           assert.deepEqual(material.source_review ?? {}, {}, "independent evidence must clear the source-review gate");
           assert.equal(value.status, "decided");
@@ -227,7 +228,7 @@ test("independent table review resolves an unverified row using original tool pr
       const draft = draftFor(options.spec, result) as Record<string, unknown>;
       // Use the actual tool-issued coordinates; the generic fixture helper only maps final/user quotations.
       if (resolutions.length) draft.table_resolutions = resolutions;
-      const accepted = await options.execute("submit_evaluation", draft);
+      const accepted = await submitFor(options, draft);
       assert.notEqual(accepted.isError, true, JSON.stringify(accepted));
     }, async abort() {}, async dispose() {} };
   } };
@@ -270,5 +271,72 @@ test("independent table review resolves an unverified row using original tool pr
     assert.deepEqual({ comparisons, reviews, prevented }, { comparisons: 2, reviews: 2, prevented: 1 });
     const resumedValidation = await validateRun(run);
     assert(resumedValidation.valid, JSON.stringify(resumedValidation));
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("draft and blind inspection plus final verification each share their four-content budget and publish one formal pair", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
+  config.execution.repairAttempts = 3;
+  config.execution.maxOutputChars = 3500;
+  const plan = await buildPlan(config);
+  const submissions = new Map<string, number>();
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      const originalPrompt = options.spec.prompt;
+      if (options.spec.evaluation.inspectionSchema) {
+        assert.throws(() => taskResult(options.spec), /must inspect actual materials/);
+        assert.equal((parsedMaterial(options.spec) as { sections: unknown[] }).sections.length, 2);
+      }
+      const inspected = await inspectFor(options);
+      assert.equal(options.spec.prompt, originalPrompt, "the actual attempt prompt stays blind and immutable");
+      if (inspected) {
+        submissions.set(options.spec.taskId, 1);
+        assert.equal((parsedMaterial(options.spec) as { sections: unknown[] }).sections.length, 3);
+      }
+      const draft = draftFor(options.spec, taskResult(options.spec)) as Record<string, unknown>;
+      if (options.spec.evaluation.id === "comparison") {
+        assert.equal(options.spec.policy.repairAttempts, 3);
+        for (let repair = 1; repair <= (inspected ? 2 : 3); repair++) {
+          const rejected = await submitFor(options, { ...draft, status: `invalid-${repair}` });
+          submissions.set(options.spec.taskId, (submissions.get(options.spec.taskId) ?? 0) + 1);
+          assert.equal(rejected.isError, true);
+        }
+      }
+      const accepted = await submitFor(options, draft);
+      submissions.set(options.spec.taskId, (submissions.get(options.spec.taskId) ?? 0) + 1);
+      assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+    }, async abort() {}, async dispose() {} };
+  } };
+  const worker = await startWorker(backend, path.join(directory, "worker"));
+  const options = { ...services, plan, config, runId: "verification-budget", output: config.output,
+    engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+    workerUrls: [worker.url], policy: config.execution, modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0 };
+  try {
+    const summary = await runEvaluation(options);
+    assert.equal(summary.completed_comparisons, 1);
+    const run = path.join(config.output.path, options.runId), state = await readRunState(run);
+    const comparisons = plan.tasks.filter(task => task.stage === "comparison");
+    assert.equal(comparisons.length, 2);
+    assert.notEqual(comparisons[0].id, comparisons[1].id);
+    for (const task of comparisons) {
+      assert.equal(submissions.get(task.id), 4);
+      assert.equal(state.receipts[task.id].submissionStats!.contentSubmissions, 4);
+      if ((task.data as TaskData).verificationOf) {
+        assert(state.receipts[task.id].audit.inspection, "accepted verification preserves its actual inspection checkpoint");
+        assert.equal((state.receipts[task.id].audit.inspection!.value.checks as unknown[]).length, 2);
+        assert(!state.receipts[task.id].audit.artifacts.some(artifact => artifact.name === "delegated-result.json"),
+          "Host-generated inspection context reaches the model in full even above ordinary tool-output limits");
+      }
+    }
+    const formal = (await readFile(path.join(run, "results/comparison.jsonl"), "utf8")).trim().split("\n");
+    const drafts = (await readFile(path.join(run, "results/comparison-draft.jsonl"), "utf8")).trim().split("\n");
+    assert.equal(formal.length, 1); assert.equal(drafts.length, 1);
+    const draftTask = comparisons.find(task => (task.data as TaskData).verificationPending)!;
+    assert.equal(JSON.parse(drafts[0]).task_id, draftTask.id);
+    const before = structuredClone(state.receipts);
+    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+    assert.deepEqual((await readRunState(run)).receipts, before);
+    assert.equal((await validateRun(run)).valid, true);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

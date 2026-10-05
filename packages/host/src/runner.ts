@@ -22,7 +22,7 @@ import {
   type FailureGuardPolicy,
   type StagePause,
 } from "@eval/contracts";
-import { HttpError, canonical, errorText, redact, safeId } from "@eval/contracts";
+import { HttpError, canonical, errorText, redact, safeId, validateEvidenceBank, validateEvidenceBankSources } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
 import { compressFile, exists, internalPath, runLayout, runLock, readJson, writeJson } from "@eval/data";
 import { loadIdentity } from "@eval/runtime/client";
@@ -134,6 +134,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       };
     }
     const manifest = saved.manifest;
+    const contentRemaining = (task: PlannedTask) => 1 + options.policy.repairAttempts -
+      (manifest.states[task.id].failure?.contentSubmissions ?? 0);
     if (options.taskIds) {
       if (!options.taskIds.length) throw new Error("Task selection must not be empty");
       manifest.executionScope = [...new Set(options.taskIds)];
@@ -169,6 +171,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         state.status = "succeeded";
       } else if (options.skipFailed && ["failed", "timed_out", "blocked"].includes(state.status)) {
         continue;
+      } else if (contentRemaining(task) <= 0) {
+        state.status = "failed";
+        state.reason ??= "Content submission budget exhausted";
       } else {
         state.status = "pending";
         delete state.attemptId;
@@ -211,6 +216,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await current.checkpoint(safeId(parts[2]), (await body(req)) as unknown as FailureContext);
         return json(res, { saved: true });
       }
+      if (req.method === "POST" && url.pathname === "/api/evidence-bank")
+        return json(res, await current.registerEvidenceBank((await body(req)) as unknown as import("@eval/contracts").EvidenceBankUpdate));
+      if (req.method === "POST" && url.pathname === "/api/inspections")
+        return json(res, await current.inspect((await body(req)) as unknown as import("@eval/contracts").MaterialInspection));
       if (req.method === "POST" && url.pathname === "/api/submissions") {
         const value = (await body(req)) as Submission;
         return json(res, await current.accept(value));
@@ -296,9 +305,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id];
       const model = options.modelForStage(task.stage);
-      const retries = retryBudgets.get(task.id) ?? { transport: 0, content: 0 };
+      const retries = retryBudgets.get(task.id) ?? {
+        transport: 0, content: 0,
+      };
       retryBudgets.set(task.id, retries);
       if (guard.paused(task.stage)) return;
+      if (contentRemaining(task) <= 0) {
+        state.status = "failed";
+        state.reason ??= "Content submission budget exhausted";
+        await current.save();
+        return;
+      }
       if (controller.signal.aborted) {
         state.status = "cancelled";
         await current.save();
@@ -335,16 +352,20 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         worker.url = workerUrl;
       }
       if (guard.paused(task.stage)) return;
+      // Automatic retries and explicit resume share the task's cumulative content cap.
+      const policy = { ...options.policy, repairAttempts: contentRemaining(task) - 1 };
       const spec: AttemptSpec = {
         runId: options.runId,
+        debug: manifest.debug,
         taskId: task.id,
         attemptId: randomUUID(),
         inputRevision: state.revision || 1,
         engine: identity,
         evaluation: prepared.evaluation,
         model,
-        policy: options.policy,
-        prompt: prepared.renderAttempt(options.policy, state.failure),
+        policy,
+        prompt: prepared.renderAttempt(policy, state.failure),
+        evidenceBank: [...prepared.evidenceBank],
         recovery: state.failure,
         inputs: Object.entries(task.inputIds).map(([name, id]) => ({
           ...manifest.inputs[id],
@@ -372,7 +393,16 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       );
       const eventController = new AbortController();
       let stream: Promise<boolean> | undefined, status: AttemptStatus | undefined;
+      let observedTerminal: AttemptStatus | undefined;
+      let eventCursor = 0, eventType: string | undefined, terminalSeq: number | undefined;
+      let drainingEvents = false, eventIdle: NodeJS.Timeout | undefined, eventArchiveError: string | undefined;
+      const resetEventIdle = () => {
+        clearTimeout(eventIdle);
+        eventIdle = setTimeout(() => eventController.abort(new Error("Terminal event stream made no progress")),
+          spec.policy.idleTimeoutSeconds * 1000);
+      };
       let eventsSaved = false;
+      let attemptDidNotStart = false;
       try {
         options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
         try {
@@ -380,7 +410,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         } catch (error) {
           try {
             await request(`${workerUrl}/api/attempts/${spec.attemptId}`);
-          } catch {
+          } catch (lookup) {
+            // An explicit pre-execution rejection and an absent attempt prove
+            // that this dispatch cannot have spent content submissions.
+            attemptDidNotStart = error instanceof HttpError && error.status >= 400 && error.status < 500 &&
+              lookup instanceof HttpError && lookup.status === 404;
             throw error;
           }
         }
@@ -390,7 +424,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             spec.attemptId,
             manifest.debug ? path.join(attemptDir, "events.jsonl") : undefined,
             eventController.signal,
-            options.onEvent,
+            (event) => {
+              // consumeEvents invokes this only after its completed local append.
+              eventCursor = event.seq;
+              eventType = event.type;
+              if (drainingEvents) resetEventIdle();
+              if (terminalSeq !== undefined && event.seq >= terminalSeq &&
+                  (event.seq !== terminalSeq || event.type !== "finished"))
+                eventController.abort(new Error("Event stream does not match the terminal sequence"));
+              try { options.onEvent?.(event); }
+              catch (error) { eventController.abort(error); }
+            },
           );
         while (true) {
           if (controller.signal.aborted || Date.now() > spec.deadline) {
@@ -425,7 +469,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             state.lastProgressAt = Date.now();
             lastSeq = status.lastSeq;
           }
-          if (status.state !== "running") break;
+          if (status.state !== "running") {
+            observedTerminal = status;
+            break;
+          }
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       } catch (error) {
@@ -469,12 +516,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
-      // Wait for cancellation and cleanup before closing the terminal event stream.
-      if (stream) await Promise.race([stream, new Promise((resolve) => setTimeout(resolve, 500))]);
-      eventController.abort();
-      eventsSaved = (await stream) ?? false;
-      const eventsFile = path.join(attemptDir, "events.jsonl");
-      if (manifest.debug && (await exists(eventsFile))) await compressFile(eventsFile);
       let record: AttemptRecord = { spec, status };
       try {
         const archived = await request<AttemptRecord>(
@@ -486,9 +527,39 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (canonical(archived.spec) !== canonical(spec))
           throw new Error("Attempt record identity mismatch");
         record = archived;
+        if (archived.status && archived.status.state !== "running") observedTerminal = archived.status;
       } catch {
         /* A crashed worker may not have finalized its usage ledger. Events remain available. */
       }
+      // A terminal worker can outrun the Host's durable SSE sink. Drain the exact
+      // published boundary, with an idle limit reset by actual local write progress.
+      terminalSeq = observedTerminal?.lastSeq;
+      if (stream) {
+        drainingEvents = true;
+        resetEventIdle();
+        if (typeof terminalSeq !== "number" || !Number.isSafeInteger(terminalSeq) || terminalSeq < 0 ||
+            eventCursor >= terminalSeq && (eventCursor !== terminalSeq || eventType !== "finished")) eventController.abort();
+        try {
+          eventsSaved = await stream && Number.isSafeInteger(terminalSeq) &&
+            eventCursor === terminalSeq && eventType === "finished";
+        } finally {
+          clearTimeout(eventIdle);
+          eventController.abort();
+        }
+        if (!eventsSaved) eventArchiveError = `Terminal event archive incomplete: persisted seq ${eventCursor}, ` +
+          `worker terminal seq ${terminalSeq ?? "unavailable"}.` +
+          (manifest.debug ? " Local prefix retained; Worker cleanup skipped." : "");
+      }
+      const eventsFile = path.join(attemptDir, "events.jsonl");
+      if (manifest.debug && eventsSaved && (await exists(eventsFile))) await compressFile(eventsFile);
+      const finalFailure = (record.status && record.status.state !== "running"
+        ? record.failure ?? record.status.failure : undefined) ??
+        (status && status.state !== "running" ? status.failure : undefined);
+      const recoveredContent = spec.recovery?.contentSubmissions ?? 0;
+      const knownContent = Math.max(recoveredContent, state.failure?.contentSubmissions ?? 0);
+      const contentLedgerConfirmed = (attemptDidNotStart && knownContent === recoveredContent) || (finalFailure?.attemptId === spec.attemptId &&
+        Number.isSafeInteger(finalFailure.contentSubmissions) &&
+        finalFailure.contentSubmissions >= knownContent);
       let copied = false;
       try {
         const artifacts = [
@@ -520,6 +591,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           error: record.artifactError,
         };
       }
+      if (eventArchiveError) {
+        record.artifactError = [record.artifactError, eventArchiveError].filter(Boolean).join("; ");
+        if (manifest.debug) state.artifactStatus = { status: "missing", source: workerUrl, error: record.artifactError };
+        await options.logger?.error(eventArchiveError, {
+          component: "host", event: "event_archive_incomplete", run_id: options.runId,
+          task_id: task.id, attempt_id: spec.attemptId,
+        });
+      }
       if (receipt) {
         state.status = "succeeded";
         await current.save();
@@ -537,7 +616,39 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         );
       if (!receipt) {
         record.error = state.reason;
-        if (record.failure || status?.failure) state.failure = record.failure || status?.failure;
+        if (finalFailure || record.failure || status?.failure) {
+          const failure = finalFailure || record.failure || status?.failure;
+          if (failure) {
+            const { inspection: _workerInspection, ...reported } = failure;
+            const persistedBank = state.failure?.evidenceBank ?? spec.evidenceBank;
+            const workerBank = reported.evidenceBank ?? record.evidenceBank ?? spec.evidenceBank;
+            const shorter = persistedBank.length <= workerBank.length ? persistedBank : workerBank;
+            const evidenceBank = persistedBank.length <= workerBank.length ? workerBank : persistedBank;
+            validateEvidenceBank(evidenceBank, shorter);
+            validateEvidenceBankSources(evidenceBank, new Map(spec.inputs.map(input => [input.id, sources[input.name]?.value])), persistedBank.length);
+            state.failure = { ...reported, evidenceBank: [...evidenceBank], contentSubmissions: Math.max(knownContent,
+              Number.isSafeInteger(failure.contentSubmissions) && failure.contentSubmissions >= 0 ? failure.contentSubmissions : 0),
+              ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}) };
+          }
+        }
+        if (!contentLedgerConfirmed) {
+          const message = "Worker 最终提交账本不可用，无法确认剩余内容额度；已停止本次自动重试，可显式续跑同一 run。";
+          state.reason = state.reason ? `${state.reason}；${message}` : message;
+          const previous = state.failure;
+          state.failure = {
+            ...previous,
+            errors: [...(previous?.errors ?? []), {
+              category: "transport", code: "submission_ledger_unavailable", path: "/", message,
+            }],
+            contentSubmissions: previous?.contentSubmissions ?? spec.recovery?.contentSubmissions ?? 0,
+            fileErrors: previous?.fileErrors ?? spec.recovery?.fileErrors ?? 0,
+            repeatedErrors: previous?.repeatedErrors ?? 0,
+            stopped: previous?.stopped ?? false,
+            attemptId: spec.attemptId,
+          };
+          record.failure = state.failure;
+          record.error = state.reason;
+        }
       }
       const errors: FailureContext["errors"] = receipt ? [] :
         (state.failure?.attemptId === spec.attemptId && state.failure.errors.length ? state.failure.errors : [{
@@ -587,7 +698,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
         return;
       }
-      if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped) return;
+      if (controller.signal.aborted || guard.paused(task.stage) || state.failure?.stopped ||
+        !contentLedgerConfirmed || contentRemaining(task) <= 0) return;
       if (status?.retryable) {
         if (retries.transport++ >= options.retries) return;
       } else if (
@@ -667,7 +779,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           blocked = true;
           continue;
         }
-        const binding = options.taskSource.bind(task, inputs, acceptedDependencies);
+        const binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
         if (guard.paused(task.stage)) continue;
         const prepared = options.agents.prepare(binding);
         const capable = eligible.filter(

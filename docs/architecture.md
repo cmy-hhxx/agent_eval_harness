@@ -47,6 +47,14 @@ flowchart LR
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
+Comparison Workflow 将每个候选对规划为 `default` 草稿和 `verification` 核验两个任务，依赖同一份 Criteria 与 Attribution，核验再依赖草稿收据。草稿以任务 UUID 保存到 `comparison-draft.jsonl`；核验才写正式 `comparison.jsonl`，改写、聚类、交付与统计选择核验节点。两个节点分别记录普通内容修复预算；进度如实计入两次调用，预检将业务对局与核验任务分别计数。
+
+核验请求保留完整可信材料，Workflow 分别提供首查与揭示视图，首查隐藏上游归因及排名。Comparison Profile 校验原材料核查，通用 Registry/Host 接受并持久化检查点，Tools 只委托 Worker；Worker 让核查与最终提交共用队列和内容预算。恢复重新验证可信检查点，不能从客户端失败草稿引入未知首查或回退计数。核验只能确认不可修改的草稿或提出来源复核，协议详见[数据契约](contract.md)。最多一轮 Attribution 复核，随后建立新草稿与核验 UUID；原收据和 superseded lineage 保留。
+
+证据选号目录属于 task 的程序恢复状态：Contracts 提供纯坐标与选号 helper，Workflow 只投影自己生成的材料引用并排除原始 source values，Tools 只登记实际返回的完整页，Worker 在返回前保存目录，Host 独立校验追加前缀和本次实际绑定来源。首查按模型选号解析后保存 canonical checkpoint；恢复使用 canonical Schema，后续模型 Schema 或模型参数变化不会重新编号已成功首查。
+
+归因复核可读取程序登记的同批次、同 case、同原问和当前候选对的其他回答作为 `grader_only` 事实源；每个来源保留各自的原用户时间，缺失保持未知，不把对方时间填入本方；相对时间主张仍按本方原始上下文核验。对方私有指令不能成为本方义务。外来正式证据保留 `source` 与 `source_input_id`，读工具与模型引用显式带来源，报告与看板按该输入 ID 定位，不能套用本方消息索引。
+
 ## 生命周期
 
 Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 attempt 能提交。提交 ID 为 UUID，同次提交重发沿用原 ID；相同 ID 内容冲突时拒绝。提交、取消和替换 attempt 串行化，过期 attempt 不能覆盖当前任务。收据和对比结果按[持久化顺序](usage.md#运行产物)落盘后才确认；提交确认只依赖结构、引用和持久化顺序。
@@ -59,11 +67,13 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 Worker 状态查询超时或连接临时重置只表示本次观察未完成，Host 继续查询同一个 attempt，不据此取消会话或重做评测；显式中断和任务总时限仍生效。连接被拒绝等真实失联按收据检查与恢复流程处理。
 
-失败续跑保留具体错误和仍可修复的未接受草稿，每个新 attempt 重新计算连续重复错误次数；前次已连续失败而停止时，旧草稿仅留在检查点，不进入新提示或新工作目录，按原材料重新评测。同一 attempt 内反复提交相同错误仍会停止，不重复执行已接受任务。上游流在缺少结束标记时断开按传输故障处理；无可续修业务草稿的零提交提前结束和空闲超时保留执行中断分类。可恢复故障的重试预算见[运行与恢复](usage.md#运行与恢复)。
+失败续跑保留具体错误和仍可修复的未接受草稿，每个新 attempt 重新计算连续重复错误次数；因独立文件加载限制而停止时，旧草稿仅留在检查点，不进入新提示或新工作目录。完整错误集与 JSON 内容均相同的重复提交保留诊断计数，并明确反馈未修改字段；错误顺序与对象键顺序不计。重复内容不提前扣除剩余修正机会，所有内容提交共用首次加 repairAttempts 次修正的累计上限；达到上限后停止，不重置累计提交次数，不重复执行已接受任务。上游流在缺少结束标记时断开按传输故障处理；无可续修业务草稿的零提交提前结束和空闲超时保留执行中断分类。可恢复故障的重试预算见[运行与恢复](usage.md#运行与恢复)。
 
 Responses 工具调用在响应终态确认参数：按 `output_item.added`、`output_item.done` 与终态输出核对调用身份，拒绝重复或不一致的调用 ID，并处理参数增量晚于 `output_item.done` 到达的流；最终参数必须是完整 JSON 对象，不把临时空参数作为完成结果执行，也不通过猜测或类型转换修复不合法 JSON。HTTP/API 返回的 5xx（包括集群过载 529）作为传输故障进入有界重试，不能将业务文本中的普通数字误判为状态码。
 
-评测 Adapter 向模型注册工具时展开 JSON Schema 的本地静态 JSON Pointer 引用，保持约束语义；外部、循环、动态引用或嵌套资源标识明确报错，不进行网络解析。Host 和 Worker 仍使用原始 Schema 校验提交，不转换模型返回值，也不放宽字段类型。
+Workflow.bind 必传当前任务清单，Host、复核与离线校验按共同 Criteria 的任务恢复同一去身份映射；上下文只供程序使用，不进入提示词或重复落盘候选资料。公共工具提取实际回答链指令并生成真实文本证据；Workflow 组装 instruction_sources、criterion_instruction_sources 与 citation_inventory，并统一去身份及模型可见投影。Attribution 只验证规范与交付闭环，Comparison 校验当前候选对共同作用域；注脚来源目录也供 Workflow 回溯标注复用，避免两套编号解析。证据原文和坐标不受语义核对的标记遮蔽影响。
+
+评测 Adapter 向模型注册工具时展开 JSON Schema 的本地静态 JSON Pointer 引用，保持约束语义；外部、循环、动态引用或嵌套资源标识明确报错，不进行网络解析。提交工具在模型请求中保留完整 Schema，SDK 只检查完整 JSON 对象并将字段原样交给 Host，避免本地业务 Schema 拒绝或类型转换遮蔽集中反馈；普通工具继续执行 SDK 参数校验。完整 JSON 提交统一由 Host 使用原始 Schema 校验，不转换模型返回值，也不放宽字段类型；Worker 保留文件参数与读取校验。
 
 外部 Worker 启动时繁忙或派发前健康检查失败时，任务保留待执行状态，不消耗一次评测尝试；该 Worker 暂停接收任务并定期检查，恢复空闲且构建身份匹配后重新纳入调度。所有可用容量长期未恢复时，Host 中断并保留待执行任务供续跑，不把整批题目逐个判失败。失败依赖在一次调度循环中批量保存，避免逐条写入整份检查点阻塞新就绪的对比或改写。
 
@@ -99,7 +109,7 @@ Responses 工具调用在响应终态确认参数：按 `output_item.added`、`o
 
 [通用契约](../packages/contracts/src/index.ts)区分以下接口：
 
-- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、模型提交 Schema、接受结果 Schema、引用展开及业务校验。Worker 收到的 `EvaluationSpec.outputSchema` 是提交 Schema 的运行时副本。
+- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、本地提交 Schema、接受结果 Schema、引用展开及业务校验；可选 `modelSubmissionSchema(request)` 按可信请求生成模型参数 Schema，不使用展示投影，也不改变本地校验。可选 `validateSubmission` 安全检查部分或结构无效的草稿，独立业务错误与结构错误合并反馈；Attribution 的可识别引用坐标同样提前检查，不等待其他结构或覆盖错误修完。全部通过才校验正式结果。Worker 收到的 `EvaluationSpec.outputSchema` 用于向模型描述提交参数。
 - `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`；可选同步 `advance` 规划已验证收据的后续任务，Host 串行提交收据、任务变更和结果，持久化失败时回滚此次任务变更。`blockedReason` 在依赖已接受后检查下游是否仍需等待，未决复核不能进入改写或问题库。
 - `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。
@@ -109,7 +119,7 @@ Responses 工具调用在响应终态确认参数：按 `output_item.added`、`o
 
 Repository 的完整读取与按任务读取复用同一流式 JSONL 路径，不先将整个结果文件读入字符串；完整读取检查文件内全部重复 ID，局部读取只保留选中结果，两者都检查冲突与缺行并忽略未完成末行。
 
-源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，评测集目录只保存显式来源和逐行字节坐标（不保存消息正文），任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
+源记录、任务、attempt、收据和正式结果分别管理：原始数据只在源文件，评测集目录只保存显式来源和逐行字节坐标（不保存消息正文），任务登记输入引用，attempt 使用临时材料，未接受草稿进入状态，正式结果写入 JSONL，状态仅保留恢复索引。证据按 `batch_id + case_id + version` 的业务标识定位，不依赖文件位置。问题库是每个模型一份的跨 run 知识库：按组件/问题类归类、出现样本可追溯；样本身份仍是本方 input UUID 与 finding ID，代表证据只选本方真实证据，缺少时明确报错；跨来源证据完整保留在归因结果中，不把对方消息坐标记录成本方位置；合并会更新类状态与样本归属，同时追加血缘事件，按模型锁住读改写（参见[使用指南](usage.md#目录约定)）。
 
 归因已实现于 `packages/agents/src/attribution`：只输出每条回答的归因结果与 `problem.component/label/definition`，不读问题库、不建类。聚类已实现于 `packages/agents/src/clustering`：每个 `(模型 × 批次)` 可按 case 分片成多个任务，先把问题观察归入已有类，确实没有才在预算内新建，必要时合并近义类；问题库由 `data/problems/<version>.json` 持久化，报告与 `stats.json` 展示类数增长。组合属于 Workflow。
 
@@ -152,7 +162,7 @@ await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 
 将工具名加入 Profile 的 `toolNames`，同时在 Profile 的 `toolDescriptions` 中提供非空描述；缺失会拒绝创建 attempt。内置评测工具的描述只编辑[提示词模块](../packages/prompts/README.md)的 `resources/tools/<工具名>.md` 并登记在其工具清单，不在 Tools/Runtime 中写第二份。两种 Adapter 自动转换为原生 SDK 工具，无须修改调度代码。当前通过 `createRegistry` 按代码注册执行逻辑。
 
-工具审计 calls 记录总调用数，requiredReadCalls 记录成功返回新必读正文页的调用数；其差值消耗探索预算，参数错误、重复读取与缓存命中仍占探索额度。Profile 声明通用 requiredReads 坐标，Host 与 Worker 共用 Contracts 的纯函数，根据原文实际转义长度与完整页元数据计算有限必读额度，Host 同时核对新读区间确实推进声明材料；按首个缺口连续读取、省略 `max_chars` 或使用 `max_chars=16000` 的新页不挤占探索额度。提交有独立修正预算。材料工具提供分页、定位和用于提交的 `evidence_id`；原文与产物页都在完整 JSON 输出预算内分页，目录 source_offset 独立于正文 offset。工具结果附带实时探索/必读剩余额度，缓存只复用数据。`read_trace`、`search_trace`、`read_artifact` 在单个 attempt 内复用相同参数的读取结果，重复调用仍计入预算。代码返回摘要，完整 stdout/stderr、脚本和 `outputs` 声明的文件存为可分页读取的产物；代码执行不缓存。十进制计算的加减乘和有限除法精确；循环小数最终商按 34 位有效数字半偶舍入，结果标明精度。
+工具审计 calls 记录总调用数，requiredReadCalls 记录成功返回新必读正文页的调用数；除成功必读页和独立保留的写稿调用外，其他调用消耗探索预算，参数错误、重复读取与缓存命中仍占探索额度。fileWriter 是注册工具能力；需要文件的首次内容轮次、内容拒绝后的修正及成功首查后的最终稿各保留一次写稿调用，不累积且总使用次数不超过 1 + repairAttempts，文件加载失败不补发。探索耗尽后消费保留额度，执行与参数错误均计数。预算分别显示探索、必读与写稿余额，audit.calls 仍记录真实总调用数。Profile 声明通用 requiredReads 坐标，Host 与 Worker 共用 Contracts 的纯函数，根据原文实际转义长度与完整页元数据计算有限必读额度，Host 同时核对新读区间确实推进声明材料；按首个缺口连续读取、省略 `max_chars` 或使用 `max_chars=16000` 的新页不挤占探索额度。提交有独立修正预算。材料工具提供分页、定位和用于模型提交的 `reference.evidence_index`；完整 `evidence_id` 由程序保留并贯穿正式结果；原文与产物页都在完整 JSON 输出预算内分页，目录 source_offset 独立于正文 offset。工具结果附带实时探索/必读剩余额度，缓存只复用数据。`read_trace`、`search_trace`、`read_artifact` 在单个 attempt 内复用相同参数的读取结果，重复调用仍计入预算。代码返回摘要，完整 stdout/stderr、脚本和 `outputs` 声明的文件存为可分页读取的产物；代码执行不缓存。非零退出、超时、取消和声明产物读取失败均标记为工具错误；反馈保留实际 exit_code、stdout、stderr，产物读取错误以 code_output_invalid 和 outputs 索引单列，不能以后续文件缺失覆盖脚本失败原因。十进制计算的加减乘和有限除法精确；循环小数最终商按 34 位有效数字半偶舍入，结果标明精度。
 
 代码进程不注入模型凭证。生命周期监护进程在 IPC 断开、取消或超时后回收所属进程组。工作目录不是安全沙箱，主动脱离进程组的代码不属于此清理保证。
 

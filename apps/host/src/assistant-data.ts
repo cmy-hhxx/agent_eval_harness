@@ -1,7 +1,7 @@
 import path from "node:path";
 import { safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisQuery, type JsonObject } from "@eval/contracts";
 import { exists, localFiles, readJson } from "@eval/data";
-import { assertComparableGroups, locateAnalysisInput, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
 
 function page(total: number, offset: number, limit: number, unit: "items" | "messages" | "characters") {
@@ -17,15 +17,30 @@ export class LocalAnalysisData implements AnalysisDataSource {
     if (!query.runId) {
       const names = await exists(this.directory) ? await localFiles.list(this.directory) : [];
       const items = [];
+      const runCounts = { scope: "all_registered_runs" as const, total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
+      let selected: { runId: string; evaluatorVersion: string; status: Checkpoint["status"]; summary: ReturnType<typeof analysisProgress> } | undefined;
       for (const runId of names) {
         const file = path.join(this.run(runId), "state.json");
         if (!(await exists(file))) continue;
         const state = await readJson<Checkpoint>(file);
         if (state.format !== "evaluation-run") continue;
-        if (query.query && !runId.includes(query.query)) continue;
-        items.push({ runId, evaluatorVersion: state.evaluatorVersion, status: state.status });
+        const summary = analysisProgress(state);
+        runCounts.total++;
+        runCounts.states[state.status]++;
+        const item = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, startedAt: summary.startedAt,
+          ...(summary.finishedAt !== undefined ? { finishedAt: summary.finishedAt } : {}), inputCount: summary.inputCount, caseCount: summary.caseCount };
+        items.push(item);
+        const preferred = summary.inputCount > 0 && (!selected ||
+          (state.status === "running" && selected.status !== "running") ||
+          ((state.status === "running") === (selected.status === "running") && summary.startedAt > selected.summary.startedAt));
+        if (preferred) selected = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, summary };
       }
-      return { kind: "runs" as const, ...page(items.length, offset, limit, "items"), items: items.slice(offset, offset + limit) };
+      items.sort((a, b) => b.startedAt - a.startedAt || a.runId.localeCompare(b.runId));
+      const currentRun = selected ? { ...selected, summary: { ...selected.summary,
+        formalComparisonStats: await readAnalysisComparisonStats(this.run(selected.runId), selected.summary.formalComparisonReferences.map((reference) => reference.taskId)) },
+        selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const } : null;
+      const filtered = query.query ? items.filter((item) => item.runId.includes(query.query!)) : items;
+      return { kind: "runs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), currentRun, runCounts };
     }
     const saved = await readJson<Checkpoint>(path.join(this.run(query.runId), "state.json"));
     const config = saved.config as EvalConfig;
@@ -41,9 +56,12 @@ export class LocalAnalysisData implements AnalysisDataSource {
       return { comparisonTier: models[0]!.comparisonTier, models: models.map(({ model, modelName }) => ({ model, modelName })) };
     });
     const items = Object.entries(saved.inputs).map(([inputId, input]) => ({ reference: { runId: query.runId!, inputId }, runId: query.runId!, inputId, batchId: input.batch_id, caseId: input.case_id, ...model(input.version),
-      tasks: Object.entries(saved.tasks).filter(([, task]) => Object.values(task.inputIds).includes(inputId)).map(([taskId, task]) => ({ reference: { runId: query.runId!, taskId }, taskId, stage: task.stage, status: task.status })) }));
+      tasks: Object.entries(saved.tasks).filter(([, task]) => Object.values(task.inputIds).includes(inputId)).map(([taskId, task]) => ({ reference: { runId: query.runId!, taskId }, taskId, stage: task.stage, purpose: analysisTaskPurpose(task), status: task.status })) }));
     const filtered = query.query ? items.filter((item) => JSON.stringify(item).includes(query.query!)) : items;
-    return { kind: "inputs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion };
+    const summary = analysisProgress(saved);
+    return { kind: "inputs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion,
+      summaryScope: "run" as const, summary: { ...summary,
+        formalComparisonStats: await readAnalysisComparisonStats(this.run(query.runId), summary.formalComparisonReferences.map((reference) => reference.taskId)) } };
   }
   async raw(reference: AnalysisReference) {
     if (!reference.inputId) throw new Error("inputId is required");
@@ -56,7 +74,9 @@ export class LocalAnalysisData implements AnalysisDataSource {
       const state = await readRunTasks(this.run(reference.runId), [reference.taskId]);
       const receipt = state.receipts[reference.taskId];
       if (!receipt) throw new Error("该 taskId 没有已接受的正式结果；原始消息仍可使用 read_data({reference:{runId,inputId}}) 读取。本会话独立任务请用 read_specialist(operationId)。");
-      return { kind: "accepted-result", reference, result: receipt.exported?.row ?? receipt.evaluation, evaluatorVersion: receipt.evaluatorVersion };
+      const result = receipt.exported?.row ?? receipt.evaluation;
+      const comparisonScope = receipt.exported ? analysisComparisonScope(receipt.exported.row, state.manifest.config as EvalConfig) : null;
+      return { kind: "accepted-result", reference, ...(comparisonScope ? { comparisonScope } : {}), result, evaluatorVersion: receipt.evaluatorVersion };
     }
     const raw = await this.raw(reference), offset = options?.offset ?? 0;
     if (reference.messageIndex === undefined) {
@@ -75,7 +95,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const evidence = sources.flatMap((source) => {
       const start = Math.max(0, offset - position), end = Math.min(source.text.length, offset + limit - position);
       position += source.text.length + 1;
-      return end > start ? [cite(reference.messageIndex!, source, start, end)] : [];
+      return end > start ? [cite(reference.inputId!, reference.messageIndex!, source, start, end)] : [];
     });
     return { kind: "message", reference, ...page(full.length, offset, limit, "characters"), text: full.slice(offset, offset + limit), evidence };
   }

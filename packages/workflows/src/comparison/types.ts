@@ -55,7 +55,7 @@ export interface EvalConfig {
     maxClassesPerModel: number;
     maxNewClassesPerTask: number;
     maxComponentsPerModel: number;
-    /** Active class count at which the agent must look for near-duplicates to merge. */
+    /** Active class count at which consolidation expands beyond the current observations. */
     consolidateAt: number;
     minSupport: number;
     maxCasesPerTask: number;
@@ -105,6 +105,7 @@ export interface BatchPreflight {
   valid_inputs: number;
   attribution_tasks: number;
   comparison_tasks: number;
+  comparison_verification_tasks: number;
   skipped_groups: number;
   input_issues: number;
 }
@@ -144,9 +145,15 @@ export interface TaskData {
   /** Compared group version IDs, in declaration order. */
   group?: string[];
   comparisonId?: string;
+  /** Workflow draft, accepted and persisted but never a formal comparison. */
+  verificationPending?: true;
+  /** Independent verification of this immutable draft receipt. */
+  verificationOf?: { taskId: string };
+  /** Registered same-case factual sources available only to an attribution review. */
+  referenceCandidates?: Record<string, Candidate>;
   /** Business scope of the shared criteria, including its candidate set. */
   criteriaScope?: string;
-  /** Independent reassessment lineage; the accepted source remains immutable. */
+  /** Independent reassessment lineage; dependencies.previous_review owns any unresolved original proof. */
   reviewOf?: { taskId: string; round: number; reasons: string[] };
   /** Follow-up comparison that resolves this review request. */
   supersededBy?: string;
@@ -164,6 +171,8 @@ export interface TaskData {
   projection?: ProblemProjection;
   /** Present on clustering tasks, which aggregate attribution receipts per model and batch. */
   scope?: ClusteringScope;
+  /** Explicit new classification of deferred observations; the accepted source task is retained. */
+  reclassifyOf?: { task_id: string; item_ids: string[] };
   revision?: number;
 }
 export type { Finding, TaskAnalysis, ComparisonResult } from "@eval/agents/comparison";

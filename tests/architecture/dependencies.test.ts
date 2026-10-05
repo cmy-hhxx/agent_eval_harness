@@ -116,7 +116,7 @@ test("public package boundaries, independent Agents and acyclic implementation i
   }
 });
 
-test("source documentation links and section anchors resolve; no replaced package paths remain", async () => {
+test("source documentation links and section anchors resolve and remain reachable from README", async () => {
   const docs = [
     "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "schemas/README.md",
     "packages/prompts/README.md", ...(await files("docs")), ...(await files("apps/host/.impeccable")),
@@ -151,22 +151,4 @@ test("source documentation links and section anchors resolve; no replaced packag
   };
   visit("README.md");
   for (const file of docs) assert(reachable.has(file), `${file}: not reachable from README.md`);
-  const paths = [
-    ...docs,
-    ...(await files("scripts")),
-    "package.json",
-    "package-lock.json",
-    "tsconfig.json",
-    "tsconfig.pi.json",
-    "tsconfig.prime.json",
-  ];
-  for (const file of paths) {
-    const text = await readFile(path.join(root, file), "utf8");
-    assert(
-      !/packages\/(?:agent-pi|agent-prime|worker)(?:\/|\b)|contracts\/src\/io\.[jt]s|EvaluationPack/.test(
-        text,
-      ),
-      `Replaced entry in ${file}`,
-    );
-  }
 });

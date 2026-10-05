@@ -16,6 +16,8 @@ import { annotateFindings } from "./annotations.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 import { taskObservations } from "./observations.js";
+import { acceptedRewriteProjection } from "./rewrite-projection.js";
+export { acceptedRewrites, acceptedRewriteProjection, sourceRewriteTasks } from "./rewrite-projection.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
     return (
@@ -89,7 +91,7 @@ export function comparisonRow(
     if (!attribution) throw new Error("缺少归因任务收据");
     const raw = inputs[c.input_id] as RawInput;
     const findings = structuredClone(attribution.findings) as (AttributionResult["findings"][number] & { stage_trace?: JsonObject })[];
-    const traces = annotateFindings(raw, findings);
+    const traces = annotateFindings(raw, c.input_id, findings, inputs);
     findings.forEach((finding, i) => {
       finding.stage_trace = traces[i];
     });
@@ -178,13 +180,13 @@ export function resultFile(stage: Stage): string {
 }
 /** The stage output inside its exported identity envelope. */
 export function stageResult(stage: string, row: JsonObject): JsonObject {
-  return stage === "criteria" || row.evaluation_type === "comparison_review" ? row.result as JsonObject
+  return stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type)) ? row.result as JsonObject
     : stage === "attribution" ? row.evaluation as JsonObject
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
   return stage === "attribution" ? { ...row, evaluation: result }
-    : stage === "clustering" ? { ...row, result } : result;
+    : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_draft"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
 }
 export function originalResultRow(stage: string, row: JsonObject): JsonObject {
   const { rewritten: _rewritten, ...result } = stageResult(stage, row);
@@ -225,16 +227,24 @@ const validateOutput = ajv.compile(outputSchema),
   validateClustering = ajv.compile(clusteringSchema);
 export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): ResultReference & { row: JsonObject; auxiliary?: boolean } {
   const receipt = state.receipts[task.id];
+  // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
+  if (receipt.exported && task.stage !== "rewrite") {
+    const data = task.data as TaskData;
+    const file = receipt.exported.file ?? (data.stage === "comparison" && data.verificationPending ? "comparison-draft.jsonl"
+      : data.stage === "comparison" && (receipt.evaluation as ComparisonResult).status === "needs_review" ? "comparison-review.jsonl"
+      : resultFile(data.stage === "rewrite" ? data.rewriteOf!.stage : task.stage as Stage));
+    return { ...receipt.exported, file };
+  }
   if (task.stage === "criteria") {
     if (!validateCriteria(receipt.evaluation)) throw new Error("共同验收基准 schema 无效：" + ajv.errorsText(validateCriteria.errors));
-    return { id: task.id, file: "criteria.jsonl", row: receipt.exported?.row ?? {
+    return { id: task.id, file: "criteria.jsonl", row: {
       evaluation_type: "criteria", evaluator_version: receipt.evaluatorVersion,
       task_id: task.id, case: { batch_id: Object.values((task.data as TaskData).candidates)[0]!.batch_id,
         case_id: Object.values((task.data as TaskData).candidates)[0]!.case_id }, result: receipt.evaluation,
     } };
   }
   if (task.stage === "attribution") {
-    const row = receipt.exported?.row || attributionRow(task, receipt);
+    const row = attributionRow(task, receipt);
     if (!validateAttribution(row.evaluation))
       throw new Error("归因结果 schema 无效：" + ajv.errorsText(validateAttribution.errors));
     return { id: task.id, file: "attribution.jsonl", row };
@@ -243,11 +253,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     const source = (task.data as TaskData).rewriteOf!;
     const sourceTask = state.manifest.tasks.find((item) => item.id === source.taskId)!;
     const exported = encodeResult(sourceTask, state, inputs);
-    const rewritten = rewrittenResult(receipt);
-    const previous = stageResult(source.stage, exported.row).rewritten as { rewrites?: { id: string; text: string }[] } | undefined;
-    const merged = new Map((previous?.rewrites ?? []).map((item) => [item.id, item]));
-    for (const item of (receipt.evaluation as RewriteResult).rewrites) merged.set(item.id, item);
-    rewritten.rewrites = [...merged.values()];
+    const rewritten = acceptedRewriteProjection(state, source.taskId)!.rewritten;
     if (!validateRewritten(rewritten))
       throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateRewritten.errors));
     return {
@@ -258,9 +264,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   }
 
   if (task.stage === "clustering") {
-    const row =
-      receipt.exported?.row ||
-      clusteringRow(task, receipt, taskObservations(task, (id) => state.receipts[id]));
+    const row = clusteringRow(task, receipt, taskObservations(task, (id) => state.receipts[id]));
     if (!validateClustering(row))
       throw new Error("聚类结果 schema 无效：" + ajv.errorsText(validateClustering.errors));
     return { id: task.id, file: "clustering.jsonl", row };
@@ -268,16 +272,21 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   const config = state.manifest.config as EvalConfig;
   const names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name]));
   const result = receipt.evaluation as ComparisonResult;
+  if ((task.data as TaskData).verificationPending) {
+    if (!validateComparison(result)) throw new Error("比较草稿 schema 无效：" + ajv.errorsText(validateComparison.errors));
+    return { id: task.id, file: "comparison-draft.jsonl", row: {
+      evaluation_type: "comparison_draft", evaluator_version: receipt.evaluatorVersion,
+      task_id: task.id, comparison_id: (task.data as TaskData).comparisonId, result,
+    } };
+  }
   if (result.status === "needs_review") {
     if (!validateComparison(result)) throw new Error("复核结果 schema 无效：" + ajv.errorsText(validateComparison.errors));
-    return { id: task.id, file: "comparison-review.jsonl", row: receipt.exported?.row ?? {
+    return { id: task.id, file: "comparison-review.jsonl", row: {
     evaluation_type: "comparison_review", evaluator_version: receipt.evaluatorVersion, task_id: task.id,
     comparison_id: (task.data as TaskData).comparisonId, result: receipt.evaluation,
     } };
   }
-  const row =
-    receipt.exported?.row ||
-    comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names, receipt.evaluatorVersion);
+  const row = comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names, receipt.evaluatorVersion);
   if (!validateOutput(row))
     throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
   return { id: String(row.comparison_id), file: "comparison.jsonl", row };

@@ -1,0 +1,79 @@
+import type { TaskState } from "@eval/contracts";
+import type { Checkpoint } from "./codec.js";
+import type { EvalConfig, Stage } from "./types.js";
+
+type SavedTask = Checkpoint["tasks"][string];
+type AnalysisCheckpoint = Pick<Checkpoint, "runId" | "status" | "startedAt" | "finishedAt" | "config" | "inputs" | "tasks">;
+export type AnalysisTaskPurpose = Exclude<Stage, "comparison"> | "comparison_draft" | "comparison_verification" | "comparison_formal";
+export interface AnalysisTaskCounts { total: number; states: Record<TaskState["status"], number> }
+
+function counts(): AnalysisTaskCounts {
+  return { total: 0, states: { pending: 0, running: 0, succeeded: 0, failed: 0, blocked: 0, cancelled: 0, timed_out: 0 } };
+}
+
+/** The execution purpose differs from whether the task produced a formal result. */
+export function analysisTaskPurpose(task: Pick<SavedTask, "stage" | "data">): AnalysisTaskPurpose {
+  if (task.stage !== "comparison") return task.stage;
+  if (task.data.verificationPending) return "comparison_draft";
+  return task.data.verificationOf ? "comparison_verification" : "comparison_formal";
+}
+
+/** Checkpoint receipts identify accepted output files without reading verdicts. */
+function analysisComparisonResult(task: SavedTask): "accepted" | "pending_review" | null {
+  if (task.stage !== "comparison" || task.data.verificationPending || task.data.supersededBy || task.status !== "succeeded") return null;
+  const exported = task.receipt?.exported;
+  if (!exported) return null;
+  // The current codec omits a stage's default filename; comparison-review keeps it explicitly.
+  const file = exported.file ?? "comparison.jsonl";
+  if (file === "comparison-review.jsonl") return "pending_review";
+  return file === "comparison.jsonl" ? "accepted" : null;
+}
+
+/** Whole-run progress from registered identities and task states; no material or result IO. */
+export function analysisProgress(saved: AnalysisCheckpoint) {
+  const config = saved.config as EvalConfig;
+  const versions = new Map(config.inputs.versions.map((version) => [version.id, version]));
+  const modelCoverage = new Map(config.inputs.versions.map((version) => [version.id, { inputs: 0, cases: new Set<string>() }]));
+  const cases = new Set<string>(), batches = new Set<string>();
+  for (const input of Object.values(saved.inputs)) {
+    const coverage = modelCoverage.get(input.version);
+    if (!coverage) throw new Error("输入版本未登记：" + input.version);
+    const identity = JSON.stringify([input.batch_id, input.case_id]);
+    cases.add(identity);
+    batches.add(input.batch_id);
+    coverage.inputs++;
+    coverage.cases.add(identity);
+  }
+  const total = counts();
+  const byPurpose: Record<AnalysisTaskPurpose, AnalysisTaskCounts> = {
+    criteria: counts(), attribution: counts(), comparison_draft: counts(), comparison_verification: counts(),
+    comparison_formal: counts(), rewrite: counts(), clustering: counts(),
+  };
+  const formalComparisonReferences: { runId: string; taskId: string }[] = [];
+  const comparisonReviewReferences: { runId: string; taskId: string }[] = [];
+  const evaluatedInputs = new Set<string>();
+  for (const [taskId, task] of Object.entries(saved.tasks)) {
+    const purpose = byPurpose[analysisTaskPurpose(task)];
+    for (const group of [total, purpose]) { group.total++; group.states[task.status]++; }
+    const result = analysisComparisonResult(task);
+    if (result === "accepted") formalComparisonReferences.push({ runId: saved.runId, taskId });
+    if (result === "pending_review") comparisonReviewReferences.push({ runId: saved.runId, taskId });
+    if (task.stage === "attribution" && task.status === "succeeded" && task.receipt) {
+      const inputId = task.inputIds.answer;
+      if (!inputId || !saved.inputs[inputId]) throw new Error("归因任务缺少登记的回答输入：" + taskId);
+      evaluatedInputs.add(inputId);
+    }
+  }
+  return {
+    status: saved.status, startedAt: saved.startedAt, ...(saved.finishedAt !== undefined ? { finishedAt: saved.finishedAt } : {}),
+    inputCount: Object.keys(saved.inputs).length, evaluatedInputCount: evaluatedInputs.size, caseCount: cases.size, batchCount: batches.size, batches: [...batches].sort(),
+    models: [...modelCoverage].map(([model, coverage]) => {
+      const version = versions.get(model)!;
+      return { model, modelName: version.display_name ?? version.name, comparisonTier: version.comparison_tier ?? null,
+        inputCount: coverage.inputs, caseCount: coverage.cases.size };
+    }),
+    tasks: { ...total, byPurpose },
+    formalComparisonsAccepted: formalComparisonReferences.length, formalComparisonReferences,
+    comparisonsPendingReview: comparisonReviewReferences.length, comparisonReviewReferences,
+  };
+}

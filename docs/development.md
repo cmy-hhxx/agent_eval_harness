@@ -35,6 +35,8 @@
 
 Agent 测试跟随 Agent 放置，集中提示词模块的测试在 `packages/prompts/src/`；跨模块和运行测试放在 `tests/`，共享 fixture 只保留仍被多个测试使用的最小集合。Schema 修改时同步检查 Profile `index.ts`、`validate.ts`、（如有）`resolve.ts`、[提示词](../packages/prompts/README.md)和测试样例。
 
+纯运算、业务校验和公开提交入口按边界覆盖。当前结果到测试提交的转换集中在 [归因 fixture](../tests/fixtures/attribution-submission.ts) 与 [对比 fixture](../tests/fixtures/comparison-submission.ts)，证据由公开入口注册；盲核查不能从上游 met/core/ranking 生成。Worker fixture 使用具名选项和共享有界等待，构造失败释放资源，恢复断言记录接受时的实际请求量，避免整流程魔数。
+
 ## 验证
 
 常用验证：
@@ -48,6 +50,8 @@ node scripts/test-clean.mjs
 ```
 
 行为修改至少运行 `typecheck` 和 `npm test`；涉及 Worker / SDK 加跑 `test:integration`；涉及安装、构建或依赖加跑 `test-clean`。`typecheck` 会检查未使用的局部变量和参数，但不能发现所有未调用的导出；删除导出前搜索跨模块引用、动态加载和 SDK 回调。`npm test` 会重建应用并运行单元、架构和回归测试。
+
+干净构建失败需要检查临时源文件时，运行 `node scripts/test-clean.mjs --debug`。它保留临时 checkout，并在同一临时目录的 `diagnostic.json` 记录选取、跳过删除、已复制的路径，以及复制、安装、独立构建和结束阶段的缺失文件。常规运行结束后删除临时目录。
 
 ### 测试代码生命周期
 
