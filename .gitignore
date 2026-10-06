@@ -7,6 +7,7 @@ __pycache__/
 /configs/local/
 node_modules/
 dist/
+evaluation-report/report.html
 .runtime/
 .cache/
 .artifacts/

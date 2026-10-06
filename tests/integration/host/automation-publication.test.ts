@@ -50,9 +50,6 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
     comparisonRewrite.data.comparisonRewriteScope = "all";
     assert.equal(publishableComparisons(saved).size, 2);
     const comparison = Object.values(saved.tasks).find((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit)!;
-    comparison.data.supersededBy = "independent-review";
-    assert.equal(publishableComparisons(saved).size, 1, "a superseded comparison cannot be published again");
-    delete comparison.data.supersededBy;
     comparison.receipt!.exported!.file = "comparison-review.jsonl";
     assert.equal(publishableComparisons(saved).size, 1, "review requests are not official comparison rows");
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -121,9 +118,9 @@ test("three-model statistics use configured battles and count each answer's corr
 
 test("statistics reject review requests and contradictory absolute core assessments across pairs", () => {
   const groups = [["a_fast", "b_fast", "baseline"]];
-  for (const row of [{ ...result.row, status: "needs_review" }, { ...result.row, supersededBy: "reviewed" },
+  for (const row of [{ ...result.row, status: "needs_review" },
     { ...result.row, evaluation_type: "comparison_review" }])
-    assert.throws(() => new PublicationStatistics(groups).addResult({ ...result, row }), /settled, unsuperseded/);
+    assert.throws(() => new PublicationStatistics(groups).addResult({ ...result, row }), /decided/);
   const stats = new PublicationStatistics(groups);
   stats.addResult({ ...result, row: { ...result.row, status: "decided", assessments: {
     a_fast: { meets_core: false }, b_fast: { meets_core: true },
@@ -507,7 +504,7 @@ test("Mongo delivery streams ready inputs and results independently of the log s
     await syncMongoDay(config, job, AbortSignal.timeout(3000), dependencies);
     assert.deepEqual(delivered, [{ inputs, results: [] }, { inputs, results: [result] }, { inputs, results: [result] }]);
     ready = [{ ...result, row: { ...result.row, status: "needs_review" } }];
-    await assert.rejects(syncMongoDay(config, job, AbortSignal.timeout(3000), dependencies), /settled, unsuperseded/);
+    await assert.rejects(syncMongoDay(config, job, AbortSignal.timeout(3000), dependencies), /decided/);
     assert.equal(delivered.length, 3, "invalid results are rejected before the Mongo writer is invoked");
     await assert.rejects(readFile(config.publication.logFile), { code: "ENOENT" });
   } finally {

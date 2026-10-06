@@ -105,16 +105,12 @@ test(`pi: only debug records original malformed arguments in ${status} Responses
 
 for (const engine of ["pi", "prime"] as const) {
 for (const streamed of [false, true]) {
-test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve nested evaluation arrays and candidate siblings`, async () => {
+test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve current flat comparison arrays and escaped text`, async () => {
   const draft = {
-    summary: '原文含 "引号"、\\ 路径和\n换行',
-    findings: [{ type: "strength", dimension: "instruction_following", norm_index: 1,
-      evidence: [{ evidence_index: 2, observation: "最终回答首段的风险提示" }],
-      assessment: { observation: "已确认", evidence_status: "established", impact: "满足指令" } }],
-    assessments: { A: { summary: "A 的完整归因" }, B: { summary: "B 的完整归因" } },
-    comparisons: [{ importance: "high", better_candidate: "A",
-      assessments: { A: { summary: "A 在当前槽位的表现" }, B: { summary: "B 在当前槽位的表现" } } }, null],
-    preference: "A", tradeoff: "保留两个候选的独立表现",
+    a_summary: '原文含 "引号"、\\ 路径和\n换行',
+    b_summary: "B 给出了不同结果。",
+    comparisons: [{importance:"high",better_candidate:"A",a_summary:"A 给出正确结果4。",b_summary:"B 给出错误结果5。"},null],
+    preference:"A",tradeoff:"A给出4，B给出5，核心数值的差异决定取舍。",
   };
   const args = JSON.stringify(draft);
   const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",
@@ -123,7 +119,7 @@ test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve nest
     { type: "response.function_call_arguments.done", output_index: 0, item_id: "fc_nested", arguments: args },
     itemEvent("done", 0, call("nested", args)), terminal([call("nested", args)])], true);
   assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.executed, [draft], "the SDK must dispatch the complete terminal JSON without moving nested fields");
+  assert.deepEqual(result.executed, [draft], "the SDK must dispatch the complete current payload without changing field order or text");
   assert.deepEqual(result.ended, result.executed);
   assert.equal(result.requests.length, 2);
   if (engine === "pi") assert.equal(object((result.providerArguments[0].calls as Record<string, unknown>[])[0]).arguments, args);

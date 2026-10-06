@@ -1,9 +1,11 @@
+import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
+import { resolveJudgment } from "./resolve.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
-import { resolveFixtureEvidence, prepareFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
-import { projectEvidenceReferences, parseEvidenceCoordinates, ValidationError, type AgentBinding, type AgentRequest, type EvidenceReference, type ToolAudit } from "@eval/contracts";
+import { prepareFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
+import { parseEvidenceCoordinates, ValidationError, type AgentBinding, type AgentRequest, type EvidenceReference, type ToolAudit } from "@eval/contracts";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 import { attributionAgent, attributionTableChecks, attributionTableReview } from "./index.js";
 import type { AttributionResult } from "./types.js";
@@ -62,7 +64,7 @@ test("public Attribution review resolves a peer UTC counterfact against its regi
   const { request, binding, draft } = fixture();
   const before = structuredClone({ request, draft });
   prepareFixtureEvidence(registry, binding);
-  const result = resolveFixtureEvidence(registry, binding, draft, audit()) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, audit()) as AttributionResult;
   registry.validate(binding, result, audit());
   assert.deepEqual(result.findings[0]!.evidence, [
     { evidence_id: draft.findings[0]!.evidence[0]!.evidence_id, message_index: 1, quote: "今天是2025年3月13日。" },
@@ -83,22 +85,19 @@ test("model schema uses numeric selections for both peer and self evidence", () 
   const prepared = prepareFixtureEvidence(registry, binding);
   const own = structuredClone(example.request);
   const plain = prepareFixtureEvidence(registry, { ...binding, request: own });
-  const peerRefs = (prepared.evaluation.outputSchema.properties as any).findings.items.properties.evidence.items.properties;
-  const ownRefs = (plain.evaluation.outputSchema.properties as any).findings.items.properties.evidence.items.properties;
-  assert(!Object.hasOwn(peerRefs, "source"));
-  assert(!Object.hasOwn(ownRefs, "source"));
-  for (const refs of [peerRefs, ownRefs]) {
-    assert.deepEqual(refs.evidence_index, { type: "integer", minimum: 1 });
-    assert(!Object.hasOwn(refs, "evidence_id"));
+  for (const preparedSchema of [prepared,plain]) {
+    const refs=(preparedSchema.evaluation.outputSchema.properties as any).strengths.items.properties.evidence_indices;
+    assert.deepEqual(refs.items,{type:"integer",minimum:1});
+    assert(!(preparedSchema.evaluation.outputSchema.properties as any).strengths.items.properties.evidence);
   }
-  assert(!Object.hasOwn(prepared.evaluation.outputSchema.properties!, "correctness_evidence"));
+  assert.equal((prepared.evaluation.outputSchema.properties as any).correctness_evidence_indices.maxItems,0);
 });
 test("unknown sources, explicit answer aliases, missing registrations and different business scope fail the public entry without rewriting a draft", () => {
   for (const source of ["B", "other", "answer", "../B"]) {
     const { binding, draft } = fixture();
-    Object.assign(draft.findings[0]!.evidence[1]!, { source });
+    Object.assign(draft.findings[0]!, { source });
     const before = structuredClone(draft);
-    hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "schema_additionalProperties");
+    hasIssue(() => resolveJudgment(binding.request, draft, audit()), "schema_additionalProperties");
     assert.deepEqual(draft, before);
   }
   for (const change of [
@@ -111,7 +110,7 @@ test("unknown sources, explicit answer aliases, missing registrations and differ
     (request: AgentRequest) => { delete request.input.review_context; },
   ]) {
     const { request, binding, draft } = fixture(); change(request);
-    hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "evidence_source_invalid");
+    hasIssue(() => resolveJudgment(binding.request, draft, audit()), "evidence_source_invalid");
   }
 });
 test("registered same-case facts preserve missing and different native timestamps without borrowing a peer clock", () => {
@@ -128,7 +127,7 @@ test("registered same-case facts preserve missing and different native timestamp
     draft.core_assessment.meets_core = null as any;
     const before = structuredClone({ request, draft });
     prepareFixtureEvidence(registry, binding);
-    const result = resolveFixtureEvidence(registry, binding, draft, audit()) as AttributionResult;
+    const result = resolveJudgment(binding.request, draft, audit()) as AttributionResult;
     registry.validate(binding, result, audit());
     assert.deepEqual({ request, draft }, before);
     assert.equal(own.messages[0].timestamp, ownTimestamp);
@@ -141,7 +140,7 @@ test("registered same-case facts preserve missing and different native timestamp
 test("foreign facts cannot replace this candidate's actual delivery or numeric correctness evidence", () => {
   const { binding, draft, ref } = fixture();
   draft.findings[0]!.evidence = [ref("B", 0, "/timestamp")];
-  const result = resolveFixtureEvidence(registry, binding, draft, audit());
+  const result = resolveJudgment(binding.request, draft, audit());
   registry.validate(binding, result, audit());
   const accepted = result as AttributionResult;
   assert.equal(accepted.findings[0]!.evidence.at(-1)!.message_index, 1, "raw own final scope is program-bound after the peer fact");
@@ -150,7 +149,7 @@ test("foreign facts cannot replace this candidate's actual delivery or numeric c
   const numeric = fixture();
   numeric.request.input.ground_truth = { available: true, value: "4" };
   const numericDraft = { ...numeric.draft, is_correct: false, correctness_reason: "结果不同", correctness_evidence: [numeric.ref("B", 1, "/content")] };
-  hasIssue(() => resolveFixtureEvidence(registry, numeric.binding, numericDraft, audit()), "evidence_final_required", "/correctness_evidence/0");
+  hasIssue(() => resolveJudgment((numeric.binding).request, numericDraft, audit()), "evidence_final_required", "/correctness_evidence/0");
 });
 
 test("a peer final answer cannot establish own correctness even alongside own actual delivery", () => {
@@ -160,7 +159,7 @@ test("a peer final answer cannot establish own correctness even alongside own ac
   draft.criterion_assessments[0]!.evidence = refs;
   prepareFixtureEvidence(registry, binding);
   const before = structuredClone({ binding, draft });
-  assert.throws(() => resolveFixtureEvidence(registry, binding, draft, audit()), (error: unknown) => {
+  assert.throws(() => resolveJudgment(binding.request, draft, audit()), (error: unknown) => {
     assert(error instanceof ValidationError);
     assert.deepEqual(error.issues!.filter(issue => issue.code === "peer_final_not_independent").map(issue => issue.path),
       ["/criterion_assessments/0/evidence/1", "/findings/0/evidence/1"]);
@@ -184,7 +183,7 @@ test("peer deferred final leaves and JSON excerpts cannot bypass the source boun
       evidence_id: cite(peerId, 1, leaf, 0, json ? leaf.text.length : 80).evidence_id,
     }];
     prepareFixtureEvidence(registry, binding);
-    hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "peer_final_not_independent", "/findings/0/evidence/1");
+    hasIssue(() => resolveJudgment(binding.request, draft, audit()), "peer_final_not_independent", "/findings/0/evidence/1");
   }
 });
 
@@ -199,11 +198,11 @@ test("same-message original tool, reference, timestamp and image evidence remain
     ref("B", 1, "/output/0/output/value"), ref("B", 1, "/reference/text"), ref("B", 1, "/timestamp"),
     { evidence_id: `ev_${peerId}_1_image`, observation: "原始图片显示日期。" }];
   prepareFixtureEvidence(registry, binding);
-  const result = resolveFixtureEvidence(registry, binding, draft, reads) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, reads) as AttributionResult;
   registry.validate(binding, result, reads);
   assert.equal(result.findings[0]!.evidence.filter(item => item.source === "B").length, 5);
   draft.findings[0]!.evidence.push(ref("B", 1, "/content"));
-  hasIssue(() => resolveFixtureEvidence(registry, binding, draft, reads), "peer_final_not_independent", "/findings/0/evidence/6");
+  hasIssue(() => resolveJudgment(binding.request, draft, reads), "peer_final_not_independent", "/findings/0/evidence/6");
 });
 
 test("registered original answer generation is final prose while its sibling tool return remains independent", () => {
@@ -224,23 +223,23 @@ test("registered original answer generation is final prose while its sibling too
       read_request: { message_index: 1, path: "/output/0/content/0/text", offset: 0, max_chars: 16000 } }] };
   draft.findings[0]!.evidence = [ref("answer", 1, "/content"), ref("B", 1, "/tool_return/content")];
   prepareFixtureEvidence(registry, binding);
-  registry.validate(binding, resolveFixtureEvidence(registry, binding, draft, audit()), audit());
+  registry.validate(binding, resolveJudgment(binding.request, draft, audit()), audit());
   draft.findings[0]!.evidence[1] = generation;
-  hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "peer_final_not_independent", "/findings/0/evidence/1");
+  hasIssue(() => resolveJudgment(binding.request, draft, audit()), "peer_final_not_independent", "/findings/0/evidence/1");
 });
 
-test("accepted peer final coordinates restore unchanged while new submissions reject their factual use", () => {
-  const { request, binding, draft, ref } = fixture();
-  draft.findings[0]!.evidence = [ref("answer", 1, "/content"), ref("B", 1, "/content")];
-  const before = structuredClone(draft);
-  const accepted = attributionAgent.profiles.default.resolve!(request, draft, audit()) as AttributionResult;
-  const restored = JSON.parse(JSON.stringify(accepted));
-  registry.validate(binding, restored, audit());
-  assert.deepEqual(restored, accepted, "formal source validation preserves the historical accepted judgment and UUIDs");
-  prepareFixtureEvidence(registry, binding);
-  hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "peer_final_not_independent", "/findings/0/evidence/1");
-  assert.deepEqual(draft, before);
+test("accepted formal origins restore without replaying current submission rules", () => {
+  const {request,binding,draft,ref}=fixture();
+  const accepted=resolveJudgment(request,draft,audit()) as AttributionResult;
+  const quote=String((request.sources.B!.value as {messages:{content:string}[]}).messages[1].content);
+  accepted.findings[0].evidence[1]={...ref("B",1,"/content"),message_index:1,quote,source:"B",source_input_id:peerId};
+  const restored=JSON.parse(JSON.stringify(accepted));
+  registry.validate(binding,restored,audit());
+  assert.deepEqual(restored,accepted);
+  draft.findings[0].evidence=[ref("answer",1,"/content"),ref("B",1,"/content")];
+  hasIssue(()=>resolveJudgment(request,draft,audit()),"peer_final_not_independent","/findings/0/evidence/1");
 });
+
 test("peer private instructions cannot close this candidate's instruction evidence even at matching indices", () => {
   const { request, binding, draft, ref } = fixture();
   const own = request.sources.answer.value as any, peer = request.sources.B!.value as any;
@@ -256,7 +255,7 @@ test("peer private instructions cannot close this candidate's instruction eviden
   const { requirement_index: _association, ...assessment } = draft.findings[0]!.assessment;
   Object.assign(draft.findings[0]!, { norm_index: 0, assessment });
   const before = structuredClone({ request, draft });
-  const result = resolveFixtureEvidence(registry, binding, draft, audit()) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, audit()) as AttributionResult;
   registry.validate(binding, result, audit());
   const ownNorm = ref("answer", 0, "/content");
   assert.deepEqual(result.findings[0]!.evidence.map(item => item.evidence_id), [
@@ -277,16 +276,16 @@ test("peer image observation requires the peer's actual view audit and keeps sou
   const { request, binding, draft } = fixture();
   (request.sources.B!.value as any).messages[1].content = [{ type: "image", mimeType: "image/png", data: "AA==" }];
   draft.findings[0]!.evidence[1] = { evidence_id: `ev_${peerId}_1_image`, observation: "图中日期为12日" } as EvidenceReference;
-  hasIssue(() => resolveFixtureEvidence(registry, binding, draft, { ...audit(), viewedImages: ["answer:1"] }), "image_not_viewed");
+  hasIssue(() => resolveJudgment(binding.request, draft, { ...audit(), viewedImages: ["answer:1"] }), "image_not_viewed");
   const inspected = { ...audit(), viewedImages: ["B:1"] };
-  const result = resolveFixtureEvidence(registry, binding, draft, inspected) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, inspected) as AttributionResult;
   registry.validate(binding, result, inspected);
   assert.deepEqual(result.findings[0]!.evidence[1], { evidence_id: draft.findings[0]!.evidence[1]!.evidence_id,
     source: "B", source_input_id: peerId, message_index: 1, quote: "[图像观察]图中日期为12日" });
   const invalid = fixture();
-  invalid.draft.findings[0]!.evidence[1]!.evidence_id = `ev_${peerId}_0_text_0_999_/timestamp`;
   const reads = { ...audit(), evidenceBank: [] as string[] };
-  const selected = projectEvidenceReferences(invalid.draft, reads.evidenceBank);
+  const selected = attributionSubmission(invalid.request,resolveJudgment(invalid.request,invalid.draft,reads) as AttributionResult,reads);
+  reads.evidenceBank[selected.problems[0].evidence_indices[1]-1]=`ev_${peerId}_0_text_0_999_/timestamp`;
   const providedBank = [...reads.evidenceBank];
   assert.throws(() => registry.resolve(invalid.binding, selected, reads), (error: unknown) => {
     assert(error instanceof ValidationError);
@@ -328,7 +327,7 @@ test("review peer independent tool facts resolve missing table rows without posi
       outcome: "supported", reason: "同题peer独立查询明确返回Beta代码。", evidence: [
         { evidence_id: row.answer.evidence.evidence_id }, ref("B", 1, "/content"),
       ] }] };
-  const result = resolveFixtureEvidence(registry, binding, draft, audit()) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, audit()) as AttributionResult;
   registry.validate(binding, result, audit());
   assert.deepEqual(attributionTableReview(request, result).concerns, []);
   assert.equal(result.table_resolutions![0]!.table_id, answer.table_check_results[0].answer_table_id);
@@ -336,7 +335,7 @@ test("review peer independent tool facts resolve missing table rows without posi
   for (const table_index of [1, 3]) {
     const invalid = structuredClone(draft); invalid.table_resolutions[0]!.table_index = table_index;
     const before = structuredClone({ request, invalid });
-    hasIssue(() => resolveFixtureEvidence(registry, binding, invalid, audit()), "table_resolution_table_index", "/table_resolutions/0/table_index");
+    hasIssue(() => resolveJudgment(binding.request, invalid, audit()), "table_resolution_table_index", "/table_resolutions/0/table_index");
     assert.deepEqual({ request, invalid }, before);
   }
   assert.equal(result.table_resolutions![0]!.evidence[1]!.source_input_id, peerId);
@@ -347,7 +346,7 @@ test("review peer independent tool facts resolve missing table rows without posi
   own.messages[1].content = table(["000001 | Alpha", "000003 | Beta"]);
   answer.table_check_results = attributionTableChecks(own, INPUT_ID, 2);
   draft.table_resolutions[0]!.evidence.push({ evidence_id: answer.table_check_results[0].rows[0].sources[0].evidence.evidence_id });
-  const conflicting = resolveFixtureEvidence(registry, binding, draft, audit());
+  const conflicting = resolveJudgment(binding.request, draft, audit());
   hasIssue(() => registry.validate(binding, conflicting, audit()), "table_resolution_unsupported");
 });
 
@@ -356,7 +355,7 @@ test("an input UUID from another task is rejected before raw-coordinate resoluti
   draft.findings[0]!.evidence[1]!.evidence_id = draft.findings[0]!.evidence[1]!.evidence_id
     .replace(peerId, "33333333-3333-4333-8333-333333333333");
   const before = structuredClone(draft);
-  hasIssue(() => resolveFixtureEvidence(registry, binding, draft, audit()), "evidence_source_invalid", "/findings/0/evidence/1");
+  hasIssue(() => resolveJudgment(binding.request, draft, audit()), "evidence_source_invalid", "/findings/0/evidence/1");
   assert.deepEqual(draft, before);
 });
 
@@ -371,14 +370,14 @@ test("malformed review feedback requires this candidate's final image even after
   const malformed = { ...draft, summary: 7 };
   const before = structuredClone({ request, draft, malformed });
   const issues = (reads: ToolAudit) => {
-    try { resolveFixtureEvidence(registry, binding, malformed, reads); assert.fail("malformed summary must fail"); }
+    try { resolveJudgment(binding.request, malformed, reads); assert.fail("malformed summary must fail"); }
     catch (error) { assert(error instanceof ValidationError); return error.issues!; }
   };
   const peerViewed = { ...audit(), viewedImages: ["B:1"] };
   assert.deepEqual(issues(peerViewed).map(issue => issue.code), ["schema_type", "final_image_not_viewed"]);
   const ownViewed = { ...audit(), viewedImages: ["answer:1"] };
   assert.deepEqual(issues(ownViewed).map(issue => issue.code), ["schema_type"]);
-  const result = resolveFixtureEvidence(registry, binding, draft, ownViewed) as AttributionResult;
+  const result = resolveJudgment(binding.request, draft, ownViewed) as AttributionResult;
   hasIssue(() => registry.validate(binding, result, peerViewed), "final_image_not_viewed");
   registry.validate(binding, result, ownViewed);
   assert.deepEqual({ request, draft, malformed }, before);

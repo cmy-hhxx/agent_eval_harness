@@ -1,5 +1,6 @@
 import { containsNumber, matchesReference } from "./numeric.js";
 import { evidenceSources, maskCitationMarkup, parseEvidenceCoordinates, parseTraceTables } from "@eval/tools";
+import type { JsonObject } from "@eval/contracts";
 
 interface Unit { dimension: string; power: number; }
 const units = new Map<string, Unit>();
@@ -14,7 +15,7 @@ register("currency:HKD", { 港元: 0, 万港元: 4, 百万港元: 6, 亿港元: 
 register("ratio", { "%": -2, "％": -2, "‰": -3 });
 register("percentage-point", { 百分点: 0, 个百分点: 0, 基点: -2, 个基点: -2 });
 register("count:day", { 天: 0, 交易日: 0, 个交易日: 0 });
-for (const name of ["个", "家", "只", "条", "项", "份", "次", "人", "户", "股"])
+for (const name of ["个", "家", "只", "条", "项", "份", "次", "人", "户", "股", "辆", "台"])
   register(`count:${name}`, { [name]: 0, [`万${name}`]: 4, [`亿${name}`]: 8 });
 const names = [...units.keys()].sort((a, b) => b.length - a.length);
 const numberPattern = "[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?";
@@ -104,8 +105,8 @@ function finalNumberUnits(message: unknown, inputId: string, quote: string, valu
       const tail = semanticText.slice(end);
       const adjacent = adjacentUnit(tail);
       const direction = semanticText.slice(0, start).match(/[^\d]*$/u)?.[0] ?? "";
-      if (!containsNumber(direction + token[0] + (/^[一二两三四五六七八九十]$/u.test(token[0]) ? adjacent?.name ?? "" : ""), value)) continue;
-      const candidates: { name: string; unit: Unit }[] = adjacent ? [adjacent] : [];
+      const direct = containsNumber(direction + token[0] + (/^[一二两三四五六七八九十]$/u.test(token[0]) ? adjacent?.name ?? "" : ""), value);
+      let candidates: { name: string; unit: Unit }[] = adjacent ? [adjacent] : [];
       let identifier = false;
       for (const table of tables.filter((table) => table.path === source.path)) for (const row of table.rows) {
         const coordinate = parseEvidenceCoordinates(row.evidence.evidence_id);
@@ -131,6 +132,14 @@ function finalNumberUnits(message: unknown, inputId: string, quote: string, valu
         }
       }
       if (identifier) continue;
+      if (!direct) {
+        // 万辆/亿股 are explicit count magnitudes, including a cell's own table header.
+        // Expanding them is another spelling of the delivered count, never a guessed conversion.
+        candidates = candidates.filter(candidate => candidate.unit.dimension.startsWith("count:") && candidate.unit.power > 0 &&
+          matchesReference(normalize(token[0]), value, `1e${candidate.unit.power}`, "exact"))
+          .map(candidate => ({name:candidate.unit.dimension.slice("count:".length),unit:{...candidate.unit,power:0}}));
+        if (!candidates.length) continue;
+      }
       matched = true;
       if (!candidates.length) unknownUnit = true;
       for (const candidate of candidates) found.set(`${candidate.unit.dimension}:${candidate.unit.power}`, candidate);
@@ -140,6 +149,20 @@ function finalNumberUnits(message: unknown, inputId: string, quote: string, valu
 }
 
 export interface NumericReference { reference_index: number; expected: string; context: string; }
+
+/** Relative-return shorthand needs a definition check; it is not an unambiguous point-unit comparison. */
+export function numericReferenceMaterials(input: JsonObject) {
+  const truth=input.ground_truth as {available:boolean;value:unknown};
+  const directory=truth.available?numericReferenceDirectory(truth.value):[];
+  const answer=input.answer as {final_answer?:string};
+  const text=answer.final_answer ?? "";
+  const interpreted=directory.filter(entry=>
+    /相对[^。；;\n]{0,40}(?:涨幅|涨跌|收益)|(?:涨幅|涨跌|收益)[^。；;\n]{0,40}相对/u.test(entry.context) &&
+    numberUnits(entry.context,entry.expected,true).some(item=>item.unit.dimension==="ratio") &&
+    typeof input.candidate_id==="string" &&
+    finalNumberUnits({content:text},input.candidate_id,text,entry.expected).units.some(item=>item.unit.dimension==="percentage-point"));
+  return {direct:directory.filter(entry=>!interpreted.includes(entry)),interpreted};
+}
 
 /** Quantities from the standard only; identifiers and calendar coordinates are not targets. */
 export function numericReferenceDirectory(reference: unknown): NumericReference[] {
@@ -158,7 +181,7 @@ export function numericReferenceDirectory(reference: unknown): NumericReference[
       return;
     }
     const text = normalize(value);
-    const dates = [...text.matchAll(/(?<!\d)(?:\d{4}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?<!\d)\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?(?!\d)|(?<!\d)\d{4}\s*年/gu)];
+    const dates = [...text.matchAll(/(?<!\d)(?:\d{4}\s*年\s*)?\d{1,2}\s*(?:月\s*)?[-—–~～至到]\s*\d{1,2}\s*月|(?<!\d)(?:\d{4}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?<!\d)\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?(?!\d)|(?<!\d)\d{4}\s*年/gu)];
     const originalLines = value.split("\n");
     let headers: string[] = [], originalHeaders = "", previous = "", lineStart = 0;
     for (const [lineIndex, line] of text.split("\n").entries()) {
@@ -173,7 +196,9 @@ export function numericReferenceDirectory(reference: unknown): NumericReference[
           const offset = lineStart + match.index;
           if (/[\d.eE]$/u.test(before) || /^[\d.eE]/u.test(tail) || /^\.(?:SH|SZ|HK|US|BJ)\b/iu.test(tail) ||
             dates.some(date => offset < date.index + date[0].length && offset + match[0].length > date.index) ||
-            /(?:代码|编号|序号|证券|股票|基金|\bid)\s*[:：=]?\s*$/iu.test(before)) continue;
+            /(?:代码|编号|序号|证券|股票|基金|\bid)\s*[:：=]?\s*$/iu.test(before) ||
+            /^\d+$/u.test(match[0]) && !/^\s*[%％‰]/u.test(tail) &&
+              /(?:上证|深证|中证|沪深|国证|科创|北证)\s*$/u.test(before)) continue;
           const column = tableRow ? before.split("|").length - (line.trimStart().startsWith("|") ? 2 : 1) : -1;
           if (column >= 0 && identifierColumn(headers[column] ?? "")) continue;
           const decline = !/^[+-]/u.test(match[0]) && /(?:下降|下跌|下滑|下挫|减少|降低|收窄|净流出|流出)[约近了为达\s*]*$/u.test(before);

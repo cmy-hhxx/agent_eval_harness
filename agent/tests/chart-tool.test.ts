@@ -74,3 +74,26 @@ test("charts require existing materials and accepted specialist results", async 
   for (const reference of [{ runId: "run" }, { reference: { runId: "run", taskId: "missing" } }, { reference: { runId: "run", inputId: "missing" } }, { operationId: "51b9dc2a-1292-4c4c-a71d-2db0b3f64d96" }])
     await assert.rejects(tool.execute({ ...chart, references: [reference] }, context), /不存在|已接受/);
 });
+
+test("comparison charts resolve every formal source in one aggregate read, including more than sixty results", async () => {
+  const calls: unknown[] = [];
+  const references = Array.from({ length: 80 }, (_, index) => ({ runId: "run", taskId: `result-${index}` }));
+  const statistics = { runId: "run", comparisonTier: "Fast" };
+  const tool = chartTool({ ...noData, async list(query) {
+    calls.push(query);
+    return { kind: "inputs", evaluatorVersion: "fixture", summary: { formalComparisonStats: {
+      tiers: [{ comparisonTier: "Fast", comparisonCount: 80, references }],
+    } } };
+  } });
+  const result = await tool.execute({ ...chart, scope: "Fast · 80场已裁决", series: [{ name: "胜场", values: [45, 35] }], references: [{ statistics }] }, context);
+  assert.deepEqual(calls, [{ runId: "run", limit: 1 }]);
+  assert.deepEqual(result.details, { references: [{ statistics, evaluatorVersion: "fixture", references }] });
+  assert(!result.content[0].text?.includes("result-79"), "source coordinates belong in metadata, not model-visible chart output");
+  await assert.rejects(tool.execute({ ...chart, references: [{ statistics: { ...statistics, comparisonTier: "Expert" } }] }, context), /正式统计/);
+  for (const invalid of [{ statistics, runId: "run" }, { statistics, reference: references[0] }, { statistics: { runId: "run" } }])
+    await assert.rejects(tool.execute({ ...chart, references: [invalid] }, context));
+  for (const summary of [{}, { formalComparisonStats: { tiers: [] } }, { formalComparisonStats: { tiers: [{ comparisonTier: "Fast", comparisonCount: 0, references: [] }] } }]) {
+    const empty = chartTool({ ...noData, list: async () => ({ kind: "inputs", summary }) });
+    await assert.rejects(empty.execute({ ...chart, references: [{ statistics }] }, context), /正式统计/);
+  }
+});

@@ -26,13 +26,13 @@ export class LocalSpecialists implements SpecialistGateway {
     if (!(await exists(path.join(run, "state.json")))) return { ...base, state: live ? "running" : "failed", ...(live ? {} : { error: "interrupted" }) };
     const metadata = await readRunTasks(run, []);
     const finalTasks = metadata.manifest.tasks.filter((task) => task.stage === request.kind &&
-      (request.kind === "comparison" ? !(task.data as TaskData).supersededBy : task.id === operationId));
+      (request.kind === "comparison" ? !(task.data as TaskData).verificationAudit : task.id === operationId));
     const expected = request.kind === "comparison" ? request.inputs.length * (request.inputs.length - 1) / 2 : 1;
     const state = await readRunTasks(run, finalTasks.map((task) => task.id));
     const receipts = finalTasks.map((task) => state.receipts[task.id]);
     if (finalTasks.length === expected && receipts.every(Boolean)) {
       if (request.kind === "comparison" && receipts.some((receipt) => (receipt.evaluation as { status: string }).status !== "decided"))
-        return { ...base, evaluatorVersion: state.manifest.evaluatorVersion, state: "failed", error: "independentReviewUnresolved" };
+        return { ...base, evaluatorVersion: state.manifest.evaluatorVersion, state: "failed", error: "comparisonUnresolved" };
       const results = finalTasks.map((task, index) => {
         const receipt = receipts[index]!;
         return { reference: { runId: operationId, taskId: task.id }, evaluatorVersion: receipt.evaluatorVersion,

@@ -93,7 +93,7 @@ test("chart metadata and the accessible number table remain text without executi
   assert(document.querySelector("figcaption")!.textContent!.includes(attack));
   assert.match(document.querySelector("figcaption")!.textContent!, /单位：场/);
   assert.match(document.querySelector("figure")!.textContent!, /来源：/);
-  assert.equal(document.querySelectorAll('details, summary, button').length, 0, 'charts do not introduce another disclosure control');
+  assert.equal(document.querySelectorAll('[data-chart-actions] button').length, 2, 'chart and exact data views are available within the reply without another model call');
   const table = document.querySelector<HTMLTableElement>('table[data-chart-data]')!;
   const accessibleContainer = table.closest<HTMLElement>('[data-chart-accessible-data]')!;
   assert.equal(accessibleContainer.style.position, 'absolute');
@@ -105,12 +105,12 @@ test("chart metadata and the accessible number table remain text without executi
   assert.equal(document.querySelectorAll("thead th[scope=col]").length, 2);
   assert.equal(document.querySelectorAll("tbody th[scope=row]").length, 2);
   const svg = document.querySelector("svg")!;
-  assert.equal(svg.getAttribute("width"), "560", "the bounded chart retains a pixel coordinate system instead of shrinking its text");
-  assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "560");
+  assert.equal(svg.getAttribute("width"), "514", "the bounded chart retains a pixel coordinate system instead of shrinking its text");
+  assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "514");
   assert.equal(document.querySelector('[data-chart-legend]'), null, 'a single series does not repeat a redundant legend');
   assert.equal(document.querySelector('footer')!.textContent, `来源：${attack}`);
   assert.equal(document.querySelector<HTMLElement>('footer')!.style.borderTop, '', 'the source has no extra footer divider');
-  assert(!document.querySelector('figure')!.getAttribute('style')!.includes('border-radius'), 'the research frame has no rounded card');
+  assert.equal(document.querySelectorAll('svg title').length, 0, 'charts expose accessible names without browser hover text');
 });
 
 test('short chart summaries stay compact without losing actual values, scope or source', () => {
@@ -222,7 +222,8 @@ test('short narrow trends fit the first screen and preserve the complete calenda
       await act(async () => { root.render(createElement(AnalysisChart, { chart: { ...base, type: 'line', categories,
         series: [{ name: 'B组Fast', values: [1.1, 1.5] }, { name: 'A组Fast', values: [1.25, 1.6] }] } })); });
       const document = dom.window.document;
-      assert.equal(document.querySelector('svg')!.getAttribute('width'), '230', 'ordinary values and dates need no horizontal scroll');
+      const plotWidth = Number(document.querySelector('svg')!.getAttribute('width'));
+      assert(plotWidth > 0 && plotWidth <= 230, 'ordinary values and dates fit the viewport including chart padding');
       assert.deepEqual([...document.querySelectorAll('[data-chart-label=date]')].map(label => label.getAttribute('data-date')), categories);
       assert.deepEqual([...document.querySelectorAll('[data-chart-tail-name]')].map(label => label.textContent), ['B组Fast', 'A组Fast']);
       assert.deepEqual([...document.querySelectorAll('[data-chart-tails] [data-chart-value]')].map(label => label.textContent), ['1.5', '1.6']);
@@ -294,7 +295,7 @@ test('a narrow trend reserves exact scientific labels and exposes keyboard and p
     const last = dom.window.document.querySelector<SVGElement>('[data-chart-hit][data-series="B组"][data-date="2026-01-21"]')!;
     await act(async () => { last.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true,
       clientX: Number(last.getAttribute('cx')), clientY: Number(last.getAttribute('cy')) })); });
-    assert.equal(readout.textContent, '2026-01-21 · A组 · 2 场 / B组 · 2 场', 'coincident observations name both models rather than arbitrarily hiding one');
+    assert.equal(readout.textContent, '2026-01-01 · A组 · 1.05 场', 'hover does not change or open point text');
     await act(async () => { last.focus(); });
     assert.equal(readout.textContent, '2026-01-21 · A组 · 2 场 / B组 · 2 场', 'keyboard focus also exposes both coincident observations');
     const precise = 0.0000010000000000000002;

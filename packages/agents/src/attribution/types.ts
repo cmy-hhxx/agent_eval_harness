@@ -97,3 +97,36 @@ export interface AttributionResult {
     evidence: Evidence[];
   }[];
 }
+
+export type ObservationSubmission = Pick<Finding, "dimension" | "stage" | "importance" | "text" | "reason"> & {
+  evidence_status: "established" | "uncertain";
+  evidence_indices: number[];
+  basis_index: number | null;
+};
+
+/** Fixed shallow rows: strengths never contain problem responsibility fields. */
+export interface AttributionSubmission {
+  summary: string;
+  meets_core: boolean | null;
+  core_reason: string;
+  core_requirements: number[];
+  is_correct: boolean | null;
+  correctness_reason: string;
+  correctness_evidence_indices: number[];
+  criterion_assessments: {
+    status: Exclude<CriterionAssessment["status"], "not_applicable">;
+    evidence_status: "established" | "uncertain";
+    summary: string;
+    evidence_indices: number[];
+  }[];
+  strengths: ObservationSubmission[];
+  problems: (ObservationSubmission & ProblemSubmission & {impact:string})[];
+  numeric_checks: {
+    label: string; reference_index: number; actual: string | number | null; scale: string;
+    mode: "rounded" | "exact"; evidence_index: number;
+  }[];
+  image_observations?: { image_number: number; text: string }[];
+  table_resolutions?: {
+    table_index: number; row_index: number; outcome: "supported" | "conflict"; reason: string; evidence_indices: number[];
+  }[];
+}

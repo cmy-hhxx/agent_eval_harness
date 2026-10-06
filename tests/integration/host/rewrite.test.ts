@@ -40,7 +40,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
           }
           const evaluation = taskResult(options.spec);
           if (options.spec.evaluation.id === "rewrite")
-            for (const item of (evaluation as { rewrites: { text: string }[] }).rewrites) item.text += `（润色${calls}）`;
+            (evaluation as {texts:string[]}).texts = (evaluation as {texts:string[]}).texts.map(text => text + `（润色${calls}）`);
           if (clustering && options.spec.evaluation.id === "attribution") {
             const attribution = evaluation as AttributionResult;
             const material = parsedMaterial(options.spec) as { answer: { final_message_index: number; final_answer: string } };

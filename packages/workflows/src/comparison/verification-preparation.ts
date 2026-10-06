@@ -17,7 +17,7 @@ export async function prepareComparisonVerification(run: string, selection: Comp
     const sources = tasks.filter(task => {
       const data = task.data as TaskData;
       return task.stage === "comparison" && !data.verificationOf &&
-        !data.verificationAudit && !data.supersededBy;
+        !data.verificationAudit;
     });
     const chosen = new Set(selection.resultIds);
     for (const id of chosen)

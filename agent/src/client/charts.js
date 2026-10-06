@@ -1,4 +1,5 @@
 import { createElement as h, memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { researchTypes, chartTable, chartSummary } from './chart-data.js';
 
 // Product colours adapted from UBS's public Year Ahead chart, not official brand tokens.
 const colors = ['var(--eris-chart-a, #676767)', 'var(--eris-chart-b, #774143)', 'var(--eris-chart-c, #424242)',
@@ -12,7 +13,7 @@ const primaryColor = 'var(--eris-chart-ink, #191919)';
 const textColor = 'var(--eris-chart-muted, #676767)';
 const borderColor = 'var(--eris-chart-grid, #E5E5E5)';
 const paperColor = 'var(--eris-chart-paper, #FFFFFF)';
-const chartMaxWidth = 560;
+const chartMaxWidth = 540;
 const visuallyHidden = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
   clip: 'rect(0, 0, 0, 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap', border: 0 };
 const numberFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 20 });
@@ -58,7 +59,7 @@ function compositionColors(categories) {
     ? categoryColors[generic.indexOf(name)] : colors[identityIndex(name)]));
 }
 const text = (value, maximum) => typeof value === 'string' && value.trim().length > 0 && value.length <= maximum;
-const strings = values => Array.isArray(values) && values.length > 0 && values.length <= 30
+const strings = (values, maximum = 30) => Array.isArray(values) && values.length > 0 && values.length <= maximum
   && values.every(value => text(value, 120)) && new Set(values).size === values.length;
 function dateTime(value) {
   if (!/^[1-9]\d{3}(?:-\d{2}(?:-\d{2})?)?$/.test(value)) return NaN;
@@ -73,14 +74,24 @@ export function chartFromToolOutput(output, state) {
   let receipt;
   try { receipt = JSON.parse(output); } catch { return null; }
   const chart = receipt?.kind === 'chart' ? receipt.chart : null;
-  if (!chart || !['bar', 'line', 'pie'].includes(chart.type)
+  if (!chart || !['bar', 'line', 'pie', ...researchTypes].includes(chart.type)
     || !['title', 'scope', 'source'].every(key => text(chart[key], 500)) || !text(chart.unit, 40)
-    || !strings(chart.categories) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > 4
+    || !strings(chart.categories, ['scatter', 'histogram'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > 4
     || !chart.series.every(series => series && text(series.name, 120)
       && Array.isArray(series.values) && series.values.length === chart.categories.length
       && series.values.every(value => value === null || (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15)))
     || !chart.series.some(series => series.values.some(value => value !== null))
     || new Set(chart.series.map(series => series.name)).size !== chart.series.length) return null;
+  if (chart.type === 'scatter' && (!Array.isArray(chart.xValues) || chart.xValues.length !== chart.categories.length
+    || !text(chart.xLabel, 80) || !text(chart.xUnit, 40)
+    || chart.xValues.some(v => v !== null && (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e15))
+    || chart.series.reduce((sum, s) => sum + s.values.filter((v, i) => v !== null && chart.xValues[i] !== null).length, 0) < 3)) return null;
+  if (chart.type === 'dumbbell' && (chart.series.length !== 2 || chart.categories.length < 2)) return null;
+  if (['histogram', 'waterfall'].includes(chart.type) && (chart.series.length !== 1 || chart.categories.length < 2 || chart.series[0].values.includes(null))) return null;
+  if (chart.annotations !== undefined && (!Array.isArray(chart.annotations) || chart.annotations.length > 3 || chart.annotations.some(a => !a
+    || !Number.isInteger(a.categoryIndex) || a.categoryIndex < 0 || !Number.isInteger(a.seriesIndex) || a.seriesIndex < 0
+    || !text(a.note, 100) || !chart.categories[a.categoryIndex] || !chart.series[a.seriesIndex]
+    || chart.series[a.seriesIndex].values[a.categoryIndex] === null || (chart.type === 'scatter' && chart.xValues[a.categoryIndex] === null)))) return null;
   if (chart.type === 'pie') {
     if (chart.series.length !== 1 || chart.categories.length > 6
       || chart.series[0].values.some(value => value === null || value < 0)) return null;
@@ -121,11 +132,11 @@ export const TurnCharts = memo(function TurnCharts({ turn, useChat }) {
 
 function useWidth() {
   const ref = useRef(null);
-  const [width, setWidth] = useState(chartMaxWidth);
+  const [width, setWidth] = useState(chartMaxWidth - 26);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const measure = () => { if (element.clientWidth > 0) setWidth(Math.min(element.clientWidth, chartMaxWidth)); };
+    const measure = () => { if (element.clientWidth > 0) { const style = element.ownerDocument.defaultView.getComputedStyle(element); setWidth(Math.min(element.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0), chartMaxWidth)); } };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
@@ -195,7 +206,7 @@ function svg(chart, width, height, marks, template, interaction = {}) {
     'data-chart-template': template, width, height, viewBox: `0 0 ${width} ${height}`,
     style: { display: 'block', fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums', maxWidth: template === 'trend' ? undefined : '100%', flexShrink: 0 },
     ...interaction,
-  }, h('title', null, chart.title), marks);
+  }, marks);
 }
 
 function ComparisonChart({ chart, width, english }) {
@@ -256,7 +267,7 @@ function ComparisonChart({ chart, width, english }) {
     const end = coordinates(x(value));
     marks.push(h('rect', { key: `bar-${categoryIndex}-${seriesIndex}`, 'data-chart-mark': 'bar', 'data-series': series.name, 'data-category': category,
       'data-value': value, x: Math.min(zero, end), y: coordinates(top), width: coordinates(Math.abs(end - zero)), height,
-      fill: barColor(chart, category, seriesIndex, identities[seriesIndex]) }, h('title', null, `${category} · ${series.name}：${formatNumber(value)} ${chart.unit}`)));
+      fill: barColor(chart, category, seriesIndex, identities[seriesIndex]) }));
     if (value === 0) marks.push(h('line', { key: `zero-value-${categoryIndex}-${seriesIndex}`, x1: zero, x2: zero, y1: coordinates(top), y2: coordinates(top + height), stroke: barColor(chart, category, seriesIndex, identities[seriesIndex]), strokeWidth: 2 }));
   });
   return svg(chart, plotWidth, bottom + 24, [...backgrounds, ...marks], compact ? 'comparison-compact' : 'comparison');
@@ -324,8 +335,7 @@ function TrendChart({ chart, width, english }) {
       segment.push(point); last = { x: point[0], y: point[1], value, series, seriesIndex, color, height: labelHeights[seriesIndex] };
       const highlighted = activeKey === key || focused === key;
       marks.push(h('circle', { key: `point-${seriesIndex}-${index}`, 'data-chart-mark': 'point', 'data-series': series.name, 'data-value': value,
-        cx: point[0], cy: point[1], r: highlighted ? 5 : 2.75, fill: highlighted ? paperColor : color, stroke: color, strokeWidth: highlighted ? 2 : 0 },
-      h('title', null, `${chart.categories[index]} · ${series.name}：${formatNumber(value)} ${chart.unit}`)));
+        cx: point[0], cy: point[1], r: highlighted ? 5 : 2.75, fill: highlighted ? paperColor : color, stroke: color, strokeWidth: highlighted ? 2 : 0 }));
       hits.push(h('circle', { key: `hit-${key}`, 'data-chart-hit': true, 'data-chart-point-key': key, 'data-series': series.name, 'data-date': chart.categories[index], 'data-value': value,
         role: 'img', tabIndex: 0, focusable: 'true', 'aria-label': `${chart.categories[index]} · ${series.name}：${formatNumber(value)} ${chart.unit}`,
         cx: point[0], cy: point[1], r: 22, fill: 'transparent', style: { cursor: 'crosshair', outline: 'none' },
@@ -374,7 +384,7 @@ function TrendChart({ chart, width, english }) {
   return h('div', { style: { position: 'relative' } },
     h('div', { style: { overflowX: 'auto', maxWidth: '100%' } }, svg(chart, plotWidth, plotHeight,
       [...marks.filter(mark => mark.type !== 'circle'), ...paths, ...marks.filter(mark => mark.type === 'circle'), ...hits], 'trend', {
-        onPointerMove: selectPoint, onPointerDown: selectPoint,
+        onPointerDown: selectPoint,
         onPointerLeave: event => { if (event.pointerType !== 'touch') setActiveKey(null); },
       })),
     compact ? h('div', { 'data-chart-tails': true, style: { display: 'grid', gap: 6, marginTop: 6 } }, labels.map(label => {
@@ -415,8 +425,7 @@ function CompositionChart({ chart, width, english }) {
         : `M ${point(outer, angle)} A ${outer} ${outer} 0 0 1 ${point(outer, end)} L ${point(inner, end)} A ${inner} ${inner} 0 0 0 ${point(inner, angle)} Z`;
     angle = end;
     return value === 0 ? null : h('path', { key: index, 'data-chart-mark': 'wedge', 'data-category': chart.categories[index], 'data-value': value,
-      d: path, fill: palette[index], fillRule: 'evenodd', stroke: paperColor, strokeWidth: divider },
-    h('title', null, `${chart.categories[index]}：${formatNumber(value)} / ${formatNumber(total)} ${chart.unit}（${formatPercentage(value / total * 100)}）`));
+      d: path, fill: palette[index], fillRule: 'evenodd', stroke: paperColor, strokeWidth: divider });
   });
   const columns = compact ? 'minmax(0, 1fr) minmax(56px, max-content)' : 'minmax(0, 1fr) minmax(0, .7fr) minmax(56px, .55fr)';
   const totalValue = h('strong', { 'data-chart-total': true, style: { display: 'block', color: primaryColor, fontWeight: 500,
@@ -425,7 +434,7 @@ function CompositionChart({ chart, width, english }) {
   return h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px 20px', margin: 0 } },
     h('div', { style: { width: ringSize, flex: `0 0 ${ringSize}px`, maxWidth: '100%' } }, h('div', { style: { position: 'relative', height: ringSize } },
       h('svg', { role: 'img', 'aria-label': `${chart.title}，总数 ${formatNumber(total)} ${chart.unit}`, 'data-chart-type': 'pie', 'data-chart-template': compact ? 'composition-compact' : 'composition',
-        width: ringSize, height: ringSize, viewBox: '0 0 200 200', style: { display: 'block', maxWidth: '100%' } }, h('title', null, chart.title), wedges),
+        width: ringSize, height: ringSize, viewBox: '0 0 200 200', style: { display: 'block', maxWidth: '100%' } }, wedges),
       h('div', { 'data-chart-denominator': true, style: { position: 'absolute', inset: centerInset, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, textAlign: 'center', fontVariantNumeric: 'tabular-nums' } },
         h('span', { style: { color: textColor, fontSize: 12 } }, english ? 'Total' : '合计'),
         longTotal ? null : totalValue)), longTotal ? totalValue : null),
@@ -441,36 +450,61 @@ function CompositionChart({ chart, width, english }) {
       h('span', { 'data-chart-share': true, style: { color: textColor, fontSize: 14, textAlign: 'right', whiteSpace: 'nowrap' } }, formatPercentage(values[index] / total * 100)))))));
 }
 
-function NumberTable({ chart, english }) {
+const actionStyle = { border: `1px solid ${borderColor}`, borderRadius: 5, background: paperColor, color: textColor, padding: '5px 9px', minHeight: 28, font: 'inherit', fontSize: 12, cursor: 'pointer' };
+function NumberTable({ chart, english, visible }) {
+  const [sort, setSort] = useState(null);
+  const table = chartTable(chart, english);
   const pie = chart.type === 'pie', total = pie ? chart.series[0].values.reduce((sum, value) => sum + value, 0) : null;
-  return h('div', { 'data-chart-accessible-data': true, style: visuallyHidden }, h('table', { 'data-chart-data': true },
-      h('caption', { style: { textAlign: 'left', padding: '4px 0' } }, `${chart.title} · ${chart.unit}`),
-      h('thead', null, h('tr', null,
-        h('th', { scope: 'col' }, english ? 'Category' : '项目'),
-        chart.series.map((series, index) => h('th', { key: index, scope: 'col' }, series.name)),
-        pie ? h('th', { scope: 'col' }, english ? 'Share' : '占比') : null)),
-      h('tbody', null, chart.categories.map((category, index) => h('tr', { key: index },
-        h('th', { scope: 'row' }, category),
-        chart.series.map((series, seriesIndex) => h('td', { key: seriesIndex }, series.values[index] === null ? (english ? 'Unknown' : '未知') : formatNumber(series.values[index]))),
-        pie ? h('td', null, `${formatPercentage(chart.series[0].values[index] / total * 100)} (${formatNumber(chart.series[0].values[index])}/${formatNumber(total)})`) : null)))));
+  const rows = table.rows.map((row, index) => ({ row, index }));
+  if (sort) rows.sort((a, b) => {
+    const x = a.row[sort.column], y = b.row[sort.column];
+    if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+    return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * sort.direction;
+  });
+  const cellStyle = { padding: '9px 10px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+  return h('div', { 'data-chart-accessible-data': true, 'data-visible': !!visible, style: visible ? { overflow: 'auto', maxHeight: 380, marginTop: 12 } : visuallyHidden }, h('table', { 'data-chart-data': true, style: { borderCollapse: 'collapse', width: '100%', fontSize: 12 } },
+    h('caption', { style: visuallyHidden }, `${chart.title} · ${chart.unit}`),
+    h('thead', null, h('tr', null, table.columns.map((name, column) => h('th', { key: column, scope: 'col', 'aria-sort': sort?.column === column ? sort.direction === 1 ? 'ascending' : 'descending' : 'none', style: { ...cellStyle, textAlign: column ? 'right' : 'left', position: 'sticky', top: 0, background: '#f7f6f4' } },
+      visible ? h('button', { className: 'eris-chart-action', type: 'button', onClick: () => setSort({ column, direction: sort?.column === column ? -sort.direction : column ? -1 : 1 }), style: { ...actionStyle, border: 0, background: 'transparent', color: primaryColor }, 'aria-label': `${english ? 'Sort by' : '排序'} ${name}` }, name, sort?.column === column ? sort.direction === 1 ? ' ↑' : ' ↓' : '') : name)),
+      pie ? h('th', { scope: 'col', style: cellStyle }, english ? 'Share' : '占比') : null)),
+    h('tbody', null, rows.map(({ row, index }) => h('tr', { key: index }, row.map((value, column) => h(column ? 'td' : 'th', { key: column, scope: column ? undefined : 'row', style: { ...cellStyle, textAlign: column ? 'right' : 'left', fontWeight: 400 } }, value === null ? (english ? 'Unknown' : '未知') : typeof value === 'number' ? formatNumber(value) : value)),
+      pie ? h('td', { style: cellStyle }, `${formatPercentage(chart.series[0].values[index] / total * 100)} (${formatNumber(chart.series[0].values[index])}/${formatNumber(total)})`) : null)))));
 }
-
+let researchModule;
+function AdvancedChart(props) {
+  const [component, setComponent] = useState(() => researchModule?.ResearchChart), [error, setError] = useState(''), [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (component) return;
+    let active = true;
+    import('./chart-research.js').then(module => { researchModule = module; if (active) { setComponent(() => module.ResearchChart); setError(''); } }).catch(error => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [component, retry]);
+  return component ? h(component, props) : h('div', { role: error ? 'alert' : 'status', style: { minHeight: 200, display: 'grid', placeContent: 'center', fontSize: 12 } },
+    error ? h('button', { className: 'eris-chart-action', style: actionStyle, onClick: () => { setError(''); setRetry(value => value + 1); } }, '重新载入图表') : '图表载入中…');
+}
 export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh' }) {
   const [ref, width] = useWidth();
-  const identities = seriesIndexes(chart);
+  const [view, setView] = useState('chart');
+  const identities = seriesIndexes(chart), advanced = researchTypes.includes(chart.type);
   const english = !language.startsWith('zh');
-  return h('figure', { ref, 'data-analysis-chart': chart.type, style: {
-    position: 'relative', margin: '16px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px 0 0', boxSizing: 'border-box', background: paperColor,
-    borderTop: `1px solid ${borderColor}`,
-    color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
+  const legend = chart.series.length > 1 && ['bar', 'scatter', 'dumbbell'].includes(chart.type);
+  const summary = chartSummary(chart, english);
+  return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
+    position: 'relative', margin: '14px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
+    border: '1px solid #e4dfe0', borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
   } }, h('figcaption', null,
-    h('h3', { style: { margin: '0 0 4px', color: primaryColor, fontSize: 18, lineHeight: 1.35, fontWeight: 600 } }, chart.title),
-    h('div', { style: { fontSize: 13, lineHeight: 1.6 } }, `${chart.scope} · ${english ? 'Unit' : '单位'}：${chart.unit}`)),
-  chart.type === 'bar' && chart.series.length > 1 ? h('div', { 'data-chart-legend': true, style: { display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 8 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor } },
-    h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8,
-      borderRadius: '50%', marginRight: 8, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-  h('div', { style: { marginTop: 12 } }, chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
-    : chart.type === 'bar' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
-  h('footer', { style: { marginTop: 8, fontSize: 12, lineHeight: 1.6 } }, `${english ? 'Source' : '来源'}：${chart.source}`),
-  h(NumberTable, { chart, english }));
+    h('div', { className: 'eris-chart-heading' },
+      h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600, flex: 1, minWidth: 0 } }, chart.title),
+      h('div', { 'data-chart-actions': true, role: 'group', 'aria-label': english ? 'View' : '视图', className: 'eris-chart-switch' }, ['chart', 'table'].map(mode => h('button', { key: mode, className: 'eris-chart-action', type: 'button', 'aria-pressed': view === mode, onClick: () => setView(mode), style: { ...actionStyle, minHeight: 24, padding: '3px 7px', fontSize: 11, border: 0, color: view === mode ? '#fff' : textColor, background: view === mode ? '#33272b' : 'transparent' } }, mode === 'chart' ? english ? 'Chart' : '图表' : english ? 'Data' : '数据')))),
+    h('div', { style: { marginTop: 4, fontSize: 11, lineHeight: 1.5 } }, `${chart.scope} · ${english ? 'Unit' : '单位'}：${chart.unit}`)),
+  summary.length ? h('div', { className: 'eris-chart-summary', 'data-chart-summary': true }, summary.map((item, i) => h('span', { key: i }, h('span', null, item.label), h('strong', null, item.value)))) : null,
+  h('div', { hidden: view !== 'chart' },
+    legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 8, fontSize: 11 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor } },
+      h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
+    h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
+      : chart.type === 'bar' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english }))),
+  h(NumberTable, { chart, english, visible: view === 'table' }),
+  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '7px 0 0', padding: '7px 0 0 20px', borderTop: `1px solid ${borderColor}`, fontSize: 11, lineHeight: 1.55, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i, style: { paddingBottom: 5 } },
+    h('strong', { style: { color: '#774143', fontWeight: 500 } }, `${chart.categories[a.categoryIndex]} · ${chart.series[a.seriesIndex].name}：${formatNumber(chart.series[a.seriesIndex].values[a.categoryIndex])} ${chart.unit}`), ' — ', a.note))) : null,
+  h('footer', { style: { marginTop: 6, fontSize: 10.5, lineHeight: 1.5 } }, `${english ? 'Source' : '来源'}：${chart.source}`));
 });

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { projectEvidenceReferences, ValidationError, type AgentRequest, type ToolAudit } from "@eval/contracts";
-import { evidenceId, evidenceSources, selectEvidenceSource } from "@eval/tools";
+import { evidenceId, evidenceSources, messageContentSources, selectEvidenceSource } from "@eval/tools";
 import { actualAnswerEvidenceShares } from "./proof-matching.js";
 import { findingAppliesToPair } from "./pair-scope.js";
 import { comparisonAgent, comparisonProfile } from "./index.js";
@@ -43,7 +43,7 @@ function publicPair() {
     const value: ComparisonMaterialInspection = { checks: Object.entries(input.candidates).flatMap(([label, material]) =>
       input.task_analysis.requirements.filter(criterion => !criterion.applies_to.length || criterion.applies_to.includes(material.candidate_id)).map(criterion => {
         const source = request.sources[label]!, raw = source.value as { messages: unknown[] },
-          leaf = evidenceSources(raw.messages[material.final_message_index]).find(source => source.kind === "text" && source.path.startsWith("/content"))!;
+          leaf = messageContentSources(raw.messages[material.final_message_index])[0]!;
         return { candidate: label, criterion_id: criterion.id, result: "supported" as const, source_evidence: [], observation: "核对实际最终回答。",
           answer_evidence: [{ evidence_id: evidenceId(source.id, material.final_message_index, "text", leaf.path, 0, leaf.text.length) }] };
       })), concerns: [{ candidate, criterion_ids: criterionIds, answer_evidence: [{ evidence_id: answerId }],
@@ -148,7 +148,7 @@ test("instruction pair scope requires all actual norm origins, never coincident 
     text: "风险位于末尾。", reason: "完整规则要求前置。", evidence: [],
     assessment: { requirement_index: 0, observation: "风险位于末尾。", evidence_status: "established", impact: "未遵循完整共同要求。" } };
   const analysis: ComparisonInput["task_analysis"] = { task_type: "subjective", goal: "根据完整规范判断交付。", requirements: [
-    { id: "norm", text: norm, applies_to: [], acceptance_rule: "按完整条件执行。" }], scoring_points: [], red_flags: [] };
+    { id: "norm", text: norm, applies_to: [], acceptance_rule: norm }], scoring_points: [], red_flags: [] };
   const attribution = { task_analysis: analysis, findings: [finding], criterion_assessments: [],
     core_assessment: { meets_core: true, reason: "核心任务已完成。", criterion_ids: ["norm"] } };
   const input: ComparisonInput = { task_analysis: analysis, candidates: { A: material, B: { ...material, candidate_id: PEER } },
@@ -195,7 +195,7 @@ test("public Registry rejects same quote at metadata and offers omission as a fi
 test("public repair choices expose partial criterion coverage without claiming a complete legal match", () => {
   const f = publicPair(), own = f.input.candidates.A!, rule = "# 完整规范\n最后询问用户；只输出数字时除外。";
   (f.request.sources.A!.value as { messages: unknown[] }).messages[0] = { role: "system", content: rule };
-  f.input.task_analysis.requirements.push({ id: "other", text: rule, applies_to: [own.candidate_id], acceptance_rule: "保留完整条件。" });
+  f.input.task_analysis.requirements.push({ id: "other", text: rule, applies_to: [own.candidate_id], acceptance_rule: rule });
   const finding = f.input.attributions.A!.findings[0]!; finding.type = "problem";
   f.inspection("A", finding.evidence[0]!.evidence_id, ["sum", "other"]);
   assert.throws(() => f.registry.resolve(f.binding, f.final([0]), f.audit), (error: unknown) => {
@@ -218,9 +218,9 @@ function sharedUserPair() {
     { role: "user", content: [{ type: "text", text: question }, { type: "text", text: condition }], metadata: question },
     { role: "assistant", content: answer }] };
   source.value = raw; f.input.candidates.A!.answer_generation = null;
-  f.input.task_analysis.requirements[0]!.text = question;
+  f.input.task_analysis.requirements[0]!.text = question; f.input.task_analysis.requirements[0]!.acceptance_rule = f.input.task_analysis.requirements[0]!.text;
   f.input.task_analysis.requirements.push({ id: "compound", text: question + "\n" + condition,
-    applies_to: [source.id], acceptance_rule: "保留原问与附加条件。" });
+    applies_to: [source.id], acceptance_rule: question + "\n" + condition });
   const reference = (messageIndex: number, path: string, start = 0, end?: number) => {
     const selected = selectEvidenceSource(evidenceSources(raw.messages[messageIndex]), path)!;
     return { evidence_id: evidenceId(source.id, messageIndex, selected.source.kind, selected.source.path,
@@ -267,7 +267,7 @@ test("a concern selecting only the compound rule's added USER leaf cannot borrow
 test("a separated additional USER paragraph cannot bypass the explicit added-clause guard", () => {
   const f = sharedUserPair();
   (f.raw.messages[0]!.content as { text: string }[])[0]!.text += "\n";
-  f.input.task_analysis.requirements[1]!.text = f.question + "\n\n" + f.condition;
+  f.input.task_analysis.requirements[1]!.text = f.question + "\n\n" + f.condition; f.input.task_analysis.requirements[1]!.acceptance_rule = f.input.task_analysis.requirements[1]!.text;
   const choice = f.inspect([f.reference(0, "/content/1/text")]);
   assert.deepEqual(choice.missing_requirement_indices, [1]);
 });
@@ -289,15 +289,15 @@ test("shared USER eligibility requires complete own original provenance and the 
     if (mode === "indivisible-condition" || mode === "heading") {
       const content = (mode === "heading" ? "# 要求\n" : "") + f.question + "\n" + f.condition;
       f.raw.messages[0]!.content = content;
-      f.input.task_analysis.requirements[0]!.text = (mode === "heading" ? "# 要求\n" : "") + f.question;
-      f.input.task_analysis.requirements[1]!.text = content;
+      f.input.task_analysis.requirements[0]!.text = (mode === "heading" ? "# 要求\n" : "") + f.question; f.input.task_analysis.requirements[0]!.acceptance_rule = f.input.task_analysis.requirements[0]!.text;
+      f.input.task_analysis.requirements[1]!.text = content; f.input.task_analysis.requirements[1]!.acceptance_rule = f.input.task_analysis.requirements[1]!.text;
       f.finding.evidence[1] = f.reference(0, "/content", 0, f.input.task_analysis.requirements[0]!.text.length);
     }
     if (mode === "strength") f.finding.type = "strength";
     if (mode === "uncertain") f.finding.assessment.evidence_status = "uncertain";
     if (mode === "unbound") f.finding.assessment.requirement_index = null;
     if (mode === "private-primary") f.input.task_analysis.requirements[0]!.applies_to = [f.source.id];
-    if (mode === "only-added-target") f.input.task_analysis.requirements[1]!.text = f.condition;
+    if (mode === "only-added-target") f.input.task_analysis.requirements[1]!.text = f.condition; f.input.task_analysis.requirements[1]!.acceptance_rule = f.input.task_analysis.requirements[1]!.text;
     const answerId = mode === "different-actual" ? f.reference(1, "/content", f.row.length + 1).evidence_id : f.finding.evidence[0]!.evidence_id;
     const choice = f.inspect([], answerId);
     assert(choice.missing_requirement_indices.includes(1), mode);
@@ -308,8 +308,8 @@ test("shared USER eligibility requires complete own original provenance and the 
 test("multi-leaf common USER blocks require every real origin, while complete JSON containers retain eligibility", () => {
   const f = sharedUserPair(), first = "按股票代码和名称", second = "输出完整表格。", common = first + "\n" + second;
   f.raw.messages[0]!.content = [{ type: "text", text: first }, { type: "text", text: second + "\n" }, { type: "text", text: f.condition }];
-  f.input.task_analysis.requirements[0]!.text = common;
-  f.input.task_analysis.requirements[1]!.text = common + "\n\n" + f.condition;
+  f.input.task_analysis.requirements[0]!.text = common; f.input.task_analysis.requirements[0]!.acceptance_rule = f.input.task_analysis.requirements[0]!.text;
+  f.input.task_analysis.requirements[1]!.text = common + "\n\n" + f.condition; f.input.task_analysis.requirements[1]!.acceptance_rule = f.input.task_analysis.requirements[1]!.text;
   f.finding.evidence = [f.finding.evidence[0]!, f.reference(0, "/content/0/text"), f.reference(0, "/content/1/text", 0, second.length)];
   assert.deepEqual(f.inspect().eligible_findings, [{ finding_index: 0, covered_requirement_indices: [0, 1] }]);
   f.finding.evidence.pop(); assert.deepEqual(f.inspect().missing_requirement_indices, [1]);
@@ -322,7 +322,7 @@ test("multi-leaf common USER blocks require every real origin, while complete JS
 test("escaped USER JSON values preserve added-clause scope without treating keys, delimiters or metadata as norms", () => {
   const f = sharedUserPair(), condition = '如果提出 "投资建议"，须提示风险。\\路径\n保留条件。';
   (f.raw.messages[0]!.content as { text: string }[])[1]!.text = condition;
-  f.input.task_analysis.requirements[1]!.text = f.question + "\n" + condition;
+  f.input.task_analysis.requirements[1]!.text = f.question + "\n" + condition; f.input.task_analysis.requirements[1]!.acceptance_rule = f.input.task_analysis.requirements[1]!.text;
   const json = evidenceSources(f.raw.messages[0]).find(source => source.kind === "json")!,
     selected = selectEvidenceSource([json], "/content/1/text")!, valueStart = selected.end - JSON.stringify(condition).length + 1,
     ref = (start: number, end: number) => ({ evidence_id: evidenceId(f.source.id, 0, "json", "", start, end) });
@@ -345,7 +345,7 @@ function returnedNewsPair() {
     context: [{ role: "system", content: "只看12小时新闻。" }, { role: "user", content: question }] } };
   raw.messages[16] = { type: "final_answer", role: "assistant", content: answer };
   source.value = raw; f.input.candidates.A!.final_message_index = 16; f.input.candidates.A!.answer_generation = null;
-  f.input.task_analysis.requirements[0]!.text = question;
+  f.input.task_analysis.requirements[0]!.text = question; f.input.task_analysis.requirements[0]!.acceptance_rule = f.input.task_analysis.requirements[0]!.text;
   const reference = (path: string, candidate = "A") => {
     const origin = f.request.sources[candidate]!, selected = selectEvidenceSource(evidenceSources(raw.messages[6]), path)!;
     return { evidence_id: evidenceId(origin.id, 6, selected.source.kind, selected.source.path, selected.start, selected.end),

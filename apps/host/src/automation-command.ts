@@ -160,7 +160,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       discover: async (signal) => (await remote.discover(signal)).filter((day) => selected(day.date)),
       initialize: (day) => evaluationTargets(config, output, day),
       recover: async (job) => recoverEvaluation(config, output, job,
-        (await loadConfig(config.hostConfigs)).evaluation.execution.repairAttempts),
+        (await loadConfig(config.hostConfigs)).evaluation.execution),
       save: (current) => writeJson(file, current),
       event: async (event, job, detail) => {
         const context = { automation_id: config.id, ...(job ? { date: job.date, run_id: job.runIds.join(",") } : {}) };

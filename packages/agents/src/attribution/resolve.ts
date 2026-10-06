@@ -7,15 +7,15 @@ import {
   type TaskAnalysis,
   type ValidationIssue,
 } from "@eval/contracts";
-import { referenceMaterialIssues, resolveAttributionEvidence } from "./source-evidence.js";
+import { resolveAttributionEvidence } from "./source-evidence.js";
 import type { Evidence, ProblemSubmission } from "./types.js";
 import { resolveProblemSubmission } from "./responsibility.js";
-import schema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
+import schema from "../../../../schemas/attribution/judgment.schema.json" with { type: "json" };
 import { parseTraceTables } from "@eval/tools";
 import { instructionEvidenceContext } from "./instructions.js";
-import { correctnessSubmissionIssues, numericSubmissionIssues, submissionCoreRequirements, validateCriterionAssessments } from "./validate.js";
-import { numericLedgerIssues, resolveNumericChecks, type NumericSubmissionCheck } from "./numeric-ledger.js";
-import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, finalAnswerScope, submissionFindingEntries } from "./norm-directory.js";
+import { validateJudgment, submissionCoreRequirements } from "./validate.js";
+import { resolveNumericChecks, type NumericSubmissionCheck } from "./numeric-ledger.js";
+import { attributionNormDirectory, finalAnswerScope, submissionFindingEntries } from "./norm-directory.js";
 
 type EvidenceRef = { evidence_id: string; source?: string; observation?: string };
 type DraftFinding = {
@@ -27,12 +27,11 @@ type DraftFinding = {
 type DraftCriterionAssessment = { criterion_id: string; evidence: EvidenceRef[]; [key: string]: unknown };
 
 const validate = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
-export function resolveSubmission(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown {
-  if (!validate(draft)) throw new ValidationError(schemaIssues(validate.errors, draft));
-  const scope = validateCriterionAssessments(request, draft, "submission");
-  const core = submissionCoreRequirements(request, draft);
-  const independentIssues = [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...scope.issues, ...core.issues, ...correctnessSubmissionIssues(request, draft), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...referenceMaterialIssues(request)];
-  if (independentIssues.length) throw new ValidationError(independentIssues);
+export function resolveJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown {
+  const valid=validate(draft),issues=valid?[]:schemaIssues(validate.errors,draft);
+  issues.push(...validateJudgment(request,draft,audit));
+  if(issues.length)throw new ValidationError(issues);
+  const core=submissionCoreRequirements(request,draft);
   const available = (request.input.ground_truth as { available: boolean }).available;
   const errors: ValidationIssue[] = [];
   const instructionContext = instructionEvidenceContext(request);
@@ -70,8 +69,9 @@ export function resolveSubmission(request: AgentRequest, draft: unknown, audit: 
     // Responsibility indices refer only to the original submitted evidence, before program additions.
     const problem = finding.type === "problem"
       ? resolveProblemSubmission(request, finding.problem, selected, `${path}/problem`) : null;
-    const norm = finding.dimension === "instruction_following" && finding.norm_index !== null ? directory[finding.norm_index!] : undefined;
-    const requirementIndex = finding.dimension === "instruction_following" ? norm?.requirement_index ?? null : finding.assessment.requirement_index ?? null;
+    const ruleBound=Object.hasOwn(finding,"norm_index");
+    const norm = ruleBound && finding.norm_index !== null ? directory[finding.norm_index!] : undefined;
+    const requirementIndex = ruleBound ? norm?.requirement_index ?? null : finding.assessment.requirement_index ?? null;
     const { norm_index: _selection, ...canonicalFinding } = finding;
     let evidence = instructionContext.appendNorms(selected.filter((item): item is Evidence => item !== undefined),
       norm?.evidence ?? instructionContext.forRequirement(requirementIndex));

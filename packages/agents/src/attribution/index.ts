@@ -3,11 +3,13 @@ import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
-import { validateEvaluation, validateSubmission } from "./validate.js";
+import { validateEvaluation } from "./validate.js";
+import { resolveModelSubmission, validateModelSubmission } from "./submission.js";
+import { numericReferenceMaterials } from "./units.js";
 import { findingIssueContext } from "./finding-feedback.js";
-import { resolveSubmission } from "./resolve.js";
-import { numericReferenceDirectory } from "./units.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
+import { attributionFindingBasis } from "./finding-basis.js";
+export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
@@ -28,9 +30,27 @@ export const attributionProfile: AgentProfile = {
   modelSubmissionSchema: attributionSubmissionSchema,
   resultSchema,
   ...prompt,
+  jsonStringSubmission: true,
   renderPrompt(input, policy, failure) {
-    const groundTruth = input.ground_truth as { available: boolean; value: unknown };
-    return prompt.renderPrompt({ ...input, numeric_references: groundTruth?.available ? numericReferenceDirectory(groundTruth.value) : [] }, policy, failure);
+    const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
+    const answer = input.answer as Record<string, unknown>;
+    const { norm_directory: _norms, ...answerMaterial } = answer;
+    const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
+      requirement_index: Number(item.requirement_index ?? index) + 1 }));
+    const focus = input.task_focus as Record<string,unknown> | undefined;
+    const shown = { ...input, task_analysis: { ...analysis, requirements },
+      criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
+      criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
+      answer: answerMaterial,
+      finding_basis: attributionFindingBasis(input).map(({requirement_index:_requirement,norm_index:_norm,...choice})=>choice),
+      ...(focus ? { task_focus: { ...focus, common_requirements: Array.isArray(focus.common_requirements)
+        ? focus.common_requirements.map((item: any) => ({...item,requirement_index:item.requirement_index+1})) : focus.common_requirements } } : {}),
+    };
+    const numeric=numericReferenceMaterials(input);
+    return prompt.renderPrompt({ ...shown,
+      numeric_references: numeric.direct.map(item => ({...item,reference_index:item.reference_index+1})),
+      numeric_interpretations: numeric.interpreted.map(({expected,context})=>({expected,context})),
+    }, policy, failure);
   },
   toolNames,
   requiredReads: (request) => (request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({
@@ -38,9 +58,10 @@ export const attributionProfile: AgentProfile = {
     path: material.path, start: 0, end: material.total_chars,
   })),
   validate: validateEvaluation,
-  validateSubmission,
+  validateSubmission: validateModelSubmission,
   validationIssueContext: findingIssueContext,
-  resolve: resolveSubmission,
+
+  resolve: resolveModelSubmission,
 };
 export const attributionAgent: AgentDefinition = {
   id: "attribution",

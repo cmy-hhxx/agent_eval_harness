@@ -118,6 +118,8 @@ export class AgentRegistry {
       throw new Error(`Incomplete tool descriptions: ${binding.agent}/${binding.profile}`);
     if (typeof profile.submissionNudge !== "string" || !profile.submissionNudge.trim())
       throw new Error(`Missing submission nudge: ${binding.agent}/${binding.profile}`);
+    if (profile.fileSubmission && profile.jsonStringSubmission)
+      throw new Error("A submission has exactly one transport encoding");
     if (profile.evidenceSelections && !binding.projectModelInput)
       throw new Error(`Evidence selections require an owned material projection: ${binding.agent}/${binding.profile}`);
     const evidenceBank: EvidenceBank = [];
@@ -134,6 +136,7 @@ export class AgentRegistry {
         ...(profile.inspection ? { inspectionSchema: profile.inspection.modelSchema ?? profile.inspection.schema } : {}),
         toolNames: profile.toolNames,
         fileSubmission: profile.fileSubmission,
+        ...(profile.jsonStringSubmission ? {jsonStringSubmission:true} : {}),
         toolDescriptions: { ...profile.toolDescriptions },
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
@@ -227,7 +230,9 @@ export class AgentRegistry {
       [...new Map(issues.map(issue => [canonical(issue), issue])).values()]), audit.evidenceBank ?? []));
     let result: unknown = draft;
     try {
-      if (profile.resolve) result = profile.resolve(binding.request, draft, audit);
+      if (binding.resolveSubmission && profile.resolve) throw new Error("Submission binding must have one owner");
+      if (binding.resolveSubmission) result = binding.resolveSubmission(draft);
+      else if (profile.resolve) result = profile.resolve(binding.request, draft, audit);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       issues.push(...error.issues!);

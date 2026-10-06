@@ -24,7 +24,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
       calls++;
       const result = taskResult(options.spec);
       if (options.spec.evaluation.id === "rewrite")
-        for (const item of (result as { rewrites: { text: string }[] }).rewrites) item.text += `（修辞${calls}）`;
+        (result as {texts:string[]}).texts = (result as {texts:string[]}).texts.map(text => text + `（修辞${calls}）`);
       const submission = await submitFor(options, draftFor(options.spec, result));
       assert.equal(submission.isError, undefined, JSON.stringify(submission));
     }, async abort() {}, async dispose() {} };
@@ -142,7 +142,7 @@ for (const configured of [false, true]) test(`repeated comparison rewrite prepar
       await inspectFor(options); calls++;
       const result = taskResult(options.spec);
       if (options.spec.evaluation.id === "rewrite") {
-        for (const item of (result as { rewrites: { text: string }[] }).rewrites) item.text = "";
+        (result as {texts:string[]}).texts.fill("");
         for (let index = 0; index <= options.spec.policy.repairAttempts; index++)
           assert.equal((await submitFor(options, draftFor(options.spec, result))).isError, true);
       } else assert.equal((await submitFor(options, draftFor(options.spec, result))).isError, undefined);

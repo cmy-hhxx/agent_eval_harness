@@ -1,11 +1,15 @@
 export interface ChartSpec {
-  type: "bar" | "line" | "pie";
+  type: "bar" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram";
   title: string;
   scope: string;
   unit: string;
   source: string;
   categories: string[];
   series: { name: string; values: (number | null)[] }[];
+  xValues?: (number | null)[];
+  xLabel?: string;
+  xUnit?: string;
+  annotations?: { categoryIndex: number; seriesIndex: number; note: string }[];
 }
 
 /** Line charts use calendar coordinates, never equal spacing for unrelated cases. */
@@ -33,6 +37,27 @@ export function validateChart(chart: ChartSpec): void {
   }
   if (!chart.series.some((series) => series.values.some((value) => value !== null)))
     throw new Error("图表没有可绘制的已知数值");
+  for (const annotation of chart.annotations ?? []) {
+    if (!chart.categories[annotation.categoryIndex] || !chart.series[annotation.seriesIndex]
+      || chart.series[annotation.seriesIndex].values[annotation.categoryIndex] === null
+      || (chart.type === "scatter" && chart.xValues?.[annotation.categoryIndex] == null))
+      throw new Error("重点标注必须指向实际存在的已知数据点");
+  }
+  if (chart.type === "scatter") {
+    if (chart.xValues?.length !== chart.categories.length || !chart.xLabel?.trim() || !chart.xUnit?.trim()
+      || chart.xValues.some(value => value !== null && !Number.isFinite(value)))
+      throw new Error("散点图需要与样本对应的横轴数值、指标名和单位");
+    const pairs = chart.series.reduce((sum, series) => sum + series.values.filter((value, index) => value !== null && chart.xValues![index] !== null).length, 0);
+    if (pairs < 3) throw new Error("散点图至少需要3个完整观测，不能从缺失值补造坐标");
+  }
+  if (chart.type === "dumbbell" && (chart.series.length !== 2 || chart.categories.length < 2))
+    throw new Error("差异点图需要两组同口径系列和至少两个比较项目");
+  if (["waterfall", "histogram"].includes(chart.type)) {
+    if (chart.series.length !== 1 || chart.categories.length < 2 || chart.series[0].values.some(value => value === null))
+      throw new Error("瀑布图和分布图需要一组至少两个完整实际数值");
+    if (chart.type === "waterfall" && !Number.isFinite(chart.series[0].values.reduce<number>((sum, value) => sum + value!, 0)))
+      throw new Error("瀑布图累计值必须有限");
+  }
   if (chart.type === "line") {
     const times = chart.categories.map(calendarTime);
     if (times.some((time, index) => index > 0 && time <= times[index - 1]))

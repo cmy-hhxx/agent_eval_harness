@@ -17,6 +17,31 @@ import { reportRun } from "@eval/workflows/comparison";
 import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
 
+test("stage content limits stop rejected attribution after its first submission even when global repairs are enabled",async()=>{
+  const {directory,config,modelForStage}=await fixtureConfig([[raw()],[],[raw()],[]]);
+  config.execution.repairAttempts=3;config.execution.stageRepairAttempts={attribution:0};
+  const plan=await buildPlan(config),calls=new Map<string,number>();
+  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return {
+    async run(){
+      calls.set(options.spec.taskId,(calls.get(options.spec.taskId)??0)+1);
+      if(options.spec.evaluation.id==="attribution"){
+        assert.equal(options.spec.policy.repairAttempts,0);
+        assert.equal((await submitFor(options,invalidDraft(options.spec))).isError,true);
+      }else assert.equal((await submitFor(options,draftFor(options.spec,taskResult(options.spec)))).terminate,true);
+    },async abort(){},async dispose(){},
+  };}};
+  const worker=await startWorker(backend,path.join(directory,"worker"));
+  try{
+    await runEvaluation({...services,runId:"first-submission",output:config.output,config,engine:"pi",identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,
+      plan,policy:config.execution,modelForStage,concurrency:1,retries:1,retryDelaySeconds:0,workerUrls:[worker.url]});
+    const state=await readRunState(path.join(config.output.path,"first-submission"));
+    for(const task of plan.tasks.filter(task=>task.stage==="attribution")){
+      assert.equal(calls.get(task.id),1);assert.equal(state.manifest.states[task.id].status,"failed");
+      assert.equal(state.manifest.states[task.id].failure?.contentSubmissions,1);
+    }
+  }finally{await worker.close();await rm(directory,{recursive:true,force:true});}
+});
+
 test("two workers execute dependency graph, archive receipts and reuse only same-run results", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw()], [raw()], [raw()], [raw()]]);
   config.comparisons = [
@@ -700,7 +725,7 @@ for (const interruption of ["content", "transport"] as const)
       if (targeted) { attempts++; repairBudgets.push(options.spec.policy.repairAttempts); }
       return { async run() {
         await inspectFor(options);
-        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings?: { importance: string }[] };
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths?: { importance: string }[] };
         if (!targeted || resumed) {
           if (targeted) {
             assert.equal(options.spec.recovery?.contentSubmissions, 4, "resume preserves historical submission costs");
@@ -712,7 +737,7 @@ for (const interruption of ["content", "transport"] as const)
         }
         const count = attempts === 1 ? 3 : 1;
         for (let index = 0; index < count; index++) {
-          draft.findings![0].importance = `invalid-${++submissions}`;
+          draft.strengths![0].importance = `invalid-${++submissions}`;
           const rejected = await submitFor(options, draft);
           assert.equal(rejected.isError, true, "changing the actual error does not trip the identical-error stop");
         }
@@ -764,7 +789,7 @@ test("an unknown final submission ledger stops automatic retries and permits exp
     if (targeted) { attempts++; repairBudgets.push(options.spec.policy.repairAttempts); }
     return { async run() {
       await inspectFor(options);
-      const draft = draftFor(options.spec, taskResult(options.spec)) as { findings?: { importance: string }[] };
+      const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths?: { importance: string }[] };
       if (!targeted || resumed || attempts > 1) {
         if (targeted) submissions++;
         const accepted = await submitFor(options, draft);
@@ -773,7 +798,7 @@ test("an unknown final submission ledger stops automatic retries and permits exp
       }
       failedAttemptId = options.spec.attemptId;
       for (let index = 0; index < 3; index++) {
-        draft.findings![0].importance = `invalid-${++submissions}`;
+        draft.strengths![0].importance = `invalid-${++submissions}`;
         assert.equal((await submitFor(options, draft)).isError, true);
       }
       submissions++;

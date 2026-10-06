@@ -52,21 +52,23 @@ test("Rewrite returns exactly the requested slots and nothing else", () => {
 
   const empty = structuredClone(example.result);
   empty.rewrites[0]!.text = "";
-  assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|rewrites/);
+  assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|texts/);
 });
 
-test("rewrite length is editorial guidance rather than a hard rejection", () => {
+test("verdicts have a concrete length budget while individual evidence wording is not truncated", () => {
   const request = { agent: "rewrite", profile: "default", sources: {}, input: { kind: "comparison", items: [
-    { id: "tradeoff", label: "裁决短评", text: "A更好。" },
+    { id: "tradeoff", label: "裁决短评", text: "A更好。", preference:"A更好" },
     { id: "comparison.0.A.summary", label: "表现", text: "给出结果。" },
   ] } };
-  const result = { rewrites: [{ id: "tradeoff", text: "短".repeat(100) }, { id: "comparison.0.A.summary", text: "短".repeat(160) }] };
-  rewriteProfile.validate!(request, result, audit);
+  const result = { rewrites: [{ id: "tradeoff", text: "A更好："+"短".repeat(156) }, { id: "comparison.0.A.summary", text: "短".repeat(160) }] };
+  const issues=()=>rewriteProfile.validateSubmission!(request,{texts:result.rewrites.map(item=>item.text)},audit);
+  assert.deepEqual(issues(),[]);
   result.rewrites[0].text += "长";
-  rewriteProfile.validate!(request, result, audit);
-  result.rewrites[0].text = "A更好。";
+  assert(issues().some(issue=>issue.code==="rewrite_verdict_too_long"&&issue.path==="/texts/0"));
+  assert.equal(result.rewrites[0].text.length,161,"validation never truncates a submitted sentence");
+  result.rewrites[0].text = "A更好：给出了实际结果。";
   result.rewrites[1].text += "长";
-  rewriteProfile.validate!(request, result, audit);
+  assert.deepEqual(issues(),[]);
 });
 
 test("rewrite number fidelity is reviewed semantically instead of rejecting numeric tokens", () => {

@@ -157,7 +157,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     }
     if (task.stage === "clustering" && !state.receipts[task.id] && !selected.clustering.enabled) continue;
     if (task.stage === "rewrite" || state.receipts[task.id] || !tasks.has(task.id) || (task.data as TaskData).reviewOf ||
-      (task.data as TaskData).supersededBy || Object.values(task.dependencies).some((id) =>
+      Object.values(task.dependencies).some((id) =>
         previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
   }
   const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));

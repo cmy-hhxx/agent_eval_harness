@@ -35,8 +35,8 @@ test("shared Criteria source combinations keep instruction provenance in either 
     const common = criteriaSources(criteriaInput).find(source => source.kind === "context")!;
     assert.deepEqual(common.applies_to, []);
     const source_indices = normFirst ? [common.source_index, 1] : [1, common.source_index];
-    const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices },
-      { source_indices: [2] }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
+    const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices, text: "用JSON给出计算结果。" },
+      { source_indices: [2], text: "核查本项要求的实际交付。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
     criteriaProfile.validate!(criteriaRequest, task, audit);
     assert.deepEqual(task.requirements[0]!.applies_to, []);
     input.task_analysis = task;
@@ -114,14 +114,14 @@ test("a format finding with an explicitly cited complete private SYSTEM norm can
     data.result.decision_basis.comparisons[0]!.better_candidates = ["A"];
     data.result.ranking = [["A"], ["B"]];
     const acceptedSource = structuredClone(input.attributions);
-    assert.throws(() => validate(data.request, resolve(data)), (error: unknown) => error instanceof ValidationError &&
-      ["comparison_advantage_scope_mismatch", "comparison_advantage_finding_scope_mismatch", "decisive_finding_scope_mismatch"].some(code =>
+    assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
+      ["comparison_advantage_scope_mismatch", "comparison_advantage_finding_scope_mismatch", "decisive_finding_scope_mismatch", "preference_unproven"].some(code =>
         error.issues?.some(issue => issue.code === code)));
     assert.deepEqual(input.attributions, acceptedSource);
     data.result.decision_basis.comparisons[0]!.better_candidates = [];
     data.result.decision_basis.decisive_findings = [];
     data.result.ranking = [["A", "B"]];
-    validate(data.request, resolve(data));
+    validate(data.request, data.result);
   }
 });
 
@@ -130,22 +130,23 @@ test("mixed common and private SYSTEM blocks restrict any finding dimension unti
     const data = pair(), input = data.request.input as unknown as ComparisonInput;
     const common = `# 共同要求\n\n${input.task_analysis.requirements[0]!.text}`;
     const privateNorm = "# 自身输出规约\n\n回答须以风险提示开头。";
-    input.task_analysis.requirements[0]!.text = common;
+    input.task_analysis.requirements[0]!.text = common; input.task_analysis.requirements[0]!.acceptance_rule = input.task_analysis.requirements[0]!.text;
     for (const attribution of Object.values(input.attributions)) attribution.task_analysis = structuredClone(input.task_analysis);
     data.request.sources.A.value.messages[0] = { type: "message", role: "system", content: `${common}\n\n${privateNorm}` };
+    data.result.task_analysis=structuredClone(input.task_analysis);
     const finding = input.attributions.A.findings[0]!;
     finding.dimension = dimension;
     finding.assessment.requirement_index = null;
     finding.evidence.unshift(canonicalEvidence(data.request.sources.A.id, 0, `${common}\n\n${privateNorm}`));
     data.result.decision_basis.comparisons[0]!.better_candidates = ["A"];
     data.result.ranking = [["A"], ["B"]];
-    assert.throws(() => validate(data.request, resolve(data)), (error: unknown) => error instanceof ValidationError &&
+    assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
       error.issues?.some(issue => ["comparison_advantage_finding_scope_mismatch","comparison_advantage_scope_mismatch"].includes(issue.code)) === true);
     finding.evidence[0] = canonicalEvidence(data.request.sources.A.id, 0, common);
     data.result.task_analysis=structuredClone(input.task_analysis);
     validate(data.request, data.result);
     finding.evidence[0] = canonicalEvidence(data.request.sources.A.id, 0, privateNorm, "/content", common.length + 2);
-    assert.throws(() => validate(data.request, resolve(data)), /专有要求|来源规范.*共同 requirement/);
+    assert.throws(() => validate(data.request, data.result), /专有要求|来源规范.*共同 requirement/);
   }
 });
 
@@ -188,6 +189,7 @@ test("private norm detection requires all real content-leaf origins and does not
   assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
     error.issues?.some(issue => ["comparison_advantage_finding_scope_mismatch","comparison_advantage_scope_mismatch"].includes(issue.code)) === true);
   input.task_analysis.requirements[0]!.text += `\n\n${heading}\n${body}\n${exception}`;
+  input.task_analysis.requirements[0]!.acceptance_rule = input.task_analysis.requirements[0]!.text;
   for (const attribution of Object.values(input.attributions)) attribution.task_analysis = structuredClone(input.task_analysis);
   data.result.task_analysis=structuredClone(input.task_analysis);
     validate(data.request, data.result);
@@ -412,17 +414,17 @@ test("submissions reject source state fields and resolution preserves source cor
   assert.deepEqual(draft, submission(data.result,data.request), "resolution must not mutate the model submission");
   for (const field of ["meets_core", "core_failure_refs"]) {
     const invalid = structuredClone(draft);
-    Object.assign(invalid.assessments.A, { [field]: result.assessments.A[field as "meets_core" | "core_failure_refs"] });
+    Object.assign(invalid, { [field]: result.assessments.A[field as "meets_core" | "core_failure_refs"] });
     assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /additional properties/);
   }
   for (const field of ["status", "evidence_status"]) {
     const invalid = structuredClone(draft);
-    Object.assign(invalid.comparisons[0]!.assessments.A, { [field]: "met" });
+    Object.assign(invalid.comparisons[0]!, { [field]: "met" });
     assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /additional properties/);
   }
   const invalid = structuredClone(draft);
-  (invalid.assessments as Record<string, unknown>)["候选A"] = invalid.assessments.A;
-  delete invalid.assessments.A;
+  (invalid as unknown as Record<string, unknown>)["候选A"] = invalid.a_summary;
+  delete (invalid as unknown as Record<string,unknown>).a_summary;
   assert.throws(() => comparisonProfile.resolve!(data.request, invalid, audit), /additional properties|required property/);
 });
 
@@ -483,7 +485,8 @@ test("resolution aggregates applicable source criteria and preserves uncertain f
   assert.equal(uncertain.decision_basis.comparisons[0].assessments.A.evidence_status, "uncertain");
   validate(data.request, uncertain);
   data.result.decision_basis.comparisons[0].better_candidates = ["A"];
-  assert.throws(() => validate(data.request, resolve(data)), /相对优势需要两方|uncertain finding 的比较行/);
+  assert.throws(() => validate(data.request, resolve(data)), error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "comparison_advantage_unproven"));
 });
 
 test("resource slots exist only for valid original metrics and remain optional", () => {
@@ -521,18 +524,19 @@ test("Comparison requires exact pair candidate keys and complete row and finding
   const missingCandidate = structuredClone(data.result); delete (missingCandidate.decision_basis.comparisons[0].assessments as Record<string, unknown>).B;
   assert.throws(() => validate(data.request, missingCandidate), /同一行包含全部候选/);
   const missingStrength = structuredClone(data.result); missingStrength.decision_basis.comparisons[0].assessments.B.finding_indices = [];
-  assert.throws(() => validate(data.request, missingStrength), /B\.findings\[0\].*comparison_slots.*summary/);
+  assert.throws(() => validate(data.request, missingStrength), error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "comparison_finding_uncovered" && issue.candidate === "B" && issue.actual === 0));
   const badRef = structuredClone(data.result); badRef.decision_basis.comparisons[0].assessments.A.finding_indices = [99];
   assert.throws(() => validate(data.request, badRef), /只能引用该候选/);
   const missed = pair(); missed.request.input.attributions.A.findings.push({ ...missed.request.input.attributions.A.findings[0], type: "problem", importance: "medium" });
-  assert.throws(() => validate(missed.request, missed.result), /中高重要性问题/);
+  validate(missed.request, missed.result);
   Object.assign(data.request.input.candidates, { C: data.request.input.candidates.A });
   assert.throws(() => validate(data.request, data.result), /只比较 A、B/);
   const requestSchema = new Ajv2020({ strict: false }).compile(comparisonProfile.requestSchema);
   assert.equal(requestSchema(data.request.input), false);
 });
 
-test("strength coverage is derived from both attributions even when low, uncertain and non-decisive", () => {
+test("criterion facts remain readable without forcing low uncertain findings into every cell", () => {
   const data = pair(), input = data.request.input as unknown as ComparisonInput;
   data.result.decision_basis.decisive_findings = [];
   for (const label of ["A", "B"] as const) {
@@ -540,8 +544,7 @@ test("strength coverage is derived from both attributions even when low, uncerta
     input.attributions[label].findings[0].assessment.evidence_status = "uncertain";
     data.result.decision_basis.comparisons[0].assessments[label].finding_indices = [];
   }
-  assert.throws(() => validate(data.request,data.result),(error: unknown) => error instanceof ValidationError &&
-    ["A", "B"].every(candidate => error.issues?.some(issue => issue.code === "comparison_finding_uncovered" && issue.candidate === candidate)));
+  validate(data.request,data.result);
   const retained = resolve(data);
   validate(data.request,retained);
   for (const label of ["A", "B"] as const) {
@@ -623,14 +626,14 @@ test("unlocated instruction following remains commentary even when a comparison 
   data.result.decision_basis.decisive_findings.push({ candidate: "A", finding_index: 0 });
   assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
     !!error.issues?.some(issue => issue.code === "decisive_finding_scope_mismatch"));
-  input.task_analysis.requirements[0].text = "计算2+2并按用户要求给出可解析JSON。";
+  input.task_analysis.requirements[0].text = "计算2+2并按用户要求给出可解析JSON。"; input.task_analysis.requirements[0].acceptance_rule = input.task_analysis.requirements[0].text;
   for (const source of Object.values(input.attributions)) source.task_analysis = structuredClone(input.task_analysis);
   data.result.decision_basis.comparisons[1].criterion_ids = ["sum"];
   data.result.decision_basis.comparisons[1].better_candidates = ["A"];
   data.result.ranking = [["A"], ["B"]];
   const source = structuredClone(input.attributions);
   assert.throws(() => validate(data.request, resolve(data)), (error: unknown) => error instanceof ValidationError &&
-    ["comparison_advantage_scope_mismatch", "comparison_advantage_finding_scope_mismatch", "decisive_finding_scope_mismatch"].some(code =>
+    ["comparison_advantage_scope_mismatch", "comparison_advantage_finding_scope_mismatch", "decisive_finding_scope_mismatch", "preference_unproven"].some(code =>
       error.issues?.some(issue => issue.code === code)), "a comparison row cannot assign scope to an unlocated source finding");
   assert.deepEqual(input.attributions, source, "Comparison must not rewrite the accepted source association");
   data.result.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
@@ -714,7 +717,9 @@ test("common criteria require rows even when attribution has no finding", () => 
   data.result.task_analysis = structuredClone(data.request.input.task_analysis);
   for (const label of ["A", "B"] as const) data.request.input.attributions[label].task_analysis = structuredClone(data.request.input.task_analysis);
   for (const label of ["A", "B"] as const) data.request.input.attributions[label].criterion_assessments.push({ criterion_id: "format", status: "met", evidence_status: "established", summary: "清晰。", evidence: [] });
-  assert.throws(() => validate(data.request, data.result), /全部共同标准/);
+  assert.throws(() => validate(data.request, data.result), error => error instanceof ValidationError &&
+    ["A", "B"].every(candidate => error.issues!.some(issue => issue.code === "comparison_criterion_uncovered" &&
+      issue.candidate === candidate && issue.actual === "format")));
   data.result.decision_basis.comparisons.push({ aspect: "表达", criterion_ids: ["format"], importance: "low", better_candidates: [], assessments: { A: { summary: "清晰。", finding_indices: [], status: "met", evidence_status: "established" }, B: { summary: "清晰。", finding_indices: [], status: "met", evidence_status: "established" } } });
   validate(data.request, data.result);
 });
@@ -842,7 +847,7 @@ test("scope differences do not create an advantage and row states cannot strengt
   assert.throws(() => validate(uncertain.request, uncertain.result), (error: unknown) => {
     assert(error instanceof ValidationError);
     const unproven = error.issues?.find(issue => issue.code === "comparison_advantage_unproven");
-    assert.match(unproven?.message ?? "", /相对优势需要两方/);
+    assert.equal(unproven?.code, "comparison_advantage_unproven");
     assert.match(unproven?.message ?? "", /保留当前比较格/);
     assert.match(unproven?.message ?? "", /better_candidate=null/);
     return true;
@@ -940,7 +945,7 @@ test("first feedback combines malformed Comparison with each unviewed candidate 
     attachments: [{ type: "image", mimeType: "image/png", data: "AA==" }],
   });
   const draft = submission(data.result,data.request);
-  draft.assessments.A!.summary = 7 as unknown as string;
+  draft.a_summary = 7 as unknown as string;
   const registry = new AgentRegistry([comparisonAgent]);
   const binding = { agent: "comparison", profile: "default", request: data.request };
   const before = structuredClone({ request: data.request, draft });

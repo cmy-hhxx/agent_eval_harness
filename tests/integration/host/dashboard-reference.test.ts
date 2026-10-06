@@ -6,7 +6,7 @@ import path from "node:path";
 import { loadConfig } from "@eval/host-app/config";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { attributionAgent } from "@eval/agents/attribution";
-import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, type JsonSchema } from "@eval/contracts";
+import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, SUBMISSION_JSON_SCHEMA, type JsonSchema } from "@eval/contracts";
 import { sharedPromptResources } from "@eval/prompts";
 import { builtinTools } from "@eval/tools";
 import { dashboardReference } from "../../../apps/host/src/dashboard-reference.js";
@@ -36,8 +36,9 @@ test("reference definitions distinguish source selections, derived comparisons a
   try {
     click('[data-section="contracts"]');
     click('[data-stage="rewrite"]');
-    assert.equal(document.querySelector('[data-document="submission"]'), null, "shared schemas have only one output tab");
-    assert.equal(document.querySelector('[data-document="result"]').textContent, "提交 / 结果 Schema");
+    assert(document.querySelector('[data-document="submission"]'), "model text arrays have a separate submission contract");
+    assert.equal(document.querySelector('[data-document="result"]').textContent, "结果 Schema");
+    click('[data-document="result"]');
     assert.equal(document.querySelector(".definition-source").textContent, "schemas/rewrite/result.schema.json");
     click('[data-stage="criteria"]');
     assert.equal(document.querySelector('[data-document="result"]').textContent, "结果 Schema");
@@ -109,11 +110,11 @@ test("reference profiles expose independent inspection and the current canonical
     assert.equal(primary.requestBoundSubmission, true);
     assert.equal(verification.requestBoundSubmission, false);
     for (const stage of reference.stages) for (const profile of stage.profiles) {
-      assert.equal(profile.fileSubmission, stage.id === "attribution" || stage.id === "comparison");
+      assert.equal(profile.fileSubmission, stage.id === "comparison");
       assert.deepEqual(Object.keys(profile.toolSchemas), Object.keys(profile.toolDescriptions));
       for (const [name, schema] of Object.entries(profile.toolSchemas)) {
         assert.deepEqual(schema, name === "submit_evaluation_file" || name === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA
-          : name === "submit_evaluation" ? profile.schemas.modelSubmission ?? profile.schemas.submission ?? profile.schemas.result
+          : name === "submit_evaluation" ? profile.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : profile.schemas.modelSubmission ?? profile.schemas.submission ?? profile.schemas.result
           : name === "inspect_material" ? profile.schemas.modelInspection : builtinTools.find((tool) => tool.name === name)!.inputSchema);
         assert(profile.sources.toolSchemas.includes("packages/prompts/resources/tools/" + name + ".md"));
       }

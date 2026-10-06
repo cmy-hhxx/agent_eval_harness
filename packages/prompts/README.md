@@ -15,9 +15,9 @@
 
 Workflow 提供 `task_focus` 时，先用 `shared/task-focus.md` 呈现，再放阶段 instructions 与完整材料；展示材料移去重复键，可信输入保持原样。focus 只重复原问、目标、真实标准、可见最终回答、原用户时刻和共同要求，不代替完整材料或改变证据。
 
-Attribution 与 Comparison（含核验）固定 `fileSubmission=true`，用 `execute_code` 写入完整 JSON 文件，再通过 `submit_evaluation_file` 只提交相对 path；核验首查的 `inspect_material` 同样只接收 path，成功后才提供最终提交工具。工具描述附程序给出的 `file_content_schema`，读取文件后执行相同的严格校验，首查与最终提交共用内容预算。Criteria、Rewrite、Clustering 通过 `submit_evaluation` 直接提交完整 JSON。完整阶段、文件错误与预算规则见[归因与判决](../../docs/contract.md#归因与判决)和[工具架构](../../docs/architecture.md#新工具)。
+Comparison（含核验）固定 `fileSubmission=true`，用 `execute_code` 写入完整 JSON 文件，再通过 `submit_evaluation_file` 只提交相对 path；核验首查的 `inspect_material` 同样只接收 path，成功后才提供最终提交工具。工具描述附程序给出的 `file_content_schema`，读取文件后执行相同的严格校验，首查与最终提交共用内容预算。Criteria、Rewrite、Clustering 通过 `submit_evaluation` 直接提交对象。Attribution 使用同工具的 json 字符串字段，由 Worker 解码后验证完整正文，原生参数只有一层，不使用模型写文件。完整阶段、文件错误与预算规则见[归因与判决](../../docs/contract.md#归因与判决)和[工具架构](../../docs/architecture.md#新工具)。
 
-阶段提示词只写实际材料下的判断动作。Criteria 选择原文来源，Attribution 一次核查本方交付及归责，Comparison 使用已接受归因在固定槽比较；可选 verification 先隐藏上游判词再揭示，独立记录核验结果；默认开启的 Rewrite 只润色文本槽，可显式关闭；后置 Clustering 维护问题类，执行后同样默认改写。模型选择数字证据或来源编号，程序保存真实坐标、关联和正式结果；详细提交形状见[各阶段契约](../../docs/contract.md#输入与输出的分层)。
+阶段提示词只写实际材料下的判断动作。Criteria 选择原文并拆解验收点，Attribution 按序核查本方交付及归责，必要时 Workflow 在首次对比前准备一轮归因补查，Comparison 使用已接受事实在固定槽比较；可选 verification 先隐藏上游判词再揭示，独立记录核验结果；默认开启的 Rewrite 只润色文本槽，可显式关闭；后置 Clustering 维护问题类，执行后同样默认改写。模型选择数字证据或来源编号，程序保存真实坐标、关联和正式结果；详细提交形状见[各阶段契约](../../docs/contract.md#输入与输出的分层)。
 
 ## 提示词写法
 

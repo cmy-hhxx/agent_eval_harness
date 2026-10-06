@@ -65,8 +65,6 @@ export interface ComparisonInput {
 }
 export interface ComparisonVerificationInput extends ComparisonInput {
   comparison_draft: ComparisonResult;
-  /** Unclosed original discoveries from the accepted parent verification, revealed only after fresh inspection. */
-  pending_concerns?: ComparisonMaterialInspection["concerns"];
 }
 /** A source-grounded check of a program-bound applicable requirement, without a new attribution or verdict. */
 export interface ComparisonVerificationCheck {
@@ -91,9 +89,6 @@ export interface ComparisonConcernMatch {
 }
 export interface ComparisonVerificationSubmission {
   concern_matches: ComparisonConcernMatch[];
-  /** Only carried concerns may be refuted, with actual original evidence rather than a new source judgment. */
-  concern_refutations: { concern_index: number; answer_evidence: ComparisonVerificationCheck["answer_evidence"];
-    source_evidence: ComparisonVerificationCheck["source_evidence"]; observation: string }[];
   /** Only nonempty review choices are submitted; the program owns the full row associations. */
   source_reviews: { slot_index: number; candidate: string; reason: string }[];
 }
@@ -138,18 +133,20 @@ export interface ComparisonSlot {
   aspect: string;
   criterion_ids: string[];
   shared: boolean;
-  kind: "criterion" | "finding" | "resource";
+  kind: "criterion" | "resource";
   optional: boolean;
   finding_indices: Record<string, number[]>;
 }
 export interface SubmittedComparison {
   importance: "high" | "medium" | "low";
   better_candidate?: string | null;
-  assessments: Record<string, { summary: string }>;
+  a_summary: string;
+  b_summary: string;
 }
 /** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
 export interface ComparisonSubmission {
-  assessments: Record<string, { summary: string }>;
+  a_summary: string;
+  b_summary: string;
   comparisons: (SubmittedComparison | null)[];
   preference?: string | null;
   tradeoff: string;

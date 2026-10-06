@@ -1,6 +1,6 @@
 export { presentSource, type SourcePresentation } from "./source-presentation.js";
 export type Engine = "pi" | "prime";
-export { evidenceId, evidenceSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
+export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
 export * from "./evidence-selection.js";
 export { mergeRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars } from "./required-reading.js";
 export * from "./automations.js";
@@ -14,6 +14,8 @@ export interface Policy {
   idleTimeoutSeconds: number;
   maxToolCalls: number;
   repairAttempts: number;
+  /** Explicit content-repair limits by workflow stage; omitted stages use repairAttempts. */
+  stageRepairAttempts?: Record<string, number>;
   codeTimeoutSeconds: number;
   maxOutputChars: number;
   maxTokens?: number;
@@ -49,6 +51,8 @@ export interface EvaluationSpec {
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
+  /** Transport the final JSON body as one string to avoid provider object-array coercion. */
+  jsonStringSubmission?: boolean;
   /** Model-facing descriptions for exactly the selected and submission tools. */
   toolDescriptions: Record<string, string>;
   /** One bounded follow-up when a session ends without an accepted submission. */
@@ -71,6 +75,10 @@ export const SUBMISSION_FILE_SCHEMA: JsonSchema = {
   additionalProperties: false,
   required: ["path"],
   properties: { path: { type: "string", minLength: 1 } },
+};
+export const SUBMISSION_JSON_SCHEMA: JsonSchema = {
+  type: "object", additionalProperties: false, required: ["json"],
+  properties: { json: { type: "string", minLength: 2 } },
 };
 export interface EngineIdentity {
   engine: Engine;
@@ -422,6 +430,7 @@ export interface AgentProfile {
   submissionNudge: string;
   toolNames: string[];
   fileSubmission: boolean;
+  jsonStringSubmission?: boolean;
   toolDescriptions: Record<string, string>;
   /** Task material on its own for inspection; policy and recovery are added per attempt. */
   renderPrompt(input: JsonObject, policy?: Policy, recovery?: FailureContext): string;
@@ -447,6 +456,8 @@ export interface AgentBinding {
   inspectionInput?: JsonObject;
   /** Workflow-owned projection of generated evidence envelopes; exclude all original source values. */
   projectModelInput?(input: JsonObject, bank: import("./evidence-selection.js").EvidenceBank): JsonObject;
+  /** Workflow-owned identity binding after submission validation; the Agent still validates the formal result. */
+  resolveSubmission?(value: unknown): unknown;
 }
 export interface WorkflowDefinition {
   id: string;
@@ -462,7 +473,6 @@ export interface WorkflowDefinition {
   advance?(task: PlannedTask, receipt: SubmissionReceipt, state: RunState, inputs: Readonly<Record<string, unknown>>): {
     tasks: PlannedTask[];
     replace?: PlannedTask[];
-    blocked?: string[];
   };
   /** A business-owned admission gate, also evaluated when resuming accepted dependencies. */
   blockedReason?(task: PlannedTask, dependencies: Record<string, SubmissionReceipt>): string | undefined;

@@ -47,7 +47,7 @@ flowchart LR
 
 公开入口、依赖和验证入口见[模块地图](modules/README.md)。跨包代码依赖只使用 `@eval/*` 公开导出；根目录 `schemas/` 是集中管理的 JSON 资源模块，由构建步骤复制到运行目录。Host 不识别候选或判决，Data 不包含评测规则，Runtime 不负责跨任务调度，Contracts 不包含文件、网络或 SDK 实现。Agent 之间禁止互相导入；Workflow 将前置结果映射为下一 Agent 的输入。
 
-Comparison Workflow 默认将每个候选对规划为一个 `default` 任务，依赖共同 Criteria 与双方已接受 Attribution。接受后直接写正式 `comparison.jsonl`；改写和交付引用该节点。归因、对比文案默认自动改写，可显式关闭。聚类默认不进入主线，后置执行后默认改写；主线不安排独立核验或自动归因复核。
+Comparison Workflow 默认将每个候选对规划为一个 `default` 任务，依赖共同 Criteria 与双方已接受 Attribution。接受的 `decided` 结果写入正式 `comparison.jsonl`，`needs_review` 写入 `comparison-review.jsonl`；改写和交付引用正式节点。归因、对比文案默认自动改写，可显式关闭。聚类默认不进入主线，后置执行后默认改写；首次对比前，未对齐的共同范围关键问题可触发一轮定向归因补查；主线不安排事后独立核验。补查与已接受结果的边界见[归因与判决](contract.md#归因与判决)。
 
 显式 `verify-comparisons` 为已接受正式对比准备独立 `verification` 任务，使用新的 UUID 和只含核验的执行范围；结果写 `comparison-verification.jsonl`。核验请求保留完整可信材料，首查隐藏上游归因及排名，成功后再揭示。Registry/Host 持久化检查点，Worker 的首查与最终提交共用内容预算；恢复重新验证可信检查点。核验仅记录确认或疑点，不替换正式结果，不触发归因重做或修改下游依赖。协议见[数据契约](contract.md)。
 
@@ -61,7 +61,7 @@ Host 是单一写入者。每个任务可有多个 attempt，只有当前有效 
 
 `.run-lock` 排除第二个 Host：完整 owner 先写入临时文件，再排他原子发布，竞争者不会读到初始化中的空文件。探测或回收前校验 owner 的正整数 PID 与非空 token；进程不存在时回收陈旧锁。已存在的锁文件内容不完整，或目录中遗留 `.run-lock.reclaim`（即使 `.run-lock` 已不存在），则拒绝继续，确认原进程停止后再清理。会话 owner 探测复用同一锁校验。共用日志锁对活跃持有者与获取竞态作有界等待；尚未写完的锁 JSON 只给一秒初始化缓冲，PID/token 无效或遗留恢复标记则立即拒绝。锁不提供跨机高可用。
 
-每个 Worker 同时运行一个 attempt，独立会话、配置目录、材料副本、代码目录和日志；会话与临时工作目录清理完成后才对外报告最终状态。默认 Host 只保留 `state.json` 中的收据、状态和用量，已接受收据同时固化产出它的 `evaluatorVersion` 和解析后的判官模型 ID，不保存模型连接配置；托管 Worker 使用系统临时目录并在结束时清除。开启 debug 后，参数、状态、用量、失败原因及未接受提交合并到 `_internal/` 的 `attempt.json`，事件单独压缩；记录与工具产物收齐后才释放 Worker 副本。失联先查收据，无收据才可重试。Host 仅在当前活跃 attempt 保留执行 spec；结束、替换或成功提交后释放其提示词及恢复材料，提交重发仍按持久化收据校验。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
+每个 Worker 同时运行一个 attempt，独立会话、配置目录、临时材料、代码目录和事件记录；会话与临时工作目录清理完成后才对外报告最终状态。默认 Host 只保留 `state.json` 中的收据、状态和用量，已接受收据同时固化产出它的 `evaluatorVersion` 和解析后的判官模型 ID，不保存模型连接配置；托管 Worker 使用系统临时目录并在结束时清除。开启 debug 后，参数、状态、用量、失败原因及未接受提交合并到 `_internal/` 的 `attempt.json`，事件单独压缩；记录与工具产物收齐后才释放 Worker 副本。失联先查收据，无收据才可重试。Host 仅在当前活跃 attempt 保留执行 spec；结束、替换或成功提交后释放其提示词及恢复材料，提交重发仍按持久化收据校验。Host 管理的失效 Worker 会被替换，外部失效 Worker 需调用方重启后恢复。
 
 ## HTTP 协议
 
@@ -109,7 +109,7 @@ Workflow.bind 必传当前任务清单，Host、复核与离线校验按共同 C
 
 [通用契约](../packages/contracts/src/index.ts)区分以下接口：
 
-- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、本地提交 Schema、接受结果 Schema、引用展开及业务校验；可选 `modelSubmissionSchema(request)` 按可信请求生成模型参数 Schema，不使用展示投影，也不改变本地校验。可选 `validateSubmission` 安全检查部分或结构无效的草稿，独立业务错误与结构错误合并反馈；Attribution 的可识别引用坐标同样提前检查，不等待其他结构或覆盖错误修完。全部通过才校验正式结果。Worker 收到的 `EvaluationSpec.outputSchema` 用于向模型描述提交参数。
+- `AgentDefinition` 登记能力；`AgentProfile` 配套定义提示词、请求 Schema、本地提交 Schema、接受结果 Schema、引用展开及业务校验；可选 `modelSubmissionSchema(request)` 按可信请求生成模型参数 Schema，不使用展示投影，也不改变本地校验。可选 `validateSubmission` 安全检查部分或结构无效的草稿，独立业务错误与结构错误合并反馈；Attribution 的可识别引用坐标同样提前检查，不等待其他结构或覆盖错误修完。全部通过才校验正式结果。Worker 收到的 `EvaluationSpec.outputSchema` 用于向模型描述提交参数。 `jsonStringSubmission` 将原生参数限制为单个 json 字符串，正文 Schema 放在 json_content_schema；Worker 原样解析、校验并记录正文，语法错误消耗内容预算，不做自动补全。与 fileSubmission 互斥。
 - `WorkflowDefinition` 规划任务和依赖，恢复输入，将原始记录与前置收据映射为 `AgentBinding`；可选同步 `advance` 规划已验证收据的后续任务，Host 串行提交收据、任务变更和结果，持久化失败时回滚此次任务变更。`blockedReason` 在依赖已接受后检查下游是否仍需等待；可选核验没有指向正式对比改写或聚类的下游依赖。
 - `RunRepository` 读写状态，为每个 run 创建结果写入器。Data 接收 Workflow 的纯 `RunCodec` 与结果转换函数，负责当前状态结构和 JSONL 转换；`OutputTarget` 指定目标，`RunLayout` 是 run 目录结构的唯一 owner。
 - `InputSource` / `SourceReader` 描述一个版本的来源（单文件或递归目录）并在 Data 中解析，Workflow 只处理解析后的记录。

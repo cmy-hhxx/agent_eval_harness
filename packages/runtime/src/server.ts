@@ -7,6 +7,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
   SUBMISSION_FILE_SCHEMA,
+  SUBMISSION_JSON_SCHEMA,
   submissionToolNames,
   type AgentBackend,
   type AgentSession,
@@ -25,7 +26,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { ArtifactStore, exists, readJson, writeJson } from "@eval/data";
-import { HttpError, canonical, errorText, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
+import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
 import { body, json, listen, request } from "./http.js";
 import { createRegistry, textResult, ToolRuntime, type ToolRegistry, type ExecutableTool } from "@eval/tools";
 import { contentToolName, modelEventForLog } from "./sdk-utils.js";
@@ -264,7 +265,7 @@ export async function startWorker(
           isError: true,
         };
       };
-      const submitExclusive = async (load: () => Promise<unknown>) => {
+      const submitExclusive = async (load: () => Promise<unknown>, jsonText = false) => {
         if (accepted)
           return {
             ...textResult({
@@ -279,6 +280,12 @@ export async function startWorker(
         try {
           result = await load();
         } catch (error) {
+          if (jsonText) {
+            submissions++;
+            runtime.clearDraftWrite();
+            return rejected(error instanceof ValidationError ? error.issues! : [{category:"structure",code:"submission_json_invalid",path:"/json",
+              message:"json 必须是完整 JSON 对象的文本，不接受 XML、Markdown、数组或标量："+errorText(error)}],failure.draft,true,false);
+          }
           return rejectedFile(error);
         }
         submissions++;
@@ -419,14 +426,29 @@ export async function startWorker(
         }
         throw new Error("Host did not acknowledge material inspection");
       });
-      const submitResult = (load: () => Promise<unknown>) => {
+      const submitResult = (load: () => Promise<unknown>, jsonText = false) => {
         // Inspection and final submissions reserve, load and validate under one attempt-local queue.
-        return enqueueContent(() => submitExclusive(load));
+        return enqueueContent(() => submitExclusive(load, jsonText));
       };
+      const validateJsonEnvelope = ajv.compile(SUBMISSION_JSON_SCHEMA);
       const submit: ExecutableTool = {
         name: "submit_evaluation",
-        inputSchema: spec.evaluation.outputSchema,
-        execute: (_context, result) => submitResult(async () => result),
+        inputSchema: spec.evaluation.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : spec.evaluation.outputSchema,
+        execute: (_context, result) => submitResult(async () => {
+          if (!spec.evaluation.jsonStringSubmission) return result;
+          if (!validateJsonEnvelope(result)) throw new Error("参数只包含 json 字符串");
+          const text=(result as {json:string}).json;
+          let decoded:unknown;
+          try { decoded=JSON.parse(text); }
+          catch(error) {
+            const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
+            throw new ValidationError([{category:"structure",code:"submission_json_invalid",path:"/json",
+              message:"JSON 正文语法错误，不进行自动修补："+errorText(error),
+              actual:{position,excerpt:text.slice(Math.max(0,position-100),position+100)}}]);
+          }
+          if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("评审正文必须为对象");
+          return decoded;
+        },Boolean(spec.evaluation.jsonStringSubmission)),
       };
       const submitFile: ExecutableTool = {
         name: "submit_evaluation_file",
@@ -443,7 +465,9 @@ export async function startWorker(
         ...tool,
         description: spec.evaluation.toolDescriptions[tool.name] + (tool.name === "inspect_material" && spec.evaluation.fileSubmission && spec.evaluation.inspectionSchema
           ? "\n" + JSON.stringify({ file_content_schema: spec.evaluation.inspectionSchema }) :
-          tool.name === "submit_evaluation_file" ? "\n" + JSON.stringify({ file_content_schema: spec.evaluation.outputSchema }) : ""),
+          tool.name === "submit_evaluation_file" ? "\n" + JSON.stringify({ file_content_schema: spec.evaluation.outputSchema }) :
+          tool.name === "submit_evaluation" && spec.evaluation.jsonStringSubmission
+            ? "\n"+JSON.stringify({json_content_schema:spec.evaluation.outputSchema}) : ""),
       }));
       attempt.session = await backend.createSession({
         spec,

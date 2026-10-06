@@ -8,24 +8,22 @@ import example from "./fixtures/example.json" with { type: "json" };
 
 const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 
-test("nested candidate feedback shows the sibling shape without moving or accepting the draft", () => {
+test("missing cell feedback shows the flat row shape without moving or accepting the draft", () => {
   const request = structuredClone(example.request), registry = new AgentRegistry([comparisonAgent]);
   const draft = requestComparisonSubmission(request, structuredClone(example.result) as ComparisonResult);
   const row = draft.comparisons[0]!;
-  const cells = row.assessments as Record<string, Record<string, unknown>>;
-  cells.A!.B = cells.B;
-  delete cells.B;
+  delete (row as unknown as Record<string,unknown>).b_summary;
   const before = structuredClone(draft);
   assert.throws(() => registry.resolve({ agent: "comparison", profile: "default", request }, draft, audit), (error: unknown) => {
     assert(error instanceof ValidationError);
-    const issue = error.issues!.find(issue => issue.path === "/comparisons/0/assessments/B")!;
+    const issue = error.issues!.find(issue => issue.path === "/comparisons/0/b_summary")!;
     const expected = issue.expected as Record<string, any>;
-    assert.equal(expected.missingProperty, "B");
+    assert.equal(expected.missingProperty, "b_summary");
     assert.equal(expected.target.slot_index, 0);
     assert.equal(expected.target.path, "/comparisons/0");
-    assert.deepEqual(expected.submission_shape.properties.assessments.required, ["A", "B"]);
-    assert.deepEqual(Object.keys(expected.submission_shape.properties.assessments.properties.A.properties), ["summary"]);
-    assert.deepEqual(Object.keys(expected.submission_shape.properties.assessments.properties.B.properties), ["summary"]);
+    assert.deepEqual(expected.submission_shape.required, ["importance","a_summary","b_summary"]);
+    assert.equal(expected.submission_shape.properties.a_summary.type,"string");
+    assert.equal(expected.submission_shape.properties.b_summary.type,"string");
     return true;
   });
   assert.deepEqual(draft, before);
@@ -55,7 +53,7 @@ test("non-object submissions receive the root container instead of a candidate c
     const issue = error.issues!.find(issue => issue.path === "/" && issue.code === "schema_type")!;
     const expected = issue.expected as Record<string, any>;
     assert.equal(expected.target.path, "/");
-    assert.deepEqual(expected.submission_shape.required, ["assessments", "comparisons", "tradeoff"]);
+    assert.deepEqual(expected.submission_shape.required, ["a_summary", "b_summary", "comparisons", "tradeoff"]);
     return true;
   });
 });

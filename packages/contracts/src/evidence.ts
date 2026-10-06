@@ -71,6 +71,21 @@ export function evidenceSources(message: unknown): { kind: "text" | "json"; path
   ];
 }
 
+/** Actual message prose, excluding modality labels, MIME types, URLs and other envelope metadata. */
+export function messageContentSources(message: unknown): { kind: "text"; path: string; text: string }[] {
+  const paths = new Set<string>();
+  const visit = (value: unknown, path: string) => {
+    if (typeof value === "string") { paths.add(path); return; }
+    if (Array.isArray(value)) { value.forEach((item, index) => visit(item, `${path}/${index}`)); return; }
+    if (!value || typeof value !== "object") return;
+    const node = value as Record<string, unknown>;
+    for (const key of ["text", "content"]) if (Object.hasOwn(node, key)) visit(node[key], `${path}/${key}`);
+  };
+  if (message && typeof message === "object") visit((message as Record<string, unknown>).content, "/content");
+  return evidenceSources(message).flatMap(source => source.kind === "text" && source.text.length && paths.has(source.path)
+    ? [{ ...source, kind: "text" as const }] : []);
+}
+
 /** Presence only; image observations and prior viewing remain separate audit requirements. */
 export function evidenceImageAvailable(value: unknown): boolean {
   if (typeof value === "string") return /^data:(image\/[\w.+-]+);base64,([\s\S]+)$/iu.test(value);

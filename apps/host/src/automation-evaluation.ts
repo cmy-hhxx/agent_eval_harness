@@ -1,5 +1,5 @@
 import path from "node:path";
-import { REMOTE_MODELS, type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
+import { REMOTE_MODELS, type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition, type Policy } from "@eval/contracts";
 import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
@@ -86,7 +86,8 @@ function limitedCheckpoint(state: Checkpoint, limit: number): Checkpoint {
 }
 
 export function isAutomationTask(task: { stage: string; data: unknown }): boolean {
-  return task.stage !== "clustering" && (task.data as { rewriteOf?: { stage: string } }).rewriteOf?.stage !== "clustering";
+  const data = task.data as { verificationAudit?: boolean; rewriteOf?: { stage: string } };
+  return task.stage !== "clustering" && !data.verificationAudit && data.rewriteOf?.stage !== "clustering";
 }
 
 function automationPauses(state: Checkpoint) {
@@ -121,11 +122,13 @@ export function summarize(checkpoints: Checkpoint[], requireItems = true): Evalu
   return summary;
 }
 
+type RepairPolicy = Pick<Policy, "repairAttempts" | "stageRepairAttempts">;
+
 const temporary = (category: string) => category === "transport" || category === "interruption";
-function exhaustedContentReason(states: Checkpoint[], repairAttempts: number): string | undefined {
-  const cap = 1 + repairAttempts;
+function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): string | undefined {
   const exhausted = states.flatMap(state => Object.entries(state.tasks).flatMap(([id, task]) => {
     const count = task.failure?.contentSubmissions;
+    const cap = 1 + (policy.stageRepairAttempts?.[task.stage] ?? policy.repairAttempts);
     return isAutomationTask(task) && !task.receipt && Number.isSafeInteger(count) && count! >= cap
       ? [`${state.runId ?? "run"}/${id}: content submissions ${count}/${cap}`] : [];
   }));
@@ -137,14 +140,14 @@ function unavailableLedgerReason(states: Checkpoint[]): string | undefined {
     .map(([id]) => `${state.runId ?? "run"}/${id}`));
   return unknown.length ? `Final content submission ledger is unavailable: ${unknown.join(", ")}; explicit recovery is required.` : undefined;
 }
-export function automaticResumeStages(state: Checkpoint, repairAttempts: number): string[] {
-  if (exhaustedContentReason([state], repairAttempts) || unavailableLedgerReason([state])) return [];
+export function automaticResumeStages(state: Checkpoint, policy: RepairPolicy): string[] {
+  if (exhaustedContentReason([state], policy) || unavailableLedgerReason([state])) return [];
   return automationPauses(state).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
 }
 
 /** Authority comes from Host receipts and failure categories, never the dashboard's old error text. */
-export function checkpointRecovery(states: Checkpoint[], repairAttempts: number): "interrupted" | "transient" | undefined {
-  if (exhaustedContentReason(states, repairAttempts) || unavailableLedgerReason(states)) return;
+export function checkpointRecovery(states: Checkpoint[], policy: RepairPolicy): "interrupted" | "transient" | undefined {
+  if (exhaustedContentReason(states, policy) || unavailableLedgerReason(states)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
   const tasks = states.flatMap((state) => Object.values(state.tasks).filter(isAutomationTask));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
@@ -167,8 +170,8 @@ function terminalReviewReason(states: Checkpoint[]): string | undefined {
   const reviews: string[] = [];
   for (const state of states) {
     const entries = Object.entries(state.tasks);
-    const final = entries.filter(([, task]) => task.stage === "comparison" && !task.data.verificationAudit && !task.data.supersededBy &&
-      (task.data.reviewOf?.round ?? 0) >= 1 && task.status === "succeeded" && task.receipt?.status === "succeeded" &&
+    const final = entries.filter(([, task]) => task.stage === "comparison" && !task.data.verificationAudit &&
+      task.status === "succeeded" && task.receipt?.status === "succeeded" &&
       task.receipt.exported?.file === "comparison-review.jsonl");
     const descendants = new Set(final.map(([id]) => id));
     let changed = true;
@@ -184,11 +187,11 @@ function terminalReviewReason(states: Checkpoint[]): string | undefined {
       (task.status !== "blocked" || !descendants.has(id)))) return;
     reviews.push(...final.map(([id]) => id));
   }
-  return reviews.length ? `Independent review is unresolved after the final review: ${reviews.join(", ")}` : undefined;
+  return reviews.length ? `Comparison remains unresolved: ${reviews.join(", ")}` : undefined;
 }
 
-export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, repairAttempts: number, empty = false): EvaluationOutcome {
-  const blocked = exhaustedContentReason(states, repairAttempts) ?? unavailableLedgerReason(states);
+export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, empty = false): EvaluationOutcome {
+  const blocked = exhaustedContentReason(states, policy) ?? unavailableLedgerReason(states);
   if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
   const review = terminalReviewReason(states);
   if (review) return { status: "blocked", summary, transient: false, error: review };
@@ -199,14 +202,14 @@ export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSumma
       error: incompleteReason(states, summary) };
   }
   if (Object.values(summary.stages).some((stage) => stage.completed !== stage.total))
-    return { status: "retry", summary, transient: checkpointRecovery(states, repairAttempts) !== undefined,
+    return { status: "retry", summary, transient: checkpointRecovery(states, policy) !== undefined,
       error: incompleteReason(states, summary) };
   if (empty || !summary.stages.comparison?.total || summary.skipped || summary.issues)
     return { status: "waiting_inputs", summary };
   return { status: "completed", summary };
 }
 
-export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob, repairAttempts: number) {
+export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob, policy: RepairPolicy) {
   job.runIds = [`${config.runPrefix}${job.date}`];
   const saved = await checkpoint(output, job.runIds[0]);
   if (!saved) return;
@@ -214,7 +217,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !limited.tasks[id]) &&
       !automationPauses(limited).some((pause) => !temporary(pause.category))) return "interrupted";
   job.summary = summarize([saved]);
-  const exhausted = exhaustedContentReason([saved], repairAttempts), unknown = unavailableLedgerReason([saved]);
+  const exhausted = exhaustedContentReason([saved], policy), unknown = unavailableLedgerReason([saved]);
   if (exhausted || unknown && !job.resumePaused) {
     job.evaluation = "blocked"; job.nextEvaluationAt = 0;
     job.evaluationError = exhausted ?? unknown;
@@ -234,7 +237,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     return;
   }
   const complete = publishableComparisons(saved, true);
-  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit && !task.data.supersededBy);
+  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit);
   if (finalComparisons.length > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
   if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
@@ -243,7 +246,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     delete job.evaluationError;
     return;
   }
-  const recovery = checkpointRecovery([saved], repairAttempts);
+  const recovery = checkpointRecovery([saved], policy);
   if (recovery === "transient" || automationPauses(saved).length) job.evaluationError = incompleteReason([saved], job.summary);
   return recovery;
 }
@@ -302,14 +305,14 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       concurrency: evaluation.execution.concurrency, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
       discoverInputs: true, signal,
-      resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable, evaluation.execution.repairAttempts)) : [],
+      resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable, evaluation.execution)) : [],
     });
     signal.throwIfAborted();
     checkpoints.push((await checkpoint(output, runId))!);
   }
   const summary = summarize(checkpoints);
   summary.skipped += skipped; summary.issues += issues;
-  return evaluationOutcome(checkpoints, summary, host.evaluation.execution.repairAttempts, empty);
+  return evaluationOutcome(checkpoints, summary, host.evaluation.execution, empty);
 }
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], runs: Map<string, Checkpoint[]>, limit: number) {
@@ -334,7 +337,7 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
       // A queued date may still hold its unlimited plan until the evaluator reaches it.
       const run = limitedCheckpoint(saved, limit);
       for (const task of Object.values(run.tasks)) {
-        if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy) continue;
+        if (task.stage !== "comparison" || task.data.verificationAudit) continue;
         const input = run.inputs[Object.values(task.inputIds)[0]];
         if (input) add(task.data.group!, input.batch_id, input.case_id,
           task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);

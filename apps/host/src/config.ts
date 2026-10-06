@@ -229,6 +229,10 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   for (const key of ["retries", "retryDelaySeconds", "repairAttempts"] as const)
     if (!Number.isInteger(config.execution[key]) || config.execution[key] < 0)
       throw new Error(`Invalid execution.${key}`);
+  if (config.execution.stageRepairAttempts !== undefined &&
+    (!isObject(config.execution.stageRepairAttempts) || Object.entries(config.execution.stageRepairAttempts)
+      .some(([stage,limit])=>!stage.trim()||!Number.isInteger(limit)||limit<0)))
+    throw new Error("Invalid execution.stageRepairAttempts");
   validateFailureGuard(config.execution.failureGuard!);
   if (
     config.execution.maxTokens !== undefined &&

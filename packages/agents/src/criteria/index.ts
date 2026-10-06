@@ -20,8 +20,11 @@ export const criteriaProfile: AgentProfile = {
   ...prompt,
   renderPrompt(input, policy, failure) {
     const value = input as unknown as CriteriaInput;
-    return prompt.renderPrompt({ candidate_ids: value.candidates.map((candidate) => candidate.candidate_id),
-      source_catalog: criteriaSources(value).filter(eligibleCriterionSource) as unknown as import("@eval/contracts").JsonObject[] }, policy, failure);
+    const positions = new Map(value.candidates.map((candidate,index) => [candidate.candidate_id,index+1]));
+    return prompt.renderPrompt({ candidate_count: value.candidates.length,
+      source_catalog: criteriaSources(value).filter(eligibleCriterionSource).map(({paths:_paths,applies_to,...source}) => ({
+        ...source,applies_to:applies_to.map(candidate=>positions.get(candidate)!),
+      })) }, policy, failure);
   },
   toolNames: [],
   resolve: resolveCriteria,

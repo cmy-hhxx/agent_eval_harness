@@ -14,12 +14,12 @@ export const comparisonWorkflow: WorkflowDefinition = {
   advance: advanceReview,
   observesFailures: task => !(task.data as TaskData).verificationAudit,
   canStart: (task, manifest) => task.stage !== "clustering" || manifest.tasks
-    .filter(item => item.stage === "attribution" && !(item.data as TaskData).reviewOf)
+    .filter(item => item.stage === "attribution" && (!(item.data as TaskData).reviewOf || (item.data as TaskData).coverageReview))
     .every(item => !["pending", "running"].includes(manifest.states[item.id].status)),
   blockedReason: (task, dependencies) => {
     if (task.stage !== "rewrite") return undefined;
     return Object.values(dependencies).some((receipt) =>
       (receipt.evaluation as { status?: string }).status === "needs_review")
-      ? "Independent review is unresolved" : undefined;
+      ? "Comparison remains unresolved" : undefined;
   },
 };

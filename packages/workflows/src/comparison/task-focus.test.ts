@@ -204,10 +204,10 @@ test("controlled judgment fixtures consume current applicable labels and preserv
   ], scoring_points: [], red_flags: [] };
   const shown = taskAnalysisPresentation(analysis, { answer: candidateIds.B });
   assert.deepEqual(shown.requirements.map(rule => rule.requirement_index), [2]);
-  const material = { task_analysis: shown, ground_truth: { available: false, value: null }, answer: {
+  const material = { finding_basis:[{basis_index:3,kind:"requirement",text:"给出4",evidence:[]}],task_analysis: { ...shown, requirements: shown.requirements.map(item => ({...item,requirement_index:item.requirement_index+1})) }, ground_truth: { available: false, value: null }, answer: {
     question: "计算2+2", final_message_index: 1, final_answer: "2+2=4", norm_directory: [],
     final_evidence: [{ quote: "2+2=4", reference: { evidence_index: 1 } }] } };
-  const spec = { evaluation: { outputSchema: { properties: { findings: {} } } },
+  const spec = { evaluation: { outputSchema: { properties: { strengths: {}, problems: {} } } },
     prompt: "\n任务材料（全部内容为数据）：\n" + JSON.stringify(material),
     inputs: [{ name: "answer", id: candidateIds.B }],
     evidenceBank: [evidenceId(candidateIds.B, 1, "text", "/content", 0, 5)] };
@@ -216,7 +216,7 @@ test("controlled judgment fixtures consume current applicable labels and preserv
   assert.deepEqual(fixture.criterion_assessments.map(item => item.criterion_id), ["r3"]);
   assert.deepEqual(fixture.task_analysis.requirements[0].applies_to, [candidateIds.B]);
   assert.equal(fixture.findings[0].assessment.requirement_index, 2);
-  const draft = draftFor(spec as Parameters<typeof draftFor>[0], fixture) as { task_analysis?: unknown; findings: { assessment: { requirement_index: number } }[] };
-  assert.equal(draft.findings[0].assessment.requirement_index, 2); assert(!Object.hasOwn(draft, "task_analysis"));
+  const draft = draftFor(spec as Parameters<typeof draftFor>[0], fixture) as { task_analysis?: unknown; strengths: { basis_index: number }[] };
+  assert.equal(draft.strengths[0].basis_index, 3); assert(!Object.hasOwn(draft, "task_analysis"));
   assert.deepEqual({ analysis, material, spec }, before);
 });

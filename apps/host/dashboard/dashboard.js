@@ -310,7 +310,7 @@ async function loadCase(batch, caseId) {
     const previous = state.caseDetail;
     const signature = (value) => JSON.stringify(value.tasks.map((item) => [
       item.id, item.status, item.attempts, item.rewrite_submission_ids,
-      item.review_of, item.superseded_by, item.result_status,
+      item.review_of, item.result_status,
     ]));
     state.caseDetail = detail;
     for (const task of detail.tasks) {

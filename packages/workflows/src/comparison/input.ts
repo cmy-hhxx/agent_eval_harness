@@ -209,7 +209,7 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
   const comparisonRole = data.verificationAudit ? "audit" : "standalone";
-  if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version), ...(data.stage === "comparison" ? [comparisonRole] : [])]);
+  if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
   if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);
   if (data.stage === "clustering")
     return canonical([data.scope!.batch_id, "clustering", data.scope!.version, data.scope!.shard]);
@@ -792,7 +792,7 @@ export async function buildPlan(
     // Select the current attribution for each answer independently of comparative decisions.
     const activeComparisons = [...new Map([...(previous?.tasks ?? []), ...tasks]
       .filter(task => task.stage === "comparison").map(task => [task.id, task])).values()]
-      .filter(task => !(task.data as TaskData).verificationAudit && !(task.data as TaskData).supersededBy);
+      .filter(task => !(task.data as TaskData).verificationAudit);
     const referencedAttributions = new Set(activeComparisons.flatMap(task => Object.keys((task.data as TaskData).candidates)
       .map(label => task.dependencies[label])));
     const comparedInputs = new Set(activeComparisons.flatMap(task => Object.values(task.inputIds)));

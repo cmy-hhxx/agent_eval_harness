@@ -2,19 +2,59 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["requirements", "scoring_points", "red_flags"],
+  "required": [
+    "requirements",
+    "scoring_points",
+    "red_flags"
+  ],
   "properties": {
-    "requirements": { "type": "array", "minItems": 1, "maxItems": 24, "items": { "$ref": "#/$defs/criterion" } },
-    "scoring_points": { "type": "array", "maxItems": 24, "items": { "$ref": "#/$defs/criterion" } },
-    "red_flags": { "type": "array", "maxItems": 24, "items": { "$ref": "#/$defs/criterion" } }
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": {
+        "$ref": "#/$defs/criterion"
+      }
+    },
+    "scoring_points": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "$ref": "#/$defs/criterion"
+      }
+    },
+    "red_flags": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "$ref": "#/$defs/criterion"
+      }
+    }
   },
   "$defs": {
     "criterion": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_indices"],
+      "required": [
+        "source_indices",
+        "text"
+      ],
       "properties": {
-        "source_indices": { "type": "array", "minItems": 1, "maxItems": 24, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
+        "source_indices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
       }
     }
   }

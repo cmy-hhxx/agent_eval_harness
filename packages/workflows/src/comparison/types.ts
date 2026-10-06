@@ -153,10 +153,12 @@ export interface TaskData {
   referenceCandidates?: Record<string, Candidate>;
   /** Business scope of the shared criteria, including its candidate set. */
   criteriaScope?: string;
-  /** Independent reassessment lineage; dependencies.previous_review owns any unresolved original proof. */
+  /** Attribution reassessment lineage; accepted source receipts remain unchanged. */
   reviewOf?: { taskId: string; round: number; reasons: string[] };
-  /** Follow-up comparison that resolves this review request. */
-  supersededBy?: string;
+  /** A primary comparison may request one bounded attribution pass for unaligned material observations. */
+  coverageReviewPrepared?: true;
+  /** Required before its primary comparison and before clustering reads this answer. */
+  coverageReview?: true;
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;

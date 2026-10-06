@@ -329,7 +329,7 @@ test("failed follow-up commits roll back task changes and preserve a queued inde
       await services.repository.writeRun(run, snapshot);
     } },
     taskSource: { ...services.taskSource, advance(task) {
-      return task.id === spec.taskId ? { tasks: [added], blocked: [original.id],
+      return task.id === spec.taskId ? { tasks: [added],
         replace: [{ ...original, dependencies: { ...original.dependencies, A: added.id } }] } : { tasks: [] };
     } },
   });

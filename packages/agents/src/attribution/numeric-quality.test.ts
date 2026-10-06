@@ -1,5 +1,7 @@
-import { canonicalEvidence, resolveFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
-import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
+import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
+import { resolveJudgment } from "./resolve.js";
+import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
+import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError } from "@eval/contracts";
@@ -41,8 +43,7 @@ function taskFixture(question: string, reference: string | number, answer: strin
   return value;
 }
 function submit(value: ReturnType<typeof fixture>) {
-  return resolveFixtureEvidence(registry, { agent: "attribution", profile: "default", request: value.request },
-    attributionSubmission(value.request, value.result), audit) as AttributionResult;
+  return resolveJudgment(value.request, attributionJudgment(value.request, value.result), audit) as AttributionResult;
 }
 function validateEmptyLedger(value: ReturnType<typeof fixture>) {
   // These checks preserve a supplied semantic assessment; they do not prove the original numerical rule.
@@ -145,6 +146,13 @@ test("unit scale is derived from the cited number's adjacent units", () => {
     code("numeric_unit_ambiguous"));
   assert.throws(fixture("10元/股", "5元/股", [check("10", "5", "2")]).validate,
     code("numeric_scale_unverified"));
+});
+
+test("count magnitudes in prose and table headers preserve their exact delivered numeric value", () => {
+  for(const answer of ["销量454.54万辆。","| 期间 | 销量（万辆） |\n| --- | --- |\n| 全年 | 454.54 |"]){
+    fixture("4545400",answer,[check("4545400","4545400")]).validate();
+    assert.throws(fixture("4545400",answer,[check("4545400","4545500")]).validate,code("numeric_answer_missing"));
+  }
 });
 
 test("a submitted missing target cannot be called correct on submission or formal result paths", () => {

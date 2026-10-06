@@ -18,10 +18,10 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
     assert.deepEqual(plan.tasks.map(task => task.stage), ["criteria", "attribution", "attribution", "comparison"]);
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).verificationOf, undefined);
-    const schema = comparisonProfile.submissionSchema as { properties: { comparisons: { items: { properties: {
-      assessments: { properties: Record<string, { properties: Record<string, unknown> }> }
-    } } } } };
-    for (const candidate of ["A", "B"]) assert.equal(schema.properties.comparisons.items.properties.assessments.properties[candidate].properties.source_review, undefined);
+    const schema = comparisonProfile.submissionSchema as any;
+    assert(schema.properties.comparisons.items.properties.a_summary);
+    assert(!schema.properties.comparisons.items.properties.source_review);
+    assert(!schema.properties.comparisons.items.properties.assessments);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 

@@ -1,0 +1,13 @@
+.eris-chart-action:focus-visible,
+[data-research-chart] [tabindex="0"]:focus-visible {
+  outline: 2px solid #774143;
+  outline-offset: 2px;
+}
+.eris-chart-action:hover { filter: brightness(.97); }
+
+.eris-analysis-chart { box-shadow: 0 2px 9px #31232906; }
+.eris-chart-heading { display: flex; align-items: flex-start; gap: 12px; }
+.eris-chart-switch { display: flex; gap: 2px; flex: 0 0 auto; padding: 2px; background: #f1eeee; border-radius: 5px; }
+.eris-chart-summary { display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 8px 0 6px; margin-top: 5px; border-bottom: 1px solid #eee9e9; font-size: 11px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.eris-chart-summary > span { display: inline-flex; align-items: baseline; gap: 6px; }
+.eris-chart-summary strong { color: #38252c; font-size: 12px; font-weight: 600; }

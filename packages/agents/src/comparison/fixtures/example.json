@@ -76,7 +76,7 @@
                 "id": "sum",
                 "text": "给出正确的加法结果",
                 "applies_to": [],
-                "acceptance_rule": "最终回答明确给出4。"
+                "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
               }
             ],
             "scoring_points": [],
@@ -150,7 +150,7 @@
                 "id": "sum",
                 "text": "给出正确的加法结果",
                 "applies_to": [],
-                "acceptance_rule": "最终回答明确给出4。"
+                "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
               }
             ],
             "scoring_points": [],
@@ -213,7 +213,7 @@
             "id": "sum",
             "text": "给出正确的加法结果",
             "applies_to": [],
-            "acceptance_rule": "最终回答明确给出4。"
+            "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
           }
         ],
         "scoring_points": [],
@@ -278,7 +278,7 @@
           "id": "sum",
           "text": "给出正确的加法结果",
           "applies_to": [],
-          "acceptance_rule": "最终回答明确给出4。"
+          "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
         }
       ],
       "scoring_points": [],

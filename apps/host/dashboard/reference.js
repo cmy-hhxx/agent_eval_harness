@@ -131,7 +131,7 @@ function contractHtml() {
   const prompt = typeof value === "string";
   const tools = state.document === "tools";
   const sources = isExport ? state.data.exportSources[state.document] : isShared ? [state.data.sharedPrompts[state.document].source] : profile.sources[tools ? "toolSchemas" : state.document];
-  const tabs = (keys, name) => `<nav class="document-tabs" aria-label="${name}">${keys.map((key) => `<button type="button" data-document="${key}" aria-pressed="${key === state.document}">${escapeHtml(key === "result" && stage?.id === "rewrite" ? "提交 / 结果 Schema" : documentNames[key] || key)}</button>`).join("")}</nav>`;
+  const tabs = (keys, name) => `<nav class="document-tabs" aria-label="${name}">${keys.map((key) => `<button type="button" data-document="${key}" aria-pressed="${key === state.document}">${escapeHtml(documentNames[key] || key)}</button>`).join("")}</nav>`;
   return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${[...state.data.stages, { id: "shared", name: "共用提示词" }, { id: "exports", name: "正式导出" }].map(({ id, name }) => `<button type="button" data-stage="${id}" aria-pressed="${id === state.stage}">${escapeHtml(name)}</button>`).join("")}</nav><section class="contract-content">
     <header class="section-heading"><h2>${escapeHtml(stage?.name || (isShared ? "共用提示词" : "正式导出"))}</h2>${stage ? `<span class="muted">${escapeHtml(stage.unit)}</span>` : ""}</header>
     ${stage?.profiles.length > 1 ? `<nav class="profile-tabs" aria-label="阶段流程">${stage.profiles.map((item) => `<button type="button" data-profile="${escapeHtml(item.id)}" aria-pressed="${item.id === state.profile}">${escapeHtml(item.name)}</button>`).join("")}</nav>` : ""}

@@ -21,7 +21,7 @@ export function comparisonIssueContext(request: AgentRequest, _value: unknown, i
         properties: { ...structuredClone(row.properties), better_candidate: { enum: [...slot.advantage_candidates, null] } } } };
   }
   if (issue.path === "/") return { target: { path: "/" }, submission_shape: structuredClone(schema) };
-  if (issue.path === "/assessments" || issue.path.startsWith("/assessments/"))
-    return { target: { path: "/assessments" }, submission_shape: structuredClone(schema.properties.assessments) };
+  if (["/a_summary", "/b_summary"].includes(issue.path))
+    return { target: { path: issue.path }, submission_shape: structuredClone(schema.properties.a_summary) };
   return undefined;
 }

@@ -9,8 +9,10 @@ import {assistantEndpoints} from '@eval/assistant/server';
 const directory=await mkdtemp(tmpdir()+'/assistant-conversation-');
 const shots=process.cwd()+'/.artifacts/agent-conversation';await mkdir(shots,{recursive:true});
 const config={provider:'gateway',model:'analysis-a',thinking:'low',contextWindow:32000,maxOutputTokens:2048};
-const modelIds=['analysis-a','analysis-b','analysis-c','analysis-d','analysis-e'];
-const models=new GatewayAssistantModels(directory,config,async()=>modelIds.map(id=>({id,name:id})));
+const modelIds=['analysis-a','analysis-b','analysis-c','analysis-d','analysis-e','deepseek-flash'];
+const flashName='DeepSeek V4.1 Flash';
+const flash={...config,provider:'deepseek',model:'deepseek-flash',thinking:'high'};
+const models=new GatewayAssistantModels(directory,config,[{name:'评测网关',model:config},{name:'DeepSeek',model:flash,models:[{id:flash.model,name:flashName}],efforts:['off','low','high','max']}],async config=>(config.provider==='deepseek'?[flash.model]:modelIds.slice(0,-1)).map(id=>({id,name:id})));
 const selected=[];
 let sourceReads=0;let sourceAvailable=true;
 let webSearches=0;let webReads=0;
@@ -22,6 +24,7 @@ const templateExamples={
 };
 templateExamples['多系列趋势']={...templateExamples['时间趋势'],title:'多系列趋势（测试示例）',series:[templateExamples['时间趋势'].series[1],templateExamples['时间趋势'].series[0],{name:'C组Fast',values:[1.7,1.75,1.8,1.85,1.9]},{name:'参照Fast',values:[.8,.85,.9,.95,1]}]};
 templateExamples['长数字组成']={type:'pie',title:'长数字组成（测试示例）',scope:'离线测试；长数值与极小非零类别，不代表真实场数',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['双方均差','经营现金流与利润口径不一致且关键推导缺失'.repeat(4),'A组胜','双方均好'],series:[{name:'组成',values:[1,999999999999999.9,1,0]}]};
+templateExamples['问题矩阵']={type:'heatmap',title:'问题矩阵（测试示例）',scope:'离线测试；相同三个检查项',unit:'次',source:'浏览器测试数据，非评测结论',categories:['事实','来源','格式'],series:[{name:'A组Fast',values:[3,0,5]},{name:'B组Fast',values:[2,null,8]}],annotations:[{categoryIndex:2,seriesIndex:1,note:'格式问题较多'}]};
 const modelColors={'A组Fast':'rgb(103, 103, 103)','B组Fast':'rgb(119, 65, 67)','C组Fast':'rgb(66, 66, 66)','参照Fast':'rgb(169, 112, 115)'};
 const chartTool={name:'show_chart',readOnly:true,description:'Show structured chart',inputSchema:{type:'object'},execute:async(chart=chartData)=>{chartDisplays++;return {content:[{type:'text',text:JSON.stringify({kind:'chart',chart})}]};}};
 const searchArgs={queries:[{query:'央行政策利率公告',domains:['pbc.gov.cn']},{query:'中国人民银行 利率 公告'},{query:'央行发布会 利率'}],category:'news',dateTo:'2026-10-02',limit:3};
@@ -60,13 +63,13 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   if(example){
    const exampleCall='template-'+selected.length;
    await event({type:'message_start',message:{role:'assistant'}});
-   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,content:[{type:'toolCall',id:exampleCall,name:'show_chart',arguments:{...example,references:[{reference:formalReference}]}}],stopReason:'toolUse'}});
+   await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,content:[{type:'toolCall',id:exampleCall,name:'show_chart',arguments:{...example,references:[{reference:formalReference}]}}],stopReason:'toolUse'}});
    await event({type:'tool_execution_start',toolCallId:exampleCall,toolName:'show_chart',args:{...example,references:[{reference:formalReference}]}});
    await event({type:'message_end',message:{role:'toolResult',toolCallId:exampleCall,...await chartTool.execute(example),isError:false}});
    await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
    const exampleText='图表模板测试示例，仅用于验证渲染，不代表评测结论。';
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:exampleText}});
-   await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,content:[{type:'text',text:exampleText}],stopReason:'stop'}});
+   await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,content:[{type:'text',text:exampleText}],stopReason:'stop'}});
    await event({type:'turn_end'});await event({type:'agent_end'});return;
   }
   await event({type:'message_start',message:{role:'assistant'}});
@@ -75,7 +78,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});await delay(40);
   }
   if (selected.length === 1) await thinkingGate.promise;
-  await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
+  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
   await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5,query:directoryQuery}});await delay(150);
   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:'{"items":[{"runId":"run-alpha","accepted":12}],"total":1}'}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'web-search-'+selected.length,toolName:'search_web',args:searchArgs});
@@ -104,7 +107,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-source-'+selected.length,content:[{type:'text',text:rawReadError}],isError:true}});
   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
   await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'## 查询完成\n\n共有 12 条正式结果。'}});
-  await event({type:'message_end',message:{role:'assistant',provider:'gateway',model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:'## 查询完成\n\n共有 12 条正式结果。'}],stopReason:'stop'}});
+  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:'## 查询完成\n\n共有 12 条正式结果。'}],stopReason:'stop'}});
   await event({type:'turn_end'});await event({type:'agent_end'});
  },async steer(){},async abort(){},async dispose(){}
 })}))});
@@ -154,10 +157,18 @@ try{
  assert.equal(await chart.locator('[data-chart-mark=bar]').count(),2,'the chart draws the receipt values as real SVG marks');
  assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
  assert.deepEqual(await chart.locator('[data-chart-mark=bar]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the UBS-derived grey and dark red identity colours');
- assert.equal(await chart.locator('details,summary,button').count(),0,'the chart has no data disclosure controls');
+ assert.equal(await chart.locator('[data-chart-actions] button').count(),2,'the chart exposes its chart and exact data views');
  const chartTable=chart.getByRole('table');
  assert((await chartTable.textContent()).includes('5'),'the semantic table retains the real values');
  assert.equal(await chart.locator('[data-chart-accessible-data]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','the semantic table remains available inside a clipped container without duplicating visible values');
+ await chart.getByRole('button',{name:'数据',exact:true}).click();
+ await chart.locator('[data-chart-accessible-data][data-visible=true]').waitFor();
+ const sortWins=chart.getByRole('button',{name:'排序 胜场 · 场',exact:true});
+ await sortWins.click();await sortWins.click();
+ assert.deepEqual(await chart.locator('tbody td').allTextContents(),['5','6'],'data sorting changes only the table order');
+ await chart.getByRole('button',{name:'图表',exact:true}).click();
+ assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'returning to the plot preserves the recorded model order');
+ assert.equal(chartDisplays,1,'view switches and sorting use the saved receipt');
  await page.setViewportSize({width:375,height:900});
  await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison-compact');
  assert(await chart.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth),'the entire comparison fits the narrow answer column');
@@ -298,6 +309,7 @@ try{
  await page.getByRole('button',{name:'勾选常用模型',exact:true}).click();
  const picker=page.getByRole('dialog').last();
  assert(await picker.getByRole('checkbox',{name:'analysis-a',exact:true}).isChecked());
+ assert(await picker.getByRole('checkbox',{name:'deepseek-flash',exact:true}).isChecked(),'both configured initial models are available without a manual favorites setup');
  for(const id of modelIds.slice(1))await picker.getByRole('checkbox',{name:id,exact:true}).check();
  await picker.getByRole('button',{name:'保存选择',exact:true}).click();
  await settings.getByRole('button',{name:'关闭',exact:true}).click();
@@ -357,8 +369,17 @@ try{
  assert.equal(webReads,1,'refresh renders persisted web source text without another network request');
  await page.locator('figure[data-analysis-chart=bar]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(chartDisplays,1,'refresh renders the stored chart without executing the tool again');
+ await page.getByRole('button',{name:/analysis-b/}).click();
+ await page.getByRole('menuitem',{name:/^模型/}).click();
+ await page.getByText('DeepSeek',{exact:true}).waitFor();
+ await page.getByRole('menuitemradio',{name:flashName,exact:true}).click();
+ await page.getByRole('button',{name:/DeepSeek V4.1 Flash/}).click();
+ await page.getByRole('menuitem',{name:/推理等级/}).click();
+ assert.equal(await page.getByRole('menuitemradio').count(),4,'DeepSeek offers only its actual reasoning levels');
+ await page.getByRole('menuitemradio',{name:'max',exact:true}).click();
+ await page.reload();await page.getByRole('button',{name:/DeepSeek V4.1 Flash.*max/}).waitFor();
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
- await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).model,'analysis-b');assert.equal(selected.at(-1).thinking,'high');
+ await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).provider,'deepseek');assert.equal(selected.at(-1).model,'deepseek-flash');assert.equal(selected.at(-1).thinking,'max');
  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  for(const [label,example] of Object.entries(templateExamples)){
   await page.locator('[contenteditable=true]').fill('图表模板测试示例：'+label);await page.locator('[contenteditable=true]').press('Enter');
@@ -366,7 +387,8 @@ try{
   await exampleChart.getByRole('heading',{name:example.title,exact:true}).waitFor();
   await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
   await exampleChart.getByText('来源：'+example.source,{exact:true}).waitFor();
-  assert.equal(await exampleChart.locator('details,summary,button').count(),0,'chart examples expose their values without bottom disclosure controls');
+  assert.equal(await exampleChart.locator('details,summary').count(),0,'chart values do not require opening a disclosure');
+  assert.equal(await exampleChart.locator('[data-chart-actions] button').count(),2,'every chart supports plot and data views');
   if(example.type==='line'){
    assert.equal(await exampleChart.locator('[data-chart-value]').count(),example.series.length,'each trend labels its last known value');
    assert.deepEqual((await exampleChart.locator('[data-chart-tail-name]').allTextContents()).toSorted(),example.series.map(series=>series.name).toSorted(),'tail labels identify every model beside its exact value');
@@ -388,10 +410,10 @@ try{
     await target.press('Escape');
     await exampleChart.locator('[data-chart-readout]').waitFor({state:'hidden'});
     await target.hover();
-    await exampleChart.locator('[data-chart-readout]').getByText('2026-01-21 · A组Fast · 1.6 示例值',{exact:true}).waitFor();
+    assert.equal(await exampleChart.locator('[data-chart-readout]').isVisible(),false,'hover does not display text');
     await page.mouse.move(0,0);await target.evaluate(node=>node.blur());
    }
-  }else{
+  }else if(example.type==='pie'){
    assert.equal(Number(await exampleChart.locator('[data-chart-total]').textContent()),example.series[0].values.reduce((sum,value)=>sum+value,0),'the visible total retains the complete recorded value');
    assert.equal(await exampleChart.locator('ul li').count(),example.categories.length,'the full composition includes the zero category');
    assert.equal(await exampleChart.locator('ul li').last().locator('[data-chart-composition-value]').textContent(),'0','zero categories retain their actual count');
@@ -409,7 +431,19 @@ try{
     assert.equal(await exampleChart.locator('[data-chart-share]').first().textContent(),'<0.01%','tiny nonzero shares are never presented as zero');
    }
   }
-  const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long'}[label];
+  if(example.type==='heatmap'){
+   await exampleChart.locator('[data-research-chart=heatmap] svg').waitFor();
+   const plot=exampleChart.getByRole('img',{name:/方向键查看数值/});
+   await plot.focus();await plot.press('Home');
+   await exampleChart.locator('[aria-live=polite]').getByText('事实 · A组Fast：3 次',{exact:true}).waitFor();
+   await exampleChart.getByRole('button',{name:'数据',exact:true}).click();
+   const table=exampleChart.getByRole('table');
+   assert((await table.textContent()).includes('B组Fast − A组Fast'),'the data view includes the observed paired difference');
+   assert.equal(await table.getByText('未知',{exact:true}).count(),2,'a missing value and its difference remain unknown');
+   await exampleChart.getByRole('button',{name:'图表',exact:true}).click();
+   await exampleChart.locator('[data-research-chart=heatmap] svg').waitFor();
+  }
+  const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long','问题矩阵':'chart-heatmap'}[label];
   await exampleChart.screenshot({path:shots+'/'+screenshot+'.png'});
  }
  const mobileContext=await browser.newContext({storageState:await page.context().storageState(),viewport:{width:375,height:900},isMobile:true,hasTouch:true});
@@ -457,7 +491,7 @@ try{
  const older=page.getByRole('button',{name:'加载更早',exact:true});
  if(await older.count())await older.click();
  await page.locator('figure[data-analysis-chart=bar]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
- assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across all three chart types');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across the recorded chart types');
  assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  assert.deepEqual(errors,[]);
  console.log('Gateway favorites, fuzzy model search, keyboard focus, queue editing, running clock, reasoning, structured tools, charts, multi-query search receipts, PDF source coordinates, usage and reload: passed');

@@ -317,47 +317,6 @@
             "type": "string",
             "minLength": 1
           }
-        },
-        "concerns": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "requirement_indices",
-              "reason",
-              "answer_evidence",
-              "source_evidence"
-            ],
-            "properties": {
-              "requirement_indices": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "\\S"
-              },
-              "answer_evidence": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                  "$ref": "#/$defs/reviewEvidence"
-                }
-              },
-              "source_evidence": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/reviewEvidence"
-                }
-              }
-            }
-          }
         }
       }
     },
@@ -377,20 +336,6 @@
     }
   },
   "$defs": {
-    "reviewEvidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "evidence_id"
-      ],
-      "properties": {
-        "evidence_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "observation": {}
-      }
-    },
     "evidence": {
       "type": "object",
       "additionalProperties": false,

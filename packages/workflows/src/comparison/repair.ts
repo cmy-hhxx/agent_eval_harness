@@ -32,7 +32,8 @@ export async function prepareClustering(run: string, selection: { apply?: boolea
   try {
     const state = await readRunState(run), tasks = state.manifest.tasks;
     const base = tasks.filter(task => task.stage === "attribution" && !(task.data as TaskData).reviewOf);
-    const unfinished = base.filter(task => ["pending", "running"].includes(state.manifest.states[task.id].status));
+    const unfinished = tasks.filter(task => task.stage === "attribution" && (!(task.data as TaskData).reviewOf || (task.data as TaskData).coverageReview) &&
+      ["pending", "running"].includes(state.manifest.states[task.id].status));
     if (unfinished.length) throw new Error("归因尚未全部结束，不能开始聚类：" + unfinished.map(task => task.id).join(", "));
     // A later accepted source review owns the same answer; unfinished optional reviews do not gate maintenance.
     const accepted = tasks.filter(task => task.stage === "attribution" &&
@@ -275,7 +276,7 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
         if (chosen) throw new Error("对比尚未接受，先补跑失败任务：" + source.id);
         continue;
       }
-      if ((source.data as TaskData).supersededBy || (receipt.evaluation as ComparisonResult).status === "needs_review") {
+      if ((receipt.evaluation as ComparisonResult).status === "needs_review") {
         if (chosen) throw new Error("待复核结果没有正式裁决改写槽位：" + source.id);
         continue;
       }

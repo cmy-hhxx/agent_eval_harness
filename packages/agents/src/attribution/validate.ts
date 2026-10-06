@@ -12,7 +12,6 @@ import { images, traceReadCoverage } from "@eval/tools";
 import type { AttributionResult } from "./types.js";
 import { attributionTableReview } from "./table-review.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
-import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
 import { instructionEvidenceIssues, instructionSubmissionIssues } from "./instructions.js";
 import { submissionEvidenceIssues } from "./submission-evidence.js";
 import { correctnessEvidenceScopeIssues, foreignActualIssues, ownEvidence, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
@@ -36,7 +35,6 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
 const strings = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 const statuses = ["met", "partial", "unmet", "unknown", "not_applicable"];
-const knownTopLevelFields = new Set([...Object.keys(schema.properties), ...Object.keys(submissionSchema.properties)]);
 
 /** Final-image coverage depends only on trusted source material and this attempt's audit. */
 function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): ValidationIssue[] {
@@ -50,7 +48,7 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
 }
 
 /** Business rules that can be checked before evidence references are resolved. */
-export function validateSubmission(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
+export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
   return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
     ...instructionSubmissionIssues(request, draft, audit)];
 }
@@ -160,23 +158,9 @@ export function validateCriterionAssessments(request: AgentRequest, draft: unkno
       issue("criterion_summary_empty", `${location}/summary`, "逐项评审说明不能为空");
   });
   if (identifiedAssessments) for (const criterion of criteria) if ((representation === "result" || applicable(criterion)) && !assessmentIds.has(criterion.id)) {
-    // Suggest only one exact-ID object outside the contract; derived formal fields are never aliases.
-    const misplaced = Object.entries(value).filter(([key, entry]) =>
-      !knownTopLevelFields.has(key) && object(entry)?.criterion_id === criterion.id);
-    const sourcePath = misplaced.length === 1 ? `/${misplaced[0]![0].replace(/~/g, "~0").replace(/\//g, "~1")}` : undefined;
-    const targetPath = "/criterion_assessments/-";
-    const applies = applicable(criterion);
     issue("criterion_assessment_missing", "/criterion_assessments",
-      `共享判据 ${criterion.id} 缺失，${representation === "submission" ? "当前候选的适用判据必须全部评审" : "正式结果必须覆盖全部判据"}。` +
-      (sourcePath ? `从 ${sourcePath} 移动完整条目到 ${targetPath}，删除错误的顶层字段 ${sourcePath}；` : `向 ${targetPath} 追加完整条目；`) +
-      "补齐必填字段 criterion_id、status、evidence_status、summary、evidence，按 expected.criterion 核对原判据和 applies_to。" +
-      (applies ? "当前候选适用，按实际证据评审，不能填 not_applicable。" : "当前候选不适用，status 必须为 not_applicable，evidence 必须为 []。"),
-      criterion.id, {
-        criterion_id: criterion.id, criterion: structuredClone(criterion), candidate_id: input.candidate_id, applicable: applies,
-        target_path: targetPath, ...(sourcePath ? { source_path: sourcePath } : {}),
-        required_fields: [...submissionSchema.properties.criterion_assessments.items.required],
-        ...(!applies ? { status: "not_applicable", evidence: [] } : {}),
-      });
+      `共享判据 ${criterion.id} 缺少评审；${representation === "submission" ? "程序绑定的适用检查项须完整" : "正式结果必须覆盖全部判据"}。`,
+      criterion.id, { criterion: structuredClone(criterion), applicable: applicable(criterion) });
   }
   return { issues: errors, assessmentMap, identifiedAssessments };
 }
@@ -268,7 +252,7 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       findingIds.add(finding.finding_id);
     }
     const originalAssessment = object(finding.assessment);
-    const assessment = representation === "submission" && finding.dimension === "instruction_following"
+    const assessment = representation === "submission" && Object.hasOwn(finding,"norm_index")
       ? { ...originalAssessment, requirement_index: Number.isSafeInteger(finding.norm_index) && Number(finding.norm_index) >= 0
         ? attributionNormDirectory(request)[Number(finding.norm_index)]?.requirement_index : null } : originalAssessment;
     if (typeof assessment?.requirement_index === "number" && Number.isInteger(assessment.requirement_index) && assessment.requirement_index >= 0) {
@@ -278,7 +262,7 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       if (requirement && !applicable(requirement))
         issue("finding_requirement_not_applicable", `${location}/assessment/requirement_index`, "finding 不能关联不适用于当前候选的共享 requirement", assessment.requirement_index);
       const criterionAssessment = requirement && assessmentMap.get(requirement.id);
-      if (finding.type === "problem" && (representation === "submission" || assessment.evidence_status === "established") &&
+      if (finding.type === "problem" && finding.importance !== "low" && (representation === "submission" || assessment.evidence_status === "established") &&
         requirement && applicable(requirement) && criterionAssessment?.status === "met" && criterionAssessment.evidence_status === "established")
         issue("finding_requirement_conflict", `${location}/assessment/requirement_index`,
           `finding_index=${index}（零起始）${typeof finding.finding_id === "string" ? `、finding_id=${finding.finding_id}` : ""} 的 problem 关联 requirement ${requirement.id}，但同一判据声明已确认 met。请核对原要求和实际证据：已确认缺口时，将判据改为 partial 或 unmet；证据确实不足时保留 uncertain，不能同时声明已确认 met。若关联错误，instruction_following 重新选择本方 norm_directory 的 norm_index，其他维度填写正确的 requirement_index；其他维度的观察确实未入 requirements 中时填 null。没有真实问题时修正 finding；真实问题仍须保留，不能仅降低其确定性或解除真实关联来消除冲突。`,

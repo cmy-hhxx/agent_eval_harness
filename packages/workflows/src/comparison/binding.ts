@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
-import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, originalUserTimestamp, displayEvidence, evidenceSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { canonical, presentSource, ValidationError, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
+import { cite, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
@@ -22,7 +22,6 @@ import { comparisonSourceReview } from "./source-review.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
 import { verificationPresentation, verificationInspectionPresentation } from "./verification-presentation.js";
 import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneration } from "./answer-generation.js";
-import { previousReviewConcerns, reviewConcernPresentation } from "./review-concerns.js";
 
 /** Project only generated evidence directories; original message values stay untouched. */
 function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string) {
@@ -214,7 +213,13 @@ function bindSourceTask(
       agent: "rewrite",
       profile: "default",
       request,
-      modelInput: { ...request.input, items: request.input.items.map(item => ({
+      resolveSubmission(value) {
+        const texts = (value as { texts: string[] }).texts;
+        if (texts.length !== request.input.items.length) throw new ValidationError([{ category:"structure",code:"rewrite_slot_count",path:"/texts",
+          actual:texts.length,expected:request.input.items.length,message:"按请求顺序返回全部文本，数量必须与槽位一致。" }]);
+        return { rewrites: request.input.items.map((item,index) => ({id:item.id,text:texts[index]})) };
+      },
+      modelInput: { ...request.input, items: request.input.items.map(({ id: _id, ...item }) => ({
         ...item,
         label: rewritePresentation(item.label),
         text: rewritePresentation(item.text),
@@ -234,7 +239,6 @@ function bindSourceTask(
   const blind = attribution ? undefined : criteriaBlind;
   const reference = structuredClone(data.reference);
   const task_analysis = structuredClone(acceptedAnalysis ?? criteria!.evaluation);
-  const pendingConcerns = acceptedAnalysis ? [] : previousReviewConcerns(task, inputs, dependencies, context.tasks, task_analysis as TaskAnalysis);
   if (attribution) for (const [key, peer] of Object.entries(data.referenceCandidates ?? {})) {
     const own = data.candidates.A;
     const registered = context.tasks.flatMap(item => Object.values((item.data as TaskData).candidates))
@@ -256,8 +260,7 @@ function bindSourceTask(
   const materials = Object.fromEntries(
     (attribution ? [["answer", data.candidates.A] as const, ...Object.entries(data.referenceCandidates ?? {})] : Object.entries(data.candidates)).map(([label, candidate]) => {
       const raw = sources[label].value as RawInput;
-      const finalSources = evidenceSources(raw.messages[candidate.final_index])
-        .filter((source) => source.kind === "text" && source.path.startsWith("/content") && source.text.length);
+      const finalSources = messageContentSources(raw.messages[candidate.final_index]);
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
       const deferred = finalSources.filter((source) => source.text.length > finalBlockLimit);
       const final = deferred.reduce(
@@ -386,13 +389,7 @@ function bindSourceTask(
       throw new Error("可选核验缺少匹配的已接受正式对比：" + data.verificationOf!.taskId);
     comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
-  const reviewContext = data.reviewOf ? { reasons: data.reviewOf.reasons,
-    ...(!acceptedAnalysis && task.dependencies.previous_review ? { concerns: pendingConcerns.map(({ criterion_ids, candidate: _candidate, ...concern }) => ({
-      ...concern, requirement_indices: criterion_ids.map(id => {
-        const index = (task_analysis as TaskAnalysis).requirements.findIndex(criterion => criterion.id === id);
-        if (index < 0) throw new Error("来源复查原要求未登记：" + id);
-        return index;
-      }) })) } : {}) } : undefined;
+  const reviewContext = data.reviewOf ? { reasons: data.reviewOf.reasons } : undefined;
   const input = attribution
     ? {
       candidate_id: data.candidates.A.input_id,
@@ -407,7 +404,6 @@ function bindSourceTask(
       ground_truth: { available: data.reference !== null, value: reference },
       candidates: materials,
       ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}),
-      ...(data.verificationAudit && task.dependencies.previous_review ? { pending_concerns: pendingConcerns } : {}),
       attributions,
       source_review: sourceReview,
     };
@@ -419,9 +415,7 @@ function bindSourceTask(
     request: { input, sources },
     modelInput: attribution
       ? { ...input,
-        ...(reviewContext ? { review_context: { ...reviewContext, kind: "unverified_concerns",
-          ...(reviewContext.concerns ? { concerns: reviewContext.concerns.map(concern =>
-            reviewConcernPresentation(concern, sources, dependencies.previous_review!.audit)) } : {}) } } : {}),
+        ...(reviewContext ? { review_context: { ...reviewContext, kind: "unverified_concerns" } } : {}),
         task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis, { answer: sources.answer.id }),
         task_focus: taskFocus({ answer: materials.answer }, task_analysis as TaskAnalysis, input.ground_truth,
           Object.values((criteriaTask.data as TaskData).candidates).map(candidate => candidate.input_id),
@@ -437,7 +431,7 @@ function bindSourceTask(
           return [label, { ...material, citation_inventory: projected.citation_inventory, answer_generation: projected.answer_generation,
             criterion_instruction_sources: criterionInstructionSources(sources[label].value as RawInput,
               data.candidates[label].final_index, task_analysis as TaskAnalysis, data.candidates[label].input_id) }];
-        })) }, sources, task_analysis as TaskAnalysis, dependencies.previous_review?.audit)
+        })) }, sources, task_analysis as TaskAnalysis)
       : { ...input, task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
           Object.fromEntries(Object.entries(sources).map(([label,source]) => [label,source.id]))),
         task_focus: taskFocus(materials, task_analysis as TaskAnalysis, input.ground_truth,

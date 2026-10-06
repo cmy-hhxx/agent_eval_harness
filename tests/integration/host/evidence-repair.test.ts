@@ -30,7 +30,7 @@ function taskDraft(spec: AttemptSpec) {
     finding.reason = "原始工具返回的计算结果与最终回答一致。";
     finding.assessment.observation = "计算2+2=4。";
   }
-  return draftFor(spec, result) as { findings?: { evidence: { evidence_index: number }[] }[] };
+  return draftFor(spec, result) as { strengths?: { evidence_indices: number[] }[] };
 }
 
 const payload = (result: ToolResult) => JSON.parse(result.content.find((item) => item.type === "text")!.text!);
@@ -57,13 +57,13 @@ for (const scenario of [
           assert.equal((await submitFor(options, draft)).isError, undefined);
           return;
         }
-        draft.findings![0].evidence = [{ evidence_index: scenario.invalidIndex }];
+        draft.strengths![0].evidence_indices = [scenario.invalidIndex];
         submittedCounts.set(options.spec.taskId, 1);
         const rejected = await submitFor(options, draft);
         assert.equal(rejected.isError, true, "an invalid selection is never interpreted as another coordinate");
         const feedback = payload(rejected) as { accepted: boolean; errors: ValidationIssue[] };
         assert.equal(feedback.accepted, false);
-        const issue = feedback.errors.find((item) => item.path === "/findings/0/evidence/0" && item.code === "evidence_selection_invalid")!;
+        const issue = feedback.errors.find((item) => item.path === "/strengths/0/evidence_indices/0" && item.code === "evidence_selection_invalid")!;
         assert.equal(issue.category, "evidence");
         assert.deepEqual(issue.actual, { evidence_index: scenario.invalidIndex });
         const expected = issue.expected as RepairExpected;
@@ -75,7 +75,7 @@ for (const scenario of [
         const selected = (payload(read) as { evidence: { reference: { evidence_index: number }; quote: string }[] }).evidence
           .find(item => item.quote.includes("4"));
         assert(selected, "the model selects evidence only after checking that its original quote supports the finding");
-        draft.findings![0].evidence = [selected.reference];
+        draft.strengths![0].evidence_indices = [selected.reference.evidence_index];
         submittedCounts.set(options.spec.taskId, 2);
         const accepted = await submitFor(options, draft);
         assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
@@ -127,7 +127,7 @@ test("Host retains remaining repairs for identical invalid evidence without exce
         assert.equal((await submitFor(options, draft)).isError, undefined);
         return;
       }
-      draft.findings![0].evidence = [{ evidence_index: invalidIndex }];
+      draft.strengths![0].evidence_indices = [invalidIndex];
       for (let index = 0; index < Math.min(2, 1 + options.spec.policy.repairAttempts); index++) {
         submissions++;
         const rejected = await submitFor(options, draft);

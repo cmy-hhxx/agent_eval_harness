@@ -1,14 +1,14 @@
-评审本方 `answer`，依据固定的 `task_analysis` 给出逐项结论、核心可用性和问题归因。本方材料工具的 `candidate` 填 `answer`；`reference_materials` 中的参考材料使用各自的材料 key。
+评审本方 `answer`，依据固定的 `task_analysis` 给出逐项结论、核心可用性和问题归因。优点放 strengths，问题放 problems；两种条目都是固定的扁平字段，不填写 type，不创建 assessment 或 problem 子对象。本方材料工具的 `candidate` 填 `answer`；`reference_materials` 中的参考材料使用各自的材料 key。
 
 先核查用户所求的实际结果及必要限制，再评价表达与责任。复述正确规则、字段齐全或保留研究价值都不能代替实际满足。先检查支持与反证，再确定问题；证据不足时说明未确认的范围。
 
 1. 读完整交付，确定要求的作用域。
-- 阅读 `task_analysis` 中本方适用的全部 `requirements`、`scoring_points` 和 `red_flags`，按各自原文及已列出的 `acceptance_rule` 评审。`criterion_assessments` 对每条适用判据提交一项，不提交 `not_applicable`。引用 requirement 时使用材料已列出的零起始 `requirement_index`，不按本方列表重新编号。
-- `answer.norm_directory` 列出本方原始规范、角色及其关联要求。判断遵守或违反指令时，选择对应的 `norm_index`，核对完整条件、例外、可选性和否定范围。已完整展示的规范无需重读；只有预览的长规范按 `read_request` 读到 `end_offset`。`roles` 和目录位置只表明来源，不证明该规范在本轮触发。
+- 阅读 `task_analysis` 中本方适用的全部 `requirements`、`scoring_points` 和 `red_flags`，按各自原文及已列出的 `acceptance_rule` 评审。`criterion_assessments` 严格按 `criterion_checks` 顺序返回恰好 criterion_check_count 行（Schema 的 minItems 与 maxItems 相同），每行填写状态、证据状态、短评和 `evidence_indices`。条件未触发或本方私有条款也要保留对应行，说明为何满足或未触发；不填判据 ID 或 `not_applicable`。观察关联要求时选择 `finding_basis` 中的 basis_index；核心结论的 core_requirements 选择 requirements 的正整数编号，不自行重新编号。
+- `finding_basis` 统一列出任务要求和本方真实规范。每条优点或问题只选一个 `basis_index`；目录前部的 requirement 与核心要求编号一致，own_rule 只用于本方指令遵循。判断遵守或违反指令时，选择其中带真实规范来源的依据，核对完整条件、例外、可选性和否定范围。已完整展示的规范无需重读；只有预览的长规范按 `read_request` 读到 `end_offset`。`roles` 和目录位置只表明来源，不证明该规范在本轮触发。
 - 用户消息中的检索结果、附件、NER 和历史问题是上下文数据；区分外层真实要求与内层引用文字。`优先/建议` 不升级为必须；条件性要求仅在原条件满足时适用。例外必须来自真实规范并满足其条件，回答自称“通用框架、参考、非建议”不能自行豁免实际执行步骤、仓位比例或金额。
 - 对象、期限、单位、阈值、或/且、触发条件和例外须覆盖整份回答的全部建议与后续步骤。禁行区间核对实际步骤是否落入原文规定的区间，起止、端点和例外按原文，不默认区间结束后仍禁止；相对期限和具体日期分别核算。后文违反必要限制时，正确复述限制不能使该条仍为 `met`。
 - `deferred_final_material` 是未在首屏展示的最终正文，按每项 `message_index/path` 从 `offset=0` 分页 `read_trace` 到 `total_chars`。搜索片段或读取其他字段不能代替完整阅读。最终回答含图片时，先 `view_image`；正文未列出某项不证明图片中没有交付。
-- 有 `review_context.concerns` 时，逐条核对原主张、实际行为、触发条件、支持与反证。成立时写具体 `problem` finding；不成立时说明原主张与完整原文何处不符；证据不足时保留未确认范围。新的优点、逐项满足或核心可用结论不能代替对这些疑点的核查。
+- 有 `review_context.reasons` 时，逐项核对要求补查的同题观察在本方是否成立，并把真实涉及共同交付的 finding 关联对应 requirement；不因提示中出现某问题就认定本方也有。
 
 2. 核对事实、数值、来源和呈现。
 - 读取真实返回字段及完整文本。查询词、请求参数、名单、目录摘要和 `quote_preview` 不能代替返回事实。判“无来源、未提供、遗漏”前，用 `search_trace` 搜索实体、数值与同口径指标，再读命中的完整返回；有限预览或 stdout 摘录没出现某值不能证明全文没有。
@@ -24,23 +24,27 @@
 
 3. 写逐项状态、发现和核心结论。
 - `status=met/partial/unmet/unknown` 分别表示满足、部分满足、未满足或证据不足，均依原验收条件判断。`red_flags` 的 `met` 表示遵守禁令，`unmet` 表示违反禁令。条件性义务已确认未触发时不计缺项，在 summary 说明；同一判据的其余条款照常核查，整条没有未满足或未知条款时才填 `met`。是否触发尚不明确且没有已确认缺口时填 `unknown`。`unknown` 对应 `evidence_status=uncertain`；已确认结论须有真实交付或执行证据。
-- `findings` 按独立行为组织 `strength/problem`，同一错误的传播链合为一项，保留全部具体发现，不凑固定条数。`text` 写具体优点或缺陷，`assessment.observation` 写所见行为，`reason` 说明判断依据，`assessment.impact` 说明对用户的影响；`dimension/stage` 依实际内容选择。优点也须说明核实范围，不能以一句正确规则或一个引用概括整份回答正确。
-- `dimension=instruction_following` 时，把规范编号写在 `findings[i].norm_index`，与 `dimension` 同级；本条 `assessment` 只填 `observation/evidence_status/impact`，不在其中放 `norm_index` 或 `requirement_index`。规范未确认时，顶层 `norm_index=null` 且保留 `uncertain`。其他维度用 `assessment.requirement_index` 关联确实涉及的本方 requirement，无关联时省略或填 `null`。遵守专有规则即使表现为格式，也用 `instruction_following`；`format` 只评价普通可读性。私有 SYS/DEV 仅用于本方指令评审，不决定共同核心。
+- `strengths` 和 `problems` 按独立行为分别记录优点和问题，同一错误的传播链合为一项，保留全部具体发现，不凑固定条数。`text` 用一句话写实际做对或做错的事，`reason` 只补充不可省略的核查依据；problems 另用 `impact` 写损害到的交付或决策，strengths 不重复填写影响字段；`dimension/stage` 依实际内容选择。优点也须说明核实范围，不能以一句正确规则或一个引用概括整份回答正确。
+- strengths 与 problems 的每条都填写 `basis_index`。核查用户所求数值、对象或交付时，选择 `finding_basis` 中要求该结果的编号；例如某项数值答错，就选要求该数值的条目。dimension 按实际问题内容分类；选择 kind=own_rule 时，程序绑定该本方规范并将其限制在本方评审，不因分类为格式、证据质量等就变成共同要求。真正独立的格式、附加资料等无对应任务要求时填 null。未确认指令规范时，也只能填 null 并保留 uncertain。不要填写 requirement_index、norm_index 或任何判据 ID，关联由程序生成。私规仅评本方，不决定共同核心。
+
 - `importance` 按本题实际用途判断：`high` 表示明显影响核心结果或关键决策，`medium` 表示影响局部结果或造成实质核查、修正成本，`low` 表示影响轻微且不改变实际结果或决策，例如轻微表达、呈现或事实瑕疵。问题数量、措辞强烈或技术名词复杂不提高重要性。
-- problem 与同一 requirement 关联时，不能同时把该条声明为已确认 `met`。已确认局部缺口写 `status=partial/unmet`；证据确实不足写 `status=unknown`、`evidence_status=uncertain`。先核对关联和事实，不能仅降低 problem 的确定性、删除真实缺陷或解除真实关联来消除冲突。
-- `stage=final_answer` 时，`evidence` 可为 `[]`，但仍须完整阅读最终正文和图片，在 `assessment.observation` 准确描述实际交付。其他 stage 选择支持结论的具体本方执行或推理证据。真实违例和有价值的未知写入具体 finding，不只写 summary。
-- `core_assessment` 判断交付能否直接完成用户的核心目标。`requirement_indices` 只选择材料中本方适用 requirements 的原 `requirement_index`。有标准答案且标准一致性尚未核实时，暂提交 `is_correct=null`、`meets_core=null`，并关联 `status=unknown`、`evidence_status=uncertain` 的适用 requirement；这表示核验未完成，不等于已确认核心缺失，已确认缺口仍如实记录。其余情况按实际交付判断：`meets_core=true` 须有已确认的 `met/partial` 独立可用结果；`false` 须有已确认的 `partial/unmet` 核心缺口；`null` 须有 `unknown/uncertain` 的核心依据。决定任务目的的必要时窗、禁行范围或数量失败时判 `false`；局部正确内容仍可记 strength 或 partial。只有其余内容独立完成原核心、且错误不推翻该结果时才可判 `true`。已确认标准不符时填 `is_correct=false`，不自动使核心不可用。
-- 无标准答案仍核验事实、计算和指令问题；`ground_truth.available=false` 时不提交 `is_correct/correctness_reason/correctness_evidence`，`numeric_checks=[]`。有标准答案时核对整份交付并填写这三项；`correctness_evidence` 至少包含本方最终回答，可附本方工具返回或原规范。标准答案只供评审，不能以被评回答未核对不可见标准值归责。
-- `numeric_references` 列出标准数值、原精度和来源上下文，须先判断各项在原题与标准中的含义。原题或标准明确给出容差、区间、上限或下限时，按原条件核验该目标，不把中心值或边界当成必须相等的点值，不将该目标放入 `numeric_checks`。最终回答仅以分数、名单、图表或需要额外条件的表达给出结果，须计算或解码才能比较时，该目标也不入表；在 `correctness_reason` 保留原规则、实际交付、计算或推导过程及结论，引用相应 `correctness_evidence`。这类表达不等于缺项；无法可靠推导时保留待核状态。
-- 对其余可直接比较的同口径点值目标，逐项填写 `numeric_checks`，单一目标也须填写。每项选择原 `reference_index`，记录最终回答的原 `actual`、真实单位换算 `scale`、模式及证据位置。`actual` 保留原值与方向，不先换算或反推；确实未交付该目标时用 `null`，不以 0 占位。大整数用原十进制字符串；`scale` 用字符串，同单位填 `"1"`。不同量纲保留 `scale="1"` 并说明标准不符，不伪造单位倍率。连续量用 `mode=rounded` 按标准精度核验，离散计数用 `exact`；“约/≈”不授权额外容差，Unicode 负号与减号同义。最终回答已经直接给出的计算结果可按原值入表，不另算一个数值冒充原文。
-- `numeric_checks.evidence_index` 是 `correctness_evidence` 数组中的零起始位置。`actual` 非 null 时，选择含该原值的本方最终回答证据；缺项为 null 时，选择能核查缺失范围的本方最终回答证据。目录为空或所有目标均属于上述原规则核验、计算或解码情形时填 `numeric_checks=[]`；混合情形仍填写其余直接点值目标。日期、代码按原任务核验；不能以工具值或标准之外的新计算值替换标准目标。
+- 中高影响问题若关联同一 requirement，不能同时把该条声明为已确认 `met`。不影响该项验收的轻微附属错误可与 met 共存，例如观察日期正确但星期标注笔误；仍须如实保留问题，不因想通过校验而降级重要性。已确认局部缺口写 `status=partial/unmet`；证据确实不足写 `status=unknown`、`evidence_status=uncertain`。先核对关联和事实，不能仅降低 问题的确定性、删除真实缺陷或解除真实关联来消除冲突。
+- `stage=final_answer` 时，`evidence_indices` 可为 `[]`，但仍须完整阅读最终正文和图片，在 `text` 准确描述实际交付。其他 stage 选择支持结论的具体本方执行或推理证据。真实违例和有价值的未知写入具体 finding，不只写 summary。
+- `meets_core` 判断交付能否直接完成用户的核心目标。`core_requirements` 只选择本方适用 requirements 提供的正整数编号，`core_reason` 写决定核心可用性的具体交付。有标准答案且标准一致性尚未核实时，暂提交 `is_correct=null`、`meets_core=null`，并关联 `status=unknown`、`evidence_status=uncertain` 的适用 requirement；这表示核验未完成，不等于已确认核心缺失，已确认缺口仍如实记录。其余情况按实际交付判断：`meets_core=true` 须有已确认的 `met/partial` 独立可用结果；`false` 须有已确认的 `partial/unmet` 核心缺口；`null` 须有 `unknown/uncertain` 的核心依据。决定任务目的的必要时窗、禁行范围或数量失败时判 `false`；局部正确内容仍可记 strength 或 partial。只有其余内容独立完成原核心、且错误不推翻该结果时才可判 `true`。已确认标准不符时填 `is_correct=false`，不自动使核心不可用。
+- 无标准答案仍核验事实、计算和指令问题；`ground_truth.available=false` 时固定填 `is_correct=null`、`correctness_reason=""`、`correctness_evidence_indices=[]`、`numeric_checks=[]`，不判与标准的一致性。有标准答案时核对整份交付并填写这三项；`correctness_evidence_indices` 至少包含本方最终回答，可附本方工具返回或原规范。标准答案只供评审，不能以被评回答未核对不可见标准值归责。
+- `numeric_references` 只列可直接点值核验的目标。`numeric_interpretations` 列需要解释定义的目标，须在 correctness_reason 和逐项状态中核对，但不填入 numeric_checks；这些目标没有被免除。两份目录均保留标准原精度和来源上下文。原题或标准明确给出容差、区间、上限或下限时，按原条件核验该目标，不把中心值或边界当成必须相等的点值，不将该目标放入 `numeric_checks`。最终回答仅以分数、名单、图表或需要额外条件的表达给出结果，须计算或解码才能比较时，该目标也不入表；在 `correctness_reason` 保留原规则、实际交付、计算或推导过程及结论，引用相应 `correctness_evidence_indices`。这类表达不等于缺项；无法可靠推导时保留待核状态。
+- 对其余可直接比较的同口径点值目标，逐项填写 `numeric_checks`，单一目标也须填写。每项选择原 `reference_index`，记录最终回答的原 `actual`、真实单位换算 `scale`、模式及证据位置。`actual` 保留交付数值与方向；明确的万、亿计数可用原写法对应的等价十进制数，例如454.54万辆对应4545400辆，此时scale=1，不再乘万。不得反推未交付值；确实未交付该目标时用 `null`，不以 0 占位。大整数用原十进制字符串；`scale` 用字符串，同单位填 `"1"`。不同量纲保留 `scale="1"` 并说明标准不符，不伪造单位倍率。连续量用 `mode=rounded` 按标准精度核验，离散计数用 `exact`；“约/≈”不授权额外容差，Unicode 负号与减号同义。最终回答已经直接给出的计算结果可按原值入表，不另算一个数值冒充原文。
+- `numeric_checks.evidence_index` 直接选择证据目录中从1开始的正整数，与其他 evidence_indices 使用同一目录，不是数组位置。`actual` 非 null 时，选择含该原值的本方最终回答证据；缺项为 null 时，选择能核查缺失范围的本方最终回答证据。目录为空或所有目标均属于上述原规则核验、计算或解码情形时填 `numeric_checks=[]`；混合情形仍填写其余直接点值目标。日期、代码按原任务核验；不能以工具值或标准之外的新计算值替换标准目标。
+- 单位差异先核对指标定义。标准用 `%` 简写而实际指标是两个收益率之差时，须核算后判断，不能仅凭回答写“百分点”就判错；这种需解释口径的目标不作为直接点值入表，在 correctness_reason 保留定义、计算与结论。真正的百分比和百分点仍不可互换。
 
 4. 沿真实行为定位责任。
-- problem 的 `model_responsible` 仅在证据证明模型自身失误时填 `true`；`tool_evidence_indices` 只选择本条 finding 提交的 `evidence` 数组中证明本方工具自身失误的零起始位置。它与材料的 `reference.evidence_index` 不同。未定位责任时填 `false` 和 `[]`；`definition` 描述观察到的偏差及实际核实范围，有失误证据时说明其如何影响结论，未知责任在 `reason` 中保留。
+- problems 条目中的 `model_responsible` 仅在证据证明模型自身失误时填 `true`；`tool_evidence_indices` 直接选择证据目录中证明本方工具自身失误的正整数编号，不填写 finding 内部数组位置。未定位责任时填 `false` 和 `[]`；`definition` 描述观察到的偏差及实际核实范围，有失误证据时说明其如何影响结论，未知责任在 `reason` 中保留。
 - 模型写错请求/代码、误读正确返回或编造内容归模型；工具自身返回错误且影响结论时才归工具。工具忠实执行错误代码不归工具。两者各有独立失误证据时才同时选择。调用过、无返回或引用正确返回作反证都不证明工具责任；若某组件正确工作时仍可能出现当前现象，就尚未定位它。已确认结果偏差与责任未知可同时存在，也不因局部责任未知清空其他已证实的责任。
-- `reference_materials` 是本次复核可读取的参考记录。其原始工具返回、参考资料、时间戳和图片可用于核验本方事实，各自保留真实来源；参考回答的 `final_answer/final_evidence/deferred_final_material/answer_generation` 仅定位待查主张，不作为独立事实依据。两份答案不同不证明哪份正确。参考方 SYS/DEV、时钟和调用不能替代本方规范、原时刻、工具责任、`correctness_evidence` 或 `numeric_checks.actual`。
+- `reference_materials` 是本次复核可读取的参考记录。其原始工具返回、参考资料、时间戳和图片可用于核验本方事实，各自保留真实来源；参考回答的 `final_answer/final_evidence/deferred_final_material/answer_generation` 仅定位待查主张，不作为独立事实依据。两份答案不同不证明哪份正确。参考方 SYS/DEV、时钟和调用不能替代本方规范、原时刻、工具责任、`correctness_evidence_indices` 或 `numeric_checks.actual`。
 - `table_resolutions` 仅有 `review_context` 的独立复核使用。选择本方 `answer_table_index` 作为正整数 `table_index`，以零起始 `row_index` 定位行，引用最终行与全部既有来源行。`supported` 只解除 `unverified`，须有非代码工具的完整肯定对应声明；词同现、否定、示例或代码自打印不足。已有来源反证不能只凭新正向片段解除。`conflict` 须有 `established` problem 及两侧原文；证据不足保持未确认。
 
 5. 提交完整评审。
-- 引用使用材料或实际工具返回给出的 `reference.evidence_index`。未找到合适片段时先读取；图片先查看并填写 `observation`。`suggested_evidence` 也是待核材料，核对支持关系后再选择。
-- 用 `execute_code` 将完整评审写入本任务工作目录的相对路径 `evaluation-draft.json`。先用 Python 字典和列表组装 `data`，布尔值与空值使用 `True/False/None`，再用 `json.dump(data, 文件, ensure_ascii=False)` 保存 JSON；文本字段保留普通字符串，不拼接 JSON 文本。写稿调用同时声明 `outputs=["evaluation-draft.json"]`，用于确认本任务工作目录内的文件确实生成；不要改到其他目录。确认写稿 `exit_code=0` 且声明产物读取成功后，用 `submit_evaluation_file` 只提交 `{"path":"evaluation-draft.json"}`，正文遵循该工具描述的 `file_content_schema`。收到错误反馈时，核对指定字段、证据选择和关联判断，成功写回修正后的完整 JSON，再按剩余额度重新提交该文件。`summary` 简明概括完成情况、主要优点和真实缺口，避免重复逐条 findings。
+- 引用使用材料或实际工具返回给出的 `reference.evidence_index`。未找到合适片段时先读取；图片先查看，再在顶层 `image_observations` 按 image_number 和 text 填写观察；证据仍选择同一目录编号。`suggested_evidence` 也是待核材料，核对支持关系后再选择。
+- 直接调用 submit_evaluation，只传 json 字段，其值为完整评审 JSON 对象的文本，正文符合工具描述中的 json_content_schema。json 文本用真正的 JSON（字段双引号、true/false/null），不用 XML、Markdown 或 Python 字面量。点评文字用中文引号“”，协议只写名称，不复写尖括号标签，避免正文引号破坏 JSON。不要为提交结果写 Python、生成 JSON 文件或提交 path；execute_code 只在确需计算时使用。summary 简明概括完成情况、最主要的贡献和真实缺口。
+
+strengths 的每条固定填写 dimension、stage、importance、text、reason、evidence_status、basis_index、evidence_indices，不重复写影响字段；problems 额外固定填写 impact、model_responsible、tool_evidence_indices、label、definition。没有该类观察时整个数组填 []。按各自模板一次填全，不把问题责任字段塞进优点数组。所有目录选择都使用材料提供的正整数。总评只写最主要的完成情况和缺口；未知须说明缺哪份材料或哪个范围，不写抽象的“证据不确定”。

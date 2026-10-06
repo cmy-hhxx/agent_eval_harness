@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import type { RewriteItem } from "@eval/agents/rewrite";
+import { rewriteAgent } from "@eval/agents/rewrite";
+import { AgentRegistry } from "@eval/host";
 import { attributionResult, comparisonResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import { bindTask } from "./workflow.js";
 import type { TaskData } from "./types.js";
@@ -17,6 +19,18 @@ function bindRewrite(stage: "attribution" | "comparison" | "clustering", evaluat
       comparisonRewriteScope: "all" } satisfies TaskData };
   return bindTask(task, {}, { source }, { tasks: [task] });
 }
+
+test("Workflow binds ordered text to original slot identities and rejects missing positions", () => {
+  const binding=bindRewrite("comparison",comparisonResult()),registry=new AgentRegistry([rewriteAgent]);
+  const shown=binding.modelInput!.items as RewriteItem[];
+  assert(shown.every(item=>!Object.hasOwn(item,"id")));
+  const draft={texts:shown.map(item=>item.preference?item.preference+"：双方都给出了正确结果4。":item.text)};
+  const before=structuredClone(draft),result=registry.resolve(binding,draft,emptyAudit()) as {rewrites:{id:string;text:string}[]};
+  registry.validate(binding,result,emptyAudit());
+  assert.deepEqual(result.rewrites.map(item=>item.id),(binding.request.input.items as RewriteItem[]).map(item=>item.id));
+  assert.deepEqual(draft,before);
+  assert.throws(()=>registry.resolve(binding,{texts:draft.texts.slice(1)},emptyAudit()),/数量必须与槽位一致/);
+});
 
 test("Rewrite projects protocol seeds in verdicts and readonly cells without changing exact slot metadata", () => {
   const result = comparisonResult();
@@ -38,8 +52,8 @@ test("Rewrite projects protocol seeds in verdicts and readonly cells without cha
   assert(shown[1]!.context!.includes("来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。"));
   assert.equal(shown[0]!.preference, "A组<Fast>更好");
   assert(shown[1]!.forbiddenPrefixes!.includes("B组<Fast>："));
-  assert.deepEqual(shown.map(({ id, preference, forbiddenPrefixes }) => ({ id, preference, forbiddenPrefixes })),
-    original.map(({ id, preference, forbiddenPrefixes }) => ({ id, preference, forbiddenPrefixes })));
+  assert.deepEqual(shown.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })),
+    original.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })));
   assert(shown.every(item => !/[<>]/.test([item.label, item.text, item.context ?? ""].join("\n"))));
   assert.equal(original[1]!.text, "使用<visual>展示27.98%。");
   assert(original[1]!.context!.includes("来源<trace ref=Ab12Cd3 />；模板[^<int>]。"));
@@ -61,7 +75,7 @@ test("all attribution rewrite slots preserve protocol attributes and figures in 
   assert.equal(shown.length, 22);
   assert(shown.every(item => item.text === "＜vis-html ref=html-7b1ac344 /＞保留24.2%、15.1%；x＜0且x＞5；已有＜visual＞。"));
   assert(original.every(item => item.text === text));
-  assert.deepEqual(shown.map(item => item.id), original.map(item => item.id));
+  assert(shown.every(item => !Object.hasOwn(item,"id")));
   assert.deepEqual(result, before);
 });
 
@@ -73,10 +87,10 @@ test("clustering rewrite presentation covers ordinary HTML and mathematical angl
   const binding = bindRewrite("clustering", result, {});
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.deepEqual(shown.map(item => ({ id: item.id, label: item.label, text: item.text })), [
-    { id: "new_classes.0.definition", label: "＜div＞格式 · 定义", text: "＜div＞5.1＜/div＞；a＜b＞c。" },
-    { id: "new_classes.0.novelty", label: "＜div＞格式 · 新建理由", text: "保留＜tag attr='123'＞协议名和属性。" },
-    { id: "merges.0.reason", label: "合并理由", text: "x＜0；已有＜0＞。" },
+  assert.deepEqual(shown.map(item => ({ label: item.label, text: item.text })), [
+    { label: "＜div＞格式 · 定义", text: "＜div＞5.1＜/div＞；a＜b＞c。" },
+    { label: "＜div＞格式 · 新建理由", text: "保留＜tag attr='123'＞协议名和属性。" },
+    { label: "合并理由", text: "x＜0；已有＜0＞。" },
   ]);
   assert.equal(original[0]!.label, "<div>格式 · 定义");
   assert.equal(original[0]!.text, "<div>5.1</div>；a<b>c。");

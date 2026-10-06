@@ -3,7 +3,7 @@ import { criteriaAgent } from "@eval/agents/criteria";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { rewriteAgent } from "@eval/agents/rewrite";
 import { clusteringAgent } from "@eval/agents/clustering";
-import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, type AgentProfile, type JsonSchema } from "@eval/contracts";
+import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, SUBMISSION_JSON_SCHEMA, type AgentProfile, type JsonSchema } from "@eval/contracts";
 import { criteriaText, comparisonText, sharedPromptResources } from "@eval/prompts";
 import { builtinTools } from "@eval/tools";
 import { outputSchema, clusteringSchema, type EvalConfig } from "@eval/workflows/comparison";
@@ -26,7 +26,7 @@ interface ReferenceFlow {
 function referenceProfile(stage: string, profile: AgentProfile, name: string) {
   const agentSource = "packages/agents/src/" + stage + "/index.ts";
   const schemaSource = (document: string) => "schemas/" + stage + "/" + document + ".schema.json";
-  const submissionSource = schemaSource(stage === "rewrite" ? "result" : profile.inspection ? "verification-submission" : "submission");
+  const submissionSource = schemaSource(profile.inspection ? "verification-submission" : "submission");
   const sources: Record<string, string[]> = {
     request: profile.inspection ? [schemaSource("request"), schemaSource("result"), agentSource] : [schemaSource("request")],
     result: [schemaSource("result")],
@@ -35,7 +35,7 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
     submissionNudge: ["packages/prompts/resources/shared/nudge.md"],
   };
   const schemas: Record<string, JsonSchema> = { request: profile.requestSchema };
-  if (stage !== "rewrite") { schemas.submission = profile.submissionSchema; sources.submission = [submissionSource]; }
+  schemas.submission = profile.submissionSchema; sources.submission = [submissionSource];
   const modelSubmission = profile.evidenceSelections ? evidenceSelectionSchema(profile.submissionSchema) : profile.submissionSchema;
   if (profile.evidenceSelections) {
     schemas.modelSubmission = modelSubmission;
@@ -63,7 +63,7 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
   }
   const toolSchemas = Object.fromEntries(Object.keys(profile.toolDescriptions).map(tool => {
     const schema = tool === "submit_evaluation_file" || tool === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA
-      : tool === "submit_evaluation" ? modelSubmission : tool === "inspect_material" ? schemas.modelInspection
+      : tool === "submit_evaluation" ? profile.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : modelSubmission : tool === "inspect_material" ? schemas.modelInspection
       : builtinTools.find(definition => definition.name === tool)?.inputSchema;
     if (!schema) throw new Error("Missing reference tool schema: " + stage + "/" + profile.id + "/" + tool);
     return [tool, schema];
@@ -71,13 +71,13 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
   sources.toolSchemas = [...new Set([
     ...Object.keys(profile.toolDescriptions).map(tool => "packages/prompts/resources/tools/" + tool + ".md"),
     "packages/tools/src/index.ts", "packages/host/src/agents.ts", submissionSource,
-    ...(profile.fileSubmission ? ["packages/contracts/src/index.ts"] : []),
+    ...(profile.fileSubmission || profile.jsonStringSubmission ? ["packages/contracts/src/index.ts"] : []),
     ...(profile.evidenceSelections ? ["packages/contracts/src/evidence-selection.ts"] : []),
     ...(profile.modelSubmissionSchema ? [agentSource] : []),
     ...(profile.inspection ? [schemaSource("inspection"), "packages/agents/src/comparison/verification.ts"] : []),
   ])];
   return { id: profile.id, name, schemas, prompts, sources, toolDescriptions: profile.toolDescriptions, toolSchemas,
-    fileSubmission: profile.fileSubmission, requestBoundSubmission: Boolean(profile.modelSubmissionSchema) };
+    fileSubmission: profile.fileSubmission, jsonStringSubmission:Boolean(profile.jsonStringSubmission),requestBoundSubmission: Boolean(profile.modelSubmissionSchema) };
 }
 
 /** Read-only reference assembled from the same public definitions used by the Host. */
@@ -121,7 +121,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
       rules: [
         "共同标准只选择问题、有效标准答案与 USER 约束原文；SYS / DEV 完整规范由归因独立核查。",
         "归因与核验选择任务内正整数 evidence_index；程序解析并保留 evidence_id、message_index、quote 与真实来源。",
-        "默认共同标准、一次归因、一次对比；decided 结果直接进入正式导出，needs_review 保留证据不足状态，不自动重评。",
+        "默认共同标准、归因、对比；首次对比前关键观察未对齐时最多补查一轮。decided 正式导出，needs_review 保留具体待核事项，已接受对比不重评。",
         "可选复核首查隐藏归因、排名与上游评审；inspect_material 成功后揭示，复核结果单独保存，不覆盖正式裁决。",
         "对比确认既有 finding；排名、核心状态与逐项关联由程序解析，两两判决由排名和核心可用性派生。",
         "better_candidates 为空表示未区分优劣；unknown 与 not_applicable 保留各自状态，不从摘要另判。",

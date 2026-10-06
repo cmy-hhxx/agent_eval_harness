@@ -149,8 +149,8 @@ export async function writeMongoPublication(
   await flush();
   const core = new Map<string, boolean>();
   for await (const { row, evaluatedAt } of results) {
-    if (row.status === "needs_review" || row.evaluation_type === "comparison_review" || row.supersededBy)
-      throw new Error("Only settled, unsuperseded comparisons can be published");
+    if (row.status === "needs_review" || row.evaluation_type === "comparison_review")
+      throw new Error("Only decided comparisons can be published");
     const identity = row.case as { batch_id?: string; case_id?: string };
     const models = row.models as Record<string, Document>;
     const versions = Object.keys(models ?? {}).sort(), rawId = identity?.case_id;

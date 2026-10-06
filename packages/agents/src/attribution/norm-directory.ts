@@ -73,7 +73,7 @@ export function findingNormSelectionIssues(request: AgentRequest, draft: unknown
     const point = parseEvidenceCoordinates(item.evidence_id);
     if (!point || point.kind !== "text") return false;
     const criterion = requirementIndex === null ? undefined : (request.input.task_analysis as unknown as TaskAnalysis).requirements[requirementIndex];
-    if (criterion?.text.includes(item.quote)) return true; // The complete, source-bound original criterion is presented verbatim.
+    if (criterion?.acceptance_rule.includes(item.quote)) return true; // The complete original is already present in the source-bound acceptance rule.
     if (Array.isArray(answer.instruction_sources) && answer.instruction_sources.some(entry => {
       const shown = object(entry);
       return context.sources.some(source => source.message_index === point.message_index && shown?.message_index === source.message_index &&
@@ -90,7 +90,7 @@ export function findingNormSelectionIssues(request: AgentRequest, draft: unknown
     });
   };
   for (const { finding, path } of submissionFindingEntries(draft)) {
-    if (finding.dimension !== "instruction_following") continue;
+    if (finding.dimension !== "instruction_following" && !Object.hasOwn(finding,"norm_index")) continue;
     const selected = finding.norm_index;
     if (selected === null) {
       if (object(finding.assessment)?.evidence_status !== "uncertain") issues.push({ category: "evidence",

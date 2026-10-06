@@ -11,7 +11,6 @@ import type {
   SubmissionReceipt,
   FailureContext,
   LogSink,
-  TaskState,
   TraceRead,
   ToolAudit,
   MaterialInspection,
@@ -439,7 +438,6 @@ export class RunStore {
     state.failure = undefined;
     const previousTasks = [...this.manifest.tasks];
     const previousScope = this.manifest.executionScope && [...this.manifest.executionScope];
-    const changedStates = new Map<string, TaskState>();
     const addedIds: string[] = [];
     try {
       const advance = this.services.taskSource.advance?.(task, receipt, this.state, this.inputs);
@@ -456,13 +454,6 @@ export class RunStore {
         this.manifest.states[next.id] = { status: "pending", attempts: 0, revision: 1 };
         if (this.manifest.executionScope?.includes(task.id)) this.manifest.executionScope.push(next.id);
       }
-      for (const id of advance?.blocked ?? []) {
-        const current = this.manifest.states[id];
-        if (!current || current.status === "running" || this.state.receipts[id]) continue;
-        changedStates.set(id, { ...current });
-        current.status = "blocked";
-        current.reason = "Independent review is unresolved";
-      }
       await this.save();
     } catch (error) {
       delete this.state.receipts[task.id];
@@ -472,7 +463,6 @@ export class RunStore {
       this.manifest.tasks = previousTasks;
       this.manifest.executionScope = previousScope;
       for (const id of addedIds) delete this.manifest.states[id];
-      for (const [id, previous] of changedStates) this.manifest.states[id] = previous;
       throw error;
     }
     this.attempts.delete(value.attemptId);

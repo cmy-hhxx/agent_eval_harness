@@ -1,3 +1,4 @@
+import "./charts.css";
 import "../../../vendor/deepseek/packages/client/web/src/base.css";
 import "../../../vendor/deepseek/packages/client/ui-theme/src/styles/brand-font.css";
 import { Context } from "@deepseek-ai/cordis";

@@ -1,6 +1,6 @@
 import type { ToolAudit, ValidationIssue } from "@eval/contracts";
 import { evidenceId, evidenceSources, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, ValidationError } from "@eval/contracts";
-export { evidenceId, evidenceSources, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "@eval/contracts";
+export { evidenceId, evidenceSources, messageContentSources, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "@eval/contracts";
 
 export function cite(
   inputId: string,

@@ -90,8 +90,8 @@ test("configuration composes layered files and resolves bound models", async () 
   for (const stage of ["criteria", "attribution", "comparison", "rewrite", "clustering"]) {
     assert.equal(modelForStage(stage).model, "your-gateway-model-id");
     assert.equal(modelForStage(stage).maxOutputTokens, 32768);
-    assert.equal(modelForStage(stage).thinking, "medium");
-    assert.equal(unconfigured(stage).thinking, "medium", "unconfigured profiles preserve the default reasoning level");
+    assert.equal(modelForStage(stage).thinking, stage === "attribution" ? "high" : "medium");
+    assert.equal(unconfigured(stage).thinking, stage === "attribution" ? "high" : "medium", "stage settings remain explicit when the profile uses its default");
   }
   const overridden = createModelResolver({
     ...resolved.models,
@@ -110,6 +110,7 @@ test("model profiles preserve explicit max effort and endpoint developer-role ca
     const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
     source.models.judge.model = "analysis-model";
     source.models.judge.thinking = "max";
+    delete source.bindings.attribution.thinking;
     source.models.judge.supportsDeveloperRole = false;
     const file = path.join(directory, "max-profile.json");
     await writeFile(file, JSON.stringify(source));
@@ -612,12 +613,12 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       assert.deepEqual(Object.keys(prepared.evaluation.toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
       if (stage === "criteria") {
         assert(rules.includes("requirements"));
-        assert(prepared.prompt.includes('"candidate_ids"'));
+        assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
         assert(rules.includes("reference.evidence_index"));
         assert(instruction.includes("读完整交付，确定要求的作用域"));
-        assert(rules.includes("strength/problem"));
+        assert(rules.includes("strengths") && rules.includes("problems"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
@@ -626,23 +627,20 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       } else {
         assert(!rules.includes("不提交 evidence_id"));
         assert(!rules.includes("不新建问题节点"));
-        for (const rule of ["comparison_slots", "assessments", "comparisons", "better_candidate", "preference"])
+        for (const rule of ["comparison_slots", "a_summary", "comparisons", "better_candidate", "preference"])
           assert(rules.includes(rule), rule);
         assert(!rules.includes("source_review"), "default comparison reads accepted attribution directly");
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
-        assert.deepEqual(submission.required, ["assessments", "comparisons", "tradeoff"]);
+        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "tradeoff"]);
         assert(Object.hasOwn(submission.properties, "preference"), "a meaningful preference remains selectable");
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
-        const rows = submission.properties.comparisons as { items: false; minItems: number; maxItems: number;
-          prefixItems: { type: string | string[]; properties: { assessments: { properties: Record<string, { required: string[]; properties: Record<string, unknown> }> } } }[] };
-        assert.equal(rows.items, false);
-        assert.equal(rows.prefixItems[0].type, "object", "the core requirement row cannot be omitted");
-        assert.equal(rows.minItems, rows.prefixItems.length);
-        assert.equal(rows.maxItems, rows.prefixItems.length);
-        assert(rows.prefixItems.every(row => Object.values(row.properties.assessments.properties)
-          .every(cell => cell.required.includes("summary") && !Object.hasOwn(cell.properties, "source_review"))),
-          "default cells require only prose about the accepted attribution");
+        const rows = submission.properties.comparisons as any;
+        assert.equal(rows.items.type.includes("object"),true);
+        assert(rows.minItems>0);assert.equal(rows.maxItems,rows.minItems);
+        assert.deepEqual(rows.items.required,["importance","a_summary","b_summary"]);
+        assert(!rows.items.properties.assessments);
+
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {

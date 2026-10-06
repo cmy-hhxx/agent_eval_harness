@@ -19,7 +19,7 @@ test("all stage texts come from one resource tree; tool descriptions are complet
     for (const key of ["system", "instructions"] as const)
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/default/${key}.md`, resources), "utf8").trim());
     assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !==
-      (stage === "attribution" || stage === "comparison" ? "submit_evaluation" : "submit_evaluation_file")).sort());
+      (stage === "comparison" ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(`tools/${name}.md`, resources), "utf8").trim());
   }
@@ -56,16 +56,17 @@ test("default comparison consumes accepted attribution without a source review s
   assert.doesNotMatch(text, /source_review|inspect_material|归因复核/);
 });
 
-test("attribution names the finding-level norm selector and its separate assessment fields", () => {
+test("attribution names fixed observation collections and one basis selector", () => {
   const prompt = agentPrompt("attribution", []);
-  assert.match(prompt.instructions, /findings\[i\]\.norm_index.*与 `dimension` 同级/);
-  assert.match(prompt.instructions, /assessment.*observation\/evidence_status\/impact.*不在其中放 `norm_index` 或 `requirement_index`/);
+  assert.match(prompt.instructions, /优点放 strengths，问题放 problems/);
+  assert.match(prompt.instructions, /每条都填写 `basis_index`/);
+  assert.match(prompt.instructions, /不创建 assessment 或 problem 子对象/);
 });
 
-test("Attribution and Comparison write JSON files while other built-ins submit directly", () => {
+test("Comparison writes a JSON file while shallow Attribution submits directly", () => {
   const prompt = agentPrompt("attribution", ["execute_code"]);
-  assert.equal(prompt.fileSubmission, true);
-  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
+  assert.equal(prompt.fileSubmission, false);
+  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation"]);
   for (const profile of ["default", "verification"])
     assert.equal(agentPrompt("comparison", ["execute_code"], profile).fileSubmission, true);
 });
@@ -80,7 +81,7 @@ test("independent comparison verification uses its own centralized prompt resour
   assert.match(prompt.instructions, /inspect_material/);
   assert.match(prompt.toolDescriptions.inspect_material, /与最终提交共用 content_call_limit/);
   assert.match(prompt.instructions, /已有 material_inspection 时继续第二步，不重复首查/);
-  assert.match(prompt.instructions, /填写 concern_matches、concern_refutations、source_reviews 三数组/);
+  assert.match(prompt.instructions, /填写 concern_matches、source_reviews 两数组/);
   assert.match(prompt.instructions, /verification_check_slots/);
   assert.match(prompt.instructions, /contradicted/);
   assert.match(prompt.instructions, /source_reviews 只列真实需要更正的归因疑点/);
@@ -109,17 +110,17 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(systemPrompt, /直接使用 currentRun.summary/);
   assert.match(systemPrompt, /无需遍历历史、手算分页或读取正文/);
   assert.match(systemPrompt, /直接使用 summary.formalComparisonStats 的完整正式战绩/);
-  assert.match(systemPrompt, /效果概览至多250字/);
-  assert.match(systemPrompt, /Fast、Expert 各一句/);
-  assert.match(systemPrompt, /默认至多450字、三个短段落/);
-  assert.match(systemPrompt, /首段直接指出所读样本中的优势和主要短板/);
-  assert.match(systemPrompt, /最后一句说样本限制，最多说一次/);
+  assert.match(systemPrompt, /常规回答正文通常50–120字，至多150字/);
+  assert.match(systemPrompt, /有图时正文最多两句、80字/);
+  assert.match(systemPrompt, /主动调用 show_chart，Fast、Expert 分图/);
+  assert.match(systemPrompt, /直接指出所读样本中的优势和主要短板/);
+  assert.match(systemPrompt, /样本限制用一句短语放在图的 scope/);
   assert.match(systemPrompt, /有双方均好或均差时不能写成“全负”“全胜”/);
   assert.match(systemPrompt, /完整问句用于内部核验/);
   assert.doesNotMatch(systemPrompt, /正文用[^。]*完整问句/);
   assert.match(systemPrompt, /自主选两个决定性案例/);
   assert.match(systemPrompt, /正式对局数采用 formalComparisonStats.comparisonCount/);
-  assert.match(systemPrompt, /N份结果待复核/);
+  assert.match(systemPrompt, /formalComparisonsAccepted 是结果份数/);
   assert.match(systemPrompt, /查错后明确承认具体错误/);
   assert.match(systemPrompt, /每档全部已裁决类别相加须等于该档场数/);
   assert.match(systemPrompt, /一场告负不自动证明一种通用弱项/);
@@ -128,7 +129,9 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(systemPrompt, /原始自然语言问句/);
   assert.match(systemPrompt, /问句、回答、实际推导、断点评语/);
   assert.match(systemPrompt, /首次失去依据或违反题目约束的位置/);
-  assert.match(systemPrompt, /多项数量.*优先用 show_chart.*优先用 Markdown 表格/);
+  assert.match(systemPrompt, /可视化是默认交付方式，不等用户要求/);
+  assert.match(systemPrompt, /多项数量.*主动调用 show_chart.*直接用 Markdown 表格/);
+  assert.doesNotMatch(systemPrompt, /200–400字|450字|至多250字|共四句|单纯数量与进度查询不加图表/);
   assert.match(toolDescriptions.read_data, /正式结果.*不能代替原始问句和回答/);
   assert.match(toolDescriptions.read_data, /保留字段名，不把 taskId 换成 inputId/);
   assert.match(toolDescriptions.list_data, /query 是字面文本筛选词，不是数据类别/);
@@ -146,7 +149,26 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(chart, /双方都好、双方都差.*独立的固定中性灰色/);
   assert.match(chart, /taskId 不放在 references 项的顶层/);
   assert.match(chart, /不在校验失败后换成运行引用/);
+  assert.match(chart, /正式战绩汇总用 \{statistics:\{runId,comparisonTier\}\}/);
   assert.doesNotMatch(chart, /A组固定墨黑|B组固定铜色/);
+  assert.match(chart, /图必须比一句话多交付信息/);
+  assert.match(chart, /dumbbell.*两组同口径/);
+  assert.match(chart, /waterfall.*可加总/);
+  assert.match(chart, /histogram.*程序分箱和计数/);
+  assert.match(chart, /annotations.*最多3处/);
+});
+
+test("Eris plans independent reads together and stops retrieval once the evidence is sufficient", () => {
+  const { systemPrompt, toolDescriptions } = erisPrompt(["search_web", "read_web", "read_data"]);
+  assert.match(systemPrompt, /相互独立的工具调用同轮发出.*最多4路并发/);
+  assert.match(systemPrompt, /有依赖则等上一步返回真实引用/);
+  assert.match(systemPrompt, /有完整证据就回答/);
+  assert.match(toolDescriptions.search_web, /单一事实默认只用1个精准查询/);
+  assert.match(toolDescriptions.search_web, /多个计划合在一次调用，不拆调用扩大并发/);
+  assert.match(toolDescriptions.search_web, /不串行碰运气/);
+  assert.match(toolDescriptions.read_web, /首次调用就带 find/);
+  assert.match(toolDescriptions.read_web, /不对空页反复 find 或翻页/);
+  assert.match(toolDescriptions.read_data, /不逐份扫全量长判词/);
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {

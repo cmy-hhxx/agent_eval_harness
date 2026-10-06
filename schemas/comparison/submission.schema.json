@@ -3,47 +3,12 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "assessments",
+    "a_summary",
+    "b_summary",
     "comparisons",
     "tradeoff"
   ],
   "properties": {
-    "assessments": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "A",
-        "B"
-      ],
-      "properties": {
-        "A": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "summary"
-          ],
-          "properties": {
-            "summary": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "B": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "summary"
-          ],
-          "properties": {
-            "summary": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
     "comparisons": {
       "type": "array",
       "items": {
@@ -54,7 +19,8 @@
         "additionalProperties": false,
         "required": [
           "importance",
-          "assessments"
+          "a_summary",
+          "b_summary"
         ],
         "properties": {
           "importance": {
@@ -71,41 +37,13 @@
               null
             ]
           },
-          "assessments": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "A",
-              "B"
-            ],
-            "properties": {
-              "A": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "summary"
-                ],
-                "properties": {
-                  "summary": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              },
-              "B": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "summary"
-                ],
-                "properties": {
-                  "summary": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            }
+          "a_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "b_summary": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -118,6 +56,14 @@
       ]
     },
     "tradeoff": {
+      "type": "string",
+      "minLength": 1
+    },
+    "a_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "b_summary": {
       "type": "string",
       "minLength": 1
     }

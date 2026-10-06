@@ -15,7 +15,6 @@ type ViewCandidate = { input_id: string; version: string; name: string };
 type ViewTask = {
   id: string; stage: string; status: string; versions: string[]; attempts: number;
   review_of?: { task_id: string; round: number; reasons: string[] };
-  superseded_by?: string;
   result_status?: "decided" | "needs_review";
 };
 
@@ -146,7 +145,7 @@ test("review projections resolve blind candidates and show uncertain cells witho
     assert.equal(verdicts, "待复核");
     assert(!/都好|都差/.test(verdicts));
     const cell = document.querySelector('[data-candidate="a_fast"]');
-    assert.match(cell.textContent, /未确认.*不确定/);
+    assert.match(cell.textContent, /证据不足.*不确定/);
     assert(document.querySelector(".comparison-table th").closest("table").textContent.includes(review.task_analysis.requirements[0]!.id));
   } finally { dom.window.close(); }
 });
@@ -243,17 +242,12 @@ test("dashboard distinguishes initial receipts from queued reviews and shows pen
           review_of: { task_id: version, round: 1, reasons: [reason] } },
       ]),
       { id: "initial-comparison", stage: "comparison", versions: ["a_fast", "b_fast"], status: "succeeded", attempts: 1,
-        result_status: "needs_review", superseded_by: "review-comparison" },
-      { id: "review-comparison", stage: "comparison", versions: ["a_fast", "b_fast"], status: "pending", attempts: 0,
-        review_of: { task_id: "initial-comparison", round: 1, reasons: [reason] } },
-      { id: "unresolved-review", stage: "comparison", versions: ["a_fast", "b_fast"], status: "succeeded", attempts: 1,
-        result_status: "needs_review", review_of: { task_id: "other-comparison", round: 1, reasons: [reason] } },
+        result_status: "needs_review" },
       { id: "decided-comparison", stage: "comparison", versions: ["a_fast", "b_fast"], status: "succeeded", attempts: 1,
         result_status: "decided" },
     ];
     const original = structuredClone(state.caseDetail.tasks);
     state.openTasks.add("a_fast-review");
-    state.openTasks.add("review-comparison");
     views.renderDetail();
     for (const version of ["a_fast", "b_fast"]) {
       const initial = document.querySelector(`[data-task="${version}"]`);
@@ -266,21 +260,17 @@ test("dashboard distinguishes initial receipts from queued reviews and shows pen
       assert.equal(review.querySelector("img"), null);
     }
     const initial = document.querySelector('[data-task="initial-comparison"]');
-    assert.equal(initial.querySelector(".task-phase").textContent, "首次对比");
+    assert.equal(initial.querySelector(".task-phase"), null);
     assert.equal(initial.querySelector(".task-status").textContent, "待复核");
     assert(initial.querySelector(".task-status").classList.contains("needs_review"));
     assert(initial.querySelector(".task-result"), "a submitted review receipt remains readable");
-    const review = document.querySelector('[data-task="review-comparison"]');
-    assert.equal(review.querySelector(".task-phase").textContent, "对比复核 · 第 1 轮");
-    assert.equal(review.querySelector(".task-review-reasons").textContent, reason);
-    assert.equal(document.querySelector('[data-task="unresolved-review"] .task-status').textContent, "待复核");
     assert.equal(document.querySelector('[data-task="decided-comparison"] .task-status').textContent, "succeeded");
     assert.equal(document.querySelectorAll("[data-task]").length, original.length, "accepted history and each queued task appear exactly once");
     assert.deepEqual(state.caseDetail.tasks, original, "display status does not mutate host execution status");
-    state.caseDetail.tasks.find((task) => task.id === "review-comparison")!.status = "failed";
-    state.caseDetail.tasks.find((task) => task.id === "review-comparison")!.result_status = "needs_review";
+    state.caseDetail.tasks.find((task) => task.id === "initial-comparison")!.status = "failed";
+    state.caseDetail.tasks.find((task) => task.id === "initial-comparison")!.result_status = "needs_review";
     views.renderDetail();
-    assert.equal(document.querySelector('[data-task="review-comparison"] .task-status').textContent, "failed", "execution failures take priority");
+    assert.equal(document.querySelector('[data-task="initial-comparison"] .task-status').textContent, "failed", "execution failures take priority");
   } finally { dom.window.close(); }
 });
 
@@ -554,7 +544,11 @@ test("comparison cells preserve complete states, confirmed advantages and direct
         const status = cell.querySelector(".comparison-status");
         const evidence = cell.querySelector(".comparison-evidence-status");
         assert.equal(status.dataset.status, assessment.status);
-        assert(status.textContent.includes(stateLabels[assessment.status]));
+        const explicitObservation = !item.criterion_ids.length && assessment.finding_indices.length &&
+          assessment.finding_indices.every(i => evaluations[version]!.findings[i]!.assessment.requirement_index === null);
+        if(assessment.status === "met" && explicitObservation) assert(status.textContent.includes("已确认"));
+        else if(assessment.status === "unknown") assert(/证据不足|未核查此项/.test(status.textContent));
+        else assert(status.textContent.includes(stateLabels[assessment.status]));
         assert.equal(evidence.dataset.evidenceStatus, assessment.evidence_status);
         assert(evidence.textContent.includes(assessment.evidence_status === "established" ? "已建立" : "不确定"));
         assert.equal(Boolean(cell.querySelector(".comparison-advantage")), item.better_candidates.includes(version));
@@ -604,6 +598,7 @@ test("comparison cells preserve complete states, confirmed advantages and direct
     }
     const lowProblem = table.querySelector('[data-comparison-index="0"] [data-candidate="b_fast"]');
     assert.equal(lowProblem.querySelector(".comparison-status").dataset.status, "met");
+    assert(lowProblem.querySelector(".comparison-status").textContent.includes("已确认问题"));
     assert.equal(lowProblem.querySelector(".comparison-advantage").textContent, "更优",
       "a source defect can belong to the confirmed relative advantage candidate");
     assert.equal(table.querySelector(".finding-type"), null, "the comparison table has no absolute strength or problem badges");

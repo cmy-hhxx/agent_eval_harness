@@ -37,7 +37,7 @@ export function publishableComparisons(state: Checkpoint, requireItems = false):
   }
   const config = state.config as EvalConfig;
   for (const [id, task] of entries) {
-    if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
+    if (task.stage !== "comparison" || task.data.verificationAudit || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
     const required = new Set([id, ...Object.values(task.dependencies)]);
     let missing = false;
     for (const sourceId of [...required]) {
@@ -131,8 +131,8 @@ export class PublicationStatistics {
     });
   }
   addResult({ row }: PublicationResult) {
-    if (row.status === "needs_review" || row.evaluation_type === "comparison_review" || row.supersededBy)
-      throw new Error("Only settled, unsuperseded comparisons can enter publication statistics");
+    if (row.status === "needs_review" || row.evaluation_type === "comparison_review")
+      throw new Error("Only decided comparisons can enter publication statistics");
     const ids = Object.keys(object(row.models)).sort(), caseId = JSON.stringify([object(row.case).batch_id, object(row.case).case_id]);
     if (ids.length !== 2 || !this.pairsForBatch(object(row.case).batch_id).some((pair) => pair.every((id) => ids.includes(id))))
       throw new Error("Unexpected statistics pair; publication requires a configured two-candidate result");

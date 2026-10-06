@@ -41,10 +41,8 @@ export function projectComparisonEvidence(input: JsonObject, bank: EvidenceBank)
   const result = { ...input };
   for (const field of ["answer"]) if (Object.hasOwn(input, field)) result[field] = materialEvidence(input[field], bank);
   for (const field of ["candidates", "reference_materials"]) if (Object.hasOwn(input, field)) result[field] = materialMap(input[field], bank);
-  for (const field of ["attributions", "source_review", "comparison_slots", "material_inspection", "pending_concerns"])
+  for (const field of ["attributions", "source_review", "comparison_slots", "material_inspection"])
     if (Object.hasOwn(input, field)) result[field] = projectEvidenceReferences(input[field], bank);
-  const review = object(input.review_context);
-  if (review && Object.hasOwn(review, "concerns")) result.review_context = { ...review, concerns: projectEvidenceReferences(review.concerns, bank) };
   const inspection = object(input.inspection_context);
   if (inspection && Object.hasOwn(inspection, "verification_concerns")) result.inspection_context = { ...inspection,
     verification_concerns: projectEvidenceReferences(inspection.verification_concerns, bank) };
@@ -54,7 +52,7 @@ export function projectComparisonEvidence(input: JsonObject, bank: EvidenceBank)
       ? section.materials.map(entry => materialEvidence(entry, bank)) : section.materials };
     if (section.kind === "source_directory") return { ...section,
       candidate_sources: materialMap(section.candidate_sources, bank),
-      ...Object.fromEntries(["requirement_catalog", "findings", "source_review", "comparison_slots", "pending_concerns"]
+      ...Object.fromEntries(["requirement_catalog", "findings", "source_review", "comparison_slots"]
         .filter(field => Object.hasOwn(section, field)).map(field => [field, projectEvidenceReferences(section[field], bank)])) };
     if (section.kind === "proposed_comparison") return projectEvidenceReferences(section, bank);
     return section;

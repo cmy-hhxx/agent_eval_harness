@@ -116,7 +116,6 @@ export function comparisonRow(
     status: result.status,
     criteria_task_id: task.dependencies.criteria,
     attribution_task_ids: Object.fromEntries(Object.keys(data.candidates).map((label) => [data.candidates[label]!.version, task.dependencies[label]])),
-    ...(data.reviewOf ? { review_of: data.reviewOf.taskId } : {}),
 
     evaluation_type: "group_model_comparison",
     comparison_id: data.comparisonId || "cmp_" + task.id,

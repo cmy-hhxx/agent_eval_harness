@@ -19,7 +19,7 @@ export function analysisTaskPurpose(task: Pick<SavedTask, "stage" | "data">): An
 
 /** Checkpoint receipts identify accepted output files without reading verdicts. */
 function analysisComparisonResult(task: SavedTask): "accepted" | "pending_review" | null {
-  if (task.stage !== "comparison" || task.data.verificationAudit || task.data.supersededBy || task.status !== "succeeded") return null;
+  if (task.stage !== "comparison" || task.data.verificationAudit || task.status !== "succeeded") return null;
   const exported = task.receipt?.exported;
   if (!exported) return null;
   // The current codec omits a stage's default filename; comparison-review keeps it explicitly.

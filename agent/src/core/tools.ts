@@ -30,11 +30,18 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     call_specialist: async (value, context) => textResult(await options.specialists.invoke(context.scope, value as SpecialistRequest, context.signal, context.progress)),
     read_specialist: async (value, context) => textResult(await options.specialists.read(context.scope, (value as { operationId: string }).operationId)),
     show_chart: async (value, context) => {
-      const { references, ...chart } = value as ChartSpec & { references: { runId?: string; operationId?: string; reference?: AnalysisReference }[] };
+      const { references, ...chart } = value as ChartSpec & { references: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
       validateChart(chart);
       const citations: unknown[] = [];
       for (const item of references) {
-        if (item.operationId) {
+        if (item.statistics) {
+          const result = await options.data.list({ runId: item.statistics.runId, limit: 1 });
+          const summary = result.summary as { formalComparisonStats?: { tiers: { comparisonTier: string; comparisonCount: number; references: AnalysisReference[] }[] } } | undefined;
+          const tier = summary?.formalComparisonStats?.tiers?.find(tier => tier.comparisonTier === item.statistics!.comparisonTier);
+          if (result.kind !== "inputs" || !tier || tier.comparisonCount <= 0 || !tier.references?.length)
+            throw new Error("该运行与档位没有可引用的正式统计");
+          citations.push({ statistics: item.statistics, evaluatorVersion: result.evaluatorVersion, references: tier.references });
+        } else if (item.operationId) {
           const result = await options.specialists.read(context.scope, item.operationId);
           if (result.state !== "succeeded") throw new Error("图表只能引用已接受的专业结果");
           citations.push({ operationId: item.operationId, evaluatorVersion: result.evaluatorVersion, reference: result.reference });

@@ -330,7 +330,6 @@ function taskDetails(saved: Checkpoint, id: string, rewriteIds: Map<string, stri
     ...(task.data.reviewOf ? { review_of: {
       task_id: task.data.reviewOf.taskId, round: task.data.reviewOf.round, reasons: task.data.reviewOf.reasons,
     } } : {}),
-    ...(task.data.supersededBy ? { superseded_by: task.data.supersededBy } : {}),
     ...(resultStatus ? { result_status: resultStatus } : {}),
     reason: status.reason || status.failure?.errors[0]?.message || null,
     last_progress_at: status.lastProgressAt ?? null,

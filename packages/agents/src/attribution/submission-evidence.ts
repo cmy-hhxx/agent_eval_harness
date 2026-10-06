@@ -1,4 +1,4 @@
-import { resolveEvidenceSelection, ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
+import { ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import { correctnessEvidenceScopeIssues, peerFinalSubmissionIssues, resolveAttributionEvidence } from "./source-evidence.js";
 import type { Evidence } from "./types.js";
 import { responsibilityIssues } from "./responsibility.js";
@@ -16,12 +16,9 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
     if (!Array.isArray(refs)) return undefined;
     return refs.map((item, index): Evidence | undefined => {
       const ref = object(item);
-      if (!ref || (!Object.hasOwn(ref, "evidence_index") && typeof ref.evidence_id !== "string")) return;
+      if (!ref || typeof ref.evidence_id !== "string") return;
       try {
-        const canonical = Object.hasOwn(ref, "evidence_index")
-          ? resolveEvidenceSelection(audit.evidenceBank ?? [], ref, `${path}/${index}`)
-          : ref as { evidence_id: string; observation?: unknown };
-        const evidence = resolveAttributionEvidence(request, canonical, audit, `${path}/${index}`);
+        const evidence = resolveAttributionEvidence(request, ref as { evidence_id: string; observation?: unknown }, audit, `${path}/${index}`);
         issues.push(...peerFinalSubmissionIssues(request, evidence, `${path}/${index}`));
         return evidence;
       } catch (error) {

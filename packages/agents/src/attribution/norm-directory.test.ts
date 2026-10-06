@@ -1,3 +1,5 @@
+import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
+import { resolveJudgment } from "./resolve.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
@@ -5,8 +7,7 @@ import { ValidationError, type AgentRequest, type ToolAudit } from "@eval/contra
 import { cite, evidenceSources, instructionSources, parseEvidenceCoordinates } from "@eval/tools";
 import { attributionAgent, attributionNormDirectory, type AttributionResult } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
-import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
-import { resolveFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
+import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 import { comparisonScope } from "@eval/agents/comparison";
 
 const rule = "## 推荐追问\n\n每次回答末尾输出 suggestion 块；若本 Prompt 要求结束则不追加。";
@@ -23,7 +24,7 @@ function scenario(messages: Record<string, unknown>[] = [{ role: "system", conte
     const source = evidenceSources(messages[index]).find(item => item.path === path)!;
     return { evidence_id: cite(request.sources.answer.id, index, source, start ?? 0, end ?? source.text.length).evidence_id };
   };
-  const submitted = attributionSubmission(request, structuredClone(example.result) as AttributionResult);
+  const submitted = attributionJudgment(request, structuredClone(example.result) as AttributionResult);
   submitted.correctness_evidence = [ref(finalIndex)];
   submitted.criterion_assessments.forEach(item => { item.evidence = [ref(finalIndex)]; });
   const { requirement_index: _association, ...assessment } = submitted.findings[0]!.assessment;
@@ -35,7 +36,7 @@ function scenario(messages: Record<string, unknown>[] = [{ role: "system", conte
   return { request, messages, finalIndex, directory, submitted, finding, registry, binding, audit, ref };
 }
 const resolve = (value: ReturnType<typeof scenario>) => {
-  const result = resolveFixtureEvidence(value.registry, value.binding, value.submitted, value.audit) as AttributionResult;
+  const result = resolveJudgment(value.binding.request, value.submitted, value.audit) as AttributionResult;
   value.registry.validate(value.binding, result, value.audit); return result;
 };
 const issue = (code: string) => (error: unknown) => error instanceof ValidationError && error.issues!.some(item => item.code === code);
@@ -63,7 +64,7 @@ test("norm directory retains complete headed and unheaded cross-leaf conditions 
 
 test("trusted criterion origin binds the requirement while private rules never borrow the ordinary question", () => {
   const value = scenario(), task = value.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
-  task.requirements[0]!.text = rule;
+  task.requirements[0]!.text = rule; task.requirements[0]!.acceptance_rule = task.requirements[0]!.text;
   const norm = value.directory[0]!.evidence[0]!;
   Object.assign(value.request.input.answer as object, { criterion_instruction_sources: { r1: [{ ...norm, path: "/content" }] } });
   value.directory = setFixtureNormDirectory(value.request);
@@ -78,7 +79,7 @@ test("independent USER paragraphs keep exact criterion owners and preserve unass
   const question = "计算2+2", condition = "仅报告数值，不输出操作建议。", metadata = "上下文：记录中的操作对象仅限示例。原时间为2026年10月5日。";
   const value = scenario([{ role: "user", content: [question, condition, metadata].join("\n\n") }, { role: "assistant", content: "2+2=4" }]);
   const task = value.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
-  task.requirements[0]!.text = question;
+  task.requirements[0]!.text = question; task.requirements[0]!.acceptance_rule = task.requirements[0]!.text;
   task.requirements.push({ ...task.requirements[0]!, id: "r2", text: condition });
   const source = evidenceSources(value.messages[0]).find(item => item.path === "/content")!;
   const origin = (quote: string) => ({ ...cite(value.request.sources.answer.id, 0, source, source.text.indexOf(quote), source.text.indexOf(quote) + quote.length), path: "/content" });
@@ -102,33 +103,27 @@ test("unknown own SYS never borrows tool output, peer instructions or a separate
   assert.deepEqual(result.findings[0]!.evidence.map(item => item.quote), ["2+2=4"]);
 });
 
-test("norm selectors cannot be missing, out of range, guessed on other dimensions, or paired with a reordered directory", () => {
+test("norm selectors reject invalid ownership while topic labels preserve the same selected norm", () => {
   const value = scenario();
   const wrong = structuredClone(value.submitted); wrong.findings[0]!.norm_index = value.directory.length;
   assert.throws(() => resolve({ ...value, submitted: wrong }), issue("finding_norm_index_invalid"));
   const absent = structuredClone(value.submitted); delete absent.findings[0]!.norm_index;
   assert.throws(() => resolve({ ...value, submitted: absent }), issue("schema_required"));
   const nonInstruction = structuredClone(value.submitted); nonInstruction.findings[0]!.dimension = "format";
-  assert.throws(() => resolve({ ...value, submitted: nonInstruction }), issue("schema_false schema"));
+  const classified=resolve({ ...value, submitted: nonInstruction });
+  assert.equal(classified.findings[0].dimension,"format");
+  assert.equal(classified.findings[0].assessment.requirement_index,resolve(value).findings[0].assessment.requirement_index);
+  assert.deepEqual(classified.findings[0].evidence,resolve(value).findings[0].evidence);
   (value.request.input.answer as Record<string, unknown>).norm_directory = [...value.directory].reverse();
   assert.throws(() => resolve(value), issue("norm_directory_invalid"));
 });
 
-test("a misplaced norm selector is rejected with the exact finding path and accepts the corrected placement", () => {
-  const value = scenario(), misplaced = structuredClone(value.submitted);
-  Object.assign(misplaced.findings[0]!.assessment, { norm_index: misplaced.findings[0]!.norm_index });
-  delete misplaced.findings[0]!.norm_index;
-  assert.throws(() => resolve({ ...value, submitted: misplaced }), (error: unknown) => {
-    if (!(error instanceof ValidationError)) return false;
-    assert(error.issues!.some(item => item.code === "schema_additionalProperties" && item.path === "/findings/0/assessment/norm_index"));
-    const selector = error.issues!.find(item => item.code === "finding_norm_index_invalid")!;
-    assert.equal(selector.path, "/findings/0/norm_index");
-    assert.match(selector.message, /\/findings\/0\/norm_index.*不放进 assessment/);
-    return true;
-  });
-  misplaced.findings[0]!.norm_index = value.finding.norm_index;
-  delete (misplaced.findings[0]!.assessment as Record<string, unknown>).norm_index;
-  assert.deepEqual(resolve({ ...value, submitted: misplaced }), resolve(value));
+test("a missing norm selector is rejected and explicit directory choice repairs it", () => {
+  const value=scenario(),missing=structuredClone(value.submitted);
+  delete missing.findings[0]!.norm_index;
+  assert.throws(()=>resolve({...value,submitted:missing}),issue("finding_norm_index_invalid"));
+  missing.findings[0]!.norm_index=value.finding.norm_index;
+  assert.deepEqual(resolve({...value,submitted:missing}),resolve(value));
 });
 
 test("non-final instruction findings require concrete execution coordinates and cannot substitute repeated norm text", () => {
@@ -171,7 +166,7 @@ test("complete original initial visibility avoids redundant norm reads while tru
   delete answer.initial_material;
   answer.initial_material = [];
   const task = value.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
-  task.requirements[0]!.text = long;
+  task.requirements[0]!.text = long; task.requirements[0]!.acceptance_rule = task.requirements[0]!.text;
   setFixtureNormDirectory(value.request);
   assert.equal(resolve(value).findings[0]!.assessment.requirement_index, 0, "complete trusted criterion text is already visible");
 });
@@ -196,7 +191,7 @@ test("responsibility indices bind original evidence before appended norm and fin
   assert.equal(result.findings.length, 9); assert.equal(result.findings[8]!.finding_id, "f8");
   assert.deepEqual(result.findings[8]!.problem!.component, ["模型自身推理", "Calc"]);
   assert.deepEqual(result.findings[8]!.evidence.map(item => item.quote), ["2+2=4", rule, "2+2=4"]);
-  problem.problem.tool_evidence_indices = [1]; value.submitted.findings = [problem];
+  problem.evidence.push(value.ref(3)); problem.problem.tool_evidence_indices = [1]; value.submitted.findings = [problem];
   assert.throws(() => resolve(value), issue("problem_tool_evidence_invalid"));
 });
 

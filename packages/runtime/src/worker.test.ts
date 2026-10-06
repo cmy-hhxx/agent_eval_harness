@@ -57,12 +57,48 @@ interface WorkerHarnessOptions {
 }
 
 const fileProfile: Partial<AgentProfile> = {
-  fileSubmission: true,
+  fileSubmission: true, jsonStringSubmission:false,
   toolDescriptions: {
-    ...attributionAgent.profiles.default.toolDescriptions,
+    ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
     submit_evaluation_file: "Submit the complete evaluation JSON file.",
   },
 };
+
+test("JSON text submission preserves nested rows, empty arrays and markup without a model-written file", async()=>{
+  const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",tool_evidence_indices:[]}],values:[false,null,0]};
+  const fixture=await harness(async options=>({async run(){
+    const tool=options.tools.find(tool=>tool.name==="submit_evaluation")!;
+    assert.deepEqual(tool.inputSchema,{type:"object",additionalProperties:false,required:["json"],properties:{json:{type:"string",minLength:2}}});
+    assert(tool.description.includes('"json_content_schema"'));
+    assert.equal((await options.execute("submit_evaluation",{json:JSON.stringify(original)})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:"fixture",profile:{jsonStringSubmission:true,requiredReads:()=>[],submissionSchema:{type:"object"}}});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt!.submitted,original);
+    assert.deepEqual(receipt!.evaluation,original);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,1);
+    assert.equal(receipt!.submissionStats!.fileErrors,0);
+  }finally{await fixture.close();}
+});
+
+test("invalid JSON text spends a content attempt without pretending it was a file error or repairing it",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    const rejected=await options.execute("submit_evaluation",{json:'{"ok":'});
+    assert.equal(rejected.isError,true);
+    const feedback=JSON.parse(rejected.content[0].text!);
+    assert(feedback.errors.some((issue:ValidationIssue)=>issue.code==="submission_json_invalid"));
+    assert.equal(feedback.budget.content_remaining,1);
+    assert.equal((await options.execute("submit_evaluation",{json:'{"ok":true}'})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:"fixture",policy:{repairAttempts:1},profile:{jsonStringSubmission:true,requiredReads:()=>[]}});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,2);
+    assert.equal(receipt!.submissionStats!.fileErrors,0);
+    assert.equal(fixture.counts().posts,1);
+  }finally{await fixture.close();}
+});
 
 async function harness(
   create: AgentBackend["createSession"],
@@ -98,7 +134,7 @@ async function harness(
     const evaluationServices: EvaluationServices = material === undefined ? {
       ...services,
       ...(profile ? { agents: new AgentRegistry([{ ...attributionAgent, profiles: {
-        default: { ...attributionAgent.profiles.default, ...profile },
+        default: { ...attributionAgent.profiles.default, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
       } }]) } : {}),
     } : {
       repository: createRunRepository<RunState>({
@@ -473,8 +509,8 @@ test("parallel file preparations and submissions share one bounded content ledge
   const fixture = await harness(async (options) => ({
     async run() {
       const results = await Promise.all(Array.from({ length: 6 }, (_, index) => {
-        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
-        draft.findings[0].importance = `invalid-${index}`;
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths: { importance: string }[] };
+        draft.strengths[0].importance = `invalid-${index}`;
         return submitFor(options, draft);
       }));
       assert(results.every((result) => result.isError));
@@ -489,8 +525,8 @@ test("parallel file preparations and submissions share one bounded content ledge
       .trim().split("\n").map(line => JSON.parse(line) as WorkerEvent);
     const loaded = events.filter(event => event.type === "submission" && object(event.data).content_loaded);
     assert.equal(loaded.length, 4, "remaining callers cannot load a hidden fifth draft");
-    const last = object(loaded.at(-1)!.data).evaluation as { findings: { importance: string }[] };
-    assert.equal(status.failure?.errors[0].actual, last.findings[0]!.importance,
+    const last = object(loaded.at(-1)!.data).evaluation as { strengths: { importance: string }[] };
+    assert.equal(status.failure?.errors[0].actual, last.strengths[0]!.importance,
       "the terminal error belongs to the actual last serialized submission, independent of file-write order");
     assert.equal(status.failure?.repeatedErrors, 1);
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
@@ -508,13 +544,13 @@ test("parallel file submissions load at most one file when only one content subm
   const fixture = await harness(async (options) => ({
     async run() {
       for (let index = 0; index < 3; index++) {
-        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
-        draft.findings[0].importance = `invalid-${index}`;
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths: { importance: string }[] };
+        draft.strengths[0].importance = `invalid-${index}`;
         assert.equal((await submitFor(options, draft)).isError, true);
       }
       for (const name of ["final-a.json", "final-b.json"]) {
-        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
-        draft.findings[0].importance = name;
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths: { importance: string }[] };
+        draft.strengths[0].importance = name;
         await writeFile(path.join(options.workdir, name), JSON.stringify(draft));
       }
       const results = await Promise.all(["final-a.json", "final-b.json"].map((name) =>
@@ -543,8 +579,8 @@ test("unacknowledged final submission updates cumulative content costs without r
   const fixture = await harness(async (options) => ({
     async run() {
       for (let index = 0; index < 3; index++) {
-        const draft = draftFor(options.spec, taskResult(options.spec)) as { findings: { importance: string }[] };
-        draft.findings[0].importance = `invalid-${index}`;
+        const draft = draftFor(options.spec, taskResult(options.spec)) as { strengths: { importance: string }[] };
+        draft.strengths[0].importance = `invalid-${index}`;
         lastRejected = structuredClone(draft);
         assert.equal((await submitFor(options, draft)).isError, true);
       }
@@ -555,7 +591,7 @@ test("unacknowledged final submission updates cumulative content costs without r
   }), { policy: { repairAttempts: 3 } });
   const accept = fixture.store.accept.bind(fixture.store);
   t.mock.method(fixture.store, "accept", async (submission: Submission) => {
-    if ((submission.evaluation as { findings: { importance: string }[] }).findings[0].importance !== "high") return accept(submission);
+    if ((submission.evaluation as { strengths: { importance: string }[] }).strengths[0].importance !== "high") return accept(submission);
     throw new HttpError(503, "HTTP 503 Connection error.");
   });
   try {
@@ -793,7 +829,7 @@ test("file submission repairs evidence through locating, reading and editing aft
           message_index: 1,
         });
         const invalid = draftFor(options.spec, taskResult(options.spec)) as any;
-        invalid.findings[0].evidence[0] = { evidence_index: Number.MAX_SAFE_INTEGER };
+        invalid.strengths[0].evidence_indices[0] = Number.MAX_SAFE_INTEGER;
         const rejected = await submitFor(options, invalid);
         assert.equal(rejected.isError, true);
         const feedback = JSON.parse(rejected.content[0]!.text!);
@@ -818,9 +854,9 @@ test("file submission repairs evidence through locating, reading and editing aft
         assert(replacement, "repair reads the supporting original quote before selecting its reference");
         const fixed = await options.execute("execute_code", {
           language: "python",
-          code: "import json\nfrom pathlib import Path\np=Path('submission-rejected.json')\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]=json.loads(VALID_REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
+          code: "import json\nfrom pathlib import Path\np=Path('submission-rejected.json')\nr=json.loads(p.read_text())\nr['strengths'][0]['evidence_indices'][0]=json.loads(VALID_REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))".replace(
             "VALID_REFERENCE",
-            JSON.stringify(JSON.stringify(replacement.reference)),
+            JSON.stringify(JSON.stringify(replacement.reference.evidence_index)),
           ),
         });
         assert.notEqual(fixed.isError, true);
@@ -847,11 +883,13 @@ test("file submission repairs evidence through locating, reading and editing aft
     const task = fixture.store.manifest.tasks.find(item => item.id === fixture.spec.taskId)!;
     const trustedAnalysis = fixture.store.state.receipts[task.dependencies.criteria]!.evaluation as AttributionResult["task_analysis"];
     const shown = parsedMaterial(fixture.spec) as { task_analysis: { requirements: { requirement_index: number }[] } };
-    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [0],
+    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [1],
       "the model view displays the global requirement index");
     assert(trustedAnalysis.requirements.every(item => !Object.hasOwn(item, "requirement_index")),
       "the accepted Criteria remains the undecorated business analysis");
     expected.task_analysis = structuredClone(trustedAnalysis);
+    expected.findings[0]!.assessment.observation = expected.findings[0]!.text;
+    expected.findings[0]!.assessment.impact = expected.findings[0]!.reason;
     expected.criterion_assessments[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
     expected.findings[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
     assert.deepEqual(receipt?.evaluation, expected);
@@ -865,7 +903,7 @@ test("a content repair can write its fixed file after all three repair explorati
     async run() {
       await options.execute("read_trace", { candidate: "answer", message_index: 1 });
       const invalid = draftFor(options.spec, taskResult(options.spec)) as any;
-      invalid.findings[0].evidence[0] = { evidence_index: Number.MAX_SAFE_INTEGER };
+      invalid.strengths[0].evidence_indices[0] = Number.MAX_SAFE_INTEGER;
       const rejected = await submitFor(options, invalid);
       assert.equal(rejected.isError, true);
       const feedback = JSON.parse(rejected.content[0]!.text!);
@@ -877,13 +915,13 @@ test("a content repair can write its fixed file after all three repair explorati
           (item: { path: string; evidence: { message_index: number } }) => item.path === "/content" && item.evidence.message_index === 1,
         )?.evidence.reference;
       }
-      assert(reference, "the replacement is selected from a real source result");
+      assert(reference && typeof reference === "object" && "evidence_index" in reference, "the replacement is selected from a real source result");
       assert.equal((await options.execute("search_trace", { candidate: "answer", query: "2+2=4" })).isError, true);
       const fixed = await options.execute("execute_code", {
         language: "python",
-        code: "import json\nfrom pathlib import Path\np=Path(SNAPSHOT)\nr=json.loads(p.read_text())\nr['findings'][0]['evidence'][0]=json.loads(REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))"
+        code: "import json\nfrom pathlib import Path\np=Path(SNAPSHOT)\nr=json.loads(p.read_text())\nr['strengths'][0]['evidence_indices'][0]=json.loads(REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))"
           .replace("SNAPSHOT", JSON.stringify(feedback.draft_file))
-          .replace("REFERENCE", JSON.stringify(JSON.stringify(reference))),
+          .replace("REFERENCE", JSON.stringify(JSON.stringify((reference as {evidence_index:number}).evidence_index))),
       });
       assert.notEqual(fixed.isError, true, "the bounded writer allowance survives exhausted repair exploration");
       const budget = JSON.parse(fixed.content.at(-1)!.text!).budget;
@@ -1176,19 +1214,19 @@ test("Attribution can repair coverage and remaining identical problem errors wit
     async run() {
       // Repairing coverage must preserve opportunities to fix the remaining invalid strength fields.
       const draft = draftFor(options.spec, taskResult(options.spec)) as {
-        findings: { problem?: unknown }[];
+        strengths: { definition?: unknown }[];
         criterion_assessments: unknown[];
       };
-      draft.findings = Array.from({ length: 4 }, () => ({
-        ...structuredClone(draft.findings[0]!), problem: "",
+      draft.strengths = Array.from({ length: 4 }, () => ({
+        ...structuredClone(draft.strengths[0]!), definition: "",
       }));
       const assessments = draft.criterion_assessments;
       draft.criterion_assessments = [];
       for (let submission = 0; submission < 3; submission++) {
         if (submission === 1) draft.criterion_assessments = assessments;
         if (submission === 2) {
-          delete draft.findings[0]!.problem;
-          delete draft.findings[1]!.problem;
+          delete draft.strengths[0]!.definition;
+          delete draft.strengths[1]!.definition;
         }
         const rejected = await submitFor(options, draft);
         assert.equal(rejected.isError, true);
@@ -1196,11 +1234,11 @@ test("Attribution can repair coverage and remaining identical problem errors wit
         feedback.push(response.errors);
         assert.equal(response.budget.content_remaining, 3 - submission);
       }
-      assert.deepEqual(feedback.map((errors) => errors.filter((error) => error.code === "strength_problem_forbidden").length), [4, 4, 2]);
+      assert.deepEqual(feedback.map((errors) => errors.filter((error) => error.code === "schema_additionalProperties").length), [4, 4, 2]);
       assert(feedback.every((errors) => errors.some((error) => error.code.startsWith("schema_"))));
-      assert(feedback[0]!.some((error) => error.code === "criterion_assessment_missing"));
-      assert(!feedback[1]!.some((error) => error.code === "criterion_assessment_missing"));
-      draft.findings.forEach((finding) => { delete finding.problem; });
+      assert(feedback[0]!.some((error) => error.code === "criterion_slot_count"));
+      assert(!feedback[1]!.some((error) => error.code === "criterion_slot_count"));
+      draft.strengths.forEach((finding) => { delete finding.definition; });
       assert.equal((await submitFor(options, draft)).terminate, true);
     },
     async abort() {},
@@ -1278,7 +1316,7 @@ test("changed drafts with the same errors retain repair opportunities without re
         writerRemaining.push((rejected.details as { budget: { draft_writes: { remaining: number } } }).budget.draft_writes.remaining);
       }
     }, async abort() {}, async dispose() {},
-  }), { policy: { repairAttempts: 3 } });
+  }), { profile:fileProfile,policy: { repairAttempts: 3 } });
   try {
     await fixture.start();
     const status = await fixture.done();

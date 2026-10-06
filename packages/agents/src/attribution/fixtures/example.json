@@ -50,7 +50,7 @@
             "id": "r1",
             "text": "给出正确的加法结果",
             "applies_to": [],
-            "acceptance_rule": "最终回答给出2与2相加的结果4。"
+            "acceptance_rule": "给出正确的加法结果\n\n最终回答给出2与2相加的结果4。"
           }
         ],
         "scoring_points": [
@@ -58,7 +58,7 @@
             "id": "s1",
             "text": "使用指定操作数",
             "applies_to": [],
-            "acceptance_rule": "计算对象为用户指定的2和2。"
+            "acceptance_rule": "使用指定操作数\n\n计算对象为用户指定的2和2。"
           }
         ],
         "red_flags": [
@@ -66,7 +66,7 @@
             "id": "f1",
             "text": "擅自替换操作数",
             "applies_to": [],
-            "acceptance_rule": "未将任一操作数替换成其他值。"
+            "acceptance_rule": "擅自替换操作数\n\n未将任一操作数替换成其他值。"
           }
         ]
       }
@@ -117,7 +117,7 @@
           "id": "r1",
           "text": "给出正确的加法结果",
           "applies_to": [],
-          "acceptance_rule": "最终回答给出2与2相加的结果4。"
+          "acceptance_rule": "给出正确的加法结果\n\n最终回答给出2与2相加的结果4。"
         }
       ],
       "scoring_points": [
@@ -125,7 +125,7 @@
           "id": "s1",
           "text": "使用指定操作数",
           "applies_to": [],
-          "acceptance_rule": "计算对象为用户指定的2和2。"
+          "acceptance_rule": "使用指定操作数\n\n计算对象为用户指定的2和2。"
         }
       ],
       "red_flags": [
@@ -133,7 +133,7 @@
           "id": "f1",
           "text": "擅自替换操作数",
           "applies_to": [],
-          "acceptance_rule": "未将任一操作数替换成其他值。"
+          "acceptance_rule": "擅自替换操作数\n\n未将任一操作数替换成其他值。"
         }
       ]
     },

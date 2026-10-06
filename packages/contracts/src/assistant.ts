@@ -196,7 +196,7 @@ export interface AssistantSessionRuntime {
 export interface AssistantPreferences { revision: number; revisions: Record<string, number>; values: Record<string, JsonObject> }
 
 export interface AssistantModelSelection { provider: string; model: string; reasoningEffort?: ModelConfig['thinking'] }
-export interface AssistantModelEntry { id: string; name: string; contextWindow?: number; maxTokens?: number; reasoning?: { defaultEffort?: string; efforts: {id: string; name: string}[] } }
+export interface AssistantModelEntry { id: string; name: string; provider: string; providerName: string; contextWindow?: number; maxTokens?: number; reasoning?: { defaultEffort?: string; efforts: {id: string; name: string}[] } }
 export interface AssistantModelDirectory {
   list(userId: string, refresh?: boolean): Promise<{ models: AssistantModelEntry[]; favorites: string[]; default: AssistantModelSelection }>;
   favorites(userId: string, ids: string[]): Promise<void>;

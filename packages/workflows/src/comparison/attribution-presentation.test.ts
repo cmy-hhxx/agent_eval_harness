@@ -173,7 +173,7 @@ test("table check model views use own full-directory ordinals while trusted own 
     inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.input_id])),
     data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
   const criteriaBinding = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
-  const rubric = criteriaProfile.resolve!(criteriaBinding.request, { requirements: [{ source_indices: [1] }], scoring_points: [], red_flags: [] }, emptyAudit());
+  const rubric = criteriaProfile.resolve!(criteriaBinding.request, { requirements: [{ source_indices: [1], text: "核查本项要求的实际交付。" }], scoring_points: [], red_flags: [] }, emptyAudit());
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric, audit: emptyAudit(), usage: emptyUsage() };
   const original: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteriaTask.id },

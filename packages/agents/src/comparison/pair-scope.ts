@@ -30,7 +30,7 @@ export function findingAppliesToPair(input: ComparisonInput, candidate: string, 
       evidence.source === undefined && evidence.source_input_id === undefined && evidenceCovers(trace!, input.candidates[candidate].candidate_id,
         evidence.evidence_id, evidenceId(input.candidates[candidate].candidate_id, source.message_index, "text", origin.path, origin.start, origin.end))))));
   if (citedNorms.some(block => !input.task_analysis.requirements.some(criterion =>
-    criterionAppliesToPair(input, criterion) && hasSourceTextBlock(criterion.text, block.quote)))) return false;
+    criterionAppliesToPair(input, criterion) && hasSourceTextBlock(criterion.acceptance_rule, block.quote)))) return false;
   if (finding.assessment.requirement_index === null) return finding.dimension !== "instruction_following";
   const criterion = findingCriterion(input, candidate, findingIndex);
   if (!criterion || !criterionAppliesToPair(input, criterion)) return false;
@@ -38,7 +38,7 @@ export function findingAppliesToPair(input: ComparisonInput, candidate: string, 
   if (!trace) return false;
   // A model index is not provenance: the explicitly cited original norm must belong
   // to this common criterion before an instruction finding can affect the pair.
-  return citedNorms.some(block => hasSourceTextBlock(criterion.text, block.quote));
+  return citedNorms.some(block => hasSourceTextBlock(criterion.acceptance_rule, block.quote));
 }
 
 /** Expose the same scope gate used by validation; scope alone does not prove a relative advantage. */

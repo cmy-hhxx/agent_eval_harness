@@ -9,7 +9,7 @@ export function criterionInstructionSources(
     blocks: sourceContentBlocks(source.content, source.path) }));
   return Object.fromEntries([...task.requirements, ...task.scoring_points, ...task.red_flags].flatMap(criterion => {
     if (criterion.applies_to.length && !criterion.applies_to.includes(candidateId)) return [];
-    const origins = sources.flatMap(source => source.blocks.filter(block => hasSourceTextBlock(criterion.text, block.quote))
+    const origins = sources.flatMap(source => source.blocks.filter(block => hasSourceTextBlock(criterion.acceptance_rule, block.quote))
       .flatMap(block => block.origins.map(original => {
         const leaf = evidenceSources(raw.messages[source.message_index]).find(leaf => leaf.kind === "text" && leaf.path === original.path)!;
         return { ...cite(candidateId, source.message_index, leaf, original.start, original.end), path: original.path };

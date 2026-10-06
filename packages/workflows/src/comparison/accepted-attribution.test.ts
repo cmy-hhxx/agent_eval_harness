@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { projectEvidenceReferences, ValidationError, emptyUsage, type AgentBinding, type SubmissionReceipt, type ToolAudit, type PlannedTask, type RunState } from "@eval/contracts";
+import { ValidationError, emptyUsage, type AgentBinding, type SubmissionReceipt, type ToolAudit, type PlannedTask, type RunState } from "@eval/contracts";
 import { attributionAgent, type AttributionResult } from "@eval/agents/attribution";
 import { AgentRegistry } from "@eval/host";
 import { evidenceId } from "@eval/tools";
@@ -13,12 +13,11 @@ import { encodeResult } from "./results.js";
 function fixture() {
   const request = structuredClone(example.request);
   // A bound original rule is expanded by the current resolver, independently of model-selected evidence.
-  request.input.task_analysis.requirements[0].text = "计算2+2";
+  request.input.task_analysis.requirements[0].text = "计算2+2"; request.input.task_analysis.requirements[0].acceptance_rule = request.input.task_analysis.requirements[0].text;
   setFixtureNormDirectory(request);
   const result = structuredClone(example.result) as AttributionResult;
-  const draft = attributionSubmission(request, result);
   const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [], evidenceBank: [] };
-  const submitted = projectEvidenceReferences(draft, audit.evidenceBank!);
+  const submitted = attributionSubmission(request,result,audit);
   const binding: AgentBinding = { agent: "attribution", profile: "default", request };
   const registry = new AgentRegistry([attributionAgent]);
   const evaluation = registry.resolve(binding, submitted, audit) as AttributionResult;
@@ -162,9 +161,9 @@ test("an accepted rewrite still merges its current slots into the durable source
     ...(receipt.evaluation as AttributionResult), rewritten: { evaluator_version: "test", rewrites: [{ id: "summary", text: "此前文案" }] },
   } } };
   const rewrite = { id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: source.id },
-    data: { stage: "rewrite", rewriteOf: { stage: "attribution", taskId: source.id } } } as PlannedTask;
+    data: { stage: "rewrite", rewriteSlotIds: ["summary","findings.0.text"], rewriteOf: { stage: "attribution", taskId: source.id } } } as PlannedTask;
   const polish: SubmissionReceipt = { ...structuredClone(receipt), taskId: rewrite.id,
-    evaluation: { rewrites: [{ id: "summary", text: "新的文案" }, { id: "findings.0.text", text: "保留新增槽位" }] } };
+    evaluation: { rewrites: [{id:"summary",text:"新的文案"},{id:"findings.0.text",text:"保留新增槽位"}] } };
   const state = { receipts: { [source.id]: receipt, [rewrite.id]: polish }, manifest: { tasks: [source, rewrite] } } as unknown as RunState;
   const before = structuredClone(state);
   const exported = encodeResult(rewrite, state, {});
@@ -181,12 +180,13 @@ test("historical rewrite replay uses the newest accepted owner per slot despite 
   const source = { id: receipt.taskId, stage: "attribution", inputIds: {}, dependencies: {}, data: { stage: "attribution" } } as PlannedTask;
   receipt.exported = { id: source.id, file: "attribution.jsonl", row: { evaluation_type: "attribution", evaluation: receipt.evaluation } };
   const rewrite = (id: string): PlannedTask => ({ id, stage: "rewrite", inputIds: {}, dependencies: { source: source.id },
-    data: { stage: "rewrite", rewriteOf: { stage: "attribution", taskId: source.id } } });
+    data: { stage: "rewrite", rewriteSlotIds: ["summary","findings.0.text"], rewriteOf: { stage: "attribution", taskId: source.id } } });
   const old = rewrite(randomUUID()), current = rewrite(randomUUID());
+  (current.data as any).rewriteSlotIds = ["summary"];
   const oldReceipt = { ...structuredClone(receipt), taskId: old.id, acceptedAt: 10, evaluatorVersion: "original-polish",
-    evaluation: { rewrites: [{ id: "summary", text: "旧文案" }, { id: "findings.0.text", text: "未刷新槽位" }] } };
+    evaluation: { rewrites: [{id:"summary",text:"旧文案"},{id:"findings.0.text",text:"未刷新槽位"}] } };
   const currentReceipt = { ...structuredClone(receipt), taskId: current.id, acceptedAt: 20, evaluatorVersion: "refreshed-polish",
-    evaluation: { rewrites: [{ id: "summary", text: "新文案" }] } };
+    evaluation: { rewrites: [{id:"summary",text:"新文案"}] } };
   const state = { receipts: { [source.id]: receipt, [old.id]: oldReceipt, [current.id]: currentReceipt },
     manifest: { tasks: [source, current, old] } } as unknown as RunState;
   const before = structuredClone(state);

@@ -72,7 +72,7 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
   };
 }
 function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
-  return { requirements: [{ source_indices: sources.filter((source) => source.kind === "question" || source.kind === "reference").map((source) => source.source_index) }],
+  return { requirements: [{ text: "核查本轮交付及标准结果。", source_indices: sources.filter((source) => source.kind === "question" || source.kind === "reference").map((source) => source.source_index) }],
     scoring_points: [], red_flags: [] };
 }
 export function criteriaResult(input: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },
@@ -104,6 +104,7 @@ export async function fixtureConfig(
     EVAL_BASE_URL: "http://127.0.0.1:1/v1",
   });
   const config = host.evaluation;
+  config.execution.stageRepairAttempts = {};
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
   config.clustering = { ...config.clustering, enabled: clustering };
@@ -122,6 +123,7 @@ export async function fixtureConfig(
   }
   host.models.models.judge!.model = "fixture";
   host.models.models.judge!.thinking = "off";
+  delete host.models.bindings.attribution!.thinking;
   return {
     directory,
     config,
@@ -172,9 +174,9 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
-  if ("rewrites" in properties) {
+  if ("texts" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };
-    return { rewrites: request.items.map((item) => ({ id: item.id, text: item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text })) };
+    return { texts: request.items.map(item => item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text) };
   }
   if ("assignments" in properties) {
     const request = parsedMaterial(spec, revealed) as {
@@ -246,7 +248,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     evidence_status: "established", summary: "已按要求完成。", evidence: criterion.applicable_candidates.includes("answer")
       ? [canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer!.final_message_index, material.answer!.final_answer)] : [] }));
   result.core_assessment.criterion_ids = material.task_analysis.requirements.filter(criterion => criterion.applicable_candidates.includes("answer")).map(criterion => criterion.id);
-  result.findings[0]!.assessment.requirement_index = material.task_analysis.requirements.find(criterion => criterion.applicable_candidates.includes("answer"))!.requirement_index;
+  result.findings[0]!.assessment.requirement_index = material.task_analysis.requirements.find(criterion => criterion.applicable_candidates.includes("answer"))!.requirement_index - 1;
   result.has_standard_answer = material.ground_truth.available;
   if (!material.ground_truth.available) {
     result.is_correct = null;
@@ -353,7 +355,7 @@ export function inspectionDraft(spec: { prompt: string }): unknown {
 
 /** Mock backends use the current profile transport; every queued file owns distinct bytes. */
 export async function submitFor(options: Parameters<AgentBackend["createSession"]>[0], value: unknown) {
-  if (!options.spec.evaluation.fileSubmission) return options.execute("submit_evaluation", value);
+  if (!options.spec.evaluation.fileSubmission) return options.execute("submit_evaluation", options.spec.evaluation.jsonStringSubmission ? {json:JSON.stringify(value)} : value);
   const file = `evaluation-${randomUUID()}.json`;
   await writeJson(path.join(options.workdir, file), value);
   return options.execute("submit_evaluation_file", { path: file });
@@ -393,7 +395,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       choice.complete_coverage_possible && choice.eligible_findings.length ? [{ concern_index: choice.concern_index,
         finding_indices: choice.eligible_findings.map(finding => finding.finding_index),
         observation: "既有问题引用本方同一要求及同一完整实际回答，记录了盲核查发现的加法错误。" }] : []);
-    return { concern_matches, concern_refutations: [], source_reviews: [] };
+    return { concern_matches, source_reviews: [] };
   }
   if ("source_catalog" in material) return result;
   if ("assignments" in result) {
@@ -425,44 +427,34 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       return choose(item.evidence_id, coordinate?.kind === "image" ? item.quote.slice("[图像观察]".length) : undefined);
     });
   if (material.answer && "findings" in result) {
-    // The Host, not the model, supplies the standard-answer flag on the accepted result.
-    delete result.has_standard_answer;
-    delete result.task_analysis;
+    const sourceRefs = (items: { reference: { evidence_index: number } }[]) => items.map(item => ({ evidence_id: spec.evidenceBank[item.reference.evidence_index - 1]! }));
+    const bases=(material as unknown as {finding_basis:{basis_index:number;kind:string;evidence:{reference:{evidence_index:number}}[]}[]}).finding_basis;
+    const norms=bases.map(basis=>({norm_index:basis.basis_index,requirement_index:basis.kind==="requirement"?basis.basis_index-1:null,evidence:sourceRefs(basis.evidence)}));
+    const selections = (items: unknown) => evidence(items).map(item => item.evidence_index);
     const core = result.core_assessment as AttributionResult["core_assessment"];
-    result.core_assessment = { meets_core: core.meets_core, reason: core.reason,
-      requirement_indices: core.criterion_ids.map(id => {
-        const criterion = material.task_analysis.requirements.find(criterion => criterion.id === id);
-        if (!criterion || !criterion.applicable_candidates.includes("answer"))
-          throw new Error("Fixture core must select an applicable requirement from the current model directory");
-        return criterion.requirement_index;
-      }) };
-    if (!material.ground_truth.available) {
-      delete result.is_correct;
-      delete result.correctness_reason;
-      delete result.correctness_evidence;
-    } else result.correctness_evidence = evidence(result.correctness_evidence);
-    result.criterion_assessments = (result.criterion_assessments as Record<string, unknown>[])
-      .filter(item => item.status !== "not_applicable");
-    (result.criterion_assessments as Record<string, unknown>[]).forEach((item) => { item.evidence = evidence(item.evidence); });
-    const sourceRefs = (items: { reference: { evidence_index: number } }[]) => items.map(item => {
-      const evidence_id = spec.evidenceBank[item.reference.evidence_index - 1];
-      if (!evidence_id) throw new Error("Fixture norm must select a registered exact origin");
-      return { evidence_id };
+    const correctness = material.ground_truth.available ? selections(result.correctness_evidence) : [];
+    const references = (parsedMaterial(spec,revealed) as {numeric_references:{reference_index:number;expected:string}[]}).numeric_references;
+    const images = (items: unknown) => evidence(items).flatMap(item => item.observation === undefined ? [] : [{image_number:item.evidence_index,text:item.observation}]);
+    const observation=(row:AttributionResult["findings"][number])=>({
+      dimension:row.dimension,stage:row.stage,importance:row.importance,text:row.text,reason:row.reason,
+      evidence_status:row.assessment.evidence_status,evidence_indices:selections(row.evidence),
+      basis_index:row.dimension==="instruction_following"?normSelection(norms,row):row.assessment.requirement_index===null?null:row.assessment.requirement_index+1,
     });
-    const norms = material.answer!.norm_directory.map(norm => ({ ...norm, evidence: sourceRefs(norm.evidence) }));
-    (result.findings as unknown as Record<string, unknown>[]).forEach((finding) => {
-      if (finding.dimension === "instruction_following") {
-        finding.norm_index = normSelection(norms, finding as unknown as AttributionResult["findings"][number]);
-        const { requirement_index: _derived, ...assessment } = finding.assessment as AttributionResult["findings"][number]["assessment"];
-        finding.assessment = assessment;
-      }
-      delete finding.finding_id;
-      if (finding.type === "strength") delete finding.problem;
-      else finding.problem = problemSubmission(finding.problem as NonNullable<AttributionResult["findings"][number]["problem"]>,
-        finding.evidence as AttributionResult["correctness_evidence"], material.answer!.catalog);
-      finding.evidence = evidence(finding.evidence);
-    });
-    return result;
+    return {
+      summary:result.summary,meets_core:core.meets_core,core_reason:core.reason,
+      core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
+      is_correct:material.ground_truth.available?result.is_correct:null,correctness_reason:material.ground_truth.available?result.correctness_reason:"",correctness_evidence_indices:correctness,
+      criterion_assessments:(result.criterion_assessments as AttributionResult["criterion_assessments"]).filter(row => row.status !== "not_applicable")
+        .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:selections(row.evidence)})),
+      numeric_checks:(result.numeric_checks as AttributionResult["numeric_checks"]).map(({expected,matches:_matches,...row}) => ({...row,
+        reference_index:references.find(item => item.expected === expected)!.reference_index,evidence_index:correctness[row.evidence_index]})),
+      strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
+      problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
+        const observed=observation(row),problem=problemSubmission(row.problem!,row.evidence,material.answer!.catalog);
+        return {...observed,impact:row.assessment.impact,...problem,tool_evidence_indices:problem.tool_evidence_indices.map(index=>observed.evidence_indices[index])};
+      }),
+      image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
+    };
   }
   if ("assessments" in result) {
     const choices = (material as unknown as { comparison_slots: { aspect:string; scope:string; optional:boolean; kind:ComparisonSlot["kind"];
@@ -481,8 +473,8 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
 
 /** A complete current submission whose first finding selects beyond the provided bank. */
 export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">): unknown {
-  const draft = draftFor(spec, taskResult(spec)) as { findings: { evidence: { evidence_index: number }[] }[] };
-  draft.findings[0].evidence[0].evidence_index = Number.MAX_SAFE_INTEGER;
+  const draft = draftFor(spec, taskResult(spec)) as { strengths: { evidence_indices: number[] }[] };
+  draft.strengths[0].evidence_indices[0] = Number.MAX_SAFE_INTEGER;
   return draft;
 }
 

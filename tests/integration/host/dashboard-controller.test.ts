@@ -188,12 +188,12 @@ test("criterion rule toggles survive case refreshes and retain a user's closed s
 });
 
 test("case refresh updates review lineage and business status without changing execution progress", async () => {
-  const initial = { id: "initial", stage: "comparison", status: "succeeded", versions: ["a_fast", "b_fast"], attempts: 1,
-    result_status: "decided", superseded_by: undefined as string | undefined };
-  const review = { id: "review", stage: "comparison", status: "pending", versions: ["a_fast", "b_fast"], attempts: 0,
+  const initial = { id: "initial", stage: "attribution", status: "succeeded", versions: ["a_fast"], attempts: 1 };
+  const comparison = { id: "comparison", stage: "comparison", status: "succeeded", versions: ["a_fast", "b_fast"], attempts: 1, result_status: "decided" };
+  const review = { id: "review", stage: "attribution", status: "pending", versions: ["a_fast"], attempts: 0,
     review_of: { task_id: "earlier", round: 1, reasons: ["原复核原因"] } };
   const page = await controller(() => ({
-    batch_id: "batch", case_id: "q1", question: "问题", tasks: [initial, review], candidates: [
+    batch_id: "batch", case_id: "q1", question: "问题", tasks: [initial, review, comparison], candidates: [
       { version: "a_fast", name: "A组Fast", input_id: "a" },
       { version: "b_fast", name: "B组Fast", input_id: "b" },
     ],
@@ -201,16 +201,15 @@ test("case refresh updates review lineage and business status without changing e
   try {
     page.state.selectedRun = "run-one";
     await page.loadCase("batch", "q1");
-    assert.equal(page.document.querySelector('[data-task="initial"] .task-status').textContent, "已接受");
+    assert.equal(page.document.querySelector('[data-task="comparison"] .task-status').textContent, "已接受");
     page.state.openTasks.add(review.id);
-    initial.result_status = "needs_review";
-    initial.superseded_by = review.id;
+    comparison.result_status = "needs_review";
     review.review_of.task_id = initial.id;
     review.review_of.reasons = ["当前证据存在冲突"];
     await page.loadCase("batch", "q1");
-    assert.equal(page.document.querySelector('[data-task="initial"] .task-status').textContent, "待复核");
-    assert.equal(page.document.querySelector('[data-task="initial"] .task-phase').textContent, "首次对比");
-    assert.equal(page.document.querySelector('[data-task="review"] .task-phase').textContent, "对比复核 · 第 1 轮");
+    assert.equal(page.document.querySelector('[data-task="comparison"] .task-status').textContent, "待复核");
+    assert.equal(page.document.querySelector('[data-task="initial"] .task-phase').textContent, "首次归因");
+    assert.equal(page.document.querySelector('[data-task="review"] .task-phase').textContent, "归因复核 · 第 1 轮");
     assert.equal(page.document.querySelector('[data-task="review"] .task-review-reasons').textContent, "当前证据存在冲突");
     assert(page.document.querySelector('[data-task="review"]').open);
     review.review_of.reasons = ["补充核验原始材料"];

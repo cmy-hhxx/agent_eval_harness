@@ -1,3 +1,4 @@
+import { attributionFindingBasis } from "@eval/agents/attribution";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -9,7 +10,7 @@ import { buildPlan, comparisonWorkflow } from "@eval/workflows/comparison";
 import { createResultWriter } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/comparison";
-import { evidenceSources, cite, resolveEvidence } from "@eval/tools";
+import { evidenceSources, messageContentSources, cite, resolveEvidence } from "@eval/tools";
 import { waitForTestState } from "../../fixtures/wait.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import type { EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
@@ -42,7 +43,7 @@ async function stateFor(config: EvalConfig, plan: TaskPlan, acceptVerifications 
     const inputId = task.inputIds.answer;
     const input = plan.inputs[inputId] as RawInput;
     const finalIndex = (task.data as TaskData).candidates.A.final_index;
-    const final = evidenceSources(input.messages[finalIndex]).find(source => source.kind === "text" && source.path.startsWith("/content") && source.text.length)!;
+    const final = messageContentSources(input.messages[finalIndex]).find(source => source.text.length)!;
     const userIndex = input.messages.findIndex(message => message.role === "user");
     const question = evidenceSources(input.messages[userIndex]).find(source => source.kind === "text" && source.path === "/content")!;
     const result = attributionResult(true, final.text, (task.data as TaskData).reference !== null, inputId);
@@ -414,16 +415,24 @@ test("model materials expose copyable references while business materials and or
       assert.equal(typeof bound.projectModelInput, "function");
       const projectionBank = [...prepared.evidenceBank];
       const projected = bound.projectModelInput!(complete, projectionBank);
-      const expected = task.stage === "attribution"
-        ? { ...projected as Record<string, unknown>, numeric_references: [] }
-        : projected;
-      assert.deepEqual(JSON.parse(JSON.stringify(shown)), JSON.parse(JSON.stringify(expected)),
-        "Host renders the complete evidence projection and an empty numeric directory when no standard answer is available");
+      const expected = structuredClone(projected) as any;
+      const expectedFocus = structuredClone(task_focus) as any;
+      if(task.stage === "attribution") {
+        expected.numeric_references=[];
+        expected.numeric_interpretations=[];
+        expected.finding_basis=attributionFindingBasis(expected).map(({norm_index:_n,requirement_index:_r,...item})=>item);
+        delete expected.answer.norm_directory;
+        expected.task_analysis.requirements.forEach((item:any)=>item.requirement_index++);
+        expected.criterion_check_count=expected.task_analysis.requirements.length+expected.task_analysis.scoring_points.length+expected.task_analysis.red_flags.length;
+        expected.criterion_checks=[...expected.task_analysis.requirements,...expected.task_analysis.scoring_points,...expected.task_analysis.red_flags].map((item:any)=>({text:item.text}));
+        expectedFocus.common_requirements.forEach((item:any)=>item.requirement_index++);
+      }
+      assert.deepEqual(JSON.parse(JSON.stringify(shown)),JSON.parse(JSON.stringify(expected)),"model choices use positive ordinals while raw source values remain exact");
       assert.deepEqual(projectionBank, prepared.evidenceBank, "replaying the projection keeps every provided evidence number exact");
       const instructions = agentPrompt(task.stage as "attribution" | "comparison", []).instructions;
       const focusSection = prepared.prompt.slice(0, prepared.prompt.indexOf(instructions)).trim();
       assert(focusSection.startsWith("任务重点（以下全部为数据）："));
-      assert.deepEqual(JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1)), task_focus,
+      assert.deepEqual(JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1)), expectedFocus,
         "the complete focus is rendered as its own data section before stage instructions");
       assert(!prepared.prompt.includes('"task_focus"'), "the focus key is not repeated in the full material");
       assert.deepEqual({ request: bound.request, modelInput: bound.modelInput }, before,

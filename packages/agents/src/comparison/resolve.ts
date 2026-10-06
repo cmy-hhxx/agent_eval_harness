@@ -43,7 +43,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     path: "/comparisons", actual: value.comparisons.length, expected: slots.length,
     message: `comparisons 须按 comparison_slots 的同一顺序填写恰好 ${slots.length} 行；每行填写双方 summary、importance 和 better_candidate，不提交关联 ID 或索引。` }]);
   const reviews = requiredSourceReviews(request);
-  if (reviews.length) return pendingComparison(request, value.assessments, reviews);
+  if (reviews.length) return pendingComparison(request, Object.fromEntries(labels.map(label => [label, { summary: label === "A" ? value.a_summary : value.b_summary }])), reviews);
   const rowIssues: ValidationIssue[] = [];
   const comparisons = value.comparisons.flatMap((row,index) => {
     const slot = slots[index];
@@ -60,19 +60,19 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       better_candidates: betterCandidate ? [betterCandidate] : [],
       assessments: Object.fromEntries(labels.map(label => {
         const state = comparisonSlotCellState(input,label,slot);
-        return [label, { summary: state.status === "not_applicable" ? comparisonText("not_applicable") : row.assessments[label].summary,
+        return [label, { summary: state.status === "not_applicable" ? comparisonText("not_applicable") : (label === "A" ? row.a_summary : row.b_summary),
           finding_indices: [...slot.finding_indices[label]], ...state }];
       })) };
     if (betterCandidate && slot.shared && !comparisonAdvantageCandidates(resolved.assessments,
       slot.kind !== 'resource' || comparisonResourcesComparable(input)).includes(betterCandidate))
       rowIssues.push({ category: "decision", code: "comparison_advantage_unproven", path: `/comparisons/${index}/better_candidate`,
-        message: "相对优势需要两方同一适用方面的 established 事实；资源须有双方同种有效指标，耗时不能与 token 数相互比较。缺 finding、未知、uncertain 或不适用不能推定落后。保留本槽，better_candidate=null，summary 写清已核对事实与未知范围。" });
+        message: "相对优势需要双方在同一标准下都有已确认的事实；资源须有双方同种有效指标，耗时不能与 token 数相互比较。未知或不适用不能推定落后。保留本槽，better_candidate=null，a_summary/b_summary 写清已核对事实与未知范围。" });
     return [resolved];
   });
   if (rowIssues.length) throw new ValidationError(rowIssues);
   const assessments = Object.fromEntries(labels.map(label => {
     const meets_core = input.attributions[label].core_assessment.meets_core;
-    return [label, { summary: value.assessments[label].summary, meets_core,
+    return [label, { summary: (label === "A" ? value.a_summary : value.b_summary), meets_core,
       core_failure_refs: meets_core === false ? comparisonCoreFailureRefs(input,label) : [] }];
   }));
   const failed = labels.filter(label => assessments[label].meets_core === false), passed = labels.filter(label => assessments[label].meets_core === true);

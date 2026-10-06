@@ -1,10 +1,12 @@
+import { AgentRegistry } from "@eval/host";
+import { attributionAgent } from "@eval/agents/attribution";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { emptyUsage, ValidationError, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
+import { selectEvidence, emptyUsage, ValidationError, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
-import { attributionProfile, type AttributionNorm, type AttributionResult } from "@eval/agents/attribution";
+import { attributionProfile, attributionFindingBasis, type AttributionNorm, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { resolveEvidence } from "@eval/tools";
 import { bindTask } from "./binding.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
@@ -12,6 +14,7 @@ import type { Candidate, RawInput, TaskData } from "./types.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
 
+const registry = new AgentRegistry([attributionAgent]);
 const candidatesFor = (question: string, finalIndex: number, reference: unknown): Record<string, Candidate> =>
   Object.fromEntries(["A", "B"].map(label => [label, {
     batch_id: "b1", case_id: "merged-norm", version: label.toLowerCase() + "_fast", name: label + "组Fast",
@@ -23,7 +26,7 @@ const candidatesFor = (question: string, finalIndex: number, reference: unknown)
 for (const normFirst of [true, false]) test(`accepted merged Criteria retains norm and answer closure with ${normFirst ? "norm" : "question"} first`, () => {
   const question = "计算2+2", norm = "# 输出规范\n\n严格使用JSON。", final = '{"answer":4}';
   const candidates = candidatesFor(question, 2, null);
-  const trace: RawInput = { messages: [{ type: "message", role: "system", content: norm },
+  const trace: RawInput = { messages: [{ type: "message", role: "user", content: norm },
     { type: "message", role: "user", content: question }, { type: "message", role: "assistant", content: final }] };
   const inputs = Object.fromEntries(Object.values(candidates).map(candidate => [candidate.input_id, structuredClone(trace)]));
   const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
@@ -31,11 +34,10 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
   const criteria = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
   const catalogue = criteriaSources(criteria.request.input as unknown as CriteriaInput);
-  const sharedNorm = catalogue.find(source => source.kind === "instruction")!;
+  const sharedNorm = catalogue.find(source => source.kind === "context" && source.text === norm)!;
   assert.deepEqual(sharedNorm.applies_to, []);
-  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [{ source_indices: [1] }],
+  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [{ source_indices: normFirst ? [sharedNorm.source_index,1] : [1,sharedNorm.source_index], text: "用JSON交付计算结果。" }],
     scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
-  rubric.requirements[0]!.text = (normFirst ? [sharedNorm.text, question] : [question, sharedNorm.text]).join("\n\n");
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
@@ -48,32 +50,32 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     message_index: number; path: string; quote: string }[]> };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, norm), path: "/content" },
     { ...canonicalEvidence(candidates.A.input_id, 1, question), path: "/content" }]);
-  assert.deepEqual(answer.norm_directory, [{ norm_index: 0, roles: ["system", "user"], requirement_index: 0,
+  assert.deepEqual(answer.norm_directory, [{ norm_index: 0, roles: ["user"], requirement_index: 0,
     evidence: [canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)] }]);
   const shown = binding.modelInput!.answer as { final_evidence: { reference: { evidence_id: string } }[];
     criterion_instruction_sources: Record<string, { reference: { evidence_id: string } }[]> };
   const finalRef = shown.final_evidence[0]!.reference;
-  const draft = { numeric_checks: [],
-    criterion_assessments: [{ criterion_id: "r1", status: "met", evidence_status: "established",
-      summary: "按共同要求以JSON给出4。", evidence: [finalRef] }],
-    core_assessment: { meets_core: true, reason: "给出可用结果。", requirement_indices: [0] }, summary: "完成计算。", findings: [] };
-  const result = attributionProfile.resolve!(binding.request, draft, emptyAudit()) as AttributionResult;
+  const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
+  const draft:AttributionSubmission = { is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks: [],
+    criterion_assessments: [{ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] }],
+    meets_core: true, core_reason: "给出可用结果。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [] };
+  const result = registry.resolve(binding,draft,reads) as AttributionResult;
   assert.deepEqual(result.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final),
     canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
   attributionProfile.validate!(binding.request, result, emptyAudit());
   const onlyNorm = structuredClone(draft);
-  onlyNorm.criterion_assessments[0]!.evidence = [shown.criterion_instruction_sources.r1![0]!.reference];
+  onlyNorm.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
   assert.throws(() => attributionProfile.validate!(binding.request,
-    attributionProfile.resolve!(binding.request, onlyNorm, emptyAudit()), emptyAudit()), (error: unknown) => {
+    registry.resolve(binding,onlyNorm,reads), emptyAudit()), (error: unknown) => {
     assert(error instanceof ValidationError);
     assert(error.issues!.some(issue => issue.code === "instruction_answer_evidence_required"));
     return true;
   });
-  const findingDraft = { ...draft, findings: [{ type: "strength", dimension: "instruction_following",
+  const findingDraft = { ...draft, strengths: [{ dimension: "instruction_following",
     stage: "final_answer", importance: "medium", text: "按共同规范使用JSON。", reason: "交付格式满足真实要求。",
-    norm_index: answer.norm_directory[0]!.norm_index, evidence: [],
-    assessment: { observation: final, evidence_status: "established", impact: "便于读取。" } }] };
-  const findingResult = attributionProfile.resolve!(binding.request, findingDraft, emptyAudit()) as AttributionResult;
+    basis_index: attributionFindingBasis(binding.request.input).find(item=>item.norm_index===answer.norm_directory[0]!.norm_index)!.basis_index, evidence_indices: [],
+    evidence_status: "established" }] };
+  const findingResult = registry.resolve(binding,findingDraft,reads) as AttributionResult;
   assert.equal(findingResult.findings[0]!.assessment.requirement_index, 0);
   assert.deepEqual(findingResult.findings[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 0, norm),
     canonicalEvidence(candidates.A.input_id, 1, question), canonicalEvidence(candidates.A.input_id, 2, final)]);
@@ -110,8 +112,8 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     .find(source => source.kind === "context" && source.text === question + "\n" + condition)!;
   assert.deepEqual(source.applies_to, [candidates.A!.input_id]);
   const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [
-    { source_indices: [1] }, { source_indices: [2] },
-    { source_indices: [source.source_index] },
+    { source_indices: [1], text: "核查本项要求的实际交付。" }, { source_indices: [2], text: "核查本项要求的实际交付。" },
+    { source_indices: [source.source_index], text: "核查本项要求的实际交付。" },
   ], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
   assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [], [candidates.A!.input_id]]);
@@ -146,25 +148,25 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     assert.equal(resolveEvidence(trace, entry.reference, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, entry.quote);
   const finalRef = shown.final_evidence.find(entry => entry.quote === final)!.reference;
   assert.equal(resolveEvidence(trace, finalRef, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, final);
-  const draft = { is_correct: false, correctness_reason: "回答1.25个百分点与标准-0.6不同。", correctness_evidence: [finalRef],
-    numeric_checks: [{ label: "利率变化百分点", reference_index: 0, actual: "1.25", scale: "1", mode: "rounded", evidence_index: 0 }],
-    criterion_assessments: rubric.requirements.map(item => ({ criterion_id: item.id,
-      status: item.id === "r3" ? "met" : "unmet", evidence_status: "established", summary: "核对真实问题、结果及条件。", evidence: [finalRef] })),
-    core_assessment: { meets_core: false, reason: "所求数值与标准不一致。", requirement_indices: [0, 1] },
-    summary: "所求数值未对齐标准。", findings: [] };
+  const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
+  const finalNumber=choose(finalRef);
+  const draft:AttributionSubmission = { is_correct:false,correctness_reason:"回答1.25个百分点与标准-0.6不同。",correctness_evidence_indices:[finalNumber],
+    numeric_checks:[{label:"利率变化百分点",reference_index:1,actual:"1.25",scale:"1",mode:"rounded",evidence_index:finalNumber}],
+    criterion_assessments:rubric.requirements.map(item=>({status:item.id==="r3"?"met":"unmet",evidence_status:"established",summary:"核对真实问题、结果及条件。",evidence_indices:[finalNumber]})),
+    meets_core:false,core_reason:"所求数值与标准不一致。",core_requirements:[1,2],summary:"所求数值未对齐标准。",strengths:[],problems:[] };
   {
     const request = binding.request;
-    const resolved = attributionProfile.resolve!(request, draft, emptyAudit()) as AttributionResult;
+    const resolved = registry.resolve(binding,draft,reads) as AttributionResult;
     assert.deepEqual(resolved.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text")]);
     assert.deepEqual(resolved.criterion_assessments[2]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"),
       canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text")]);
     attributionProfile.validate!(request, resolved, emptyAudit());
     const normOnly = structuredClone(draft);
-    normOnly.criterion_assessments[0]!.evidence = [shown.criterion_instruction_sources.r1![0]!.reference];
+    normOnly.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
     assert.throws(() => attributionProfile.validate!(request,
-      attributionProfile.resolve!(request, normOnly, emptyAudit()), emptyAudit()), (error: unknown) => {
+      registry.resolve(binding,normOnly,reads), emptyAudit()), (error: unknown) => {
       assert(error instanceof ValidationError);
-      assert(error.issues!.some(issue => issue.code === "instruction_answer_evidence_required" && issue.path === "/criterion_assessments/0/evidence"));
+      assert(error.issues!.some(issue => issue.code === "instruction_answer_evidence_required" && issue.path === "/criterion_assessments/0/evidence_indices"));
       return true;
     });
   }
@@ -179,56 +181,37 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   assert.deepEqual(rubric.requirements[2]!.applies_to, [candidates.A!.input_id]);
 });
 
-test("a headed norm spanning real leaves retains all origins and cannot bind only its heading or condition", () => {
-  const question = "解释平均利率。", parts = ["## 风险边界", "只有投资建议须提示风险。", "概念解释无需风险提示；不得扩大触发范围。"];
-  const final = "平均利率是按统一口径计算的平均融资成本。", candidates = candidatesFor(question, 2, null);
-  const trace: RawInput = { messages: [{ type: "message", role: "system", content: parts.map(text => ({ type: "input_text", text })) },
-    { type: "message", role: "user", content: question }, { type: "message", role: "assistant", content: final }] };
-  const inputs = Object.fromEntries(Object.values(candidates).map(candidate => [candidate.input_id, structuredClone(trace)]));
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-    inputIds: { A: candidates.A!.input_id, B: candidates.B!.input_id },
-    data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
-  const criteria = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
-  const catalogue = criteriaSources(criteria.request.input as unknown as CriteriaInput);
-  const section = catalogue.find(source => source.kind === "instruction")!;
-  assert.equal(section.text, parts.join("\n"));
-  assert(!catalogue.some(source => parts.includes(source.text)));
-  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [{ source_indices: [1] }],
-    scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
-  rubric.requirements.push({ ...rubric.requirements[0]!, id: "r2", text: section.text });
-  criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
-    audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates.A!.input_id },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const answer = binding.request.input.answer as { norm_directory: AttributionNorm[];
-    criterion_instruction_sources: Record<string, { path: string; quote: string }[]> };
-  assert.deepEqual(answer.criterion_instruction_sources.r2!.map(origin => origin.quote), parts);
-  assert.deepEqual(answer.norm_directory.find(norm => norm.requirement_index === 1)!.evidence.map(origin => origin.quote), parts);
-  const shown = binding.modelInput!.answer as { final_evidence: { reference: { evidence_id: string } }[];
-    criterion_instruction_sources: Record<string, { path: string; quote: string; reference: { evidence_id: string } }[]> };
-  for (const [index, origin] of shown.criterion_instruction_sources.r2!.entries()) {
-    assert.equal(origin.path, `/content/${index}/text`);
-    assert.equal(resolveEvidence(trace, origin.reference, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, parts[index]);
-  }
-  const finalRef = shown.final_evidence[0]!.reference;
-  const draft = { numeric_checks: [],
-    criterion_assessments: rubric.requirements.map(criterion => ({ criterion_id: criterion.id, status: "met", evidence_status: "established",
-      summary: "按完整条件解释概念。", evidence: [finalRef] })),
-    core_assessment: { meets_core: true, reason: "概念解释已完成。", requirement_indices: [0] }, summary: "直接解释概念。", findings: [] };
-  {
-    const request = binding.request;
-    const result = attributionProfile.resolve!(request, draft, emptyAudit()) as AttributionResult;
-    assert.deepEqual(result.criterion_assessments[1]!.evidence.slice(1).map(evidence => evidence.quote), parts);
-    attributionProfile.validate!(request, result, emptyAudit());
-  }
-  for (const quote of parts) {
-    const partial = structuredClone(rubric);
-    partial.requirements[1]!.text = quote;
-    assert.equal(criterionInstructionSources(trace, 2, partial, candidates.A!.input_id).r2, undefined);
-  }
+test("a headed private norm keeps all leaf origins without being promoted by a short task description", () => {
+  const question="解释平均利率。",parts=["## 风险边界","只有投资建议须提示风险。","概念解释无需风险提示；不得扩大触发范围。"];
+  const final="平均利率是按统一口径计算的平均融资成本。",candidates=candidatesFor(question,2,null);
+  const trace:RawInput={messages:[{role:"system",content:parts.map(text=>({type:"input_text",text}))},{role:"user",content:question},{role:"assistant",content:final}]};
+  const inputs=Object.fromEntries(Object.values(candidates).map(candidate=>[candidate.input_id,structuredClone(trace)]));
+  const criteriaTask:PlannedTask={id:randomUUID(),stage:"criteria",inputIds:{A:candidates.A.input_id,B:candidates.B.input_id},dependencies:{},data:{stage:"criteria",candidates,reference:null} satisfies TaskData};
+  const criteria=bindTask(criteriaTask,inputs,{}, {tasks:[criteriaTask]});
+  const rubric=criteriaProfile.resolve!(criteria.request,{requirements:[{source_indices:[1],text:"解释平均利率的含义。"}],scoring_points:[],red_flags:[]},emptyAudit()) as TaskAnalysis;
+  const receipt:SubmissionReceipt={taskId:criteriaTask.id,attemptId:randomUUID(),submissionId:randomUUID(),acceptedAt:1,status:"succeeded",evaluatorVersion:"fixture",judge:"fixture",evaluation:rubric,audit:emptyAudit(),usage:emptyUsage()};
+  const task:PlannedTask={id:randomUUID(),stage:"attribution",inputIds:{answer:candidates.A.input_id},dependencies:{criteria:criteriaTask.id},data:{stage:"attribution",candidates:{A:candidates.A},reference:null} satisfies TaskData};
+  const binding=bindTask(task,inputs,{criteria:receipt},{tasks:[criteriaTask,task]});
+  const answer=binding.request.input.answer as {norm_directory:AttributionNorm[]};
+  const own=answer.norm_directory.find(item=>item.roles.includes("system"))!;
+  assert.equal(own.requirement_index,null);assert.deepEqual(own.evidence.map(item=>item.quote),parts);
+  const finalRef=(binding.modelInput!.answer as any).final_evidence[0].reference;
+  const reads=emptyAudit(),finalNumber=selectEvidence(reads.evidenceBank!,finalRef).evidence_index;
+  const draft:AttributionSubmission={is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks:[],summary:"已解释含义。",meets_core:true,core_reason:"给出了所求含义。",core_requirements:[1],
+    criterion_assessments:[{status:"met",evidence_status:"established",summary:"给出了融资成本含义。",evidence_indices:[finalNumber]}],
+    problems:[],strengths:[{dimension:"instruction_following",stage:"final_answer",importance:"low",text:"纯概念解释没有加入投资风险提示。",reason:"该条件在本轮未触发。",basis_index:attributionFindingBasis(binding.request.input).find(item=>item.norm_index===own.norm_index)!.basis_index,evidence_indices:[],evidence_status:"established"}]};
+  const result=registry.resolve(binding,draft,reads) as AttributionResult;
+  registry.validate(binding,result,reads);
+  assert.equal(result.findings[0].assessment.requirement_index,null);
+  assert(parts.every(part=>result.findings[0].evidence.some(item=>item.quote===part)));
+  draft.strengths[0].dimension="format";
+  const classified=registry.resolve(binding,draft,reads) as AttributionResult;
+  registry.validate(binding,classified,reads);
+  assert.equal(classified.findings[0].dimension,"format","topic labels do not change the selected rule's ownership");
+  assert.equal(classified.findings[0].assessment.requirement_index,null);
+  assert(parts.every(part=>classified.findings[0].evidence.some(item=>item.quote===part)));
+  const copied=structuredClone(rubric);copied.requirements[0].text=parts.join("\n");
+  assert.deepEqual(criterionInstructionSources(trace,2,copied,candidates.A.input_id),criterionInstructionSources(trace,2,rubric,candidates.A.input_id));
 });
 
 test("norm directories preserve own original conditions, global requirement positions and long full-read coordinates", () => {

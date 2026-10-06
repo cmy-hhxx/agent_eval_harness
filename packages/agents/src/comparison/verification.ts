@@ -13,11 +13,10 @@ import { actualAnswerEvidenceShares } from "./proof-matching.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validator = ajv.compile(schema), inspectionValidator = ajv.compile(inspectionSchema);
-const concernValidator = ajv.compile(inspectionSchema.properties.concerns);
 export { inspectionSchema };
 
 /** Stable source order and global requirement order bind each submitted check by position. */
-export function verificationCheckSlots(request: Pick<AgentRequest, "input">) {
+function verificationCheckSlots(request: Pick<AgentRequest, "input">) {
   const input = request.input as unknown as ComparisonVerificationInput;
   return Object.entries(input.candidates).flatMap(([candidate, material]) => input.task_analysis.requirements.flatMap((criterion, requirement_index) =>
     !criterion.applies_to.length || criterion.applies_to.includes(material.candidate_id)
@@ -27,18 +26,9 @@ export function verificationCheckSlots(request: Pick<AgentRequest, "input">) {
 /** Each original rule is inspected for its deliverable and its governing constraints. */
 export const verificationCheckAspects = ["delivery", "constraints"] as const;
 
-/** Fresh discoveries stay first; accepted unclosed discoveries follow without changing the fresh checkpoint. */
-export function verificationConcerns(request: Pick<AgentRequest, "input">, audit: Pick<ToolAudit, "inspection">): ComparisonMaterialInspection["concerns"] {
-  const fresh = audit.inspection?.value as unknown as ComparisonMaterialInspection | undefined;
-  const input = request.input as unknown as ComparisonVerificationInput;
-  return [...(fresh?.concerns ?? []), ...(input.pending_concerns ?? [])];
-}
-
-/** Pure projection of already accepted selections; no historical attribution is reinterpreted. */
-export function unresolvedVerificationConcerns(request: Pick<AgentRequest, "input">, submission: ComparisonVerificationSubmission,
-  audit: Pick<ToolAudit, "inspection">): ComparisonMaterialInspection["concerns"] {
-  const closed = new Set([...submission.concern_matches, ...(submission.concern_refutations ?? [])].map(item => item.concern_index));
-  return verificationConcerns(request, audit).filter((_concern, index) => !closed.has(index));
+/** Only discoveries from this task's accepted blind inspection participate in matching. */
+function verificationConcerns(audit: Pick<ToolAudit, "inspection">): ComparisonMaterialInspection["concerns"] {
+  return (audit.inspection?.value as unknown as ComparisonMaterialInspection | undefined)?.concerns ?? [];
 }
 
 /** Fixed checks bind the inspected actual scope; only specific concerns select answer counterevidence. */
@@ -288,7 +278,7 @@ function selectedNormBlocks(request: AgentRequest, concern: ComparisonMaterialIn
   if (!criterion) return [];
   return normativeSources(source.value as { messages: unknown[] }, source.id, input.candidates[concern.candidate]!.final_message_index)
     .filter(norm => norm.role !== "user").flatMap(norm => sourceContentBlocks(norm.content, norm.path)
-      .filter(block => hasSourceTextBlock(criterion.text, block.quote))
+      .filter(block => hasSourceTextBlock(criterion.acceptance_rule, block.quote))
       .map(block => block.origins.map(origin => ({ evidence_id: evidenceId(source.id, norm.message_index, "text", origin.path, origin.start, origin.end) }))));
 }
 
@@ -380,7 +370,7 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
     !findingSharesActualAnswer(request, finding, concern, audit, path)) return false;
   const own = finding.evidence.filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
   return normativeSources(raw, source.id, material.final_message_index).filter(norm => norm.role === "user").some(norm => {
-    const blocks = sourceContentBlocks(norm.content, norm.path), targets = blocks.filter(block => hasSourceTextBlock(target.text, block.quote)),
+    const blocks = sourceContentBlocks(norm.content, norm.path), targets = blocks.filter(block => hasSourceTextBlock(target.acceptance_rule, block.quote)),
       sources = evidenceSources(raw.messages[norm.message_index]);
     const overlaps = (reference: EvidenceReference, origin: { path: string; start: number; end: number }) => {
       const coordinates = parseEvidenceCoordinates(reference.evidence_id);
@@ -395,7 +385,7 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
         end = valueStart + JSON.stringify(leaf.text.slice(0, origin.end)).length - 2;
       return coordinates.start < end && start < coordinates.end;
     };
-    return blocks.filter(block => hasSourceTextBlock(primary.text, block.quote)).some(anchor =>
+    return blocks.filter(block => hasSourceTextBlock(primary.acceptance_rule, block.quote)).some(anchor =>
       anchor.origins.length && anchor.origins.every(origin => own.some(evidence => evidenceCovers(raw, source.id, evidence.evidence_id,
         evidenceId(source.id, norm.message_index, "text", origin.path, origin.start, origin.end)))) &&
       targets.some(block => anchor.origins.every(origin =>
@@ -444,8 +434,8 @@ function concernMatchChoices(request: AgentRequest, concern: ComparisonMaterialI
 /** Reveal finite structural choices after inspection; they never establish semantic equivalence. */
 export function inspectionMatchContext(request: AgentRequest, value: unknown, audit: ToolAudit) {
   const inspection = value as ComparisonMaterialInspection;
-  const concerns = [...inspection.concerns, ...((request.input as unknown as ComparisonVerificationInput).pending_concerns ?? [])];
-  return { verification_concerns: concerns, fresh_concern_count: inspection.concerns.length,
+  const concerns = inspection.concerns;
+  return { verification_concerns: concerns,
     eligible_match_choices: concerns.map((concern, concernIndex) => {
     const { concern_index, candidate, eligible_findings, complete_coverage_possible, missing_requirement_indices } =
       concernMatchChoices(request, concern, concernIndex, audit, `/material_inspection/concerns/${concernIndex}`);
@@ -473,14 +463,6 @@ function verificationConcernIssues(request: AgentRequest, concerns: ComparisonMa
     issues.push(...sourceEvidenceIssues(request, concern.source_evidence, audit, `${path}/source_evidence`));
   }
   return issues;
-}
-
-/** Validate carried original proof with its accepted read ledger, without copying prior checks or conclusions. */
-export function validateVerificationConcerns(request: AgentRequest, concerns: unknown, audit: ToolAudit): void {
-  if (!concernValidator(concerns)) throw new ValidationError(schemaIssues(concernValidator.errors, concerns)
-    .map(issue => ({ ...issue, path: `/pending_concerns${issue.path === "/" ? "" : issue.path}` })));
-  const issues = verificationConcernIssues(request, concerns as ComparisonMaterialInspection["concerns"], audit, "/pending_concerns");
-  if (issues.length) throw new ValidationError(issues);
 }
 
 /** The blind inspection covers every applicable requirement; upstream conclusions are never its input. */
@@ -518,8 +500,7 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
     message: "先独立核查原材料，再查看及确认判词。" }]);
   validateMaterialInspection(request, audit.inspection.value, { ...audit, ...audit.inspection.proof });
   const input = request.input as unknown as ComparisonVerificationInput;
-  const concerns = verificationConcerns(request, audit);
-  const freshCount = (audit.inspection.value as unknown as ComparisonMaterialInspection).concerns.length;
+  const concerns = verificationConcerns(audit);
   const requestedMatches = new Set<number>();
   const issues: ValidationIssue[] = [];
   for (const [index, match] of submission.concern_matches.entries()) {
@@ -561,53 +542,8 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
       issues.push(...error.issues!);
     }
   }
-  const requestedRefutations = new Set<number>();
-  for (const [index, refutation] of submission.concern_refutations.entries()) {
-    const path = `/concern_refutations/${index}`, concern = concerns[refutation.concern_index];
-    const duplicate = requestedRefutations.has(refutation.concern_index);
-    requestedRefutations.add(refutation.concern_index);
-    const selectionIssues: ValidationIssue[] = [];
-    if (!concern || refutation.concern_index < freshCount) selectionIssues.push({ category: "decision", code: "inspection_refutation_index", path,
-      actual: refutation.concern_index, expected: { available_pending_concern_indices: concerns.map((_concern, i) => i).slice(freshCount) },
-      message: "只能明确反驳 accepted 父核验留下的 pending concern；本轮首查发现须匹配准确既有问题或保留复核。" });
-    if (duplicate) selectionIssues.push({ category: "decision", code: "inspection_refutation_duplicate", path,
-      message: "同一旧发现只能提交一个完整反驳。" });
-    if (requestedMatches.has(refutation.concern_index)) selectionIssues.push({ category: "decision", code: "inspection_concern_resolution_conflict", path,
-      message: "同一发现不能同时匹配既有问题和反驳。" });
-    issues.push(...selectionIssues);
-    if (!concern || refutation.concern_index < freshCount) continue;
-    const proofIssues = refutationEvidenceIssues(request, concern, refutation, audit, path);
-    issues.push(...proofIssues);
-  }
   if (issues.length) throw new ValidationError(issues);
-  return unresolvedVerificationConcerns(request, submission, audit).map(localReview);
-}
-
-function refutationEvidenceIssues(request: AgentRequest, concern: ComparisonMaterialInspection["concerns"][number],
-  refutation: ComparisonVerificationSubmission["concern_refutations"][number], audit: ToolAudit, path: string): ValidationIssue[] {
-  const issues = [
-    ...answerEvidenceIssues(request, concern.candidate, refutation.answer_evidence, audit, `${path}/answer_evidence`),
-    ...sourceEvidenceIssues(request, refutation.source_evidence, audit, `${path}/source_evidence`),
-  ];
-  const source = request.sources[concern.candidate], raw = source?.value as { messages: unknown[] } | undefined;
-  const input = request.input as unknown as ComparisonVerificationInput, material = input.candidates[concern.candidate];
-  if (!source || !raw || !material) return issues;
-  const covers = (block: EvidenceReference[]) => block.every(norm => refutation.source_evidence.some(reference =>
-    evidenceCovers(raw, source.id, reference.evidence_id, norm.evidence_id)));
-  const groups = concern.criterion_ids.length ? concern.criterion_ids.flatMap(id => {
-    const criterion = input.task_analysis.requirements.find(criterion => criterion.id === id);
-    const privateBlocks = selectedNormBlocks(request, concern, id);
-    // A trusted common question/reference already supplies the original norm, including standards absent from the trace.
-    if (criterion && !criterion.applies_to.length && !privateBlocks.length) return [];
-    const blocks = privateBlocks.length ? privateBlocks : normativeSources(raw, source.id, material.final_message_index).flatMap(norm => sourceContentBlocks(norm.content, norm.path)
-      .filter(block => criterion && hasSourceTextBlock(criterion.text, block.quote))
-      .map(block => block.origins.map(origin => ({ evidence_id: evidenceId(source.id, norm.message_index, "text", origin.path, origin.start, origin.end) }))));
-    return [blocks];
-  }) : sourceOnlyNormProof(request, concern, audit, `${path}/source_evidence`).blocks.map(block => [block]);
-  if ((!concern.criterion_ids.length && !groups.length) || groups.some(blocks => !blocks.some(covers))) issues.push({ category: "evidence", code: "inspection_refutation_norm_required",
-    path: `${path}/source_evidence`, expected: { original_norm_blocks: groups },
-    message: "反驳须保留同一原要求的本方完整真实规范；私规须是旧发现所据完整 SYS/DEV，其他判词、他方规范或仅复述规则不能替代原规范与实际回答反证。" });
-  return issues;
+  return concerns.filter((_concern, index) => !requestedMatches.has(index)).map(localReview);
 }
 
 /** Unknown facts remain unknown; only an upstream definite use of this same requirement needs correction. */
@@ -701,7 +637,7 @@ export function resolveVerification(request: AgentRequest, draft: unknown, audit
 export function validateVerification(request: AgentRequest, result: unknown, audit: ToolAudit): void {
   const inspection = audit.inspection?.value as unknown as ComparisonMaterialInspection | undefined;
   if (inspection) validateMaterialInspection(request, inspection, { ...audit, ...audit.inspection!.proof });
-  const localReviews = verificationConcerns(request, audit).filter(concern => !concern.criterion_ids.length).map(localReview);
+  const localReviews = verificationConcerns(audit).filter(concern => !concern.criterion_ids.length).map(localReview);
   validateEvaluation(request, result, audit, localReviews);
   const input = request.input as unknown as ComparisonVerificationInput;
   const value = result as ComparisonResult;

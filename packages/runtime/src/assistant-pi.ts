@@ -79,15 +79,34 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   if (!model) throw new Error("Configured model unavailable");
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off", packages: [] });
   const loader = new sdk.DefaultResourceLoader({ cwd: workdir, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt,
-    extensionFactories: [(api) => { api.on("before_provider_request", (event) => transformPayload(event.payload, config)); }],
+    extensionFactories: [(api) => { api.on("before_provider_request", (event) => {
+      const payload = object(transformPayload(event.payload, config));
+      // DeepSeek enables thinking when reasoning is omitted, including for a non-reasoning SDK model.
+      if (config.provider === 'deepseek' && config.api === 'openai-responses' && config.thinking === 'off') payload.reasoning = {effort:'none'};
+      return payload;
+    }); }],
   });
   await loader.reload();
+  // Pi batches independent reads; the application bounds their I/O. A batch
+  // containing a writable tool remains sequential in Pi, preserving ordering.
+  const activeReads = new Set<Promise<void>>();
   const customTools: sdk.ToolDefinition[] = options.tools.map((tool) => ({
-    name: tool.name, label: tool.name, description: tool.description, parameters: tool.inputSchema as sdk.ToolDefinition["parameters"], executionMode: "sequential",
+    name: tool.name, label: tool.name, description: tool.description, parameters: tool.inputSchema as sdk.ToolDefinition["parameters"], executionMode: tool.readOnly ? "parallel" : "sequential",
     async execute(callId, args, signal) {
-      await options.checkpoint();
-      const result = await tool.execute(args, { scope: options.scope, callId, signal: signal ?? new AbortController().signal, progress: (value) => options.progress(callId, value) });
-      return { ...result, content: sdkContent(result.content), details: result.details ?? {} };
+      while (tool.readOnly && activeReads.size >= 4) {
+        await Promise.race(activeReads);
+        signal?.throwIfAborted();
+      }
+      signal?.throwIfAborted();
+      let release = () => {};
+      const slot = new Promise<void>(resolve => { release = resolve; });
+      if (tool.readOnly) activeReads.add(slot);
+      try {
+        await options.checkpoint();
+        signal?.throwIfAborted();
+        const result = await tool.execute(args, { scope: options.scope, callId, signal: signal ?? new AbortController().signal, progress: (value) => options.progress(callId, value) });
+        return { ...result, content: sdkContent(result.content), details: result.details ?? {} };
+      } finally { activeReads.delete(slot); release(); }
     },
   }));
   const { session } = await sdk.createAgentSession({ cwd: workdir, agentDir, modelRuntime: runtime, model, thinkingLevel: config.thinking, settingsManager: settings, sessionManager: sdk.SessionManager.inMemory(workdir, { id: options.scope.sessionId }, [{ type: "session", id: options.scope.sessionId, cwd: workdir, timestamp: new Date().toISOString() }, ...await restore(options)]), resourceLoader: loader, noTools: "builtin", tools: customTools.map((tool) => tool.name), customTools });

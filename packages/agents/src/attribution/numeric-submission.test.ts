@@ -1,8 +1,10 @@
+import { validateJudgment } from "./validate.js";
+import { resolveJudgment } from "./resolve.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionProfile, numericReferenceDirectory } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
-import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
+import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
 import type { AttributionResult } from "./types.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import { ValidationError } from "@eval/contracts";
@@ -15,7 +17,7 @@ test("an ETF identity standard forbids supplemental source numbers and reports t
   const schema = attributionProfile.modelSubmissionSchema!(request);
   const ledger = (schema.properties as Record<string, { maxItems?: number }>).numeric_checks;
   assert.equal(ledger.maxItems, 0, "security identifiers are not standard-answer numeric quantities");
-  const issues = attributionProfile.validateSubmission!(request, {
+  const issues = validateJudgment(request, {
     findings: [{ type: "problem", dimension: "format", assessment: { requirement_index: null } }],
     numeric_checks: [{ reference_index: 0, actual: "27.98", scale: "1", mode: "rounded", evidence_index: 0 }],
   }, audit);
@@ -34,14 +36,14 @@ test("the program retains multiple standard quantities, signed declines and orig
   request.sources.answer.value.messages[1]!.content = "2+2=4元";
   const result = structuredClone(example.result) as AttributionResult;
   result.correctness_evidence = [canonicalEvidence(request.sources.answer.id, 1, "2+2=4元")];
-  const draft = attributionSubmission(request, result);
+  const draft = attributionJudgment(request, result);
   draft.numeric_checks = [{ label: "加法结果", reference_index: 0, actual: "4", scale: "1", mode: "exact", evidence_index: 0 }];
-  const resolved = attributionProfile.resolve!(request, draft, audit) as AttributionResult;
+  const resolved = resolveJudgment(request, draft, audit) as AttributionResult;
   assert.equal(resolved.numeric_checks[0]!.expected, "4");
   assert.equal(resolved.numeric_checks[0]!.matches, true);
   assert(!Object.hasOwn(resolved.numeric_checks[0]!, "reference_index"));
   draft.numeric_checks[0]!.scale = "0";
-  assert.throws(() => attributionProfile.resolve!(request, draft, audit), (error: unknown) => {
+  assert.throws(() => resolveJudgment(request, draft, audit), (error: unknown) => {
     assert(error instanceof ValidationError);
     assert(error.issues?.some(issue => issue.code === "numeric_invalid"));
     return true;
@@ -57,13 +59,18 @@ test("a missing problem does not hide a real standard-value contradiction or uni
     findings: [{ type: "problem", dimension: "format", assessment: { requirement_index: null } }],
     numeric_checks: [{ reference_index: 0, actual: "5", scale: "1", mode: "rounded", evidence_index: 0 }],
   };
-  const issues = attributionProfile.validateSubmission!(request, malformed, audit);
+  const issues = validateJudgment(request, malformed, audit);
   assert(issues.some(issue => issue.code === "problem_required"));
   assert(issues.some(issue => issue.code === "numeric_correctness_contradiction"));
   request.sources.answer.value.messages[1]!.content = "结果为4吨";
   malformed.correctness_evidence = [{ evidence_id: canonicalEvidence(request.sources.answer.id, 1, "结果为4吨").evidence_id }];
   malformed.numeric_checks[0]!.actual = "4";
-  assert(attributionProfile.validateSubmission!(request, malformed, audit).some(issue => issue.code === "numeric_correctness_contradiction"));
+  const unitIssues=validateJudgment(request, malformed, audit);
+  assert(unitIssues.some(issue => issue.code === "numeric_correctness_contradiction"));
+  const mismatch=unitIssues.find(issue=>issue.code==="numeric_unit_mismatch")!;
+  assert.equal(mismatch.path,"/numeric_checks/0");
+  assert.deepEqual(mismatch.actual,{label:undefined,expected:"4",actual:"4",scale:"1"});
+  assert.match(mismatch.message,/元.*吨/u);
 });
 
 test("standard tables retain quantity columns while identifier and date columns stay outside the directory", () => {

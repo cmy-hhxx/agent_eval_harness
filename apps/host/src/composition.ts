@@ -38,6 +38,7 @@ export const services = {
           submissionNudge: profile.submissionNudge,
           toolDescriptions: profile.toolDescriptions,
           fileSubmission: profile.fileSubmission,
+          jsonStringSubmission: profile.jsonStringSubmission ?? false,
           requestSchema: profile.requestSchema,
           submissionSchema: profile.submissionSchema,
           resultSchema: profile.resultSchema,

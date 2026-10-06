@@ -43,8 +43,9 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?:
           if (!sessions.options.models || !Array.isArray(request.ids) || request.ids.some(id=>typeof id!=="string")) throw new Error("Invalid model selection");
           await sessions.options.models.favorites(userId, request.ids as string[]); return {accepted:true};
         case "session/modelCatalog": {
-          const directory = sessions.options.models ? await sessions.options.models.list(userId) : {models:[{id:sessions.options.model.model,name:sessions.options.model.model}],favorites:[sessions.options.model.model],default:{provider:sessions.options.model.provider,model:sessions.options.model.model}};
-          return {groups:[{id:sessions.options.model.provider,name:"评测网关",models:directory.models.filter(model=>directory.favorites.includes(model.id))}],failures:[],routableProviders:[sessions.options.model.provider],default:directory.default};
+          const directory = sessions.options.models ? await sessions.options.models.list(userId) : {models:[{id:sessions.options.model.model,name:sessions.options.model.model,provider:sessions.options.model.provider,providerName:"评测网关"}],favorites:[sessions.options.model.model],default:{provider:sessions.options.model.provider,model:sessions.options.model.model}};
+          const providers = [...new Set(directory.models.map(model=>model.provider))];
+          return {groups:providers.map(provider=>({id:provider,name:directory.models.find(model=>model.provider===provider)!.providerName,models:directory.models.filter(model=>model.provider===provider && directory.favorites.includes(model.id))})),failures:[],routableProviders:providers,default:directory.default};
         }
         case "session/skillList": return { items: [] };
         case "session/workspacePathApplications": return { applications: [] };

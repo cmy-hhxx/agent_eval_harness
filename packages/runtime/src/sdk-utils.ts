@@ -1,5 +1,5 @@
 import type { EvaluationSpec, ModelConfig, ToolContent, ToolResult } from "@eval/contracts";
-import { object } from "@eval/contracts";
+import { object, SUBMISSION_JSON_SCHEMA } from "@eval/contracts";
 
 export function inlineToolSchema(schema: Record<string, unknown> | boolean): Record<string, unknown> | boolean {
   const single = new Set(["items", "additionalItems", "additionalProperties", "unevaluatedItems", "unevaluatedProperties", "contains", "propertyNames", "not", "if", "then", "else", "contentSchema"]);
@@ -101,7 +101,7 @@ export function providerConfig(config: ModelConfig) {
 export function transformPayload(
   value: unknown,
   config: ModelConfig,
-  evaluation?: Pick<EvaluationSpec, "toolNames" | "outputSchema" | "inspectionSchema" | "fileSubmission">,
+  evaluation?: Pick<EvaluationSpec, "toolNames" | "outputSchema" | "inspectionSchema" | "fileSubmission" | "jsonStringSubmission">,
   activeNames?: readonly string[],
 ): unknown {
   const payload = object(value);
@@ -121,7 +121,7 @@ export function transformPayload(
     // Keep the full model-facing contract while the SDK dispatches raw submission fields to Host.
     for (const value of payload.tools) {
       const tool = config.api === "openai-completions" ? object(object(value).function) : object(value);
-      const schema = tool.name === "submit_evaluation" ? evaluation.outputSchema :
+      const schema = tool.name === "submit_evaluation" ? evaluation.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : evaluation.outputSchema :
         tool.name === "inspect_material" && !evaluation.fileSubmission ? evaluation.inspectionSchema : undefined;
       if (schema) tool.parameters = inlineToolSchema(schema);
     }

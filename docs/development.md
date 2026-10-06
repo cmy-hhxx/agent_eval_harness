@@ -35,7 +35,7 @@
 
 Agent 测试跟随 Agent 放置，集中提示词模块的测试在 `packages/prompts/src/`；跨模块和运行测试放在 `tests/`，共享 fixture 只保留仍被多个测试使用的最小集合。Schema 修改时同步检查 Profile `index.ts`、`validate.ts`、（如有）`resolve.ts`、[提示词](../packages/prompts/README.md)和测试样例。
 
-纯运算、业务校验和公开提交入口按边界覆盖。当前结果到测试提交的转换集中在 [归因 fixture](../tests/fixtures/attribution-submission.ts) 与 [对比 fixture](../tests/fixtures/comparison-submission.ts)，证据由公开入口注册；盲核查不能从上游 met/core/ranking 生成。Worker fixture 使用具名选项和共享有界等待，构造失败释放资源，恢复断言记录接受时的实际请求量，避免整流程魔数。
+纯运算、业务校验和公开提交入口按边界覆盖。模型提交 fixture 直接生成当前扁平载荷，集中在 [归因 fixture](../tests/fixtures/attribution-submission.ts) 与 [对比 fixture](../tests/fixtures/comparison-submission.ts)，证据由公开入口注册；内部判定规则使用单独的 [判定 fixture](../tests/fixtures/attribution-judgment.ts)，不把内部对象当成模型提交，也不转换旧提交格式维持测试；盲核查不能从上游 met/core/ranking 生成。Worker fixture 使用具名选项和共享有界等待，构造失败释放资源，恢复断言记录接受时的实际请求量，避免整流程魔数。
 
 ## 验证
 

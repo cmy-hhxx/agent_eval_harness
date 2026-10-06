@@ -10,6 +10,17 @@ import type { RewriteRequest, RewriteResult } from "./types.js";
 import schema from "../../../../schemas/rewrite/result.schema.json" with { type: "json" };
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
+export const verdictMaxChars = 160;
+/** Enforce writing budgets on new text, without rejudging accepted receipts during restoration. */
+export function validateSubmission(request: AgentRequest, draft: unknown): ValidationIssue[] {
+  const texts=(draft as {texts?:unknown[]}|null)?.texts;
+  if(!Array.isArray(texts))return [];
+  const input=request.input as unknown as RewriteRequest;
+  return texts.flatMap((text,index)=>typeof text==="string"&&input.items[index]?.preference&&[...text].length>verdictMaxChars ? [{
+    category:"structure" as const,code:"rewrite_verdict_too_long",path:`/texts/${index}`,actual:[...text].length,expected:{maxLength:verdictMaxChars},
+    message:`整场偏好最多 ${verdictMaxChars} 字符；只留决定取舍的一至两项事实，不重抄逐项材料、系统私规或无关指标。保留既定偏好、必要反证和不确定性，重新组织短句，不机械截断。`,
+  }]:[]);
+}
 /** Rewrites are pure text slots: exactly the requested ids, once each, nothing else. */
 export function validateEvaluation(request: AgentRequest, result: unknown, audit: ToolAudit): void {
   void audit;

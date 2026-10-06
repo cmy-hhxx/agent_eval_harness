@@ -1,12 +1,11 @@
 import { comparisonSlotChoices } from "@eval/agents/comparison";
-import type { AgentRequest, TaskAnalysis, ToolAudit } from "@eval/contracts";
-import { cite, displayEvidence, evidenceSources, instructionSources, originalUserTimestamp, parseEvidenceCoordinates } from "@eval/tools";
+import type { AgentRequest, TaskAnalysis } from "@eval/contracts";
+import { cite, displayEvidence, evidenceSources, hasSourceTextBlock, messageContentSources, instructionSources, originalUserTimestamp, parseEvidenceCoordinates } from "@eval/tools";
 import type { AttributionResult } from "@eval/agents/attribution";
 import { verificationCheckAspects } from "@eval/agents/comparison";
 import type { ComparisonResult, RawInput } from "./types.js";
 import { contentText } from "./input.js";
 import { attributionPresentation } from "./attribution-presentation.js";
-import { reviewConcernPresentation } from "./review-concerns.js";
 
 /** Convert only valid native calendar instants with an explicit offset; Date's invalid-day rollover is not evidence. */
 function timestampUTC(timestamp: string | null): string | null {
@@ -34,7 +33,7 @@ function criterionMeaning(criterion: TaskAnalysis["requirements"][number]) {
 
 /** Ordered sections keep primary materials ahead of the upstream verdict even under canonical JSON serialization. */
 export function verificationPresentation(input: Record<string, unknown>, sources: NonNullable<AgentRequest["sources"]>,
-  analysis: TaskAnalysis, pendingProof: Pick<ToolAudit, "viewedImages" | "traceReads"> = { viewedImages: [], traceReads: [] }) {
+  analysis: TaskAnalysis) {
   const materials = input.candidates as Record<string, { question: string; final_message_index: number;
     catalog: unknown; citation_inventory: unknown; answer_generation: unknown;
     original_answer_timing: { finish_seconds: number | null };
@@ -67,9 +66,9 @@ export function verificationPresentation(input: Record<string, unknown>, sources
     return [label, { question: material.question, original_user_timestamp: timestamp,
       original_user_timestamp_utc: timestampUTC(timestamp),
       question_evidence: (material.criterion_instruction_sources ?? {})[analysis.requirements.find(criterion =>
-        common(criterion) && criterion.text === material.question)?.id ?? ""]?.map(entry => sourceReference(label, entry)) ?? [],
+        common(criterion) && hasSourceTextBlock(criterion.acceptance_rule, material.question))?.id ?? ""]?.map(entry => sourceReference(label, entry)) ?? [],
       final_message_index: material.final_message_index, final_answer: contentText(raw.messages[material.final_message_index].content),
-      final_evidence: evidenceSources(raw.messages[material.final_message_index]).filter(source => source.kind === "text" && source.path.startsWith("/content"))
+      final_evidence: messageContentSources(raw.messages[material.final_message_index])
         .map(source => { const full = cite(sourceIds[label], material.final_message_index, source, 0, source.text.length);
           return displayEvidence(source.text.length <= 200 ? full : { ...full, quote: undefined,
             quote_preview: source.text.slice(0, 200), has_more: true }); }),
@@ -116,8 +115,6 @@ export function verificationPresentation(input: Record<string, unknown>, sources
           }),
         })) }])),
       requirement_catalog: requirementCatalog, findings: findingCatalog,
-      ...(Array.isArray(input.pending_concerns) ? { pending_concerns: input.pending_concerns.map(concern =>
-        reviewConcernPresentation(concern, sources, pendingProof)) } : {}),
       source_review: input.source_review,
       comparison_slots: comparisonSlotChoices({ input, sources }) },
     { kind: "proposed_comparison", comparison_draft: { ...draft,

@@ -9,7 +9,7 @@ const task = (stage: Task["stage"], status: Task["status"], data: Task["data"] =
   ...(file !== undefined ? { receipt: { exported: { ...(file ? { file } : {}), comparisonId: "comparison" } } as Task["receipt"] } : {}),
 });
 
-test("whole-run progress counts business identities and accepted outputs without counting peers, optional audits or replaced reviews", () => {
+test("whole-run progress counts business identities and accepted outputs without counting peers or optional audits as formal results", () => {
   const saved = {
     runId: "run", status: "finished", startedAt: 10, finishedAt: 20,
     config: { inputs: { versions: [
@@ -32,7 +32,6 @@ test("whole-run progress counts business identities and accepted outputs without
       acceptedComparison: task("comparison", "succeeded", { reference: null }, {}, ""),
       failedVerification: task("comparison", "failed", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }),
       pendingReview: task("comparison", "succeeded", { reference: null }, {}, "comparison-review.jsonl"),
-      replacedReview: task("comparison", "succeeded", { reference: null, supersededBy: "pendingReview" }, {}, "comparison-review.jsonl"),
       directComparison: task("comparison", "running"),
       rewrite: task("rewrite", "blocked"),
       clustering: task("clustering", "cancelled"),
@@ -47,10 +46,10 @@ test("whole-run progress counts business identities and accepted outputs without
     { modelName: "A Expert", comparisonTier: "Expert", inputCount: 1, caseCount: 1 },
     { modelName: "B Fast", comparisonTier: null, inputCount: 1, caseCount: 1 },
   ]);
-  assert.equal(summary.tasks.total, 12);
-  assert.deepEqual(summary.tasks.states, { pending: 1, running: 1, succeeded: 6, failed: 1, blocked: 1, cancelled: 1, timed_out: 1 });
+  assert.equal(summary.tasks.total, 11);
+  assert.deepEqual(summary.tasks.states, { pending: 1, running: 1, succeeded: 5, failed: 1, blocked: 1, cancelled: 1, timed_out: 1 });
   assert.equal(summary.tasks.byPurpose.comparison_verification.total, 2);
-  assert.equal(summary.tasks.byPurpose.comparison_formal.total, 4);
+  assert.equal(summary.tasks.byPurpose.comparison_formal.total, 3);
   assert.equal(summary.formalComparisonsAccepted, 1);
   assert.deepEqual(summary.formalComparisonReferences, [{ runId: "run", taskId: "acceptedComparison" }]);
   assert.equal(summary.comparisonsPendingReview, 1);

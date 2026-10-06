@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, schemaIssues, ValidationError, type AgentRequest, type CriteriaInput, type TaskAnalysis, type TaskCriterion, type ValidationIssue } from "@eval/contracts";
+import { schemaIssues, ValidationError, type AgentRequest, type CriteriaInput, type TaskAnalysis, type TaskCriterion, type ValidationIssue } from "@eval/contracts";
 import { criteriaText } from "@eval/prompts";
 import requestSchema from "../../../../schemas/criteria/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/criteria/submission.schema.json" with { type: "json" };
@@ -7,9 +7,9 @@ import { criteriaSources, eligibleCriterionSource, type CriterionSource } from "
 import { criteriaGroups, criterionIdentity } from "./identity.js";
 
 export interface CriteriaSubmission {
-  requirements: { source_indices: number[] }[];
-  scoring_points: { source_indices: number[] }[];
-  red_flags: { source_indices: number[] }[];
+  requirements: { source_indices: number[]; text: string }[];
+  scoring_points: { source_indices: number[]; text: string }[];
+  red_flags: { source_indices: number[]; text: string }[];
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
@@ -22,7 +22,7 @@ function scope(input: CriteriaInput, sources: CriterionSource[]): string[] {
 }
 
 function rule(sources: CriterionSource[]): string {
-  return [criteriaText("source_rule"), ...(sources.some((source) => source.kind === "reference")
+  return [...new Set(sources.map(source => source.text)), criteriaText("source_rule"), ...(sources.some((source) => source.kind === "reference")
     ? [criteriaText("reference_rule")] : [])].join("\n\n");
 }
 
@@ -50,12 +50,13 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       return source ? [source] : [];
     });
     if (sources.length !== criterion.source_indices.length) return;
+    sources.sort((a,b) => a.source_index-b.source_index);
     const applies = scope(input, sources);
     if (!applies.length) errors.push({ category: "decision", code: "criterion_source_scope_empty", path: `/${group}/${index}/source_indices`,
       message: "合并来源必须有共同适用候选；相反或不同候选的专有约束分别列出", actual: criterion.source_indices });
     if (group === "requirements" && applies.length === input.candidates.length)
       for (const source of sources) required.add(source.source_index);
-    const resolved = { id: "", text: [...new Set(sources.map((source) => source.text))].join("\n\n"),
+    const resolved = { id: "", text: criterion.text.trim(),
       applies_to: applies.length === input.candidates.length ? [] : applies, acceptance_rule: rule(sources) };
     entries.push({ group, sourceIndices: criterion.source_indices, criterion: resolved });
   });
@@ -65,11 +66,10 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       message: `${source.kind} 来源 ${source.source_index} 必须至少出现在一条适用于全部候选的 requirements 中；多条私有要求的作用域并集不算公共覆盖。请在 requirements 为该来源单独新增一条公共要求，source_indices 只填该来源编号，即可覆盖全部候选；也可与真正共同适用的来源合并，但整条仍须覆盖全部候选，不得降为加分项或红线。`,
       actual: source.source_index, expected: { source_indices: [source.source_index] } });
   if (errors.length) throw new ValidationError(errors);
-  const sourceSets = new Set<string>(), generated = new Set<string>();
+  const generated = new Set<string>();
   for (const entry of entries) {
-    const sources = canonical([...entry.sourceIndices].sort((a, b) => a - b)), identity = criterionIdentity(entry.criterion);
-    const duplicate = sourceSets.has(sources) || generated.has(identity);
-    sourceSets.add(sources);
+    const identity = criterionIdentity(entry.criterion);
+    const duplicate = generated.has(identity);
     generated.add(identity);
     if (!duplicate) {
       const prefix = { requirements: "r", red_flags: "f", scoring_points: "s" }[entry.group];
@@ -115,5 +115,7 @@ export function matchCriterionSources(input: CriteriaInput, criterion: TaskCrite
     }
     return undefined;
   };
-  return visit(criterion.text, []);
+  const suffix = criteriaText("source_rule");
+  const boundary = criterion.acceptance_rule.lastIndexOf("\n\n" + suffix);
+  return boundary < 0 ? undefined : visit(criterion.acceptance_rule.slice(0, boundary), []);
 }

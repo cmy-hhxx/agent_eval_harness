@@ -119,11 +119,11 @@ test("three-model specialist runs share one criteria task and return all three r
   async run() {
    await inspectFor(options);
    const stage = options.spec.evaluation.id; stages.push(stage);
-   const material = parsedMaterial(options.spec) as { task_analysis?: ModelAnalysis; candidate_ids?: string[]; source_catalog?: CriterionSource[];
+   const material = parsedMaterial(options.spec) as { task_analysis?: ModelAnalysis; candidate_count?: number; source_catalog?: CriterionSource[];
     candidate_id?: string; candidates?: Record<string, { candidate_id: string }>; answer?: { final_message_index: number; final_answer: string } };
    if (stage === "criteria") {
     assert(!("task_analysis" in material));
-    assert.equal(material.candidate_ids!.length, 3);
+    assert.equal(material.candidate_count, 3);
     assert(material.source_catalog!.filter(source => source.kind === "context").every(source => source.role === "user"));
     assert(material.source_catalog!.every(source => source.role !== "system" && source.role !== "developer"),
      "own SYS/DEV cannot become common or private task criteria");
@@ -178,7 +178,7 @@ test("three-model specialist runs share one criteria task and return all three r
      const applicable_candidates = Object.entries(owners).flatMap(([label, id]) =>
       !criterion.applies_to.length || criterion.applies_to.includes(id) ? [label] : []);
      return applicable_candidates.length ? [{ id: criterion.id, text: criterion.text, acceptance_rule: criterion.acceptance_rule,
-      applicable_candidates, ...(group === "requirements" ? { requirement_index: index } : {}) }] : [];
+      applicable_candidates, ...(group === "requirements" ? { requirement_index: index + Number(Object.hasOwn(owners,"answer")) } : {}) }] : [];
     });
     assert.deepEqual(analysis[group].map(criterion => ({ ...criterion, acceptance_rule: criterion.acceptance_rule ?? criterion.text })), expected,
      "model materials preserve common original rules and indices and reveal private rules only to their actual candidate or pair");
@@ -217,7 +217,7 @@ test("incompatible accepted attributions are independently reassessed without ch
    const output = taskResult(options.spec);
    if (revised && options.spec.evaluation.id === "criteria")
     (output as CriteriaSubmission).requirements = [
-     { source_indices: [1] }, { source_indices: [2] },
+     { source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [2], text: "核对标准结果。" },
     ];
    if (revised && options.spec.evaluation.id === "attribution")
     assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,

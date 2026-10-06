@@ -2,10 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { parseEvidenceCoordinates, projectEvidenceReferences, ValidationError, type AgentRequest, type AgentBinding, type ToolAudit } from "@eval/contracts";
-import { cite, evidenceId, evidenceSources, selectEvidenceSource } from "@eval/tools";
+import { cite, evidenceId, evidenceSources, messageContentSources, selectEvidenceSource } from "@eval/tools";
 import { comparisonSourceReviews, comparisonVerificationSubmission, requestComparisonSubmission, comparisonInspectionSubmission as inspectionSubmission } from "../../../../tests/fixtures/comparison-submission.js";
-import { comparisonAgent, comparisonProfile, comparisonScope, verificationConcerns, unresolvedVerificationConcerns,
-  validateVerificationConcerns } from "./index.js";
+import { comparisonAgent, comparisonProfile, comparisonScope } from "./index.js";
 import type { ComparisonResult, ComparisonVerificationInput, ComparisonMaterialInspection } from "./types.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import example from "./fixtures/example.json" with { type: "json" };
@@ -26,7 +25,7 @@ function checks(request: AgentRequest): ComparisonMaterialInspection {
   return { checks: Object.entries(input.candidates).flatMap(([candidate, material]) => input.task_analysis.requirements.filter(criterion =>
     !criterion.applies_to.length || criterion.applies_to.includes(material.candidate_id)).map(criterion => {
       const source = request.sources[candidate]!, raw = source.value as { messages: unknown[] };
-      const leaf = evidenceSources(raw.messages[material.final_message_index]).find(item => item.kind === "text" && item.path.startsWith("/content"))!;
+      const leaf = messageContentSources(raw.messages[material.final_message_index])[0];
       return { candidate, criterion_id: criterion.id, result: "supported" as const, source_evidence: [], observation: "逐条核对实际最终交付及全部动作。",
         answer_evidence: [{ evidence_id: leaf ? cite(source.id, material.final_message_index, leaf, 0, leaf.text.length).evidence_id : evidenceId(source.id, material.final_message_index, "image") }] };
     })), concerns: [] };
@@ -141,7 +140,7 @@ test("program check scope keeps whole reads and actual image views with model-au
 test("constraint counterevidence survives a correct main deliverable and cannot borrow its matching proof", () => {
   const { request, input } = pair(), registry = new AgentRegistry([comparisonAgent]), audit = emptyAudit();
   const question = "计算2+2，并在交割月开始前完成移仓。";
-  input.task_analysis.requirements[0]!.text = question;
+  input.task_analysis.requirements[0]!.text = question; input.task_analysis.requirements[0]!.acceptance_rule = input.task_analysis.requirements[0]!.text;
   input.task_analysis.requirements[0]!.acceptance_rule = question;
   for (const [candidate, material] of Object.entries(input.candidates)) {
     const raw = request.sources[candidate]!.value as { messages: { content: string }[] };
@@ -180,7 +179,7 @@ test("constraint counterevidence survives a correct main deliverable and cannot 
   (invalid.checks[0] as Record<string, unknown>).answer_evidence = [{ evidence_index: 1 }];
   assert.throws(() => registry.resolveInspection(binding, invalid, audit), error => error instanceof ValidationError &&
     error.issues!.some(issue => issue.code === "schema_additionalProperties" && issue.path === "/checks/0/answer_evidence"),
-    "new fixed checks reject hand-selected answer fields rather than accepting a legacy wire");
+    "program-owned answer coverage cannot be overwritten by a model submission");
   const unresolved = structuredClone(wire);
   unresolved.checks[1]!.result = "unverified";
   const unknown = registry.resolveInspection(binding, unresolved, audit) as unknown as ComparisonMaterialInspection;
@@ -227,7 +226,7 @@ test("revealed and restored inspection lists only mechanically eligible numeric 
       { finding_index: 0, covered_requirement_indices: [0] }, { finding_index: 1, covered_requirement_indices: [0] },
     ], complete_coverage_possible: true, missing_requirement_indices: [] },
     { concern_index: 1, candidate: "B", eligible_findings: [], complete_coverage_possible: false, missing_requirement_indices: [0] },
-  ], fresh_concern_count: 2, verification_concerns: projectEvidenceReferences(value.concerns, audit.evidenceBank!) };
+  ], verification_concerns: projectEvidenceReferences(value.concerns, audit.evidenceBank!) };
   assert.deepEqual(revealed.inspection_context, expected);
   assert(!JSON.stringify(revealed.inspection_context).includes("evidence_id"));
   const checkpointAudit = inspected(request, value, audit), before = structuredClone(checkpointAudit.inspection);
@@ -278,19 +277,19 @@ test("sparse source-review choices preserve unresolved checks without copying em
   const { request, input } = pair(), value = checks(request);
   value.checks[0]!.result = "unverified";
   value.checks[0]!.observation = "同一要求的关键来源事实仍未核实。";
-  const audit = inspected(request, value), draft = { concern_matches: [], concern_refutations: [], source_reviews: [] };
+  const audit = inspected(request, value), draft = { concern_matches: [], source_reviews: [] };
   const before = structuredClone(draft), resolved = profile.resolve!(request, draft, audit) as ComparisonResult;
   profile.validate!(request, resolved, audit);
   assert.equal(resolved.status, "needs_review");
   assert(resolved.review_requests.some(review => review.reason === value.checks[0]!.observation));
   assert.deepEqual(draft, before);
   const choice = { slot_index: 0, candidate: "A", reason: "已有来源结论与实际原文冲突。" };
-  const reviewed = profile.resolve!(request, { concern_refutations: [], concern_matches: [], source_reviews: [choice] }, audit) as ComparisonResult;
+  const reviewed = profile.resolve!(request, { concern_matches: [], source_reviews: [choice] }, audit) as ComparisonResult;
   assert(reviewed.review_requests.some(review => review.candidate === "A" && review.reason === choice.reason));
   for (const source_reviews of [[{ A: null, B: null }], [{ ...choice, candidate: "X" }], [{ ...choice, reason: false }],
     [{ ...choice, reason: "" }], [{ ...choice, slot_index: 999 }], [choice, choice]])
-    assert.throws(() => profile.resolve!(request, { concern_matches: [], concern_refutations: [], source_reviews }, audit), ValidationError);
-  assert.throws(() => profile.resolve!(request, { concern_matches: [], concern_refutations: [] }, audit), ValidationError);
+    assert.throws(() => profile.resolve!(request, { concern_matches: [], source_reviews }, audit), ValidationError);
+  assert.throws(() => profile.resolve!(request, { concern_matches: [] }, audit), ValidationError);
   assert(input.comparison_draft.status === "decided");
 });
 
@@ -302,7 +301,7 @@ test("source review preserves complete evidence reasoning without a presentation
     "复核理由还需说明本方实际交付与来源的具体冲突；相同结论不能替代来源与责任链核查。",
   ].map((item, index) => Array.from({ length: 8 }, (_, part) => `${index + 1}.${part + 1} ${item}`).join("\n")).join("\n");
   assert(reason.length > 600);
-  const result = profile.resolve!(request, { concern_refutations: [], concern_matches: [], source_reviews: [
+  const result = profile.resolve!(request, { concern_matches: [], source_reviews: [
     { slot_index: 0, candidate: "A", reason },
   ] }, audit) as ComparisonResult;
   profile.validate!(request, result, audit);
@@ -468,7 +467,7 @@ test("empty immutable concerns report every bad match index in one actionable pu
   const binding = { agent: "comparison", profile: "verification", request, projectModelInput: projectEvidenceReferences,
     modelInput: { actual: "blind" }, inspectionInput: { draft: "upstream" } };
   const audit = inspected(request);
-  const draft = { concern_refutations: [], concern_matches: [0, 1].map(concern_index => ({ concern_index, finding_indices: [0], observation: "核对原发现。" })),
+  const draft = { concern_matches: [0, 1].map(concern_index => ({ concern_index, finding_indices: [0], observation: "核对原发现。" })),
     source_reviews: [] };
   assert.throws(() => registry.resolve(binding, draft, audit), (error: unknown) => {
     assert(error instanceof ValidationError);
@@ -658,128 +657,6 @@ function privateProblemDraft(f: ReturnType<typeof localInstructionPair>, index: 
   comparisonProfile.validate!(f.request, f.input.comparison_draft, f.audit);
  }
 
-test("an accepted prior concern survives a fresh supported inspection and a new source met judgment", () => {
-  const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair();
-  (f.input as ComparisonVerificationInput & { pending_concerns: ComparisonMaterialInspection["concerns"] }).pending_concerns =
-    structuredClone(f.value.concerns);
-  const fresh = checks(f.request), audit = inspected(f.request, fresh);
-  const before = structuredClone(audit.inspection);
-  const result = registry.resolve(f.binding, finalFor(f.request), audit) as ComparisonResult;
-  assert.equal(result.status, "needs_review", "a new met/strength claim does not close the accepted original concern");
-  assert.deepEqual(result.review_requests, [{ candidate: "A", criterion_ids: [], finding_indices: [], reason: f.value.concerns[0]!.reason }]);
-  assert.deepEqual(audit.inspection, before, "the independent fresh inspection stays unchanged");
-  registry.validate(f.binding, result, audit);
-});
-
-test("a carried false omission may be refuted with its complete own norm and the original final answer", () => {
-  const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair();
-  const raw = f.request.sources.A!.value as { messages: { content: unknown }[] };
-  raw.messages[2]!.content = "2+2=4。需要继续核算吗？";
-  (f.input as ComparisonVerificationInput & { pending_concerns: ComparisonMaterialInspection["concerns"] }).pending_concerns =
-    structuredClone(f.value.concerns);
-  const fresh = checks(f.request), audit = inspected(f.request, fresh);
-  const submitted = finalFor(f.request, { concern_matches: [], concern_refutations: [{ concern_index: 0,
-    answer_evidence: fresh.checks[0]!.answer_evidence, source_evidence: f.value.concerns[0]!.source_evidence,
-    observation: "真实最终正文末尾已有‘需要继续核算吗？’，因此旧发现称缺少末尾问句不成立；规范仍为本方同一完整原文。" }] });
-  const wire = projectEvidenceReferences(submitted, audit.evidenceBank = []);
-  const result = registry.resolve(f.binding, wire, audit) as ComparisonResult;
-  assert.equal(result.status, "decided");
-  registry.validate(f.binding, result, audit);
-  assert.deepEqual(result, f.input.comparison_draft);
-});
-
-test("a common reference absent from raw messages can close a false numeric concern with the actual answer", () => {
-  const registry = new AgentRegistry([comparisonAgent]), { request, input } = pair();
-  request.input.ground_truth = { available: true, value: "4.000" };
-  input.task_analysis.requirements[0]!.text = "4.000";
-  for (const attribution of Object.values(input.attributions)) attribution.task_analysis = structuredClone(input.task_analysis);
-  input.comparison_draft.task_analysis = structuredClone(input.task_analysis);
-  const fresh = checks(request), audit = inspected(request, fresh);
-  input.pending_concerns = [{ candidate: "A", criterion_ids: ["sum"], answer_evidence: fresh.checks[0]!.answer_evidence,
-    source_evidence: [], reason: "旧核验误称标准4.000与回答4数值不一致。" }];
-  const binding = { agent: "comparison", profile: "verification", request, projectModelInput: projectEvidenceReferences,
-    modelInput: { original: "blind" }, inspectionInput: { draft: "revealed" } };
-  const submitted = comparisonVerificationSubmission(request, { concern_refutations: [{ concern_index: 0,
-    answer_evidence: fresh.checks[0]!.answer_evidence, source_evidence: [],
-    observation: "可信原标准为4.000，真实回答2+2=4，数值相等；无需为不在轨迹中的原标准拼造证据坐标。" }] });
-  const result = registry.resolve(binding, projectEvidenceReferences(submitted, audit.evidenceBank = []), audit) as ComparisonResult;
-  assert.equal(result.status, "decided"); registry.validate(binding, result, audit);
-  assert.deepEqual(unresolvedVerificationConcerns(request, submitted, audit), []);
-});
-
-test("carried concerns share the existing matcher, keep fresh indices first and retain accepted original proof", () => {
-  const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair(), existing = structuredClone(f.input.attributions.A!.findings[0]!);
-  existing.type = "problem"; existing.dimension = "instruction_following"; existing.assessment.requirement_index = null;
-  existing.evidence = [canonicalEvidence(f.request.sources.A!.id, 0, f.rule), canonicalEvidence(f.request.sources.A!.id, 2, "2+2=4")];
-  f.input.attributions.A!.findings.push(existing);
-  const findingIndex = f.input.attributions.A!.findings.length - 1;
-  privateProblemDraft(f, findingIndex);
-  f.input.pending_concerns = structuredClone(f.value.concerns);
-  const fresh = checks(f.request); fresh.concerns = [{ ...structuredClone(f.value.concerns[0]!), reason: "本轮独立发现仍须保留。" }];
-  const audit = inspected(f.request, fresh), before = structuredClone(audit.inspection);
-  validateVerificationConcerns(f.request, f.input.pending_concerns, audit);
-  assert.deepEqual(verificationConcerns(f.request, audit), [...fresh.concerns, ...f.input.pending_concerns]);
-  const revealed = registry.inspectCanonical(f.binding, fresh, audit) as unknown as { inspection_context: {
-    fresh_concern_count: number; verification_concerns: ComparisonMaterialInspection["concerns"]; eligible_match_choices: { concern_index: number }[] } };
-  assert.equal(revealed.inspection_context.fresh_concern_count, 1);
-  assert.deepEqual(revealed.inspection_context.eligible_match_choices.map(item => item.concern_index), [0, 1]);
-  const submission = comparisonVerificationSubmission(f.request, { concern_matches: [{ concern_index: 1, finding_indices: [findingIndex],
-    observation: "父轮私规发现已由同一实际回答及完整规范的instruction problem准确记录。" }] });
-  const result = registry.resolve(f.binding, submission, audit) as ComparisonResult;
-  assert.equal(result.status, "needs_review"); assert.equal(result.review_requests.length, 1);
-  assert.equal(result.review_requests[0]!.reason, fresh.concerns[0]!.reason);
-  assert.deepEqual(unresolvedVerificationConcerns(f.request, submission, audit), fresh.concerns);
-  assert.deepEqual(audit.inspection, before);
-});
-
-test("refutations reject fresh indices, duplicates, match conflicts and independent invalid selections together", () => {
-  const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair();
-  f.input.pending_concerns = structuredClone(f.value.concerns);
-  const fresh = structuredClone(f.value), audit = inspected(f.request, fresh);
-  const refutation = { concern_index: 1, answer_evidence: fresh.checks[0]!.answer_evidence,
-    source_evidence: f.value.concerns[0]!.source_evidence, observation: "引用完整原规范和实际回答，具体说明旧发现所称行为。" };
-  const wire = projectEvidenceReferences(comparisonVerificationSubmission(f.request, {
-    concern_matches: [{ concern_index: 1, finding_indices: [999], observation: "无效既有finding选择。" }],
-    concern_refutations: [{ ...refutation, concern_index: 0 }, refutation, refutation, { ...refutation, concern_index: 999 }],
-    source_reviews: [{ slot_index: 999, candidate: "A", reason: "独立无效行选择。" }],
-  }), audit.evidenceBank = []);
-  assert.throws(() => registry.resolve(f.binding, wire, audit), (error: unknown) => {
-    assert(error instanceof ValidationError);
-    const codes = error.issues!.map(issue => issue.code);
-    for (const code of ["inspection_match_finding", "inspection_refutation_index", "inspection_refutation_duplicate",
-      "inspection_concern_resolution_conflict", "source_review_slot_index"]) assert(codes.includes(code), code);
-    assert(error.issues!.some(issue => issue.path === "/concern_refutations/0"));
-    assert(error.issues!.some(issue => issue.path === "/concern_refutations/3"));
-    return true;
-  });
-});
-
-test("private refutations require original own norm and actual delivery, never a peer norm or new attribution", () => {
-  const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair();
-  f.input.pending_concerns = structuredClone(f.value.concerns);
-  const fresh = checks(f.request), audit = inspected(f.request, fresh), source = f.request.sources.A!;
-  const refutation = { concern_index: 0, answer_evidence: fresh.checks[0]!.answer_evidence,
-    source_evidence: f.value.concerns[0]!.source_evidence, observation: "反驳须由原行为和原规范证据支持。" };
-  const peer = f.request.sources.B!.value as { messages: { role?: string; content: string }[] };
-  peer.messages[0] = { role: "system", content: f.rule };
-  for (const value of [
-    { ...refutation, source_evidence: [] },
-    { ...refutation, source_evidence: [canonicalEvidence(f.request.sources.B!.id, 0, f.rule)] },
-    { ...refutation, source_evidence: [canonicalEvidence(source.id, 0, "## Delivery condition")] },
-    { ...refutation, answer_evidence: f.value.concerns[0]!.source_evidence },
-    { ...refutation, answer_evidence: fresh.checks[1]!.answer_evidence },
-    { ...refutation, answer_evidence: [], observation: "新归因称met/core/strength，所以旧发现不成立。" },
-    { ...refutation, meets_core: true },
-  ]) {
-    const wire = projectEvidenceReferences(comparisonVerificationSubmission(f.request, { concern_refutations: [value] }), audit.evidenceBank = []);
-    assert.throws(() => registry.resolve(f.binding, wire, audit), ValidationError);
-  }
-  const malformed = structuredClone(f.input.pending_concerns);
-  malformed[0]!.source_evidence = [{ evidence_id: canonicalEvidence(f.request.sources.B!.id, 0, f.rule).evidence_id }];
-  assert.throws(() => validateVerificationConcerns(f.request, malformed, audit), /本方完整 SYS\/DEV/);
-  assert.equal((registry.resolve(f.binding, comparisonVerificationSubmission(f.request), audit) as ComparisonResult).status, "needs_review");
-});
-
 test("a source-only norm outside fixed requirements can request one proof-bound local review through the public registry", () => {
   const registry = new AgentRegistry([comparisonAgent]), f = localInstructionPair(), before = structuredClone(f.input);
   const revealed = inspect(registry,f.binding, f.value, f.audit);
@@ -930,10 +807,8 @@ test("verification schema accepts only nonempty indexed review choices", () => {
   assert.deepEqual(rowSchema.required, ["slot_index", "candidate", "reason"]);
   const audit = inspected(request);
   assert.doesNotThrow(() => registry.resolve(binding, finalFor(request), audit));
-  assert.throws(() => registry.resolve(binding, { concern_matches: [], concern_refutations: [] }, audit), ValidationError);
-  assert.throws(() => registry.resolve(binding, { concern_matches: [], source_reviews: [] }, audit),
-    (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.path === "/concern_refutations" && issue.code === "schema_required"));
-  assert.throws(() => registry.resolve(binding, { concern_matches: [], concern_refutations: [], source_reviews: false }, audit),
+  assert.throws(() => registry.resolve(binding, { concern_matches: [] }, audit), ValidationError);
+  assert.throws(() => registry.resolve(binding, { concern_matches: [], source_reviews: false }, audit),
     (error: unknown) => error instanceof ValidationError && error.issues!.every(issue => issue.path === "/source_reviews" && issue.code === "schema_type"));
   const result = registry.resolve(binding, finalFor(request, { concern_matches: [],
     source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
@@ -1223,7 +1098,7 @@ test("verification reports independent match and row-count failures in one repai
     assert(codes.includes("source_review_slot_index"));
     return true;
   });
-  assert.throws(() => profile.resolve!(request, { concern_matches: "invalid", concern_refutations: [], source_reviews: [] }, audit), (error: unknown) => {
+  assert.throws(() => profile.resolve!(request, { concern_matches: "invalid", source_reviews: [] }, audit), (error: unknown) => {
     assert(error instanceof ValidationError);
     assert(error.issues!.every(issue => issue.code.startsWith("schema_")), "invalid shape stops unsafe downstream checks");
     return true;

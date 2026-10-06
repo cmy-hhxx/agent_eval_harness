@@ -9,7 +9,7 @@ import type { ComparisonInput, ComparisonResult, CriterionAssessment } from "./t
 import { comparisonCoreFailureRefs } from "./resolve.js";
 import { criterionAppliesToPair } from "./pair-scope.js";
 import { comparisonCellState, comparisonCellCriterionIds, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
-import { comparisonReferenceIssues } from "./submission-checks.js";
+import { comparisonResultIssues } from "./result-checks.js";
 import schema from "../../../../schemas/comparison/result.schema.json" with { type: "json" };
 
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -48,7 +48,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as ComparisonInput;
   const value = result as ComparisonResult;
-  const errors: ValidationIssue[] = [...comparisonReferenceIssues(request, value), ...comparisonFinalImageIssues(request, audit), ...comparisonDeferredFinalIssues(request, audit)];
+  const errors: ValidationIssue[] = [...comparisonResultIssues(request, value), ...comparisonFinalImageIssues(request, audit), ...comparisonDeferredFinalIssues(request, audit)];
   const issue = (code: string, path: string, message: string, candidate?: string, actual?: unknown, expected?: unknown) =>
     errors.push({ category: "decision", code, path, message, candidate, actual, ...(expected !== undefined ? { expected } : {}) });
   const labels = Object.keys(input.candidates);

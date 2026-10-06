@@ -1,14 +1,7 @@
-import type { AgentRequest, TaskAnalysis } from "@eval/contracts";
-import { attributionNormDirectory, numericReferenceDirectory, type AttributionResult, type ProblemProposal, type ProblemSubmission } from "@eval/agents/attribution";
+import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
+import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission, type ProblemProposal, type ProblemSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
-type FixtureFinding = Omit<AttributionResult["findings"][number], "finding_id" | "problem" | "evidence" | "assessment"> & {
-  norm_index?: number | null;
-  assessment: Omit<AttributionResult["findings"][number]["assessment"], "requirement_index"> & { requirement_index?: number | null };
-  problem?: ProblemSubmission;
-  evidence: { evidence_id: string }[];
-};
-
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
   const directory = attributionNormDirectory(request);
@@ -50,46 +43,39 @@ export function problemSubmission(problem: ProblemProposal, evidence: Attributio
     }), label: problem.label, definition: problem.definition };
 }
 
-/** Current fixture contract only; resolveFixtureEvidence registers these coordinates as numeric choices. */
-export function attributionSubmission(request: AgentRequest, result: AttributionResult) {
-  const { has_standard_answer: _derived, task_analysis: _shared, core_assessment, ...submission } = result;
-  const refs = (evidence: AttributionResult["correctness_evidence"]) =>
-    evidence.map(item => ({ evidence_id: item.evidence_id }));
-  const requirements = (request.input.task_analysis as unknown as TaskAnalysis).requirements;
-  const truth = request.input.ground_truth as { available: boolean; value: unknown };
-  const directory = truth.available ? numericReferenceDirectory(truth.value) : [];
-  const norms = attributionNormDirectory(request);
-  const finding = (finding: AttributionResult["findings"][number]): FixtureFinding => {
-    const { problem: _derivedProblem, finding_id: _id, assessment, ...strength } = finding;
-    const { requirement_index, ...observed } = assessment;
-    return { ...strength,
-      ...(finding.dimension === "instruction_following" ? { norm_index: normSelection(norms, finding), assessment: observed }
-        : { assessment: { ...observed, requirement_index } }),
-      ...(finding.type === "problem" ? { problem: problemSubmission(finding.problem!, finding.evidence,
-        (request.input.answer as { catalog: { message_index: number; name?: string | null; type: string; role?: string }[] }).catalog) } : {}),
-      evidence: refs(finding.evidence) };
+/** Build the current model payload directly from a known formal fixture and its provided source directory. */
+export function attributionSubmission(request: AgentRequest, result: AttributionResult, audit: ToolAudit): AttributionSubmission {
+  const bank=audit.evidenceBank??=[],images=new Map<number,string>();
+  const refs=(values:AttributionResult["correctness_evidence"])=>values.map(item=>{
+    const selected=selectEvidence(bank,{evidence_id:item.evidence_id});
+    if(parseEvidenceCoordinates(item.evidence_id)?.kind==="image")images.set(selected.evidence_index,item.quote.slice("[图像观察]".length));
+    return selected.evidence_index;
+  });
+  const task=request.input.task_analysis as unknown as TaskAnalysis,truth=request.input.ground_truth as {available:boolean;value:unknown};
+  const directory=truth.available?numericReferenceDirectory(truth.value):[],norms=attributionNormDirectory(request);
+  const correctness=refs(result.correctness_evidence),basis=attributionFindingBasis(request.input);
+  const observation=(row:AttributionResult["findings"][number])=>{
+    const norm=row.dimension==="instruction_following"?normSelection(norms,row):null;
+    const basis_index=row.dimension==="instruction_following" ? norm===null?null:basis.find(item=>item.norm_index===norm)!.basis_index
+      : row.assessment.requirement_index===null?null:row.assessment.requirement_index+1;
+    return {dimension:row.dimension,stage:row.stage,importance:row.importance,text:row.text,reason:row.reason,
+      evidence_status:row.assessment.evidence_status,evidence_indices:refs(row.evidence),basis_index};
   };
-  const draft = {
-    ...submission,
-    correctness_evidence: refs(result.correctness_evidence),
-    numeric_checks: result.numeric_checks.map(({ expected, matches: _computed, ...check }) => ({
-      ...check, reference_index: directory.findIndex(item => item.expected === expected),
-    })),
-    core_assessment: {
-      meets_core: core_assessment.meets_core,
-      reason: core_assessment.reason,
-      requirement_indices: core_assessment.criterion_ids.map(id => requirements.findIndex(criterion => criterion.id === id)),
-    },
-    criterion_assessments: result.criterion_assessments
-      .filter(assessment => assessment.status !== "not_applicable")
-      .map(assessment => ({ ...assessment, evidence: refs(assessment.evidence) })),
-    findings: result.findings.map(finding),
+  const submission:AttributionSubmission={
+    summary:result.summary,meets_core:result.core_assessment.meets_core,core_reason:result.core_assessment.reason,
+    core_requirements:result.core_assessment.criterion_ids.map(id=>task.requirements.findIndex(item=>item.id===id)+1),
+    is_correct:truth.available?result.is_correct:null,correctness_reason:truth.available?result.correctness_reason:"",correctness_evidence_indices:truth.available?correctness:[],
+    criterion_assessments:result.criterion_assessments.flatMap(row=>row.status==="not_applicable"?[]:[{
+      status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
+    strengths:result.findings.filter(row=>row.type==="strength").map(observation),
+    problems:result.findings.filter(row=>row.type==="problem").map(row=>{
+      const observed=observation(row),problem=problemSubmission(row.problem!,row.evidence,
+        (request.input.answer as {catalog:{message_index:number;name?:string|null;type:string;role?:string}[]}).catalog);
+      return {...observed,impact:row.assessment.impact,...problem,tool_evidence_indices:problem.tool_evidence_indices.map(index=>observed.evidence_indices[index])};
+    }),
+    numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
+      reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),
   };
-  if (!(request.input.ground_truth as { available: boolean }).available) {
-    const optional = draft as Partial<typeof draft>;
-    delete optional.is_correct;
-    delete optional.correctness_reason;
-    delete optional.correctness_evidence;
-  }
-  return draft;
+  if(images.size)submission.image_observations=[...images].map(([image_number,text])=>({image_number,text}));
+  return submission;
 }

@@ -4,7 +4,7 @@ import type { CriteriaInput, TaskAnalysis } from "./types.js";
 import requestSchema from "../../../../schemas/criteria/request.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/criteria/result.schema.json" with { type: "json" };
 import { criteriaText } from "@eval/prompts";
-import { criteriaSources } from "./sources.js";
+import { criteriaSources, eligibleCriterionSource } from "./sources.js";
 import { matchCriterionSources } from "./resolve.js";
 import { criteriaGroups, criterionIdentity } from "./identity.js";
 
@@ -19,7 +19,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const input = request.input as unknown as CriteriaInput;
   const value = result as TaskAnalysis;
   const errors: ValidationIssue[] = [];
-  const catalogue = criteriaSources(input);
+  const catalogue = criteriaSources(input).filter(eligibleCriterionSource);
   const requiredSources = new Set<number>();
   if (value.goal !== input.question || value.task_type !== criteriaText("task_type")) errors.push({
     category: "decision", code: "criteria_summary_not_derived", path: "/goal",
@@ -49,7 +49,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       const sources = matchCriterionSources(input, criterion, catalogue);
       if (!sources) errors.push({
         category: "decision", code: "criterion_source_mismatch", path: location,
-        message: "text、acceptance_rule 与 applies_to 必须由完整原文来源生成，不能新增数值容差、替换单位或改变原句条件",
+        message: "acceptance_rule 与 applies_to 必须由完整原文来源生成；检查项不得改变原句条件、单位或容差",
       });
       else if (group === "requirements" && !criterion.applies_to.length)
         for (const source of sources) requiredSources.add(source.source_index);

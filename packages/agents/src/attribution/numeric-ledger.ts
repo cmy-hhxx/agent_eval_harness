@@ -1,6 +1,6 @@
-import { resolveEvidenceSelection, ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
+import { ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import { numericReferenceDirectory, numericUnitIssue } from "./units.js";
-import { containsNumber, matchesReference } from "./numeric.js";
+import { matchesReference } from "./numeric.js";
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import type { AttributionResult, Evidence } from "./types.js";
 
@@ -66,10 +66,7 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
     const ref = object(raw);
     if (!ref || !audit) return undefined;
     try {
-      const canonical = Object.hasOwn(ref, "evidence_index")
-        ? resolveEvidenceSelection(audit.evidenceBank ?? [], ref, `/correctness_evidence/${index}`)
-        : ref as { evidence_id: string };
-      return resolveAttributionEvidence(request, canonical, audit, `/correctness_evidence/${index}`);
+      return resolveAttributionEvidence(request, ref as { evidence_id: string }, audit, `/correctness_evidence/${index}`);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       return undefined; // Evidence diagnostics are already collected by submissionEvidenceIssues.
@@ -93,6 +90,10 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
     try { calculation = numericMatch(request, check, actualEvidence); }
     catch (error) { issue("numeric_invalid", location, (error as Error).message); return; }
     const { matches, unitIssue } = calculation;
+    if (representation === "submission" && unitIssue?.code === "numeric_unit_mismatch" && value.is_correct !== false)
+      issue(unitIssue.code, location,
+        `${check.label}：${unitIssue.message}先核对指标定义：可直接比较但量纲确实错误时保留本项并判错；须解释标准简写、计算或解码才能比较时，不把该目标当直接点值，在 correctness_reason 写明原定义、核对过程和结论。`,
+        { label: check.label, expected: check.expected, actual: check.actual, scale: check.scale });
     if (unitIssue?.code === "numeric_unit_mismatch" && !matchesReference(check.scale, "1", "1", "exact"))
       issue("numeric_scale_mismatch", `${location}/scale`, "不同维度没有单位等价倍率；保留scale=1，并在correctness_reason说明差异。");
     if (representation === "result" && check.matches !== matches)
@@ -100,7 +101,7 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
         unitIssue?.code === "numeric_unit_mismatch" ? `${unitIssue.message} matches 必须为false。` :
           `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
     if (unitIssue && unitIssue.code !== "numeric_unit_mismatch") issue(unitIssue.code, `${location}/scale`, unitIssue.message);
-    if (actualEvidence && check.actual !== null && !containsNumber(actualEvidence.quote, check.actual))
+    if (actualEvidence && check.actual !== null && unitIssue?.code === "numeric_answer_context_missing")
       issue("numeric_answer_missing", `${location}/evidence_index`, `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；actual 保留最终回答原数值，不能先换算、补0或使用自行推导值。请选择包含真实原数值的最终回答证据。`,
         { number: check.actual, quote: actualEvidence.quote });
     if (value.is_correct === true && !matches)

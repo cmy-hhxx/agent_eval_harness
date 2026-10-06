@@ -86,10 +86,10 @@ test("Mongo publication accepts a registered baseline input and keeps paired ext
 });
 
 test("Mongo publication rejects review rows and conflicting core assessments for a repeated answer", async () => {
-  for (const row of [{ ...result.row, status: "needs_review" }, { ...result.row, supersededBy: "reviewed" },
+  for (const row of [{ ...result.row, status: "needs_review" },
     { ...result.row, evaluation_type: "comparison_review" }]) {
     const db = fakeCollection();
-    await assert.rejects(writeMongoPublication(db.collection, date, rows(inputs), rows([{ ...result, row }]), AbortSignal.timeout(5000)), /settled, unsuperseded/);
+    await assert.rejects(writeMongoPublication(db.collection, date, rows(inputs), rows([{ ...result, row }]), AbortSignal.timeout(5000)), /decided/);
     assert([...db.docs.values()].every((doc) => doc.kind === "input"));
   }
   const db = fakeCollection(), baseline = { ...inputs[1], versionId: "baseline", trace: { ...inputs[1].trace, version: "Baseline" } };

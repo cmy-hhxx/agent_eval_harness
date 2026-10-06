@@ -31,13 +31,13 @@ export function comparisonSourceReviews(request: AgentRequest, result?: Comparis
 }
 
 export function comparisonVerificationSubmission(request: AgentRequest, selections: Partial<ComparisonVerificationSubmission> = {}): ComparisonVerificationSubmission {
- return { concern_matches: [], concern_refutations: [], source_reviews: comparisonSourceReviews(request), ...selections };
+ return { concern_matches: [], source_reviews: comparisonSourceReviews(request), ...selections };
 }
 
 /** Fixtures use the current thin submission; the canonical result remains a separate contract. */
 export function comparisonSubmission(result: ComparisonResult, slots: ComparisonSlot[]): ComparisonSubmission {
  const rows = result.decision_basis?.comparisons ?? [];
- return { assessments: Object.fromEntries(Object.entries(result.assessments).map(([candidate,item]) => [candidate,{ summary:item.summary }])),
+ return { a_summary: result.assessments.A.summary, b_summary: result.assessments.B.summary,
   comparisons: slots.map(slot => {
    const row = [...rows].sort((a,b) => {
     const score = (row:ComparisonResult["decision_basis"]["comparisons"][number]) => Object.entries(slot.finding_indices).reduce((sum,[label,indices]) => sum+indices.filter(index => row.assessments[label]?.finding_indices.includes(index)).length,0);
@@ -47,8 +47,8 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return null;
    return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,
-    assessments: Object.fromEntries(Object.entries(result.assessments).map(([candidate,item]) => [candidate, {
-     summary: row?.assessments[candidate]?.summary ?? item.summary }])) };
+    a_summary: row?.assessments.A?.summary ?? result.assessments.A.summary,
+    b_summary: row?.assessments.B?.summary ?? result.assessments.B.summary };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
   tradeoff: result.decision_basis?.tradeoff ?? '来源存在待核事项。' };
 }

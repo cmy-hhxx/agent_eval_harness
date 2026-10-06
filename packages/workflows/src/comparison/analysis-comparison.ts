@@ -101,7 +101,7 @@ export async function readAnalysisComparisonStats(run: string, taskIds: readonly
   return analysisComparisonStats(ids.map((taskId) => {
     const task = state.manifest.tasks.find((item) => item.id === taskId), receipt = state.receipts[taskId];
     const data = task?.data as TaskData | undefined;
-    if (!task || task.stage !== "comparison" || data?.verificationAudit || data?.supersededBy || state.manifest.states[taskId]?.status !== "succeeded" ||
+    if (!task || task.stage !== "comparison" || data?.verificationAudit || state.manifest.states[taskId]?.status !== "succeeded" ||
       !receipt?.exported || (receipt.exported.file ?? "comparison.jsonl") !== "comparison.jsonl") throw new Error("比较引用不是当前正式结果：" + taskId);
     const scope = analysisComparisonScope(receipt.exported.row, config);
     if (!scope) throw new Error("比较引用缺少正式比较内容：" + taskId);

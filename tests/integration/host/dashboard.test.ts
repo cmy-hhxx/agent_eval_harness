@@ -397,7 +397,7 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
   }
 });
 
-test("dashboard distinguishes accepted review requests and preserves independent reassessment lineage", async () => {
+test("dashboard preserves attribution reassessment lineage and comparison business status", async () => {
   const fixture = await setup();
   const file = path.join(fixture.run, "state.json");
   const readTasks = async (caseId: string) => (await readCaseDetail(fixture.run, "b1", caseId))!.tasks;
@@ -409,7 +409,7 @@ test("dashboard distinguishes accepted review requests and preserves independent
       !task.data.verificationAudit);
     const [comparisonId, comparison] = comparisons.find(([, task]) =>
       checkpoint.inputs[Object.values(task.inputIds)[0]!]!.case_id === "q1")!;
-    const reviewId = randomUUID(), reasons = ["首轮证据不足，核验原始来源。"];
+    const reasons = ["首轮证据不足，核验原始来源。"];
     const accepted = checkpoint.tasks[fixture.task.id]!.receipt!;
     const reviewAttributions = attributions.map(([id, task]) => {
       task.status = "succeeded";
@@ -418,7 +418,7 @@ test("dashboard distinguishes accepted review requests and preserves independent
       const reassessmentId = randomUUID();
       checkpoint.tasks[reassessmentId] = {
         ...structuredClone(task), status: "pending", attempts: 0, receipt: undefined,
-        dependencies: { ...task.dependencies, previous_review: comparisonId },
+        dependencies: { ...task.dependencies },
         data: { ...task.data, reviewOf: { taskId: id, round: 1, reasons } },
       };
       return { sourceId: id, taskId: reassessmentId };
@@ -427,14 +427,6 @@ test("dashboard distinguishes accepted review requests and preserves independent
     comparison.attempts = 1;
     comparison.receipt = {
       ...accepted, taskId: comparisonId, exported: { taskId: comparisonId, file: "comparison-review.jsonl" },
-    };
-    comparison.data.supersededBy = reviewId;
-    const dependencies = Object.fromEntries(Object.entries(comparison.dependencies).map(([label, id]) =>
-      [label, reviewAttributions.find((item) => item.sourceId === id)?.taskId ?? id]));
-    checkpoint.tasks[reviewId] = {
-      ...structuredClone(comparison), status: "pending", attempts: 0, receipt: undefined,
-      dependencies: { ...dependencies, previous_review: comparisonId },
-      data: { ...comparison.data, supersededBy: undefined, reviewOf: { taskId: comparisonId, round: 1, reasons } },
     };
     await writeJson(file, checkpoint);
 
@@ -449,12 +441,7 @@ test("dashboard distinguishes accepted review requests and preserves independent
     const original = tasks.find((task) => task.id === comparisonId)!;
     assert.equal(original.status, "succeeded", "acceptance remains the Host submission status");
     assert.equal(original.result_status, "needs_review");
-    assert.equal(original.superseded_by, reviewId);
-    const reassessment = tasks.find((task) => task.id === reviewId)!;
-    assert.equal(reassessment.status, "pending");
-    assert.equal(reassessment.result_status, undefined);
-    assert.deepEqual(reassessment.review_of, { task_id: comparisonId, round: 1, reasons });
-    assert.equal(tasks.filter((task) => task.stage === "comparison").length, 2);
+    assert.equal(tasks.filter((task) => task.stage === "comparison").length, 1);
     assert.equal(await exists(path.join(fixture.run, "results", "comparison-review.jsonl")), false,
       "task metadata is projected without reading accepted result bodies");
 
@@ -467,7 +454,6 @@ test("dashboard distinguishes accepted review requests and preserves independent
     await writeJson(file, checkpoint);
     const unresolved = (await readTasks("q2")).find((task) => task.id === terminalId)!;
     assert.equal(unresolved.result_status, "needs_review", "a terminal review has no follow-up task");
-    assert.equal(unresolved.superseded_by, undefined);
     terminal.receipt.exported = { comparisonId: terminal.data.comparisonId!, file: "comparison.jsonl" };
     await writeJson(file, checkpoint);
     assert.equal((await readTasks("q2")).find((task) => task.id === terminalId)!.result_status,

@@ -21,7 +21,7 @@ test("the complete Markdown norm remains one real evidence span after binding", 
   const trace: RawInput = { messages: [{ role: "system", content: `${section}\n\n## 其他\n\n不得编造。` },
     { role: "assistant", content: "结果。" }] };
   const rubric = criteriaResult();
-  rubric.requirements = [{ id: "r1", text: section, applies_to: [], acceptance_rule: "核对完整条件。" }];
+  rubric.requirements = [{ id: "r1", text: section, applies_to: [], acceptance_rule: section }];
   const id = randomUUID();
   assert.deepEqual(criterionInstructionSources(trace, 1, rubric, id), {
     r1: [{ ...canonicalEvidence(id, 0, section), path: "/content" }],
@@ -35,7 +35,7 @@ test("empty text parts preserve the catalogue's instruction paragraph boundaries
   ] };
   const rubric = criteriaResult();
   rubric.requirements = ["条件段落。", "要求段落。"].map((text, index) => ({ id: `r${index + 1}`,
-    text, applies_to: [], acceptance_rule: "按完整原文条件核查。" }));
+    text, applies_to: [], acceptance_rule: text }));
   const id = randomUUID();
   assert.deepEqual(criterionInstructionSources(trace, 1, rubric, id), {
     r1: [{ ...canonicalEvidence(id, 0, "条件段落。", "/content/0/text"), path: "/content/0/text" }],
@@ -90,7 +90,7 @@ test("criteria and attribution bind the real nested norm even when its identity 
   assert(!JSON.stringify(binding.request.input).includes("2+2=4。风险。"));
   const rubric = criteriaResult();
   rubric.requirements.push({ id: "r2", text: String(input.candidates[0]!.instructions[0]!.content),
-    applies_to: [], acceptance_rule: "按完整原文条件核查。" });
+    applies_to: [], acceptance_rule: String(input.candidates[0]!.instructions[0]!.content) });
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
@@ -142,7 +142,7 @@ for (const role of ["system", "user"] as const) test(`a single attribution keeps
   const groupBlind = blindMaterials(candidates), singleBlind = blindMaterials({ A: candidates.B });
   assert.notEqual(groupBlind.value(parts.join("\n")), singleBlind.value(parts.join("\n")));
   rubric.requirements.push({ id: "r2", text: parts.join("\n"), applies_to: [ids[1]!],
-    acceptance_rule: "按完整条件核查。" });
+    acceptance_rule: parts.join("\n") });
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };

@@ -57,7 +57,7 @@ async function resumeExperiment(change: "none" | "rubric" | "reference" | "sourc
           }
           if (stage === "criteria" && expanded && change === "rubric") {
             const criteria = result as import("@eval/agents/criteria").CriteriaSubmission;
-            criteria.requirements = [{ source_indices: [1] }, { source_indices: [2] }];
+            criteria.requirements = [{ source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [2], text: "核对标准结果。" }];
           }
           const response = await submitFor(options, draftFor(options.spec, result));
           assert.equal(response.isError, undefined, JSON.stringify(response));

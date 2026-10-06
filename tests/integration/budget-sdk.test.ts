@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { object, projectEvidenceReferences, ValidationError, type AgentProfile, type RunState, type AgentRequest, type TaskAnalysis } from "@eval/contracts";
 import { cite, displayEvidence, evidenceSources } from "@eval/tools";
-import { attributionProfile, type AttributionResult } from "@eval/agents/attribution";
+import { attributionFindingBasis, attributionProfile, type AttributionResult } from "@eval/agents/attribution";
 import { createRunRepository } from "@eval/data";
 import { AgentRegistry, runEvaluation } from "@eval/host";
 import { createModelResolver } from "@eval/host-app/config";
@@ -139,7 +139,7 @@ for (const engine of ["pi", "prime"] as const)
 // File submission and its reserved writer remain available after repair exploration is exhausted.
 for (const engine of ["pi", "prime"] as const)
   for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} repairs an unknown norm selector through a scalar file submission after exploration is exhausted`,
+    test(`${engine}: ${api} file profile repairs an unknown basis selector after exploration is exhausted`,
       { timeout: 60000 }, async () => {
         const { directory, config, models } = await fixtureConfig();
         const norm = "结论优先：正文第一句明确判断，随后使用 Markdown 解释依据。";
@@ -153,7 +153,11 @@ for (const engine of ["pi", "prime"] as const)
         const normProof = cite(request.sources.answer.id, 1, normSource, 0, normSource.text.length);
         Object.assign(request.input.answer as object, { final_evidence: [finalProof] });
         const norms = setFixtureNormDirectory(request);
-        const registry = new AgentRegistry([{ id: "attribution", profiles: { default: attributionProfile } }]);
+        const fileProfile={...attributionProfile,fileSubmission:true,jsonStringSubmission:false,toolDescriptions:{
+          ...Object.fromEntries(Object.entries(attributionProfile.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
+          submit_evaluation_file:"Submit the complete evaluation JSON file.",
+        }};
+        const registry = new AgentRegistry([{ id: "attribution", profiles: { default: fileProfile } }]);
         const analysis = request.input.task_analysis as unknown as TaskAnalysis;
         const modelAnalysis = { task_type: analysis.task_type, goal: analysis.goal,
           ...Object.fromEntries((["requirements", "scoring_points", "red_flags"] as const).map(kind => [kind,
@@ -178,26 +182,25 @@ for (const engine of ["pi", "prime"] as const)
         result.findings[0].assessment.requirement_index = null;
         result.findings[0].evidence = [structuredClone(normProof), structuredClone(finalProof)];
         const draft = draftFor(prepared, result) as {
-          findings: { text: string; norm_index?: number | null; assessment: { evidence_status: string };
-            evidence: { evidence_index: number }[] }[];
+          strengths: { text: string; basis_index: number | null; evidence_status: string;
+            evidence_indices: number[] }[];
         };
-        const findingIndex = draft.findings.findIndex(finding => finding.text === "遵守结论优先与 Markdown 规范。");
-        assert(findingIndex >= 0, "the current fixture helper keeps the real finding in the single flat collection");
-        const normIndex = draft.findings[findingIndex]!.norm_index;
-        assert.equal(typeof normIndex, "number", "the fixture helper selects the exact program-owned norm");
-        assert(norms.some(norm => norm.norm_index === normIndex && norm.requirement_index === null &&
-          norm.evidence.some(evidence => evidence.evidence_id === normProof.evidence_id)));
-        draft.findings[findingIndex]!.evidence = [];
+        const findingIndex = draft.strengths.findIndex(finding => finding.text === "遵守结论优先与 Markdown 规范。");
+        assert(findingIndex >= 0, "the current fixture helper keeps the observation in the fixed strengths collection");
+        const basisIndex = draft.strengths[findingIndex]!.basis_index;
+        assert.equal(typeof basisIndex, "number", "the fixture helper selects the exact program-owned norm");
+        assert(attributionFindingBasis(request.input).some(item => item.basis_index === basisIndex && item.kind === "own_rule"));
+        draft.strengths[findingIndex]!.evidence_indices = [];
         const validDraft = structuredClone(draft);
         const valid = registry.resolve(binding, validDraft, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] }) as AttributionResult;
         registry.validate(binding, valid, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] });
         assert.deepEqual(valid.findings[findingIndex]!.evidence, [normProof, finalProof],
           "the program binds the complete own norm and actual final delivery without model evidence copying");
-        assert.equal(draft.findings[findingIndex]!.assessment.evidence_status, "established");
-        draft.findings[findingIndex]!.norm_index = null;
+        assert.equal(draft.strengths[findingIndex]!.evidence_status, "established");
+        draft.strengths[findingIndex]!.basis_index = null;
         assert.throws(() => registry.resolve(binding, draft, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] }),
           (error: unknown) => error instanceof ValidationError && error.issues!.length > 0 && error.issues!.every(issue =>
-            issue.code === "finding_norm_unknown" && issue.path === `/findings/${findingIndex}/norm_index`),
+            issue.code === "finding_norm_unknown" && issue.path === `/strengths/${findingIndex}/basis_index`),
           "the schema accepts null, but business validation requires uncertain for an unknown norm");
         const submissions = ["submit_evaluation_file"];
         const allTools = [...attributionProfile.toolNames, ...submissions];
@@ -234,11 +237,11 @@ for (const engine of ["pi", "prime"] as const)
             assert.deepEqual(scalarSchema.properties, { path: { type: "string", minLength: 1 } });
             const description = String(fileTool.description);
             const contentSchema = object(JSON.parse(description.slice(description.indexOf('\n{"file_content_schema":') + 1)).file_content_schema);
-            assert.equal(object(object(object(contentSchema.properties).findings).items).type, "object");
+            assert.equal(object(object(object(contentSchema.properties).strengths).items).type, "object");
             if (current === 3) {
               const errors = history.flatMap(frame => Array.isArray(frame.errors) ? frame.errors : []);
               assert(errors.some(value => object(value).code === "finding_norm_unknown" &&
-                object(value).path === `/findings/${findingIndex}/norm_index`));
+                object(value).path === `/strengths/${findingIndex}/basis_index`));
               assert.equal(budget.content_remaining, 3, "one rejected file consumes one of the four submissions allowed by three repairs");
               assert.equal(object(budget.exploration).remaining, 4);
             }

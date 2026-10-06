@@ -1,0 +1,486 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "findings",
+    "numeric_checks",
+    "criterion_assessments",
+    "core_assessment"
+  ],
+  "properties": {
+    "is_correct": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "correctness_reason": {
+      "type": "string"
+    },
+    "correctness_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidence_id"
+        ],
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "dimension",
+          "stage",
+          "importance",
+          "text",
+          "reason",
+          "evidence",
+          "assessment"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "strength",
+              "problem"
+            ]
+          },
+          "dimension": {
+            "enum": [
+              "correctness",
+              "completeness",
+              "instruction_following",
+              "evidence_quality",
+              "reasoning",
+              "format",
+              "relevance",
+              "efficiency"
+            ]
+          },
+          "stage": {
+            "enum": [
+              "context_recall",
+              "reasoning",
+              "execution",
+              "final_answer"
+            ]
+          },
+          "importance": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "assessment": {
+            "type": "object",
+            "description": "本条观察、确定性与影响；instruction_following 时只填 observation/evidence_status/impact，norm_index 放在 findings[i] 顶层，与 dimension 同级。其他维度可关联 requirement_index。",
+            "additionalProperties": false,
+            "required": [
+              "observation",
+              "evidence_status",
+              "impact"
+            ],
+            "properties": {
+              "requirement_index": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "observation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_status": {
+                "enum": [
+                  "established",
+                  "uncertain"
+                ]
+              },
+              "impact": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "problem": {
+            "description": "仅 type=problem 时必填，描述责任组件与问题；type=strength 时禁止提交此字段。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "model_responsible",
+              "tool_evidence_indices",
+              "label",
+              "definition"
+            ],
+            "properties": {
+              "model_responsible": {
+                "type": "boolean",
+                "description": "是否有具体证据支持模型自身的独立责任；引用工具返回本身不代表工具有责任。"
+              },
+              "tool_evidence_indices": {
+                "type": "array",
+                "minItems": 0,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "本 finding 提交的 evidence 数组中证明本方工具自身失误的零起始位置，须对应本方真实工具调用或返回。没有工具失误证据时填 []，不能选择仅作正确来源或反证的工具。"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "definition": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "norm_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "仅 instruction_following 必填 findings[i].norm_index，与 dimension 同级，不放进 assessment。选择 answer.norm_directory 的原 norm_index；未知规范用 null 且 assessment.evidence_status=uncertain，不另填 assessment.requirement_index。"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "problem"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "problem"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "strength"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "problem": false
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "dimension": {
+                  "const": "instruction_following"
+                }
+              },
+              "required": [
+                "dimension"
+              ]
+            },
+            "then": {
+              "required": [
+                "norm_index"
+              ],
+              "properties": {
+                "assessment": {
+                  "properties": {
+                    "requirement_index": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "stage": {
+                  "const": "final_answer"
+                }
+              },
+              "required": [
+                "stage"
+              ]
+            },
+            "else": {
+              "properties": {
+                "evidence": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "numeric_checks": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "逐项核对 numeric_references 中可直接比较的同口径点值；选择原零起始 reference_index，不提交 expected 或 matches。显式容差、区间、上下限及须计算或解码的表达在 correctness_reason 按原规则核验，该目标不入表。目录为空或没有直接点值目标时填空数组；最终回答已直接给出的计算结果可按原值入表。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "actual",
+          "scale",
+          "mode",
+          "evidence_index",
+          "reference_index"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "actual": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ],
+            "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
+            "maxLength": 80,
+            "description": "最终回答原数值；确实未提供该项时为null，绝不能用0表示缺失"
+          },
+          "scale": {
+            "type": "string",
+            "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
+            "maxLength": 80,
+            "description": "回答单位转换到标准单位的正比例，同单位填1"
+          },
+          "mode": {
+            "enum": [
+              "rounded",
+              "exact"
+            ],
+            "description": "直接点值比较：连续量按标准精度rounded，整数计数等离散结果用exact；显式容差、区间和上下限不使用此表"
+          },
+          "evidence_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "correctness_evidence 数组中的零起始位置，不是 reference.evidence_index；actual 非 null 时选包含原值的本方最终回答证据，actual=null 时选覆盖待核缺失范围的本方最终回答证据"
+          },
+          "reference_index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "numeric_references 中所核对标准数值的零起始 reference_index，须与实际值口径相同"
+          }
+        }
+      }
+    },
+    "criterion_assessments": {
+      "type": "array",
+      "description": "对 task_analysis 中本方适用的每条 requirements、scoring_points 和 red_flags 各提交一项；不提交他方条款或 not_applicable。",
+      "minItems": 1,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "criterion_id",
+          "status",
+          "evidence_status",
+          "summary",
+          "evidence"
+        ],
+        "properties": {
+          "criterion_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+          },
+          "status": {
+            "enum": [
+              "met",
+              "partial",
+              "unmet",
+              "unknown"
+            ]
+          },
+          "evidence_status": {
+            "enum": [
+              "established",
+              "uncertain"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "core_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "meets_core",
+        "reason",
+        "requirement_indices"
+      ],
+      "properties": {
+        "meets_core": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirement_indices": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "table_resolutions": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "Only independent review may resolve a specific unresolved table row using source evidence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "table_index",
+          "row_index",
+          "outcome",
+          "reason",
+          "evidence"
+        ],
+        "properties": {
+          "table_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "row_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outcome": {
+            "enum": [
+              "supported",
+              "conflict"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id"
+              ],
+              "properties": {
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

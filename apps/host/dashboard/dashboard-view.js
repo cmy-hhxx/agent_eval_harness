@@ -268,13 +268,21 @@ export function createDashboardViews({
       <section class="schema-section"><h5>逐项对照</h5><div class="comparison-scroll" tabindex="0" role="region" aria-label="各模型逐项对照"><table class="comparison-table"><thead><tr><th scope="col">比较点</th>${versions.map((version) => `<th scope="col">${escapeHtml(name(version))}</th>`).join("")}</tr></thead><tbody>${rows.map(({ item, index }) => `<tr data-comparison-index="${index}"><th scope="row"><code class="comparison-index">comparisons[${index}]</code><strong>${escapeHtml(item.aspect)}</strong><span class="comparison-importance">重要性 · ${escapeHtml(scalar(item.importance, "importance"))}</span><span class="comparison-importance">直接标准引用 · ${escapeHtml(item.criterion_ids.length ? item.criterion_ids.join(" / ") : "0 项")}</span><span class="comparison-better-candidates">${escapeHtml(item.better_candidates.length ? `更优 · ${item.better_candidates.map(name).join(" / ")}` : "未区分优劣")}</span></th>${versions.map((version) => {
         const assessment = item.assessments[version];
         const evaluation = row.evaluations[version];
+        const observed = assessment.finding_indices.flatMap(i => evaluation?.findings[i] ? [evaluation.findings[i]] : []);
+        const hasRequirement = item.criterion_ids.length || observed.some(finding => finding.assessment?.requirement_index != null);
+        const oneSided = !hasRequirement && !observed.length && Object.values(item.assessments).some(cell => cell.finding_indices.length);
+        const stateLabel = assessment.status === "unknown" ? (oneSided ? "未核查此项" : "证据不足")
+          : assessment.status === "met" && !hasRequirement ? (assessment.evidence_status !== "established" ? "观察待核" : observed.length
+            ? observed.every(finding => finding.type === "problem") ? "已确认问题"
+              : observed.every(finding => finding.type === "strength") ? "已确认优点" : "已确认观察"
+            : "已记录") : scalar(assessment.status, "status");
         const links = assessment.finding_indices.map((findingIndex) => {
           const target = `finding-${taskId}.evaluations.${version}.findings.${findingIndex}`;
           return `<a data-finding-target="${escapeHtml(target)}" href="#${encodeURIComponent(target)}">归因 #${findingIndex}</a>`;
         }).join("");
         const findings = assessment.finding_indices.filter((findingIndex) => evaluation?.findings[findingIndex])
           .map((findingIndex) => comparisonFindingHtml(evaluation, findingIndex, version, index, taskId)).join("");
-        return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">更优</strong>' : ""}<div class="comparison-cell-states"><span class="comparison-status" data-status="${escapeHtml(assessment.status)}">状态 · ${escapeHtml(scalar(assessment.status, "status"))}</span><span class="comparison-evidence-status" data-evidence-status="${escapeHtml(assessment.evidence_status)}">证据 · ${escapeHtml(scalar(assessment.evidence_status, "evidence_status"))}</span></div>${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">关联归因 · ${assessment.finding_indices.length} 项${links}</div>${findings}</td>`;
+        return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">更优</strong>' : ""}<div class="comparison-cell-states"><span class="comparison-status" data-status="${escapeHtml(assessment.status)}">状态 · ${escapeHtml(stateLabel)}</span><span class="comparison-evidence-status" data-evidence-status="${escapeHtml(assessment.evidence_status)}">证据 · ${escapeHtml(scalar(assessment.evidence_status, "evidence_status"))}</span></div>${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">关联归因 · ${assessment.finding_indices.length} 项${links}</div>${findings}</td>`;
       }).join("")}</tr>`).join("")}</tbody></table></div></section>`;
   }
 
@@ -313,8 +321,8 @@ export function createDashboardViews({
       version, name: state.caseDetail?.candidates.find((candidate) => candidate.version === version)?.name || version,
     }))).flatMap((group) => group.candidates.map((candidate) => candidate.name));
     const scope = [versions.join(" / "), task.stage === "clustering" ? task.batch_id : "", task.shard != null ? `分片 ${task.shard + 1}` : ""].filter(Boolean).join(" · ");
-    const hasReview = task.superseded_by || state.caseDetail?.tasks.some((other) => other.review_of?.task_id === task.id);
-    const phase = ["attribution", "comparison"].includes(task.stage)
+    const hasReview = state.caseDetail?.tasks.some((other) => other.review_of?.task_id === task.id);
+    const phase = task.stage === "attribution"
       ? task.review_of
         ? `${stageLabel(task.stage)}复核 · 第 ${task.review_of.round} 轮`
         : hasReview ? `首次${stageLabel(task.stage)}` : ""

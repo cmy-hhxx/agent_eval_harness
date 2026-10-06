@@ -64,9 +64,7 @@ export function comparisonCellState(input: ComparisonInput, candidate: string, c
 }
 
 export function comparisonSlotCellState(input: ComparisonInput, candidate: string, slot: ComparisonSlot) {
- return slot.kind === 'finding' && !slot.finding_indices[candidate].length
-  ? { status:'unknown' as const,evidence_status:'uncertain' as const }
-  : comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
+ return comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
 }
 
 /** Scope and already bound facts determine available choices, never their semantic direction. */
@@ -91,8 +89,7 @@ export function comparisonSlots(request: AgentRequest): ComparisonSlot[] {
    slot.finding_indices[candidate].push(finding_index);
    if (finding.type === 'strength' || finding.importance !== 'low') slot.optional = false;
   }
-  else slots.push({ aspect: finding.text.slice(0,60), criterion_ids: [], shared, kind: 'finding', optional: finding.type === 'problem' && finding.importance === 'low', finding_indices: {
-   ...empty(), [candidate]: [finding_index] } });
+  // Independent findings remain in the source assessment. A missing counterpart is not a comparison fact.
  }
  const hasResource = labels.some(label => Object.values(comparisonResourceMetrics(input,label)).some(value => value !== null));
  if (hasResource) slots.push({ aspect: '原始完成时长与用量', criterion_ids: [], shared: true, kind: 'resource', optional: true, finding_indices: empty() });
@@ -100,14 +97,14 @@ export function comparisonSlots(request: AgentRequest): ComparisonSlot[] {
 }
 
 /** Each fixed cell owns its review choice; the model never copies a row or source association. */
-export function resolveSourceReviews(request: AgentRequest, rows: Record<string, string | null>[], basePath = '/source_reviews'): ComparisonResult['review_requests'] {
+export function resolveSourceReviews(request: AgentRequest, rows: Record<string, string | null>[]): ComparisonResult['review_requests'] {
  const input = request.input as unknown as ComparisonInput, slots = comparisonSlots(request);
- if (rows.length !== slots.length) throw new ValidationError([{ category: 'decision', code: 'source_review_slot_count', path: basePath,
+ if (rows.length !== slots.length) throw new ValidationError([{ category: 'decision', code: 'source_review_slot_count', path: '/source_reviews',
   actual: rows.length, expected: slots.length, message: `按 comparison_slots 的同一顺序填写恰好 ${slots.length} 行，每行保留 A/B；无来源疑点填 null，不复制槽位 ID 或索引。` }]);
  const issues: ValidationIssue[] = [];
  const reviews = rows.flatMap((row,index) => Object.entries(row).flatMap(([candidate,reason]) => {
   if (reason === null) return [];
-  const slot = slots[index], path = basePath === '/comparisons' ? `${basePath}/${index}/assessments/${candidate}/source_review` : `${basePath}/${index}/${candidate}`;
+  const slot = slots[index], path = `/source_reviews/${index}/${candidate}`;
   if (!input.candidates[candidate] || slot.kind === 'resource' ||
    !slot.criterion_ids.length && !slot.finding_indices[candidate]?.length)
    { issues.push({ category: 'decision', code: 'review_slot_invalid', path,
@@ -145,6 +142,10 @@ export function requiredSourceReviews(request: AgentRequest): ComparisonResult['
    criterion_ids: [...new Set([...core.criterion_ids.filter(id => byId.has(id)), ...((blockers.length || sourceMismatch) ? applicable.map(criterion => criterion.id) : [])])],
    finding_indices: [], reason: blockers.map(item => item.reason).join('；') || (sourceMismatch ? '来源标准、适用范围或逐项状态与固定任务不一致，须核查来源归因。' : privateCore
     ? '核心失败仅由专有要求支持，须独立核查共同交付可用性。' : core.reason) });
+  const uncovered = attribution.findings.flatMap((finding,index) => finding.type === 'problem' && finding.importance !== 'low' &&
+    !findingCriterion(input,candidate,index) && findingAppliesToPair(input,candidate,index,request.sources[candidate]?.value) ? [index] : []);
+  if (uncovered.length) reviews.push({ candidate, criterion_ids: [], finding_indices: uncovered,
+    reason: `以下实质观察尚未绑定可逐项比较的共同要求，不能据此判定没有差距：${uncovered.map(index => attribution.findings[index].text).join('；')}` });
  }
  return reviews;
 }

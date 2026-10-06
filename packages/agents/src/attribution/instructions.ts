@@ -60,7 +60,7 @@ export function instructionEvidenceContext(request: AgentRequest) {
     if (bindings) return boundEvidence.get(criterion.id) ?? [];
     const evidence: ReturnType<typeof cite>[] = [];
     for (const source of sources) for (const block of sourceContentBlocks(source.content, source.path)) {
-      if (!hasSourceTextBlock(criterion.text, block.quote)) continue;
+      if (!hasSourceTextBlock(criterion.acceptance_rule, block.quote)) continue;
       for (const original of block.origins) {
         const location = evidenceSources(raw.messages[source.message_index]).find(value => value.kind === "text" &&
           value.path === original.path && source.evidence.some(item => { const point = parseEvidenceCoordinates(item.evidence_id);

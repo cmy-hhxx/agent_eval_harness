@@ -623,7 +623,12 @@
         "enum": [
           "bar",
           "line",
-          "pie"
+          "pie",
+          "dumbbell",
+          "heatmap",
+          "scatter",
+          "waterfall",
+          "histogram"
         ]
       },
       "title": {
@@ -653,7 +658,7 @@
       "categories": {
         "type": "array",
         "minItems": 1,
-        "maxItems": 30,
+        "maxItems": 200,
         "uniqueItems": true,
         "items": {
           "type": "string",
@@ -679,7 +684,7 @@
             "values": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 30,
+              "maxItems": 200,
               "items": {
                 "type": [
                   "number",
@@ -769,6 +774,26 @@
                   }
                 }
               ]
+            },
+            "statistics": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "runId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "comparisonTier": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "required": [
+                "runId",
+                "comparisonTier"
+              ],
+              "description": "正式战绩汇总引用；使用 list_data 返回的运行和档位，一次核验并保存该档所有正式结果来源，不逐条复制 taskId。"
             }
           },
           "oneOf": [
@@ -786,6 +811,11 @@
                   {
                     "required": [
                       "reference"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "statistics"
                     ]
                   }
                 ]
@@ -806,6 +836,11 @@
                     "required": [
                       "reference"
                     ]
+                  },
+                  {
+                    "required": [
+                      "statistics"
+                    ]
                   }
                 ]
               }
@@ -825,12 +860,97 @@
                     "required": [
                       "operationId"
                     ]
+                  },
+                  {
+                    "required": [
+                      "statistics"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "statistics"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "runId"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "operationId"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "reference"
+                    ]
                   }
                 ]
               }
             }
           ]
         }
+      },
+      "xValues": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 200,
+        "items": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": -1000000000000000,
+          "maximum": 1000000000000000
+        },
+        "description": "散点图横轴值，与 categories 逐项对应；缺失为 null。"
+      },
+      "xLabel": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "\\S"
+      },
+      "xUnit": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "\\S"
+      },
+      "annotations": {
+        "type": "array",
+        "maxItems": 3,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "categoryIndex": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seriesIndex": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "\\S"
+            }
+          },
+          "required": [
+            "categoryIndex",
+            "seriesIndex",
+            "note"
+          ]
+        },
+        "description": "最多3处有证据的重点标注；用真实数据位置指出异常、差距或拐点，不重复标题。"
       }
     },
     "required": [
@@ -883,6 +1003,109 @@
         },
         "then": {
           "properties": {
+            "categories": {
+              "minItems": 2
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "scatter"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "xValues",
+            "xLabel",
+            "xUnit"
+          ],
+          "properties": {
+            "categories": {
+              "minItems": 3
+            }
+          }
+        },
+        "else": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "xValues"
+                ]
+              },
+              {
+                "required": [
+                  "xLabel"
+                ]
+              },
+              {
+                "required": [
+                  "xUnit"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "enum": [
+                "scatter",
+                "histogram"
+              ]
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "categories": {
+              "maxItems": 30
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "dumbbell"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "series": {
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "categories": {
+              "minItems": 2
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "enum": [
+                "waterfall",
+                "histogram"
+              ]
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "series": {
+              "maxItems": 1
+            },
             "categories": {
               "minItems": 2
             }

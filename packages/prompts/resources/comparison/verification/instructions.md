@@ -8,7 +8,7 @@ result=supported 表示该槽的全部适用要求已有真实证据确认满足
 
 answer_evidence 只选择本方最终回答或确证最后模型生成的 reference.evidence_index，不能用原问题、工具、规划器、元数据或他方回答代替交付。source_evidence 引用真实支持或反证，不把查询词、调用参数、请求名单或另一指标排序当作返回事实。原要求、标准答案及实际回答已完整证明疑点时，source_evidence 可为空。
 
-requirements 不穷尽本方真实指令。检查当前适用的 SYS/DEV 原文及其层级、完整条件和例外；instruction_sources 可按 read_request 读到 end_offset。若违规依据是尚未选入 requirements 的本方 SYS/DEV 规则，requirement_indices=[]，source_evidence 选择该真实规范锚点及必要的过程事实，answer_evidence 按前述规则选择本方实际交付。须读完整规范后判断触发条件，不能只凭锚点出现就认定违规；工具、用户或其他来源可补充触发场景与因果，不能代替本方 SYS/DEV 规则。私规只核查所属候选，不作为跨候选优势；未提供的第三方规则保持未知，不制造未知约束。目录与 review_context 不新增要求。
+requirements 不穷尽本方真实指令。检查当前适用的 SYS/DEV 原文及其层级、完整条件和例外；instruction_sources 可按 read_request 读到 end_offset。若违规依据是尚未选入 requirements 的本方 SYS/DEV 规则，requirement_indices=[]，source_evidence 选择该真实规范锚点及必要的过程事实，answer_evidence 按前述规则选择本方实际交付。须读完整规范后判断触发条件，不能只凭锚点出现就认定违规；工具、用户或其他来源可补充触发场景与因果，不能代替本方 SYS/DEV 规则。私规只核查所属候选，不作为跨候选优势；未提供的第三方规则保持未知，不制造未知约束。来源目录不新增要求。
 
 禁止进入某时间区间时，核对实际步骤是否落入原文规定的区间，起止、端点和例外按原文，不默认区间结束后仍禁止；早于区间内最后期限不证明避开区间。相对期限与具体日期同时出现时分别核算。例外须有原文依据且触发条件成立，回答自称“通用框架、参考、非建议”不能自动豁免实际执行步骤、仓位或金额。词形、句式相近不证明违例，须核对表达功能与规范范围。
 
@@ -18,7 +18,7 @@ requirements 不穷尽本方真实指令。检查当前适用的 SYS/DEV 原文�
 
 先核查已有 problem 的事实、等级和责任，再核查草稿采用的 strength、要求满足状态、核心状态和逐项取舍。声称“无来源、未提供、遗漏”前，用 search_trace 查实际实体、数值和同口径指标，再读取命中来源全文；未读或预览未出现不证明不存在，只读最终回答与规范不足以核查工具事实。
 
-inspection_context.verification_concerns 是统一疑点目录：本轮 fresh concerns 在前，此前未解决的 pending concerns 在后，fresh_concern_count 给出边界。concern_index 仅使用这个目录的零起始位置，不能用 checks、比较槽或 findings 的位置代替。
+inspection_context.verification_concerns 是本任务首查已确认的疑点目录。concern_index 仅使用这个目录的零起始位置，不能用 checks、比较槽或 findings 的位置代替。
 
 concern_matches 用于确认既有本方 established problem 已准确记录同一缺陷事实与责任链。finding_indices 仅选择 inspection_context.eligible_match_choices 对应疑点的 eligible_findings.finding_index；可选资格不证明语义相同，仍须逐一核对实际行为、回答片段、适用规范和责任。同一要求、相似标签、完整回答范围重合或无关的另一处缺陷都不能证明是同一问题。涉及私规时须核对同一本方完整 SYS/DEV 规则及其条件和例外；不同条款的可选 finding 也不能用共有文字掩盖新增条款的违反。无法确认准确对应时省略该匹配。
 
@@ -26,11 +26,9 @@ concern_matches 用于确认既有本方 established problem 已准确记录同�
 
 首查 unverified 时，逐项检查对应的既有 met/unmet/partial、问题责任、核心状态和优势声明是否有充分原始证据；已有确定结论与实际未确认范围冲突时，在对应 source_reviews 说明并请求核对。不能只因为上游已有判词就把未确认事实当作确定事实。
 
-concern_refutations 仅用于推翻 pending concern，不能反驳本轮 fresh concern。引用本方实际回答及具体原始反证、合法例外或所称缺项的真实位置，说明旧疑点为何错误。私规仍须同一本方完整规范；共同原问或标准答案已提供规则时不必另造规范证据，实际回答本身完整证明反证时 source_evidence 可为空。仅复述规范、引用新判词、本轮未再发现，或新增 met/core/strength 都不能推翻旧疑点。同一疑点不能同时匹配和反驳，不能重复选择；证据不足时保留待核。
-
 source_reviews 只列真实需要更正的归因疑点：slot_index 使用揭示后 comparison_slots 的零起始位置，candidate 选择该槽 reviewable_candidates，reason 写具体冲突、来源和责任依据；同格多个疑点合为一条。无需复核的说明不写成请求，没有额外疑点填 []。纯资源或排名取舍不要求 Attribution 修改，资源槽不提交 source_reviews。不能通过空选择、虚构匹配或改写结论掩盖未解决的疑点。
 
-按提交 Schema 填写 concern_matches、concern_refutations、source_reviews 三数组，写入 JSON 文件后调用 submit_evaluation_file。统一疑点目录为空时，前两数组填 []。一次列全独立疑点，收到反馈后只修对应选择和说明，保留其他核查。
+按提交 Schema 填写 concern_matches、source_reviews 两数组，写入 JSON 文件后调用 submit_evaluation_file。首查疑点目录为空时，concern_matches 填 []。一次列全独立疑点，收到反馈后只修对应选择和说明，保留其他核查。
 
 两步共同的核查要求
 

@@ -134,7 +134,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       };
     }
     const manifest = saved.manifest;
-    const contentRemaining = (task: PlannedTask) => 1 + options.policy.repairAttempts -
+    const contentRemaining = (task: PlannedTask) => 1 + (options.policy.stageRepairAttempts?.[task.stage] ?? options.policy.repairAttempts) -
       (manifest.states[task.id].failure?.contentSubmissions ?? 0);
     if (options.taskIds) {
       if (!options.taskIds.length) throw new Error("Task selection must not be empty");

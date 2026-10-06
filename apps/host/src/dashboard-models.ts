@@ -10,7 +10,7 @@ export interface DashboardModel {
 export type DashboardModelLoader = () => Promise<DashboardModel[]>;
 
 /** Keep only the public model identity; never expose the gateway endpoint or credentials. */
-export function toDashboardModels(models: readonly AssistantModelEntry[]): DashboardModel[] {
+export function toDashboardModels(models: readonly Pick<AssistantModelEntry, 'id' | 'name' | 'contextWindow' | 'maxTokens'>[]): DashboardModel[] {
   return models.map(({ id, name }) => ({ id, name }));
 }
 
