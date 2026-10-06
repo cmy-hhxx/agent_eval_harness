@@ -46,7 +46,7 @@
 | 阶段 | 一次处理 | 输出内容 | 下游用途 |
 |---|---|---|---|
 | Criteria | 同题、同标准的一组候选约束 | 从本轮问题、已有标准答案与候选用户上下文的原文目录选择来源；形成带 ID、`applies_to` 和 `acceptance_rule` 的 `task_analysis`，不向模型展示 SYS/DEV、回答或工具轨迹 | 写入 `criteria.jsonl`，作为归因与对比的共同基准 |
-| Attribution | 一条已标明版本的回答 | 条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、`criterion_assessments`、`core_assessment`、`summary`、有证据的优点及确定/疑似问题 `findings`；Host 在接受结果时加入 `has_standard_answer` | 写入 `attribution.jsonl`；Comparison 读取去身份视图，Clustering 读取问题观察并维护问题库 |
+| Attribution | 一条已标明版本的回答 | 条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、可选的 `standard_conflict`、`criterion_assessments`、`core_assessment`、`summary`、有证据的优点及确定/疑似问题 `findings`；Host 在接受结果时加入 `has_standard_answer` | 写入 `attribution.jsonl`；Comparison 读取去身份视图，Clustering 读取问题观察并维护问题库 |
 | Comparison | 两个候选 | `status`、复核请求、分层 `ranking`、核心分类、带 criterion ID / 状态 / 证据状态的逐项对照及决定依据 | decided 写入 `comparison.jsonl`；needs_review 写入 `comparison-review.jsonl`，不派生判决 |
 | Rewrite | 一个归因、对比或聚类结果 | 模型返回同序 `texts`，Workflow 绑定为正式 `rewrites`（程序 id 与润色文本），不含判定、证据或新增条目 | 写入源结果的 `rewritten` 字段；报告与逐题总结优先展示改写文案 |
 | Clustering | 一个模型 × 一个批次（可按 case 分片） | `assignments` 把每个观察归入已有类或新类，`new_classes`（key/component/label/definition/最接近类/novelty），可选 `merges` | 写入 `clustering.jsonl`；run 结束把决定写进该模型问题库 |
@@ -90,7 +90,7 @@ Criteria 绑定来源、Attribution 绑定选择并展开证据、Comparison 从
 
 ### 归因与共同基准
 
-每条回答先经过归因 Agent，以 Workflow 的 `ground_truth.available` 为准。有标准答案且能够核实时，`is_correct` 为 true/false；确实无法核实时可为 null，但 `core_assessment.meets_core` 必须同时为 null，并引用适用 requirement 的 unknown/uncertain 评审，保留待核。两种情况都须填写非空核对理由和最终回答证据；已确认的缺失、数值不等价或量纲冲突不能改成未知。无标准答案时，固定填写 `is_correct=null`、`correctness_reason=""`、`correctness_evidence_indices=[]` 和 `numeric_checks=[]`，不判断与标准的一致性。四个字段仍存在，程序校验空值并生成对应正式结果。`has_standard_answer` 由 Host 从请求填入接受结果。模型工具 Schema 从可信请求选择，不采用展示投影决定这些字段。归因提交安全检查可识别字段中的覆盖、作用域、无标准答案、问题描述约束及当前证据数组中的引用坐标，与结构错误一并反馈；结构错误或缺项不会遮蔽已能解析的非法引用。合并后的反馈仅按完整错误内容去重；不同候选、判据、路径或修复细节分别保留。接受结果继续使用同一套独立规则和完整证据校验。
+每条回答先经过归因 Agent，以 Workflow 的 `ground_truth.available` 为准。有标准答案且能够核实时，`is_correct` 为 true/false；确实无法核实时可为 null，但 `core_assessment.meets_core` 必须同时为 null，并引用适用 requirement 的 unknown/uncertain 评审，保留待核。两种情况都须填写非空核对理由和最终回答证据；已确认的缺失、数值不等价或量纲冲突不能改成未知。无标准答案时，固定填写 `is_correct=null`、`correctness_reason=""`、`correctness_evidence_indices=[]` 和 `numeric_checks=[]`，不判断与标准的一致性。四个字段仍存在，程序校验空值并生成对应正式结果。与标准不符但已核实本方工具返回或独立来源支持回答值（含合理口径差异）时，提交 `standard_conflict=true`；模型自身错误、口径未核实或标准可正确核验时保持 false，无标准答案时禁止填写。该标记与 `is_correct=false` 并存，供统计单列复核，不改变标准一致性判定。`has_standard_answer` 由 Host 从请求填入接受结果。模型工具 Schema 从可信请求选择，不采用展示投影决定这些字段。归因提交安全检查可识别字段中的覆盖、作用域、无标准答案、问题描述约束及当前证据数组中的引用坐标，与结构错误一并反馈；结构错误或缺项不会遮蔽已能解析的非法引用。合并后的反馈仅按完整错误内容去重；不同候选、判据、路径或修复细节分别保留。接受结果继续使用同一套独立规则和完整证据校验。
 
 归因模型按 `criterion_checks` 固定顺序提交 `criterion_assessments`，每项只有 status、evidence_status、summary、evidence_indices；不提交判据 ID。顶层提交 meets_core、core_reason、core_requirements，后者只选择 applies_to=[] 的共同 requirements 正整数编号，动态提交 Schema 给出允许的编号。程序绑定正式 core_assessment.criterion_ids，并为其他候选专属要求生成 not_applicable；本方专有要求仍须逐项评审，但不能作为共同核心依据。缺项或多项拒绝，不猜测对应关系。核心 false 必须由已确认的共同 partial/unmet 支持；true 不能同时选择已确认 unmet 的核心项；null 保留具体未知范围，局部 partial 不机械等于核心失败。
 
@@ -98,7 +98,7 @@ Criteria 绑定来源、Attribution 绑定选择并展开证据、Comparison 从
 
 错误请求或误读正确返回归模型；工具返回有缺陷且实际传入错误结论时才归工具；共同责任须分别有证据。工具参与、无返回、引用正确返回作为反证均不足以归责。未知责任提交 model_responsible=false、tool_evidence_indices=[]，正式 component=[]，看板显示待定位；已确认结果偏差可同时保留 established。被评方不可见标准答案，不能以未核对标准归责。每条 finding 的身份由程序按顺序生成；归因不读问题库、不建类，Workflow 按已确认组件展开聚类观察，不重复计同一回答缺陷。
 
-Criteria 提交 requirements、scoring_points、red_flags 三个数组，每条只包含 source_indices 和不超过300字符的 text。text 是一个可分别核验的交付项；同一来源可以拆成多个不同检查项。模型材料只展示候选数量和来源适用位置，text 使用原题语言，不写候选身份；同一交付的问题与标准合为一项。模型不生成判据 ID、候选 UUID、原文坐标或验收规则。程序按来源交集绑定 applies_to，按组生成 r1/f1/s1，并把完整所选原文与共用核验规则写入 acceptance_rule。原文条件、例外、单位与效力始终优先；检查短句是否忠实须语义复核，不能因引用合法就认定没有新增义务。
+Criteria 提交 requirements、scoring_points、red_flags 三个数组，每条只包含 source_indices 和不超过300字符的 text。text 是一个可分别核验的交付项；同一来源可以拆成多个不同检查项。模型材料只展示候选数量和来源适用位置，text 使用原题语言，不写候选身份；同一交付的问题与标准合为一项。模型不生成判据 ID、候选 UUID、原文坐标或验收规则。程序按来源交集绑定 applies_to，按组生成 r1/f1/s1，并把完整所选原文与共用核验规则写入 acceptance_rule。原文条件、例外、单位与效力始终优先；检查短句是否忠实须语义复核，不能因引用合法就认定没有新增义务。程序另校验检查项不能丢掉所选来源的时窗、边界和日期（2026年1月5日/2026-1-5、大于10/>10 等等价写法视为保留），要求把这些限制放进可独立核查的条目。
 
 question 与有效 reference 各自至少支撑一条共同 requirement；私有作用域的并集不构成公共覆盖。SYS/DEV 不进入新任务要求，已识别的内部上下文、附件容器、NER 与用户结束后的元数据块不升为交付义务；它们原始材料仍用于本方核查。三组原始提交合计最多24条，只有检查内容、原文依据和作用域都相同的项目才归并；不能按相同来源编号删掉独立验收点。正式结果继续检查来源、作用域与重复项。
 
@@ -106,7 +106,7 @@ question 与有效 reference 各自至少支撑一条共同 requirement；私有
 
 ### 对比与定向补查
 
-Comparison 使用两条已接受归因完成一次比较，照录各回答核心可用性；源归因的完整 `task_analysis` 须与本次共同基准相同，核对文本、作用域和验收规则。基准不一致、来源已待核或核心未知时，程序保留具体候选和既有判据，派生 `needs_review`；没有可信的确定结论时不强行判胜负。来源 false 只有专有失败、没有双方共同适用 requirement 的已确认 unmet/partial 时同样保留待核；不直接改成 true。正式 core_failure_refs 仅采用共同作用域失败。Comparison 不新增或改写 finding。
+Comparison 使用两条已接受归因完成一次比较，照录各回答核心可用性；源归因的完整 `task_analysis` 须与本次共同基准相同，核对文本、作用域和验收规则。基准不一致、来源已待核或核心未知时，程序保留具体候选和既有判据，派生 `needs_review`；没有可信的确定结论时不强行判胜负。同一共同要求上双方给出不同日期的已确认结论属于已知材料冲突：程序在对比输入阶段检测并生成 `unresolved_conflict` 复核项，该对局保留待核，不能两边都记为满足。来源 false 只有专有失败、没有双方共同适用 requirement 的已确认 unmet/partial 时同样保留待核；不直接改成 true。正式 core_failure_refs 仅采用共同作用域失败。Comparison 不新增或改写 finding。
 
 Comparison 按 comparison_slots 固定顺序评审共同验收点和可比资源；关联到要求的既有 findings 放进对应行。独立 finding 保留在本方归因，不自动生成另一方空格。共同要求即使没有同名 finding，也使用各自已接受的 criterion_assessments；缺少 finding 不等于没有做到。专有要求只评本方，不参与横向优势。程序派生状态、关联与排名，只有同一适用方面的双方 established 事实才能支持优势。
 
@@ -289,9 +289,9 @@ expected 由程序保留标准原有小数位与科学计数法指数，actual �
 
 [表格来源核对](../packages/agents/src/attribution/table-review.ts)为可解析的最终代码/名称表预计算 `answer.table_check_results` 并由 Workflow 提供给归因；summary 统计全部行，rows 仅展开经证券代码规范化后的疑点行及真实证据。目录只识别带表头分隔行的标准 Markdown；JSON 行、stdout 空格表、Python 字典打印等不自动成为来源表。没有可比来源表时，实际回答行保留 unverified、原文坐标和空 sources，不虚构匹配或冲突；未收录也不证明原材料没有支持或反证，须继续读取真实来源。模型直接检查疑点与两侧原文，按对象、时间和加工过程解释差异；额外探索仍可调用 check_table。提交校验从原始消息重算，拒绝预计算材料缺失或不一致，不把计算完成声称为模型逐行阅读。conflict/ambiguous 行必须有引用最终行与来源行的 problem finding。`source_review` 是程序生成的只读事项目录，每项包含 `kind/reason/requires_review`；kind 区分 unverified、unresolved_conflict 和 invalid_material。requires_review=true 的事项要求 Comparison 输出 needs_review。unverified 不能单凭来源缺失判答案错误；未断言具体代码的文字占位符仍按任务要求评审。六位证券代码相同且仅一方省略 .SH/.SZ/.BJ 后缀时可对应；交易所后缀按大小写统一识别，两边明确不同交易所不能合并。
 
-剩余纯 unverified 行仅在以下条件全部成立时不强制保留对比待核：本方已有共同 requirement 的 established unmet/partial 核心失败，关联该失败条款的 established/high problem finding 用最终行及原始来源行闭合程序重算的确定冲突；对方核心已确认可用且没有来源待核；本方没有材料校验错误、歧义或其他未解决冲突。程序只将这些事项的 requires_review 设为 false，原因仍保留在可信请求与模型材料，未确认行不能成为错误证据或比较优势。私有失败、核心未知、双方可用或对方待核不满足此豁免；不改归因、证据或核心状态，也不自动生成排名。
+剩余纯 unverified 行仅在以下条件全部成立时不强制保留对比待核：本方已有共同 requirement 的 established unmet/partial 核心失败，关联该失败条款的 established/high problem finding 用最终行及原始来源行闭合程序重算的确定冲突；对方核心已确认可用或同样已确认为不可用且没有来源待核；本方没有材料校验错误、歧义或其他未解决冲突。程序只将这些事项的 requires_review 设为 false，原因仍保留在可信请求与模型材料，未确认行不能成为错误证据或比较优势。私有失败、核心未知、双方可用或对方待核不满足此豁免；不改归因、证据或核心状态，也不自动生成排名。
 
-独立归因复核可用可选 `table_resolutions` 逐行选择本方完整表目录的正整数 table_index，提交零起始 row_index、outcome（supported/conflict）、reason 和 evidence_indices；程序还原正式 table_id；首轮不得用它解除疑点。只接受预计算中的疑点行，每行一次；已匹配行不能提交解除决定，证据须覆盖最终行与全部既有来源行。supported 仅用于 unverified 行，还须引用可信、非代码执行工具返回的完整文本节点，且该节点本身是可解析的肯定代码对应声明。已有原表反证冲突不能仅靠后续正向声明解除；模型代码执行输出、同词共现、否定、示例或截句均不能作为独立支持。conflict 还须有同时引用两侧原文的 established problem。仅写解释不能解除来源疑点；仍未解决的事项保留未知，不自动重做主线。
+独立归因复核可用可选 `table_resolutions` 逐行选择本方完整表目录的正整数 table_index，提交零起始 row_index、outcome（supported/conflict）、reason 和 evidence_indices；程序还原正式 table_id；首轮不得用它解除疑点；没有 `review_context` 的任务必须提交空数组，疑点写入 problems 的 finding。只接受预计算中的疑点行，每行一次；已匹配行不能提交解除决定，证据须覆盖最终行与全部既有来源行。supported 仅用于 unverified 行，还须引用可信、非代码执行工具返回的完整文本节点，且该节点本身是可解析的肯定代码对应声明。已有原表反证冲突不能仅靠后续正向声明解除；模型代码执行输出、同词共现、否定、示例或截句均不能作为独立支持。conflict 还须有同时引用两侧原文的 established problem。仅写解释不能解除来源疑点；仍未解决的事项保留未知，不自动重做主线。
 
 ### 文案校验
 

@@ -34,6 +34,7 @@ export function summarizeResults(
   comparisons: JsonObject[],
   skipped: JsonObject[],
   issues: JsonObject[],
+  pending: JsonObject[] = [],
 ) {
   const cases = new Set([
     ...tasks
@@ -54,6 +55,7 @@ export function summarizeResults(
     core_case_count: number; core_decidable_count: number; core_undetermined: number; core_conflicted_count: number;
   }> = {};
   const diagnostics: JsonObject[] = [];
+  const standardConflicts: JsonObject[] = [];
   const coreCases = new Map<string, { batch_id: string; case_id: string; version: string; rows: { comparison_id: unknown; value: boolean | null }[] }>();
   const answerKey = (batch: unknown, caseId: unknown, version: string) => canonical([batch, caseId, version]);
   const standing = (version: string) =>
@@ -189,6 +191,11 @@ export function summarizeResults(
       diagnostics.push({ metric: "correctness", code: "conflicting_attribution_conclusions", batch_id: value.batch_id,
         case_id: value.case_id, version: value.version, task_ids: selected.map((row) => row.task_id), values: [...conclusions] });
     }
+    for (const row of value.rows.filter((item) => item.standard_conflict === true)) {
+      standardConflicts.push({ batch_id: value.batch_id, case_id: value.case_id, version: value.version, task_id: row.task_id });
+      diagnostics.push({ metric: "standard", code: "standard_conflict", batch_id: value.batch_id,
+        case_id: value.case_id, version: value.version, task_ids: [row.task_id] });
+    }
     const result = conclusions.values().next().value;
     stats[incomplete || ambiguous || conflicted || result === null || result === undefined ? "undetermined" : result ? "correct" : "incorrect"]++;
   }
@@ -216,6 +223,14 @@ export function summarizeResults(
       skipped_groups: skipped.length,
       input_issues: issues.length,
     },
+    coverage: {
+      planned: tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length,
+      decided: comparisons.length,
+      pending: pending.length,
+      incomplete: Math.max(0, tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length -
+        comparisons.length - pending.length),
+    },
+    ...(standardConflicts.length ? { standard_conflicts: standardConflicts } : {}),
     task_statuses: statuses,
     completed_comparisons: comparisons.length,
     head_to_head: headToHead,
@@ -262,6 +277,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   const comparisons: JsonObject[] = [],
     outcomes: JsonObject[] = [],
     attribution: JsonObject[] = [],
+    pendingComparisons: JsonObject[] = [],
     summaries: JsonObject[] = [];
   const markdown: string[] = [];
   const savedSchema = manifest.debug ? await readJson(internalPath(run, "output_schema.json")) : outputSchema;
@@ -307,6 +323,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     const result = receipt.evaluation as ComparisonResult,
       review = result.status === "needs_review";
     if (review) {
+      pendingComparisons.push({ case: taskIdentity(data), candidates: data.candidates });
       markdown.push(`## ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`, "", "**状态**：待复核", "",
         ...result.review_requests.map((item) => `- ${names[data.candidates[item.candidate]!.version]}：${item.reason}`), "");
       continue;
@@ -482,7 +499,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     Object.values(manifest.states).reduce((n, task) => n + task.attempts, 0) - state.recordedAttempts,
   );
   const inputTokens = attemptUsage.input + attemptUsage.cacheRead + attemptUsage.cacheWrite;
-  const totals = summarizeResults(manifest.tasks, outcomes, attribution, comparisons, skipped, issues);
+  const totals = summarizeResults(manifest.tasks, outcomes, attribution, comparisons, skipped, issues, pendingComparisons);
   const measured = manifest.tasks.flatMap((task) => {
     const receipt = receipts.get(task.id),
       failure = manifest.states[task.id].failure;
@@ -528,6 +545,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         comparisons.filter((row) => (row.case as JsonObject).batch_id === batch),
         skipped.filter((item) => item.batch_id === batch),
         issues.filter((item) => item.batch_id === batch),
+        pendingComparisons.filter((row) => (row.case as { batch_id: string }).batch_id === batch),
       );
       return [batch, stats];
     }),
@@ -625,10 +643,16 @@ export async function writeOverview(
     if (summary.debug && (await exists(internalPath(run, "diagnostics", name + ".jsonl"))))
       links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
   const summaryVersions = (summary.evaluator_versions as string[]).join("、") || "无已接受结果";
+  const coverage = summary.coverage as { planned: number; decided: number; pending: number; incomplete: number } | undefined;
+  const standardConflicts = (summary.standard_conflicts as JsonObject[] | undefined) ?? [];
   await atomicWrite(
     locateRun(run).report,
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
       `执行失败：${failures}；依赖阻塞：${statuses.blocked || 0}；已取消：${statuses.cancelled || 0}；输入跳过对比组：${skipped}。\n\n` +
+      (coverage
+        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。` +
+          (standardConflicts.length ? `标准冲突待核：${standardConflicts.length} 例（见 stats.json）。` : "") + "\n\n"
+        : "") +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation
         ? `[校验记录](stats.json)；附件：${validation.artifacts?.status === "missing" ? "缺失（不影响正式结果状态）" : validation.artifacts_checked ? "已检查" : "未保留"}。`

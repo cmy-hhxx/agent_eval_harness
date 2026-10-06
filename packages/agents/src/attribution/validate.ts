@@ -47,9 +47,18 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
     : [];
 }
 
+function tableResolutionScopeIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
+  const value = object(draft);
+  if (!value || !Array.isArray(value.table_resolutions) || !value.table_resolutions.length) return [];
+  if ((request.input as { review_context?: unknown }).review_context) return [];
+  return [{ category: "decision", code: "table_resolution_without_review", path: "/table_resolutions",
+    message: "本任务没有 review_context，table_resolutions 必须为空数组；表格或代码疑点写入 problems 的 finding，不提交复核结论。",
+    actual: value.table_resolutions.length, expected: { table_resolutions: [] } }];
+}
+
 /** Business rules that can be checked before evidence references are resolved. */
 export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
-  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
+  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...tableResolutionScopeIssues(request, draft), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
     ...instructionSubmissionIssues(request, draft, audit)];
 }
 
@@ -312,7 +321,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as Input;
   const value = result as AttributionResult;
-  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result")];
+  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...tableResolutionScopeIssues(request, result)];
   repairErrors.push(...attributionTableReview(request, value).errors);
   repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>

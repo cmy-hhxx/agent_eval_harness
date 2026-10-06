@@ -2,7 +2,7 @@ import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
-import { ValidationError, selectEvidence, type AgentRequest, type ToolAudit } from "@eval/contracts";
+import { ValidationError, evidenceId, selectEvidence, type AgentRequest, type ToolAudit } from "@eval/contracts";
 import { attributionAgent, attributionProfile, type AttributionResult } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
@@ -156,4 +156,48 @@ test("no-standard submissions use explicit empty correctness fields and preserve
     assert(error.issues!.some(issue=>issue.code==="final_image_not_viewed"));
     return true;
   });
+});
+
+test("standard conflicts are an explicit flag and cannot excuse a passing or standard-free judgment",()=>{
+  const f=fixture();
+  assert.equal(f.draft.standard_conflict,undefined);
+  f.draft.is_correct=false;f.draft.standard_conflict=true;f.draft.correctness_reason="标准为38.1%，本方工具返回与口径支持38.41%。";
+  const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  assert.equal(result.standard_conflict,true);
+  assert.equal(result.is_correct,false);
+  f.draft.is_correct=true;
+  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="standard_conflict_correctness"));
+  const request=structuredClone(example.request) as AgentRequest;
+  request.input.ground_truth={available:false,value:null};
+  const noStandard=fixture(request);
+  assert.throws(()=>noStandard.registry.resolve(noStandard.binding,{...noStandard.draft,standard_conflict:true},noStandard.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="standard_conflict_without_standard"));
+});
+
+test("table resolutions stay out of tasks without a review context",()=>{
+  const f=fixture();
+  f.draft.table_resolutions=[{table_index:1,row_index:0,outcome:"supported",reason:"已核对。",evidence_indices:[1]}];
+  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="table_resolution_without_review"));
+});
+
+test("an image observation numbered by image order binds to the unique image entry",()=>{
+  const f=fixture();
+  const messages=(f.request.sources.answer.value as {messages:Record<string,unknown>[]}).messages;
+  messages[1].attachments=[{type:"image",mimeType:"image/png",data:"AA=="}];
+  f.audit.evidenceBank!.push(evidenceId(f.request.sources.answer.id,1,"image"));
+  const imageIndex=f.audit.evidenceBank!.length;
+  f.audit.viewedImages.push("answer:1");
+  f.draft.image_observations=[{image_number:1,text:"图中是表格。"}];
+  f.draft.strengths[0].evidence_indices=[imageIndex];
+  const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  assert.equal(result.findings[0]!.evidence[0]!.quote,"[图像观察]图中是表格。");
+  const invalid=fixture();
+  (invalid.request.sources.answer.value as {messages:Record<string,unknown>[]}).messages[1].attachments=[{type:"image",mimeType:"image/png",data:"AA=="}];
+  invalid.audit.evidenceBank!.push(evidenceId(invalid.request.sources.answer.id,1,"image"));
+  invalid.audit.viewedImages.push("answer:1");
+  invalid.draft.image_observations=[{image_number:9,text:"图中是表格。"}];
+  assert.throws(()=>invalid.registry.resolve(invalid.binding,invalid.draft,invalid.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="image_observation_source"&&Array.isArray((issue.expected as {image_numbers:number[]}).image_numbers)));
 });

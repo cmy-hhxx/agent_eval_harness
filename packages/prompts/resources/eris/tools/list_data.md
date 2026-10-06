@@ -1,4 +1,4 @@
-查询共享只读评测数据目录。list_data({}) 按记录时间列运行，返回 currentRun 及 summary；list_data({runId}) 分页列出该运行的回答输入和任务引用，并返回该运行的完整 summary。
+查询共享只读评测数据目录。list_data({}) 按记录时间列运行，返回 currentRun 及完整数量统计，不附逐场叙述或结果坐标清单；list_data({runId}) 分页列出该运行的回答输入和任务引用，并返回该运行的完整 summary。
 
 问当前数据量或进度时，只需 list_data({}) 的 currentRun.summary，只取回答当前问题所需的数量；单一状态用短句，可比较的完成组成或模型进度直接用 show_chart。默认优先最近有输入且正在运行的记录，否则取最近有输入的记录，selectionReason 明示选择规则。对用户明确为“最近一轮”，不附内部编号、模型覆盖、批次、任务总数或去重解释，不遍历历史。finished 表示运行结束，不证明全部评测完成。summaryScope=run 覆盖整个运行，query、offset、limit 仅影响 items，筛选不改变 currentRun。
 
@@ -10,7 +10,7 @@ query 是字面文本筛选词，不是数据类别。查看完整输入目录�
 
 kind=inputs 还返回运行配置的 comparisonGroups；组内 models 给模型标识与展示名，comparisonTier 给声明的档位。每条输入的 model 用于定位，modelName 用于用户正文，comparisonTier 为 null 表示档位未声明。Fast 只能与 Fast 比，Expert 只能与 Expert 比，按声明和分组确认范围，不从名称猜测。配置组不代表已完成对局；分析具体案例时继续读取原问和必要回答片段，不把 caseId 或目录主题作为题目正文。
 
-formalComparisonStats 是当前运行全部已接受且未被取代的正式战绩，基于保存配置与正式 verdicts 的完整统计，直接使用，不从长正文重数。formalResultCount 是结果份数，comparisonCount 是两模型对局场数，三模型一份结果含三场。tiers 分档给对局数、模型展示名、wins/losses/both_good/both_bad 和 references；records 给各结果的原问、scope.comparisonTier、各模型正式类别与短理由、正式点评和 tradeoff。tradeoff 的相对评价不能覆盖 verdicts 的胜负或双方均好/均差。问四模型效果直接使用战绩，主动调用 show_chart，Fast、Expert 分图；图必须揭示胜负之外的有效差异，双方均好与双方均差不能合并；仅有战绩组成时用 bar，已有问题矩阵或同口径指标时按 show_chart 说明选择热力图或差异点图，references 用 {statistics:{runId,comparisonTier}} 引用本档完整正式统计，不逐条复制结果引用。正文最多两句、80字，只选两条短依据，无需读完所有完整判词，不重抄图中数字；有双方均好或均差不能概括成全胜或全负。
+formalComparisonStats 是当前运行全部已接受且未被取代的正式战绩，基于保存配置与正式 verdicts 的完整统计，直接使用，不从长正文重数。formalResultCount 是结果份数，comparisonCount 是两模型对局场数，三模型一份结果含三场。tiers 分档给对局数、模型展示名、wins/losses/both_good/both_bad 和 references；仅在指定 runId 后返回 records 与完整 references；records 给各结果的原问、scope.comparisonTier、各模型正式类别与短理由、正式点评和 tradeoff。tradeoff 的相对评价不能覆盖 verdicts 的胜负或双方均好/均差。问四模型效果直接使用战绩，主动调用 show_chart，Fast、Expert 分图；图必须揭示胜负之外的有效差异，双方均好与双方均差不能合并；仅有战绩组成时用单行 heatmap，胜负与双方均好/均差是四个互斥类别，少量数量也可用 dot，已有问题矩阵或同口径指标时按 show_chart 说明选择热力图、环形热力图或差异点图，references 用 {statistics:{runId,comparisonTier}} 引用本档完整正式统计，不逐条复制结果引用。概览无需读完所有完整判词；图中战绩只呈现一次，正文说明其对差距与可用性的含义，问原因再补读决定性案例的原问与回答；有双方均好或均差不能概括成全胜或全负。
 
 kind=inputs 中任务的 purpose 区分 comparison_formal、comparison_draft 和 comparison_verification；核验可能生成最终正式结果，但任务完成数不是对局数。summary.formalComparisonsAccepted 与 formalComparisonReferences 是正式结果份数与可读引用；comparisonsPendingReview 是待复核结果份数，不能称作对局场数。草稿、被取代和待复核结果不计战绩。缺少正式结果不补零或从配置覆盖推断已完成。
 

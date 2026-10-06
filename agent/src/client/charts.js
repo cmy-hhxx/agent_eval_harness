@@ -1,18 +1,16 @@
 import { createElement as h, memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { researchTypes, chartTable, chartSummary } from './chart-data.js';
+import { RadialHeatmap } from './chart-radial.js';
+import { researchTypes } from './chart-data.js';
 
-// Product colours adapted from UBS's public Year Ahead chart, not official brand tokens.
-const colors = ['var(--eris-chart-a, #676767)', 'var(--eris-chart-b, #774143)', 'var(--eris-chart-c, #424242)',
-  'var(--eris-chart-d, #A97073)'];
-const categoryColors = ['var(--eris-chart-category-1, #969696)', 'var(--eris-chart-category-2, #D0D0D0)',
-  'var(--eris-chart-category-3, #8A6668)', 'var(--eris-chart-category-4, #A6A6A6)',
-  'var(--eris-chart-category-5, #AB8385)', 'var(--eris-chart-category-6, #C3ABAC)'];
-const bothGoodColor = 'var(--eris-chart-both-good, #BDBDBD)';
-const bothBadColor = 'var(--eris-chart-both-bad, #303030)';
-const primaryColor = 'var(--eris-chart-ink, #191919)';
-const textColor = 'var(--eris-chart-muted, #676767)';
-const borderColor = 'var(--eris-chart-grid, #E5E5E5)';
-const paperColor = 'var(--eris-chart-paper, #FFFFFF)';
+import { chartTheme, researchColors } from './chart-theme.js';
+const colors = researchColors;
+const categoryColors = [chartTheme.mist, chartTheme.lavender, chartTheme.blue, chartTheme.pink, chartTheme.steel, chartTheme.navy];
+const bothGoodColor = chartTheme.mist;
+const bothBadColor = chartTheme.navy;
+const primaryColor = chartTheme.ink;
+const textColor = chartTheme.muted;
+const borderColor = chartTheme.grid;
+const paperColor = chartTheme.paper;
 const chartMaxWidth = 540;
 const visuallyHidden = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
   clip: 'rect(0, 0, 0, 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap', border: 0 };
@@ -50,13 +48,15 @@ const resultColor = name => {
   if (['双方均差', '双方都差', 'bothbad'].includes(label)) return bothBadColor;
   return null;
 };
-const barColor = (chart, category, seriesIndex, colorIndex) => chart.series.length === 1
+const dotColor = (chart, category, seriesIndex, colorIndex) => chart.series.length === 1
   ? resultColor(category) ?? colors[identityIndex(category) ?? 0]
   : seriesColor(chart.series[seriesIndex].name, colorIndex);
 function compositionColors(categories) {
   const generic = categories.filter(name => identityIndex(name) === null && resultColor(name) === null).toSorted();
+  const reserved = new Set(categories.map(name => resultColor(name) ?? (identityIndex(name) === null ? null : colors[identityIndex(name)])).filter(Boolean));
+  const available = categoryColors.filter(color => !reserved.has(color));
   return categories.map(name => resultColor(name) ?? (identityIndex(name) === null
-    ? categoryColors[generic.indexOf(name)] : colors[identityIndex(name)]));
+    ? available[generic.indexOf(name)] : colors[identityIndex(name)]));
 }
 const text = (value, maximum) => typeof value === 'string' && value.trim().length > 0 && value.length <= maximum;
 const strings = (values, maximum = 30) => Array.isArray(values) && values.length > 0 && values.length <= maximum
@@ -74,24 +74,36 @@ export function chartFromToolOutput(output, state) {
   let receipt;
   try { receipt = JSON.parse(output); } catch { return null; }
   const chart = receipt?.kind === 'chart' ? receipt.chart : null;
-  if (!chart || !['bar', 'line', 'pie', ...researchTypes].includes(chart.type)
+  if (!chart || !['dot', 'line', 'pie', 'radial_heatmap', ...researchTypes].includes(chart.type)
     || !['title', 'scope', 'source'].every(key => text(chart[key], 500)) || !text(chart.unit, 40)
-    || !strings(chart.categories, ['scatter', 'histogram'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > 4
+    || !strings(chart.categories, ['scatter', 'histogram', 'bubble', 'boxplot', 'violin'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > 4
     || !chart.series.every(series => series && text(series.name, 120)
       && Array.isArray(series.values) && series.values.length === chart.categories.length
       && series.values.every(value => value === null || (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15)))
     || !chart.series.some(series => series.values.some(value => value !== null))
     || new Set(chart.series.map(series => series.name)).size !== chart.series.length) return null;
-  if (chart.type === 'scatter' && (!Array.isArray(chart.xValues) || chart.xValues.length !== chart.categories.length
+  if (['scatter', 'bubble'].includes(chart.type) && (!Array.isArray(chart.xValues) || chart.xValues.length !== chart.categories.length
     || !text(chart.xLabel, 80) || !text(chart.xUnit, 40)
     || chart.xValues.some(v => v !== null && (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e15))
     || chart.series.reduce((sum, s) => sum + s.values.filter((v, i) => v !== null && chart.xValues[i] !== null).length, 0) < 3)) return null;
+  if (chart.type === 'bubble' && (!Array.isArray(chart.sizeValues) || chart.sizeValues.length !== chart.categories.length
+    || !text(chart.sizeLabel, 80) || !text(chart.sizeUnit, 40) || chart.sizeValues.some(v => v !== null && (!Number.isFinite(v) || v < 0 || v > 1e15))
+    || chart.series.reduce((sum, s) => sum + s.values.filter((v, i) => v !== null && chart.xValues[i] !== null && chart.sizeValues[i] !== null).length, 0) < 3)) return null;
+  if (chart.type === 'bubble_matrix' && chart.series.some(s => s.values.some(v => v !== null && v < 0))) return null;
+  if (chart.type === 'slope' && (chart.categories.length !== 2 || !chart.series.some(s => s.values.every(v => v !== null)))) return null;
+  if (chart.type === 'bump' && (chart.categories.length < 2 || chart.categories.length > 12 || chart.series.some(s => s.values.some(v => v !== null && (!Number.isInteger(v) || v < 1))))) return null;
+  if (chart.type === 'interval' && chart.series.some(s => !Array.isArray(s.lowerValues) || !Array.isArray(s.upperValues)
+    || s.lowerValues.length !== chart.categories.length || s.upperValues.length !== chart.categories.length
+    || s.values.some((v, i) => v === null ? s.lowerValues[i] !== null || s.upperValues[i] !== null
+      : !Number.isFinite(s.lowerValues[i]) || !Number.isFinite(s.upperValues[i]) || Math.abs(s.lowerValues[i]) > 1e15 || Math.abs(s.upperValues[i]) > 1e15 || s.lowerValues[i] > v || s.upperValues[i] < v))) return null;
+  if (['boxplot', 'violin'].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === 'violin' ? 8 : 5))) return null;
+  if (chart.type === 'radial_heatmap' && (chart.series.length < 2 || chart.categories.length < 3 || chart.categories.length > 12 || chart.categories.some(label => Array.from(label).length > 12))) return null;
   if (chart.type === 'dumbbell' && (chart.series.length !== 2 || chart.categories.length < 2)) return null;
   if (['histogram', 'waterfall'].includes(chart.type) && (chart.series.length !== 1 || chart.categories.length < 2 || chart.series[0].values.includes(null))) return null;
   if (chart.annotations !== undefined && (!Array.isArray(chart.annotations) || chart.annotations.length > 3 || chart.annotations.some(a => !a
     || !Number.isInteger(a.categoryIndex) || a.categoryIndex < 0 || !Number.isInteger(a.seriesIndex) || a.seriesIndex < 0
     || !text(a.note, 100) || !chart.categories[a.categoryIndex] || !chart.series[a.seriesIndex]
-    || chart.series[a.seriesIndex].values[a.categoryIndex] === null || (chart.type === 'scatter' && chart.xValues[a.categoryIndex] === null)))) return null;
+    || chart.series[a.seriesIndex].values[a.categoryIndex] === null || (['scatter', 'bubble'].includes(chart.type) && chart.xValues[a.categoryIndex] === null) || (chart.type === 'bubble' && chart.sizeValues[a.categoryIndex] === null)))) return null;
   if (chart.type === 'pie') {
     if (chart.series.length !== 1 || chart.categories.length > 6
       || chart.series[0].values.some(value => value === null || value < 0)) return null;
@@ -209,12 +221,19 @@ function svg(chart, width, height, marks, template, interaction = {}) {
   }, marks);
 }
 
+function annotationMarkers(chart, categoryIndex, seriesIndex, x, y) {
+  return (chart.annotations ?? []).flatMap((a, index) => a.categoryIndex === categoryIndex && a.seriesIndex === seriesIndex
+    ? [h('g', { key: `annotation-${index}`, 'data-chart-annotation-marker': true },
+      h('circle', { cx: x, cy: y, r: 7, fill: primaryColor }),
+      h('text', { x, y: y + 3, textAnchor: 'middle', fontSize: 10, fill: paperColor }, String(index + 1)))] : []);
+}
+
 function ComparisonChart({ chart, width, english }) {
   const identities = seriesIndexes(chart);
   const plotWidth = Math.max(1, width), compact = plotWidth < 500, marks = [], rows = [];
   const valueWidth = Math.min(220, Math.max(44, ...chart.series.flatMap(series => series.values.map(value => labelWidth(value === null ? (english ? 'Unknown' : '未知') : formatNumber(value), 16) + 8))));
   const labelColumn = compact ? 0 : Math.min(180, Math.max(100, plotWidth * 0.26));
-  const left = compact ? 1 : labelColumn + 16, right = compact ? plotWidth - 1 : plotWidth - valueWidth - 12;
+  const left = compact ? 6 : labelColumn + 16, right = compact ? plotWidth - 6 : plotWidth - valueWidth - 12;
   const { position: x, ticks } = numericScale(chart, left, right, true, Math.max(2, Math.min(5, Math.floor((right - left) / 70) + 1)));
   let offset = 4;
   chart.categories.forEach((category, categoryIndex) => {
@@ -252,7 +271,7 @@ function ComparisonChart({ chart, width, english }) {
       offset += groupHeight + 8;
     }
   });
-  const bottom = offset + 2, zero = coordinates(x(0));
+  const bottom = offset + 2;
   const backgrounds = [];
   for (const tick of ticks) {
     const spans = compact ? rows.map(row => [row.top - 3, row.top + row.height + 3]) : [[0, bottom - 8]];
@@ -265,10 +284,10 @@ function ComparisonChart({ chart, width, english }) {
   rows.forEach(({ category, series, categoryIndex, seriesIndex, value, top, height }) => {
     if (value === null) return;
     const end = coordinates(x(value));
-    marks.push(h('rect', { key: `bar-${categoryIndex}-${seriesIndex}`, 'data-chart-mark': 'bar', 'data-series': series.name, 'data-category': category,
-      'data-value': value, x: Math.min(zero, end), y: coordinates(top), width: coordinates(Math.abs(end - zero)), height,
-      fill: barColor(chart, category, seriesIndex, identities[seriesIndex]) }));
-    if (value === 0) marks.push(h('line', { key: `zero-value-${categoryIndex}-${seriesIndex}`, x1: zero, x2: zero, y1: coordinates(top), y2: coordinates(top + height), stroke: barColor(chart, category, seriesIndex, identities[seriesIndex]), strokeWidth: 2 }));
+    marks.push(h('circle', { key: `dot-${categoryIndex}-${seriesIndex}`, 'data-chart-mark': 'dot', 'data-series': series.name, 'data-category': category,
+      'data-value': value, cx: end, cy: coordinates(top + height / 2), r: 4,
+      fill: dotColor(chart, category, seriesIndex, identities[seriesIndex]) }));
+    marks.push(...annotationMarkers(chart, categoryIndex, seriesIndex, Math.max(8, Math.min(plotWidth - 8, end + 10)), top - 4));
   });
   return svg(chart, plotWidth, bottom + 24, [...backgrounds, ...marks], compact ? 'comparison-compact' : 'comparison');
 }
@@ -336,6 +355,7 @@ function TrendChart({ chart, width, english }) {
       const highlighted = activeKey === key || focused === key;
       marks.push(h('circle', { key: `point-${seriesIndex}-${index}`, 'data-chart-mark': 'point', 'data-series': series.name, 'data-value': value,
         cx: point[0], cy: point[1], r: highlighted ? 5 : 2.75, fill: highlighted ? paperColor : color, stroke: color, strokeWidth: highlighted ? 2 : 0 }));
+      marks.push(...annotationMarkers(chart, index, seriesIndex, point[0] + 8, point[1] - 12));
       hits.push(h('circle', { key: `hit-${key}`, 'data-chart-hit': true, 'data-chart-point-key': key, 'data-series': series.name, 'data-date': chart.categories[index], 'data-value': value,
         role: 'img', tabIndex: 0, focusable: 'true', 'aria-label': `${chart.categories[index]} · ${series.name}：${formatNumber(value)} ${chart.unit}`,
         cx: point[0], cy: point[1], r: 22, fill: 'transparent', style: { cursor: 'crosshair', outline: 'none' },
@@ -443,32 +463,24 @@ function CompositionChart({ chart, width, english }) {
         compact ? null : h('span', null, english ? 'Category' : '类别'), h('span', { style: { textAlign: compact ? 'left' : 'right' } }, chart.unit), h('span', { style: { textAlign: 'right' } }, english ? 'Share' : '占比')),
       h('ul', { 'data-chart-composition': true, style: { listStyle: 'none', margin: 0, padding: 0 } }, chart.categories.map((category, index) => h('li', {
         key: index, style: { display: 'grid', gridTemplateColumns: columns, gap: '4px 12px', alignItems: 'baseline', padding: '6px 0', borderTop: `1px solid ${borderColor}` },
-      }, h('span', { style: { gridColumn: compact ? '1 / -1' : undefined, color: primaryColor, overflowWrap: 'anywhere', fontSize: 14 } }, h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 7, height: 7, marginRight: 8, background: palette[index] } }), category),
+      }, h('span', { style: { gridColumn: compact ? '1 / -1' : undefined, color: primaryColor, overflowWrap: 'anywhere', fontSize: 14 } }, h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 7, height: 7, marginRight: 8, background: palette[index] } }), category, ...(chart.annotations ?? []).flatMap((a, i) => a.categoryIndex === index ? [h('sup', { key: i, 'data-chart-annotation-marker': true, style: { marginLeft: 3 } }, String(i + 1))] : [])),
       h('strong', { 'data-chart-composition-value': true, style: { color: primaryColor, fontSize: formatNumber(values[index]).length > 12 ? 14 : 16,
-        textAlign: compact ? 'left' : 'right', paddingLeft: compact ? 15 : 0,
+        textAlign: compact ? 'left' : 'right', paddingLeft: compact ? 15 : 0, gridColumn: compact && labelWidth(formatNumber(values[index]), 14) > width * .55 ? '1 / -1' : undefined,
         fontWeight: 500, overflowWrap: 'anywhere' } }, numberText(formatNumber(values[index]))),
-      h('span', { 'data-chart-share': true, style: { color: textColor, fontSize: 14, textAlign: 'right', whiteSpace: 'nowrap' } }, formatPercentage(values[index] / total * 100)))))));
+      h('span', { 'data-chart-share': true, style: { color: textColor, fontSize: 14, gridColumn: compact ? 2 : undefined, textAlign: 'right', whiteSpace: 'nowrap' } }, formatPercentage(values[index] / total * 100)))))));
 }
 
 const actionStyle = { border: `1px solid ${borderColor}`, borderRadius: 5, background: paperColor, color: textColor, padding: '5px 9px', minHeight: 28, font: 'inherit', fontSize: 12, cursor: 'pointer' };
-function NumberTable({ chart, english, visible }) {
-  const [sort, setSort] = useState(null);
-  const table = chartTable(chart, english);
-  const pie = chart.type === 'pie', total = pie ? chart.series[0].values.reduce((sum, value) => sum + value, 0) : null;
-  const rows = table.rows.map((row, index) => ({ row, index }));
-  if (sort) rows.sort((a, b) => {
-    const x = a.row[sort.column], y = b.row[sort.column];
-    if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
-    return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))) * sort.direction;
-  });
-  const cellStyle = { padding: '9px 10px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-  return h('div', { 'data-chart-accessible-data': true, 'data-visible': !!visible, style: visible ? { overflow: 'auto', maxHeight: 380, marginTop: 12 } : visuallyHidden }, h('table', { 'data-chart-data': true, style: { borderCollapse: 'collapse', width: '100%', fontSize: 12 } },
-    h('caption', { style: visuallyHidden }, `${chart.title} · ${chart.unit}`),
-    h('thead', null, h('tr', null, table.columns.map((name, column) => h('th', { key: column, scope: 'col', 'aria-sort': sort?.column === column ? sort.direction === 1 ? 'ascending' : 'descending' : 'none', style: { ...cellStyle, textAlign: column ? 'right' : 'left', position: 'sticky', top: 0, background: '#f7f6f4' } },
-      visible ? h('button', { className: 'eris-chart-action', type: 'button', onClick: () => setSort({ column, direction: sort?.column === column ? -sort.direction : column ? -1 : 1 }), style: { ...actionStyle, border: 0, background: 'transparent', color: primaryColor }, 'aria-label': `${english ? 'Sort by' : '排序'} ${name}` }, name, sort?.column === column ? sort.direction === 1 ? ' ↑' : ' ↓' : '') : name)),
-      pie ? h('th', { scope: 'col', style: cellStyle }, english ? 'Share' : '占比') : null)),
-    h('tbody', null, rows.map(({ row, index }) => h('tr', { key: index }, row.map((value, column) => h(column ? 'td' : 'th', { key: column, scope: column ? undefined : 'row', style: { ...cellStyle, textAlign: column ? 'right' : 'left', fontWeight: 400 } }, value === null ? (english ? 'Unknown' : '未知') : typeof value === 'number' ? formatNumber(value) : value)),
-      pie ? h('td', { style: cellStyle }, `${formatPercentage(chart.series[0].values[index] / total * 100)} (${formatNumber(chart.series[0].values[index])}/${formatNumber(total)})`) : null)))));
+// Exact observations remain available to screen readers without a second visual representation.
+function AccessibleValues({ chart, english }) {
+  const valueText = value => value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
+  const total = chart.type === 'pie' ? chart.series[0].values.reduce((sum, value) => sum + value, 0) : null;
+  return h('dl', { 'data-chart-accessible-data': true, style: visuallyHidden }, chart.categories.map((category, index) =>
+    h('div', { key: index }, h('dt', null, category), h('dd', null,
+      ['scatter', 'bubble'].includes(chart.type) ? `${chart.xLabel}：${valueText(chart.xValues[index])} ${chart.xUnit} · ` : '',
+      chart.series.map(series => `${series.name}：${valueText(series.values[index])} ${chart.unit}${chart.type === 'interval' ? ` [${valueText(series.lowerValues[index])}, ${valueText(series.upperValues[index])}]` : ''}`).join(' · '),
+      chart.type === 'bubble' ? ` · ${chart.sizeLabel}：${valueText(chart.sizeValues[index])} ${chart.sizeUnit}` : '',
+      total === null ? '' : ` · ${formatPercentage(chart.series[0].values[index] / total * 100)} (${formatNumber(chart.series[0].values[index])}/${formatNumber(total)})`))));
 }
 let researchModule;
 function AdvancedChart(props) {
@@ -484,27 +496,20 @@ function AdvancedChart(props) {
 }
 export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh' }) {
   const [ref, width] = useWidth();
-  const [view, setView] = useState('chart');
   const identities = seriesIndexes(chart), advanced = researchTypes.includes(chart.type);
   const english = !language.startsWith('zh');
-  const legend = chart.series.length > 1 && ['bar', 'scatter', 'dumbbell'].includes(chart.type);
-  const summary = chartSummary(chart, english);
+  const legend = chart.series.length > 1 && ['dot', 'scatter', 'bubble', 'dumbbell', 'slope', 'bump'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
     position: 'relative', margin: '14px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
-    border: '1px solid #e4dfe0', borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
+    border: `1px solid ${borderColor}`, borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
   } }, h('figcaption', null,
-    h('div', { className: 'eris-chart-heading' },
-      h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600, flex: 1, minWidth: 0 } }, chart.title),
-      h('div', { 'data-chart-actions': true, role: 'group', 'aria-label': english ? 'View' : '视图', className: 'eris-chart-switch' }, ['chart', 'table'].map(mode => h('button', { key: mode, className: 'eris-chart-action', type: 'button', 'aria-pressed': view === mode, onClick: () => setView(mode), style: { ...actionStyle, minHeight: 24, padding: '3px 7px', fontSize: 11, border: 0, color: view === mode ? '#fff' : textColor, background: view === mode ? '#33272b' : 'transparent' } }, mode === 'chart' ? english ? 'Chart' : '图表' : english ? 'Data' : '数据')))),
-    h('div', { style: { marginTop: 4, fontSize: 11, lineHeight: 1.5 } }, `${chart.scope} · ${english ? 'Unit' : '单位'}：${chart.unit}`)),
-  summary.length ? h('div', { className: 'eris-chart-summary', 'data-chart-summary': true }, summary.map((item, i) => h('span', { key: i }, h('span', null, item.label), h('strong', null, item.value)))) : null,
-  h('div', { hidden: view !== 'chart' },
-    legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 8, fontSize: 11 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor } },
-      h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-    h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
-      : chart.type === 'bar' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english }))),
-  h(NumberTable, { chart, english, visible: view === 'table' }),
-  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '7px 0 0', padding: '7px 0 0 20px', borderTop: `1px solid ${borderColor}`, fontSize: 11, lineHeight: 1.55, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i, style: { paddingBottom: 5 } },
-    h('strong', { style: { color: '#774143', fontWeight: 500 } }, `${chart.categories[a.categoryIndex]} · ${chart.series[a.seriesIndex].name}：${formatNumber(chart.series[a.seriesIndex].values[a.categoryIndex])} ${chart.unit}`), ' — ', a.note))) : null,
-  h('footer', { style: { marginTop: 6, fontSize: 10.5, lineHeight: 1.5 } }, `${english ? 'Source' : '来源'}：${chart.source}`));
+    h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600 } }, chart.title),
+    h('div', { style: { marginTop: 3, fontSize: 12, lineHeight: 1.45 } }, `${chart.scope} · ${chart.unit}`)),
+  legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 12 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
+    h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
+  h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
+    : chart.type === 'dot' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
+  h(AccessibleValues, { chart, english }),
+  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 12, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null,
+  h('footer', { style: { marginTop: 5, fontSize: 11, lineHeight: 1.45 } }, `${english ? 'Source' : '来源'}：${chart.source}`));
 });

@@ -20,7 +20,19 @@ const textResult = (value: unknown) => ({ content: [{ type: "text" as const, tex
 
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
-    list_data: async (value) => textResult(await options.data.list(value as JsonObject)),
+    list_data: async (value) => {
+      const result = await options.data.list(value as JsonObject);
+      const current = result.currentRun as JsonObject | undefined;
+      const summary = current?.summary as JsonObject | undefined;
+      const statistics = summary?.formalComparisonStats as JsonObject | undefined;
+      if (result.kind !== "runs" || !statistics) return textResult(result);
+      // The initial overview carries counts. Case narratives are requested by runId when needed.
+      // Keep the data source intact: chart provenance validation still reads its complete references.
+      const { records: _records, ...counts } = statistics;
+      const { formalComparisonReferences: _references, ...progress } = summary!;
+      const tiers = (counts.tiers as JsonObject[]).map(({ references: _sources, ...tier }) => tier);
+      return textResult({ ...result, currentRun: { ...current, summary: { ...progress, formalComparisonStats: { ...counts, tiers } } } });
+    },
     read_data: async (value) => { const args = value as { reference: AnalysisReference; offset?: number; limit?: number }; const result = textResult(await options.data.read(args.reference, args)); return args.reference.taskId ? result : { ...result, details: { sourceRead: { tool: "read_data", args } } }; },
     search_data: async (value) => { const args = value as { reference: AnalysisReference; query: string; offset?: number; limit?: number }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
     search_web: async (value, context) => textResult(await options.search.search(value as WebSearchRequest, context.signal)),

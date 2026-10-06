@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { AgentRequest } from "@eval/contracts";
 import { attributionTableReview } from "@eval/agents/attribution";
 import { comparisonScope, type ComparisonInput, type SourceReviewItem } from "@eval/agents/comparison";
+import { contestedFactReviews, contestedPairFacts } from "./contested-facts.js";
 
 type TableReview = ReturnType<typeof attributionTableReview>;
 
@@ -28,11 +29,15 @@ export function comparisonSourceReview(request: AgentRequest, reviews: Record<st
     const other = labels.find(other => other !== label)!;
     const counterpart = input.attributions[other];
     const otherReview = reviews[other];
-    if (counterpart?.core_assessment.meets_core !== true || !otherReview || otherReview.errors.length || otherReview.concerns.length ||
-      !commonCoreRefs(other, false).length || counterpart.core_assessment.criterion_ids.some(id => {
+    if (!counterpart || !otherReview || otherReview.errors.length || otherReview.concerns.length) return false;
+    // A confirmed one-sided failure decides the pair; two confirmed failures decide it as both bad.
+    // Unverified rows on the failed side cannot restore that side or change the outcome.
+    const counterpartCore = counterpart.core_assessment.meets_core;
+    if (counterpartCore !== true && counterpartCore !== false) return false;
+    if (counterpartCore && (!commonCoreRefs(other, false).length || counterpart.core_assessment.criterion_ids.some(id => {
         const facts = counterpart.criterion_assessments.filter(fact => fact.criterion_id === id);
         return facts.length !== 1 || facts[0].evidence_status !== "established" || facts[0].status === "unknown";
-      })) return false;
+      }))) return false;
     const failed = new Set(commonCoreRefs(label, true));
     if (!failed.size) return false;
     return review.confirmed_conflicts.some(row => row.finding_indices.some(index => {
@@ -44,13 +49,16 @@ export function comparisonSourceReview(request: AgentRequest, reviews: Record<st
         !!criterion && failed.has(criterion.id) && scope.findings[label]?.[index]?.scope === "pair";
     }));
   };
-  return Object.fromEntries(Object.entries(reviews).flatMap(([label, review]) => {
-    const keepUnknown = canKeepUnverifiedWithoutReview(label, review);
+  const contested = contestedFactReviews(contestedPairFacts(input), labels);
+  return Object.fromEntries(labels.flatMap((label) => {
+    const review = reviews[label];
+    const keepUnknown = review ? canKeepUnverifiedWithoutReview(label, review) : false;
     const items: SourceReviewItem[] = [
-      ...review.errors.map(issue => ({ kind: issue.code === "table_conflict_unreported" ? "unresolved_conflict" as const : "invalid_material" as const,
+      ...(review?.errors ?? []).map(issue => ({ kind: issue.code === "table_conflict_unreported" ? "unresolved_conflict" as const : "invalid_material" as const,
         reason: issue.message, requires_review: true })),
-      ...review.concerns.map(concern => ({ kind: concern.kind, reason: concern.reason,
+      ...(review?.concerns ?? []).map(concern => ({ kind: concern.kind, reason: concern.reason,
         requires_review: !(keepUnknown && concern.kind === "unverified") })),
+      ...(contested[label] ?? []),
     ];
     return items.length ? [[label, items]] : [];
   }));

@@ -365,9 +365,9 @@ npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope verdic
 | `results/clustering.jsonl` | 每个模型×批次分片的归类决定（观察、归类/延期、新类、合并与目录维护），行内 `evaluator_version` 标识产出评测器；run 结束应用进问题库 |
 | `task_summaries.md` | 以 `batch_id / case_id` 标识逐题结论、同项对比、双方优缺点、原始回答耗时与 token 对照，以及失败、输入跳过原因和输入异常；开启改写时优先展示润色文案 |
 | `state.json` | 唯一进度账本：任务与输入索引、批次范围、预检、当前 `evaluatorVersion` 与引擎身份、结果引用、待修草稿与错误、累计用量；已接受收据保留产出时的评测器版本与判官模型 ID（不保存连接配置）；候选信息仅登记一次 |
-| `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `evaluator_versions`、`judge_models`（按阶段列出去重的模型 ID）和 `artifacts` 产物清单；不包含回答正文，来源冲突单列 `statistical_diagnostics` |
+| `stats.json` | 数量、对局胜出、Token、缓存命中、耗时和校验汇总，以及 `evaluator_versions`、`judge_models`（按阶段列出去重的模型 ID）和 `artifacts` 产物清单；不包含回答正文，来源冲突单列 `statistical_diagnostics`，标准冲突单列 `standard_conflicts` |
 
-`stats.json` 保存 `standings`（每个版本对局数、核心可判题数、完成核心要求、核心待定题数、胜/都好/都差，以及核心样本覆盖和冲突计数）、派生的 `head_to_head` 对局矩阵与 `per_version`；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。报告与看板的失败只计 `failed`、`timed_out`；`blocked` 单列为依赖阻塞，`cancelled` 单列为取消，待完成计 `pending`、`running`，原始任务状态保持不变。各项均按任务计数，计划任务包含共同标准、归因、对比，以及显式开启的核验、改写和聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
+`stats.json` 保存 `standings`（每个版本对局数、核心可判题数、完成核心要求、核心待定题数、胜/都好/都差，以及核心样本覆盖和冲突计数）、派生的 `head_to_head` 对局矩阵与 `per_version`；`coverage` 记录计划、已决、待核和未完成的正式比较数，`standard_conflicts` 列出已标记标准冲突的归因，供人工复核；`by_batch` 按批次保存数量与对比口径，字段口径与总体统计一致；`problem_library` 按模型保存 `components`/`classes`/`occurrences` 与本 run 的 `assigned`/`proposed_new_classes`/`merged_classes`（后二者是接受的提议数与合并决定数，不是库文件的净增长）。`artifacts` 列出权威结果目录、结果文件、报告和状态文件。报告与看板的失败只计 `failed`、`timed_out`；`blocked` 单列为依赖阻塞，`cancelled` 单列为取消，待完成计 `pending`、`running`，原始任务状态保持不变。各项均按任务计数，计划任务包含共同标准、归因、对比，以及显式开启的核验、改写和聚类阶段；有效比较统计派生判决中的胜出、都好、都差。正式 JSONL 继续通过 `case.batch_id` 区分批次。Token、耗时和缓存统计保持全局口径。
 
 正确性和核心完成情况按 `batch_id + case_id + version` 去重；同一回答参加多场对战或保留多条复核归因时，只计一次。正确性优先采用正式对比引用的归因来源；没有正式对比时，只采用唯一的当前输入来源，来源缺失、来源不唯一或结论冲突均计为未确定，冲突另计 `conflicted_count` 并写入 `statistical_diagnostics`。核心通过率的分母是结论明确的去重样本数，`core_decidable_coverage` 表示这部分样本占所有核心样本的比例；跨对战的核心结论冲突计入 `core_conflicted_count` 和未确定数。`standings.entered`、胜率及 `head_to_head` 仍按实际对战场数计数。上述报告字段不改变冻结的统计上传日志结构。
 

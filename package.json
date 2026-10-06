@@ -33,7 +33,7 @@
     "build:agent": "node scripts/build-agent.mjs",
     "agent": "node --env-file-if-exists=.env dist/apps/host/src/agent.js",
     "test:agent:upstream": "vitest run --config agent/vitest.config.mjs",
-    "test:agent:browser": "node agent/tests/browser-smoke.mjs && node agent/tests/browser-conversation.mjs",
+    "test:agent:browser": "node agent/tests/browser-smoke.mjs && node agent/tests/browser-conversation.mjs && node agent/tests/chart-layout.mjs",
     "test:agent:performance": "node scripts/build-agent-benchmarks.mjs && vitest run --config agent/benchmarks.config.mjs benchmarks/"
   },
   "dependencies": {

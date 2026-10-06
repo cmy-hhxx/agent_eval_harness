@@ -577,6 +577,16 @@ test("a private-only core failure automatically requests source review without c
  validate(data.request,pending); assert.deepEqual(input.attributions,source);
 });
 
+test("a blocking unresolved-conflict source review keeps the pair pending with the located reason", () => {
+ const data=pair(), input=data.request.input as unknown as ComparisonInput;
+ input.source_review = { A: [{ kind: "unresolved_conflict", requires_review: true,
+   reason: "共同要求 r1 双方给出不同结论：A=2025-12-31；B=2026-01-05。" }] };
+ const source=structuredClone(input.attributions), pending=resolve(data);
+ assert.equal(pending.status,"needs_review");
+ assert(pending.review_requests.some(item => item.candidate === "A" && item.reason.includes("不同结论")));
+ validate(data.request,pending); assert.deepEqual(input.attributions,source);
+});
+
 test("private findings remain visible but cannot become advantages or decisive findings through an unlinked row", () => {
   const data = pair(), input = privateRisk(data);
   input.attributions.A.findings.push({ ...structuredClone(input.attributions.A.findings[0]), type: "problem",

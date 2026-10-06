@@ -65,6 +65,7 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     summary:result.summary,meets_core:result.core_assessment.meets_core,core_reason:result.core_assessment.reason,
     core_requirements:result.core_assessment.criterion_ids.map(id=>task.requirements.findIndex(item=>item.id===id)+1),
     is_correct:truth.available?result.is_correct:null,correctness_reason:truth.available?result.correctness_reason:"",correctness_evidence_indices:truth.available?correctness:[],
+    ...(truth.available && result.standard_conflict === true ? {standard_conflict:true} : {}),
     criterion_assessments:result.criterion_assessments.flatMap(row=>row.status==="not_applicable"?[]:[{
       status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),

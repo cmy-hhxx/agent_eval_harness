@@ -1,6 +1,6 @@
 // Derived display data only. Source values and accepted receipts stay unchanged.
-export const researchTypes = ['dumbbell', 'heatmap', 'scatter', 'waterfall', 'histogram'];
-export const researchColors = ['#676767', '#774143', '#424242', '#A97073'];
+export const researchTypes = ['dumbbell', 'heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'bump', 'interval', 'boxplot', 'violin'];
+export { researchColors } from './chart-theme.js';
 export const differenceUnit = (chart, english = false) => ['%', '％'].includes(chart.unit) ? english ? 'pp' : '百分点' : chart.unit;
 export const compactNumber = value => {
   const rounded = Number(value.toPrecision(6)), magnitude = Math.abs(rounded);
@@ -47,51 +47,6 @@ export function quantile(values, probability) {
   const sorted = values.toSorted((a, b) => a - b), position = (sorted.length - 1) * probability, lower = Math.floor(position);
   return decimalSum([sorted[lower], (sorted[Math.ceil(position)] - sorted[lower]) * (position - lower)]);
 }
-export function chartSummary(chart, english = false) {
-  if (chart.type === 'dumbbell') {
-    const pairs = pairedDifferences(chart).filter(p => p.value !== null), peak = pairs.toSorted((a, b) => Math.abs(b.value) - Math.abs(a.value))[0];
-    return [{ label: english ? 'Paired' : '有效配对', value: `${pairs.length}/${chart.categories.length}` },
-      ...(peak ? [{ label: `${english ? 'Max Δ' : '最大差值'} · ${chart.series[1].name}−${chart.series[0].name}`, value: `${peak.name} ${signedNumber(peak.value)} ${differenceUnit(chart, english)}` }] : [])];
-  }
-  if (chart.type === 'heatmap') {
-    const values = chart.series.flatMap(s => s.values), known = values.filter(v => v !== null);
-    return [{ label: english ? 'Matrix' : '矩阵', value: `${chart.series.length} × ${chart.categories.length}` }, { label: english ? 'Recorded' : '有记录', value: `${known.length}/${values.length}` }];
-  }
-  if (chart.type === 'scatter') {
-    const pairs = chart.series.flatMap(s => s.values.flatMap((y, i) => y !== null && chart.xValues[i] !== null ? [{ x: chart.xValues[i], y }] : []));
-    return [{ label: english ? 'Points' : '观测点', value: String(pairs.length) },
-      { label: `${chart.xLabel}${english ? ' median' : '中位'}`, value: `${compactNumber(quantile(pairs.map(p => p.x), .5))} ${chart.xUnit}` },
-      { label: english ? 'Y median' : '纵轴中位', value: `${compactNumber(quantile(pairs.map(p => p.y), .5))} ${chart.unit}` }];
-  }
-  if (chart.type === 'histogram') {
-    const values = chart.series[0].values;
-    return [{ label: english ? 'Observations' : '观测数', value: String(values.length) }, { label: english ? 'Median' : '中位数', value: `${compactNumber(quantile(values, .5))} ${chart.unit}` },
-      { label: 'Q1–Q3', value: `${compactNumber(quantile(values, .25))}–${compactNumber(quantile(values, .75))} ${chart.unit}` }];
-  }
-  if (chart.type === 'waterfall') {
-    const steps = waterfallSteps(chart);
-    return [{ label: english ? 'Start → End' : '起点 → 合计', value: `${compactNumber(steps[0].value)} → ${compactNumber(steps.at(-1).value)} ${chart.unit}` },
-      { label: english ? 'Net change' : '净变动', value: `${signedNumber(decimalSum(chart.series[0].values.slice(1)))} ${chart.unit}` }];
-  }
-  return [];
-}
-export function chartTable(chart, english = false) {
-  const columns = [english ? 'Item' : '项目'];
-  if (chart.type === 'scatter') columns.push(`${chart.xLabel} · ${chart.xUnit}`);
-  columns.push(...chart.series.map(s => `${s.name} · ${chart.unit}`));
-  const difference = ['dumbbell', 'heatmap'].includes(chart.type) && chart.series.length === 2;
-  if (difference) columns.push(`${chart.series[1].name} − ${chart.series[0].name} · ${differenceUnit(chart, english)}`);
-  if (chart.type === 'waterfall') columns.push(english ? 'Cumulative' : `累计 · ${chart.unit}`);
-  const rows = chart.categories.map((category, index) => {
-    const row = [category];
-    if (chart.type === 'scatter') row.push(chart.xValues[index]);
-    row.push(...chart.series.map(s => s.values[index]));
-    if (difference) row.push(pairedDifferences(chart)[index].value);
-    if (chart.type === 'waterfall') row.push(waterfallSteps(chart)[index].end);
-    return row;
-  });
-  return { columns, rows };
-}
 export function chartReading(chart, data, index) {
   if (data?.derived === 'difference') {
     const pair = pairedDifferences(chart)[data.categoryIndex];
@@ -106,6 +61,30 @@ export function chartReading(chart, data, index) {
     return `${step.name} · ${step.value} ${chart.unit} · 累计 ${step.end} ${chart.unit}`;
   }
   const series = chart.series[data.sourceSeries], value = series.values[data.categoryIndex];
-  const detail = `${series.name}：${value === null ? '未知' : `${value} ${chart.unit}`}`;
-  return `${chart.categories[data.categoryIndex]} · ${chart.type === 'scatter' ? `${chart.xLabel}：${chart.xValues[data.categoryIndex]} ${chart.xUnit} · ` : ''}${detail}`;
+  const detail = `${series.name}：${value === null ? '未知' : `${value} ${chart.unit}`}${chart.type === 'interval' ? ` [${series.lowerValues[data.categoryIndex]}, ${series.upperValues[data.categoryIndex]}]` : ''}${chart.type === 'bubble' ? ` · ${chart.sizeLabel}：${chart.sizeValues[data.categoryIndex]} ${chart.sizeUnit}` : ''}`;
+  return `${chart.categories[data.categoryIndex]} · ${['scatter', 'bubble'].includes(chart.type) ? `${chart.xLabel}：${chart.xValues[data.categoryIndex]} ${chart.xUnit} · ` : ''}${detail}`;
+}
+
+export function boxSummary(values) {
+  const sorted = values.filter(v => v !== null).toSorted((a, b) => a - b);
+  const q1 = quantile(sorted, .25), median = quantile(sorted, .5), q3 = quantile(sorted, .75), span = q3 - q1;
+  return { count: sorted.length, q1, median, q3,
+    low: sorted.find(v => v >= q1 - 1.5 * span), high: sorted.findLast(v => v <= q3 + 1.5 * span) };
+}
+// Gaussian KDE, common Silverman bandwidth across groups, clipped to observed support.
+export function violinDensity(series) {
+  const pooled = series.flatMap(s => s.values).filter(v => v !== null), n = pooled.length;
+  const mean = pooled.reduce((s, v) => s + v, 0) / n;
+  const sigma = Math.sqrt(pooled.reduce((s, v) => s + (v - mean) ** 2, 0) / Math.max(1, n - 1));
+  const robust = (quantile(pooled, .75) - quantile(pooled, .25)) / 1.34;
+  const scale = Math.min(...[sigma, robust].filter(v => v > 0));
+  const bandwidth = Number.isFinite(scale) ? .9 * scale * n ** (-.2) : Math.max(Math.abs(mean) * .01, 1);
+  const groups = series.map(s => {
+    const values = s.values.filter(v => v !== null), min = Math.min(...values), max = Math.max(...values);
+    return Array.from({ length: min === max ? 1 : 49 }, (_, i) => {
+      const value = min + (max - min) * i / 48;
+      return { value, density: values.reduce((sum, v) => sum + Math.exp(-.5 * ((value - v) / bandwidth) ** 2), 0) / (values.length * bandwidth * Math.sqrt(2 * Math.PI)) };
+    });
+  });
+  return { bandwidth, groups, maximum: Math.max(...groups.flat().map(p => p.density)) };
 }

@@ -621,14 +621,22 @@
     "properties": {
       "type": {
         "enum": [
-          "bar",
+          "dot",
           "line",
           "pie",
           "dumbbell",
           "heatmap",
           "scatter",
           "waterfall",
-          "histogram"
+          "histogram",
+          "radial_heatmap",
+          "bubble",
+          "bubble_matrix",
+          "slope",
+          "bump",
+          "interval",
+          "boxplot",
+          "violin"
         ]
       },
       "title": {
@@ -692,6 +700,32 @@
                 ],
                 "minimum": -1000000000000000,
                 "maximum": 1000000000000000
+              }
+            },
+            "lowerValues": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": -1000000000000000.0,
+                "maximum": 1000000000000000.0
+              }
+            },
+            "upperValues": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": -1000000000000000.0,
+                "maximum": 1000000000000000.0
               }
             }
           },
@@ -951,6 +985,31 @@
           ]
         },
         "description": "最多3处有证据的重点标注；用真实数据位置指出异常、差距或拐点，不重复标题。"
+      },
+      "sizeValues": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 200,
+        "items": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000000000000000.0
+        }
+      },
+      "sizeLabel": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "\\S"
+      },
+      "sizeUnit": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "\\S"
       }
     },
     "required": [
@@ -1013,7 +1072,10 @@
         "if": {
           "properties": {
             "type": {
-              "const": "scatter"
+              "enum": [
+                "scatter",
+                "bubble"
+              ]
             }
           }
         },
@@ -1057,7 +1119,10 @@
             "type": {
               "enum": [
                 "scatter",
-                "histogram"
+                "histogram",
+                "bubble",
+                "boxplot",
+                "violin"
               ]
             }
           }
@@ -1108,6 +1173,201 @@
             },
             "categories": {
               "minItems": 2
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "radial_heatmap"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 3,
+              "maxItems": 12,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 2
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "bubble"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "sizeValues",
+            "sizeLabel",
+            "sizeUnit"
+          ]
+        },
+        "else": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "sizeValues"
+                ]
+              },
+              {
+                "required": [
+                  "sizeLabel"
+                ]
+              },
+              {
+                "required": [
+                  "sizeUnit"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "interval"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "series": {
+              "items": {
+                "required": [
+                  "lowerValues",
+                  "upperValues"
+                ]
+              }
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "series": {
+              "items": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "lowerValues"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "upperValues"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "slope"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "bump"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 12
+            },
+            "series": {
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "bubble_matrix"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "series": {
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "enum": [
+                "boxplot",
+                "violin"
+              ]
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 5
             }
           }
         }

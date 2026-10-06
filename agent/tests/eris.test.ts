@@ -5,6 +5,27 @@ import { createEris, type ErisDependencies } from "@eval/assistant";
 import { erisPrompt } from "@eval/prompts";
 import type { WebSearchRequest, WebReadResult } from "@eval/contracts";
 
+test('overview material keeps exact counts while case narratives are read explicitly by run', async () => {
+  const unexpected = async (): Promise<never> => { throw new Error('Unexpected call'); };
+  const reference = { runId: 'run', taskId: 'case' };
+  const summary = { inputCount: 12, evaluatedInputCount: 10, formalComparisonReferences: [reference],
+    formalComparisonStats: { comparisonCount: 3, records: [{ reference, question: 'Only needed for case analysis' }],
+      tiers: [{ comparisonTier: 'Fast', comparisonCount: 3, both_good: 1, both_bad: 1, references: [reference], models: [{ wins: 1, losses: 0, both_good: 1, both_bad: 1 }] }] } };
+  const original = structuredClone(summary);
+  const eris = createEris({ data: { list: async query => query.runId ? { kind: 'inputs', summary } : { kind: 'runs', currentRun: { runId: 'run', summary } }, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+  const tool = eris.tools.find(t => t.name === 'list_data')!;
+  const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'list', signal: new AbortController().signal, progress() {} };
+  const result = JSON.parse((await tool.execute({}, context)).content[0].text!);
+  assert.equal(result.currentRun.summary.evaluatedInputCount, 10);
+  assert.equal(result.currentRun.summary.inputCount, 12);
+  assert.equal(result.currentRun.summary.formalComparisonStats.records, undefined);
+  assert.equal(result.currentRun.summary.formalComparisonStats.tiers[0].references, undefined);
+  assert.deepEqual(result.currentRun.summary.formalComparisonStats.tiers[0].models, summary.formalComparisonStats.tiers[0].models);
+  assert.deepEqual(JSON.parse((await tool.execute({ runId: 'run' }, context)).content[0].text!).summary, original);
+  assert.deepEqual(summary, original, 'source values and full provenance remain intact for chart validation');
+});
+
 test("Eris's public definition includes every tool resource and validates before invoking dependencies", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const received: unknown[] = [];

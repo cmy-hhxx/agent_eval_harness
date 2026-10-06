@@ -52,7 +52,6 @@ test("a closed common core failure leaves unrelated missing rows visible without
 test("unknown cores, uncertain common failure and insufficient conflict findings retain the review gate", () => {
   const changes = [
     (data: ReturnType<typeof fixture>) => { data.attributions.B.core_assessment.meets_core = null; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.A.core_assessment.meets_core = false; },
     (data: ReturnType<typeof fixture>) => { data.attributions.A.core_assessment.meets_core = null; },
     (data: ReturnType<typeof fixture>) => { data.attributions.B.criterion_assessments[0].evidence_status = "uncertain"; },
     (data: ReturnType<typeof fixture>) => { data.attributions.A.criterion_assessments[0].evidence_status = "uncertain"; },
@@ -93,6 +92,14 @@ test("a counterpart's missing rows or any unresolved ambiguity keep both unknown
   assert(mixed.B.every(item => item.requires_review));
 });
 
+test("two confirmed core failures keep the unverified rows non-blocking", () => {
+  const data = fixture();
+  data.attributions.A.core_assessment.meets_core = false;
+  const result = comparisonSourceReview(data.request, data.reviews());
+  assert(result.B.length > 0);
+  assert(result.B.every(item => !item.requires_review));
+});
+
 test("invalid recomputed material cannot be hidden behind a confirmed failure", () => {
   const data = fixture(), reviews = data.reviews();
   reviews.B = attributionTableReview({ sources: { answer: data.sources.B }, input: { answer: {
@@ -101,4 +108,18 @@ test("invalid recomputed material cannot be hidden behind a confirmed failure", 
   const result = comparisonSourceReview(data.request, reviews);
   assert(result.B.some(item => item.kind === "invalid_material"));
   assert(result.B.every(item => item.requires_review));
+});
+
+test("divergent core dates for one shared requirement keep the pair pending", () => {
+  const data = fixture();
+  data.attributions.A.findings[0].text = "远端交割日 2025年12月31日（周三）";
+  data.attributions.B.findings[0].type = "strength";
+  data.attributions.B.findings[0].text = "远端交割日 2026年1月5日（周一）";
+  const result = comparisonSourceReview(data.request, data.reviews());
+  for (const label of ["A", "B"] as const) {
+    const item = result[label]!.find(entry => entry.kind === "unresolved_conflict" && entry.reason.includes("不同结论"));
+    assert(item?.requires_review);
+    assert.match(item!.reason, /2025年12月31日/);
+    assert.match(item!.reason, /2026年1月5日/);
+  }
 });

@@ -76,7 +76,7 @@ export async function serveAssistant(options: { port: number; userId: string; we
         const injection = bootThemeInjections("light");
         res.setHeader("cache-control", "no-store");
         res.end(content.toString("utf8").replace("<!--agent-theme-->", injection.filter((row) => row.kind === "style").map((row) => `<style>${row.text}</style>`).join("")).replace("<body>", `<body>${injection.filter((row) => row.kind === "script").map((row) => `<script>${row.text}</script>`).join("")}`));
-      } else { res.setHeader("cache-control", "public,max-age=31536000,immutable"); res.end(content); }
+      } else { res.setHeader("cache-control", path.extname(file) === ".html" ? "no-store" : "public,max-age=31536000,immutable"); res.end(content); }
     } catch (error) {
       options.onError?.(error);
       if (res.headersSent) { res.destroy(); return; }

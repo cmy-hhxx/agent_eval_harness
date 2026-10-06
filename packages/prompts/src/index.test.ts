@@ -110,15 +110,16 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(systemPrompt, /直接使用 currentRun.summary/);
   assert.match(systemPrompt, /无需遍历历史、手算分页或读取正文/);
   assert.match(systemPrompt, /直接使用 summary.formalComparisonStats 的完整正式战绩/);
-  assert.match(systemPrompt, /常规回答正文通常50–120字，至多150字/);
-  assert.match(systemPrompt, /有图时正文最多两句、80字/);
+  assert.match(systemPrompt, /篇幅服从问题/);
+  assert.match(systemPrompt, /原因分析通常用2–3个短段/);
+  assert.doesNotMatch(systemPrompt, /正文最多两句、80字|至多150字/);
   assert.match(systemPrompt, /主动调用 show_chart，Fast、Expert 分图/);
   assert.match(systemPrompt, /直接指出所读样本中的优势和主要短板/);
   assert.match(systemPrompt, /样本限制用一句短语放在图的 scope/);
   assert.match(systemPrompt, /有双方均好或均差时不能写成“全负”“全胜”/);
   assert.match(systemPrompt, /完整问句用于内部核验/);
   assert.doesNotMatch(systemPrompt, /正文用[^。]*完整问句/);
-  assert.match(systemPrompt, /自主选两个决定性案例/);
+  assert.match(systemPrompt, /自主选1–2个决定性案例/);
   assert.match(systemPrompt, /正式对局数采用 formalComparisonStats.comparisonCount/);
   assert.match(systemPrompt, /formalComparisonsAccepted 是结果份数/);
   assert.match(systemPrompt, /查错后明确承认具体错误/);
@@ -129,7 +130,7 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(systemPrompt, /原始自然语言问句/);
   assert.match(systemPrompt, /问句、回答、实际推导、断点评语/);
   assert.match(systemPrompt, /首次失去依据或违反题目约束的位置/);
-  assert.match(systemPrompt, /可视化是默认交付方式，不等用户要求/);
+  assert.match(systemPrompt, /同一组信息图、表二选一/);
   assert.match(systemPrompt, /多项数量.*主动调用 show_chart.*直接用 Markdown 表格/);
   assert.doesNotMatch(systemPrompt, /200–400字|450字|至多250字|共四句|单纯数量与进度查询不加图表/);
   assert.match(toolDescriptions.read_data, /正式结果.*不能代替原始问句和回答/);
@@ -138,15 +139,15 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(toolDescriptions.list_data, /先去掉筛选词查同一运行/);
   assert.match(toolDescriptions.list_data, /comparisonCount 是两模型对局场数，三模型一份结果含三场/);
   assert.match(toolDescriptions.list_data, /无需读完所有完整判词/);
-  assert.match(toolDescriptions.list_data, /只选两条短依据/);
+  assert.match(toolDescriptions.list_data, /问原因再补读决定性案例的原问与回答/);
   assert.match(toolDescriptions.read_data, /comparisonTier 来自保存配置/);
   for (const text of [systemPrompt, toolDescriptions.call_specialist])
     assert.match(text, /Fast 只能与 Fast 比，Expert 只能与 Expert 比/);
   assert.match(systemPrompt, /不能混成总排名或跨档优劣/);
   const chart = toolDescriptions.show_chart;
-  assert.match(chart, /A组固定中灰，B组固定暗红/);
+  assert.match(chart, /A组钢蓝，B组淡粉/);
   assert.match(chart, /不随赢家或涨跌改变.*不按类别位置猜测身份/);
-  assert.match(chart, /双方都好、双方都差.*独立的固定中性灰色/);
+  assert.match(chart, /双方都好、双方都差分别用浅蓝和深蓝/);
   assert.match(chart, /taskId 不放在 references 项的顶层/);
   assert.match(chart, /不在校验失败后换成运行引用/);
   assert.match(chart, /正式战绩汇总用 \{statistics:\{runId,comparisonTier\}\}/);
@@ -155,7 +156,18 @@ test("Eris wording completes the business question, verifies corrections and kee
   assert.match(chart, /dumbbell.*两组同口径/);
   assert.match(chart, /waterfall.*可加总/);
   assert.match(chart, /histogram.*程序分箱和计数/);
-  assert.match(chart, /annotations.*最多3处/);
+  assert.match(chart, /annotations.*默认省略.*最多3处/);
+  assert.match(chart, /图独立显示，不附带数据表/);
+  assert.match(chart, /原因与推导写在正文/);
+  assert.match(systemPrompt, /首次断点.*对结果的影响/);
+  assert.match(systemPrompt, /不能从输出猜模型训练、检索能力或内部动机/);
+  assert.match(systemPrompt, /多个案例出现同类断点才归纳共性/);
+  assert.match(systemPrompt, /用户已看过的战绩、口径说明和结论不重新铺一遍/);
+  assert.match(systemPrompt, /已形成的正式对局数不是计划总量/);
+  assert.match(systemPrompt, /先完成读取与作图，再一次性交付最终回复/);
+  assert.match(systemPrompt, /绝不能把登记数写成已评数/);
+  assert.match(systemPrompt, /期末借款余额不能当作年度加权平均利率/);
+  assert.match(systemPrompt, /与参考答案一致也不等于已经证明经济含义正确/);
 });
 
 test("Eris plans independent reads together and stops retrieval once the evidence is sufficient", () => {

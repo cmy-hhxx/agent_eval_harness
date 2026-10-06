@@ -1,12 +1,15 @@
 export interface ChartSpec {
-  type: "bar" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram";
+  type: "dot" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "bump" | "interval" | "boxplot" | "violin";
   title: string;
   scope: string;
   unit: string;
   source: string;
   categories: string[];
-  series: { name: string; values: (number | null)[] }[];
+  series: { name: string; values: (number | null)[]; lowerValues?: (number | null)[]; upperValues?: (number | null)[] }[];
   xValues?: (number | null)[];
+  sizeValues?: (number | null)[];
+  sizeLabel?: string;
+  sizeUnit?: string;
   xLabel?: string;
   xUnit?: string;
   annotations?: { categoryIndex: number; seriesIndex: number; note: string }[];
@@ -40,16 +43,33 @@ export function validateChart(chart: ChartSpec): void {
   for (const annotation of chart.annotations ?? []) {
     if (!chart.categories[annotation.categoryIndex] || !chart.series[annotation.seriesIndex]
       || chart.series[annotation.seriesIndex].values[annotation.categoryIndex] === null
-      || (chart.type === "scatter" && chart.xValues?.[annotation.categoryIndex] == null))
+      || (["scatter", "bubble"].includes(chart.type) && chart.xValues?.[annotation.categoryIndex] == null)
+      || (chart.type === "bubble" && chart.sizeValues?.[annotation.categoryIndex] == null))
       throw new Error("重点标注必须指向实际存在的已知数据点");
   }
-  if (chart.type === "scatter") {
+  if (["scatter", "bubble"].includes(chart.type)) {
     if (chart.xValues?.length !== chart.categories.length || !chart.xLabel?.trim() || !chart.xUnit?.trim()
       || chart.xValues.some(value => value !== null && !Number.isFinite(value)))
       throw new Error("散点图需要与样本对应的横轴数值、指标名和单位");
     const pairs = chart.series.reduce((sum, series) => sum + series.values.filter((value, index) => value !== null && chart.xValues![index] !== null).length, 0);
     if (pairs < 3) throw new Error("散点图至少需要3个完整观测，不能从缺失值补造坐标");
   }
+  if (chart.type === "bubble" && (chart.sizeValues?.length !== chart.categories.length
+    || chart.series.reduce((sum, series) => sum + series.values.filter((v, i) => v !== null && chart.xValues![i] !== null && chart.sizeValues![i] !== null).length, 0) < 3))
+    throw new Error("气泡图需要至少3个横轴、纵轴和大小均有记录的观测");
+  if (chart.type === "slope" && (chart.categories.length !== 2 || !chart.series.some(s => s.values.every(v => v !== null))))
+    throw new Error("坡度图需要两个可比阶段与至少一组完整配对");
+  if (chart.type === "interval") for (const series of chart.series) {
+    if (series.lowerValues?.length !== chart.categories.length || series.upperValues?.length !== chart.categories.length
+      || series.values.some((v, i) => v === null ? series.lowerValues![i] !== null || series.upperValues![i] !== null
+        : series.lowerValues![i] === null || series.upperValues![i] === null || series.lowerValues![i]! > v || series.upperValues![i]! < v))
+      throw new Error("区间图需要对应的已知上下界且包含中心值，缺失项三个值均为 null");
+  }
+  if (["boxplot", "violin"].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === "violin" ? 8 : 5)))
+    throw new Error("箱线图每组至少5条、小提琴图每组至少8条原始观测");
+  if (chart.type === "radial_heatmap" && (chart.series.length < 2 || chart.categories.length < 3
+    || chart.categories.length > 12 || chart.categories.some(label => Array.from(label).length > 12)))
+    throw new Error("环形热力图需要2–4组同口径系列、3–12个类别，类别名最多12字");
   if (chart.type === "dumbbell" && (chart.series.length !== 2 || chart.categories.length < 2))
     throw new Error("差异点图需要两组同口径系列和至少两个比较项目");
   if (["waterfall", "histogram"].includes(chart.type)) {

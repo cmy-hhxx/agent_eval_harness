@@ -83,6 +83,8 @@ export interface AttributionResult {
     matches: boolean;
     evidence_index: number;
   }[];
+  /** With a reference and is_correct=false, set only when verified evidence supports the answer and the standard conflicts. */
+  standard_conflict?: boolean;
   task_analysis: TaskAnalysis;
   criterion_assessments: CriterionAssessment[];
   core_assessment: CoreAssessment;
@@ -113,6 +115,7 @@ export interface AttributionSubmission {
   is_correct: boolean | null;
   correctness_reason: string;
   correctness_evidence_indices: number[];
+  standard_conflict?: boolean;
   criterion_assessments: {
     status: Exclude<CriterionAssessment["status"], "not_applicable">;
     evidence_status: "established" | "uncertain";

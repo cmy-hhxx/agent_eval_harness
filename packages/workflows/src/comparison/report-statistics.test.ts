@@ -47,6 +47,18 @@ test("report separates failed attempts, blocked dependencies and cancelled tasks
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("report surfaces comparison coverage and standard conflicts", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "report-coverage-"));
+  const totals = { ...summarize([], []), coverage: { planned: 43, decided: 40, pending: 1, incomplete: 2 },
+    standard_conflicts: [{ batch_id: "day", case_id: "case", version: "a", task_id: "a" }] };
+  try {
+    await writeOverview(directory, { ...totals, run_id: "coverage", status: "finished", evaluator_versions: ["test"],
+      by_batch: {}, tokens: { totalTokens: 0 }, attempts_without_final_metrics: 0 });
+    const report = await readFile(path.join(directory, "report.md"), "utf8");
+    assert.match(report, /比较覆盖：已决 40；待核 1；未完成 2（计划 43）。标准冲突待核：1 例（见 stats.json）。/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("two-model statistics preserve battle counts while separating answer identity across batches", () => {
   const answers = [answer("a1", "a", true, "first"), answer("b1", "b", true, "first"),
     answer("a2", "a", false, "second"), answer("b2", "b", false, "second")];
@@ -131,4 +143,23 @@ test("missing formal references and multiple input identities do not borrow an u
   assert.equal(differentInputs.per_version!.a!.undetermined, 1);
   assert.equal(differentInputs.per_version!.a!.conflicted_count, 0);
   assert.equal(differentInputs.statistical_diagnostics![0]!.code, "ambiguous_input_source");
+});
+
+test("standard conflicts are surfaced separately from model errors", () => {
+  const first = answer("a", "a", false);
+  first.standard_conflict = true;
+  const result = summarize([first, answer("b", "b", true)], []);
+  assert.deepEqual(result.standard_conflicts, [{ batch_id: "day", case_id: "case", version: "a", task_id: "a" }]);
+  assert(result.statistical_diagnostics!.some((row) => row.metric === "standard" && row.code === "standard_conflict"));
+  assert.equal(result.per_version!.a!.incorrect, 1);
+});
+
+test("coverage distinguishes decided, pending and incomplete comparison tasks", () => {
+  const answers = [answer("a", "a", true), answer("b", "b", true)];
+  const tasks = answers.map(source);
+  const comparisonTask = (id: string): PlannedTask => ({ id, stage: "comparison", inputIds: {}, dependencies: {},
+    data: { ...(tasks[0]!.data as JsonObject), stage: "comparison" } } as unknown as PlannedTask);
+  const result = summarizeResults([...tasks, comparisonTask("decided"), comparisonTask("pending"), comparisonTask("blocked")],
+    [], answers, [pair("a", "b", [true, true], ["a", "b"])], [], [], [{ case: { batch_id: "day", case_id: "case" } }]);
+  assert.deepEqual(result.coverage, { planned: 3, decided: 1, pending: 1, incomplete: 1 });
 });

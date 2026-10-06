@@ -431,6 +431,21 @@ export async function startWorker(
         return enqueueContent(() => submitExclusive(load, jsonText));
       };
       const validateJsonEnvelope = ajv.compile(SUBMISSION_JSON_SCHEMA);
+      // A raw control character inside a JSON string has exactly one intended value; escaping it
+      // preserves the model's text while structural JSON errors still fail without repair.
+      const escapeControlCharacters = (text: string): string | undefined => {
+        let repaired = "", inString = false, escaped = false, changed = false;
+        for (const char of text) {
+          if (inString) {
+            if (escaped) { repaired += char; escaped = false; continue; }
+            if (char === "\\") { repaired += char; escaped = true; continue; }
+            if (char === '"') { inString = false; repaired += char; continue; }
+            if (char.codePointAt(0)! < 0x20) { repaired += JSON.stringify(char).slice(1, -1); changed = true; continue; }
+          } else if (char === '"') inString = true;
+          repaired += char;
+        }
+        return changed && !inString ? repaired : undefined;
+      };
       const submit: ExecutableTool = {
         name: "submit_evaluation",
         inputSchema: spec.evaluation.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : spec.evaluation.outputSchema,
@@ -441,10 +456,14 @@ export async function startWorker(
           let decoded:unknown;
           try { decoded=JSON.parse(text); }
           catch(error) {
-            const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
-            throw new ValidationError([{category:"structure",code:"submission_json_invalid",path:"/json",
-              message:"JSON 正文语法错误，不进行自动修补："+errorText(error),
-              actual:{position,excerpt:text.slice(Math.max(0,position-100),position+100)}}]);
+            const escaped = escapeControlCharacters(text);
+            if (escaped !== undefined) { try { decoded=JSON.parse(escaped); } catch {/**/} }
+            if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+              const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
+              throw new ValidationError([{category:"structure",code:"submission_json_invalid",path:"/json",
+                message:"JSON 正文语法错误，不进行自动修补："+errorText(error),
+                actual:{position,excerpt:text.slice(Math.max(0,position-100),position+100)}}]);
+            }
           }
           if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("评审正文必须为对象");
           return decoded;

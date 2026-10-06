@@ -16,5 +16,6 @@ export default defineConfig({
   },
   esbuild: { jsx: "automatic", tsconfigRaw: { compilerOptions: { experimentalDecorators: false } } },
   define: { "process.env.DSH_CLIENT_BUILD_PROFILE": JSON.stringify("official"), "process.env.DSH_CLIENT_TITLE": JSON.stringify("Eris"), "process.env.NODE_ENV": JSON.stringify("production") },
-  build: { outDir: path.join(root, "dist/agent/web"), emptyOutDir: true, target: "es2023", sourcemap: true },
+  build: { outDir: path.join(root, "dist/agent/web"), emptyOutDir: true, target: "es2023", sourcemap: true,
+    rollupOptions: { input: { app: path.join(root, 'agent/index.html'), charts: path.join(root, 'agent/chart-gallery.html') } } },
 });

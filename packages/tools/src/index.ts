@@ -421,9 +421,14 @@ export const builtinTools: ExecutableTool[] = [
       const content = images(message(ctx, args.candidate, args.message_index));
       if (!content.length) throw new Error("该消息没有可读取的内嵌图片");
       const id = `${args.candidate}:${args.message_index}`;
+      const reference = evidenceId(registeredInputId(ctx, args.candidate), args.message_index, "image");
+      // The top-level image_observations.image_number is a position in this task's evidence
+      // directory, not the ordinal of the image in the answer; show it so the model copies it.
+      const imageNumber = (ctx.audit.evidenceBank ?? []).indexOf(reference) + 1;
       const metadata = JSON.stringify({
         message: `原始消息 ${id}，${content.length} 张图片`,
-        reference: { evidence_id: evidenceId(registeredInputId(ctx, args.candidate), args.message_index, "image") },
+        reference: { evidence_id: reference },
+        ...(imageNumber > 0 ? { image_number: imageNumber } : {}),
       });
       if (metadata.length > ctx.policy.maxOutputChars)
         throw new Error("本次工具输出上限无法容纳图片元数据，未成功查看图片");

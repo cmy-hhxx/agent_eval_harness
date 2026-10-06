@@ -58,17 +58,19 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 战绩作图用运行与档位组成的 `statistics` 引用，服务端一次读取并核验该档完整正式统计，把全部结果坐标保存为图表来源；模型无需逐条复制任务清单。单个案例仍用具体 `reference`，普通运行统计用 `runId`。
 
-`show_chart` 支持八种数据图形：数量与排名用 `bar`，时间趋势用 `line`，完整组成用 `pie`，两组逐项差距用 `dumbbell`，密集问题矩阵用 `heatmap`，成对指标关系用 `scatter`，可加总变动贡献用 `waterfall`，原始观测分布用 `histogram`。瀑布累计和分布分箱由程序计算，不能把期末总数重复作为增量，也不能把均值当原始样本。缺失值保持未知；散点至少3个完整观测，差异点图恰好两组，组成图保持完整互斥类别；业务约束由 [工具 Schema](../schemas/eris/tools.json) 与 [图表校验](src/core/chart.ts)共同执行。
+`show_chart` 支持点图 `dot`、时间趋势 `line`、环形组成 `pie`、差异点图 `dumbbell`、矩阵热力图 `heatmap`、环形热力图 `radial_heatmap`、散点 `scatter`、瀑布贡献 `waterfall`、观测分布 `histogram`、气泡 `bubble`、气泡矩阵 `bubble_matrix`、坡度 `slope`、排名变化 `bump`、真实区间 `interval`、箱线 `boxplot` 与小提琴 `violin`。默认按分析问题优先选择差异、矩阵、关系与分布图。环形热力图用2–4个同口径对象作为由内到外的环带、3–12个短类别作为等角扇区，颜色映射实际值，不能用扇区面积比较数值。瀑布累计和分布分箱由程序计算，不把期末总数作为增量，不把均值当原始观测。缺失保持未知，零值保留；约束由[工具 Schema](../schemas/eris/tools.json)与[图表校验](src/core/chart.ts)执行。
 
-图形服务于具体分析问题，不能为样式丰富机械作图。标题给短判断，范围写明期间、比较基准、样本与分母；`annotations` 把最多3处重点绑定到实际数据位置，图下保留对应短注。Fast 与 Expert 分开，不能从少量胜负、相关性或图形外观推断因果和稳定排名；语言与选图规则统一维护在 [Eris 系统提示](../packages/prompts/resources/eris/system.md)与[作图说明](../packages/prompts/resources/eris/tools/show_chart.md)。
+图形独立呈现，没有附带数据表、视图切换或自动统计摘要。同义图表只保留图；原文、条件、推导等新增信息可用独立 Markdown 表格。标题用短判断，范围只保留期间、样本与必要分母，来源用短业务名称；图注默认省略，必要时只写新增解释，不重复坐标和数值。正文讲清实际推导断点、原因与影响，不把分析塞进图注，也不因有图而限制为两句。选图、篇幅与证据要求统一维护在[Eris 系统提示](../packages/prompts/resources/eris/system.md)和[作图说明](../packages/prompts/resources/eris/tools/show_chart.md)。
 
-视觉沿用 UBS 风格适配的白底、中灰与暗红，A组中灰 `#676767`、B组暗红 `#774143`，颜色不随胜负或类别换序改变。bar、line、pie 使用原生 SVG；其余研究图按需加载本地打包的 Apache ECharts SVG 模块，普通对话不预载图表引擎，也不使用 CDN。图框与正文左对齐，桌面采用紧凑的细边框面板，常见研究绘图区约170–220 px；标题、视图切换与描述统计紧凑排列。差异点图直接附差值列，两行热力图补充后者减前者的差值带；散点图使用成对观测的中位参考线；分布图在数值横轴上叠加原始观测短线、样本中位数和四分位区间（Q1–Q3）（R7线性插值），不是置信区间；瀑布图连接累计水平并显示净变动。派生信息只用于当前图的阅读，不改变正式结果。范围、单位、来源和真实数值随图呈现。图表不显示 hover 提示文字；重点、数值与差值直接呈现，研究图支持方向键查看；数据视图提供可排序的语义表，未知值不改为零。窄屏只在数据表内滚动，减少动态效果与无必要动画。
+视觉采用用户参考中的科研配色：淡粉 `#e5c5c1`、浅紫 `#dcd9e6`、灰蓝 `#becddc`、雾蓝 `#90a8c5`、钢蓝 `#556c8d`、深蓝 `#344c67` 和浅底 `#f0f4f8`。A组钢蓝、B组淡粉，模型身份色与热力值色标分开。点图、趋势、环形组成与环形热力图使用原生 SVG，其余研究图按需加载本地打包的 ECharts SVG 模块，无 CDN。图内标签保持单行，重复的模型名在差值标签中缩写，完整名称保留在图例；密集图按标签宽度扩展绘图区，在图内横向滚动，页面不被撑宽。画布随数据行数变化，两行短差异图约104 px；不设置空白摘要区。差异点图和双行矩阵直接呈现差值；散点中位参考线、分布的原始观测短线与Q1–Q3只来自当前数据，不是置信区间。未知格保留空缺标记，数值可由辅助阅读、键盘或环形单元点击查看，不显示 hover 提示。
 
-每张图可在回复内切换图表与可排序数据表，使用已接受的本地记录，不重新联网、评测或修改正式结果。回复以短结论、主图、重点标注和必要对照组成，不新增报告下载入口。图表在完成回复后直接呈现，折叠工作步骤不会隐藏，刷新继续使用保存结果。实现与产品借鉴见 [Hex Threads](https://learn.hex.tech/docs/explore-data/threads)、[Observable 图形选择](https://observablehq.com/blog/essential-charts-code-snippet-observable-plot)与 [ECharts 模块加载](https://echarts.apache.org/handbook/en/basics/import/)。
+图形在回复完成后直接呈现，折叠工作步骤不会隐藏，刷新使用已保存的结果，不重新联网、评测或修改正式结果。无报告下载入口。设计依据见[Observable 点图](https://observablehq.com/plot/marks/dot)、[Observable 进阶可视化](https://observablehq.com/blog/beyond-bar-charts-a-guide-to-advanced-visualizations-in-observable-plot)与[Circos 环形热力轨道](https://circos.ca/documentation/tutorials/2d_tracks/heat_maps/lesson)。
+
+本地模板库：启动后打开 `/u/local/chart-gallery.html`，可按比较、结构、关系、分布和趋势筛选24个模板、复制当前数据载荷。模板定义在[src/client/chart-templates.js](src/client/chart-templates.js)，使用同一套正式渲染组件与数据校验；所有预览是固定示例，不是评测结果。模板按图形结构复用，不包含通用柱状图和3D装饰变体。区间图要求提供真实上下界；箱线与小提琴图只接收原始观测，程序计算四分位数、1.5倍IQR须和统一带宽的高斯KDE，不生成置信度或显著性结论。
 
 ### 本地运行与结果
 
-目录通过 Workflow 的进度投影，按登记输入与任务标识统计回答数、去重题数、模型覆盖和各阶段状态。默认 `currentRun` 优先选有输入且正在运行的记录，否则选最近开始的有输入记录；零输入维护运行不抢占范围，历史试跑不重复累加。同 case 跨批次分别计题，同题 Fast / Expert 仍计一道题。
+目录通过 Workflow 的进度投影，按登记输入与任务标识统计回答数、去重题数、模型覆盖和各阶段状态。首次 `list_data({})` 只给数量与战绩，逐场短记录和完整来源清单在指定 `runId` 后读取，避免基础概览混入整批案例叙述；来源数据保持完整。默认 `currentRun` 优先选有输入且正在运行的记录，否则选最近开始的有输入记录；零输入维护运行不抢占范围，历史试跑不重复累加。同 case 跨批次分别计题，同题 Fast / Expert 仍计一道题。
 
 仅选中运行读取正式结果并生成 `formalComparisonStats`，历史项保留简要元数据。结果份数与对局场数分列：三模型形成三份两两结果、三场对局。各档战绩按保存配置与正式 `verdicts` 计算，提供档位引用和包含原问、模型展示名、正式理由的短记录；核验、草稿和待核结果不算正式对局。`read_data` 保留完整结果，并为已裁决比较补充 `comparisonScope`。
 
@@ -128,7 +130,7 @@ npm run test:agent:browser
 npm run test:agent:performance
 ```
 
-浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型搜索与推理等级切换、设置保存与语言切换、运行计时与折叠、排队操作、工具详情和刷新恢复。上游回归包含工具参数的增量解析与封口、Unicode 摘要边界、会话事件路由、结构化草稿恢复、统计面板交互和工具结果恢复，校验未开始、结果未知与已接受调用的区别。性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
+浏览器回归同时逐一检查24个图形模板在1440、1024、768、375和320像素宽度下的实际文字边界：文字相交、标签换行或缺失均失败。可单独执行 `node agent/tests/chart-layout.mjs`。浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型搜索与推理等级切换、设置保存与语言切换、运行计时与折叠、排队操作、工具详情和刷新恢复。上游回归包含工具参数的增量解析与封口、Unicode 摘要边界、会话事件路由、结构化草稿恢复、统计面板交互和工具结果恢复，校验未开始、结果未知与已接受调用的区别。性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
 
 视觉检查先运行 `node scripts/build-agent-reference.mjs`，再执行 `AGENT_VISUAL_REFERENCE=1 npm run test:agent:browser`。参考构建反向应用 UI 局部补丁，使用原始上游组件和同一份会话内容；对侧栏、标题栏、消息、Markdown、代码块区域逐像素比较。输入文案、不可用的功能入口和品牌标识属于明确差异。截图与检查结果写入 `.artifacts/agent-browser/`。
 

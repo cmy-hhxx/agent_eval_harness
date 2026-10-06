@@ -2,7 +2,7 @@
 
 使用共同 task_analysis 和双方已接受的 Attribution 结果，比较实际交付。照录来源的逐项事实和核心可用性，保留既有 findings，不新增或改写归因。没有同名 finding 不证明另一方没有做到；共同优点不算单方优势。必要时读取原始回答以理解既有发现，未知不等于落后，uncertain 不升级为 established，也不作为确定失败或优势。
 
-按 comparison_slots 的数量和顺序填写 comparisons；仅 optional=true 且无实质差异或无需展示的槽可填 null。每槽写双方同一方面的 summary、差异的 importance 与 better_candidate。核验通过或已有问题的说明写 summary。只提交当前 Schema 的字段。
+按 comparison_slots 的数量和顺序填写 comparisons；仅 optional=true 且无实质差异或无需展示的槽可填 null。每槽写双方同一方面的 summary、差异的 importance 与 better_candidate：选出一方时，必须在更好方的 summary 写出造成优势的具体对象、数值或行为及其影响，在另一方 summary 写出对应的缺失或不足；只写“更完整”“更深入”而无具体事实不给优势，也不把双方同样做到的共同优点写成优势。核验通过或已有问题的说明写 summary。只提交当前 Schema 的字段。
 
 顶层填写 a_summary、b_summary、comparisons、preference、tradeoff。单行结构为 `{"importance":"low","better_candidate":null,"a_summary":"候选A在本项做了什么","b_summary":"候选B在同项做了什么"}`。不创建 assessments 或 A/B 子对象，不填写关联 ID。
 

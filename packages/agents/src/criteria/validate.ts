@@ -7,7 +7,7 @@ import { criteriaText } from "@eval/prompts";
 import { criteriaSources, eligibleCriterionSource } from "./sources.js";
 import { matchCriterionSources } from "./resolve.js";
 import { criteriaGroups, criterionIdentity } from "./identity.js";
-import { criterionValueIssues } from "./source-values.js";
+import { criterionConstraintIssues, criterionValueIssues } from "./source-values.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validateRequest = ajv.compile<unknown>(requestSchema);
@@ -69,6 +69,12 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       category: "decision", code: "criterion_required_source_missing", path: "/requirements",
       message: `${source.kind} 来源 ${source.source_index} 必须至少保留在一条适用于全部候选的 requirements 中；多条私有要求的作用域并集不算公共覆盖。单独保留此来源或与真正共同适用的来源合并，不能降为加分项或红线。`,
       actual: source.source_index, expected: { source_indices: [source.source_index] } });
+  const allCriteria = [...value.requirements, ...value.scoring_points, ...value.red_flags];
+  for (const source of catalogue.filter((source) => source.kind === "question" || source.kind === "reference")) {
+    const texts = allCriteria.flatMap((criterion) => matchCriterionSources(input, criterion, catalogue)
+      ?.some((item) => item.source_index === source.source_index) ? [criterion.text] : []);
+    if (texts.length) errors.push(...criterionConstraintIssues(texts, [source], "/requirements"));
+  }
   const count = value.requirements.length + value.scoring_points.length + value.red_flags.length;
   for (const candidate of candidates) if (!value.requirements.some((criterion) =>
     !criterion.applies_to.length || criterion.applies_to.includes(candidate))) errors.push({

@@ -39,6 +39,33 @@ test("source bindings reject unknown selections and private scope cannot replace
   rejects(() => accepted(req, value), "criterion_source_unknown");
 });
 
+test("a condensed requirement cannot drop the source time window or dates", () => {
+  const req = request("结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。");
+  const value = draft(); value.requirements = [{ source_indices: [1], text: "给出3条信息。" }];
+  assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "criterion_constraint_dropped" && String(issue.actual).includes("过去12小时")));
+  value.requirements = [{ source_indices: [1], text: "结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。" }];
+  accepted(req, value);
+});
+
+test("equivalent comparison writings satisfy a dropped-bound check", () => {
+  const req = request("筛选：5日均线>10日均线，90%集中度<20%。");
+  const value = draft(); value.requirements = [{ source_indices: [1], text: "5日均线大于10日均线；90%集中度小于20%。" }];
+  accepted(req, value);
+  value.requirements = [{ source_indices: [1], text: "均线多头排列；集中度较低。" }];
+  assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "criterion_constraint_dropped"));
+});
+
+test("missing-source feedback names the private source that broke common coverage", () => {
+  const req = request(), input = req.input as unknown as CriteriaInput;
+  input.candidates[0].context = [{ message_index: 0, role: "user", content: "只用一句话回答。" }];
+  const privateSource = criteriaSources(input).find(item => item.kind === "context")!;
+  const value = draft(); value.requirements = [{ source_indices: [1, privateSource.source_index], text: "核查本方交付。" }];
+  assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "criterion_required_source_missing" && /与仅适用于候选 1 的来源合并/.test(issue.message)));
+});
+
 test("opposite private constraints never merge their scope", () => {
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates.forEach((candidate,index) => candidate.context = [{ message_index: 0, role: "user", content: index ? "结尾提问。" : "不要结尾提问。" }]);
@@ -71,7 +98,7 @@ test("a question-only rubric cannot invent a calculated settlement date or borro
 
 test("rubric numeric values may quote the selected reference with equivalent punctuation and zero padding", () => {
   const date = request("2025年12月22日成交的1周掉期交割日是哪一天？", "2026年01月05日");
-  accepted(date, { requirements: [{ source_indices: [1, 2], text: "交割日为2026-1-5，按所给标准核对。" }], scoring_points: [], red_flags: [] });
+  accepted(date, { requirements: [{ source_indices: [1, 2], text: "2025年12月22日成交的交割日为2026-1-5，按所给标准核对。" }], scoring_points: [], red_flags: [] });
   const value = request("给出收益率。", "−0.830%");
   accepted(value, { requirements: [{ source_indices: [1, 2], text: "给出收益率并核对-0.83%。" }], scoring_points: [], red_flags: [] });
   accepted(value, { requirements: [{ source_indices: [1, 2], text: "收益率下降0.830%。" }], scoring_points: [], red_flags: [] });

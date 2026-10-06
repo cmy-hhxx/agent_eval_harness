@@ -100,6 +100,20 @@ test("invalid JSON text spends a content attempt without pretending it was a fil
   }finally{await fixture.close();}
 });
 
+test("raw control characters inside JSON strings are escaped without changing text",async()=>{
+  const original={summary:"第一行\n第二行\t结束",values:[1]};
+  const fixture=await harness(async options=>({async run(){
+    const result=await options.execute("submit_evaluation",{json:'{"summary":"第一行\n第二行\t结束","values":[1]}'});
+    assert.equal(result.terminate,true);
+  },async abort(){},async dispose(){}}),{material:"fixture",profile:{jsonStringSubmission:true,requiredReads:()=>[],submissionSchema:{type:"object"}}});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt!.submitted,original);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,1);
+  }finally{await fixture.close();}
+});
+
 async function harness(
   create: AgentBackend["createSession"],
   { policy = {}, dropAck = false, material, profile, dropInspectionAck = false,
