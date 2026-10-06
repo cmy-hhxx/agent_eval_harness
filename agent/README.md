@@ -48,25 +48,21 @@ bash agent/run.sh --port 4181 --user alice --no-open
 
 日期检索条件只是候选过滤：`dateAssessment.within_range`表示搜索或页面声明日期在范围内，不证明当时已公开或未被修订；日期未知的候选需继续核验。历史审查先确定截至日期，再核对首次发布及当时版本，不能用后来的镜像、修订值倒推过去错误。外部事实与原始材料、正式判词和Eris分析分别说明；外部查证不能写回或改变正式判决。精确数字、冲突与否定结论读取原文，联读季度/全年、财年/自然年、经营利润/净利润、百分比/百分点等口径；引用给实际最终链接、PDF页码或必要行号、页面声明日期或检索时点。没有命中不是反证，摘要不足以确认精确数字。查询与原文结果一次性记入会话，刷新、展开及恢复不重新联网；Key仅发送给Serper，原文请求逐跳验证公共地址并固定DNS连接，阻止内网读取。
 
-对话面向能理解金融分析的业务负责人，默认用短判断配图表或对照表，主动呈现可比较的数量、差距、趋势和组成；追问只补新增信息。搜索从单一精准查询起步，已有链接直接读原文，证据足够即交付；无目标数据的静态页面换已定位来源。模型实际采用的表达、篇幅和场景规则统一维护在 [Eris 系统提示](../packages/prompts/resources/eris/system.md)，本页不重复提示词正文。
+回答篇幅、点评结构、查询策略和金融推理规则统一维护在 [Eris 系统提示](../packages/prompts/resources/eris/system.md)及[各工具说明](../packages/prompts/resources/eris/tools/)。修改这些规则时直接更新提示词与对应验证，不在使用文档复制一份。
 
 同一模型响应中的独立只读工具最多4路并行，包含专业调用或保存操作的批次按声明顺序执行。取消后排队的读取不再启动；每个结果（包括失败）均持久化后才进入下一轮模型请求。多个外部搜索计划应合在一次 `search_web` 内，维持每次最多两路 Serper 请求。具体来源与分页存在依赖时仍需等待前一轮真实引用；并发不替代证据核验，也不增加自动重试或结果缓存。
 
-财务推理区分存量、流量和因果：应收余额变动不等于新增利润，也不能单独解释经营现金流同比变化；现金流/净利润是总体覆盖指标，不是逐元利润收现比例。估值倍数溢价须结合成长、资本效率、盈利质量与风险，不直接当作高估或折价依据。观点缺少依据不代表相反结论成立，缺少估值依据时表述为“合理性尚未得到论证”；审阅不为材料作者补造推理过程。情景估值交代假设，不能替代缺失的实际数据，缺少同业财务数据时不倒推同业质量。[IAS 7](https://www.ifrs.org/issued-standards/list-of-standards/ias-7-statement-of-cash-flows.html/) 和 [CFA 相对估值](https://www.cfainstitute.org/insights/professional-learning/refresher-readings/2026/market-based-valuation-price-enterprise-value-multiples)为相关分析依据。
-
 ### 图表与来源
 
-战绩作图用运行与档位组成的 `statistics` 引用，服务端一次读取并核验该档完整正式统计，把全部结果坐标保存为图表来源；模型无需逐条复制任务清单。单个案例仍用具体 `reference`，普通运行统计用 `runId`。
+战绩作图用运行与档位组成的 `statistics` 引用，服务端一次读取并核验该档完整正式统计，把全部结果坐标保存为图表来源；模型无需逐条复制任务清单。单个案例仍用具体 `reference`，普通运行统计用 `runId`；外部网页、研报、行情等材料作图不传 references，来源写图内 `source`、原文链接放正文，不为凑引用去读无关运行。
 
-`show_chart` 支持点图 `dot`、时间趋势 `line`、环形组成 `pie`、差异点图 `dumbbell`、矩阵热力图 `heatmap`、环形热力图 `radial_heatmap`、散点 `scatter`、瀑布贡献 `waterfall`、观测分布 `histogram`、气泡 `bubble`、气泡矩阵 `bubble_matrix`、坡度 `slope`、排名变化 `bump`、真实区间 `interval`、箱线 `boxplot` 与小提琴 `violin`。默认按分析问题优先选择差异、矩阵、关系与分布图。环形热力图用2–4个同口径对象作为由内到外的环带、3–12个短类别作为等角扇区，颜色映射实际值，不能用扇区面积比较数值。瀑布累计和分布分箱由程序计算，不把期末总数作为增量，不把均值当原始观测。缺失保持未知，零值保留；约束由[工具 Schema](../schemas/eris/tools.json)与[图表校验](src/core/chart.ts)执行。
+`show_chart` 的当前图形类型与参数直接见[工具 Schema](../schemas/eris/tools.json)，服务端及展示数据校验分别在 [chart.ts](src/core/chart.ts) 和 [charts.js](src/client/charts.js)。缺失值保持未知，零值保留；分箱、累计、四分位数等派生显示由程序计算，区间必须来自真实上下界，不生成置信度或显著性结论。
 
-图形独立呈现，没有附带数据表、视图切换或自动统计摘要。同义图表只保留图；原文、条件、推导等新增信息可用独立 Markdown 表格。标题用短判断，范围只保留期间、样本与必要分母，来源用短业务名称；图注默认省略，必要时只写新增解释，不重复坐标和数值。正文讲清实际推导断点、原因与影响，不把分析塞进图注，也不因有图而限制为两句。选图、篇幅与证据要求统一维护在[Eris 系统提示](../packages/prompts/resources/eris/system.md)和[作图说明](../packages/prompts/resources/eris/tools/show_chart.md)。
+新增的结构图包括面积玫瑰 `rose`、多层环形 `concentric`、独立比例环 `radial_progress`、统一量纲雷达 `radar`、原始计数华夫 `waffle`、两层旭日 `sunburst` 与矩形树 `treemap`、守恒无环流向 `sankey`、对称共现弦图 `chord`、经验累积分布 `ecdf` 与统一带宽山脊 `ridgeline`，总计27种图形。环形分类集中展示玫瑰、环形、比例环与旭日；小图直接标记数据，完整观测保留辅助阅读。数据要求由工具契约校验，不能用花样替代真实流向、完整组成或原始观测。
 
-视觉采用用户参考中的科研配色：淡粉 `#e5c5c1`、浅紫 `#dcd9e6`、灰蓝 `#becddc`、雾蓝 `#90a8c5`、钢蓝 `#556c8d`、深蓝 `#344c67` 和浅底 `#f0f4f8`。A组钢蓝、B组淡粉，模型身份色与热力值色标分开。点图、趋势、环形组成与环形热力图使用原生 SVG，其余研究图按需加载本地打包的 ECharts SVG 模块，无 CDN。图内标签保持单行，重复的模型名在差值标签中缩写，完整名称保留在图例；密集图按标签宽度扩展绘图区，在图内横向滚动，页面不被撑宽。画布随数据行数变化，两行短差异图约104 px；不设置空白摘要区。差异点图和双行矩阵直接呈现差值；散点中位参考线、分布的原始观测短线与Q1–Q3只来自当前数据，不是置信区间。未知格保留空缺标记，数值可由辅助阅读、键盘或环形单元点击查看，不显示 hover 提示。
+图形独立呈现，折叠工作步骤不会隐藏，刷新使用已保存结果。布局、配色、标签与辅助阅读要求统一见 [PRODUCT.md](../PRODUCT.md#eris-评测助手)；选图、篇幅与证据规则见[作图说明](../packages/prompts/resources/eris/tools/show_chart.md)。图表没有单独报告下载入口；Markdown 总结通过 `save_summary` 保存，见[会话与恢复](#会话与恢复)。
 
-图形在回复完成后直接呈现，折叠工作步骤不会隐藏，刷新使用已保存的结果，不重新联网、评测或修改正式结果。无报告下载入口。设计依据见[Observable 点图](https://observablehq.com/plot/marks/dot)、[Observable 进阶可视化](https://observablehq.com/blog/beyond-bar-charts-a-guide-to-advanced-visualizations-in-observable-plot)与[Circos 环形热力轨道](https://circos.ca/documentation/tutorials/2d_tracks/heat_maps/lesson)。
-
-本地模板库：启动后打开 `/u/local/chart-gallery.html`，可按比较、结构、关系、分布和趋势筛选24个模板、复制当前数据载荷。模板定义在[src/client/chart-templates.js](src/client/chart-templates.js)，使用同一套正式渲染组件与数据校验；所有预览是固定示例，不是评测结果。模板按图形结构复用，不包含通用柱状图和3D装饰变体。区间图要求提供真实上下界；箱线与小提琴图只接收原始观测，程序计算四分位数、1.5倍IQR须和统一带宽的高斯KDE，不生成置信度或显著性结论。
+本地模板库：启动后打开 `/u/local/chart-gallery.html`，按分析类型筛选并复制数据载荷。模板清单以 [chart-templates.js](src/client/chart-templates.js) 为准，复用正式渲染器与校验；预览使用固定示例，不是评测结果。
 
 ### 本地运行与结果
 
@@ -116,13 +112,13 @@ bash agent/run.sh --port 4181 --user alice --no-open
 | 完整 Agent 定义 | [core/profile.ts](src/core/profile.ts) 导出的 `createEris` |
 | 界面名称和标记 | [brand.js](src/client/brand.js)、[eris.svg](src/client/brand/eris.svg)；浏览器标题通过 [vite.config.mjs](vite.config.mjs) 的上游 `DSH_CLIENT_TITLE` 配置；欢迎语维护在上游 [local.patch](../vendor/deepseek/local.patch) |
 
-新增工具时同步 Schema、工具说明、执行器与测试；Host 仅注入 `ErisDependencies`，不再单独拼装提示词。构建并重启 `bash agent/run.sh` 后生效。当前工具提供数据分析、外部金融搜索和专业评测；命令执行、数据整理与持续监控尚未接入。
+新增工具时同步 Schema、工具说明、执行器与测试；Host 仅注入 `ErisDependencies`，不再单独拼装提示词。构建并重启 `bash agent/run.sh` 后生效。当前能力以工具注册及 Schema 为准；新增能力通过同一装配入口接入。
 
 ## 验证
 
 ```bash
 npm run typecheck
-npm test
+npm run test:full
 npm run test:integration
 node scripts/test-clean.mjs
 npm run test:agent:upstream
@@ -130,7 +126,7 @@ npm run test:agent:browser
 npm run test:agent:performance
 ```
 
-浏览器回归同时逐一检查24个图形模板在1440、1024、768、375和320像素宽度下的实际文字边界：文字相交、标签换行或缺失均失败。可单独执行 `node agent/tests/chart-layout.mjs`。浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型搜索与推理等级切换、设置保存与语言切换、运行计时与折叠、排队操作、工具详情和刷新恢复。上游回归包含工具参数的增量解析与封口、Unicode 摘要边界、会话事件路由、结构化草稿恢复、统计面板交互和工具结果恢复，校验未开始、结果未知与已接受调用的区别。性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
+浏览器回归同时逐一检查当前全部图形模板在1440、1024、768、375和320像素宽度下的实际文字边界：文字相交、标签换行或缺失均失败。可单独执行 `node agent/tests/chart-layout.mjs`。浏览器检查使用 `CHROME_PATH`，默认本机 Google Chrome；浏览器回归包含常用模型勾选、模型搜索与推理等级切换、设置保存与语言切换、运行计时与折叠、排队操作、工具详情和刷新恢复。上游回归包含工具参数的增量解析与封口、Unicode 摘要边界、会话事件路由、结构化草稿恢复、统计面板交互和工具结果恢复，校验未开始、结果未知与已接受调用的区别。性能负载与预算保持原值，包括十万增量前缀重连、240 轮长历史、代码块、分页、Trajectory 和流式期间输入。
 
 视觉检查先运行 `node scripts/build-agent-reference.mjs`，再执行 `AGENT_VISUAL_REFERENCE=1 npm run test:agent:browser`。参考构建反向应用 UI 局部补丁，使用原始上游组件和同一份会话内容；对侧栏、标题栏、消息、Markdown、代码块区域逐像素比较。输入文案、不可用的功能入口和品牌标识属于明确差异。截图与检查结果写入 `.artifacts/agent-browser/`。
 

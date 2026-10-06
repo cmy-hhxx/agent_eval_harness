@@ -1,11 +1,14 @@
+import { calculate } from "@eval/tools";
+
 export interface ChartSpec {
-  type: "dot" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "bump" | "interval" | "boxplot" | "violin";
+  type: "dot" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "bump" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
   title: string;
   scope: string;
   unit: string;
   source: string;
   categories: string[];
   series: { name: string; values: (number | null)[]; lowerValues?: (number | null)[]; upperValues?: (number | null)[] }[];
+  maxValue?: number;
   xValues?: (number | null)[];
   sizeValues?: (number | null)[];
   sizeLabel?: string;
@@ -67,6 +70,43 @@ export function validateChart(chart: ChartSpec): void {
   }
   if (["boxplot", "violin"].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === "violin" ? 8 : 5)))
     throw new Error("箱线图每组至少5条、小提琴图每组至少8条原始观测");
+  const complete = ["rose", "concentric", "radial_progress", "radar", "waffle", "sunburst", "treemap", "sankey", "chord"].includes(chart.type);
+  if (complete && chart.series.some(s => s.values.some(v => v === null || v < 0)))
+    throw new Error("组成、层级和流量图需要完整非负数据，未知不能补零");
+  if (complete && !["radar", "radial_progress"].includes(chart.type) && chart.series.some(s => !s.values.some(v => v! > 0)))
+    throw new Error("每组组成或流量须有正值");
+  if (["radar", "radial_progress"].includes(chart.type) && (!Number.isFinite(chart.maxValue) || chart.maxValue! <= 0 || chart.series.some(s => s.values.some(v => v! > chart.maxValue!))))
+    throw new Error("雷达与比例环需要真实统一上限，数值不得超过 maxValue");
+  if (chart.type === "waffle" && (chart.series[0].values.some(v => !Number.isInteger(v)) || chart.series[0].values.reduce<number>((sum,v) => sum + v!, 0) > 400))
+    throw new Error("华夫图使用原始整数计数，合计最多400，一格对应一个单位");
+  if (["ecdf", "ridgeline"].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === "ecdf" ? 2 : 8)))
+    throw new Error("累积分布每组至少2条、山脊密度每组至少8条原始观测");
+  if (["sankey", "chord"].includes(chart.type)) {
+    const n = chart.categories.length, matrix = Array.from({ length: n }, () => Array<number>(n).fill(0));
+    for (const series of chart.series) {
+      const row = chart.categories.indexOf(series.name);
+      if (row < 0) throw new Error("流量系列名必须对应 categories 中的节点名称");
+      matrix[row] = series.values as number[];
+      if (matrix[row][row] !== 0) throw new Error("流量与共现关系不包含自环");
+    }
+    if (chart.type === "chord") {
+      if (chart.series.length !== n || matrix.some((row,i) => row.some((v,j) => v !== matrix[j][i])))
+        throw new Error("弦图需要完整对称共现矩阵，不将有向流量冒充无向关联");
+    } else {
+      const active = new Set<number>(), visited = new Set<number>();
+      const visit = (i: number) => {
+        if (active.has(i)) throw new Error("桑基图必须是无环流向");
+        if (visited.has(i)) return;
+        active.add(i); matrix[i].forEach((v,j) => { if (v > 0) visit(j); }); active.delete(i); visited.add(i);
+      };
+      matrix.forEach((_,i) => visit(i));
+      const sum = (values: number[]) => calculate("add", ["0", ...values.map(String)]).result;
+      matrix.forEach((row,i) => {
+        const incoming = sum(matrix.map(r => r[i])), outgoing = sum(row);
+        if (incoming !== "0" && outgoing !== "0" && incoming !== outgoing) throw new Error("桑基图中间节点的流入与流出须守恒");
+      });
+    }
+  }
   if (chart.type === "radial_heatmap" && (chart.series.length < 2 || chart.categories.length < 3
     || chart.categories.length > 12 || chart.categories.some(label => Array.from(label).length > 12)))
     throw new Error("环形热力图需要2–4组同口径系列、3–12个类别，类别名最多12字");

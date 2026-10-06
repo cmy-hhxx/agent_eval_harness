@@ -5,7 +5,7 @@ export const categorySegmentAction = "依据目录语义重新填写该层名称
 const invalidCategoryCharacters = /[<>\[\]{}\u0000-\u001F\u007F-\u009F\u2028\u2029]/u;
 
 const segmentKey = (value: string) => value.trim().replace(/\s+/gu, " ").toLowerCase();
-export const categoryPathKey = (path: string[]) => JSON.stringify(path.map(segmentKey));
+const categoryPathKey = (path: string[]) => JSON.stringify(path.map(segmentKey));
 
 /** Topic paths have no class references or graph edges; repeated levels are rejected. */
 export function categoryPathIssues(paths: string[][] | undefined, location: string): ValidationIssue[] {

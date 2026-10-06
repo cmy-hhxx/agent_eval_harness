@@ -11,7 +11,7 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
     option.grid.bottom = 28;
     option.series = chart.series.map((s, si) => ({ name: s.name, type: 'scatter',
       symbolSize: value => maximum === 0 ? 0 : 30 * Math.sqrt(value[2] / maximum),
-      itemStyle: { color: palette[si], opacity: .8, borderColor: theme.steel, borderWidth: .6 },
+      itemStyle: { color: palette[si], opacity: .8, borderColor: theme.royal, borderWidth: .6 },
       data: s.values.flatMap((y, ci) => y === null || chart.xValues[ci] === null || chart.sizeValues[ci] === null ? [] : [point(chart, si, ci, [chart.xValues[ci], y, chart.sizeValues[ci]])]) }));
     // Explicit size key: area, not radius, is proportional to the third metric.
     option.graphic = { type: 'text', right: 4, top: 0, style: { text: `${chart.sizeLabel} · ${chart.sizeUnit}`, fill: theme.muted, fontSize: 11 } };
@@ -30,7 +30,7 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
     option.xAxis = { ...axis, type: 'category', data: chart.categories, boundaryGap: false, splitLine: { show: false }, axisLabel: { ...axis.axisLabel, interval: 0, lineHeight: 18 } };
     option.yAxis = { ...axis, type: 'value', inverse: ranking, scale: !ranking, min: ranking ? 1 : undefined, minInterval: ranking ? 1 : 0 };
     option.series = chart.series.map((s, si) => ({ type: 'line', name: s.name, connectNulls: false, symbol: 'circle', symbolSize: 7,
-      lineStyle: { width: 2, color: palette[si] }, itemStyle: { color: palette[si], borderColor: theme.steel, borderWidth: .6 },
+      lineStyle: { width: 2, color: palette[si] }, itemStyle: { color: palette[si], borderColor: theme.royal, borderWidth: .6 },
       label: { show: true, color: theme.ink, fontSize: 10, formatter: p => p.value == null ? '' : display(p.value) },
       endLabel: { show: false }, labelLayout: { hideOverlap: true },
       data: s.values.map((v, ci) => ({ ...point(chart, si, ci, v) })) }));
@@ -48,8 +48,8 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
         const labelX = Math.max(params.coordSys.x + half, Math.min(center[0], params.coordSys.x + params.coordSys.width - half));
         return { type: 'group', children: [
           { type: 'line', shape: { x1: low[0], y1: low[1], x2: high[0], y2: high[1] }, style: { stroke: color, lineWidth: 2 } },
-          ...[low, high].map(p => ({ type: 'line', shape: { x1: p[0], y1: p[1] - 4, x2: p[0], y2: p[1] + 4 }, style: { stroke: theme.steel, lineWidth: 1 } })),
-          { type: 'circle', shape: { cx: center[0], cy: center[1], r: 4 }, style: { fill: color, stroke: theme.steel, lineWidth: 1 } },
+          ...[low, high].map(p => ({ type: 'line', shape: { x1: p[0], y1: p[1] - 4, x2: p[0], y2: p[1] + 4 }, style: { stroke: theme.royal, lineWidth: 1 } })),
+          { type: 'circle', shape: { cx: center[0], cy: center[1], r: 4 }, style: { fill: color, stroke: theme.royal, lineWidth: 1 } },
           { type: 'text', style: { x: labelX, y: center[1] - 8, text: label, align: 'center', verticalAlign: 'bottom', fill: theme.ink, fontSize: 10 } },
         ] };
       } }];
@@ -70,7 +70,7 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
         renderItem: (params, api) => {
           const si = params.dataIndex, center = api.coord([si, 0])[0], half = Math.min(35, api.size([1, 0])[0] * .35);
           const side = direction => density.groups[si].map(p => [center + direction * half * p.density / density.maximum, api.coord([si, p.value])[1]]);
-          return { type: 'polygon', shape: { points: [...side(-1), ...side(1).reverse()] }, style: { fill: palette[si], stroke: theme.steel, opacity: .65, lineWidth: .8 } };
+          return { type: 'polygon', shape: { points: [...side(-1), ...side(1).reverse()] }, style: { fill: palette[si], stroke: theme.royal, opacity: .65, lineWidth: .8 } };
         } });
     }
   }

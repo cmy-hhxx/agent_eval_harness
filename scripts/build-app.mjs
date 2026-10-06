@@ -1,28 +1,33 @@
-import { rm, cp, readdir } from "node:fs/promises";
+import { cp, copyFile, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { root, run } from "./lib.mjs";
+import { publishTree, root, run } from "./lib.mjs";
 
-await Promise.all(
-  ["apps", "packages", "tests", "schemas"].map((name) =>
-    rm(path.join(root, "dist", name), { recursive: true, force: true }),
-  ),
-);
-await run("node", ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
-await cp(path.join(root, "apps/host/dashboard"), path.join(root, "dist/apps/host/dashboard"), {
-  recursive: true,
-});
+await mkdir(path.join(root, ".runtime"), { recursive: true });
+const staging = await mkdtemp(path.join(root, ".runtime", "build-app-"));
+try {
+  await run("node", ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--outDir", staging]);
+  await cp(path.join(root, "apps/host/dashboard"), path.join(staging, "apps/host/dashboard"), {
+    recursive: true,
+  });
 
-async function resources(directory) {
-  for (const entry of await readdir(path.join(root, directory), {
-    withFileTypes: true,
-  })) {
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) await resources(file);
-    else if (/\.(md|json)$/.test(entry.name)) await cp(path.join(root, file), path.join(root, "dist", file));
+  async function resources(directory) {
+    for (const entry of await readdir(path.join(root, directory), { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) await resources(file);
+      else if (/\.(md|json)$/.test(entry.name)) {
+        await mkdir(path.dirname(path.join(staging, file)), { recursive: true });
+        await copyFile(path.join(root, file), path.join(staging, file));
+      }
+    }
   }
-}
-await resources("packages/agents/src");
-await resources("packages/prompts/resources");
-await resources("schemas");
+  await resources("packages/agents/src");
+  await resources("packages/prompts/resources");
+  await resources("schemas");
 
-await run("node", ["scripts/build-agent.mjs"]);
+  for (const name of ["apps", "packages", "tests", "schemas", "agent/src", "agent/tests"])
+    await publishTree(path.join(staging, name), path.join(root, "dist", name));
+
+  await run("node", ["scripts/build-agent.mjs"]);
+} finally {
+  await rm(staging, { recursive: true, force: true });
+}

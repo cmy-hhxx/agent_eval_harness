@@ -201,3 +201,34 @@ test("an image observation numbered by image order binds to the unique image ent
   assert.throws(()=>invalid.registry.resolve(invalid.binding,invalid.draft,invalid.audit),error=>error instanceof ValidationError&&
     error.issues!.some(issue=>issue.code==="image_observation_source"&&Array.isArray((issue.expected as {image_numbers:number[]}).image_numbers)));
 });
+
+test("a truncated numeric quote points to directory evidence that contains the actual",()=>{
+  const build=(value:string)=>{const request=structuredClone(example.request) as AgentRequest;
+    const answer="结论见下表。\n\n| 名称 | 拟回购上限 |\n|---|---|\n| 甲 | 5.0 |\n| 乙 | 3.0 |";
+    (request.sources.answer.value as {messages:{content:string}[]}).messages[1]!.content=answer;
+    (request.input.answer as {final_answer:string}).final_answer=answer;
+    request.input.ground_truth={available:true,value};
+    const result=structuredClone(example.result) as AttributionResult;
+    result.correctness_evidence=[canonicalEvidence(request.sources.answer.id,1,answer)];
+    result.numeric_checks=[{label:"目标",expected:value,actual:value,scale:"1",mode:"exact",matches:true,evidence_index:0}];
+    return {request,result,answer};};
+  const first=build("5.0"),f=fixture(first.request,first.result);
+  const available=f.audit.evidenceBank!.indexOf(first.result.correctness_evidence[0]!.evidence_id)+1;
+  assert(available>0);
+  f.audit.evidenceBank!.push(canonicalEvidence(first.request.sources.answer.id,1,first.answer.slice(0,12)).evidence_id);
+  f.draft.numeric_checks=[{label:"目标",reference_index:1,actual:"5.0",scale:"1",mode:"exact",evidence_index:f.audit.evidenceBank!.length}];
+  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>{
+    assert(error instanceof ValidationError);
+    const issue=error.issues!.find(item=>item.code==="numeric_answer_missing");
+    assert(issue,JSON.stringify(error.issues));
+    assert.deepEqual(issue!.expected,{evidence_indices:[available]});
+    assert.match(issue!.message,new RegExp(`编号 ${available} 的引文包含该原值`));
+    return true;
+  });
+  // Without any answer evidence holding the value, the repair must still require a real read.
+  const second=build("7.7"),g=fixture(second.request,second.result);
+  g.audit.evidenceBank!.push(canonicalEvidence(second.request.sources.answer.id,1,second.answer.slice(0,12)).evidence_id);
+  g.draft.numeric_checks=[{label:"目标",reference_index:1,actual:"7.7",scale:"1",mode:"exact",evidence_index:g.audit.evidenceBank!.length}];
+  assert.throws(()=>g.registry.resolve(g.binding,g.draft,g.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="numeric_answer_missing"&&issue.expected===undefined&&/read_trace/u.test(issue.message)));
+});

@@ -106,6 +106,7 @@ export async function startWorker(
     const saveRecord = () => writeJson(path.join(attempt.directory, "attempt.json"), record);
     let accepted: SubmissionReceipt | undefined,
       submissions = 0,
+      jsonRepairs = 0,
       modelError: string | undefined,
       malformedCompletedResponse = false;
     const deadline = setTimeout(
@@ -291,7 +292,8 @@ export async function startWorker(
         submissions++;
         runtime.clearDraftWrite();
         emit(attempt, "submission", { accepted: false, content_loaded: true, evaluation: result,
-          contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions });
+          contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
+          ...(jsonRepairs ? { jsonRepairs } : {}) });
         await writeJson(draftPath, result);
         const submission: Submission = {
           submissionId: randomUUID(),
@@ -303,6 +305,7 @@ export async function startWorker(
           submissionStats: {
             contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
             fileErrors: (spec.recovery?.fileErrors || 0) + fileErrors,
+            ...(jsonRepairs ? { jsonRepairs } : {}),
           },
         };
         record.pendingSubmission = submission;
@@ -446,6 +449,29 @@ export async function startWorker(
         }
         return changed && !inString ? repaired : undefined;
       };
+      // An unescaped ASCII quote inside a JSON string is either the string terminator (followed by a
+      // structural character) or literal prose punctuation; the two readings differ by one backslash,
+      // so the repair is deterministic. Structural mistakes still fail, and the repaired object must
+      // pass every later Schema and business check before it becomes a result.
+      const escapeStringQuotes = (text: string): { text: string; escaped: number } | undefined => {
+        let repaired = "", inString = false, escapedChar = false, escaped = 0;
+        for (let index = 0; index < text.length; index++) {
+          const char = text[index];
+          if (!inString) {
+            if (char === '"') inString = true;
+            repaired += char;
+            continue;
+          }
+          if (escapedChar) { repaired += char; escapedChar = false; continue; }
+          if (char === "\\") { repaired += char; escapedChar = true; continue; }
+          if (char !== '"') { repaired += char; continue; }
+          let next = index + 1;
+          while (next < text.length && /\s/u.test(text[next])) next++;
+          if (next >= text.length || ",:}]".includes(text[next])) { inString = false; repaired += char; }
+          else { repaired += '\\"'; escaped++; }
+        }
+        return escaped && !inString ? { text: repaired, escaped } : undefined;
+      };
       const submit: ExecutableTool = {
         name: "submit_evaluation",
         inputSchema: spec.evaluation.jsonStringSubmission ? SUBMISSION_JSON_SCHEMA : spec.evaluation.outputSchema,
@@ -456,12 +482,18 @@ export async function startWorker(
           let decoded:unknown;
           try { decoded=JSON.parse(text); }
           catch(error) {
-            const escaped = escapeControlCharacters(text);
-            if (escaped !== undefined) { try { decoded=JSON.parse(escaped); } catch {/**/} }
+            const controlEscaped = escapeControlCharacters(text);
+            if (controlEscaped !== undefined) { try { decoded=JSON.parse(controlEscaped); } catch {/**/} }
+            if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+              const quoting = escapeStringQuotes(controlEscaped ?? text);
+              if (quoting) { try { decoded=JSON.parse(quoting.text); } catch {/**/} }
+              if (decoded && typeof decoded === "object" && !Array.isArray(decoded)) jsonRepairs++;
+            }
             if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
               const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
               throw new ValidationError([{category:"structure",code:"submission_json_invalid",path:"/json",
-                message:"JSON 正文语法错误，不进行自动修补："+errorText(error),
+                message:"JSON 正文语法错误，无法安全修复："+errorText(error)+
+                  "。正文里的英文双引号必须转义（前置反斜杠）或改用中文引号“”；只修正报错位置附近，保持其他内容不变。",
                 actual:{position,excerpt:text.slice(Math.max(0,position-100),position+100)}}]);
             }
           }

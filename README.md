@@ -1,10 +1,10 @@
 # 可编排评测 Host
 
-TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。当前内置 Criteria、Attribution、Comparison、Rewrite、Clustering 与 Comparison Workflow；Clustering 支持自由主题组织、明确类维护和受预算限制的延期重归类。默认使用 Pi，保留 Prime，Python 只用于代码工具和 Prime runtime。
+TypeScript Host 编排 JSON 评测，Agent 通过 Profile 提供提示词、Schema 和业务校验。默认使用 Pi，也支持 Prime；Python 只用于代码工具和 Prime runtime。
 
-**当前契约优先：**项目快速迭代，不设置未确定的版本号；结果只记录显式声明的 `evaluatorVersion`，用于区分不同评测器产出的判词，不是 Schema 版本。契约变更必须同步当前实现、调用方、测试和文档；详细规则见 [AGENTS.md](AGENTS.md)。
+开发前先读 [AGENTS.md](AGENTS.md)；当前契约、模块边界和验证要求以此为准。
 
-默认主线是共同 Criteria → 每条回答 Attribution → 必要时一轮定向归因补查 → 每场一次 Comparison。对比接受且 `status=decided` 后即形成正式结果，未决样本单独保存为待核，归因与对比文案默认自动润色，可显式关闭改写；独立核验按需启用且不阻塞主线。聚类在全部归因结束后单独执行，其结果默认自动润色。流程与科学边界见[评测质量](docs/quality.md#流程与科学边界)，命令见[使用指南](docs/usage.md#可选复核与后置聚类)。
+主线是共同 Criteria → 每条回答 Attribution → 每场一次 Comparison，必要时在对比前补查一轮归因。正式结果默认经 Rewrite 润色，未决结果单独待核；独立核验和后置 Clustering 按需执行。流程边界见[评测质量](docs/quality.md#流程与科学边界)，操作见[使用指南](docs/usage.md)。
 
 ## Agent 开发导航
 
@@ -12,25 +12,22 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 |---|---|
 | 运行、配置、恢复、产物 | [使用指南](docs/usage.md) |
 | 输入、Agent 输出、证据、导出 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) |
-| 提示词、工具描述与专家示例启用边界 | [提示词模块](packages/prompts/README.md) |
+| 提示词、材料文案与工具描述 | [提示词模块](packages/prompts/README.md) |
 | 模块边界、Host / Worker、扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、验证、测试和文档 | [开发指南](docs/development.md) |
 | 评语和真实模型复核 | [评测质量](docs/quality.md) |
-| 小批放量、失败补跑、逐格修复与交付核验 | [运行流程](docs/usage.md#运行与恢复) · [改写放量验收](docs/quality.md#改写放量验收) |
-| 远程输入数据服务交接 | [输入服务交接](docs/handoff.md) |
-| `bash automation.sh` 启动持续取数、评测改写与动态看板 | [Automations 流水线](docs/automations.md) |
+| 看板与界面规范 | [PRODUCT.md](PRODUCT.md) |
+| 持续取数、评测改写与上传 | [自动化流水线](docs/automations.md) · [远程输入接口](docs/handoff.md) |
 
-阅读顺序：先看本页和 [AGENTS.md](AGENTS.md)，再按任务进入上表对应文档。使用步骤、数据语义、质量复核与实现边界分别以使用指南、数据契约、评测质量、架构及模块地图为准；规则只维护一份，其他页面通过链接引用。
+按任务进入对应页面；同一规则只维护一份，其他页面通过链接引用。
 
 ## Eris 评测助手
 
-配置根目录 `.env` 后运行 `bash agent/run.sh`，浏览器会打开浅色 Eris 评测助手。支持 `--port`、`--user`、`--no-open`；对话、独立 Attribution / Comparison 调用、原始数据引用与多副本恢复见 [Agent 使用说明](agent/README.md)。看板仍使用根目录 `bash run.sh`。
+配置根目录 `.env` 后运行 `bash agent/run.sh`。模型、对话、专业评测调用与恢复见 [Agent 使用说明](agent/README.md)。批量评测看板使用 `bash run.sh`。
 
 ## 离线评测汇报
 
-打开 [evaluation-report/index.html](evaluation-report/index.html) 查看流程案例、判决规则和提示词；执行 `node evaluation-report/build.mjs` 生成可单文件离线展示的 `evaluation-report/report.html`，构建产物不入库。源码、交互、构建与来源说明见[模块文档](evaluation-report/README.md)。
-
-案例与提示词分别保留 r73、r74 的历史快照，包含已知语义疑点；页面换位仅改变展示代号，不代表重新盲测或当前方法验证。更新快照须核对原始记录，保留生产统计契约、输入和正式结果。
+打开 [evaluation-report/index.html](evaluation-report/index.html) 查看历史案例与提示词快照；它不代表当前评测器或方法验证结果。单文件构建、快照来源和已知疑点见[模块说明](evaluation-report/README.md)。
 
 ## 最短运行路径
 
@@ -38,12 +35,14 @@ TypeScript Host 编排通用 JSON 评测，Agent 通过 Profile 提供提示词�
 mise trust
 mise install
 cp .env.example .env
+mkdir -p configs/local
+cp configs/models.example.json configs/local/models.json
 npm run bootstrap
 npm run build
 npm run doctor
 ```
 
-在 `.env` 填写两种底座共用的 `EVAL_BASE_URL` 和 `EVAL_API_KEY`。将 [configs/models.example.json](configs/models.example.json) 复制为 `configs/local/models.json`，填入网关模型 ID，然后运行：
+在 `.env` 填写两种底座共用的 `EVAL_BASE_URL` 和 `EVAL_API_KEY`，在 `configs/local/models.json` 填入网关模型 ID，然后运行：
 
 ```bash
 npm run eval -- preflight
@@ -51,8 +50,8 @@ npm run eval -- run --engine pi --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 
-默认结果写入 `data/runs/comparison/<run-id>/`，日志写入 `log/runtime.log` 和 `log/evaluation.log`。同一个 `run-id` 会续跑未完成和新增任务，并保留已接受任务；输入、选择、模型和恢复细节见[使用指南](docs/usage.md#运行与恢复)。需要按样本查看输入、正式输出和 Agent 状态，或在页面预检并启动运行，在项目根目录执行 `bash run.sh`；详情见[本机看板](docs/usage.md#本机运行看板)。
+结果默认写入 `data/runs/comparison/<run-id>/`。同一个 `run-id` 续跑未完成和原选择范围内的新增任务，保留已接受结果；详见[运行与恢复](docs/usage.md#运行与恢复)。本机预检、启动和结果浏览使用 `bash run.sh`，见[看板](docs/usage.md#本机运行看板)。
 
-输入来源由 `configs/host.json` 的 `inputs.versions[].sources` 指定，支持单文件或递归目录；默认分为 A组Fast vs B组Fast、A组Expert vs B组Expert 两组；`comparisons` 每组选择二至三个模型，三模型执行三场两两比较；第三方基线须显式声明与组内一致的 `comparison_tier`，不能混排 Fast 与 Expert。需要临时替换来源或输出时使用 `--input <版本 ID>=<路径>` 和 `--output <目录>`。按日期或名称组织的多模型文件可用 `eval index --dataset ...` 登记为评测集，再用 `preflight/run --dataset ...` 选择；索引只保存定位信息，完整消息仍留在源文件，详见[输入治理](docs/usage.md#输入治理)。不要修改入库的原始输入、评测结果或 `dist/`。
+输入由 [configs/host.json](configs/host.json) 指定，默认按 Fast、Expert 分组两两比较。文件与评测集选择见[输入治理](docs/usage.md#输入治理)，模型组规则见[对比组契约](docs/contract.md#对比组)。
 
 固定工具版本见 [mise.toml](mise.toml)，底座版本与来源见 [vendor/upstream.json](vendor/upstream.json)。

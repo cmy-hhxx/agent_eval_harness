@@ -20,15 +20,6 @@
 - 共同标准、归因、对比、对比复核请求及聚类的 JSONL 行顶层带 `evaluator_version`，取自源任务收据；改写不单独成行，内嵌 `rewritten.evaluator_version` 取自改写收据。`report` / `validate` 按收据重建，不重新解释版本。显式导出的逐题总结 JSONL 沿用对应对比行的版本。
 - `stats.json` 的 `evaluator_versions` 汇总本 run 已接受版本，`judge_models` 按阶段列出实际使用的模型 ID。
 
-## Agent 先记
-
-- 原始 JSONL 没有统一总 Schema；适配器和预检负责来源解析与业务校验。
-- `request` 是 Host 组装的内部材料，`submission` 是模型提交，`result` 是 Host 接受后的结果。
-- 契约变更直接更新当前调用方，不保留旧入口、别名、迁移层或静默降级。
-- 不新增没有必要的哈希、摘要或跨 run 结果缓存；使用业务 ID、UUID 以及结构和引用校验。
-
-细节按“输入 → 阶段输出 → 对比判决 → 证据导出”顺序阅读。
-
 ## 输入与输出的分层
 
 这里的“输入”有两层，不能与 Agent 的输出混为一个 Schema：
@@ -125,9 +116,9 @@ Agent 自主决定读取、检索、图片观察和计算步骤。提示词要�
 | Comparison（含可选核验） | `execute_code` 写完整 JSON，`submit_evaluation_file({"path":"相对文件名"})` | 按工具描述的 `file_content_schema` 读取文件并校验 |
 | 可选核验首查 | `inspect_material({"path":"相对文件名"})` | 首查成功后才暴露最终提交工具，检查点由程序持久化 |
 
-所有模式保留原始内容，执行严格结构与业务校验，不补写 JSON、不静默改字段或判词。Attribution 不需要写稿文件；JSON 语法错误消耗内容次数，不计为文件错误。核验首查和最终提交共用单任务内容队列与累计修正预算；阶段额度和续跑规则见[运行与恢复](usage.md#运行与恢复)。通用 Profile 能力声明见[提示词模块](../packages/prompts/README.md)。
+所有模式保留原始内容，执行严格结构与业务校验，不补写 JSON、不静默改字段或判词。Attribution 不需要写稿文件；正文里位于字符串内部、后面不是 `,`/`:`/`}`/`]` 等结构字符的英文双引号由程序确定性转义（只插入反斜杠），修复后仍须通过全部 Schema 与业务校验，修复次数记入收据的 `submissionStats.jsonRepairs`；其他 JSON 语法错误仍拒绝并消耗内容次数，不计为文件错误。核验首查和最终提交共用单任务内容队列与累计修正预算；阶段额度和续跑规则见[运行与恢复](usage.md#运行与恢复)。通用 Profile 能力声明见[提示词模块](../packages/prompts/README.md)。
 
-内容被拒绝后，Worker 在工作目录将提交快照单独保存为 `submission-rejected.json`；文件模式反馈的 `draft_file` 指向该快照，与模型自行创建的工作文件分开。文件加载失败不生成草稿，也不反馈不存在的草稿路径。
+内容被拒绝后，Worker 在工作目录将提交快照单独保存为 `submission-rejected.json`；文件模式反馈的 `draft_file` 指向该快照，与模型自行创建的工作文件分开。文件加载失败不生成草稿，也不反馈不存在的草稿路径；累计三次文件加载错误后停止，该计数跨同任务续跑保留。
 
 校验反馈包含 `code/path/message` 及适用的 `candidate/expected/actual`。Attribution 的结构错误给出当前扁平字段的 `expected.target.path` 和 `submission_shape`；业务反馈使用模型实际可写的字段及目录正整数，不要求填写内部 ID 或嵌套对象。数组错误路径仍按 JSON Pointer 从0定位，例如 `/problems/5` 指第六条问题；它与从1开始的证据和要求选择编号分开。反馈不提供新证据或修改草稿；原 expected 约束与真实 normative_sources 保留。
 
@@ -285,7 +276,7 @@ expected 由程序保留标准原有小数位与科学计数法指数，actual �
 
 模型须逐项填写可直接比较的同口径点值目标，单一目标也不例外。原题或标准明确给出容差、区间、上限或下限时，按原条件核验该目标，不将中心值或边界套成点值相等；该目标不入数值表。最终回答仅以分数、名单、图表或需额外条件的表达交付，须计算或解码才能比较时，也在 correctness_reason 保留原规则、实际交付、过程和判定，并引用 correctness_evidence，不伪装成逐字 actual/expected，也不当作缺项。最终回答已直接给出的计算结果仍可按原值入表；日期、代码按原任务核验。单一及多目标的比较方式、抽取和覆盖均须语义复核，程序不根据标准文本形似单个数值强制添加表项；它严格验证已提交表项的标准绑定、原值、单位、精度和判词一致性。目录为空或没有直接点值目标时提交空表，混合情形保留其余直接点值目标；数值表通过不代表整份判断正确。
 
-原文数字匹配保留数值边界与方向：识别明确的“跌”及下降表述、量词前的单字中文数量（包括天与交易日，不包含日期中的“日”）、完整公式中的减法右操作数；紧接半年、季度或月份标题的年份不并入前一小数。数值未出现在引用时，反馈附上实际解析的 quote，不把模型填写的 observation 当作原文。
+原文数字匹配保留数值边界与方向：识别明确的“跌”及下降表述、量词前的单字中文数量（包括天与交易日，不包含日期中的“日”）、完整公式中的减法右操作数；紧接半年、季度或月份标题的年份不并入前一小数。数值未出现在引用时，反馈附上实际解析的 quote，并列出当前证据目录中包含该原值的编号；没有可用编号时要求先读取完整片段，不把模型填写的 observation 当作原文。
 
 [表格来源核对](../packages/agents/src/attribution/table-review.ts)为可解析的最终代码/名称表预计算 `answer.table_check_results` 并由 Workflow 提供给归因；summary 统计全部行，rows 仅展开经证券代码规范化后的疑点行及真实证据。目录只识别带表头分隔行的标准 Markdown；JSON 行、stdout 空格表、Python 字典打印等不自动成为来源表。没有可比来源表时，实际回答行保留 unverified、原文坐标和空 sources，不虚构匹配或冲突；未收录也不证明原材料没有支持或反证，须继续读取真实来源。模型直接检查疑点与两侧原文，按对象、时间和加工过程解释差异；额外探索仍可调用 check_table。提交校验从原始消息重算，拒绝预计算材料缺失或不一致，不把计算完成声称为模型逐行阅读。conflict/ambiguous 行必须有引用最终行与来源行的 problem finding。`source_review` 是程序生成的只读事项目录，每项包含 `kind/reason/requires_review`；kind 区分 unverified、unresolved_conflict 和 invalid_material。requires_review=true 的事项要求 Comparison 输出 needs_review。unverified 不能单凭来源缺失判答案错误；未断言具体代码的文字占位符仍按任务要求评审。六位证券代码相同且仅一方省略 .SH/.SZ/.BJ 后缀时可对应；交易所后缀按大小写统一识别，两边明确不同交易所不能合并。
 

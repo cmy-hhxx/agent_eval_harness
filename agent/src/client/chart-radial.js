@@ -1,10 +1,7 @@
 import { createElement as h, useState } from 'react';
-import { chartTheme } from './chart-theme.js';
+import { chartTheme, heatColor, heatColors, heatTextColor } from './chart-theme.js';
 import { compactNumber } from './chart-data.js';
 
-const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
-const neutral = rgb(chartTheme.pale), positive = rgb(chartTheme.navy), negative = rgb(chartTheme.pink);
-const blend = (end, amount) => `rgb(${neutral.map((v, i) => Math.round(v + (end[i] - v) * amount)).join(',')})`;
 const glyphWidth = text => Array.from(text).reduce((sum, c) => sum + (/[\x00-\x7f]/.test(c) ? 6 : 11), 0);
 const round = value => Number(value.toFixed(3));
 const position = (radius, angle, center) => [round(center + radius * Math.cos(angle)), round(center + radius * Math.sin(angle))];
@@ -20,10 +17,11 @@ export function radialCells(chart, size) {
     const r0 = inner + si * thickness + 1, r1 = inner + (si + 1) * thickness - 1;
     const a = position(r1, start, center), b = position(r1, end, center), c = position(r0, end, center), d = position(r0, start, center);
     const middle = (start + end) / 2, radius = (r0 + r1) / 2;
-    const label = value === null ? '—' : compactNumber(value), strength = extent === 0 || value === null ? 0 : Math.abs(value) / extent;
+    const label = value === null ? '—' : compactNumber(value);
+    const fill = value === null ? '#E7E7E7' : heatColor(value, minimum, maximum);
     return { value, categoryIndex: ci, seriesIndex: si, label, position: position(radius, middle, center),
       showLabel: glyphWidth(label) < 2 * radius * Math.sin(angle / 2) - 5 && thickness >= 16,
-      fill: value === null ? '#e7e7e7' : blend(value < 0 ? negative : positive, strength), ink: value > 0 && strength > .6 ? chartTheme.paper : chartTheme.ink,
+      fill, ink: heatTextColor(fill),
       path: `M ${a} A ${r1} ${r1} 0 0 1 ${b} L ${c} A ${r0} ${r0} 0 0 0 ${d} Z` };
   }));
   return { cells, minimum, maximum, outer, center, angle };
@@ -61,6 +59,6 @@ export function RadialHeatmap({ chart, width, english }) {
           category);
       })),
     h('div', { 'data-radial-scale': true, style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, fontSize: 11, color: chartTheme.muted } },
-      compactNumber(minimum), h('span', { 'aria-hidden': true, style: { width: 96, height: 5, background: minimum < 0 ? `linear-gradient(90deg,${chartTheme.pink},${chartTheme.pale},${chartTheme.navy})` : maximum === 0 ? chartTheme.pale : `linear-gradient(90deg,${chartTheme.pale},${chartTheme.navy})` } }), compactNumber(maximum)),
+      compactNumber(minimum), h('span', { 'aria-hidden': true, style: { width: 96, height: 5, background: maximum === 0 ? chartTheme.ivory : `linear-gradient(90deg,${heatColors(minimum).join(',')})` } }), compactNumber(maximum)),
     h('div', { 'aria-live': 'polite', style: { fontSize: 12, color: chartTheme.muted, minHeight: reading ? 18 : 0 } }, reading));
 }

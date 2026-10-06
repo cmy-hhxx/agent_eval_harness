@@ -50,6 +50,11 @@ test("Eris's public definition includes every tool resource and validates before
   await list.execute({ runId: "run" }, context);
   await list.execute({ runId: "run", query: "A组Fast" }, context);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
+  assert.match(JSON.stringify(read.inputSchema), /顶层字段，与 reference 同级/);
+  const searchTool = eris.tools.find(tool => tool.name === "search_web")!;
+  assert.match(JSON.stringify(searchTool.inputSchema), /只有 web（默认）和 news 两个合法值，没有 finance/);
+  const chartTool = eris.tools.find(tool => tool.name === "show_chart")!;
+  assert(!(chartTool.inputSchema as { required: string[] }).required.includes("references"), "external material charts omit local provenance references");
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input", taskId: "task" } }, context), /oneOf/);
   await assert.rejects(read.execute({ reference: { runId: "run" } }, context), /required/);
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input" }, limit: 101 }, context), /100/);

@@ -296,6 +296,10 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
           status: "failed",
           attempts: 1,
           reason: "test failure",
+          failure: {
+            errors: [{ category: "decision", code: "fixture_failure", path: "/field", message: "固定失败原因" }],
+            contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "fixture",
+          },
         };
         continue;
       }
@@ -364,6 +368,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     for (const id of ["objective", "bad", "unknown", "failed", "pending"])
       assert(markdown.includes(`# ${secondDay} / ${id}`));
+    assert(markdown.includes("**错误**：fixture_failure（/field）：固定失败原因"));
     assert(markdown.includes(`${secondDay} / missing`));
     const validation = await validateRun(run);
     assert.equal(validation.results.valid, true, JSON.stringify(validation.results.errors));

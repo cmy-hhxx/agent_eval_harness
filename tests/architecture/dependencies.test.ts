@@ -118,7 +118,7 @@ test("public package boundaries, independent Agents and acyclic implementation i
 
 test("source documentation links and section anchors resolve and remain reachable from README", async () => {
   const docs = [
-    "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "schemas/README.md",
+    "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "evaluation-report/README.md", "schemas/README.md",
     "packages/prompts/README.md", ...(await files("docs")), ...(await files("apps/host/.impeccable")),
   ].filter((file) => file.endsWith(".md"));
   const links = new Map<string, string[]>();

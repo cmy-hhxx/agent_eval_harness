@@ -1,9 +1,10 @@
 .eris-chart-action:focus-visible,
 [data-radial-cell]:focus-visible,
+[data-structure-mark]:focus-visible,
 [data-research-chart] [tabindex="0"]:focus-visible {
-  outline: 2px solid #556c8d;
+  outline: 2px solid #1E4E8C;
   outline-offset: 2px;
 }
 .eris-chart-action:hover { filter: brightness(.97); }
 
-.eris-analysis-chart { box-shadow: 0 2px 9px #344c6706; }
+.eris-analysis-chart { box-shadow: 0 2px 9px #0B1F5406; }

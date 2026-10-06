@@ -1,7 +1,7 @@
 import { localFiles } from "@eval/data";
 import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { JsonObject, PlannedTask, SubmissionReceipt, Usage } from "@eval/contracts";
+import type { JsonObject, PlannedTask, SubmissionReceipt, TaskState, Usage } from "@eval/contracts";
 import { atomicWrite, exists, internalPath, locateRun, readJson, writeJson, writeJsonl } from "@eval/data";
 import { canonical } from "@eval/contracts";
 import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
@@ -25,6 +25,18 @@ interface Standing {
   wins: number;
   both_good: number;
   both_bad: number;
+}
+
+/** Per-case failure text for the report; state.json keeps every issue verbatim. */
+export function taskFailureSummary(state: TaskState | undefined): string | null {
+  const errors = state?.failure?.errors ?? [];
+  if (!errors.length) return null;
+  const shown = errors.slice(0, 3).map((issue) => {
+    const message = issue.message.length > 220 ? `${issue.message.slice(0, 220)}…` : issue.message;
+    return `${issue.code}（${issue.path}）：${message}`;
+  });
+  if (errors.length > shown.length) shown.push(`其余 ${errors.length - shown.length} 项见 state.json`);
+  return shown.join("；");
 }
 
 export function summarizeResults(
@@ -298,6 +310,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     // Rewrite and clustering receipts feed the report view, not the per-case result sections.
     if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || data.verificationAudit) continue;
     if (!receipt) {
+      const failure = taskFailureSummary(manifest.states[task.id]);
       markdown.push(
         `# ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`,
         "",
@@ -305,6 +318,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         "",
         `**原因**：${manifest.states[task.id]?.reason || "尚未完成"}`,
         "",
+        ...(failure ? [`**错误**：${failure}`, ""] : []),
         `**问题**：${data.candidates.A.question}`,
         "",
         "---",
@@ -515,6 +529,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       ? measured.filter((r) => r.accepted && r.submissions === 1).length / measured.length
       : null,
     content_repairs: measured.reduce((sum, r) => sum + r.submissions - 1, 0),
+    json_repairs: manifest.tasks.reduce((sum, task) => sum + (receipts.get(task.id)?.submissionStats?.jsonRepairs ?? 0), 0),
     repeated_error_tasks: Object.values(manifest.states).filter(
       (s) => (s.repeatedErrors ?? s.failure?.repeatedErrors ?? 0) >= 2,
     ).length,

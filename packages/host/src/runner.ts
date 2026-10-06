@@ -438,6 +438,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
               catch (error) { eventController.abort(error); }
             },
           );
+        // Observe an active attempt promptly, then back off so a quiet model turn
+        // keeps the documented one-request-per-second cadence.
+        let pollMs = 25;
         while (true) {
           if (controller.signal.aborted || Date.now() > spec.deadline) {
             const receipt = await current.receipt(task.id);
@@ -470,12 +473,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           if (status.lastSeq !== lastSeq) {
             state.lastProgressAt = Date.now();
             lastSeq = status.lastSeq;
-          }
+            pollMs = 25;
+          } else pollMs = Math.min(1000, pollMs * 2);
           if (status.state !== "running") {
             observedTerminal = status;
             break;
           }
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, pollMs));
         }
       } catch (error) {
         status = {

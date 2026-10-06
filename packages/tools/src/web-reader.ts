@@ -326,7 +326,7 @@ async function htmlDocument(input: ParserInput): Promise<ParsedDocument> {
       element.prepend("\n"); element.append("\n");
     }
     const bounded = boundLines(normalizeLines(content.textContent ?? "").map((text) => ({ text })), input.maxTextChars);
-    if (!bounded.lines.length) throw new Error("读取网页没有可提取正文；页面可能需要 JavaScript、登录或由图片组成");
+    if (!bounded.lines.length) throw new Error("读取网页没有可提取正文；页面可能需要 JavaScript、登录或由图片组成。不要重试本页，改用搜索结果里的 PDF；没有 PDF 候选时重新搜索并在 query 加 filetype:pdf");
     if (bounded.lines.some((line) => /\bloading\s+(?:component|content|data|chart|table)\b(?:\s*[.…])?|(?:正在加载(?:组件|内容|数据|图表|表格)|加载中)[.…]/i.test(line.text)))
       limitations.push(`当前静态正文含客户端加载占位，相关内容未加载，无法据此核定缺失数据；${links.length ? "可继续读取返回的报告或附件链接" : "需另查可读取的报告正文或附件"}。`);
     if (bounded.truncated) limitations.push(`正文超过 ${input.maxTextChars} 字符，已截断；后续行不包含在本次结果中。`);
@@ -403,7 +403,7 @@ async function parseDocument(input: ParserInput, signal: AbortSignal): Promise<P
   if (/text\/html|application\/xhtml\+xml/i.test(input.contentType) || /^\s*(<!doctype\s+html|<html\b)/i.test(beginning)) return htmlDocument(input);
   if (!/^text\/plain(?:\s*;|$)/i.test(input.contentType)) throw new Error("读取只支持 HTML、PDF 和 text/plain，响应格式不受支持");
   const bounded = boundLines(normalizeLines(decodeText(input.bytes, input.contentType)).map((text) => ({ text })), input.maxTextChars);
-  if (!bounded.lines.length) throw new Error("读取响应没有可提取正文");
+  if (!bounded.lines.length) throw new Error("读取响应没有可提取正文；该地址不是可解析的正文页，改用 PDF 或另一域名原文");
   return { title: new URL(input.url).hostname, format: "text", ...bounded, limitations: bounded.truncated ? [`正文超过 ${input.maxTextChars} 字符，已截断。`] : [] };
 }
 
@@ -477,7 +477,7 @@ export function createWebReader(options: WebReaderOptions = {}): WebReader {
             const hostname = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
             let addresses: ResolvedAddress[];
             try { addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname); }
-            catch { throw new Error("读取公共地址 DNS 解析失败"); }
+            catch { throw new Error("读取公共地址 DNS 解析失败；该域名当前不可达，改用搜索结果里的 PDF，或重新搜索并在 query 加 filetype:pdf"); }
             controller.signal.throwIfAborted();
             if (publicLookup && !isIP(hostname) && addresses.length && addresses.every((address) => proxyFakeAddress(address.address))) {
               try { addresses = await publicLookup(hostname, controller.signal); }

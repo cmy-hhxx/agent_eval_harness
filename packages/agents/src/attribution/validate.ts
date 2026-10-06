@@ -63,7 +63,7 @@ export function validateJudgment(request: AgentRequest, draft: unknown, audit: T
 }
 
 /** Native actuals may use JSON numbers; uncertain precision still requires an exact string. */
-export function numericSubmissionIssues(draft: unknown): ValidationIssue[] {
+function numericSubmissionIssues(draft: unknown): ValidationIssue[] {
   const checks = object(draft)?.numeric_checks;
   if (!Array.isArray(checks)) return [];
   return checks.flatMap((check, index) => {
@@ -76,7 +76,7 @@ export function numericSubmissionIssues(draft: unknown): ValidationIssue[] {
 }
 
 /** Presence and ownership are determined by the trusted standard-answer flag. */
-export function correctnessSubmissionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
+function correctnessSubmissionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
   const value = object(draft);
   if (!value) return [];
   const available = (request.input.ground_truth as unknown as Input["ground_truth"]).available;
@@ -120,7 +120,7 @@ export function submissionCoreRequirements(request: AgentRequest, draft: unknown
 }
 
 /** The submitted assessments cover applicable criteria; resolved assessments cover the complete rubric. */
-export function validateCriterionAssessments(request: AgentRequest, draft: unknown, representation: "submission" | "result") {
+function validateCriterionAssessments(request: AgentRequest, draft: unknown, representation: "submission" | "result") {
   const value = object(draft);
   const assessmentMap = new Map<string, Record<string, unknown>>();
   if (!value) return { issues: [] as ValidationIssue[], assessmentMap, identifiedAssessments: false };

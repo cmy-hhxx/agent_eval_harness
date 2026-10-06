@@ -11,6 +11,7 @@ const data = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-
 const { chartFromToolOutput } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/charts.js')).href);
 const { researchOption, ResearchChart } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-research.js')).href);
 const { chartTemplates } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-templates.js')).href);
+const { roseRadius, chordArcs } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-structure-data.js')).href);
 const { radialCells } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-radial.js')).href);
 const base = { title: '比较实际指标', scope: '固定期间 · 样本 n=3', source: '测试来源', unit: '次', categories: ['甲', '乙', '丙'], series: [{ name: 'A组', values: [10, 20, 30] }] };
 const samples = [
@@ -107,7 +108,7 @@ test('row charts size their real canvas to the data and keep count axes integral
 });
 
 test('every local template uses the current tool contract and the same receipt renderer', async () => {
-  assert.equal(new Set(chartTemplates.map((t: { chart: { type: string } }) => t.chart.type)).size, 16);
+  assert.equal(new Set(chartTemplates.map((t: { chart: { type: string } }) => t.chart.type)).size, 27);
   for (const { chart } of chartTemplates) {
     const result = await tool.execute({ ...chart, references: [{ runId: 'test' }] }, context);
     assert.deepEqual(chartFromToolOutput(result.content[0].text, 'ok'), chart);
@@ -153,4 +154,38 @@ test('scientific chart data requirements fail before any source is read', async 
     await assert.rejects(tool.execute({ ...chart, references: [{ runId: 'test' }] }, context));
     assert.equal(chartFromToolOutput(JSON.stringify({ kind: 'chart', chart }), 'ok'), null, chart.type);
   }
+});
+
+test('circular and flow templates preserve area, units, hierarchy and empirical ranks', () => {
+  assert.equal(roseRadius(0,20),18);
+  assert(Math.abs((roseRadius(20,20)**2-18**2)/(roseRadius(10,20)**2-18**2)-2)<1e-10, 'rose area, not radius, tracks value');
+  assert(data.decimalSumsEqual([.1,.2],[.3]));
+  assert(!data.decimalSumsEqual([.1,.2],[.30000000000000004]));
+  assert.deepEqual(data.empiricalCdf([2,1,2,null,4]), [{value:1,count:1,total:4,percent:25},{value:2,count:3,total:4,percent:75},{value:4,count:4,total:4,percent:100}]);
+  const hierarchy=chartTemplates.find((t: {chart:{type:string}})=>t.chart.type==='sunburst').chart;
+  assert.deepEqual(data.chartHierarchy(hierarchy).map((p: {value:number})=>p.value),[26,30,14]);
+  const chord=chartTemplates.find((t: {chart:{type:string}})=>t.chart.type==='chord').chart;
+  const arcs=chordArcs(chord);
+  assert(Math.abs(arcs.reduce((sum:number,arc:{from:number;end:number})=>sum+arc.end-arc.from,0)+arcs.length*.08-2*Math.PI)<1e-10);
+  assert.equal(data.chartLinks({categories:['A','B'],series:[{name:'A',values:[0,3]}]}).length,1);
+});
+
+test('new diagrams reject invented progress, invalid composition and impossible flows', async () => {
+  const example=(type:string)=>chartTemplates.find((t:{chart:{type:string}})=>t.chart.type===type).chart;
+  for (const chart of [
+    {...example('rose'),series:[{name:'A',values:[1,2,-1,3,4,5]}]},
+    {...example('concentric'),series:[{name:'A',values:[1,null,3]},{name:'B',values:[1,2,3]}]},
+    {...example('radial_progress'),maxValue:80},
+    {...example('radar'),maxValue:0},
+    {...example('waffle'),series:[{name:'样本',values:[1.5,2,3]}]},
+    {...example('waffle'),series:[{name:'样本',values:[300,200,1]}]},
+    {...example('sankey'),categories:['A','B','C'],series:[{name:'A',values:[0,3,0]},{name:'B',values:[0,0,2]}]},
+    {...example('sankey'),categories:['A','B','C'],series:[{name:'A',values:[0,3,0]},{name:'B',values:[0,0,3]},{name:'C',values:[3,0,0]}]},
+    {...example('chord'),categories:['A','B','C'],series:[{name:'A',values:[0,2,3]},{name:'B',values:[1,0,2]},{name:'C',values:[3,2,0]}]},
+  ]) {
+    await assert.rejects(tool.execute({...chart,references:[{runId:'test'}]},context));
+    assert.equal(chartFromToolOutput(JSON.stringify({kind:'chart',chart}),'ok'),null,chart.type);
+  }
+  const decimal={...example('sankey'),categories:['A','B','C','D'],series:[{name:'A',values:[0,.1,.2,0]},{name:'B',values:[0,0,0,.1]},{name:'C',values:[0,0,0,.2]}]};
+  await tool.execute({...decimal,references:[{runId:'test'}]},context);
 });

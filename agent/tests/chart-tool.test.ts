@@ -36,6 +36,15 @@ test("charts reject unsafe configuration and invalid geometry before reading sou
   assert.equal(tool.readOnly, true);
 });
 
+test("external material charts skip provenance references instead of borrowing a run", async () => {
+  const tool = chartTool(noData);
+  const { references: _, ...external } = chart;
+  const response = await tool.execute(external, context);
+  assert.equal(response.details, undefined, "external charts have no local source coordinates to store");
+  assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify({ kind: "chart", chart: external }) }]);
+  await assert.rejects(tool.execute({ ...chart, references: [] }, context), /references/);
+});
+
 test("chart output keeps source coordinates in metadata and preserves measured values and gaps", async () => {
   const calls: unknown[] = [];
   const tool = chartTool({ ...noData, async list(query) { calls.push(query); return { kind: "inputs", total: 56, evaluatorVersion: "fixture" }; } });

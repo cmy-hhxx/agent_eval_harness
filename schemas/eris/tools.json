@@ -87,13 +87,14 @@
       },
       "offset": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "顶层字段，与 reference 同级；不要写进 reference。"
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
         "maximum": 16000,
-        "description": "消息目录按条，默认30、最多100；正文按 UTF-16 字符，默认8000、最多16000。"
+        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；正文按 UTF-16 字符，默认8000、最多16000。"
       }
     },
     "required": [
@@ -175,12 +176,14 @@
       },
       "offset": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "顶层字段，与 reference 同级。"
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 100
+        "maximum": 100,
+        "description": "顶层字段，与 reference 同级。"
       }
     },
     "required": [
@@ -197,6 +200,7 @@
     "properties": {
       "queries": {
         "type": "array",
+        "description": "1–4条明确查询计划；单一事实默认只发1条精准查询，多个独立缺口才合并互补查询。",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -208,10 +212,12 @@
               "type": "string",
               "minLength": 1,
               "pattern": "\\S",
-              "maxLength": 500
+              "maxLength": 500,
+              "description": "必填；写明机构或公司 + 期间 + 指标口径。"
             },
             "domains": {
               "type": "array",
+              "description": "可选；最多5个完整主机名，不带协议、端口或路径，不确定就省略。",
               "items": {
                 "type": "string",
                 "maxLength": 253,
@@ -223,16 +229,19 @@
             },
             "country": {
               "type": "string",
-              "pattern": "^[a-z]{2}$"
+              "pattern": "^[a-z]{2}$",
+              "description": "可选；两位小写国家代码，默认 cn。"
             },
             "language": {
               "type": "string",
-              "pattern": "^[a-z]{2}(-[a-z]{2})?$"
+              "pattern": "^[a-z]{2}(-[a-z]{2})?$",
+              "description": "可选；语言代码，例如 zh-cn 或 en，默认 zh-cn。"
             },
             "page": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 3
+              "maximum": 3,
+              "description": "可选；1–3，默认1；只在必要的查询上翻页。"
             }
           }
         },
@@ -245,7 +254,8 @@
         "enum": [
           "web",
           "news"
-        ]
+        ],
+        "description": "只有 web（默认）和 news 两个合法值，没有 finance 等类别；提交其他值会被校验拒绝。"
       },
       "timeRange": {
         "type": "string",
@@ -254,20 +264,24 @@
           "week",
           "month",
           "year"
-        ]
+        ],
+        "description": "可选；相对检索时点的 day/week/month/year，与 dateFrom / dateTo 互斥。"
       },
       "dateFrom": {
         "type": "string",
-        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "description": "可选；包含端点的 YYYY-MM-DD。"
       },
       "dateTo": {
         "type": "string",
-        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "description": "可选；包含端点的 YYYY-MM-DD；历史审查设为问题截至日期。"
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 20
+        "maximum": 20,
+        "description": "可选；合并输出条数，默认10、最多20。"
       }
     },
     "allOf": [
@@ -636,7 +650,18 @@
           "bump",
           "interval",
           "boxplot",
-          "violin"
+          "violin",
+          "rose",
+          "concentric",
+          "radial_progress",
+          "radar",
+          "waffle",
+          "sunburst",
+          "treemap",
+          "sankey",
+          "chord",
+          "ecdf",
+          "ridgeline"
         ]
       },
       "title": {
@@ -678,7 +703,7 @@
       "series": {
         "type": "array",
         "minItems": 1,
-        "maxItems": 4,
+        "maxItems": 8,
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -1010,6 +1035,11 @@
         "minLength": 1,
         "maxLength": 40,
         "pattern": "\\S"
+      },
+      "maxValue": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 1000000000000000.0
       }
     },
     "required": [
@@ -1019,8 +1049,7 @@
       "unit",
       "source",
       "categories",
-      "series",
-      "references"
+      "series"
     ],
     "allOf": [
       {
@@ -1122,7 +1151,9 @@
                 "histogram",
                 "bubble",
                 "boxplot",
-                "violin"
+                "violin",
+                "ecdf",
+                "ridgeline"
               ]
             }
           }
@@ -1368,6 +1399,457 @@
           "properties": {
             "categories": {
               "minItems": 5
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "enum": [
+                "sankey",
+                "chord"
+              ]
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "series": {
+              "maxItems": 4
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "enum": [
+                "radar",
+                "radial_progress"
+              ]
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "maxValue"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "maxValue"
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "rose"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 3,
+              "maxItems": 10,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "concentric"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 6,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "radial_progress"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 1,
+              "maxItems": 6,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "radar"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 3,
+              "maxItems": 8,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "waffle"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 6,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "sunburst"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "treemap"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "sankey"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "chord"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 3,
+              "maxItems": 8,
+              "items": {
+                "maxLength": 12
+              }
+            },
+            "series": {
+              "minItems": 3,
+              "maxItems": 8,
+              "items": {
+                "properties": {
+                  "values": {
+                    "items": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "name": {
+                    "maxLength": 12
+                  }
+                }
+              }
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "ecdf"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 2,
+              "maxItems": 200
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 4
+            },
+            "annotations": {
+              "maxItems": 0
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "type": {
+              "const": "ridgeline"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "categories": {
+              "minItems": 8,
+              "maxItems": 200
+            },
+            "series": {
+              "minItems": 1,
+              "maxItems": 4
+            },
+            "annotations": {
+              "maxItems": 0
             }
           }
         }

@@ -1,14 +1,15 @@
 import { createElement as h, memo, useEffect, useRef, useState } from 'react';
 import { init, use } from 'echarts/core';
-import { ScatterChart, HeatmapChart, CustomChart, LineChart, BoxplotChart } from 'echarts/charts';
+import { ScatterChart, HeatmapChart, CustomChart, LineChart, BoxplotChart, SunburstChart, TreemapChart, SankeyChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import { LabelLayout } from 'echarts/features';
 import { histogramBins, waterfallSteps, researchColors, chartReading, pairedDifferences, differenceUnit, quantile, compactNumber, signedNumber } from './chart-data.js';
-use([LineChart, BoxplotChart, ScatterChart, HeatmapChart, CustomChart, GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent, LabelLayout, SVGRenderer]);
+use([SunburstChart, TreemapChart, SankeyChart, LineChart, BoxplotChart, ScatterChart, HeatmapChart, CustomChart, GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent, LabelLayout, SVGRenderer]);
 
-import { chartTheme } from './chart-theme.js';
+import { chartTheme, heatColor, heatColors, heatTextColor } from './chart-theme.js';
 import { chartTextWidth, differenceLabel, researchLayout } from './chart-layout.js';
+import { structuralResearchOption } from './chart-research-structure.js';
 import { extendedResearchOption } from './chart-research-extended.js';
 const ink = chartTheme.ink, muted = chartTheme.muted, grid = chartTheme.grid;
 const display = compactNumber;
@@ -40,12 +41,12 @@ export function researchOption(chart, width = 560) {
       data: chart.categories.flatMap((_, i) => chart.series.every(s => s.values[i] !== null) ? [[chart.series[0].values[i], i, chart.series[1].values[i]]] : []),
       renderItem: (params, api) => { const a = api.coord([api.value(0), api.value(1)]), b = api.coord([api.value(2), api.value(1)]), delta = deltas[api.value(1)].value;
         return { type: 'group', children: [
-          { type: 'line', shape: { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, style: { stroke: chartTheme.mist, lineWidth: 2 } },
-          { type: 'text', style: { x: params.coordSys.x + params.coordSys.width + 16, y: a[1], text: `Δ ${signedNumber(delta)}`, verticalAlign: 'middle', fill: delta > 0 ? chartTheme.navy : chartTheme.steel, font: '600 11px system-ui' } },
+          { type: 'line', shape: { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, style: { stroke: chartTheme.denim, lineWidth: 2 } },
+          { type: 'text', style: { x: params.coordSys.x + params.coordSys.width + 16, y: a[1], text: `Δ ${signedNumber(delta)}`, verticalAlign: 'middle', fill: delta > 0 ? chartTheme.navy : chartTheme.royal, font: '600 11px system-ui' } },
         ] };
       },
     }, ...chart.series.map((s, si) => ({ name: s.name, type: 'scatter', symbol: si === 0 ? 'circle' : 'diamond', symbolSize: 8, itemStyle: { color: palette[si], borderWidth: 1.5, borderColor: '#fff' },
-      label: { show: true, distance: 4, fontSize: 10, color: palette[si], formatter: p => display(p.value[0]) },
+      label: { show: true, distance: 4, fontSize: 10, color: ink, formatter: p => display(p.value[0]) },
       data: s.values.flatMap((value, ci) => { if (value === null) return []; const other = chart.series[1 - si].values[ci]; return [{ ...point(chart, si, ci, [value, ci]), label: { position: other === null ? si === 0 ? 'left' : 'right' : value < other || (value === other && si === 0) ? 'left' : 'right' } }]; }),
     }))];
   } else if (chart.type === 'heatmap') {
@@ -55,9 +56,9 @@ export function researchOption(chart, width = 560) {
     const differences = pairedDifferences(chart), hasDifferences = differences.length > 0;
     option.xAxis = { ...axis, type: 'category', data: chart.categories, splitArea: { show: false }, axisLabel: { ...axis.axisLabel, interval: 0, rotate: 0, lineHeight: 18 } };
     option.yAxis.data = [...chart.series.map(s => s.name), ...(hasDifferences ? [differenceLabel(chart, differenceUnit(chart))] : [])];
-    option.visualMap = { type: 'continuous', min, max: max === min ? min + 1 : max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: Math.min(120, width - 80), itemWidth: 5, text: [display(max), display(min)], textStyle: { color: muted }, inRange: { color: min < 0 ? [chartTheme.pink, chartTheme.pale, chartTheme.navy] : [chartTheme.pale, chartTheme.blue, chartTheme.navy] }, seriesIndex: 0 };
+    option.visualMap = { type: 'continuous', min, max: max === min ? min + 1 : max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: Math.min(120, width - 80), itemWidth: 5, text: [display(max), display(min)], textStyle: { color: muted }, inRange: { color: heatColors(min) }, seriesIndex: 0 };
     option.series = [{ type: 'heatmap', name: chart.unit,
-      data: chart.series.flatMap((s, si) => s.values.flatMap((value, ci) => value === null ? [] : [{ ...point(chart, si, ci, [ci, si, value]), label: { color: Math.abs(value) / Math.max(Number.MIN_VALUE, value < 0 ? Math.abs(min) : max) > .6 ? '#fff' : ink } }])),
+      data: chart.series.flatMap((s, si) => s.values.flatMap((value, ci) => value === null ? [] : [{ ...point(chart, si, ci, [ci, si, value]), label: { color: heatTextColor(heatColor(value, min, max)) } }])),
       itemStyle: { borderWidth: 2, borderColor: '#fff' }, label: { show: chart.categories.length <= 12, fontSize: 12, formatter: p => display(p.value[2]) }, emphasis: { itemStyle: { borderColor: ink, borderWidth: 2 } },
     }, { type: 'scatter', symbolSize: 0, itemStyle: { color: 'transparent' }, label: { show: true, formatter: '—', color: '#999', opacity: 1, fontSize: 14, position: 'inside' },
       data: chart.series.flatMap((s, si) => s.values.flatMap((value, ci) => value === null ? [point(chart, si, ci, [ci, si])] : [])),
@@ -67,8 +68,8 @@ export function researchOption(chart, width = 560) {
       renderItem: (_, api) => {
         const ci = api.value(0), center = api.coord([ci, api.value(1)]), size = api.size([1, 1]), value = differences[ci].value;
         return { type: 'group', children: [
-          { type: 'rect', shape: { x: center[0] - size[0] / 2 + 1, y: center[1] - size[1] / 2 + 2, width: size[0] - 2, height: size[1] - 4 }, style: { fill: chartTheme.pale } },
-          { type: 'text', style: { x: center[0], y: center[1], text: value === null ? '—' : signedNumber(value), align: 'center', verticalAlign: 'middle', fill: value > 0 ? chartTheme.navy : chartTheme.steel, font: '600 11px system-ui' } },
+          { type: 'rect', shape: { x: center[0] - size[0] / 2 + 1, y: center[1] - size[1] / 2 + 2, width: size[0] - 2, height: size[1] - 4 }, style: { fill: chartTheme.ivory } },
+          { type: 'text', style: { x: center[0], y: center[1], text: value === null ? '—' : signedNumber(value), align: 'center', verticalAlign: 'middle', fill: value > 0 ? chartTheme.navy : chartTheme.royal, font: '600 11px system-ui' } },
         ] };
       },
     });
@@ -80,7 +81,7 @@ export function researchOption(chart, width = 560) {
       emphasis: { scale: 1.4 }, data: s.values.flatMap((value, ci) => value === null || chart.xValues[ci] === null ? [] : [point(chart, si, ci, [chart.xValues[ci], value])]),
     }));
     const paired = option.series.flatMap(s => s.data.map(d => d.value));
-    option.series[0].markLine = { silent: true, symbol: 'none', label: { show: true, formatter: '中位 {c}', fontSize: 10, color: muted, position: 'insideEndTop' }, lineStyle: { color: chartTheme.blue, type: 'dashed', width: 1 },
+    option.series[0].markLine = { silent: true, symbol: 'none', label: { show: true, formatter: '中位 {c}', fontSize: 10, color: muted, position: 'insideEndTop' }, lineStyle: { color: chartTheme.denim, type: 'dashed', width: 1 },
       data: [{ xAxis: quantile(paired.map(p => p[0]), .5) }, { yAxis: quantile(paired.map(p => p[1]), .5) }],
     };
   } else if (chart.type === 'waterfall') {
@@ -91,8 +92,8 @@ export function researchOption(chart, width = 560) {
       renderItem: (params, api) => {
         const step = steps[params.dataIndex], a = api.coord([api.value(0), api.value(1)]), b = api.coord([api.value(0), api.value(2)]), barWidth = Math.min(32, api.size([1, 0])[0] * .5);
         return { type: 'group', children: [
-          ...(params.dataIndex < steps.length - 1 ? [{ type: 'line', shape: { x1: a[0] + barWidth / 2, y1: b[1], x2: api.coord([params.dataIndex + 1, step.end])[0] - barWidth / 2, y2: b[1] }, style: { stroke: chartTheme.mist, lineWidth: 1, lineDash: [3, 3] } }] : []),
-          { type: 'rect', shape: { x: a[0] - barWidth / 2, y: Math.min(a[1], b[1]), width: barWidth, height: Math.max(1, Math.abs(a[1] - b[1])) }, style: { fill: step.total ? chartTheme.navy : step.value < 0 ? chartTheme.navy : chartTheme.blue } },
+          ...(params.dataIndex < steps.length - 1 ? [{ type: 'line', shape: { x1: a[0] + barWidth / 2, y1: b[1], x2: api.coord([params.dataIndex + 1, step.end])[0] - barWidth / 2, y2: b[1] }, style: { stroke: chartTheme.denim, lineWidth: 1, lineDash: [3, 3] } }] : []),
+          { type: 'rect', shape: { x: a[0] - barWidth / 2, y: Math.min(a[1], b[1]), width: barWidth, height: Math.max(1, Math.abs(a[1] - b[1])) }, style: { fill: step.total ? chartTheme.navy : step.value < 0 ? chartTheme.terracotta : chartTheme.denim } },
           { type: 'text', style: { x: a[0], y: Math.min(a[1], b[1]) - 8, text: `${params.dataIndex > 0 && step.value > 0 && !step.total ? '+' : ''}${display(step.value)}`, align: 'center', verticalAlign: 'bottom', fill: ink, fontSize: 11 } },
         ] };
       },
@@ -104,13 +105,14 @@ export function researchOption(chart, width = 560) {
     option.grid.bottom = 30;
     option.series = [{ type: 'custom', encode: { x: [0, 1], y: 2 }, data: bins.map(b => [b.low, b.high, b.count]),
       renderItem: (_, api) => { const left = api.coord([api.value(0), 0]), right = api.coord([api.value(1), api.value(2)]);
-        return { type: 'group', children: [{ type: 'rect', shape: { x: left[0] + 1, y: right[1], width: Math.max(2, right[0] - left[0] - 2), height: Math.max(0, left[1] - right[1]) }, style: { fill: chartTheme.steel, opacity: .82 } }, { type: 'text', style: { x: (left[0] + right[0]) / 2, y: right[1] - 5, text: String(api.value(2)), align: 'center', verticalAlign: 'bottom', fill: ink, fontSize: 10 } }] };
+        return { type: 'group', children: [{ type: 'rect', shape: { x: left[0] + 1, y: right[1], width: Math.max(2, right[0] - left[0] - 2), height: Math.max(0, left[1] - right[1]) }, style: { fill: chartTheme.royal, opacity: .82 } }, { type: 'text', style: { x: (left[0] + right[0]) / 2, y: right[1] - 5, text: String(api.value(2)), align: 'center', verticalAlign: 'bottom', fill: ink, fontSize: 10 } }] };
       },
       markLine: { silent: true, symbol: 'none', label: { show: true, formatter: '中位 {c}', fontSize: 10, color: muted, position: 'insideEndTop' }, lineStyle: { color: chartTheme.navy, width: 1.5 }, data: [{ xAxis: median }] },
-      markArea: { silent: true, label: { show: true, formatter: 'Q1–Q3', position: 'insideTop', color: muted, fontSize: 10 }, itemStyle: { color: 'rgba(144,168,197,.15)' }, data: [[{ xAxis: quantile(samples, .25) }, { xAxis: quantile(samples, .75) }]] },
+      markArea: { silent: true, label: { show: true, formatter: 'Q1–Q3', position: 'insideTop', color: muted, fontSize: 10 }, itemStyle: { color: 'rgba(30,78,140,.12)' }, data: [[{ xAxis: quantile(samples, .25) }, { xAxis: quantile(samples, .75) }]] },
     }, { type: 'scatter', silent: true, symbol: 'rect', symbolSize: [2, 6], symbolOffset: [0, 5], itemStyle: { color: chartTheme.navy, opacity: .7 }, data: samples.map(v => [v, 0]) }];
   }
   extendedResearchOption(option, chart, { width, palette, axis, point });
+  structuralResearchOption(option, chart, palette);
   // Numbered markers point to real values; the full notes stay legible below the plot.
   (chart.annotations ?? []).forEach((a, index) => {
     const value = chart.series[a.seriesIndex].values[a.categoryIndex];
@@ -143,7 +145,6 @@ function chartLayout(chart, width) {
   const numbers = chart.series.flatMap(s => [...s.values, ...(s.lowerValues ?? []), ...(s.upperValues ?? [])]).filter(v => v !== null).map(display);
   return researchLayout(chart, width, differenceUnit(chart), numbers);
 }
-export function researchHeight(chart, width) { return chartLayout(chart, width).height; }
 
 export const ResearchChart = memo(function ResearchChart({ chart, width, english }) {
   const ref = useRef(null), instance = useRef(null), active = useRef(-1);
@@ -163,10 +164,11 @@ export const ResearchChart = memo(function ResearchChart({ chart, width, english
     event.preventDefault(); event.stopPropagation();
     const engine = instance.current; if (!engine) return;
     if (event.key === 'Escape') { engine.dispatchAction({ type: 'downplay' }); setReading(''); return; }
-    const option = researchOption(chart, layout.width), choices = option.series.flatMap((s, si) => s.silent ? [] : s.data.map((data, di) => ({ si, di, data })));
+    const option = researchOption(chart, layout.width);
+    const choices = option.series.flatMap((s, si) => s.silent ? [] : chart.type === 'sankey' ? s.links.map((data,di)=>({si,di,data,dataType:'edge'})) : s.data.flatMap((data,di)=> data.children ? data.children.map(child=>({si,di,data:child,highlight:false})) : [{si,di,data}]));
     if (!choices.length) return;
     active.current = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (active.current + (event.key === 'ArrowLeft' ? -1 : 1) + choices.length) % choices.length;
-    const selected = choices[active.current]; engine.dispatchAction({ type: 'downplay' }); engine.dispatchAction({ type: 'highlight', seriesIndex: selected.si, dataIndex: selected.di });
+    const selected = choices[active.current]; engine.dispatchAction({ type: 'downplay' }); if (selected.highlight !== false) engine.dispatchAction({ type: 'highlight', seriesIndex: selected.si, dataIndex: selected.di, ...(selected.dataType ? { dataType:selected.dataType } : {}) });
     setReading(chartReading(chart, selected.data, selected.di));
   };
   return h('div', { 'data-research-chart': chart.type }, h('div', { style: { overflowX: 'auto', maxWidth: '100%' } }, h('div', { ref, tabIndex: 0, role: 'group', 'aria-label': `${chart.title} · ${english ? 'Use arrow keys to inspect' : '方向键查看数据'}`, onKeyDown: inspect, style: { width: layout.width, height } })),

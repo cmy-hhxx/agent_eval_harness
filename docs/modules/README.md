@@ -25,16 +25,9 @@
 | Schemas | [根目录 Schema 模块](../../schemas/README.md)、Criteria / Attribution / Comparison / Rewrite / Clustering / Workflow Schema | 根目录 `schemas/` | 被 Agents 与 Workflow 读取 | JSON Schema 与文档一致性 |
 | 离线汇报 | [开发预览](../../evaluation-report/index.html)、[独立源码与导出](../../evaluation-report/README.md)，SVG 机制图、历史提示词与案例快照 | 浏览器直接打开；`node evaluation-report/build.mjs` 导出单文件 | 无业务代码依赖，不接入项目运行或构建 | 模块构建测试、快照分母、一级导航、原文阅读、单文件再打开与响应式核验 |
 
-Agent 不导入其他 Agent 或 Workflow。新增 Profile 在 `packages/prompts` 配套提交提示词与工具描述，在 Agent 目录提交校验、测试样例和单元测试，并在根目录 `schemas/<stage>/` 增加或修改 Schema，在应用组装处登记。Workflow 负责组合和输入映射，Agent 不读取其他 Agent 的实现或状态。改写 Agent 只认文本槽位，槽位选择、回填和内嵌 rewritten 字段由 Comparison Workflow 维护；聚类 Agent 拥有问题库，归因只提供问题描述，显式历史来源复核由 Workflow 绑定原登记输入与原收据后交给 Clustering 纯规则追加审计事件；工作流负责按 `(模型 × 批次)` 分片组合观察，并通过 Data 的模型锁读改写问题库。
+## 跨模块修改
 
-工作台的 `/problems` 页面只负责模型 → 组件 → 问题类的树状目录、主题筛选与样本展示；共享问题库投影、类详情和可召回样本的运行定位由 Comparison Workflow 的公开读取入口提供，文件读取仍通过 Data。样本链接回运行工作台，由页面控制器恢复运行、case 与归因 finding 的展开状态，不新增评测或问题库写入入口。
-
-正式对比结果由 [Workflow Schema](../../packages/workflows/src/comparison/schema.ts)引用两个 Agent 的接受结果 Schema，再添加身份、对错摘要与回溯字段；Workflow 自己的 [export schema](../../schemas/workflow/export.schema.json) 只描述这层正式导出，内嵌改写字段由 Attribution、Comparison、Clustering 各自的结果 Schema 描述，聚类产物由 [clustering schema](../../schemas/workflow/clustering.schema.json) 描述。Schema 统一存放在[根目录 schemas 模块](../../schemas/README.md)，Agent 的业务结构仍在各自目录的校验和类型中维护；模型可见文案集中在[提示词模块](../../packages/prompts/README.md)。
-
-Eris 的运行计数与正式结果定位由 Workflow 的 [进度投影](../../packages/workflows/src/comparison/analysis-progress.ts)从当前 Checkpoint 计算，正式档位、模型身份和两两战绩由 [正式比较投影](../../packages/workflows/src/comparison/analysis-comparison.ts)按保存配置与原 verdict 计算，通过现有结果读取入口汇总当前正式引用；区分结果份数与对局场数。Host 数据目录仅选择范围、分页并提供这些投影；不读原始回答计数、不跨 run 累计试跑输入。Eris 通过 `createEris` 统一装配独立的 [提示词与工具说明](../../packages/prompts/resources/eris/)、[工具 Schema](../../schemas/eris/tools.json) 和执行器；修改入口见 [Eris 定义](../../agent/README.md#修改-eris)。`AnalysisDataSource`、`SpecialistGateway`、`WebSearchProvider`、`WebReader`、`AssistantSessionRuntime` 和执行者协调接口位于 [Contracts](../../packages/contracts/src/assistant.ts)。[应用专业网关](../../apps/host/src/assistant-specialists.ts) 通过 Workflow 公开入口复用材料、共同标准、独立复核和盲测规则，构造本次输入引用的可恢复小计划，再通过 Host 的 [runEvaluation](../../packages/host/src/runner.ts) 执行、校验和提交正式结果。
-
-分析助手的网关模型发现位于 Runtime，各服务商的模型目录、凭据路由与常用模型组装位于应用 Host，用户选择 IO 位于 Data；客户端装配上游模型选择、命令入口和模型勾选组件。模型配置与 DeepSeek Flash 接入见 [Agent 说明](../../agent/README.md)。Pi 正文中的 `<think>` 包装只在展示适配时归入 reasoning，不改写原始恢复消息。
-
-分析助手设置通过原有 Deepseek ConfigForms / settings RPC 读写，Runtime 适配上游设置 Schema，Data 按用户保存偏好并检查并发修改；前端沿用上游通用设置面板和各功能控件。
-
-Comparison Workflow 的 `input.ts` 默认每场规划一个对比 UUID，`results.ts` / `codec.ts` 保存与恢复主线正式结果。`verification-preparation.ts` 从已接受的正式对比准备可选核验及固定执行范围，`verification-presentation.ts` 管理隐藏上游判词的首查和揭示材料；核验记录写 comparison-verification.jsonl，不替换主线结果、不自动重做归因或修改下游依赖。`review.ts` 处理共同标准变化后的归因重绑定，以及首次对比前最多一轮关键观察补查；`answer-generation.ts` 从可确认的回答链定位真实模型输出，不推定产品渲染。聚类在全部归因结束后通过独立命令准备，仅使用已接受归因，不依赖对比或核验。`problem-occurrence-review.ts` 提供只读 preview 与显式 apply 的来源审计入口，在已有模型锁内追加库事件，不修改原运行或统计。
+- Agent 规则改动同步提示词、Schema、解析、业务校验与测试；公共规则见[仓库约束](../../AGENTS.md#模块边界)。
+- 比较流程由 Workflow 组合：`review.ts` 管归因补查，`verification-preparation.ts` 准备可选核验，`commentary.ts` 选择与回填改写槽位，`problem-library.ts` 通过 Data 锁更新问题库。语义见[数据契约](../contract.md)。
+- 看板、问题库和 Eris 只读取 Workflow 的公开投影；[analysis-progress.ts](../../packages/workflows/src/comparison/analysis-progress.ts) 统计任务进度，[analysis-comparison.ts](../../packages/workflows/src/comparison/analysis-comparison.ts) 汇总正式战绩。[应用专业网关](../../apps/host/src/assistant-specialists.ts) 构造小计划并复用 Host。
+- Eris 的数据、搜索、专业任务和会话接口在 [Contracts](../../packages/contracts/src/assistant.ts)；工具与界面入口见[修改 Eris](../../agent/README.md#修改-eris)，运行与恢复见[架构](../architecture.md#独立分析助手)。

@@ -168,7 +168,7 @@ export interface Submission {
   evaluation: unknown;
   audit: ToolAudit;
   usage: Usage;
-  submissionStats?: { contentSubmissions: number; fileErrors: number };
+  submissionStats?: { contentSubmissions: number; fileErrors: number; jsonRepairs?: number };
 }
 export interface Usage {
   input: number;

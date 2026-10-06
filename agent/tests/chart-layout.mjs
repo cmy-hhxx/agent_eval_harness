@@ -17,7 +17,7 @@ try {
   await page.locator('[data-template]').last().locator('svg').waitFor();
   await page.evaluate(() => document.fonts.ready);
   const failures = [];
-  const expectedLabels = Object.fromEntries(chartTemplates.map(({id, chart}) => [id, ['heatmap','bubble_matrix','dumbbell','slope','bump','waterfall','interval','radial_heatmap'].includes(chart.type) ? chart.categories : ['boxplot','violin'].includes(chart.type) ? chart.series.map(s => s.name) : []]));
+  const expectedLabels = Object.fromEntries(chartTemplates.map(({id, chart}) => [id, ['heatmap','bubble_matrix','dumbbell','slope','bump','waterfall','interval','radial_heatmap'].includes(chart.type) ? chart.categories : ['boxplot','violin','ridgeline'].includes(chart.type) ? chart.series.map(s => s.name) : []]));
   for (const width of [1440, 1024, 768, 375, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
@@ -47,7 +47,7 @@ try {
   assert.deepEqual(errors, []);
   assert.equal(failures.length, 0, 'chart text must stay on one line without overlap at desktop, split-pane or phone widths');
   await page.setViewportSize({ width: 1280, height: 760 });
-  await page.getByRole('button', { name: '结构', exact: true }).click();
+  await page.getByRole('button', { name: '环形', exact: true }).click();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.screenshot({ path: output + '/after.png' });
   console.log('All chart templates have single-line, non-overlapping labels at five viewport widths.');

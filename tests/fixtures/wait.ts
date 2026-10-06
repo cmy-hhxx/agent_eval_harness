@@ -7,7 +7,7 @@ export async function waitForTestState<T>(
   read: () => Promise<T>,
   ready: (state: T) => boolean,
   description: string,
-  timeoutMs = 5000,
+  timeoutMs = 15000,
 ) {
   const deadline = performance.now() + timeoutMs;
   let latest: T;

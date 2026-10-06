@@ -32,6 +32,6 @@
 
 ## 验证与维护
 
-- 行为修改后运行 `npm run typecheck`、`npm test`；涉及 Worker / SDK 加跑 `npm run test:integration`；涉及安装、构建或依赖加跑 `node scripts/test-clean.mjs`。
+- 开发中运行 `npm run typecheck`、`npm test`（单元、架构与脚本）；提交前和契约变更运行 `npm run test:full`（追加 Agent 与 Host 集成回归）；涉及 Worker / SDK 加跑 `npm run test:integration`；涉及安装、构建或依赖加跑 `node scripts/test-clean.mjs`。
 - 每次契约或目录变更、每轮迭代收尾和提交前检查测试代码：删除失效用例、旧字段、重复 fixture/helper 和旧兼容路径，让测试只覆盖当前行为。不要删除真实输入、结果或缓存来“清理测试”。
 - 修改 vendor 必须更新 `vendor/upstream.json` 的 `local_changes` 并重新构建。Pi 只注册应用从 `.env` 网关配置的模型，不恢复内置第三方模型数据或目录刷新。

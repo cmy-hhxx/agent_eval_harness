@@ -1,5 +1,5 @@
 // Derived display data only. Source values and accepted receipts stay unchanged.
-export const researchTypes = ['dumbbell', 'heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'bump', 'interval', 'boxplot', 'violin'];
+export const researchTypes = ['dumbbell', 'heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'bump', 'interval', 'boxplot', 'violin', 'sunburst', 'treemap', 'sankey', 'ecdf', 'ridgeline'];
 export { researchColors } from './chart-theme.js';
 export const differenceUnit = (chart, english = false) => ['%', '％'].includes(chart.unit) ? english ? 'pp' : '百分点' : chart.unit;
 export const compactNumber = value => {
@@ -9,7 +9,8 @@ export const compactNumber = value => {
     : rounded.toLocaleString('zh-CN', { maximumFractionDigits: 6 });
 };
 export const signedNumber = value => `${value > 0 ? '+' : ''}${compactNumber(value)}`;
-export function decimalSum(values) {
+function decimalParts(values) {
+  if (!values.length) return { integer: 0n, exponent: 0 };
   const parts = values.map(value => {
     const [coefficient, power = '0'] = String(value).split('e');
     const decimals = coefficient.split('.')[1]?.length ?? 0;
@@ -17,7 +18,15 @@ export function decimalSum(values) {
   });
   const exponent = Math.min(...parts.map(p => p.exponent));
   const integer = parts.reduce((sum, p) => sum + p.integer * 10n ** BigInt(p.exponent - exponent), 0n);
+  return { integer, exponent };
+}
+export function decimalSum(values) {
+  const { integer, exponent } = decimalParts(values);
   return Number(`${integer}e${exponent}`);
+}
+export function decimalSumsEqual(left, right) {
+  const a = decimalParts(left), b = decimalParts(right), exponent = Math.min(a.exponent, b.exponent);
+  return a.integer * 10n ** BigInt(a.exponent - exponent) === b.integer * 10n ** BigInt(b.exponent - exponent);
 }
 export function histogramBins(values) {
   const minimum = Math.min(...values), maximum = Math.max(...values);
@@ -60,6 +69,10 @@ export function chartReading(chart, data, index) {
     const step = waterfallSteps(chart)[index];
     return `${step.name} · ${step.value} ${chart.unit} · 累计 ${step.end} ${chart.unit}`;
   }
+  if (data?.derived === 'branch') return `${data.name}：${data.value} ${chart.unit}`;
+  if (data?.derived === 'cdf') return `${chart.series[data.sourceSeries].name} · ≤${data.value[0]} ${chart.unit}：${data.count}/${data.total}（${compactNumber(data.value[1])}%）`;
+  if (data?.derived === 'density') return `${chart.series[data.sourceSeries].name} · ${data.count} 条观测 · 中位 ${compactNumber(data.median)} ${chart.unit}`;
+  if (chart.type === 'sankey') return `${data.source} → ${data.target}：${data.value} ${chart.unit}`;
   const series = chart.series[data.sourceSeries], value = series.values[data.categoryIndex];
   const detail = `${series.name}：${value === null ? '未知' : `${value} ${chart.unit}`}${chart.type === 'interval' ? ` [${series.lowerValues[data.categoryIndex]}, ${series.upperValues[data.categoryIndex]}]` : ''}${chart.type === 'bubble' ? ` · ${chart.sizeLabel}：${chart.sizeValues[data.categoryIndex]} ${chart.sizeUnit}` : ''}`;
   return `${chart.categories[data.categoryIndex]} · ${['scatter', 'bubble'].includes(chart.type) ? `${chart.xLabel}：${chart.xValues[data.categoryIndex]} ${chart.xUnit} · ` : ''}${detail}`;
@@ -87,4 +100,16 @@ export function violinDensity(series) {
     });
   });
   return { bandwidth, groups, maximum: Math.max(...groups.flat().map(p => p.density)) };
+}
+
+export function empiricalCdf(values) {
+  const sorted = values.filter(v => v !== null).toSorted((a,b) => a - b);
+  return sorted.flatMap((value,i) => i + 1 < sorted.length && sorted[i + 1] === value ? [] : [{ value, count: i + 1, total: sorted.length, percent: (i + 1) / sorted.length * 100 }]);
+}
+export function chartHierarchy(chart) {
+  return chart.series.map((s,si) => ({ name: s.name, value: decimalSum(s.values), derived: 'branch', sourceSeries: si,
+    children: s.values.flatMap((value,ci) => value === 0 ? [] : [{ name: chart.categories[ci], value, sourceSeries: si, categoryIndex: ci }]) }));
+}
+export function chartLinks(chart) {
+  return chart.series.flatMap((s,si) => s.values.flatMap((value,ci) => value > 0 ? [{ source: s.name, target: chart.categories[ci], value, sourceSeries: si, categoryIndex: ci }] : []));
 }

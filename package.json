@@ -26,6 +26,7 @@
     "automations": "node --env-file-if-exists=.env dist/apps/host/src/automations.js",
     "benchmark": "node --env-file-if-exists=.env scripts/benchmark.mjs",
     "test": "npm run build:app && node scripts/test.mjs",
+    "test:full": "npm run build:app && node scripts/test.mjs --full",
     "test:integration": "npm run build:app && node --test dist/tests/integration/*.test.js",
     "build:pi": "node scripts/build.mjs pi",
     "build:prime": "node scripts/build.mjs prime",

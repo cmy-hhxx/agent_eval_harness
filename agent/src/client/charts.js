@@ -1,11 +1,13 @@
 import { createElement as h, memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { CircularChart } from './chart-circular.js';
+import { circularTypes, validStructureChart } from './chart-structure-data.js';
 import { RadialHeatmap } from './chart-radial.js';
 import { researchTypes } from './chart-data.js';
 
 import { chartTheme, researchColors } from './chart-theme.js';
 const colors = researchColors;
-const categoryColors = [chartTheme.mist, chartTheme.lavender, chartTheme.blue, chartTheme.pink, chartTheme.steel, chartTheme.navy];
-const bothGoodColor = chartTheme.mist;
+const categoryColors = [chartTheme.denim, chartTheme.earth, chartTheme.terracotta, chartTheme.coral, chartTheme.royal, chartTheme.navy, chartTheme.ivory];
+const bothGoodColor = chartTheme.denim;
 const bothBadColor = chartTheme.navy;
 const primaryColor = chartTheme.ink;
 const textColor = chartTheme.muted;
@@ -74,14 +76,15 @@ export function chartFromToolOutput(output, state) {
   let receipt;
   try { receipt = JSON.parse(output); } catch { return null; }
   const chart = receipt?.kind === 'chart' ? receipt.chart : null;
-  if (!chart || !['dot', 'line', 'pie', 'radial_heatmap', ...researchTypes].includes(chart.type)
+  if (!chart || !['dot', 'line', 'pie', 'radial_heatmap', ...circularTypes, ...researchTypes].includes(chart.type)
     || !['title', 'scope', 'source'].every(key => text(chart[key], 500)) || !text(chart.unit, 40)
-    || !strings(chart.categories, ['scatter', 'histogram', 'bubble', 'boxplot', 'violin'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > 4
+    || !strings(chart.categories, ['scatter', 'histogram', 'bubble', 'boxplot', 'violin', 'ecdf', 'ridgeline'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > (['sankey','chord'].includes(chart.type) ? 8 : 4)
     || !chart.series.every(series => series && text(series.name, 120)
       && Array.isArray(series.values) && series.values.length === chart.categories.length
       && series.values.every(value => value === null || (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15)))
     || !chart.series.some(series => series.values.some(value => value !== null))
     || new Set(chart.series.map(series => series.name)).size !== chart.series.length) return null;
+  if (!validStructureChart(chart)) return null;
   if (['scatter', 'bubble'].includes(chart.type) && (!Array.isArray(chart.xValues) || chart.xValues.length !== chart.categories.length
     || !text(chart.xLabel, 80) || !text(chart.xUnit, 40)
     || chart.xValues.some(v => v !== null && (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e15))
@@ -377,7 +380,7 @@ function TrendChart({ chart, width, english }) {
       d: `M ${label.x} ${label.y} L ${coordinates(right + 6)} ${coordinates(label.labelY)} L ${coordinates(right + 10)} ${coordinates(label.labelY)}`,
       stroke: label.color, strokeWidth: 1, fill: 'none' }));
     marks.push(svgLabel(label.series.name, right + 14, label.labelY - label.height / 2 + 14, tailSpace - 18, { key: 'tail-name-' + label.seriesIndex,
-      'data-chart-tail-name': true, 'data-series': label.series.name, fill: label.color, fontSize: 14 }));
+      'data-chart-tail-name': true, 'data-series': label.series.name, fill: primaryColor, fontSize: 14 }));
     marks.push(svgLabel(formatNumber(label.value), right + 14, label.labelY + label.height / 2 - 4, tailSpace - 18, { key: 'tail-' + label.seriesIndex,
       'data-chart-value': true, 'data-series': label.series.name, 'data-endpoint-x': label.x, 'data-endpoint-y': label.y,
       fill: primaryColor, fontSize: 15, fontWeight: 600 }));
@@ -411,7 +414,7 @@ function TrendChart({ chart, width, english }) {
       const valueText = formatNumber(label.value), stack = labelWidth(valueText, 15) > width * .45;
       return h('div', {
       key: label.seriesIndex, style: { display: 'grid', gridTemplateColumns: stack ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) minmax(0, .8fr)', gap: stack ? 4 : 12, alignItems: 'baseline' },
-    }, h('span', { 'data-chart-tail-name': true, 'data-series': label.series.name, style: { color: label.color, fontSize: 14, overflowWrap: 'anywhere' } },
+    }, h('span', { 'data-chart-tail-name': true, 'data-series': label.series.name, style: { color: primaryColor, fontSize: 14, overflowWrap: 'anywhere' } },
       h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 18, marginRight: 8, verticalAlign: 'middle',
         borderTopWidth: 2, borderTopStyle: lineStyle(label.series.name, identities[label.seriesIndex]), borderTopColor: label.color } }), label.series.name),
     h('strong', { 'data-chart-value': true, 'data-series': label.series.name, 'data-endpoint-x': label.x, 'data-endpoint-y': label.y,
@@ -498,7 +501,7 @@ export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh
   const [ref, width] = useWidth();
   const identities = seriesIndexes(chart), advanced = researchTypes.includes(chart.type);
   const english = !language.startsWith('zh');
-  const legend = chart.series.length > 1 && ['dot', 'scatter', 'bubble', 'dumbbell', 'slope', 'bump'].includes(chart.type);
+  const legend = chart.series.length > 1 && ['dot', 'scatter', 'bubble', 'dumbbell', 'slope', 'bump', 'ecdf'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
     position: 'relative', margin: '14px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
     border: `1px solid ${borderColor}`, borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
@@ -507,7 +510,7 @@ export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh
     h('div', { style: { marginTop: 3, fontSize: 12, lineHeight: 1.45 } }, `${chart.scope} · ${chart.unit}`)),
   legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 12 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
     h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-  h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
+  h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
     : chart.type === 'dot' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
   h(AccessibleValues, { chart, english }),
   chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 12, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null,

@@ -21,7 +21,7 @@
 - `workflow/statistics-log.schema.json`：已冻结的统计日志外部契约，覆盖完整日志信封、累计总计、逐日统计和全部嵌套字段；所有 `wins` 同级紧随必填非负整数 `both_good / both_bad`，涵盖模型、场景、难度及趋势。生成日志落盘前与恢复日志上传前严格校验。仅允许数值、标签内容和日期条目更新，未经用户明确授权不得修改结构。
 - `attribution/result.schema.json`、`comparison/result.schema.json`、`clustering/result.schema.json`：各自包含可选 `rewritten` 槽位，原字段不变；Workflow 在改写成功后写回。
 - `workflow/clustering.schema.json`：聚类阶段接受后的归类产物行，按模型与批次引用观察和归类决定。
-- `eris/tools.json`：独立分析助手的数据读取、专业任务、受限的八类分析图表、重点标注及总结工具输入，不接受自行填写的专业判词。图表只接收有来源引用的标签与有限数值，不接收 HTML、脚本、回调或远程数据配置。
+- `eris/tools.json`：独立分析助手的数据读取、专业任务、图表及总结工具输入，不接受自行填写的专业判词。图表类型与字段直接以 `show_chart` Schema 为准；本地评测图核验正式引用，外部材料图通过 `source` 说明来源，正文提供原文链接。图表不接收 HTML、脚本、回调或远程数据配置；执行校验见 [chart.ts](../agent/src/core/chart.ts)。
 
 Criteria 的 submission 接收三组 `{source_indices,text}`，同一来源可支持多个独立检查项。程序生成身份、作用域及包含完整原文的验收依据。Attribution 用单个 json 字符串传输，Worker 严格解码后按 submission 验证；内容是固定 strengths/problems 两数组及标量，每种行不含互斥字段，统一用 basis_index 选择真实依据；无标准答案时也保留明确的空对错字段。`judgment.schema.json` 只校验程序绑定后的内部判断，不是模型入口。正式结果继续保留完整证据坐标与来源身份。
 

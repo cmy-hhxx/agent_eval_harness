@@ -42,7 +42,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     call_specialist: async (value, context) => textResult(await options.specialists.invoke(context.scope, value as SpecialistRequest, context.signal, context.progress)),
     read_specialist: async (value, context) => textResult(await options.specialists.read(context.scope, (value as { operationId: string }).operationId)),
     show_chart: async (value, context) => {
-      const { references, ...chart } = value as ChartSpec & { references: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
+      const { references = [], ...chart } = value as ChartSpec & { references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
       validateChart(chart);
       const citations: unknown[] = [];
       for (const item of references) {
@@ -68,7 +68,9 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
           citations.push({ reference: item.reference, ...(result.evaluatorVersion ? { evaluatorVersion: result.evaluatorVersion } : {}) });
         }
       }
-      return { ...textResult({ kind: "chart", chart }), details: { references: citations } };
+      return citations.length
+        ? { ...textResult({ kind: "chart", chart }), details: { references: citations } }
+        : textResult({ kind: "chart", chart });
     },
     save_summary: async (value, context) => {
       const args = value as { markdown: string; references: { operationId?: string; reference?: AnalysisReference }[] };

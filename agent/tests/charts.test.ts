@@ -158,8 +158,8 @@ test('comparison labels wrap without dropping text and identity colours do not t
   assert.equal(dots[1].getAttribute('fill'), swapped.querySelector('[data-category="A 组Fast"]')!.getAttribute('fill'));
   assert.equal(dots[2].getAttribute('fill'), swapped.querySelector('[data-category="B: Fast"]')!.getAttribute('fill'));
   assert.notEqual(dots[1].getAttribute('fill'), dots[2].getAttribute('fill'));
-  assert.equal(dots[1].getAttribute('fill'), '#556c8d');
-  assert.equal(dots[2].getAttribute('fill'), '#e5c5c1');
+  assert.equal(dots[1].getAttribute('fill'), '#1E4E8C');
+  assert.equal(dots[2].getAttribute('fill'), '#F25F3B');
   const generic = render({ ...base, type: 'dot', categories: ['Apple', 'ABC', 'BA'], series: [{ name: '指标', values: [1, 2, 3] }] });
   assert.equal(new Set([...generic.querySelectorAll('[data-chart-mark=dot]')].map(node => node.getAttribute('fill'))).size, 1, 'ordinary names are not guessed to be A/B/C identities');
   const ranking = render({ ...base, type: 'dot', categories: ['证据缺失', '口径混用'], series: [{ name: 'B组Fast', values: [2, 1] }] });

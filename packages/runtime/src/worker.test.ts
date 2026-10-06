@@ -96,7 +96,41 @@ test("invalid JSON text spends a content attempt without pretending it was a fil
     const receipt=await fixture.store.receipt(fixture.spec.taskId);
     assert.equal(receipt!.submissionStats!.contentSubmissions,2);
     assert.equal(receipt!.submissionStats!.fileErrors,0);
+    assert.equal(receipt!.submissionStats!.jsonRepairs,undefined);
     assert.equal(fixture.counts().posts,1);
+  }finally{await fixture.close();}
+});
+
+test("unescaped quotes inside JSON strings are escaped deterministically and audited",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    const result=await options.execute("submit_evaluation",{json:'{"text":"标注"冲高回落"指向"}'});
+    assert.equal(result.terminate,true);
+  },async abort(){},async dispose(){}}),{material:"fixture",profile:{jsonStringSubmission:true,requiredReads:()=>[],
+    submissionSchema:{type:"object",additionalProperties:false,required:["text"],properties:{text:{type:"string"}}}}});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt!.evaluation,{text:'标注"冲高回落"指向'});
+    assert.equal(receipt!.submissionStats!.jsonRepairs,1);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,1);
+  }finally{await fixture.close();}
+});
+
+test("structural JSON errors still fail instead of inventing a repair",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    const rejected=await options.execute("submit_evaluation",{json:'{"text":"a" "b":"c"}'});
+    assert.equal(rejected.isError,true);
+    const feedback=JSON.parse(rejected.content[0].text!);
+    const issue=feedback.errors.find((item:ValidationIssue)=>item.code==="submission_json_invalid");
+    assert.match(issue.message,/无法安全修复/u);
+    assert.match(issue.message,/英文双引号必须转义/u);
+    assert((issue.actual as {position:number}).position>=0);
+    assert.equal((await options.execute("submit_evaluation",{json:'{"ok":true}'})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:"fixture",policy:{repairAttempts:1},profile:{jsonStringSubmission:true,requiredReads:()=>[]}});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,2);
   }finally{await fixture.close();}
 });
 

@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {setTimeout as delay} from 'node:timers/promises';
 import {AssistantSessions,serveAssistant} from '@eval/runtime/assistant';
 import {GatewayAssistantModels} from '../../dist/apps/host/src/assistant-models.js';
+import {chartTemplates} from '../src/client/chart-templates.js';
 import {assistantEndpoints} from '@eval/assistant/server';
 const directory=await mkdtemp(tmpdir()+'/assistant-conversation-');
 const shots=process.cwd()+'/.artifacts/agent-conversation';await mkdir(shots,{recursive:true});
@@ -25,7 +26,7 @@ const templateExamples={
 templateExamples['多系列趋势']={...templateExamples['时间趋势'],title:'多系列趋势（测试示例）',series:[templateExamples['时间趋势'].series[1],templateExamples['时间趋势'].series[0],{name:'C组Fast',values:[1.7,1.75,1.8,1.85,1.9]},{name:'参照Fast',values:[.8,.85,.9,.95,1]}]};
 templateExamples['长数字组成']={type:'pie',title:'长数字组成（测试示例）',scope:'离线测试；长数值与极小非零类别，不代表真实场数',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['双方均差','经营现金流与利润口径不一致且关键推导缺失'.repeat(4),'A组胜','双方均好'],series:[{name:'组成',values:[1,999999999999999.9,1,0]}]};
 templateExamples['问题矩阵']={type:'heatmap',title:'问题矩阵（测试示例）',scope:'离线测试；相同三个检查项',unit:'次',source:'浏览器测试数据，非评测结论',categories:['事实','来源','格式'],series:[{name:'A组Fast',values:[3,0,5]},{name:'B组Fast',values:[2,null,8]}],annotations:[{categoryIndex:2,seriesIndex:1,note:'格式问题较多'}]};
-const modelColors={'A组Fast':'rgb(85, 108, 141)','B组Fast':'rgb(229, 197, 193)','C组Fast':'rgb(144, 168, 197)','参照Fast':'rgb(220, 217, 230)'};
+const modelColors={'A组Fast':'rgb(30, 78, 140)','B组Fast':'rgb(242, 95, 59)','C组Fast':'rgb(107, 127, 106)','参照Fast':'rgb(71, 118, 168)'};
 const chartTool={name:'show_chart',readOnly:true,description:'Show structured chart',inputSchema:{type:'object'},execute:async(chart=chartData)=>{chartDisplays++;return {content:[{type:'text',text:JSON.stringify({kind:'chart',chart})}]};}};
 const searchArgs={queries:[{query:'央行政策利率公告',domains:['pbc.gov.cn']},{query:'中国人民银行 利率 公告'},{query:'央行发布会 利率'}],category:'news',dateTo:'2026-10-02',limit:3};
 const searchTitle='中国人民银行政策利率公告';
@@ -156,7 +157,7 @@ try{
  assert.equal(await chart.locator('svg[role=img]').count(),1);
  assert.equal(await chart.locator('[data-chart-mark=dot]').count(),2,'the chart draws the receipt values as positioned SVG points');
  assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
- assert.deepEqual(await chart.locator('[data-chart-mark=dot]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the reference blue and pink identity colours');
+ assert.deepEqual(await chart.locator('[data-chart-mark=dot]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the reference royal blue and coral identity colours');
  assert.equal(await chart.locator('[data-chart-actions], table, [data-chart-summary]').count(),0,'a standalone plot has no duplicate table, view toggle or repeated statistics');
  assert((await chart.locator('[data-chart-accessible-data]').textContent()).includes('5'),'assistive readers retain exact observations');
  assert.equal(await chart.locator('[data-chart-accessible-data]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','accessible observations do not take up visible space');
@@ -413,8 +414,8 @@ try{
    assert.equal(await exampleChart.locator('[data-chart-denominator]').count(),1,'the total is stated once in the visible composition');
    assert.deepEqual((await exampleChart.locator('[data-chart-composition-value]').allTextContents()).map(Number),example.series[0].values,'composition values remain exact including scientific notation');
    const swatches=await exampleChart.locator('ul li').evaluateAll(nodes=>Object.fromEntries(nodes.map(node=>[node.firstElementChild.textContent,getComputedStyle(node.querySelector('[aria-hidden=true]')).backgroundColor])));
-   assert.equal(swatches['双方均好'],'rgb(190, 205, 220)','both-good remains a reference mist blue after reordering');
-   assert.equal(swatches['双方均差'],'rgb(52, 76, 103)','both-bad remains a reference navy after reordering');
+   assert.equal(swatches['双方均好'],'rgb(71, 118, 168)','both-good remains a reference denim blue after reordering');
+   assert.equal(swatches['双方均差'],'rgb(11, 31, 84)','both-bad remains a reference navy after reordering');
    assert.equal(swatches['A组胜'],modelColors['A组Fast'],'A wins keep the A identity colour');
    if(label==='结果组成'){
     assert.equal(swatches['B组胜'],modelColors['B组Fast'],'B wins keep the B identity colour');
@@ -497,7 +498,7 @@ try{
  assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  await page.goto(server.url+'/u/local/chart-gallery.html');
  await page.getByRole('heading',{name:'科研图形模板',exact:true}).waitFor();
- assert.equal(await page.locator('[data-template]').count(),24);
+ assert.equal(await page.locator('[data-template]').count(),chartTemplates.length);
  for(const item of await page.locator('[data-template]').all()){
   await item.locator('[data-chart-plot] svg').waitFor();
   assert.equal(await item.locator('table,[data-chart-actions],[data-chart-summary]').count(),0);
@@ -509,11 +510,14 @@ try{
  await radial.locator('[aria-live=polite]').getByText('来源 · A组Fast：7 次',{exact:true}).waitFor();
  await radial.getByRole('img',{name:'来源 · A组Fast：7 次',exact:true}).press('Escape');
  await page.screenshot({path:shots+'/gallery-desktop.png',fullPage:true});
+ await page.getByRole('button',{name:'比较',exact:true}).click();
+ await page.evaluate(()=>window.scrollTo(0,0));
+ await page.screenshot({path:shots+'/gallery-comparison.png'});
  await page.getByRole('button',{name:'结构',exact:true}).click();
  await page.evaluate(()=>window.scrollTo(0,0));
  await page.screenshot({path:shots+'/gallery-preview.png'});
  await page.getByRole('button',{name:'分布',exact:true}).click();
- assert.equal(await page.locator('[data-template]').count(),4);
+ assert.equal(await page.locator('[data-template]').count(),chartTemplates.filter(t=>t.family==='分布').length);
  await page.getByRole('button',{name:'全部',exact:true}).click();
  await page.getByRole('searchbox',{name:'搜索模板'}).fill('环形热力');
  assert.equal(await page.locator('[data-template]').count(),2);
@@ -522,7 +526,7 @@ try{
  await page.getByRole('searchbox',{name:'搜索模板'}).fill('');
  await page.setViewportSize({width:375,height:900});
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1),'gallery fits mobile');
- for(const id of ['radial','radial-four','bubble-matrix','violin','interval','bump']){
+ for(const id of ['radial','radial-four','bubble-matrix','violin','interval','bump','rose-issues','rings-two','progress-ring','sunburst-issues','treemap-issues','sankey-stages','chord-issues','ecdf-duration','ridge-duration']){
   const item=page.locator(`[data-template="${id}"]`);await item.scrollIntoViewIfNeeded();
   assert(await item.evaluate(node=>node.scrollWidth<=node.clientWidth+1),`${id} fits mobile`);
   await item.screenshot({path:shots+`/gallery-${id}-narrow.png`});

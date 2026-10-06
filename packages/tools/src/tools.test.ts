@@ -671,13 +671,12 @@ test("worker SIGKILL does not leave an executing Python process behind", async (
     });
   let pid: number | undefined;
   try {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 200 && !pid; i++) {
       try {
-        pid = Number(await readFile(path.join(ctx.workdir, "pid"), "utf8"));
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 25));
-      }
+        const value = Number(await readFile(path.join(ctx.workdir, "pid"), "utf8"));
+        if (Number.isInteger(value) && value > 0) pid = value;
+      } catch {}
+      if (!pid) await new Promise((r) => setTimeout(r, 25));
     }
     assert(pid, "Python did not start");
     const exited = new Promise<void>((r) => child.once("exit", () => r()));

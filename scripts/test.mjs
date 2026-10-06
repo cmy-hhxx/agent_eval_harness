@@ -1,8 +1,14 @@
 import { readdir } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import path from "node:path";
 import { root, run } from "./lib.mjs";
 
-const roots = ["dist/packages", "dist/agent/tests", "dist/tests/architecture", "dist/tests/integration/host"];
+const full = process.argv.includes("--full");
+const roots = [
+  "dist/packages",
+  "dist/tests/architecture",
+  ...(full ? ["dist/agent/tests", "dist/tests/integration/host"] : []),
+];
 const files = (
   await Promise.all(
     roots.map(async (directory) =>
@@ -16,4 +22,13 @@ const files = (
 )
   .flat()
   .sort();
-await run("node", ["--test", ...files, "scripts/benchmark.test.mjs"]);
+// Test files are I/O-bound; two files per core shortens the wall clock without
+// starving the timing-sensitive Worker waits.
+const concurrency = Math.min(24, Math.max(4, availableParallelism() * 2));
+await run("node", [
+  "--test",
+  `--test-concurrency=${concurrency}`,
+  ...files,
+  "scripts/benchmark.test.mjs",
+  "scripts/publish.test.mjs",
+]);

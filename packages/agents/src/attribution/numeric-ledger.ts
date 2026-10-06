@@ -1,7 +1,7 @@
 import { ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import { numericReferenceDirectory, numericUnitIssue } from "./units.js";
-import { matchesReference } from "./numeric.js";
-import { resolveAttributionEvidence } from "./source-evidence.js";
+import { containsNumber, matchesReference } from "./numeric.js";
+import { ownEvidence, resolveAttributionEvidence } from "./source-evidence.js";
 import type { AttributionResult, Evidence } from "./types.js";
 
 type NumericCheck = AttributionResult["numeric_checks"][number];
@@ -12,8 +12,26 @@ export type NumericSubmissionCheck = Omit<NumericCheck, "expected" | "matches" |
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
+/** The answer evidence directory already contains a usable quote for this actual. */
+function answerEvidenceCandidates(request: AgentRequest, audit: ToolAudit | undefined, actual: string): number[] {
+  if (!audit) return [];
+  const finalIndex = object(request.input.answer)?.final_message_index;
+  if (!Number.isSafeInteger(finalIndex)) return [];
+  const found: number[] = [];
+  (audit.evidenceBank ?? []).forEach((evidenceId, index) => {
+    try {
+      const item = resolveAttributionEvidence(request, { evidence_id: evidenceId }, audit, `/correctness_evidence/${index}`);
+      if (ownEvidence(item) && item.message_index === finalIndex && containsNumber(item.quote, actual)) found.push(index + 1);
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      // Unregistered, foreign or image-only references cannot back an answer actual.
+    }
+  });
+  return found;
+}
+
 /** Reference ownership is checkable even when an unrelated finding is malformed. */
-export function numericReferenceSelectionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
+function numericReferenceSelectionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
   const checks = object(draft)?.numeric_checks;
   if (!Array.isArray(checks)) return [];
   const groundTruth = request.input.ground_truth as { available: boolean; value: unknown };
@@ -28,7 +46,7 @@ export function numericReferenceSelectionIssues(request: AgentRequest, draft: un
   });
 }
 
-export function numericMatch(request: AgentRequest, check: Omit<NumericCheck, "matches">, evidence: Evidence | undefined) {
+function numericMatch(request: AgentRequest, check: Omit<NumericCheck, "matches">, evidence: Evidence | undefined) {
   const truth = request.input.ground_truth as { value: unknown };
   const answer = request.input.answer as { final_message_index: number };
   const source = request.sources.answer;
@@ -101,9 +119,12 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
         unitIssue?.code === "numeric_unit_mismatch" ? `${unitIssue.message} matches 必须为false。` :
           `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
     if (unitIssue && unitIssue.code !== "numeric_unit_mismatch") issue(unitIssue.code, `${location}/scale`, unitIssue.message);
-    if (actualEvidence && check.actual !== null && unitIssue?.code === "numeric_answer_context_missing")
+    if (actualEvidence && check.actual !== null && unitIssue?.code === "numeric_answer_context_missing") {
+      const candidates = representation === "submission" ? answerEvidenceCandidates(request, audit, check.actual) : [];
       issue("numeric_answer_missing", `${location}/evidence_index`, `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；actual 保留最终回答原数值，不能先换算、补0或使用自行推导值。请选择包含真实原数值的最终回答证据。`,
-        { number: check.actual, quote: actualEvidence.quote });
+        { number: check.actual, quote: actualEvidence.quote },
+        candidates.length ? { evidence_indices: candidates } : undefined);
+    }
     if (value.is_correct === true && !matches)
       issue("numeric_correctness_contradiction", "/is_correct", "存在未通过的标准数值核对，不能判全部正确；先核查数值、单位、口径是否选对");
     if (value.is_correct === null && !matches)

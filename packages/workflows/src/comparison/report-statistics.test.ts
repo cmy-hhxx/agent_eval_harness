@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { JsonObject, PlannedTask } from "@eval/contracts";
+import type { JsonObject, PlannedTask, TaskState } from "@eval/contracts";
 import type { Candidate, TaskData } from "./types.js";
-import { summarizeResults, writeOverview } from "./report.js";
+import { summarizeResults, taskFailureSummary, writeOverview } from "./report.js";
 
 const answer = (id: string, version: string, correct: boolean | null, batch = "day", caseId = "case", inputId = `${batch}:${caseId}:${version}`): JsonObject => ({
   task_id: id, version, input_id: inputId, batch_id: batch, case_id: caseId, is_correct: correct,
@@ -162,4 +162,18 @@ test("coverage distinguishes decided, pending and incomplete comparison tasks", 
   const result = summarizeResults([...tasks, comparisonTask("decided"), comparisonTask("pending"), comparisonTask("blocked")],
     [], answers, [pair("a", "b", [true, true], ["a", "b"])], [], [], [{ case: { batch_id: "day", case_id: "case" } }]);
   assert.deepEqual(result.coverage, { planned: 3, decided: 1, pending: 1, incomplete: 1 });
+});
+
+test("failed task summaries expose bounded diagnostics from the persisted state", () => {
+  const long = "x".repeat(300);
+  const state: TaskState = { status: "failed", attempts: 1, failure: {
+    errors: Array.from({ length: 5 }, (_, index) => ({ category: "decision", code: `code_${index}`,
+      path: `/field/${index}`, message: index === 0 ? long : "原因" })),
+    contentSubmissions: 4, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "attempt",
+  } };
+  const summary = taskFailureSummary(state)!;
+  assert.match(summary, /code_0（\/field\/0）：x{220}…/u);
+  assert.match(summary, /其余 2 项见 state\.json/u);
+  assert.equal(taskFailureSummary(undefined), null);
+  assert.equal(taskFailureSummary({ status: "failed", attempts: 1 }), null);
 });

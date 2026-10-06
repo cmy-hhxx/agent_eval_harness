@@ -15,6 +15,14 @@ export function differenceLabel(chart, unit) {
 }
 
 export function researchLayout(chart, width, deltaUnit, numbers) {
+  if (['sunburst','treemap'].includes(chart.type)) return { width: Math.max(320,width), height: chart.type==='sunburst'?300:240, labelWidth:0 };
+  if (chart.type==='sankey') {
+    const depths=Array(chart.categories.length).fill(0);
+    for(let i=0;i<chart.categories.length;i++) for(const series of chart.series) series.values.forEach((v,j)=>{if(v>0)depths[j]=Math.max(depths[j],depths[chart.categories.indexOf(series.name)]+1);});
+    const columns=Math.max(...depths)+1, maxLabel=Math.max(...chart.categories.map(name=>chartTextWidth(name)));
+    return {width:Math.max(width,400,columns*(maxLabel+50)),height:Math.max(220,...depths.map(d=>depths.filter(v=>v===d).length*44+24)),labelWidth:maxLabel};
+  }
+  if (chart.type==='ridgeline') return {width:Math.max(width,340),height:chart.series.length*62+60,labelWidth:Math.max(...chart.series.map(s=>chartTextWidth(s.name)))};
   const matrix = ['heatmap', 'bubble_matrix'].includes(chart.type);
   const delta = chart.type === 'heatmap' && chart.series.length === 2;
   const rowNames = matrix ? [...chart.series.map(s => s.name), ...(delta ? [differenceLabel(chart, deltaUnit)] : [])]
