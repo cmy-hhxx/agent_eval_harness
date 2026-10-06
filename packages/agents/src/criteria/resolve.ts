@@ -5,6 +5,7 @@ import requestSchema from "../../../../schemas/criteria/request.schema.json" wit
 import submissionSchema from "../../../../schemas/criteria/submission.schema.json" with { type: "json" };
 import { criteriaSources, eligibleCriterionSource, type CriterionSource } from "./sources.js";
 import { criteriaGroups, criterionIdentity } from "./identity.js";
+import { criterionValueIssues } from "./source-values.js";
 
 export interface CriteriaSubmission {
   requirements: { source_indices: number[]; text: string }[];
@@ -50,6 +51,7 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       return source ? [source] : [];
     });
     if (sources.length !== criterion.source_indices.length) return;
+    errors.push(...criterionValueIssues(criterion.text, sources, `/${group}/${index}/text`));
     sources.sort((a,b) => a.source_index-b.source_index);
     const applies = scope(input, sources);
     if (!applies.length) errors.push({ category: "decision", code: "criterion_source_scope_empty", path: `/${group}/${index}/source_indices`,

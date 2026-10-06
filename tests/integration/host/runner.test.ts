@@ -17,6 +17,44 @@ import { reportRun } from "@eval/workflows/comparison";
 import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
 
+test("repository defaults give criteria, each attribution and comparison three independent repairs and preserve accepted tasks on resume", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
+  const plan = await buildPlan(config), calls = new Map<string, number>();
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
+    async run() {
+      calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1);
+      assert.equal(options.spec.policy.repairAttempts, 3, `${options.spec.evaluation.id} has its own repair budget`);
+      for (let index = 0; index < 3; index++) {
+        const rejected = await submitFor(options, {});
+        assert.equal(rejected.isError, true);
+        const feedback = JSON.parse(rejected.content[0].text!);
+        assert.equal(feedback.budget.content_remaining, 3 - index);
+      }
+      assert.equal((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate, true);
+    }, async abort() {}, async dispose() {},
+  }; } };
+  const worker = await startWorker(backend, path.join(directory, "worker"));
+  try {
+    const options = { ...services, runId: "stage-repairs", output: config.output, config, engine: "pi" as const,
+      identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, plan, policy: config.execution, modelForStage,
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
+    await runEvaluation(options);
+    const before = await readRunState(path.join(config.output.path, options.runId));
+    assert.deepEqual(new Set(plan.tasks.map(task => task.stage)), new Set(["criteria", "attribution", "comparison"]));
+    for (const task of plan.tasks) {
+      assert.equal(before.manifest.states[task.id].status, "succeeded", task.stage);
+      assert.equal(before.receipts[task.id].submissionStats?.contentSubmissions, 4);
+      assert.equal(calls.get(task.id), 1);
+    }
+    await runEvaluation(options);
+    const after = await readRunState(path.join(config.output.path, options.runId));
+    for (const task of plan.tasks) {
+      assert.equal(calls.get(task.id), 1, "accepted tasks must not call the model again");
+      assert.equal(after.receipts[task.id].submissionId, before.receipts[task.id].submissionId);
+    }
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("stage content limits stop rejected attribution after its first submission even when global repairs are enabled",async()=>{
   const {directory,config,modelForStage}=await fixtureConfig([[raw()],[],[raw()],[]]);
   config.execution.repairAttempts=3;config.execution.stageRepairAttempts={attribution:0};

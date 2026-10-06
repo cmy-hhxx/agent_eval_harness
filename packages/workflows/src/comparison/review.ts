@@ -32,6 +32,7 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
         review = { id: randomUUID(), stage: "attribution", dependencies: { criteria: task.id }, inputIds: { answer: candidate.input_id },
           data: { stage: "attribution", candidates: { A: candidate }, reference: data.reference, criteriaScope: data.criteriaScope,
             initialContextChars: compared.initialContextChars, revision: 1,
+            ...((original.data as TaskData).reviewQuestions ? { reviewQuestions: [...(original.data as TaskData).reviewQuestions!] } : {}),
             reviewOf: { taskId: sourceId, round: 1, reasons: ["本次共同标准、标准答案或当前材料证据与原归因不一致，按本次材料独立核验。"] } } satisfies TaskData };
         reviews.set(sourceId, review); tasks.push(review);
         const polish = state.manifest.tasks.find((item) => item.stage === "rewrite" && item.dependencies.source === sourceId);
@@ -75,6 +76,8 @@ const advanceCoverage: NonNullable<WorkflowDefinition["advance"]> = (task, _rece
         data:{stage:"attribution",candidates:{A:candidate},reference:data.reference,criteriaScope:data.criteriaScope,group:data.group,coverageReview:true,
           initialContextChars:data.initialContextChars,revision:1,reviewOf:{taskId:original.id,round:1,
             reasons:["核查以下同题比较点在本方回答中的实际表现；这些观察不是本方既定事实。确实涉及某项共同交付时，将本方 finding 关联对应要求并同步逐项状态；私规不扩大为共同要求，无关内容不强行关联。",...new Set(observations)]}} satisfies TaskData };
+      if ((original.data as TaskData).reviewQuestions)
+        (review.data as TaskData).reviewQuestions = [...(original.data as TaskData).reviewQuestions!];
       tasks.push(review); next[label]=id;
       const polish = state.manifest.tasks.find(item => item.stage === "rewrite" && item.dependencies.source === original.id);
       if(polish) tasks.push({...polish,id:randomUUID(),dependencies:{source:id},data:{...(polish.data as TaskData),

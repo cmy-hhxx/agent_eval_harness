@@ -104,7 +104,6 @@ export async function fixtureConfig(
     EVAL_BASE_URL: "http://127.0.0.1:1/v1",
   });
   const config = host.evaluation;
-  config.execution.stageRepairAttempts = {};
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
   config.clustering = { ...config.clustering, enabled: clustering };

@@ -114,18 +114,20 @@ export async function loadRunInputs(
   return inputs;
 }
 export async function reconcileRun(_run: string, state: RunState, current: unknown, options?: { extendVersions: boolean }): Promise<TaskPlan> {
+  const config = state.manifest.config as EvalConfig,
+    supplied = current as EvalConfig;
   if (state.manifest.executionScope) {
     const pending = new Set(state.manifest.executionScope.filter((id) => !state.receipts[id]));
+    state.manifest.config = { ...config, execution: supplied.execution };
     return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
       catalog: state.manifest.inputCatalog, summary: state.manifest.preflight };
   }
-  const config = state.manifest.config as EvalConfig,
-    supplied = current as EvalConfig;
   const versions = [...config.inputs.versions, ...(options?.extendVersions ? supplied.inputs.versions.filter((version) =>
     !config.inputs.versions.some((existing) => existing.id === version.id)) : [])];
   const selected: EvalConfig = {
     ...config,
     execution: supplied.execution,
+    reviewQuestions: supplied.reviewQuestions,
     // Automation explicitly extends a daily run's model selection; normal resume retains its selection.
     comparisons: selectComparisonGroups(supplied.comparisons, versions.map((version) => version.id)),
     // Presentation and library stages may be enabled or disabled on resume without touching evaluations.

@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r141",
+  "evaluatorVersion": "r146",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -124,10 +124,7 @@
     "retryDelaySeconds": 10,
     "codeTimeoutSeconds": 60,
     "maxOutputChars": 16000,
-    "initialContextChars": 16000,
-    "stageRepairAttempts": {
-      "attribution": 0
-    }
+    "initialContextChars": 16000
   },
   "output": {
     "kind": "directory",

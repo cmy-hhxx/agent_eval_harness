@@ -57,6 +57,29 @@ test("reference coverage is required without making the answer visible to candid
   rejects(() => criteriaProfile.validate!(req,result,audit), "criterion_source_mismatch");
 });
 
+test("a question-only rubric cannot invent a calculated settlement date or borrow an unselected value", () => {
+  const req = request("2025年12月22日成交的日元对人民币1周掉期的交割日是哪一天");
+  (req.input as unknown as CriteriaInput).candidates[0].context = [{ message_index: 1, role: "user", content: "只写31字以内。" }];
+  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1],
+    text: "回答交割日，正确日期应为2025年12月31日。" }], scoring_points: [], red_flags: [] };
+  rejects(() => accepted(req, submitted), "criterion_value_not_in_source");
+  submitted.requirements[0].text = "给出2025年12月22日成交的1周掉期交割日。";
+  const value = accepted(req, submitted);
+  value.requirements[0].text += "正确答案是12月31日。";
+  rejects(() => criteriaProfile.validate!(req, value, audit), "criterion_value_not_in_source");
+});
+
+test("rubric numeric values may quote the selected reference with equivalent punctuation and zero padding", () => {
+  const date = request("2025年12月22日成交的1周掉期交割日是哪一天？", "2026年01月05日");
+  accepted(date, { requirements: [{ source_indices: [1, 2], text: "交割日为2026-1-5，按所给标准核对。" }], scoring_points: [], red_flags: [] });
+  const value = request("给出收益率。", "−0.830%");
+  accepted(value, { requirements: [{ source_indices: [1, 2], text: "给出收益率并核对-0.83%。" }], scoring_points: [], red_flags: [] });
+  accepted(value, { requirements: [{ source_indices: [1, 2], text: "收益率下降0.830%。" }], scoring_points: [], red_flags: [] });
+  accepted(request("2026年0322主力净流入前三行业是什么？"), {
+    requirements: [{ source_indices: [1], text: "给出2026年3月22日主力净流入前三行业。" }], scoring_points: [], red_flags: [],
+  });
+});
+
 test("only identical checks merge; independent points from the same source remain", () => {
   const value = draft(); value.requirements.push(structuredClone(value.requirements[0]));
   assert.equal(accepted(request(),value).requirements.length,2);

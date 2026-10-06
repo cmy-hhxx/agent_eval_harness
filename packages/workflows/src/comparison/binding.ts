@@ -389,7 +389,8 @@ function bindSourceTask(
       throw new Error("可选核验缺少匹配的已接受正式对比：" + data.verificationOf!.taskId);
     comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
-  const reviewContext = data.reviewOf ? { reasons: data.reviewOf.reasons } : undefined;
+  const reviewReasons = [...(data.reviewOf?.reasons ?? []), ...(data.reviewQuestions ?? [])];
+  const reviewContext = reviewReasons.length ? { reasons: reviewReasons } : undefined;
   const input = attribution
     ? {
       candidate_id: data.candidates.A.input_id,

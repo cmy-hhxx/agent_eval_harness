@@ -696,6 +696,7 @@ export async function buildPlan(
           stats.attribution_tasks++;
           continue;
         }
+        const reviewQuestions = config.reviewQuestions?.find(item => item.batch_id === batch && item.case_id === id)?.questions;
         const data: TaskData = {
           stage: "attribution",
           // Internal slot only; attribution materials and tools use `answer`.
@@ -703,6 +704,7 @@ export async function buildPlan(
           reference,
           criteriaScope,
           initialContextChars: config.execution.initialContextChars,
+          ...(reviewQuestions ? { reviewQuestions: [...reviewQuestions] } : {}),
         };
         const old = oldTasks.get(checkKey);
         const checkId = old?.id || randomUUID();
@@ -712,6 +714,7 @@ export async function buildPlan(
           Number(
             !!oldCheck &&
               (!isDeepStrictEqual(oldCheck.reference, reference) ||
+                !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
         stats.attribution_tasks++;
@@ -941,6 +944,10 @@ export async function buildPlan(
     }
   }
   for (const id of Object.keys(inputs)) if (!used.has(id)) delete inputs[id];
+  for (const review of comparisonPairs.length ? config.reviewQuestions ?? [] : []) if (![...checks.values()].some(task => {
+    const candidate = (task.data as TaskData).candidates.A;
+    return candidate.batch_id === review.batch_id && candidate.case_id === review.case_id;
+  })) issues.push({ batch_id: review.batch_id, case_id: review.case_id, stage: "attribution", reason: "review_case_unavailable" });
   return {
     tasks: [...criteriaTasks.values(), ...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
     inputs,

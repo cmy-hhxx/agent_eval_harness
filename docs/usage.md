@@ -41,6 +41,7 @@ EVAL_API_KEY=your-key
 | `inputs.versions` | 版本 ID、展示名称、输入适配器与来源；ID 用小写字母开头的字母、数字和下划线，不能包含对局保留分隔符 `__vs__`；`comparison_tier` 可声明模型规模档位（默认 A/B 的 Fast 或 Expert）；`adapter` 引用已注册的输入结构，`sources` 用 `file`（单文件）或 `directory`（递归按 `include` 的 basename 匹配，缺省全部 `*.jsonl`）描述，可多个 |
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 每组选择二至三个已登记模型，展开为独立两两比较；档位声明、缺失模型与重复模型对的规则见[对比组契约](contract.md#对比组) |
+| `reviewQuestions` | 显式语义复核问题：`[{ batch_id, case_id, questions: ["待核问题"] }]`；精确匹配批次与 case，对该 case 当前所选各候选一视同仁。问题作为归因的待核材料，不是已确认事实或指定判词；无对应输入会在预检报告 `review_case_unavailable`。重评已接受但语义有误的结果时，使用限定 case 与模型对的新 run ID |
 | `rewrite` | 文案改写：`{ comparison, attribution, clustering }`，三项默认开启，可显式设为 `false`；归因、对比及后置聚类接受后自动润色。对比默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前配置为 `openai-responses`）、`apiKeyEnv`、`thinking`（模型档案缺省 `medium`，仓库 Attribution 绑定显式覆盖为 `high`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
@@ -207,13 +208,13 @@ npm run eval -- run --engine pi --run-id daily-a --batch <batch_id_a> --batch <b
 
 改写开关可以随续跑变化：开启后为已接受归因/对比补齐改写任务，关闭后不再计划未完成的对应任务；已接受收据和正式结果保留。聚类在全部归因结束后单独准备，见[可选复核与后置聚类](#可选复核与后置聚类)。
 
-通过试跑或修复命令保存了 `executionScope` 时，续跑只执行清单内的任务，不重新发现输入，也不根据开关增加或删去任务。只读取范围内未完成任务实际需要的源记录；纯改写无需原始输入。范围完成后仍保留清单；显式 `run --discover-inputs` 才恢复原选择范围内的输入发现和规划。此选项不会重评成功任务，也不会扩大原先的日期、case 或数量限制。
+通过试跑或修复命令保存了 `executionScope` 时，续跑只执行清单内的任务，不重新发现输入，也不根据开关增加或删去任务；状态中的执行配置更新为本次实际预算，既有提交计数保留。只读取范围内未完成任务实际需要的源记录；纯改写无需原始输入。范围完成后仍保留清单；显式 `run --discover-inputs` 才恢复原选择范围内的输入发现和规划。此选项不会重评成功任务，也不会扩大原先的日期、case 或数量限制。
 
 续跑沿用原运行的批次、case 和数量筛选条件，按 `batch_id + case_id + 阶段 + 版本组合` 识别归因与对比任务，改写任务保留原 UUID 与源任务引用，补缺和刷新按来源、范围及槽位清单复用未完成工作；本次传入的 `--batch`、`--case`、`--limit-cases` 不替换原范围。已经接受的归因、对比和改写结果不再评测，即使原输入、标准答案或模型参数发生变化。未完成任务使用最新有效输入，并加入原选择范围内的新增对比组；无效或冲突记录不能覆盖未完成任务，未完成任务的来源缺失或无效时使该任务跳过并记入预检诊断，不中断其他任务。需要新增日期批次或重新评测已完成样本时使用新 run ID。旧归因收据始终保留；未完成或新增对比仅在共同标准、标准答案一致且通过当前材料校验时复用它，否则创建独立归因复核。需要重做已经接受的判决时使用新 run ID。累计 attempts 和已记录的 Token 保留历次执行成本。运行退出码：0 成功、2 有失败、130 被中断。
 
 内容修复、文件加载与传输错误使用独立预算。单任务跨自动 attempt 和同 run 续跑共享 `1 + (execution.stageRepairAttempts[阶段] ?? execution.repairAttempts)` 次累计内容调用；可选核验的首查与最终确认共用该上限，恢复保留成功首查。Host 只派发剩余额度，耗尽时保存草稿、错误和计数，不调用模型；显式准备的新核验任务按 UUID 记录独立预算，已接受任务跳过。
 
-默认 `execution.repairAttempts=3`，归因由 `execution.stageRepairAttempts.attribution=0` 覆盖：首稿不通过就记失败，不自动让模型改稿。其他阶段仍最多返工3次。每阶段任务独立计数；可显式修改对应阶段额度，同 run 只补足新增余额，不重置已用次数。归因与对比的结构反馈指向当前扁平提交字段；对比数量错误给出完整槽位顺序，归因还提供 `submission_shape`；模型按实际字段和槽位顺序修稿，程序不会把错误草稿静默改成结果。
+默认 `execution.repairAttempts=3`，共同标准、每条回答的归因和最终对比各自最多返工3次，即各自最多提交4次（首稿 + 3次返工），不共用整条流程的总额度。其他阶段也沿用此默认值。可用 `execution.stageRepairAttempts` 显式覆盖对应阶段额度；同 run 只补足新增余额，不重置已用次数。归因与对比的结构反馈指向当前扁平提交字段；对比数量错误给出完整槽位顺序，归因还提供 `submission_shape`；模型按实际字段和槽位顺序修稿，程序不会把错误草稿静默改成结果。
 
 内容失败最多自动开启一次跨 attempt 续修，带入最后草稿和结构化反馈；相同错误或实际改稿都不重置次数。代码、模型变化、重复准备和显式续跑不补发额度；提高该阶段实际生效的修稿额度时，只补足新上限与历史用量之差。源材料修订会清除失效草稿、证据目录、首查和材料反馈，但保留同 UUID 的历史提交、文件错误、用量及未知终态诊断。
 

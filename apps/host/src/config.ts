@@ -135,6 +135,18 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     rewrite: { comparison: true, attribution: true, clustering: true },
     clustering: { ...CLUSTERING_DEFAULTS },
   };
+  if (source.reviewQuestions !== undefined) {
+    const entries = source.reviewQuestions;
+    if (!Array.isArray(entries) || entries.some(entry => !isObject(entry) ||
+      Object.keys(entry).some(key => !["batch_id", "case_id", "questions"].includes(key)) ||
+      typeof entry.batch_id !== "string" || !entry.batch_id.trim() ||
+      typeof entry.case_id !== "string" || !entry.case_id.trim() ||
+      !Array.isArray(entry.questions) || !entry.questions.length ||
+      entry.questions.some(question => typeof question !== "string" || !question.trim())) ||
+      new Set(entries.map(entry => JSON.stringify([entry.batch_id, entry.case_id]))).size !== entries.length)
+      throw new Error("Invalid reviewQuestions: unique batch_id/case_id and non-empty questions are required");
+    config.reviewQuestions = structuredClone(entries) as EvalConfig["reviewQuestions"];
+  }
   if (source.clustering !== undefined) {
     if (!isObject(source.clustering)) throw new Error("Invalid clustering");
     const clustering = source.clustering;

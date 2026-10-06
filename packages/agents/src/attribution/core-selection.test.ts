@@ -73,3 +73,30 @@ test("a numeric core selector never changes unsupported false or unknown conclus
     assert.throws(() => resolveJudgment(request,value,audit),error=>error instanceof ValidationError&&error.issues!.some(issue=>issue.code===code));
   }
 });
+
+test("candidate-only requirements remain assessable but cannot determine common core usability", () => {
+  const { request, draft } = fixture();
+  const analysis = request.input.task_analysis as unknown as TaskAnalysis;
+  analysis.requirements.push({ ...analysis.requirements[0], id: "private", applies_to: [request.input.candidate_id as string] });
+  draft.criterion_assessments.push({ ...draft.criterion_assessments[0], criterion_id: "private", status: "unmet" });
+  draft.core_assessment = { meets_core: false, reason: "仅本方格式未满足。", requirement_indices: [1] };
+  const issues = validateJudgment(request, draft, audit);
+  assert(issues.some(issue => issue.code === "core_requirement_private" && issue.path === "/core_assessment/requirement_indices/0"));
+  const schema = attributionProfile.modelSubmissionSchema!(request) as any;
+  assert.deepEqual(schema.properties.core_requirements.items.enum, [1]);
+  assert.equal(schema.properties.criterion_assessments.minItems, draft.criterion_assessments.length,
+    "private compliance still needs its own assessment");
+  draft.core_assessment = { meets_core: true, reason: "共同任务结果已完成，私有格式问题单列。", requirement_indices: [0] };
+  assert(!validateJudgment(request, draft, audit).some(issue => issue.code.startsWith("core_")));
+});
+
+test("a selected unmet core requirement cannot be hidden by another met requirement", () => {
+  const { request, draft } = fixture();
+  const analysis = request.input.task_analysis as unknown as TaskAnalysis;
+  analysis.requirements.push({ ...analysis.requirements[0], id: "limit", text: "交付必须满足规定的时间限制。" });
+  draft.criterion_assessments.push({ ...draft.criterion_assessments[0], criterion_id: "limit", status: "unmet" });
+  draft.core_assessment.requirement_indices = [0, 1];
+  assert(validateJudgment(request, draft, audit).some(issue => issue.code === "core_success_unmet"));
+  draft.core_assessment.meets_core = false;
+  assert(!validateJudgment(request, draft, audit).some(issue => issue.code.startsWith("core_")));
+});

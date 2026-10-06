@@ -114,6 +114,7 @@ function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSub
     if(issue.code==="finding_norm_unknown")message="未确认规范时 basis_index=null，并保留 evidence_status=uncertain；不能宣称已确认遵守或违反。";
     if(issue.code==="finding_requirement_conflict")message="本条问题关联的检查项同时被判为已确认 met。核对实际缺口后修正该项状态；确属错误关联才重选 basis_index，不能用 null 隐藏已确认问题。";
     if(issue.code.startsWith("core_requirement_"))message="core_requirements 只选择本方 requirements 目录提供的正整数编号；从 expected 选择，不按过滤后位置重新编号。";
+    if(issue.code==="core_requirement_private")message="core_requirements 只选择共同要求的正整数编号（见 expected）；本方专有要求的逐项评审和真实问题照常保留，不能用私规判共同核心失败或成功。";
     if(issue.code==="numeric_answer_missing")message="numeric_checks.evidence_index 直接选择证据目录中包含 actual 原值的本方最终回答；actual 保留原数值，不先换算、补零或使用自行推导值。";
     if(/^correctness(?:_reason|_evidence)?_(?:required|forbidden)$/u.test(issue.code)) {
       message=message.replaceAll("correctness_evidence","correctness_evidence_indices");

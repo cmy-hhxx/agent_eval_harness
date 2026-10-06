@@ -7,6 +7,7 @@ import { criteriaText } from "@eval/prompts";
 import { criteriaSources, eligibleCriterionSource } from "./sources.js";
 import { matchCriterionSources } from "./resolve.js";
 import { criteriaGroups, criterionIdentity } from "./identity.js";
+import { criterionValueIssues } from "./source-values.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validateRequest = ajv.compile<unknown>(requestSchema);
@@ -53,6 +54,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       });
       else if (group === "requirements" && !criterion.applies_to.length)
         for (const source of sources) requiredSources.add(source.source_index);
+      if (sources) errors.push(...criterionValueIssues(criterion.text, sources, `${location}/text`));
       for (const candidate of criterion.applies_to) if (!candidates.has(candidate)) errors.push({
         category: "decision", code: "criterion_scope_unknown", path: `${location}/applies_to`, candidate,
         message: "applies_to 只能引用本题真实 candidate_id；[] 表示适用于全部候选", actual: candidate, expected: [...candidates],

@@ -5,7 +5,7 @@ import { emptyUsage, type PlannedTask, type RunState } from "@eval/contracts";
 import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig } from "../../../../tests/fixtures/comparison.js";
 import { buildPlan } from "./input.js";
 import { reconcileRun } from "./run-data.js";
-import type { TaskData } from "./types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 
 for (const accepted of [false, true]) for (const frozen of [false, true])
   test(`standalone comparison keeps its identity on resume (accepted: ${accepted}, frozen: ${frozen})`, async () => {
@@ -16,7 +16,7 @@ for (const accepted of [false, true]) for (const frozen of [false, true])
       const analysis = criteriaResultForTask(criterion, plan.inputs);
       const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
         format: "evaluation-run", runId: "standalone-resumption", debug: false, status: "interrupted", startedAt: 1,
-        evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: fixture.config,
+        evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: structuredClone(fixture.config),
         tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary,
         states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0, revision: 1 }])),
       } };
@@ -40,8 +40,10 @@ for (const accepted of [false, true]) for (const frozen of [false, true])
       if (frozen) state.manifest.executionScope = [comparison.id];
       const before = structuredClone(state.receipts), progress = structuredClone(state.manifest.states[comparison.id]);
       const identity = (comparison.data as TaskData).comparisonId;
+      const supplied = { ...fixture.config, execution: { ...fixture.config.execution, repairAttempts: 2,
+        stageRepairAttempts: { attribution: 3 } } };
       for (let attempt = 0; attempt < 2; attempt++) {
-        const resumed = await reconcileRun(fixture.directory, state, fixture.config);
+        const resumed = await reconcileRun(fixture.directory, state, supplied);
         const comparisons = resumed.tasks.filter(task => task.stage === "comparison");
         assert.equal(comparisons.length, 1);
         assert.equal(comparisons[0].id, comparison.id);
@@ -51,6 +53,8 @@ for (const accepted of [false, true]) for (const frozen of [false, true])
         assert.deepEqual(state.manifest.states[comparison.id], progress, "planning preserves accepted work and paid attempt counters");
         assert.deepEqual(state.receipts, before);
         assert.deepEqual(state.manifest.executionScope, frozen ? [comparison.id] : undefined);
+        assert.deepEqual((state.manifest.config as EvalConfig).execution, supplied.execution,
+          "frozen scope preserves task selection, but records the effective execution policy");
       }
     } finally { await rm(fixture.directory, { recursive: true, force: true }); }
   });

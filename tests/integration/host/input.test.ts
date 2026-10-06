@@ -23,6 +23,22 @@ function fixtureReceipt(taskId: string, evaluation: unknown): SubmissionReceipt 
     judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };
 }
 
+test("semantic review configuration retains explicit questions and rejects ambiguous selectors", async () => {
+  const { directory } = await fixtureConfig();
+  const file = path.join(directory, "review.json"), base = path.join(ROOT, "configs/host.json");
+  const entry = { batch_id: "b1", case_id: "q", questions: ["核对限制与实际交付，不预设结论。"] };
+  try {
+    await writeFile(file, JSON.stringify({ reviewQuestions: [entry] }));
+    const loaded = await loadConfig([base, file], { EVAL_BASE_URL: "https://gateway.example/v1" });
+    assert.deepEqual(loaded.evaluation.reviewQuestions, [entry]);
+    for (const reviewQuestions of [[entry, entry], [{ ...entry, questions: [] }], [{ ...entry, questions: [""] }],
+      [{ ...entry, case_id: "" }], [{ ...entry, winner: "A" }]]) {
+      await writeFile(file, JSON.stringify({ reviewQuestions }));
+      await assert.rejects(loadConfig([base, file], { EVAL_BASE_URL: "https://gateway.example/v1" }), /Invalid reviewQuestions/);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("compressed JSONL preserves full records and rejects truncated storage", async () => {
   const { directory } = await fixtureConfig();
   try {

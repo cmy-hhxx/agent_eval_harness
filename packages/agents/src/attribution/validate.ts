@@ -95,13 +95,16 @@ export function submissionCoreRequirements(request: AgentRequest, draft: unknown
   const requirements = input.task_analysis.requirements;
   const applicable = (criterion: TaskAnalysis["requirements"][number]) =>
     !criterion.applies_to.length || criterion.applies_to.includes(input.candidate_id);
-  const expected = requirements.flatMap((criterion, index) => applicable(criterion) ? [index] : []);
+  const expected = requirements.flatMap((criterion, index) => !criterion.applies_to.length ? [index] : []);
   indices.forEach((selection, index) => {
     const criterion = requirements[selection];
     if (!criterion || !applicable(criterion)) issues.push({ category: "decision",
       code: criterion ? "core_requirement_not_applicable" : "core_requirement_index_invalid",
       path: `/core_assessment/requirement_indices/${index}`, actual: selection, expected,
       message: "核心依据只选择本方适用 requirements 的原全局零起始 requirement_index；从 expected 选择，不按过滤后位置编号，也不选择 scoring_points、red_flags 或 finding。" });
+    else if (criterion.applies_to.length) issues.push({ category: "decision", code: "core_requirement_private",
+      path: `/core_assessment/requirement_indices/${index}`, actual: selection, expected,
+      message: "本方专有要求只影响本方合规评审，不能决定共同核心可用性；保留该条逐项结论与真实问题，用共同任务结果及其必要限制判断核心。" });
     else criterionIds.push(criterion.id);
   });
   return { criterionIds, issues, identified };
@@ -190,6 +193,10 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       if (!criterion || !applicable(criterion))
         issue("core_criterion_invalid", `/core_assessment/criterion_ids/${index}`, "核心可用性只能引用适用于当前候选的 requirements；从 expected 列出的 ID 选择，不能引用 scoring_points、red_flags 或 finding_id", id,
           input.task_analysis.requirements.filter(applicable).map((item) => item.id));
+      else if (criterion.applies_to.length)
+        issue("core_criterion_private", `/core_assessment/criterion_ids/${index}`,
+          "专有要求不得作为共同核心依据；本方合规结论保留在逐项评审与 finding。", id,
+          input.task_analysis.requirements.filter(item => !item.applies_to.length).map(item => item.id));
       else {
         const assessment = assessmentMap.get(id);
         if (assessment) coreEvidence.push(assessment);
@@ -197,11 +204,18 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
     });
     evidenceStatesValid = !!identifiedAssessments && !selection?.issues.length && criterionIds.every((id) => {
       const criterion = requirements.get(id);
-      return !!criterion && applicable(criterion) && assessmentMap.has(id);
+      return !!criterion && !criterion.applies_to.length && assessmentMap.has(id);
     }) && coreEvidence.every((assessment) =>
       typeof assessment.status === "string" && statuses.includes(assessment.status) &&
       (assessment.evidence_status === "established" || assessment.evidence_status === "uncertain"));
     if (evidenceStatesValid) {
+      if (core.meets_core === true && coreEvidence.some(assessment =>
+        assessment.evidence_status === "established" && assessment.status === "unmet"))
+        issue("core_success_unmet", "/core_assessment/meets_core",
+          "已选为核心依据的要求存在已确认 unmet，不能同时声明核心完成。按原要求核对交付与必要限制；保留真实缺口，不靠删掉核心依据或降低确定性消除矛盾。局部仍有用途可记录 strength。",
+          core.meets_core, { unmet_requirements: input.task_analysis.requirements.flatMap((criterion, requirement_index) =>
+            criterionIds.includes(criterion.id) && assessmentMap.get(criterion.id)?.status === "unmet" &&
+            assessmentMap.get(criterion.id)?.evidence_status === "established" ? [{ requirement_index, text: criterion.text }] : []) });
       if (core.meets_core === false && !coreEvidence.some((assessment) =>
         assessment.evidence_status === "established" && (assessment.status === "unmet" || assessment.status === "partial")))
         issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");

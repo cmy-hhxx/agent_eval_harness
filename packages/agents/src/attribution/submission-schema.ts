@@ -14,6 +14,9 @@ export function attributionSubmissionSchema(request: AgentRequest) {
   const checkCount=[...analysis.requirements,...analysis.scoring_points,...analysis.red_flags]
     .filter(item=>!item.applies_to.length||item.applies_to.includes(request.input.candidate_id as string)).length;
   Object.assign(schema.properties.criterion_assessments,{minItems:checkCount,maxItems:checkCount});
+  Object.assign(schema.properties.core_requirements.items, {
+    enum: analysis.requirements.flatMap((item, index) => item.applies_to.length ? [] : [index + 1]),
+  });
   const indices = attributionFindingBasis(request.input).map(item => item.basis_index);
   for(const field of ["strengths","problems"] as const)
     Object.assign(schema.properties[field].items.properties.basis_index, { enum: [...indices, null] });

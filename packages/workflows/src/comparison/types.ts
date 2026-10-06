@@ -41,6 +41,8 @@ export interface EvalConfig {
   problemLibrary: ProblemLibraryTarget;
   /** Two or three selected models, expanded into independent two-candidate comparisons. */
   comparisons: string[][];
+  /** Explicit audit questions for selected cases; never accepted facts or requested verdicts. */
+  reviewQuestions?: { batch_id: string; case_id: string; questions: string[] }[];
   /** Language polish targets. Every accepted source result gets one rewrite task. */
   rewrite: {
     comparison: boolean;
@@ -155,6 +157,8 @@ export interface TaskData {
   criteriaScope?: string;
   /** Attribution reassessment lineage; accepted source receipts remain unchanged. */
   reviewOf?: { taskId: string; round: number; reasons: string[] };
+  /** User-selected semantic checks, applied equally to the case's candidate answers. */
+  reviewQuestions?: string[];
   /** A primary comparison may request one bounded attribution pass for unaligned material observations. */
   coverageReviewPrepared?: true;
   /** Required before its primary comparison and before clustering reads this answer. */
