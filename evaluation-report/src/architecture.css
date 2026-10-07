@@ -1,0 +1,39 @@
+.architecture-counts { display:flex; gap:32px; font-size:14px; color:var(--gray); margin:8px 0 24px; }
+.architecture-counts b { font-size:24px; font-weight:500; color:var(--black); margin-right:5px; }
+.agent-system { max-width:1180px; margin:0 auto; }
+.agent-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:26px; }
+.agent-role { position:relative; border:1px solid var(--input); border-radius:6px; background:var(--white); padding:18px 20px; }
+.agent-role h2 { font-size:20px; margin-bottom:12px; }
+.agent-input,.agent-output { font-size:14px; line-height:1.6; color:var(--gray); }
+.agent-action { font-size:16px; line-height:1.55; margin:10px 0; }
+.host-lane { position:relative; margin:26px 0; padding:16px 0; }
+.host-lane::before,.host-lane::after { content:''; position:absolute; left:16.66%; right:16.66%; height:15px; border:1px solid var(--input); }
+.host-lane::before { top:-26px; height:26px; border-top:0; }
+.host-lane::after { bottom:-26px; height:26px; border-bottom:0; }
+.agent-row-main .agent-role:nth-child(2)::after { content:''; position:absolute; left:50%; bottom:-43px; width:1px; height:42px; background:var(--input); }
+.agent-row-support .agent-role:nth-child(2)::before { content:''; position:absolute; left:50%; top:-43px; width:1px; height:42px; background:var(--input); }
+.host-coordinator { position:relative; width:fit-content; max-width:100%; margin:auto; text-align:center; border:1px solid var(--black); border-radius:6px; padding:13px 26px; background:var(--white); }
+.host-coordinator h2 { font-size:20px; }
+.host-coordinator p { font-size:15px; margin:4px 0 8px; }
+.host-artifacts { color:var(--gray); font-size:14px; }
+.host-artifacts span { padding:0 8px; color:var(--input); }
+.architecture-boundaries { display:grid; grid-template-columns:1fr 1fr; gap:28px; border-top:1px solid var(--border); margin-top:25px; padding-top:14px; font-size:14px; }
+.architecture-boundaries b { display:block; font-weight:500; margin-bottom:4px; }
+@media(max-width:760px) {
+ .architecture-counts { gap:18px; margin:0 0 14px; font-size:12px; }
+ .architecture-counts b { font-size:20px; }
+ .agent-row { gap:12px; }
+ .agent-role { padding:10px 12px; }
+ .agent-role h2 { font-size:16px; margin-bottom:8px; }
+ .agent-input,.agent-output { font-size:12px; line-height:1.45; }
+ .agent-action { font-size:14px; line-height:1.45; margin:8px 0; }
+ .host-coordinator { padding:10px 15px; }
+ .host-lane { margin:18px 0; padding:8px 0; }
+ .host-lane::before { top:-18px; height:18px; }
+ .host-lane::after { bottom:-18px; height:18px; }
+ .agent-row-main .agent-role:nth-child(2)::after { bottom:-27px; height:26px; }
+ .agent-row-support .agent-role:nth-child(2)::before { top:-27px; height:26px; }
+ .host-coordinator p { font-size:13px; }
+ .architecture-boundaries { gap:18px; font-size:12px; margin-top:10px; padding-top:8px; line-height:1.5; }
+}
+@media(max-width:480px) { .agent-row { gap:6px; } .agent-role { padding:9px; } .agent-role h2 { font-size:14px; } .agent-action { font-size:12px; } .architecture-counts { gap:10px; flex-wrap:wrap; } }

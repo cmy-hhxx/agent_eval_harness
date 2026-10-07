@@ -9,10 +9,14 @@ import { JSDOM } from 'jsdom';
 import { buildReport } from './build.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const stylePaths = ['src/tokens.css', 'src/styles.css', 'src/rules.css', 'src/prompts.css'];
+const stylePaths = [
+  'src/tokens.css', 'src/styles.css', 'src/rules.css', 'src/prompts.css',
+  'src/architecture.css', 'src/experiments.css',
+];
 const scriptPaths = [
-  'src/data.js', 'src/motion.js', 'src/icons.js', 'src/diagram-interaction.js',
-  'src/flow.js', 'src/rules.js', 'src/prompts.js', 'src/app.js',
+  'src/data.js', 'src/case-summaries-a.js', 'src/case-summaries-b.js', 'src/motion.js', 'src/icons.js',
+  'src/answer.js', 'src/details.js', 'src/flow.js', 'src/rules.js', 'src/prompt-data.js', 'src/architecture.js',
+  'src/experiment-data.js', 'src/experiments.js', 'src/prompts.js', 'src/app.js',
 ];
 
 test('离线导出内联全部展示资源，并完整保留内容快照', async () => {
@@ -27,13 +31,15 @@ test('离线导出内联全部展示资源，并完整保留内容快照', async
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
     assert.deepEqual(scripts.map(([, attributes]) => attributes.match(/data-source="([^"]+)"/)?.[1]), scriptPaths);
     for (const [, , script] of scripts) new vm.Script(script);
-    const embedded = scripts.find(([, attributes]) => /id="report-data"/.test(attributes))?.[2];
-    assert.ok(embedded, '构建产物必须保留完整的数据资源');
-    const source = { window: {} };
-    const result = { window: {} };
-    vm.runInNewContext(await readFile(join(directory, 'src/data.js'), 'utf8'), source);
-    vm.runInNewContext(embedded, result);
-    assert.equal(JSON.stringify(result.window.EvaluationReportData), JSON.stringify(source.window.EvaluationReportData));
+    for (const path of ['src/data.js', 'src/prompt-data.js', 'src/experiment-data.js']) {
+      const embedded = scripts.find(([, attributes]) => attributes.includes(`data-source="${path}"`))?.[2];
+      assert.ok(embedded, `构建产物必须保留完整的 ${path}`);
+      const source = { window: {} };
+      const result = { window: {} };
+      vm.runInNewContext(await readFile(join(directory, path), 'utf8'), source);
+      vm.runInNewContext(embedded, result);
+      assert.equal(JSON.stringify(result.window), JSON.stringify(source.window), `${path} 内联不可改变来源快照`);
+    }
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -45,18 +51,16 @@ test('导出不能覆盖页面或样式、数据、逻辑源文件', async () =>
   }
 });
 
-test('页面没有下载入口，实验区只保留空表与空指标', async () => {
+test('页面保留五个主题入口与独立挂载点，不添加下载入口', async () => {
   const dom = new JSDOM(await readFile(join(directory, 'index.html'), 'utf8'));
   try {
     const { document } = dom.window;
     assert.equal(document.querySelector('[download],#downloadPromptsBtn,#exportHtmlBtn'), null);
     for (const control of document.querySelectorAll('button,a')) assert.doesNotMatch(control.textContent, /下载|导出/);
-    const experiments = document.getElementById('page-experiments');
-    assert.ok(experiments);
-    assert.deepEqual([...experiments.querySelectorAll('tbody tr')].map(row => row.textContent.trim()), ['—', '—']);
-    assert.deepEqual([...experiments.querySelectorAll('.empty-metric')].map(node => node.textContent.trim()), ['—', '—', '—']);
-    assert.equal(experiments.querySelector('tbody tr:not(.empty-row)'), null);
-    assert.equal(experiments.querySelector('#runEvidence,#semanticEvidence,#engineeringEvidence,#supplementalRecords'), null);
+    assert.deepEqual([...document.querySelectorAll('[data-page]')].map(button => button.dataset.page), ['flow', 'architecture', 'rules', 'prompts', 'experiments']);
+    for (const page of ['flow', 'architecture', 'rules', 'prompts', 'experiments']) {
+      assert.ok(document.querySelector(`#page-${page} #${page}Body`), `${page} 需要对应的独立渲染入口`);
+    }
   } finally {
     dom.window.close();
   }

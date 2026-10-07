@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const report = window.EvaluationReportData;
-  const pages = ['flow', 'rules', 'prompts', 'experiments'];
+  const pages = ['flow', 'architecture', 'rules', 'prompts', 'experiments'];
   const $ = id => document.getElementById(id);
   function activatePage(value, updateHash = true, animate = true) {
     const page = pages.includes(value) ? value : 'flow';
@@ -16,6 +16,8 @@
     window.dispatchEvent(new Event('report-page-change'));
   }
   window.ReportFlow.render($('flowBody'), report);
+  window.ReportArchitecture.render($('architectureBody'), report);
+  window.ReportExperiments.render($('experimentsBody'), window.EvaluationExperimentData);
   window.ReportRules.render($('rulesBody'), report);
   window.ReportPrompts.render($('promptsBody'));
   document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => activatePage(button.dataset.page)));

@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="src/styles.css">
   <link rel="stylesheet" href="src/rules.css">
   <link rel="stylesheet" href="src/prompts.css">
+  <link rel="stylesheet" href="src/architecture.css">
+  <link rel="stylesheet" href="src/experiments.css">
 </head>
 <body>
   <a class="skip" href="#main">跳到正文</a>
@@ -16,6 +18,7 @@
     <a class="site-name" href="#flow">模型评测</a>
     <nav class="navigation" aria-label="汇报主题">
       <button type="button" data-page="flow" aria-current="page">流程</button>
+      <button type="button" data-page="architecture">Agent 协作</button>
       <button type="button" data-page="rules">判决规则</button>
       <button type="button" data-page="prompts">提示词</button>
       <button type="button" data-page="experiments">实验</button>
@@ -23,8 +26,12 @@
   </header>
   <main id="main" tabindex="-1">
     <section class="page" id="page-flow" aria-labelledby="flowTitle">
-      <div class="page-heading"><h1 id="flowTitle">评测机制</h1></div>
+      <div class="page-heading"><h1 id="flowTitle">multi-agent评测机制</h1></div>
       <div id="flowBody"></div>
+    </section>
+    <section class="page" id="page-architecture" aria-labelledby="architectureTitle" hidden>
+      <div class="page-heading"><h1 id="architectureTitle">Agent 协作</h1></div>
+      <div id="architectureBody"></div>
     </section>
     <section class="page" id="page-rules" aria-labelledby="rulesTitle" hidden>
       <div class="page-heading"><h1 id="rulesTitle">判决规则</h1></div>
@@ -36,20 +43,23 @@
     </section>
     <section class="page" id="page-experiments" aria-labelledby="experimentsTitle" hidden>
       <div class="page-heading"><h1 id="experimentsTitle">对比实验</h1></div>
-      <div class="experiment-layout">
-        <section class="experiment-panel"><h2>评测器版本</h2><div class="table-wrap"><table><thead><tr><th>评测器</th><th>题集</th><th>裁判模型</th><th>重复次数</th></tr></thead><tbody><tr class="empty-row"><td colspan="4">—</td></tr></tbody></table></div></section>
-        <section class="experiment-panel"><h2>实验结果</h2><div class="experiment-metrics"><section><h3>盲测换位</h3><div class="empty-metric">—</div></section><section><h3>提示词消融</h3><div class="empty-metric">—</div></section><section><h3>人工一致性</h3><div class="empty-metric">—</div></section></div></section>
-        <section class="experiment-panel"><h2>逐轮对比</h2><div class="table-wrap"><table><thead><tr><th>实验</th><th>基线版本</th><th>对照版本</th><th>有效样本</th><th>差异</th></tr></thead><tbody><tr class="empty-row"><td colspan="5">—</td></tr></tbody></table></div></section>
-      </div>
+      <div id="experimentsBody"></div>
     </section>
   </main>
   <noscript><p>请启用 JavaScript 以显示报告。</p></noscript>
   <script id="report-data" src="src/data.js"></script>
+  <script id="report-case-summaries-a" src="src/case-summaries-a.js"></script>
+  <script id="report-case-summaries-b" src="src/case-summaries-b.js"></script>
   <script id="report-motion" src="src/motion.js"></script>
   <script id="report-icons" src="src/icons.js"></script>
-  <script id="report-interaction" src="src/diagram-interaction.js"></script>
+  <script id="report-answer" src="src/answer.js"></script>
+  <script id="report-details" src="src/details.js"></script>
   <script id="report-flow" src="src/flow.js"></script>
   <script id="report-rules" src="src/rules.js"></script>
+  <script id="report-prompt-data" src="src/prompt-data.js"></script>
+  <script id="report-architecture" src="src/architecture.js"></script>
+  <script id="report-experiment-data" src="src/experiment-data.js"></script>
+  <script id="report-experiments" src="src/experiments.js"></script>
   <script id="report-prompts" src="src/prompts.js"></script>
   <script id="report-app" src="src/app.js"></script>
 </body>

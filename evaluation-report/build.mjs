@@ -8,12 +8,21 @@ const assets = [
   { path: 'src/styles.css', tag: 'link', attribute: 'href', kind: 'style' },
   { path: 'src/rules.css', tag: 'link', attribute: 'href', kind: 'style' },
   { path: 'src/prompts.css', tag: 'link', attribute: 'href', kind: 'style' },
+  { path: 'src/architecture.css', tag: 'link', attribute: 'href', kind: 'style' },
+  { path: 'src/experiments.css', tag: 'link', attribute: 'href', kind: 'style' },
   { path: 'src/data.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/case-summaries-a.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/case-summaries-b.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/motion.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/icons.js', tag: 'script', attribute: 'src', kind: 'script' },
-  { path: 'src/diagram-interaction.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/answer.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/details.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/flow.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/rules.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/prompt-data.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/architecture.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/experiment-data.js', tag: 'script', attribute: 'src', kind: 'script' },
+  { path: 'src/experiments.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/prompts.js', tag: 'script', attribute: 'src', kind: 'script' },
   { path: 'src/app.js', tag: 'script', attribute: 'src', kind: 'script' },
 ];
@@ -45,7 +54,7 @@ function inlineAsset(html, asset, content) {
 export async function buildReport({ output = resolve(directory, 'report.html') } = {}) {
   const outputPath = resolve(output);
   const sourcePaths = ['index.html', ...assets.map(asset => asset.path)].map(path => resolve(directory, path));
-  const protectedPaths = [...sourcePaths, ...['build.mjs', 'build.test.mjs', 'interaction.test.mjs', 'README.md', 'PHOSPHOR-LICENSE.txt'].map(path => resolve(directory, path))];
+  const protectedPaths = [...sourcePaths, ...['build.mjs', 'build.test.mjs', 'interaction.test.mjs', 'snapshot.mjs', 'snapshot.test.mjs', 'rules.test.mjs', 'prompts.test.mjs', 'experiments.test.mjs', 'summaries.test.mjs', 'details.test.mjs', 'README.md', 'PHOSPHOR-LICENSE.txt'].map(path => resolve(directory, path))];
   if (protectedPaths.includes(outputPath)) throw new Error('导出路径不能覆盖汇报源文件。');
 
   const contents = await Promise.all(sourcePaths.map(path => readFile(path, 'utf8')));

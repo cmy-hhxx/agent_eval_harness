@@ -15,10 +15,10 @@
           <marker id="rules-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9Z"/></marker>
           <marker id="rules-review-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9Z"/></marker>
         </defs><g data-rule-lines></g></svg>
-        <div class="rules-question rules-evidence" data-rule-node="evidence" data-rule-routes="${joins(all)}">判决依据明确？</div>
-        <div class="rules-question rules-review" data-rule-node="review" data-rule-routes="unresolved"><span>独立复核</span><span class="rules-round"><span>≤${safe(rounds)} 轮</span><span>再次比较</span></span></div>
-        <div class="rules-question rules-core" data-rule-node="core" data-rule-routes="${joins(routes)}">核心交付是否可用？</div>
-        <button class="rules-result rules-unresolved" type="button" data-rule-node="unresolved" data-rule-routes="unresolved" data-rule-result="unresolved" aria-pressed="false">不交付</button>
+        <div class="rules-question rules-evidence" data-rule-node="evidence" data-rule-routes="${joins(all)}">归因比较点已对齐？</div>
+        <div class="rules-question rules-review" data-rule-node="review" data-rule-routes="${joins(all)}"><span>对比前补查归因</span><span class="rules-round"><span>按需 · ≤${safe(rounds)} 轮</span></span></div>
+        <div class="rules-question rules-core" data-rule-node="core" data-rule-routes="${joins(all)}"><span class="rules-state-title">匿名比较一次</span><span>核心交付是否可用？</span></div>
+        <button class="rules-result rules-unresolved" type="button" data-rule-node="unresolved" data-rule-routes="unresolved" data-rule-result="unresolved" aria-pressed="false"><span>待核</span><span class="rules-pending-note">不计对战结果</span></button>
         <div class="rules-state rules-single" data-rule-node="single" data-rule-routes="core-win">仅一方可用</div>
         <div class="rules-state rules-neither" data-rule-node="neither" data-rule-routes="both-bad">双方不可用</div>
         <div class="rules-question rules-difference" data-rule-node="difference" data-rule-routes="quality-win both-good"><span class="rules-state-title">双方可用</span><span>有实质差距？</span></div>
@@ -27,7 +27,7 @@
         <button class="rules-result rules-quality-win" type="button" data-rule-node="quality-win" data-rule-routes="quality-win" data-rule-result="quality-win" aria-pressed="false">优势者胜</button>
         <button class="rules-result rules-both-good" type="button" data-rule-node="both-good" data-rule-routes="both-good" data-rule-result="both-good" aria-pressed="false">都好</button>
         <p class="visually-hidden" data-rules-status role="status"></p>
-      </div>`;
+      </div><section class="rules-audit"><h2>可选独立核验</h2><p>正式结果后显式执行：先独立核查原材料，再揭示归因与对比。核验单独记录，不改原判、不重做归因，也不阻塞改写和交付。</p></section>`;
       const root = container.querySelector('.rules-tree');
       const svg = root.querySelector('.rules-connectors');
       const layer = root.querySelector('[data-rule-lines]');
@@ -61,18 +61,18 @@
         const e=p('evidence'), r=p('review'), c=p('core'), u=p('unresolved'), one=p('single'), none=p('neither'), diff=p('difference');
         const lines = [];
         // Aligned main nodes give the direct path one uninterrupted vertical arrow.
-        // Review uses a separate return lane and a second top port on the core box.
-        lines.push(path(`M${e.right} ${e.y}H${r.left-3}`, ['unresolved'], true));
-        lines.push(label((e.right+r.left)/2,e.y-10,'否',['unresolved'],true));
+        // The optional source check happens before the single comparison.
+        lines.push(path(`M${e.right} ${e.y}H${r.left-3}`, all, true));
+        lines.push(label((e.right+r.left)/2,e.y-10,'待对齐',all,true));
         const rightPort = c.x+c.width*.28;
         const firstBranchY=e.bottom+(c.top-e.bottom)*.46;
-        lines.push(path(`M${e.x} ${e.bottom}V${c.top-3}`, routes));
-        lines.push(label(e.x-12,(e.bottom+c.top)/2+5,'是',routes,false,'end'));
+        lines.push(path(`M${e.x} ${e.bottom}V${c.top-3}`, all));
+        lines.push(label(e.x-12,(e.bottom+c.top)/2+5,'是',all,false,'end'));
         const reviewPort = r.left+r.width*.24;
-        lines.push(path(`M${reviewPort} ${r.bottom}V${firstBranchY}H${rightPort}V${c.top-3}`,[],true));
-        lines.push(label((reviewPort+rightPort)/2,firstBranchY-9,'可判决',[],true));
-        lines.push(path(`M${r.x} ${r.bottom}V${u.top-3}`,['unresolved'],true));
-        lines.push(label(u.x-10,firstBranchY+(u.top-firstBranchY)/2+5,'仍未决',['unresolved'],true,'end'));
+        lines.push(path(`M${reviewPort} ${r.bottom}V${firstBranchY}H${rightPort}V${c.top-3}`,all,true));
+        lines.push(label((reviewPort+rightPort)/2,firstBranchY-9,'完成补查',all,true));
+        lines.push(path(`M${c.right} ${c.y}H${u.left-3}`,['unresolved'],true));
+        lines.push(label(u.x,u.bottom+22,'未知 / 冲突',['unresolved'],true));
         // Three core states share one explicit branch, without crossing the review path.
         const forkY=c.bottom+(one.top-c.bottom)*.50;
         lines.push(`<path d="M${c.x} ${c.bottom}V${forkY}" class="rules-edge" data-rule-routes="${joins(routes)}"/>`);
