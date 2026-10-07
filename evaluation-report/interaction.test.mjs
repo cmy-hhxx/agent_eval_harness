@@ -8,9 +8,11 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { buildReport } from './build.mjs';
 const directory=dirname(fileURLToPath(import.meta.url));
 const html=await readFile(join(directory,'index.html'),'utf8');
+const typographyTokens=await readFile(join(directory,'src/tokens.css'),'utf8');
 function environment(t,markup=html,inline=false) {
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message));
   const dom=new JSDOM(markup,{url:'https://offline-report.invalid/report.html#flow',runScripts:inline?'dangerously':'outside-only',pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.scrollTo=()=>{};w.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});}});
+  if(!inline){const style=dom.window.document.createElement('style');style.textContent=typographyTokens;dom.window.document.head.append(style);}
   t.after(()=>{dom.window.close();assert.deepEqual(errors,[]);});
   return {window:dom.window,document:dom.window.document,async load(){if(!inline)for(const script of dom.window.document.querySelectorAll('script[src]'))dom.window.eval(await readFile(join(directory,script.getAttribute('src')),'utf8'));},click(selector){const node=typeof selector==='string'?dom.window.document.querySelector(selector):selector;assert.ok(node,`Missing ${selector}`);node.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true}));},change(selector,value){const el=dom.window.document.querySelector(selector);el.value=String(value);el.dispatchEvent(new dom.window.Event('change',{bubbles:true}));},key(selector,key){dom.window.document.querySelector(selector).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}};
 }
@@ -205,6 +207,97 @@ test('逐项对照覆盖所有比较，归因卡计数与完整核验输出保�
    roles.forEach(node=>assert.ok(node.querySelector('.agent-title,.agent-card-title'),'每个Agent保留文字标识'));
   }
  }
+});
+
+test('宽窄布局全部分页的比较表与判决共用中线，双路证据只汇合一次',async t=>{
+ const page=environment(t);await page.load();
+ const box=node=>{
+  const [x,y,width,height]=['x','y','width','height'].map(name=>Number(node.getAttribute(name)));
+  return {x,y,width,height,right:x+width,bottom:y+height,cx:x+width/2,cy:y+height/2};
+ };
+ const route=node=>{
+  const d=node.getAttribute('d'),steps=[...d.matchAll(/([MHVQ])([^MHVQ]+)/g)].map(([,command,values])=>({command,values:values.trim().split(/[\s,]+/).map(Number)}));
+  assert.ok(steps.length>1&&steps[0].command==='M');
+  assert.equal(d.replace(/[MHVQ\d.\s,+-]/g,''),'','连线仅包含可核验的绝对直线与圆角命令');
+  let x=steps[0].values[0],y=steps[0].values[1];
+  const start=[x,y];
+  for(const step of steps.slice(1)){
+   if(step.command==='H')x=step.values[0];
+   else if(step.command==='V')y=step.values[0];
+   else if(step.command==='Q')[x,y]=step.values.slice(2);
+   else assert.fail('一条流向不能用新的M断开');
+   step.end=[x,y];
+  }
+  assert.ok([...start,x,y].every(Number.isFinite));
+  return {start,end:[x,y],steps};
+ };
+ const checkGeometry=compact=>{
+  const table=box(page.document.querySelector('.comparison-matrix')),verdict=box(page.document.querySelector('.verdict-sheet'));
+  const cards=[...page.document.querySelectorAll('.anonymous-sheet')].map(box).sort((a,b)=>a.cy-b.cy);
+  assert.equal(cards.length,2);assert.equal(verdict.height,196);
+  assert.equal(table.cy,verdict.cy,'比较表与判决始终在同一水平中线上');
+  const flowBottom=Math.max(...cards.map(card=>card.bottom));
+  if(compact)assert.equal(Math.min(table.y,verdict.y)-flowBottom,54,'窄屏整组比较区留在上游卡片下方，按较高框确定间隔');
+  else assert.equal(table.cy,(cards[0].cy+cards[1].cy)/2,'桌面对照表围绕两匿名卡的中心均值居中');
+  if(!page.document.querySelector('.matrix-row'))assert.equal(table.height,120,'空表也使用实际外框高度参与对齐');
+
+  const merge=page.document.querySelector('[data-flow-merge]');
+  assert.equal(page.document.querySelectorAll('[data-flow-merge]').length,1);
+  assert.equal(merge.querySelectorAll('circle.flow-junction').length,1);
+  const circle=merge.querySelector('circle.flow-junction'),junction=['cx','cy'].map(name=>Number(circle.getAttribute(name)));
+  const inputs=[...merge.querySelectorAll('[data-merge-input]')];
+  assert.deepEqual(inputs.map(node=>node.dataset.mergeInput),['0','1']);
+  inputs.forEach((node,lane)=>{
+   const input=route(node);
+   assert.equal(input.start[1],cards[lane].cy,'输入线从对应显示通道的卡片中点引出');
+   assert.ok(input.start[0]>cards[lane].right&&input.start[0]<junction[0]);
+   assert.deepEqual(input.end,junction,'两路输入必须落到同一个汇合点');
+   assert.equal(node.hasAttribute('marker-end'),false,'汇合前不叠加箭头');
+  });
+  if(compact){assert.equal(junction[1],cards[1].cy);assert.ok(junction[0]>cards[1].right);}
+  else{assert.equal(junction[1],table.cy);assert.equal(junction[0],(cards[0].right+table.x)/2);}
+
+  const entryNode=merge.querySelector('[data-comparison-entry]'),entry=route(entryNode);
+  assert.equal(merge.querySelectorAll('[data-comparison-entry]').length,1);assert.deepEqual(entry.start,junction);
+  if(compact){
+   assert.deepEqual(entry.end,[table.cx,table.y-8]);
+   assert.equal(entry.steps.at(-1).command,'V');
+   assert.ok(entry.steps.at(-2).end[1]<entry.end[1],'窄屏从上方顺向进入表格');
+   entry.steps.filter(step=>step.command==='H').forEach(step=>assert.ok(step.end[1]>flowBottom,'跨越到表格的横线不能穿过上游卡片'));
+  }else{
+   assert.deepEqual(entry.steps.map(step=>step.command),['M','H'],'桌面汇合后直接水平入表');
+   assert.deepEqual(entry.end,[table.x-8,table.cy]);assert.ok(entry.end[0]>entry.start[0]);
+  }
+  const verdictNode=page.document.querySelector('[data-verdict-entry]'),output=route(verdictNode);
+  assert.equal(page.document.querySelectorAll('[data-verdict-entry]').length,1);
+  assert.deepEqual(output.steps.map(step=>step.command),['M','H'],'表格到判决始终直接水平连接');
+  assert.deepEqual(output.start,[table.right+8,table.cy]);assert.deepEqual(output.end,[verdict.x-8,verdict.cy]);
+  assert.ok(output.end[0]>output.start[0],'判决箭头不能反向');
+  for(const node of [entryNode,verdictNode]){
+   assert.equal(node.hasAttribute('marker-start'),false);
+   const marker=node.getAttribute('marker-end').match(/^url\(#([\w-]+)\)$/)?.[1];
+   const head=page.document.getElementById(marker)?.querySelector('path');assert.ok(head);assert.doesNotMatch(head.getAttribute('d'),/[Zz]/,'箭头使用开放尖角');
+  }
+ };
+ let pages=0,emptyPages=0;
+ for(const width of [1400,716]){
+  Object.defineProperty(page.window,'innerWidth',{value:width,configurable:true});page.window.dispatchEvent(new page.window.Event('resize'));
+  for(const [index,group] of page.window.EvaluationReportData.cases.entries()){
+   page.change('[data-case-select]',index);
+   for(const [pairIndex,pair] of group.pairs.entries()){
+    page.change('[data-pair-select]',pairIndex);
+    const seen=new Set();
+    while(true){
+     const signature=page.document.querySelector('.matrix-row')?.dataset.matrixRow??'empty';
+     if(seen.has(signature))break;
+     seen.add(signature);checkGeometry(width<=1080);pages++;if(signature==='empty')emptyPages++;
+     const next=page.document.querySelector('[data-matrix-next]');if(!next)break;page.click(next);
+    }
+    assert.equal(seen.size,Math.max(1,Math.ceil(pair.comparisons.length/5)),'每个矩阵分页均执行几何校验');
+   }
+  }
+ }
+ assert.equal(pages,116);assert.equal(emptyPages,10);
 });
 
 test('翻页键盘、断点重排与重新挂载保持正确状态，无重复监听',async t=>{

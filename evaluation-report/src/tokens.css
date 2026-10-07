@@ -7,13 +7,13 @@
   --standard-answer: #25617a;
   --comparison-better: #25734f;
   --comparison-worse: #b04745;
-  --agent-criteria: #285787;
+  --agent-criteria: #246fc4;
   --agent-criteria-light: #5daaf1;
   --agent-criteria-glint: #d9eeff;
-  --agent-attribution: #23615e;
+  --agent-attribution: #087f72;
   --agent-attribution-light: #3ac5b6;
   --agent-attribution-glint: #d8fff8;
-  --agent-comparison: #634681;
+  --agent-comparison: #9650cf;
   --agent-comparison-light: #b58af0;
   --agent-comparison-glint: #efe1ff;
   --bg: var(--white);
@@ -30,4 +30,19 @@
   --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
   --display: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --type-page: 26px;
+  --type-page-compact: 24px;
+  --type-section: 20px;
+  --type-card: 16px;
+  --type-body: 16px;
+  --type-copy: 15px;
+  --type-meta: 14px;
+  --type-fine: 12px;
+  --type-result: 28px;
+  --type-result-small: 24px;
+  --type-metric: 36px;
+  --type-metric-compact: 32px;
+  --weight-heading: 600;
+  --weight-medium: 500;
+  --weight-regular: 400;
 }

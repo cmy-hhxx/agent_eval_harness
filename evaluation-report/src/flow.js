@@ -3,7 +3,7 @@
   const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const text = (x,y,value,cls,anchor='start',attrs='') => `<text x="${x}" y="${y}" class="${cls}" text-anchor="${anchor}" ${attrs}>${safe(value)}</text>`;
   const rect = (x,y,w,h,cls='material-sheet',r=6) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" class="${cls}"/>`;
-  const edge = (d,kind='material',arrow=true) => `<path d="${d}" class="diagram-edge ${kind}-edge"${kind==='material'?' pathLength="1"':''}${arrow?` marker-end="url(#${kind}-arrow)"`:''}/>`;
+  const edge = (d,kind='material',arrow=true,attributes='') => `<path d="${d}" class="diagram-edge ${kind}-edge" ${attributes}${kind==='material'?' pathLength="1"':''}${arrow?` marker-end="url(#${kind}-arrow)"`:''}/>`;
   // Chinese glyphs are full width; the conservative Latin allowance prevents labels touching box edges.
   function wrap(value,width,size) {
     const lines=[]; let line='',used=0;
@@ -17,6 +17,15 @@
     return lines.length?lines:[''];
   }
   const lines = (x,y,values,cls,step=24,anchor='start',attrs='') => `<text x="${x}" y="${y}" class="${cls}" text-anchor="${anchor}" ${attrs}>${values.map((value,index)=>`<tspan x="${x}" dy="${index?step:0}">${safe(value)}</tspan>`).join('')}</text>`;
+  const textWidth=(value,size)=>[...value].reduce((sum,char)=>sum+(/[\x20-\x7e]/.test(char)?size*.61:size),0);
+  function typography() {
+    const style=window.getComputedStyle(document.documentElement);
+    return Object.fromEntries(['section','body','copy','meta'].map(name=>{
+      const size=Number.parseFloat(style.getPropertyValue(`--type-${name}`));
+      if(!Number.isFinite(size)||size<=0)throw new Error(`缺少有效字号：--type-${name}`);
+      return [name,size];
+    }));
+  }
   function preview(value,width,size,maxLines) {
     const all=wrap(value,width,size),visible=all.slice(0,maxLines);
     if(all.length>maxLines)visible[maxLines-1]=[...visible[maxLines-1]].slice(0,-1).join('')+'…';
@@ -111,18 +120,19 @@
       }
       function drawCase() {
         compact=window.innerWidth<=1080;
+        const fonts=typography();
         const group=cases[current],pair=item(),labels=mapping(),W=compact?820:1660;
         const presentation=(window.ReportCaseSummaries[pair.id]||window.ReportCaseSummariesB[pair.id]);
         if(!presentation)throw new Error('缺少案例展示摘要：'+pair.id);
         const xInput=10,xStandard=280,xAnonymous=650,inputWidth=224,standardWidth=318,anonymousWidth=146;
         const order=displayOrder(),top=42,topHeight=148,nodeHeight=112;
-        const questionPreview=preview(group.question,inputWidth-28,16,pair.hasStandardAnswer?3:5);
+        const questionPreview=preview(group.question,inputWidth-28,fonts.body,pair.hasStandardAnswer?3:5);
         const gold=pair.hasStandardAnswer?String(typeof pair.groundTruth.value==='string'?pair.groundTruth.value:JSON.stringify(pair.groundTruth.value)):'';
-        const goldPreview=pair.hasStandardAnswer?preview(gold,inputWidth-28,15,2):{lines:[],truncated:false};
+        const goldPreview=pair.hasStandardAnswer?preview(gold,inputWidth-28,fonts.body,2):{lines:[],truncated:false};
         const allChecks=pair.presentation.checklist,checks=[];
         let checklistBudget=topHeight-40;
         for(const value of allChecks.slice(0,4)){
-          const check=preview(value,standardWidth-58,15,2).lines,cost=check.length*18+4;
+          const check=preview(value,standardWidth-58,fonts.body,2).lines,cost=check.length*18+4;
           if(cost>checklistBudget)break;
           checks.push(check);checklistBudget-=cost;
         }
@@ -132,26 +142,27 @@
         const start=matrixPage*pageSize;
         const rows=presentation.rows.slice(start,start+pageSize);
         const mx=compact?10:852,mw=compact?624:590,topicWidth=112,cellWidth=(mw-topicWidth)/2;
-        const rowLayout=rows.map(row=>({row,topics:wrap(anonymous(row.label),topicWidth-16,14),cells:row.values.map(value=>wrap(anonymous(value),cellWidth-38,15)),judgments:[0,1].map(i=>cellJudgment(pair,row,i))}));
+        const rowLayout=rows.map(row=>({row,topics:wrap(anonymous(row.label),topicWidth-16,fonts.copy),cells:row.values.map(value=>wrap(anonymous(value),cellWidth-38,fonts.copy)),judgments:[0,1].map(i=>cellJudgment(pair,row,i))}));
         const rowHeights=rowLayout.map(row=>Math.max(48,row.topics.length*17+12,...row.cells.map(cell=>cell.length*17+12)));
-        const matrixHeight=30+rowHeights.reduce((h,v)=>h+v,0);
-        const my=compact?flowBottom+54:top+2,matrixBottom=my+Math.max(matrixHeight,120);
+        const matrixHeight=Math.max(30+rowHeights.reduce((h,v)=>h+v,0),120);
+        const verdictHeight=196;
+        const comparisonCenterY=compact?flowBottom+54+Math.max(matrixHeight,verdictHeight)/2:(rowY[0]+rowY[1]+nodeHeight)/2;
+        const my=comparisonCenterY-matrixHeight/2,matrixBottom=my+matrixHeight;
         const vx=compact?666:1476,vw=compact?144:174;
         const reason=anonymous(pair.rewrittenReason||pair.tradeoff||pair.reason);
-        const reasonPreview=preview(reason,vw-24,15,5),reasonLines=reasonPreview.lines;
-        const verdictHeight=196;
-        const vy=Math.max(my+20,matrixBottom-verdictHeight);
+        const reasonPreview=preview(reason,vw-24,fonts.copy,5),reasonLines=reasonPreview.lines;
+        const vy=comparisonCenterY-verdictHeight/2;
         const verdictBottom=vy+verdictHeight;
         const postY=Math.max(matrixBottom,verdictBottom,flowBottom)+66;
         const problems=pair.candidates.map(c=>c.findings.filter(f=>f.type==='problem'));
-        const problemLines=problems.map((list,index)=>list.map(f=>({finding:f,wrapped:wrap(anonymous(`${f.problem?.component?.length?f.problem.component.join(' / '):'责任待定位'}｜${f.problem?.label||f.text}${f.assessment?.evidence_status==='uncertain'?'（待核实）':''}`),W-66,15)})));
+        const problemLines=problems.map((list,index)=>list.map(f=>({finding:f,wrapped:wrap(anonymous(`${f.problem?.component?.length?f.problem.component.join(' / '):'责任待定位'}｜${f.problem?.label||f.text}${f.assessment?.evidence_status==='uncertain'?'（待核实）':''}`),W-66,fonts.copy)})));
         const problemHeight=problemLines.reduce((h,groups)=>h+24+Math.max(22,groups.reduce((sum,g)=>sum+g.wrapped.length*18+5,0)),0);
         const fullHeight=postY+problemHeight+34;
         const pageCount=String(current+1).padStart(2,'0');
         const prevIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h12"/></svg>';
         const nextIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6M4 12h12"/></svg>';
         container.innerHTML=`<div class="case-navigation" aria-label="真实案例"><span class="case-position">${pageCount}<span> / ${cases.length}</span></span><select aria-label="选择真实案例" data-case-select>${cases.map((entry,index)=>`<option value="${index}" ${index===current?'selected':''}>${safe(entry.title)}</option>`).join('')}</select><select class="pair-select" aria-label="选择模型组" data-pair-select>${group.pairs.map((entry,index)=>`<option value="${index}" ${index===pairIndex?'selected':''}>${safe(entry.tier)}${entry.status==='needs_review'?' · 待核':''}</option>`).join('')}</select><span class="case-kind">${pair.hasStandardAnswer?'客观题':'主观题'}</span><div class="case-pager"><button type="button" data-case-prev aria-label="上一个案例">${prevIcon}</button><button type="button" data-case-next aria-label="下一个案例">${nextIcon}</button></div></div>
-          <article id="active-case" aria-label="${safe(group.title)}"><figure class="research-figure ${compact?'compact-figure':''}"><svg id="evaluationMechanism" viewBox="0 0 ${W} ${fullHeight}" role="group" aria-label="${safe(group.title)}的multi-agent评测机制" xmlns="http://www.w3.org/2000/svg"><defs>${['criteria','attribution','comparison'].map(role=>`<linearGradient id="agent-${role}-sheen" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0"><stop offset="0" class="agent-sheen-base"/><stop offset=".3" class="agent-sheen-base"/><stop offset=".44" class="agent-sheen-light"/><stop offset=".485" class="agent-sheen-glint"/><stop offset=".515" class="agent-sheen-glint"/><stop offset=".56" class="agent-sheen-light"/><stop offset=".7" class="agent-sheen-base"/><stop offset="1" class="agent-sheen-base"/><animateTransform attributeName="gradientTransform" type="translate" values="-1 0;1 0" dur="3.6s" repeatCount="indefinite"/></linearGradient>`).join('')}${window.ReportIcons.symbols()}${['material','reference','review'].map(kind=>`<marker id="${kind}-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L9 5L1 9Z" class="${kind}-arrow-fill"/></marker>`).join('')}</defs><g id="mechanismScene"></g></svg></figure></article>
+          <article id="active-case" aria-label="${safe(group.title)}"><figure class="research-figure ${compact?'compact-figure':''}"><svg id="evaluationMechanism" viewBox="0 0 ${W} ${fullHeight}" role="group" aria-label="${safe(group.title)}的multi-agent评测机制" xmlns="http://www.w3.org/2000/svg"><defs>${['criteria','attribution','comparison'].map(role=>`<linearGradient id="agent-${role}-sheen" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0"><stop offset="0" class="agent-sheen-base"/><stop offset=".3" class="agent-sheen-base"/><stop offset=".44" class="agent-sheen-light"/><stop offset=".485" class="agent-sheen-glint"/><stop offset=".515" class="agent-sheen-glint"/><stop offset=".56" class="agent-sheen-light"/><stop offset=".7" class="agent-sheen-base"/><stop offset="1" class="agent-sheen-base"/><animateTransform attributeName="gradientTransform" type="translate" values="-.65 0;.65 0" dur="3.2s" repeatCount="indefinite"/></linearGradient>`).join('')}${window.ReportIcons.symbols()}${['material','reference','review'].map(kind=>`<marker id="${kind}-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse"><path d="M3 2L10 6L3 10" class="arrow-head ${kind}-arrow-head"/></marker>`).join('')}</defs><g id="mechanismScene"></g></svg></figure></article>
           <dialog class="case-detail" aria-labelledby="caseDetailTitle"><header><h2 id="caseDetailTitle" data-detail-title></h2><button type="button" data-detail-close aria-label="关闭详情">×</button></header><div class="case-detail-body" data-detail-body></div></dialog>`;
         const scene=container.querySelector('#mechanismScene');
         let checklist=rect(xStandard,top,standardWidth,topHeight,'criteria-sheet')+agentTitle(xStandard+14,top+24,'标准 Agent','agent-card-title');
@@ -171,15 +182,15 @@
           const counts=Object.entries(count).filter(([,value])=>value).map(([key,value])=>`${value}${{met:'满足',partial:'部分',unmet:'未满足',unknown:'待核'}[key]}`).join(' · ');
           const strengths=candidate.findings.filter(f=>f.type==='strength').length;
           const uncertainProblems=problems[index].filter(f=>f.assessment?.evidence_status==='uncertain').length;
-          return `<g data-agent-role="attribution" data-agent-candidate="${index}">${control(xStandard,y,standardWidth,nodeHeight,agentTitle(xStandard+14,y+24,`归因 Agent ${index===0?'①':'②'}`,'agent-card-title')+text(xStandard+standardWidth-15,y+23,coreName(candidate),candidate.core.meets_core===true?'usable-caption':'issue-caption','end')+lines(xStandard+15,y+47,preview(presentation.checks[index],standardWidth-30,16,2).lines,'check-text',18)+text(xStandard+15,y+86,`验收 ${counts}`,'agent-output-count')+text(xStandard+15,y+106,`优点 ${strengths} · 问题 ${problems[index].length}${uncertainProblems?'（'+uncertainProblems+' 待核）':''}`,'agent-output-count')+text(xStandard+standardWidth-15,y+106,'输出 ↗','agent-output-count','end'),`data-check-card="${index}" aria-label="查看${candidate.source}核验依据"`)}</g>`;
+          return `<g data-agent-role="attribution" data-agent-candidate="${index}">${control(xStandard,y,standardWidth,nodeHeight,agentTitle(xStandard+14,y+24,`归因 Agent ${index===0?'①':'②'}`,'agent-card-title')+text(xStandard+standardWidth-15,y+23,coreName(candidate),candidate.core.meets_core===true?'usable-caption':'issue-caption','end')+lines(xStandard+15,y+47,preview(presentation.checks[index],standardWidth-30,fonts.body,2).lines,'check-text',18)+text(xStandard+15,y+86,`验收 ${counts}`,'agent-output-count')+text(xStandard+15,y+106,`优点 ${strengths} · 问题 ${problems[index].length}${uncertainProblems?'（'+uncertainProblems+' 待核）':''}`,'agent-output-count')+text(xStandard+standardWidth-15,y+106,'输出 ↗','agent-output-count','end'),`data-check-card="${index}" aria-label="查看${candidate.source}核验依据"`)}</g>`;
         }).join('');
         const attributionFrame=rect(xStandard,rowY[0],standardWidth,flowBottom-rowY[0],'attribution-frame')+`<path class="matrix-rule" d="M${xStandard} ${rowY[0]+nodeHeight+8}H${xStandard+standardWidth}"/>`;
         const anon=order.map((index,slot)=>{
           const candidate=pair.candidates[index],y=rowY[slot];
-          return `<g data-anonymous-candidate="${index}">`+rect(xAnonymous,y,anonymousWidth,nodeHeight,'anonymous-sheet')+text(xAnonymous+14,y+25,labels[index],'identity-label','start',`data-candidate-identity="${index}"`)+text(xAnonymous+anonymousWidth-12,y+24,`证据${index===0?'①':'②'}`,'packet-source','end')+(revealed?lines(xAnonymous+12,y+55,wrap(`${candidate.displayName}\n${candidate.model||candidate.version}`,anonymousWidth-24,14),'identity-model',17,'start',`data-revealed-model="${index}"`):text(xAnonymous+anonymousWidth/2,y+72,coreName(candidate),'packet-long','middle'))+'</g>';
+          return `<g data-anonymous-candidate="${index}">`+rect(xAnonymous,y,anonymousWidth,nodeHeight,'anonymous-sheet')+text(xAnonymous+14,y+25,labels[index],'identity-label','start',`data-candidate-identity="${index}"`)+text(xAnonymous+anonymousWidth-12,y+24,`证据${index===0?'①':'②'}`,'packet-source','end')+(revealed?lines(xAnonymous+12,y+55,wrap(`${candidate.displayName}\n${candidate.model||candidate.version}`,anonymousWidth-24,fonts.meta),'identity-model',17,'start',`data-revealed-model="${index}"`):text(xAnonymous+anonymousWidth/2,y+72,coreName(candidate),'packet-long','middle'))+'</g>';
         }).join('');
         const swap=`<g data-swap-control role="button" tabindex="0" aria-label="交换匿名 A/B 映射" aria-pressed="${swapped}" class="swap-target">${rect(xAnonymous+66,4,80,31,'swap-control',4)}${window.ReportIcons.draw('shuffle',xAnonymous+73,9,20,20,'swap-icon')}${text(xAnonymous+121,26,'换位','swap-label','middle')}</g>`;
-        let matrix=rect(mx,my,mw,Math.max(matrixHeight,120),'comparison-matrix');
+        let matrix=rect(mx,my,mw,matrixHeight,'comparison-matrix');
         matrix+=`<path class="matrix-rule" d="M${mx} ${my+30}H${mx+mw}M${mx+topicWidth} ${my}V${matrixBottom}M${mx+topicWidth+cellWidth} ${my}V${matrixBottom}"/>`;
         matrix+=text(mx+topicWidth/2,my+21,'对照项','matrix-header','middle');
         order.forEach((index,slot)=>{matrix+=text(mx+topicWidth+cellWidth*(slot+.5),my+21,labels[index],'matrix-header','middle',`data-candidate-identity="${index}"`);});
@@ -191,13 +202,26 @@
         });
         if(!rows.length)matrix+=lines(mx+18,my+65,['来源核验尚有未决问题','没有正式逐项对比'], 'evidence-text',24);
         const judgments=rowLayout.flatMap(r=>r.judgments);
-        const legend=['✓ 较优','× 较弱','— 未判',judgments.some(j=>j.state==='not-applicable')?'∅ 不适用':'',judgments.some(j=>j.state==='uncertain')?'? 待核实':''].filter(Boolean).join('  ');
+        const legend=['✓较优','×较弱','—未判',judgments.some(j=>j.state==='not-applicable')?'∅不适用':'',judgments.some(j=>j.state==='uncertain')?'?待核实':''].filter(Boolean).join('  ');
+        const comparisonHeadingX=mx+Math.ceil(textWidth('对比 Agent',fonts.section))+12;
+        const originalLinkX=comparisonHeadingX+Math.ceil(textWidth('逐项对照',fonts.section))+12;
         matrix+=text(mx+mw,my-13,legend,'matrix-legend','end','data-matrix-legend');
         if(totalPages>1)matrix+=`<g class="matrix-pagination">${text(mx+mw/2,matrixBottom+24,`${start+1}–${start+rows.length} / ${pair.comparisons.length} 项`,'sheet-caption','middle')}<g role="button" tabindex="0" class="diagram-control" data-matrix-prev aria-label="上一组对照项">${rect(mx+mw/2-108,matrixBottom+7,32,25)}${text(mx+mw/2-92,matrixBottom+25,'←','sheet-caption','middle')}</g><g role="button" tabindex="0" class="diagram-control" data-matrix-next aria-label="下一组对照项">${rect(mx+mw/2+76,matrixBottom+7,32,25)}${text(mx+mw/2+92,matrixBottom+25,'→','sheet-caption','middle')}</g></g>`;
         const winner=pair.status==='needs_review'?'待核':pair.winnerIndex===null?(pair.outcome==='both_good'?'都好':'都差'):`${labels[pair.winnerIndex]} 胜`;
         const verdict=`${rect(vx,vy,vw,verdictHeight,'verdict-sheet')}<g data-reveal-control class="diagram-control" role="button" tabindex="0" aria-label="${revealed?'隐藏':'揭示'} A/B 模型身份" aria-pressed="${revealed}"><rect class="detail-hit" x="${vx+1}" y="${vy+1}" width="${vw-2}" height="68" rx="5"/>${text(vx+vw/2,vy+33,winner,'winner-label','middle','id="winnerLabel"')}${text(vx+vw/2,vy+59,revealed?'隐藏模型身份':'揭示模型身份','sheet-caption','middle')}</g><path class="matrix-rule" d="M${vx+12} ${vy+70}H${vx+vw-12}"/><g data-verdict-control class="diagram-control" role="button" tabindex="0" aria-label="查看完整裁决与取舍"><rect class="detail-hit" x="${vx+1}" y="${vy+72}" width="${vw-2}" height="${verdictHeight-73}" rx="5"/>${lines(vx+12,vy+93,reasonLines,'verdict-reason',17,'start',`data-verdict-reason data-truncated="${reasonPreview.truncated}"`)}${text(vx+vw-12,vy+verdictHeight-12,'完整点评 ↗','sheet-caption','end')}</g>`;
         const sourceX=xInput+inputWidth,laneMid=nodeHeight/2;
-        const paths=`<g class="connections">${edge(`M${sourceX+7} ${top+topHeight/2}H${xStandard-8}`)}${edge(`M${xStandard+standardWidth/2} ${top+topHeight+5}V${rowY[0]-7}`,'reference')}${rowY.map(y=>edge(`M${sourceX+7} ${y+laneMid}H${xStandard-8}`)+edge(`M${xStandard+standardWidth+8} ${y+laneMid}H${xAnonymous-8}`)).join('')}${compact?edge(`M${xAnonymous+anonymousWidth+6} ${rowY[0]+laneMid}H813V${flowBottom+14}H${mx+mw/2}V${my-8}`)+edge(`M${xAnonymous+anonymousWidth+6} ${rowY[1]+laneMid}H813`,'material',false):edge(`M${xAnonymous+anonymousWidth+6} ${rowY[0]+laneMid}H816V${my+matrixHeight/2}H${mx-8}`)+edge(`M${xAnonymous+anonymousWidth+6} ${rowY[1]+laneMid}H816V${my+matrixHeight/2}`,'material',false)}${edge(`M${mx+mw+8} ${vy+33}H${vx-8}`)}</g>`;
+        const sourcePortX=xAnonymous+anonymousWidth+6,firstPortY=rowY[0]+laneMid,secondPortY=rowY[1]+laneMid;
+        const mergeX=compact?W-7:(xAnonymous+anonymousWidth+mx)/2;
+        const joinY=compact?secondPortY:comparisonCenterY;
+        // Join both evidence lanes once, then enter the centred comparison block.
+        const mergeInputs=compact?
+          edge(`M${sourcePortX} ${firstPortY}H${mergeX-6}Q${mergeX} ${firstPortY} ${mergeX} ${firstPortY+6}V${joinY}`,'material',false,'data-merge-input="0"')+edge(`M${sourcePortX} ${secondPortY}H${mergeX}`,'material',false,'data-merge-input="1"'):
+          edge(`M${sourcePortX} ${firstPortY}H${mergeX-6}Q${mergeX} ${firstPortY} ${mergeX} ${firstPortY+6}V${joinY}`,'material',false,'data-merge-input="0"')+edge(`M${sourcePortX} ${secondPortY}H${mergeX-6}Q${mergeX} ${secondPortY} ${mergeX} ${secondPortY-6}V${joinY}`,'material',false,'data-merge-input="1"');
+        const turnY=flowBottom+14,tablePortX=mx+mw/2;
+        const comparisonEntry=compact?
+          `M${mergeX} ${joinY}V${turnY-6}Q${mergeX} ${turnY} ${mergeX-6} ${turnY}H${tablePortX+6}Q${tablePortX} ${turnY} ${tablePortX} ${turnY+6}V${my-8}`:
+          `M${mergeX} ${comparisonCenterY}H${mx-8}`;
+        const paths=`<g class="connections">${edge(`M${sourceX+7} ${top+topHeight/2}H${xStandard-8}`)}${edge(`M${xStandard+standardWidth/2} ${top+topHeight+5}V${rowY[0]-7}`,'reference')}${rowY.map(y=>edge(`M${sourceX+7} ${y+laneMid}H${xStandard-8}`)+edge(`M${xStandard+standardWidth+8} ${y+laneMid}H${xAnonymous-8}`)).join('')}<g data-flow-merge>${mergeInputs}<circle class="flow-junction" cx="${mergeX}" cy="${joinY}" r="2.25"/>${edge(comparisonEntry,'material',true,'data-comparison-entry')}</g>${edge(`M${mx+mw+8} ${comparisonCenterY}H${vx-8}`,'material',true,'data-verdict-entry')}</g>`;
         let problemsContent=text(10,postY,'问题归因','attribution-heading');
         let py=postY+27;
         order.forEach(index=>{
@@ -211,7 +235,7 @@
           for(const {finding,wrapped} of list){problemsContent+=lines(39,py,wrapped,'attribution-text',18,'start',`data-problem-finding="${safe(finding.finding_id)}" data-problem-candidate="${index}"`);py+=wrapped.length*18+5;}
           py+=7;problemsContent+='</g>';
         });
-        scene.innerHTML=`<g class="stage-headings">${text(xInput,28,'输入与回答','diagram-heading')}${text(xStandard,28,'独立查证','diagram-heading')}${text(xAnonymous,28,revealed?'模型':'匿名','diagram-heading')}</g>${paths}<g id="source-materials">${question}${answers}</g><g id="shared-rubric-and-attribution"><g class="diagram-control" role="button" tabindex="0" data-agent-role="criteria" data-checklist-control aria-label="查看完整验收清单">${checklist}</g>${attributionFrame}${attribution}</g><g id="identity-mapping">${swap}${anon}</g><g data-agent-role="comparison">${agentTitle(mx,my-13,'对比 Agent')}${text(mx+116,my-13,'逐项对照','diagram-heading')}<g class="diagram-control" role="button" tabindex="0" data-comparison-control aria-label="查看逐项对照原文">${text(mx+216,my-13,'原文 ↗','sheet-caption')}</g>${text(vx,vy-14,'裁决与取舍','verdict-heading')}<g id="comparison-grid">${matrix}</g><g id="formal-outcomes">${verdict}</g></g><path d="M10 ${postY-19}H${W-10}" class="panel-rule"/><g id="problem-attribution">${problemsContent}</g>`;
+        scene.innerHTML=`<g class="stage-headings">${text(xInput,28,'输入与回答','diagram-heading')}${text(xStandard,28,'独立查证','diagram-heading')}${text(xAnonymous,28,revealed?'模型':'匿名','diagram-heading')}</g>${paths}<g id="source-materials">${question}${answers}</g><g id="shared-rubric-and-attribution"><g class="diagram-control" role="button" tabindex="0" data-agent-role="criteria" data-checklist-control aria-label="查看完整验收清单">${checklist}</g>${attributionFrame}${attribution}</g><g id="identity-mapping">${swap}${anon}</g><g data-agent-role="comparison">${agentTitle(mx,my-13,'对比 Agent')}${text(comparisonHeadingX,my-13,'逐项对照','diagram-heading')}<g class="diagram-control" role="button" tabindex="0" data-comparison-control aria-label="查看逐项对照原文">${text(originalLinkX,my-13,'原文 ↗','sheet-caption')}</g>${text(vx,vy-14,'裁决与取舍','verdict-heading')}<g id="comparison-grid">${matrix}</g><g id="formal-outcomes">${verdict}</g></g><path d="M10 ${postY-19}H${W-10}" class="panel-rule"/><g id="problem-attribution">${problemsContent}</g>`;
       }
       function selectCase(index,focus=false){
         if(destroyed||!Number.isInteger(index)||index<0||index>=cases.length)return;
