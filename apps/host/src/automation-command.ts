@@ -7,7 +7,8 @@ import { runPipeline, sameRows, nextPublicationAt, type AutomationState } from "
 import { publishSnapshot, syncMongoDay } from "./automation-publication.js";
 import { startAutomationDashboard } from "./automation-dashboard.js";
 import { loadAutomationConfig } from "./automation-config.js";
-import { checkpoint, evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress, summarize } from "./automation-evaluation.js";
+import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
+import { createAutomationMonitor } from "./automation-monitor.js";
 import { boundProfiles, createModelResolver, loadConfig } from "./config.js";
 import { logger } from "./composition.js";
 import { ROOT } from "./paths.js";
@@ -138,22 +139,22 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     }
     releaseSources = await runLock(config.sourceDirectory);
     process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
+    const monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier);
     if (values.dashboard) {
-      dashboard = await startAutomationDashboard({ config, output, state: () => state, port,
+      dashboard = await startAutomationDashboard({ config, output, state: () => state, port, monitor,
         settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
       console.log(`自动化看板：${dashboard.url}`);
     }
     const observe = async (current: AutomationState, signal: AbortSignal) => {
-      const runs = new Map();
+      const dates = [];
+      let available = false;
       for (const job of Object.values(current.jobs)) {
-        const checkpoints = (await Promise.all(job.runIds.map((id) => checkpoint(output, id)))).filter((value) => value !== undefined);
-        if (checkpoints.length) {
-          job.summary = summarize(checkpoints, !job.adopted);
-          runs.set(job.date, checkpoints);
-        }
+        const view = await monitor(job);
+        if (view.summary) { job.summary = view.summary; available = true; }
+        dates.push(view.progress);
       }
-      if (config.publishProgress && runs.size)
-        await remote.publish(remoteProgress(current, config.engine, runs, config.dailyComparisonLimitPerTier), signal);
+      if (config.publishProgress && available)
+        await remote.publish(remoteProgress(current, config.engine, dates), signal);
     };
     console.log(`Automations ${config.id}: ${config.fromDate} → ${config.sourceUrl}\n状态：${file}`);
     await runPipeline(state, { ...config, once: values.once }, {

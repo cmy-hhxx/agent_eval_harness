@@ -190,7 +190,20 @@ function terminalReviewReason(states: Checkpoint[]): string | undefined {
   return reviews.length ? `Comparison remains unresolved: ${reviews.join(", ")}` : undefined;
 }
 
-export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, empty = false): EvaluationOutcome {
+function waitingForInputs(states: Checkpoint[], summary: EvaluationSummary, limit: number, empty = false): boolean {
+  if (empty || !summary.stages.comparison?.total || summary.issues) return true;
+  if (!summary.skipped) return false;
+  const counts = new Map<string, number>(), groupKey = (group: string[]) => [...group].sort().join("+");
+  for (const state of states) for (const task of Object.values(state.tasks)) {
+    if (task.stage !== "comparison" || task.data.verificationAudit || !task.receipt) continue;
+    const key = groupKey(task.data.group!);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return states.some(state => (state.preflight.skipped as { versions: string[] }[])
+    .some(skipped => (counts.get(groupKey(skipped.versions)) ?? 0) < limit));
+}
+
+export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, limit: number, empty = false): EvaluationOutcome {
   const blocked = exhaustedContentReason(states, policy) ?? unavailableLedgerReason(states);
   if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
   const review = terminalReviewReason(states);
@@ -204,7 +217,7 @@ export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSumma
   if (Object.values(summary.stages).some((stage) => stage.completed !== stage.total))
     return { status: "retry", summary, transient: checkpointRecovery(states, policy) !== undefined,
       error: incompleteReason(states, summary) };
-  if (empty || !summary.stages.comparison?.total || summary.skipped || summary.issues)
+  if (waitingForInputs(states, summary, limit, empty))
     return { status: "waiting_inputs", summary };
   return { status: "completed", summary };
 }
@@ -241,7 +254,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   if (finalComparisons.length > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
   if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
-    job.evaluation = job.summary.skipped || job.summary.issues || !job.summary.stages.comparison?.total ? "waiting_inputs" : "completed";
+    job.evaluation = waitingForInputs([saved], job.summary, config.dailyComparisonLimitPerTier) ? "waiting_inputs" : "completed";
     job.evaluationAttempts = 0; job.nextEvaluationAt = 0;
     delete job.evaluationError;
     return;
@@ -312,49 +325,50 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   }
   const summary = summarize(checkpoints);
   summary.skipped += skipped; summary.issues += issues;
-  return evaluationOutcome(checkpoints, summary, host.evaluation.execution, empty);
+  return evaluationOutcome(checkpoints, summary, host.evaluation.execution, config.dailyComparisonLimitPerTier, empty);
 }
 
-export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], runs: Map<string, Checkpoint[]>, limit: number) {
-  const dates = Object.values(state.jobs).map((job) => {
-    const planned = expandComparisonPairs((runs.get(job.date) ?? []).flatMap((run) => [
-      ...(run.config as EvalConfig).comparisons,
-      ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
-    ]));
-    const pairName = (group: string[]) => [...group].sort().join("__vs__");
-    const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
-      total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
-    }]));
-    const statuses = new Map<string, { pair: string; statuses: string[] }>();
-    const add = (group: string[], batch: string, id: string, status: string) => {
-      if (group.length !== 2) throw new Error("Remote progress requires two-candidate comparison tasks");
-      const pair = pairName(group);
-      if (!Object.hasOwn(pairs, pair)) throw new Error("Remote progress comparison pair is not configured: " + pair);
-      const key = JSON.stringify([pair, batch, id]), value = statuses.get(key) ?? { pair, statuses: [] };
-      value.statuses.push(status); statuses.set(key, value);
-    };
-    for (const saved of runs.get(job.date) ?? []) {
-      // A queued date may still hold its unlimited plan until the evaluator reaches it.
-      const run = limitedCheckpoint(saved, limit);
-      for (const task of Object.values(run.tasks)) {
-        if (task.stage !== "comparison" || task.data.verificationAudit) continue;
-        const input = run.inputs[Object.values(task.inputIds)[0]];
-        if (input) add(task.data.group!, input.batch_id, input.case_id,
-          task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);
-      }
-      for (const skipped of run.preflight.skipped as { versions: string[]; batch_id: string; case_id: string }[])
-        add(skipped.versions, skipped.batch_id, skipped.case_id, "skipped");
+export function remoteDateProgress(date: string, runs: Checkpoint[], limit: number) {
+  const planned = expandComparisonPairs(runs.flatMap((run) => [
+    ...(run.config as EvalConfig).comparisons,
+    ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
+  ]));
+  const pairName = (group: string[]) => [...group].sort().join("__vs__");
+  const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
+    total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
+  }]));
+  const statuses = new Map<string, { pair: string; statuses: string[] }>();
+  const add = (group: string[], batch: string, id: string, status: string) => {
+    if (group.length !== 2) throw new Error("Remote progress requires two-candidate comparison tasks");
+    const pair = pairName(group);
+    if (!Object.hasOwn(pairs, pair)) throw new Error("Remote progress comparison pair is not configured: " + pair);
+    const key = JSON.stringify([pair, batch, id]), value = statuses.get(key) ?? { pair, statuses: [] };
+    value.statuses.push(status); statuses.set(key, value);
+  };
+  for (const saved of runs) {
+    // A queued date may still hold its unlimited plan until the evaluator reaches it.
+    const run = limitedCheckpoint(saved, limit);
+    for (const task of Object.values(run.tasks)) {
+      if (task.stage !== "comparison" || task.data.verificationAudit) continue;
+      const input = run.inputs[Object.values(task.inputIds)[0]];
+      if (input) add(task.data.group!, input.batch_id, input.case_id,
+        task.receipt?.exported?.file === "comparison-review.jsonl" ? "pending" : task.status);
     }
-    for (const { pair, statuses: items } of statuses.values()) {
-      const counts = pairs[pair]; counts.total_cases++;
-      if (items.includes("running")) counts.running_cases++;
-      else if (items.some((status) => ["failed", "timed_out"].includes(status))) counts.failed_cases++;
-      else if (items.includes("succeeded")) counts.completed_cases++;
-      else if (items.includes("skipped")) counts.skipped_cases++;
-      else counts.queued_cases++;
-    }
-    return { date: job.date, pairs };
-  });
+    for (const skipped of run.preflight.skipped as { versions: string[]; batch_id: string; case_id: string }[])
+      add(skipped.versions, skipped.batch_id, skipped.case_id, "skipped");
+  }
+  for (const { pair, statuses: items } of statuses.values()) {
+    const counts = pairs[pair]; counts.total_cases++;
+    if (items.includes("running")) counts.running_cases++;
+    else if (items.some((status) => ["failed", "timed_out"].includes(status))) counts.failed_cases++;
+    else if (items.includes("succeeded")) counts.completed_cases++;
+    else if (items.includes("skipped")) counts.skipped_cases++;
+    else counts.queued_cases++;
+  }
+  return { date, pairs };
+}
+
+export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], dates: ReturnType<typeof remoteDateProgress>[]) {
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||
     ["pending", "evaluating", "retry"].includes(job.evaluation));
   return {

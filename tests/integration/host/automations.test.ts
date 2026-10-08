@@ -11,26 +11,62 @@ import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
 import { buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
 import { automationEvaluationConfig, loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
-import { automaticResumeStages, createAutomationWorkflow, checkpointRecovery, evaluationOutcome, evaluationTargets, recoverEvaluation, summarize, remoteProgress } from "../../../apps/host/src/automation-evaluation.js";
+import { automaticResumeStages, createAutomationWorkflow, checkpointRecovery, evaluationOutcome, evaluationTargets, recoverEvaluation, summarize, remoteDateProgress, remoteProgress } from "../../../apps/host/src/automation-evaluation.js";
 import { submitFor, inspectFor, attributionResult, comparisonResult, draftFor, fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
-const automationWorkflow = createAutomationWorkflow(600);
+const automationWorkflow = createAutomationWorkflow(300);
 
-test("automation caps each tier at 600 battles and keeps reservations across input refreshes", async () => {
-  const fast = Array.from({ length: 603 }, (_, index) => raw(`q${String(index).padStart(4, "0")}`));
-  const expert = Array.from({ length: 605 }, (_, index) => raw(`q${String(index + 500).padStart(4, "0")}`));
+test("completed quota stays completed despite unpaired inputs, including after restart", async () => {
+  const rows = Array.from({ length: 300 }, (_, index) => raw(`q${index}`));
+  const { directory, config } = await fixtureConfig([[...rows, raw("missing")], rows, rows, rows], true);
+  try {
+    config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
+    config.rewrite = { attribution: true, comparison: true, comparisonItems: true, clustering: false };
+    const plan = await automationWorkflow.plan(config);
+    const saved = comparisonCodec.encode({ usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+      format: "evaluation-run", debug: false, runId: "daily-2026-09-29", status: "finished", evaluatorVersion: fakeEvaluatorVersion,
+      engine: fakeIdentity, config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+      states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+      preflight: plan.summary, startedAt: Date.now(),
+    } });
+    for (const task of Object.values(saved.tasks)) {
+      task.status = "succeeded";
+      task.receipt = { acceptedAt: Date.now(), exported: {} } as NonNullable<typeof task.receipt>;
+    }
+    const summary = summarize([saved]);
+    assert.equal(summary.readyComparisons, 600);
+    assert.equal(summary.skipped, 2);
+    assert.equal(evaluationOutcome([saved], summary, DEFAULT_POLICY, 300).status, "completed");
+    assert.equal(evaluationOutcome([saved], summary, DEFAULT_POLICY, 301).status, "waiting_inputs", "unfilled quotas still wait for missing pairs");
+    assert.equal(evaluationOutcome([saved], { ...summary, issues: 1 }, DEFAULT_POLICY, 300).status, "waiting_inputs", "quota completion cannot hide invalid inputs");
+    const rewrite = Object.values(saved.tasks).find(task => task.stage === "rewrite")!;
+    rewrite.status = "failed";
+    assert.equal(evaluationOutcome([saved], summarize([saved]), DEFAULT_POLICY, 300).status, "retry", "all planned rewrites must finish before completion");
+    rewrite.status = "succeeded";
+    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const job = { date: "2026-09-29", runIds: [saved.runId], evaluation: "waiting_inputs" } as AutomationJob;
+    await writeJson(path.join(directory, saved.runId, "state.json"), saved);
+    await recoverEvaluation(settings, directory, job, DEFAULT_POLICY);
+    assert.equal(job.evaluation, "completed");
+    assert.equal(job.summary!.skipped, 2, "input gaps remain visible separately from completion");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("automation caps each tier at 300 battles and keeps reservations across input refreshes", async () => {
+  const fast = Array.from({ length: 303 }, (_, index) => raw(`q${String(index).padStart(4, "0")}`));
+  const expert = Array.from({ length: 305 }, (_, index) => raw(`q${String(index + 500).padStart(4, "0")}`));
   const { directory, config } = await fixtureConfig([fast, expert, fast, expert], true);
   try {
     config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     config.rewrite.comparisonItems = true;
     const plan = await automationWorkflow.plan(config);
-    assert.deepEqual(plan.summary.group_counts, { "a_fast+b_fast": 600, "a_expert+b_expert": 600 });
-    assert.equal(plan.summary.comparison_tasks, 1200);
-    assert.equal(plan.summary.attribution_tasks, 2400);
-    assert.equal(plan.summary.rewrite_tasks, 3600);
-    assert.equal(Object.keys(plan.inputs).length, (603 + 605) * 2, "unselected inputs remain available");
-    assert.equal((await buildPlan(config)).summary.comparison_tasks, 1208, "manual evaluation is unrestricted");
+    assert.deepEqual(plan.summary.group_counts, { "a_fast+b_fast": 300, "a_expert+b_expert": 300 });
+    assert.equal(plan.summary.comparison_tasks, 600);
+    assert.equal(plan.summary.attribution_tasks, 1200);
+    assert.equal(plan.summary.rewrite_tasks, 1800);
+    assert.equal(Object.keys(plan.inputs).length, (303 + 305) * 2, "unselected inputs remain available");
+    assert.equal((await buildPlan(config)).summary.comparison_tasks, 608, "manual evaluation is unrestricted");
     const ids = new Set(plan.tasks.map((task) => task.id));
     for (const task of plan.tasks) for (const id of Object.values(task.dependencies)) assert(ids.has(id));
     const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
@@ -46,7 +82,7 @@ test("automation caps each tier at 600 battles and keeps reservations across inp
     await automationWorkflow.reconcile!(directory, state, config);
     assert.deepEqual(new Set(state.manifest.tasks.map((task) => task.id)), ids, "refresh must not rotate the reserved battles");
     for (const id of ids) assert.equal(state.manifest.states[id].attempts, 1);
-    assert.deepEqual(state.manifest.preflight.group_counts, { "a_fast+b_fast": 600, "a_expert+b_expert": 600 });
+    assert.deepEqual(state.manifest.preflight.group_counts, { "a_fast+b_fast": 300, "a_expert+b_expert": 300 });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -108,8 +144,8 @@ test("automation comparison quota is a required positive integer setting", async
   try {
     const source = path.join(ROOT, "configs/automations.json"), file = path.join(directory, "automation.json");
     const settings = await readJson<Record<string, unknown>>(source);
-    assert.equal((await loadAutomationConfig(source)).dailyComparisonLimitPerTier, 600);
-    for (const value of [undefined, 0, -1, 1.5, "600"]) {
+    assert.equal((await loadAutomationConfig(source)).dailyComparisonLimitPerTier, 300);
+    for (const value of [undefined, 0, -1, 1.5, "300"]) {
       await writeJson(file, { ...settings, dailyComparisonLimitPerTier: value });
       await assert.rejects(loadAutomationConfig(file), /Invalid automations.dailyComparisonLimitPerTier/);
     }
@@ -341,7 +377,7 @@ test("automation stops confirmed cumulative content exhaustion and resumes only 
     for (const category of ["transport", "interruption"] as const) {
       saved.tasks.spent.failure!.errors[0].category = category;
       saved.pausedStages![0].category = category;
-      const outcome = evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 });
+      const outcome = evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 }, 300);
       assert.equal(outcome.status, "blocked");
       assert.equal(outcome.transient, false);
       assert.match(outcome.error!, /spent.*3\/3/);
@@ -355,7 +391,7 @@ test("automation stops confirmed cumulative content exhaustion and resumes only 
     assert.equal(job.nextEvaluationAt, 0);
     assert.match(job.evaluationError!, /spent.*3\/3/);
     assert.equal(saved.tasks.spent.failure!.contentSubmissions, 3);
-    assert.equal(evaluationOutcome([saved], summarize([saved]), { repairAttempts: 3 }).status, "retry");
+    assert.equal(evaluationOutcome([saved], summarize([saved]), { repairAttempts: 3 }, 300).status, "retry");
     assert.equal(checkpointRecovery([saved], { repairAttempts: 3 }), "transient", "use the current cap even though the saved configuration allows only three");
     assert.deepEqual(automaticResumeStages(saved, { repairAttempts: 3 }), ["rewrite"]);
     assert.equal(await recoverEvaluation(settings, directory, job, { repairAttempts: 3 }), "transient");
@@ -378,7 +414,7 @@ test("automation and restart honor the current stage repair cap without refundin
     const date = "2026-09-29", job = { date, runIds: [], evaluation: "retry", resumePaused: true } as unknown as AutomationJob;
     await writeJson(path.join(directory, `daily-${date}`, "state.json"), saved);
     const policy = { repairAttempts: 3, stageRepairAttempts: { attribution: 0 } };
-    assert.equal(evaluationOutcome([saved], summarize([saved]), policy).status, "blocked");
+    assert.equal(evaluationOutcome([saved], summarize([saved]), policy, 300).status, "blocked");
     assert.equal(checkpointRecovery([saved], policy), undefined);
     assert.deepEqual(automaticResumeStages(saved, policy), []);
     assert.equal(await recoverEvaluation(settings, directory, job, policy), undefined);
@@ -412,7 +448,7 @@ test("automation blocks an unavailable final submission ledger until explicit re
     await writeJson(file, saved);
     assert.equal(checkpointRecovery([saved], { repairAttempts: 2 }), undefined);
     assert.deepEqual(automaticResumeStages(saved, { repairAttempts: 2 }), []);
-    const outcome = evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 });
+    const outcome = evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 }, 300);
     assert.equal(outcome.status, "blocked");
     assert.equal(outcome.transient, false);
     assert.match(outcome.error!, /ledger.*unknown.*explicit recovery/i);
@@ -461,7 +497,7 @@ test("accepted unresolved comparison is terminal for its blocked dependency clos
     assert.equal(terminal.job.summary!.stages.comparison.failed, 0);
     assert.equal(terminal.job.summary!.stages.rewrite.blocked, 2);
     assert.equal(terminal.job.summary!.readyComparisons, 0);
-    const outcome = (state: Checkpoint) => evaluationOutcome([state], summarize([state]), DEFAULT_POLICY);
+    const outcome = (state: Checkpoint) => evaluationOutcome([state], summarize([state]), DEFAULT_POLICY, 300);
     assert.equal(outcome(saved).status, "blocked");
     assert.equal(outcome(saved).transient, false);
 
@@ -534,7 +570,7 @@ test("optional verification never blocks or replaces a delivered formal comparis
       if (status === "succeeded") saved.tasks.audit.receipt = {
         ...receipt, exported: { file: "comparison-verification.jsonl" },
       } as never;
-      assert.equal(evaluationOutcome([saved], summarize([saved]), DEFAULT_POLICY).status, "completed");
+      assert.equal(evaluationOutcome([saved], summarize([saved]), DEFAULT_POLICY, 300).status, "completed");
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -697,7 +733,7 @@ test("local evaluation counts preserve rewrite failure while the remote projecti
   const progress = remoteProgress({ id: "auto", sourceUrl: "http://test", status: "running", startedAt: 1, updatedAt: 2,
     jobs: { "2026-09-29": { date: "2026-09-29", evaluation: "blocked", runIds: ["daily-2026-09-29"],
       observed: { a_fast: 1, b_fast: 1, a_expert: 0, b_expert: 0 }, adopted: false, download: "ready", checkedAt: 1,
-      downloadAttempts: 0, evaluationAttempts: 3, nextDownloadAt: 0, nextEvaluationAt: 0 } } }, "pi", new Map([["2026-09-29", [state]]]), 600);
+      downloadAttempts: 0, evaluationAttempts: 3, nextDownloadAt: 0, nextEvaluationAt: 0 } } }, "pi", [remoteDateProgress("2026-09-29", [state], 300)]);
   assert.equal(progress.status, "interrupted");
   assert.equal(progress.dates[0].pairs.a_fast__vs__b_fast.completed_cases, 1);
 });
@@ -723,7 +759,7 @@ test("remote progress satisfies the required six-count contract and separates sk
     jobs: { [date]: { date, runIds: ["test"], observed: { a_fast: 5, b_fast: 4, a_expert: 0, b_expert: 0 },
       adopted: false, download: "ready", evaluation: "evaluating", checkedAt: 1,
       downloadAttempts: 0, evaluationAttempts: 1, nextDownloadAt: 0, nextEvaluationAt: 0 } },
-  }, "pi", new Map([[date, [run]]]), 600);
+  }, "pi", [remoteDateProgress(date, [run], 300)]);
   const fields = ["total_cases", "completed_cases", "running_cases", "queued_cases", "failed_cases", "skipped_cases"];
   // Mirror the current /evaluation-progress boundary, including exact keys for empty pairs.
   const server = await listen(async (req, res) => {
@@ -764,7 +800,7 @@ test("remote progress excludes excess queued battles before the daily run is rec
   const state = { id: "test", status: "running", startedAt: 1,
     jobs: { [date]: { date, evaluation: "pending", download: "ready" } },
   } as unknown as AutomationState;
-  const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 2);
+  const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 2)]);
   assert.deepEqual(progress.dates[0].pairs.a_fast__vs__b_fast, {
     total_cases: 4, completed_cases: 3, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 1,
   });
@@ -780,7 +816,7 @@ test("remote progress includes every configured baseline pair", () => {
     one: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
   const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
-  const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 600);
+  const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 300)]);
   assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), ["a_fast__vs__b_fast", "a_fast__vs__baseline", "b_fast__vs__baseline"].sort());
   assert.equal(progress.dates[0].pairs.a_fast__vs__baseline.completed_cases, 1);
 });
@@ -792,7 +828,7 @@ test("remote progress retains accepted pairs after selection changes and keeps r
     review: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison-review.jsonl" } } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
   const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
-  const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 600).dates[0].pairs;
+  const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 300)]).dates[0].pairs;
   assert.equal(progress.a_fast__vs__b_fast.completed_cases, 1);
   assert.equal(progress.a_fast__vs__baseline.completed_cases, 0);
   assert.equal(progress.a_fast__vs__baseline.queued_cases, 1);

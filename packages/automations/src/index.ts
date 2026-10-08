@@ -79,6 +79,14 @@ export interface PipelineServices {
 export const sameRows = (a: RemoteDay["rows"] | undefined, b: RemoteDay["rows"]) =>
   !!a && REMOTE_MODELS.every((model) => a[model] === b[model]);
 
+function refreshInterval(job: AutomationJob, now: number, recentInterval: number): number {
+  const day = 24 * 60 * 60_000;
+  const oldestRecentDate = new Date(now + 8 * 60 * 60_000 - 2 * day).toISOString().slice(0, 10);
+  const settled = ["completed", "waiting_inputs"].includes(job.evaluation) && job.summary &&
+    !job.summary.issues && Object.values(job.summary.stages).every(stage => stage.completed === stage.total);
+  return settled && job.date < oldestRecentDate ? Math.max(recentInterval, day) : recentInterval;
+}
+
 /** Independent download, evaluation, Mongo and log lanes. Each run uses Host task concurrency.
  * Polling continues independently; a date's sources never change while it is evaluated. */
 export async function runPipeline(
@@ -375,11 +383,15 @@ export async function runPipeline(
         state.publication = { status: "pending", attempts: 0, nextAt: nextPublicationAt(now) };
         await save();
       }
-      if (!downloading && state.publication?.status !== "running") {
-        const job = [...jobs].sort((a, b) => Number(sameRows(a.downloaded, a.observed)) - Number(sameRows(b.downloaded, b.observed)))
+      // Once due, reserve the next idle download slot for the cumulative snapshot.
+      if (!publishing && !downloading && services.publish && state.publication && state.publication.status !== "uncertain" &&
+          now >= state.publication.nextAt && (!options.once || state.publication.status !== "retry"))
+        publishing = guarded(publish(), () => { publishing = undefined; });
+      if (!downloading && !publishing) {
+        const job = [...jobs].sort((a, b) => Number(sameRows(a.downloaded, a.observed)) - Number(sameRows(b.downloaded, b.observed)) || a.checkedAt - b.checkedAt)
           .find((job) => job.sourceReady === true && job.mongo?.status !== "running" && job.evaluation !== "evaluating" && now >= job.nextDownloadAt &&
           ((!sameRows(job.downloaded, job.observed)) || job.download !== "ready" ||
-            (!job.adopted && now - job.checkedAt >= options.refreshMs)) &&
+            (!job.adopted && (job.downloadError || now - job.checkedAt >= refreshInterval(job, now, options.refreshMs)))) &&
           (!options.once || (job.download !== "retry" && !job.downloadError)));
         if (job) downloading = guarded(sync(job), () => { downloading = undefined; });
       }
@@ -392,9 +404,6 @@ export async function runPipeline(
         nextObserve = now + 10_000;
         observing = guarded(observe(), () => { observing = undefined; });
       }
-      if (!publishing && !downloading && services.publish && state.publication && state.publication.status !== "uncertain" &&
-          now >= state.publication.nextAt && (!options.once || state.publication.status !== "retry"))
-        publishing = guarded(publish(), () => { publishing = undefined; });
       if (!syncingMongo && services.syncMongo) {
         const job = jobs.find((job) => {
           if (job.adopted || job.download !== "ready" || now < (job.mongo?.nextAt ?? 0) ||

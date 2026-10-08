@@ -12,7 +12,7 @@
   "refreshMs": 1800000,
   "retryMs": 30000,
   "maxEvaluationAttempts": 3,
-  "dailyComparisonLimitPerTier": 600,
+  "dailyComparisonLimitPerTier": 300,
   "requestTimeoutMs": 600000,
   "publishProgress": true,
   "publication": {

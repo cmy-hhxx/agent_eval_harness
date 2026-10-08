@@ -5,91 +5,35 @@ import { errorText, HttpError, redact } from "@eval/contracts";
 import { json, listen } from "@eval/runtime/http";
 import type { AutomationState } from "@eval/automations";
 import { hasLiveRunOwner } from "@eval/data";
-import { publishableComparisons, type Checkpoint } from "@eval/workflows/comparison";
 import type { AutomationConfig } from "./automation-config.js";
-import { checkpoint, summarize, isAutomationTask } from "./automation-evaluation.js";
+import { cacheUsage, liveExecution, createAutomationMonitor } from "./automation-monitor.js";
 import { automationErrors } from "./automation-errors.js";
 import { ROOT } from "./paths.js";
 
-const HOUR = 60 * 60 * 1000;
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 export interface AutomationMonitorSettings { evaluatorVersion: string; concurrency: number }
 
-function cacheUsage(runs: Checkpoint[]) {
-  let readTokens = 0, inputTokens = 0;
-  for (const run of runs) {
-    readTokens += run.usage.cacheRead;
-    inputTokens += run.usage.input + run.usage.cacheRead + run.usage.cacheWrite;
-  }
-  return { readTokens, inputTokens, hitRate: inputTokens ? readTokens / inputTokens : null };
-}
-
-/** Counts attempts and distinct cases separately; a case can have several active stages. */
-function liveExecution(runs: Checkpoint[]) {
-  const cases = new Set<string>(), stages: Record<string, number> = { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 };
-  const retryingStages: Record<string, number> = { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 };
-  let retryingTasks = 0, readyTasks = 0, waitingDependencies = 0, nextRetryAt: number | undefined;
-  for (const run of runs) for (const task of Object.values(run.tasks)) {
-    if (!isAutomationTask(task)) continue;
-    if (task.nextRetryAt !== undefined) {
-      retryingTasks++;
-      retryingStages[task.stage]++;
-      nextRetryAt = Math.min(nextRetryAt ?? Infinity, task.nextRetryAt);
-    }
-    if (task.status === "pending" && task.nextRetryAt === undefined && !run.pausedStages?.some(pause => pause.stage === task.stage)) {
-      if (Object.values(task.dependencies).every(id => run.tasks[id]?.status === "succeeded")) readyTasks++;
-      else waitingDependencies++;
-    }
-    if (task.status !== "running") continue;
-    stages[task.stage]++;
-    for (const id of Object.values(task.inputIds)) {
-      const input = run.inputs[id];
-      if (input) cases.add(JSON.stringify([input.batch_id, input.case_id]));
-    }
-  }
-  return { runningTasks: Object.values(stages).reduce((a, b) => a + b, 0), runningCases: cases.size,
-    stages, retryingStages, readyTasks, waitingDependencies, retryingTasks, nextRetryAt };
-}
-
-/** Derived from persisted Host receipts, so refreshes and restarts never increment counters. */
-export function completionTimeline(runs: Checkpoint[], requireItems = true) {
-  const hours = new Map<number, { start: number; completed: number; stages: Record<string, number> }>();
-  const bucket = (at: number) => {
-    const start = Math.floor(at / HOUR) * HOUR;
-    if (!hours.has(start)) hours.set(start, { start, completed: 0, stages: {} });
-    return hours.get(start)!;
-  };
-  for (const run of runs) {
-    for (const task of Object.values(run.tasks)) {
-      if (!isAutomationTask(task)) continue;
-      if (task.status !== "succeeded" || !task.receipt?.exported || !Number.isFinite(task.receipt.acceptedAt)) continue;
-      const counts = bucket(task.receipt.acceptedAt).stages;
-      counts[task.stage] = (counts[task.stage] ?? 0) + 1;
-    }
-    for (const at of publishableComparisons(run, requireItems).values()) bucket(at).completed++;
-  }
-  return [...hours.values()].sort((a, b) => b.start - a.start);
-}
-
-export async function automationSnapshot(config: AutomationConfig, output: string, state: AutomationState, settings: AutomationMonitorSettings) {
+export async function automationSnapshot(config: AutomationConfig, output: string, state: AutomationState, settings: AutomationMonitorSettings,
+  monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
+) {
   const snapshot = structuredClone(state);
-  const jobs = [], activeRuns: Checkpoint[] = [], measuredRuns = new Map<string, Checkpoint>();
+  type Observation = Awaited<ReturnType<typeof monitor>>;
+  const jobs = [], activeRuns: Observation["runs"] = [], measuredRuns = new Map<string, Observation["runs"][number]>();
   for (const job of Object.values(snapshot.jobs).sort((a, b) => b.date.localeCompare(a.date))) {
-    const runs: Checkpoint[] = [], liveRuns: Checkpoint[] = [], errors: string[] = [];
-    for (const id of job.runIds) {
-      try {
-        const run = await checkpoint(output, id);
-        if (run) {
-          runs.push(run);
-          measuredRuns.set(run.runId, run);
-          if (snapshot.status === "running" && job.evaluation === "evaluating" && run.status === "running" &&
-              await hasLiveRunOwner(path.join(output, id))) liveRuns.push(run);
-        }
-        else if (job.evaluation === "completed") errors.push(`${id}: 评测状态文件缺失`);
-      } catch (error) { errors.push(`${id}: ${errorText(error)}`); }
-    }
-    jobs.push({ ...job, summary: runs.length ? summarize(runs, !job.adopted) : job.summary,
-      cache: cacheUsage(runs), execution: liveExecution(liveRuns), hours: completionTimeline(runs, !job.adopted), monitorError: errors.join("\n") || undefined });
+    let view: Observation | undefined;
+    const liveRuns: Observation["runs"] = [], errors: string[] = [];
+    try {
+      view = await monitor(job);
+      for (const run of view.runs) {
+        measuredRuns.set(run.runId, run);
+        if (snapshot.status === "running" && job.evaluation === "evaluating" && run.status === "running" &&
+            await hasLiveRunOwner(path.join(output, run.runId))) liveRuns.push(run);
+      }
+      if (job.evaluation === "completed") for (const id of job.runIds)
+        if (!view.runs.some(run => run.runId === id)) errors.push(`${id}: 评测状态文件缺失`);
+    } catch (error) { errors.push(errorText(error)); }
+    jobs.push({ ...job, summary: view?.summary ?? job.summary,
+      cache: cacheUsage(view?.runs ?? []), execution: liveExecution(liveRuns), hours: view?.hours ?? [], monitorError: errors.join("\n") || undefined });
     activeRuns.push(...liveRuns);
   }
   return {
@@ -108,8 +52,10 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
 export async function startAutomationDashboard(options: {
   config: AutomationConfig; output: string; state: () => AutomationState; port: number; settings: AutomationMonitorSettings;
   runtimeLogFile?: string;
+  monitor?: ReturnType<typeof createAutomationMonitor>;
 }) {
   let sampledAt = 0, snapshot: ReturnType<typeof automationSnapshot> | undefined;
+  const monitor = options.monitor ?? createAutomationMonitor(options.output, options.config.dailyComparisonLimitPerTier);
   const assets: Record<string, [string, string]> = {
     "/": ["automations.html", "text/html"],
     "/dashboard.css": ["dashboard.css", "text/css"],
@@ -128,7 +74,7 @@ export async function startAutomationDashboard(options: {
     if (url.pathname === "/api/status") {
       if (!snapshot || Date.now() - sampledAt >= 1000) {
         sampledAt = Date.now();
-        snapshot = automationSnapshot(options.config, options.output, options.state(), options.settings);
+        snapshot = automationSnapshot(options.config, options.output, options.state(), options.settings, monitor);
       }
       try {
         const result = await snapshot;

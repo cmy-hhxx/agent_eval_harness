@@ -9,6 +9,46 @@ const fresh = (): AutomationState => ({ id: "test", sourceUrl: "http://test", st
 const summary: EvaluationSummary = { stages: { rewrite: { total: 2, completed: 2, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 } }, skipped: 0, issues: 0, readyComparisons: 1 };
 const options = { pollMs: 100, refreshMs: 100_000, retryMs: 10, maxEvaluationAttempts: 2 };
 
+test("settled historical dates refresh daily while recent dates and changed counts remain responsive", async (t) => {
+  const now = Date.parse("2026-10-08T16:05:00Z"); // October 9 in Beijing.
+  t.mock.method(Date, "now", () => now);
+  const dates = ["2026-10-06", "2026-10-07", "2026-10-08"];
+  const state = fresh(), downloads: string[] = [];
+  const deps = services({ discover: async () => dates.map(date => day(date)),
+    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 10 }; } });
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  for (const job of Object.values(state.jobs)) job.checkedAt = now - 60 * 60_000;
+  state.jobs[dates[0]].evaluation = "waiting_inputs";
+  downloads.length = 0;
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  assert.deepEqual(downloads, dates.slice(1), "settled history must not compete with recent dates every refresh interval");
+  downloads.length = 0;
+  await runPipeline(state, { ...options, once: true }, { ...deps,
+    discover: async () => dates.map((date, index) => day(date, index ? 1 : 2)),
+  }, t.signal);
+  assert.deepEqual(downloads, [dates[0]], "new historical rows bypass the daily refresh interval");
+  state.jobs[dates[0]].checkedAt = now - 24 * 60 * 60_000;
+  downloads.length = 0;
+  await runPipeline(state, { ...options, once: true }, { ...deps,
+    discover: async () => dates.map((date, index) => day(date, index ? 1 : 2)),
+  }, t.signal);
+  assert.deepEqual(downloads, [dates[0]], "same-count historical corrections still receive a full daily check");
+});
+
+test("a due statistics publication runs before the next queued download", async (t) => {
+  const state = fresh(), order: string[] = [];
+  const deps = services({ discover: async () => [day("2026-10-01"), day("2026-10-02")],
+    publish: async () => { order.push("publish"); },
+    sync: async (job) => { order.push(job.date); return { changed: false, bytes: 10 }; },
+  });
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  state.publication!.nextAt = 0;
+  for (const job of Object.values(state.jobs)) job.checkedAt = 0;
+  order.length = 0;
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  assert.deepEqual(order, ["publish", "2026-10-01", "2026-10-02"]);
+});
+
 test("a progressing retry resets the consecutive failure budget", async () => {
   const state = fresh();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));

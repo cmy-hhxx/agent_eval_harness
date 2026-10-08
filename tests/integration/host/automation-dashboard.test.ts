@@ -7,10 +7,12 @@ import { createRequire } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { emptyUsage, type RunState } from "@eval/contracts";
-import { runLock, writeJson } from "@eval/data";
+import { fileSourceReader, runLock, writeJson } from "@eval/data";
 import type { AutomationJob, AutomationState } from "@eval/automations";
-import { comparisonCodec, buildPlan } from "@eval/workflows/comparison";
-import { completionTimeline, automationSnapshot, startAutomationDashboard } from "../../../apps/host/src/automation-dashboard.js";
+import { comparisonCodec, buildPlan, type Checkpoint } from "@eval/workflows/comparison";
+import { automationSnapshot, startAutomationDashboard } from "../../../apps/host/src/automation-dashboard.js";
+import { completionTimeline, createAutomationMonitor } from "../../../apps/host/src/automation-monitor.js";
+import { checkpoint } from "../../../apps/host/src/automation-evaluation.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
@@ -52,18 +54,32 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     const current = state(); current.jobs["2026-09-30"] = job("2026-09-30");
     await writeJson(path.join(directory, "fixture/state.json"), saved);
     const automation = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
-    const first = await automationSnapshot(automation, directory, current, settings);
+    let reads = 0;
+    const monitor = createAutomationMonitor(directory, automation.dailyComparisonLimitPerTier, {
+      revision: fileSourceReader.revision,
+      checkpoint: async (output, id) => { reads++; return checkpoint(output, id); },
+    });
+    const [first, progress] = await Promise.all([
+      automationSnapshot(automation, directory, current, settings, monitor), monitor(current.jobs["2026-09-30"]),
+    ]);
+    assert.equal(reads, 1, "simultaneous dashboard and progress reads share one parse");
+    assert.equal(progress.summary!.readyComparisons, first.jobs[0].summary!.readyComparisons);
+    assert.equal(Object.hasOwn(progress.runs[0], "tasks"), false, "monitor retains no task bodies or drafts");
+    progress.summary!.readyComparisons = -1;
     assert.equal(first.cache.hitRate, null, "no token usage is unknown, not a zero hit rate");
-    const second = await automationSnapshot(automation, directory, JSON.parse(JSON.stringify(current)), settings);
+    const second = await automationSnapshot(automation, directory, JSON.parse(JSON.stringify(current)), settings, monitor);
+    assert.equal(reads, 1, "unchanged historical checkpoints are not reloaded");
+    assert.equal(second.jobs[0].summary!.readyComparisons, 2, "callers cannot mutate the stored projection");
     assert.deepEqual(first.jobs[0].hours, second.jobs[0].hours);
     assert.equal(first.jobs[0].summary!.stages.rewrite.completed, plan.tasks.filter((task) => task.stage === "rewrite" && (task.data as { rewriteOf: { stage: string } }).rewriteOf.stage !== "clustering").length);
     assert.equal(first.jobs[0].summary!.stages.clustering, undefined);
     assert.equal(current.jobs["2026-09-30"].summary, undefined, "read-only projection cannot mutate scheduler state");
-    const server = await startAutomationDashboard({ config: automation, output: directory, state: () => current, port: 0, settings });
+    const server = await startAutomationDashboard({ config: automation, output: directory, state: () => current, port: 0, settings, monitor });
     try {
       const response = await fetch(server.url + "/api/status");
       assert.equal(response.headers.get("cache-control"), "no-store");
       assert.deepEqual((await response.json() as typeof first).jobs[0].hours, first.jobs[0].hours);
+      assert.equal(reads, 1, "HTTP monitoring shares the progress projection");
       assert.equal((await fetch(server.url + "/api/status", { method: "POST" })).status, 405);
       assert.equal((await fetch(server.url + "/.env")).status, 404);
       assert.match(await (await fetch(server.url)).text(), /完成对比 · 含改写/);
@@ -81,7 +97,8 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     saved.concurrency = 16;
     await writeJson(path.join(directory, "fixture/state.json"), saved);
     const release = await runLock(path.join(directory, "fixture"));
-    const live = (await automationSnapshot(automation, directory, current, settings)).execution;
+    const live = (await automationSnapshot(automation, directory, current, settings, monitor)).execution;
+    assert.equal(reads, 2, "atomic replacement invalidates the prior projection");
     assert.equal(live.evaluatorVersion, fakeEvaluatorVersion, "use the active Host version, not old receipts or newly edited config");
     assert.equal(live.concurrency, 16);
     assert.equal(live.runningTasks, 3);
@@ -93,22 +110,46 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     assert(live.waitingDependencies > 0);
     assert.equal(live.nextRetryAt, at + hour, "deferred clustering must not set the next retry");
     current.status = "stopped";
-    assert.equal((await automationSnapshot(automation, directory, current, settings)).execution.runningTasks, 0);
+    assert.equal((await automationSnapshot(automation, directory, current, settings, monitor)).execution.runningTasks, 0);
     current.status = "running";
     await release();
-    const stale = (await automationSnapshot(automation, directory, current, settings)).execution;
+    const stale = (await automationSnapshot(automation, directory, current, settings, monitor)).execution;
     assert.equal(stale.runningTasks, 0, "stale running tasks without a live owner are not real concurrency");
     assert.equal(stale.evaluatorVersion, settings.evaluatorVersion);
+    assert.equal(reads, 2, "owner liveness is rechecked without parsing unchanged task state");
     saved.usage = { ...emptyUsage(), input: 20, cacheRead: 70, cacheWrite: 10 };
     await writeJson(path.join(directory, "fixture/state.json"), saved);
     await writeJson(path.join(directory, "fixture2/state.json"), { ...saved, runId: "fixture2",
       usage: { ...emptyUsage(), input: 200, cacheRead: 30, cacheWrite: 70 } });
     current.jobs["2026-09-29"] = { ...job("2026-09-29"), runIds: ["fixture2"] };
-    const cached = await automationSnapshot(automation, directory, current, settings);
+    const cached = await automationSnapshot(automation, directory, current, settings, monitor);
     assert.deepEqual(cached.cache, { readTokens: 100, inputTokens: 400, hitRate: .25 });
     assert.equal(cached.jobs.find((job) => job.date === "2026-09-30")!.cache.hitRate, .7);
     assert.equal(cached.jobs.find((job) => job.date === "2026-09-29")!.cache.hitRate, .1);
+    const file = path.join(directory, "fixture/state.json");
+    await writeFile(file, "invalid JSON");
+    assert.match((await automationSnapshot(automation, directory, current, settings, monitor)).jobs[0].monitorError!, /JSON|Unexpected/);
+    await rm(file);
+    current.jobs["2026-09-30"].evaluation = "completed";
+    assert.match((await automationSnapshot(automation, directory, current, settings, monitor)).jobs[0].monitorError!, /状态文件缺失/);
+    await writeJson(file, saved);
+    assert.equal((await automationSnapshot(automation, directory, current, settings, monitor)).jobs[0].monitorError, undefined);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a checkpoint replaced during projection is reread on the next observation", async () => {
+  const saved = { runId: "fixture", tasks: {}, preflight: { skipped: [], issues: [] },
+    usage: emptyUsage(), config: { comparisons: [] } } as unknown as Checkpoint;
+  let revision = "first", reads = 0;
+  const monitor = createAutomationMonitor("unused", 300, {
+    revision: async () => revision,
+    checkpoint: async () => { reads++; revision = "replaced"; return saved; },
+  });
+  const current = job("2026-10-01");
+  await monitor(current);
+  await monitor(current);
+  await monitor(current);
+  assert.equal(reads, 2, "a raced projection is not retained under either file identity");
 });
 
 test("monitor renders receipts, preserves filters on polling and marks stale data after disconnect", async () => {
