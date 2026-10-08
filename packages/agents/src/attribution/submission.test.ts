@@ -176,6 +176,27 @@ test("standard conflicts are an explicit flag and cannot excuse a passing or sta
     error.issues!.some(issue=>issue.code==="standard_conflict_without_standard"));
 });
 
+test("a confirmed wrong reference does not force blame onto a correct answer or its tools",()=>{
+  const request=structuredClone(example.request) as AgentRequest;
+  request.input.ground_truth={available:true,value:"5"};
+  const f=fixture(request);
+  f.draft.is_correct=false;f.draft.standard_conflict=true;
+  f.draft.correctness_reason="原题2+2的结果为4，回答正确；导入标准5错误，仅标准一致性不通过。";
+  const {evidence_indices}=f.draft.strengths[0];
+  f.draft.problems=[{basis_index:null,dimension:"correctness",stage:"final_answer",importance:"low",
+    text:"导入标准与已核实的正确结果冲突。",reason:f.draft.correctness_reason,impact:"影响对标评分，不构成回答错误。",
+    evidence_status:"established",evidence_indices,model_responsible:false,tool_evidence_indices:[],
+    label:"标准冲突",definition:"冲突来自导入标准，未发现候选或工具错误。"}];
+  const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  f.registry.validate(f.binding,result,f.audit);
+  assert.equal(result.standard_conflict,true);
+  assert.equal(result.core_assessment.meets_core,true);
+  assert.deepEqual(result.findings.find(row=>row.type==="problem")!.problem!.component,[]);
+  f.draft.standard_conflict=false;
+  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="standard_mismatch_responsibility_required"));
+});
+
 test("table resolutions stay out of tasks without a review context",()=>{
   const f=fixture();
   f.draft.table_resolutions=[{table_index:1,row_index:0,outcome:"supported",reason:"已核对。",evidence_indices:[1]}];

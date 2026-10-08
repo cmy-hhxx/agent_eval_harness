@@ -38,6 +38,33 @@ test("low-impact independent observations remain in attribution without manufact
  const result=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
  assert.equal(result.status,'decided');assert(comparisonSlots(f.request).every(row=>row.kind==='criterion'||row.kind==='resource'));
 });
+test("an additional unmapped error cannot erase already established failures on both sides",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ for(const attribution of Object.values(input.attributions)) {
+  attribution.core_assessment.meets_core=false;
+  attribution.core_assessment.reason='所求结果已确认错误。';
+  attribution.criterion_assessments[0].status='unmet';
+  attribution.criterion_assessments[0].evidence_status='established';
+ }
+ const finding=input.attributions.A.findings[0];
+ Object.assign(finding,{type:'problem',importance:'medium',text:'附加交集表的并集计算错误。',
+  problem:{component:['模型自身推理'],label:'附加计算错误',definition:'容斥计算与所列并集不符。'}});
+ finding.assessment.requirement_index=null;
+ const result=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ assert.equal(result.status,'decided');
+ assert.deepEqual(result.ranking,[['A','B']]);
+ assert.deepEqual(result.review_requests,[]);
+ assert.equal(result.assessments.A.meets_core,false);
+ assert.equal(input.attributions.A.findings[0].text,finding.text);
+ input.source_review={A:[{kind:'unresolved_conflict',reason:'核心来源仍有未解决冲突。',requires_review:true}]};
+ const conflict=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
+ assert.equal(conflict.status,'needs_review','known source conflicts must remain pending even when both cores failed');
+ delete input.source_review;
+ input.attributions.A.core_assessment.meets_core=null;
+ const pending=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
+ assert.equal(pending.status,'needs_review','actual core uncertainty must remain pending');
+});
 test("fixed rows reject missing or extra positions and do not accept program-owned state",()=>{
  const f=setup();f.draft.comparisons=[];assert.throws(()=>f.registry.resolve(f.binding,f.draft,audit));
  const fresh=setup();Object.assign(fresh.draft.comparisons[0]!,{status:'met'});

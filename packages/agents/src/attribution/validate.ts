@@ -308,13 +308,13 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("problem_label_empty", `${location}/problem/label`, "问题名称不能为空");
     if (typeof problem.definition === "string" && !problem.definition.trim())
       issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
-    if (input.ground_truth.available && value.is_correct === false && finding.type === "problem" &&
+    if (input.ground_truth.available && value.is_correct === false && value.standard_conflict !== true && finding.type === "problem" &&
       finding.dimension === "correctness" && assessment?.evidence_status === "established" &&
       (representation === "submission"
         ? problem.model_responsible === false && Array.isArray(problem.tool_evidence_indices) && !problem.tool_evidence_indices.length
         : strings(problem.component) && !problem.component.length))
       issue("standard_mismatch_responsibility_required", `${location}/problem`,
-        "已确认标准不符的正确性问题必须归到对应取数、计算或结果校验逻辑，不能留空责任或写无法确定。核对本方请求与返回：有工具自身错误及传播证据才选择工具；其余归模型的取数与结果校验，不猜测具体底层故障。保留实际值、标准值及具体口径差异；标准冲突另按事实记录。");
+        "已确认标准不符的正确性问题必须归到对应取数、计算或结果校验逻辑，不能留空责任或写无法确定。核对本方请求与返回：有工具自身错误及传播证据才选择工具；其余归模型的取数与结果校验，不猜测具体底层故障。若已核实来源支持回答而与标准冲突，按事实标记 standard_conflict，不能强行把标准错误归责给回答或工具；其他独立错误仍逐项归因。");
     if (representation === "submission" || !strings(problem.component)) return;
     problem.component.forEach((component, componentIndex) => {
       if (component !== "模型自身推理" && !tools.has(component))

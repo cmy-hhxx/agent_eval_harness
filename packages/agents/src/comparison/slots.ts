@@ -130,6 +130,7 @@ export function resolveSourceReviews(request: AgentRequest, rows: Record<string,
 /** Known source blockers stay pending without asking the model to repeat them. */
 export function requiredSourceReviews(request: AgentRequest): ComparisonResult['review_requests'] {
  const input = request.input as unknown as ComparisonInput, reviews: ComparisonResult['review_requests'] = [];
+ const bothFailed = Object.values(input.attributions).every(attribution => attribution.core_assessment.meets_core === false);
  for (const [candidate, attribution] of Object.entries(input.attributions)) {
   const blockers = input.source_review?.[candidate]?.filter(item => item.requires_review) ?? [];
   const core = attribution.core_assessment;
@@ -149,7 +150,8 @@ export function requiredSourceReviews(request: AgentRequest): ComparisonResult['
     ? '核心失败仅由专有要求支持，须独立核查共同交付可用性。' : core.reason) });
   const uncovered = attribution.findings.flatMap((finding,index) => finding.type === 'problem' && finding.importance !== 'low' &&
     !findingCriterion(input,candidate,index) && findingAppliesToPair(input,candidate,index,request.sources[candidate]?.value) ? [index] : []);
-  if (uncovered.length) reviews.push({ candidate, criterion_ids: [], finding_indices: uncovered,
+  // Extra unmapped defects cannot change an already established both-bad outcome. Source blockers above still apply.
+  if (uncovered.length && !bothFailed) reviews.push({ candidate, criterion_ids: [], finding_indices: uncovered,
     reason: `以下实质观察尚未绑定可逐项比较的共同要求，不能据此判定没有差距：${uncovered.map(index => attribution.findings[index].text).join('；')}` });
  }
  return reviews;
