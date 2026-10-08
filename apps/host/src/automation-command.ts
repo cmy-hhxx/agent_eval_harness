@@ -152,7 +152,8 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
           runs.set(job.date, checkpoints);
         }
       }
-      if (config.publishProgress && runs.size) await remote.publish(remoteProgress(current, config.engine, runs), signal);
+      if (config.publishProgress && runs.size)
+        await remote.publish(remoteProgress(current, config.engine, runs, config.dailyComparisonLimitPerTier), signal);
     };
     console.log(`Automations ${config.id}: ${config.fromDate} → ${config.sourceUrl}\n状态：${file}`);
     await runPipeline(state, { ...config, once: values.once }, {

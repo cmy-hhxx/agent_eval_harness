@@ -17,6 +17,7 @@ export interface AutomationConfig extends PipelineOptions {
   runPrefix: string;
   engine: Engine;
   requestTimeoutMs: number;
+  dailyComparisonLimitPerTier: number;
   publishProgress: boolean;
   publication: {
     logFile: string;
@@ -32,7 +33,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
   const keys = ["id", "sourceUrl", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
-    "requestTimeoutMs", "publishProgress", "publication"];
+    "requestTimeoutMs", "dailyComparisonLimitPerTier", "publishProgress", "publication"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
     if (typeof raw[key] !== "string" || !raw[key]) throw new Error(`Invalid automations.${key}`);
@@ -77,6 +78,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix: safeId(string("runPrefix")),
     pollMs: number("pollMs"), refreshMs: number("refreshMs"), retryMs: number("retryMs"),
     maxEvaluationAttempts: number("maxEvaluationAttempts"), requestTimeoutMs: number("requestTimeoutMs"),
+    dailyComparisonLimitPerTier: number("dailyComparisonLimitPerTier"),
     publishProgress: raw.publishProgress,
     publication: { ...publication, logFile: path.resolve(directory, publication.logFile), logUrl: logUrl.href },
   };
