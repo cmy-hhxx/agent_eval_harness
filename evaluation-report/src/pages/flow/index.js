@@ -122,7 +122,7 @@
         compact=window.innerWidth<=1080;
         const fonts=typography();
         const group=cases[current],pair=item(),labels=mapping(),W=compact?820:1660;
-        const presentation=(window.ReportCaseSummaries[pair.id]||window.ReportCaseSummariesB[pair.id]);
+        const presentation=window.ReportCaseSummaries[pair.id];
         if(!presentation)throw new Error('缺少案例展示摘要：'+pair.id);
         const xInput=10,xStandard=280,xAnonymous=650,inputWidth=224,standardWidth=318,anonymousWidth=146;
         const order=displayOrder(),top=42,topHeight=148,nodeHeight=112;

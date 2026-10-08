@@ -4,17 +4,19 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { JSDOM, VirtualConsole } from 'jsdom';
-import { buildReport } from './build.mjs';
-const directory=dirname(fileURLToPath(import.meta.url));
-const html=await readFile(join(directory,'index.html'),'utf8');
-const typographyTokens=await readFile(join(directory,'src/tokens.css'),'utf8');
+import { JSDOM, requestInterceptor, VirtualConsole } from 'jsdom';
+import { buildReport } from '../scripts/build.mjs';
+const directory=dirname(dirname(fileURLToPath(import.meta.url)));
+const html=await readFile(join(directory,'src/template.html'),'utf8');
+const typographyTokens=await readFile(join(directory,'src/shared/tokens.css'),'utf8');
 function environment(t,markup=html,inline=false) {
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message));
-  const dom=new JSDOM(markup,{url:'https://offline-report.invalid/report.html#flow',runScripts:inline?'dangerously':'outside-only',pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.scrollTo=()=>{};w.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});}});
+  const requests=[];
+  const resources=inline?{interceptors:[requestInterceptor(request=>{requests.push(request.url);return new Response('',{status:503});})]}:undefined;
+  const dom=new JSDOM(markup,{url:'https://offline-report.invalid/report.html#flow',runScripts:inline?'dangerously':'outside-only',resources,pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.scrollTo=()=>{};w.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});w.fetch=url=>{requests.push(url);throw new Error('离线报告不能请求外部资源');};}});
   if(!inline){const style=dom.window.document.createElement('style');style.textContent=typographyTokens;dom.window.document.head.append(style);}
-  t.after(()=>{dom.window.close();assert.deepEqual(errors,[]);});
-  return {window:dom.window,document:dom.window.document,async load(){if(!inline)for(const script of dom.window.document.querySelectorAll('script[src]'))dom.window.eval(await readFile(join(directory,script.getAttribute('src')),'utf8'));},click(selector){const node=typeof selector==='string'?dom.window.document.querySelector(selector):selector;assert.ok(node,`Missing ${selector}`);node.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true}));},change(selector,value){const el=dom.window.document.querySelector(selector);el.value=String(value);el.dispatchEvent(new dom.window.Event('change',{bubbles:true}));},key(selector,key){dom.window.document.querySelector(selector).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}};
+  t.after(()=>{dom.window.close();assert.deepEqual(errors,[]);assert.deepEqual(requests,[],'离线报告不能依赖其他文件或网络请求');});
+  return {window:dom.window,document:dom.window.document,async load(){if(!inline)for(const script of dom.window.document.querySelectorAll('script[src]'))dom.window.eval(await readFile(join(directory,'src',script.getAttribute('src')),'utf8'));},click(selector){const node=typeof selector==='string'?dom.window.document.querySelector(selector):selector;assert.ok(node,`Missing ${selector}`);node.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true}));},change(selector,value){const el=dom.window.document.querySelector(selector);el.value=String(value);el.dispatchEvent(new dom.window.Event('change',{bubbles:true}));},key(selector,key){dom.window.document.querySelector(selector).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}};
 }
 const markers=page=>[...page.document.querySelectorAll('.matrix-row')].map(row=>({row:row.dataset.matrixRow,cells:[...row.querySelectorAll('.matrix-cell')].map(c=>({candidate:c.dataset.cellCandidate,symbol:c.querySelector('[data-symbol]').dataset.symbol,text:c.querySelector('.matrix-basis').textContent}))}));
 const expectedWinner=(pair,labels)=>pair.status==='needs_review'?'待核':pair.winnerIndex===null?(pair.outcome==='both_good'?'都好':'都差'):`${labels[pair.winnerIndex]} 胜`;
@@ -46,7 +48,7 @@ function assertFixedCards(page){
 }
 function assertOwnership(page,pair,swapped){
  const order=swapped?[1,0]:[0,1],labels=Array.from(pair.candidates,c=>c.label);if(swapped)labels.reverse();
- const summary=page.window.ReportCaseSummaries[pair.id]||page.window.ReportCaseSummariesB[pair.id];
+ const summary=page.window.ReportCaseSummaries[pair.id];
  for(const attribute of ['data-answer-card','data-check-card','data-anonymous-candidate','data-problem-group'])assert.deepEqual([...page.document.querySelectorAll(`[${attribute}]`)].map(node=>Number(node.getAttribute(attribute))),order,attribute+'应按展示顺序整组交换，属性保留原来源');
  const columns=[...page.document.querySelectorAll('#comparison-grid .matrix-header[data-candidate-identity]')];
  assert.deepEqual(columns.map(node=>Number(node.dataset.candidateIdentity)),order);
@@ -324,6 +326,7 @@ test('离线单文件可重开五个主题，来源HTML不会执行',async t=>{
  for(const name of ['architecture','rules','prompts','experiments','flow']){page.click(`[data-page="${name}"]`);assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);assert.equal(page.document.querySelector(`#page-${name}`).hidden,false);}
  assert.equal(page.document.querySelector('[src^="http"],link[rel="stylesheet"],script[src]'),null);
  assert.equal(page.document.querySelectorAll('#architectureBody [data-agent-role]').length,6);
+ assert.doesNotMatch(page.document.querySelector('#architectureBody').textContent,/关键问题没查齐|分开检查，也可能一起看错/);
  assertFixedCards(page);page.click('[data-swap-control]');assertOwnership(page,page.window.EvaluationReportData.cases[0].pairs[0],true);
  page.click('[data-input-control]');assert.equal(page.document.querySelector('[data-full-question]').textContent,page.window.EvaluationReportData.cases[0].question);
 });

@@ -5,14 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="模型评测流程、判决规则、提示词和对比实验。">
   <title>模型评测汇报</title>
-  <link rel="stylesheet" href="src/tokens.css">
-  <link rel="stylesheet" href="src/styles.css">
-  <link rel="stylesheet" href="src/rules.css">
-  <link rel="stylesheet" href="src/prompts.css">
-  <link rel="stylesheet" href="src/architecture.css">
-  <link rel="stylesheet" href="src/experiments.css">
+  <!-- 样式：共用基础 → 各主题 -->
+  <link rel="stylesheet" href="shared/tokens.css">
+  <link rel="stylesheet" href="shared/base.css">
+  <link rel="stylesheet" href="pages/flow/styles.css">
+  <link rel="stylesheet" href="pages/rules/styles.css">
+  <link rel="stylesheet" href="pages/prompts/styles.css">
+  <link rel="stylesheet" href="pages/architecture/styles.css">
+  <link rel="stylesheet" href="pages/experiments/styles.css">
 </head>
 <body>
+  <!-- 页面骨架 -->
   <a class="skip" href="#main">跳到正文</a>
   <header class="header">
     <a class="site-name" href="#flow">模型评测</a>
@@ -47,20 +50,25 @@
     </section>
   </main>
   <noscript><p>请启用 JavaScript 以显示报告。</p></noscript>
-  <script id="report-data" src="src/data.js"></script>
-  <script id="report-case-summaries-a" src="src/case-summaries-a.js"></script>
-  <script id="report-case-summaries-b" src="src/case-summaries-b.js"></script>
-  <script id="report-motion" src="src/motion.js"></script>
-  <script id="report-icons" src="src/icons.js"></script>
-  <script id="report-answer" src="src/answer.js"></script>
-  <script id="report-details" src="src/details.js"></script>
-  <script id="report-flow" src="src/flow.js"></script>
-  <script id="report-rules" src="src/rules.js"></script>
-  <script id="report-prompt-data" src="src/prompt-data.js"></script>
-  <script id="report-architecture" src="src/architecture.js"></script>
-  <script id="report-experiment-data" src="src/experiment-data.js"></script>
-  <script id="report-experiments" src="src/experiments.js"></script>
-  <script id="report-prompts" src="src/prompts.js"></script>
-  <script id="report-app" src="src/app.js"></script>
+
+  <!-- 数据快照：构建时仅压缩 data-snapshot 的 JSON 空白，源码保持易读 -->
+  <script id="report-data" src="data/cases.js" data-snapshot></script>
+  <script id="report-case-summaries" src="data/case-summaries.js"></script>
+  <script id="report-prompt-data" src="data/prompts.js" data-snapshot></script>
+  <script id="report-experiment-data" src="data/experiments.js" data-snapshot></script>
+
+  <!-- 展示逻辑：共用工具 → 各主题 -->
+  <script id="report-motion" src="shared/motion.js"></script>
+  <script id="report-icons" src="shared/icons.js"></script>
+  <script id="report-answer" src="pages/flow/answer.js"></script>
+  <script id="report-details" src="pages/flow/details.js"></script>
+  <script id="report-flow" src="pages/flow/index.js"></script>
+  <script id="report-rules" src="pages/rules/index.js"></script>
+  <script id="report-architecture" src="pages/architecture/index.js"></script>
+  <script id="report-experiments" src="pages/experiments/index.js"></script>
+  <script id="report-prompts" src="pages/prompts/index.js"></script>
+
+  <!-- 启动：挂载页面与导航 -->
+  <script id="report-app" src="app.js"></script>
 </body>
 </html>

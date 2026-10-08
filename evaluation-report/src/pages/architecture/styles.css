@@ -17,8 +17,6 @@
 .host-coordinator p { font-size:var(--type-copy); margin:4px 0 8px; }
 .host-artifacts { color:var(--gray); font-size:var(--type-meta); }
 .host-artifacts span { padding:0 8px; color:var(--input); }
-.architecture-boundaries { display:grid; grid-template-columns:1fr 1fr; gap:28px; border-top:1px solid var(--border); margin-top:25px; padding-top:14px; font-size:var(--type-meta); }
-.architecture-boundaries b { display:block; font-weight:var(--weight-medium); margin-bottom:4px; }
 @media(max-width:760px) {
  .architecture-counts { gap:18px; margin:0 0 14px; font-size:var(--type-fine); }
  .architecture-counts b { font-size:var(--type-section); }
@@ -34,6 +32,5 @@
  .agent-row-main .agent-role:nth-child(2)::after { bottom:-27px; height:26px; }
  .agent-row-support .agent-role:nth-child(2)::before { top:-27px; height:26px; }
  .host-coordinator p { font-size:var(--type-meta); }
- .architecture-boundaries { gap:18px; font-size:var(--type-fine); margin-top:10px; padding-top:8px; line-height:1.5; }
 }
 @media(max-width:480px) { .agent-row { gap:6px; } .agent-role { padding:9px; } .agent-role h2 { font-size:var(--type-card);  font-weight:var(--weight-heading); } .agent-action { font-size:var(--type-meta); } .architecture-counts { gap:10px; flex-wrap:wrap; } }

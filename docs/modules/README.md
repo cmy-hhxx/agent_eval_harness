@@ -23,7 +23,7 @@
 | Tools | [注册与执行](../../packages/tools/src/index.ts)、[外部搜索](../../packages/tools/src/serper.ts)、[公开原文提取](../../packages/tools/src/web-reader.ts)、证据、分页、图片、代码与产物 | `@eval/tools` | Contracts、Data | 工具、搜索响应与进程生命周期 |
 | Prompts | [集中提示词模块](../../packages/prompts/README.md)、阶段规则、工具描述、组装 | `@eval/prompts` | Contracts | 文案、工具覆盖和实际发送内容 |
 | Schemas | [根目录 Schema 模块](../../schemas/README.md)、Criteria / Attribution / Comparison / Rewrite / Clustering / Workflow Schema | 根目录 `schemas/` | 被 Agents 与 Workflow 读取 | JSON Schema 与文档一致性 |
-| 离线汇报 | [开发预览](../../evaluation-report/index.html)、[独立源码与导出](../../evaluation-report/README.md)，SVG 机制图、历史提示词与案例快照 | 浏览器直接打开；`node evaluation-report/build.mjs` 导出单文件 | 无业务代码依赖，不接入项目运行或构建 | 模块构建测试、快照分母、一级导航、原文阅读、单文件再打开与响应式核验 |
+| 离线汇报 | [离线成品](../../evaluation-report/report.html)、[源码与构建说明](../../evaluation-report/README.md)，SVG 机制图、提示词与案例快照 | `node evaluation-report/scripts/build.mjs` 生成单文件；浏览器直接打开 | 无业务代码依赖，不接入项目运行或构建 | 模块构建测试、快照分母、一级导航、原文阅读、单文件再打开与响应式核验 |
 
 ## 跨模块修改
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const defaultRoot = resolve(moduleDir, '..');
+const defaultRoot = resolve(moduleDir, '../..');
 const titles = {
   '市场热点与异动归因_20题_20260921_Q018': '爱柯迪上涨归因',
   '公司事件与财报解读_20题_20260921_Q012': '中谷物流毛利率',
@@ -310,8 +310,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const args = process.argv.slice(2);
   const option = name => { const index = args.indexOf(name); return index < 0 ? undefined : args[index + 1]; };
   const runDir = option('--run');
-  if (!runDir) throw new Error('Usage: node evaluation-report/snapshot.mjs --run data/runs/comparison/<run-id> [--output /absolute/data.js]');
-  const output = resolve(option('--output') ?? resolve(moduleDir, 'src/data.js'));
+  if (!runDir) throw new Error('Usage: node evaluation-report/scripts/snapshot.mjs --run data/runs/comparison/<run-id> [--output /absolute/data.js]');
+  const output = resolve(option('--output') ?? resolve(moduleDir, '../src/data/cases.js'));
   const snapshot = await buildSnapshot({ runDir });
   await writeSnapshot(snapshot, output);
   console.log(`Snapshot: ${snapshot.meta.caseCount} cases / ${snapshot.meta.pairCount} pairings (${snapshot.meta.decidedCount} decided, ${snapshot.meta.pendingCount} pending) → ${output}`);

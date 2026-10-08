@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import vm from 'node:vm';
 const context={window:{}};
-for(const name of ['data','case-summaries-a','case-summaries-b'])vm.runInNewContext(await readFile(new URL(`src/${name}.js`,import.meta.url),'utf8'),context);
-const summaries={...context.window.ReportCaseSummaries,...context.window.ReportCaseSummariesB};
+for(const name of ['cases','case-summaries'])vm.runInNewContext(await readFile(new URL(`../src/data/${name}.js`,import.meta.url),'utf8'),context);
+const summaries=context.window.ReportCaseSummaries;
 test('42场主图短稿逐项覆盖全部202比较，保留适用与待核边界',()=>{
  const pairs=context.window.EvaluationReportData.cases.flatMap(c=>c.pairs);
  assert.equal(Object.keys(summaries).length,pairs.length);

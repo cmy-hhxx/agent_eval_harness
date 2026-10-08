@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { effectiveReference, evidenceCoordinates, extractFinalAnswer, readJsonLines, writeSnapshot } from './snapshot.mjs';
+import { effectiveReference, evidenceCoordinates, extractFinalAnswer, readJsonLines, writeSnapshot } from '../scripts/snapshot.mjs';
 
-const directory = dirname(fileURLToPath(import.meta.url));
+const directory = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = resolve(directory, '..');
-const text = await readFile(resolve(directory, 'src/data.js'), 'utf8');
+const text = await readFile(resolve(directory, 'src/data/cases.js'), 'utf8');
 const context = { window: {} };
 vm.runInNewContext(text, context);
 const report = JSON.parse(JSON.stringify(context.window.EvaluationReportData));

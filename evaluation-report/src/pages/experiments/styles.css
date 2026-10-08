@@ -73,3 +73,12 @@
   .exp-table thead th, .exp-table tbody th, .exp-table td { padding-left: 4px; padding-right: 4px; }
 }
 @media print { .exp-method[open] summary { display: none; } .experiment-evidence { max-width: none; } }
+
+@media (max-width: 760px) {
+  .experiment-metrics { gap: 16px; }
+}
+@media (max-width: 480px) {
+  .experiment-metrics h3 { font-size: var(--type-copy); }
+  .experiment-panel table { font-size: var(--type-meta); }
+  .experiment-panel td, .experiment-panel th { padding-inline: 8px; }
+}

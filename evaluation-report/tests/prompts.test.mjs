@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { JSDOM } from 'jsdom';
 
-const scripts = await Promise.all(['prompt-data', 'prompts'].map(name =>
-  readFile(new URL(`./src/${name}.js`, import.meta.url), 'utf8')));
+const scripts = await Promise.all(['data/prompts.js', 'pages/prompts/index.js'].map(path =>
+  readFile(new URL(`../src/${path}`, import.meta.url), 'utf8')));
 const groups = ['criteria', 'attribution', 'comparison', 'clustering', 'rewrite', 'shared', 'tools'];
 
 function reader(t) {
@@ -42,7 +42,7 @@ test('当前提示词快照覆盖五角色、可选核验、共用文案与工�
   for (const id of ['comparison/verification/system', 'comparison/verification/instructions', 'shared/evidence', 'shared/task-focus', 'tools/inspect_material']) assert.ok(text(id));
 });
 
-test('七入口直接显示34份完整原文；关键规则、执行结构与职责边界同时呈现', t => {
+test('七入口以材料、步骤和产出呈现流程，展开后完整保留34份原文', t => {
   const { api, container, controller } = reader(t);
   assert.deepEqual([...container.querySelectorAll('[data-prompt-component]')].map(node => node.textContent),
     ['验收标准', '独立归因', '匿名比较', '问题归类', '评语润色', '共用材料', '工具说明']);
@@ -50,22 +50,52 @@ test('七入口直接显示34份完整原文；关键规则、执行结构与职
   for (const group of groups) {
     controller.select(group);
     assert.equal(container.querySelector('.rp-snapshot'), null);
+    const diagram = container.querySelector('figure.rp-flow');
+    assert.ok(diagram.getAttribute('aria-label').endsWith('处理流程'));
+    assert.deepEqual([...diagram.querySelectorAll('[data-prompt-node]')].map(node => node.dataset.promptNode),
+      ['input', 'step', 'step', 'step', 'output']);
+    assert.equal(diagram.querySelectorAll('svg[aria-hidden="true"]').length, 4);
+    for (const node of diagram.querySelectorAll('.rp-flow-node')) {
+      assert.ok(node.querySelector('h3').textContent.trim());
+      assert.ok(node.querySelector('p').textContent.trim());
+    }
+    const complete = container.querySelector('.rp-full-prompt');
+    assert.equal(complete.open, false, '流程先呈现，原文按需展开');
+    complete.querySelector('summary').click();
+    assert.equal(complete.open, true);
     if (groups.slice(0, 5).includes(group)) {
-      assert.deepEqual([...container.querySelectorAll('.rp-workflow dt')].map(node => node.textContent), ['输入', '执行', '产出']);
       assert.ok(container.querySelector('.rp-responsibility p').textContent.trim());
       const excerpts = [...container.querySelectorAll('[data-prompt-excerpt]')];
       assert.equal(excerpts.length, 3);
-      for (const excerpt of excerpts) assert.ok(api.data.find(resource => resource.id === excerpt.dataset.promptExcerpt).text.includes(excerpt.textContent));
+      const original = container.querySelector(`[data-prompt-original="${group}/instructions"]`);
+      for (const excerpt of excerpts) {
+        assert.ok(api.data.find(resource => resource.id === excerpt.dataset.promptExcerpt).text.includes(excerpt.textContent));
+        const emphasis = excerpt.querySelector('strong');
+        assert.ok(emphasis?.textContent.trim(), '每条关键规则突出一句原文重点');
+        assert.ok([...original.querySelectorAll('strong')].some(node => node.textContent === emphasis.textContent), '完整原文保留对应重点');
+        const rule = excerpt.closest('.rp-flow-rule');
+        assert.equal(rule.open, false);
+        rule.querySelector('summary').click();
+        assert.equal(rule.open, true, '规则可在对应步骤旁展开');
+      }
       assert.ok(container.querySelector(`[data-prompt-original="${group}/instructions"] .rp-rule-block`));
     }
     for (const original of container.querySelectorAll('[data-prompt-original]')) {
       assert.equal(original.textContent, api.data.find(resource => resource.id === original.dataset.promptOriginal).text);
-      assert.equal(original.closest('details,[hidden]'), null);
+      assert.equal(original.closest('details'), complete);
       visited.add(original.dataset.promptOriginal);
     }
   }
   assert.equal(visited.size, 34);
-  assert.equal(container.querySelector('details,[download],textarea'), null);
+  assert.equal(container.querySelector('[download],textarea'), null);
+  controller.select('criteria');
+  assert.deepEqual([...container.querySelectorAll('.rp-flow-node h3')].map(node => node.textContent),
+    ['任务来源', '选择原文来源', '拆分独立交付', '区分要求与范围', '验收清单']);
+  assert.deepEqual([...container.querySelectorAll('.rp-flow-rule-label')].map(node => node.textContent),
+    ['不造答案', '独立验收', '保留范围']);
+  controller.select('clustering');
+  assert.deepEqual([...container.querySelectorAll('.rp-flow-rule-label')].map(node => node.textContent),
+    ['复用已有类', '不硬归类', '不改判']);
   controller.select('attribution');
   assert.ok(container.querySelector('[data-prompt-original="tools/submit_evaluation"]'));
   assert.equal(container.querySelector('[data-prompt-original="tools/submit_evaluation_file"]'), null);

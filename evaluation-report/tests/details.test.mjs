@@ -6,10 +6,10 @@ import vm from 'node:vm';
 import { test } from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
-const directory = dirname(fileURLToPath(import.meta.url));
+const directory = dirname(dirname(fileURLToPath(import.meta.url)));
 const [source, dataSource] = await Promise.all([
-  readFile(join(directory, 'src/details.js'), 'utf8'),
-  readFile(join(directory, 'src/data.js'), 'utf8'),
+  readFile(join(directory, 'src/pages/flow/details.js'), 'utf8'),
+  readFile(join(directory, 'src/data/cases.js'), 'utf8'),
 ]);
 const sandbox = {window:{}};
 vm.runInNewContext(dataSource, sandbox);

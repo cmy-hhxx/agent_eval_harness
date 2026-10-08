@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { JSDOM } from 'jsdom';
 
-const source = await readFile(new URL('./src/rules.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/pages/rules/index.js', import.meta.url), 'utf8');
 
 test('补查在唯一一次对比之前，待核单列，可选核验不改原判', t => {
   const dom = new JSDOM('<main id="rules"></main>', { runScripts: 'outside-only' });

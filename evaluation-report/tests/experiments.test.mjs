@@ -6,11 +6,11 @@ import vm from 'node:vm';
 import { test } from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
-const directory = dirname(fileURLToPath(import.meta.url));
+const directory = dirname(dirname(fileURLToPath(import.meta.url)));
 const repository = resolve(directory, '..');
 const [dataSource, renderer] = await Promise.all([
-  readFile(join(directory, 'src/experiment-data.js'), 'utf8'),
-  readFile(join(directory, 'src/experiments.js'), 'utf8'),
+  readFile(join(directory, 'src/data/experiments.js'), 'utf8'),
+  readFile(join(directory, 'src/pages/experiments/index.js'), 'utf8'),
 ]);
 const scope = {window: {}};
 vm.runInNewContext(dataSource, scope);
