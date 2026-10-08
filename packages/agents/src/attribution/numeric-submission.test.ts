@@ -50,27 +50,23 @@ test("the program retains multiple standard quantities, signed declines and orig
   });
 });
 
-test("a missing problem does not hide a real standard-value contradiction or unit mismatch", () => {
+test("a malformed finding does not hide an invalid conversion or an invented actual", () => {
   const request = structuredClone(example.request);
   request.input.ground_truth.value = "4元";
   request.sources.answer.value.messages[1]!.content = "结果为5元";
   const malformed = {
     is_correct: true, correctness_evidence: [{ evidence_id: canonicalEvidence(request.sources.answer.id, 1, "结果为5元").evidence_id }],
     findings: [{ type: "problem", dimension: "format", assessment: { requirement_index: null } }],
-    numeric_checks: [{ reference_index: 0, actual: "5", scale: "1", mode: "rounded", evidence_index: 0 }],
+    numeric_checks: [{ reference_index: 0, actual: "5", scale: "2", mode: "rounded", evidence_index: 0 }],
   };
   const issues = validateJudgment(request, malformed, audit);
   assert(issues.some(issue => issue.code === "problem_required"));
-  assert(issues.some(issue => issue.code === "numeric_correctness_contradiction"));
-  request.sources.answer.value.messages[1]!.content = "结果为4吨";
-  malformed.correctness_evidence = [{ evidence_id: canonicalEvidence(request.sources.answer.id, 1, "结果为4吨").evidence_id }];
-  malformed.numeric_checks[0]!.actual = "4";
-  const unitIssues=validateJudgment(request, malformed, audit);
-  assert(unitIssues.some(issue => issue.code === "numeric_correctness_contradiction"));
-  const mismatch=unitIssues.find(issue=>issue.code==="numeric_unit_mismatch")!;
-  assert.equal(mismatch.path,"/numeric_checks/0");
-  assert.deepEqual(mismatch.actual,{label:undefined,expected:"4",actual:"4",scale:"1"});
-  assert.match(mismatch.message,/元.*吨/u);
+  assert(issues.some(issue => issue.code === "numeric_scale_mismatch"));
+  malformed.numeric_checks[0]!.actual = "99";
+  malformed.numeric_checks[0]!.scale = "1";
+  const actualIssues = validateJudgment(request, malformed, audit);
+  assert(actualIssues.some(issue => issue.code === "problem_required"));
+  assert(actualIssues.some(issue => issue.code === "numeric_answer_missing"));
 });
 
 test("standard tables retain quantity columns while identifier and date columns stay outside the directory", () => {

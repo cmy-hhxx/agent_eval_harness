@@ -143,14 +143,14 @@ test("Host retains remaining repairs for identical invalid evidence without exce
       policy: config.execution, concurrency: 1, retries: 3, retryDelaySeconds: 0, workerUrls: [worker.url] });
     assert.equal(summary.completed_comparisons, 0);
     const saved = await readRunState(path.join(config.output.path, runId)), failed = saved.manifest.states[target.id];
-    assert.equal(attempts, 2, "one bounded content continuation uses the remaining repairs despite identical errors");
-    assert.deepEqual(attemptContentBudgets, [contentBudget, 2], "the continuation receives only the two unspent content submissions");
+    assert.equal(attempts, 1, "the bounded same-session continuation uses the remaining repairs without restarting");
+    assert.deepEqual(attemptContentBudgets, [contentBudget], "the continuation shares the original session budget");
     assert.deepEqual(remainingContentBudgets, [3, 2, 1, 0], "the same-run continuation cannot reset the cumulative repair budget");
     assert.equal(submissions, contentBudget);
     assert.equal(failed.status, "failed");
-    assert.equal(failed.attempts, 2);
+    assert.equal(failed.attempts, 1);
     assert.equal(failed.failure!.contentSubmissions, contentBudget);
-    assert.equal(failed.failure!.repeatedErrors, 2, "the last continuation has two rejected drafts; duplicate diagnostics are scoped to its session");
+    assert.equal(failed.failure!.repeatedErrors, 4, "all rejected drafts belong to the same session");
     assert.equal(failed.failure!.stopped, false, "duplicate errors are diagnostic; cumulative exhaustion stops the task");
     assert.equal(saved.receipts[target.id], undefined, "invalid evidence never produces an accepted receipt");
     assert.deepEqual(failed.failure!.errors.find(issue => issue.code === "evidence_selection_invalid")!.actual,

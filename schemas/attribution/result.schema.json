@@ -336,7 +336,7 @@
     "numeric_checks": {
       "type": "array",
       "maxItems": 64,
-      "description": "逐项核对可直接比较的同口径标准点值，不能仅列错误项；确实未交付该目标时保留 actual=null、matches=false。显式容差、区间、上下限及须计算或解码的表达在 correctness_reason 按原规则核验，该目标不入表；最终回答已直接给出的计算结果可按原值入表。无标准或没有直接点值目标时填空数组。",
+      "description": "记录可直接比较的同口径标准点值，不能仅列错误项；确实未交付该目标时保留 actual=null、matches=false。matches 仅为算术观察，不决定整体正确性。显式容差、区间、上下限及须计算或解码的表达在 correctness_reason 按原规则核验，该目标不入表；最终回答已直接给出的计算结果可按原值入表。无标准或没有直接点值目标时填空数组。",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -374,18 +374,18 @@
             "type": "string",
             "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
             "maxLength": 80,
-            "description": "回答单位转换到标准单位的正比例，同单位填1"
+            "description": "有证据依据的回答单位到标准单位的正倍率，同单位填1；不能为使数值相等而选择倍率"
           },
           "matches": {
             "type": "boolean",
-            "description": "actual*scale 与 expected 按 mode 比较是否相等：rounded 按标准末位精度四舍五入，exact 精确比较；actual=null 时为false"
+            "description": "仅记录 actual*scale 与 expected 的算术比较：rounded 按标准末位精度四舍五入，exact 精确比较；actual=null 时为false。不表示语义正确性，须结合 correctness_reason 的原题、计算与证据判断"
           },
           "mode": {
             "enum": [
               "rounded",
               "exact"
             ],
-            "description": "直接点值比较：连续量按标准精度rounded，整数计数等离散结果用exact；显式容差、区间和上下限不使用此表"
+            "description": "算术观察方式：rounded 按标准末位精度舍入，exact 精确比较，离散计数用exact；精度差异的语义结论由 correctness_reason 说明，容差、区间和上下限不使用此表"
           },
           "evidence_index": {
             "type": "integer",

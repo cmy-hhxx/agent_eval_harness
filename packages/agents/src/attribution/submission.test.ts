@@ -91,12 +91,13 @@ test("direct tool evidence choices bind only declared responsibility and reject 
   assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
     error.issues!.some(issue=>issue.code==="problem_tool_evidence_invalid"&&issue.path==="/problems/0/tool_evidence_indices/0"));
   finding.tool_evidence_indices=[];
-  for(const responsible of [false,true]){
-    finding.model_responsible=responsible;
-    const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-    assert.deepEqual(accepted.findings[0].problem!.component,responsible?["模型自身推理"]:[]);
-    assert.equal(accepted.findings[0].assessment.evidence_status,"established");
-  }
+  finding.model_responsible=false;
+  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
+    error.issues!.some(issue=>issue.code==="standard_mismatch_responsibility_required"));
+  finding.model_responsible=true;
+  const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  assert.deepEqual(accepted.findings[0].problem!.component,["模型自身推理"]);
+  assert.equal(accepted.findings[0].assessment.evidence_status,"established");
 });
 
 test("requirement links are explicit choices while verdict, prose and evidence fields remain required",()=>{

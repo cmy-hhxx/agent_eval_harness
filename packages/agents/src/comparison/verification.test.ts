@@ -372,7 +372,12 @@ test("canonical generation evidence must be proven final assistant prose, exclud
 
 test("deferred final text and real image views remain required", () => {
   const { request, input } = pair(); input.candidates.A!.deferred_final_material = [{ message_index: 1, path: "/content", total_chars: 5 }];
-  assert.throws(() => inspected(request), /未完整读取/);
+  assert.throws(() => inspected(request), (error: unknown) => {
+    assert(error instanceof ValidationError);
+    const issue = error.issues!.find(item => item.code === "deferred_final_material_not_read")!;
+    assert.deepEqual(issue.expected, { read_request: { candidate: "A", message_index: 1, path: "/content", offset: 0, max_chars: 16000 } });
+    return true;
+  });
   const reads = emptyAudit(); reads.traceReads.push({ candidate: "A", message_index: 1, path: "/content", kind: "text", start: 0, end: 5 });
   const audit = inspected(request, checks(request), reads), result = profile.resolve!(request, finalFor(request, { concern_matches: [] }), audit); profile.validate!(request, result, audit);
   (request.sources.B!.value as { messages: { content: unknown }[] }).messages[1]!.content = "data:image/png;base64,aA==";

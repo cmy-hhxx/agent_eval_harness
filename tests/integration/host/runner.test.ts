@@ -415,7 +415,8 @@ for (const missingArtifact of [false, true])
       );
       assert.equal(record.status?.state, "failed");
       assert.match(record.error!, /without an accepted submission/);
-      assert(record.pendingSubmission);
+      assert.equal(record.pendingSubmission, undefined, "a Host-rejected draft is not an unacknowledged submission");
+      assert(record.failure?.draft, "the rejected content remains in its recovery checkpoint");
       assert(record.metrics!.audit.artifacts.length > 0);
       if (missingArtifact) {
         assert.match(record.artifactError!, /Artifact unavailable/);
@@ -597,10 +598,9 @@ for (const stop of [false, true]) test(`Host persists its actual retry deadline 
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const exhausted of [false, true]) test(`completed SDK malformed arguments ${exhausted ? "stop at" : "recover within"} the shared content budget in one Host attempt`, async () => {
+for (const exhausted of [false, true]) test(`completed SDK malformed arguments ${exhausted ? "stop at" : "recover within"} the loading budget in one Host attempt`, async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
-  const contentBudget = 1 + config.execution.repairAttempts;
-  assert.equal(contentBudget, 4, "the default permits one draft and three repairs");
+  const loadingBudget = 3;
   let targetId: string | undefined, targetCalls = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     targetId ??= options.spec.taskId;
@@ -621,18 +621,20 @@ for (const exhausted of [false, true]) test(`completed SDK malformed arguments $
       plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
       policy: config.execution, concurrency: 1, retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url] });
     const saved = await readRunState(path.join(config.output.path, runId));
-    assert.equal(targetCalls, exhausted ? contentBudget : 2, "invalid arguments consume the same configured content allowance");
+    assert.equal(targetCalls, exhausted ? loadingBudget : 2, "malformed input receives one same-session correction");
     assert.equal(saved.manifest.states[targetId!].attempts, 1, "parameter feedback continues the same session without a transport attempt");
     assert.equal(saved.manifest.states[targetId!].status, exhausted ? "failed" : "succeeded");
     assert.equal(summary.completed_comparisons, exhausted ? 0 : 1);
     if (exhausted) {
       assert.equal(saved.receipts[targetId!], undefined);
       assert.equal(saved.manifest.states[targetId!].failure?.errors[0].code, "tool_arguments_invalid");
-      assert.equal(saved.manifest.states[targetId!].failure?.contentSubmissions, contentBudget);
+      assert.equal(saved.manifest.states[targetId!].failure?.contentSubmissions, 0);
+      assert.equal(saved.manifest.states[targetId!].failure?.fileErrors, loadingBudget);
       assert.equal(saved.manifest.states[targetId!].failure?.draft, undefined, "unknown malformed JSON cannot manufacture a draft");
     } else {
       assert(saved.receipts[targetId!], "only the valid resubmission produces an accepted evaluation");
-      assert.equal(saved.receipts[targetId!].submissionStats?.contentSubmissions, 2);
+      assert.equal(saved.receipts[targetId!].submissionStats?.contentSubmissions, 1);
+      assert.equal(saved.receipts[targetId!].submissionStats?.fileErrors, 1);
     }
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -711,7 +713,7 @@ test("a repair attempt that makes no submission retains its draft and counters f
     return { async run() {
       await inspectFor(options);
       if (targeted && !resumed) {
-        if (attempts === 1) {
+        if (attempts === 1 && draft === undefined) {
           draft = invalidDraft(options.spec);
           assert.equal((await submitFor(options, draft)).isError, true);
         } else assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
@@ -773,7 +775,7 @@ for (const interruption of ["content", "transport"] as const)
           assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
           return;
         }
-        const count = attempts === 1 ? 3 : 1;
+        const count = Math.min(attempts === 1 ? 3 : 1, 4 - submissions);
         for (let index = 0; index < count; index++) {
           draft.strengths![0].importance = `invalid-${++submissions}`;
           const rejected = await submitFor(options, draft);
@@ -790,24 +792,26 @@ for (const interruption of ["content", "transport"] as const)
       const failed = await runEvaluation(options);
       assert.equal(failed.completed_comparisons, 0);
       const run = path.join(config.output.path, runId), saved = await readRunState(run);
-      assert.equal(attempts, 2, "exhausting content stops automatic attempts even when transport retries remain");
+      const failedAttempts = interruption === "content" ? 1 : 2;
+      const expectedBudgets = interruption === "content" ? [3] : [3, 0];
+      assert.equal(attempts, failedAttempts, "content repairs stay in-session; transport interruptions require a new attempt");
       assert.equal(submissions, 4, "the initial submission and three repairs are shared across automatic attempts");
-      assert.deepEqual(repairBudgets, [3, 0], "the second attempt gets only the final remaining submission");
+      assert.deepEqual(repairBudgets, expectedBudgets, "every attempt receives only the remaining content budget");
       assert.equal(saved.manifest.states[target.id].failure!.contentSubmissions, 4);
       assert.equal(saved.manifest.states[target.id].failure!.repeatedErrors, 1);
       assert.equal(saved.receipts[target.id], undefined);
       resumed = true;
       const stillFailed = await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
       assert.equal(stillFailed.completed_comparisons, 0);
-      assert.equal(attempts, 2, "an exhausted task never creates a session on same-budget resume");
+      assert.equal(attempts, failedAttempts, "an exhausted task never creates a session on same-budget resume");
       const retained = await readRunState(run);
       assert.deepEqual(retained.manifest.states[target.id].failure, saved.manifest.states[target.id].failure,
         "resume preserves the exhausted draft, errors and cumulative count");
       config.execution.repairAttempts = 4;
       const complete = await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
       assert.equal(complete.completed_comparisons, 1);
-      assert.equal(attempts, 3);
-      assert.deepEqual(repairBudgets, [3, 0, 0], "raising the cumulative cap grants exactly one remaining submission");
+      assert.equal(attempts, failedAttempts + 1);
+      assert.deepEqual(repairBudgets, [...expectedBudgets, 0], "raising the cumulative cap grants exactly one remaining submission");
       const accepted = (await readRunState(run)).receipts[target.id];
       assert.equal(accepted.submissionStats!.contentSubmissions, 5, "the cost ledger includes the previous invocation");
       assert.equal((await validateRun(run)).valid, true);

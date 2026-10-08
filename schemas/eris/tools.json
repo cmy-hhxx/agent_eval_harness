@@ -6,7 +6,8 @@
       "runId": {
         "type": "string",
         "minLength": 1,
-        "description": "省略时列出评测运行及 currentRun 的完整 summary，当前数量和进度直接使用它；提供时列出该运行的回答输入、任务引用及完整 summary。"
+        "description": "省略时列出评测运行及 currentRun 的完整 summary，当前数量和进度直接使用它；提供时列出该运行的回答输入、任务引用及完整 summary。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。",
+        "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$"
       },
       "query": {
         "type": "string",
@@ -35,7 +36,9 @@
         "properties": {
           "runId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
             "type": "string",
@@ -158,7 +161,9 @@
         "properties": {
           "runId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
             "type": "string",
@@ -313,7 +318,9 @@
         "properties": {
           "runId": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
             "type": "string",
@@ -385,7 +392,9 @@
           "properties": {
             "runId": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "inputId": {
               "type": "string",
@@ -417,7 +426,9 @@
             },
             "runId": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "taskId": {
               "type": "string",
@@ -541,7 +552,9 @@
               "properties": {
                 "runId": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "taskId": {
                   "type": "string",
@@ -736,8 +749,8 @@
                   "number",
                   "null"
                 ],
-                "minimum": -1000000000000000.0,
-                "maximum": 1000000000000000.0
+                "minimum": -1000000000000000,
+                "maximum": 1000000000000000
               }
             },
             "upperValues": {
@@ -749,8 +762,8 @@
                   "number",
                   "null"
                 ],
-                "minimum": -1000000000000000.0,
-                "maximum": 1000000000000000.0
+                "minimum": -1000000000000000,
+                "maximum": 1000000000000000
               }
             }
           },
@@ -771,7 +784,9 @@
           "properties": {
             "runId": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "operationId": {
               "type": "string",
@@ -784,7 +799,9 @@
               "properties": {
                 "runId": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "inputId": {
                   "type": "string",
@@ -840,7 +857,9 @@
               "properties": {
                 "runId": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "comparisonTier": {
                   "type": "string",
@@ -1021,7 +1040,7 @@
             "null"
           ],
           "minimum": 0,
-          "maximum": 1000000000000000.0
+          "maximum": 1000000000000000
         }
       },
       "sizeLabel": {
@@ -1039,7 +1058,7 @@
       "maxValue": {
         "type": "number",
         "exclusiveMinimum": 0,
-        "maximum": 1000000000000000.0
+        "maximum": 1000000000000000
       }
     },
     "required": [

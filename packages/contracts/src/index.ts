@@ -597,6 +597,7 @@ export interface FailureContext {
   inspection?: InspectionCheckpoint;
   errors: ValidationIssue[];
   contentSubmissions: number;
+  /** Failed submission file reads, JSON decoding or SDK argument loading; separate from content judgments. */
   fileErrors: number;
   repeatedErrors: number;
   stopped: boolean;

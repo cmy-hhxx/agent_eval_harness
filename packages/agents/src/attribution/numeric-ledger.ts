@@ -52,12 +52,12 @@ function numericMatch(request: AgentRequest, check: Omit<NumericCheck, "matches"
   const source = request.sources.answer;
   const unitIssue = evidence ? numericUnitIssue(truth.value, evidence.quote, check,
     (source.value as { messages: unknown[] }).messages[answer.final_message_index], source.id) : null;
-  const matches = unitIssue?.code !== "numeric_unit_mismatch" && check.actual !== null &&
+  const matches = check.actual !== null &&
     matchesReference(check.actual, check.expected, check.scale, check.mode);
   return { matches, unitIssue };
 }
 
-/** Program-owned standard precision and arithmetic; the selected position never enters formal output. */
+/** Arithmetic observations never replace the agent's contextual correctness judgment. */
 export function resolveNumericChecks(request: AgentRequest, checks: NumericSubmissionCheck[], evidence: Evidence[]): NumericCheck[] {
   const errors = numericReferenceSelectionIssues(request, { numeric_checks: checks });
   if (errors.length) throw new ValidationError(errors);
@@ -108,27 +108,16 @@ export function numericLedgerIssues(request: AgentRequest, draft: unknown, repre
     try { calculation = numericMatch(request, check, actualEvidence); }
     catch (error) { issue("numeric_invalid", location, (error as Error).message); return; }
     const { matches, unitIssue } = calculation;
-    if (representation === "submission" && unitIssue?.code === "numeric_unit_mismatch" && value.is_correct !== false)
-      issue(unitIssue.code, location,
-        `${check.label}：${unitIssue.message}先核对指标定义：可直接比较但量纲确实错误时保留本项并判错；须解释标准简写、计算或解码才能比较时，不把该目标当直接点值，在 correctness_reason 写明原定义、核对过程和结论。`,
-        { label: check.label, expected: check.expected, actual: check.actual, scale: check.scale });
-    if (unitIssue?.code === "numeric_unit_mismatch" && !matchesReference(check.scale, "1", "1", "exact"))
-      issue("numeric_scale_mismatch", `${location}/scale`, "不同维度没有单位等价倍率；保留scale=1，并在correctness_reason说明差异。");
     if (representation === "result" && check.matches !== matches)
-      issue(unitIssue?.code === "numeric_unit_mismatch" ? unitIssue.code : "numeric_rounding_mismatch", `${location}/matches`,
-        unitIssue?.code === "numeric_unit_mismatch" ? `${unitIssue.message} matches 必须为false。` :
-          `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 核验，matches 应为 ${matches}；同步修正理由和 findings，不能把精度等价写成错误。`, check.matches, matches);
-    if (unitIssue && unitIssue.code !== "numeric_unit_mismatch") issue(unitIssue.code, `${location}/scale`, unitIssue.message);
+      issue("numeric_rounding_mismatch", `${location}/matches`,
+        `${check.label}：${check.actual} × ${check.scale} 与标准值 ${check.expected} 按 ${check.mode} 计算，matches 应为 ${matches}。该字段仅记录算术结果，语义正确性由 correctness_reason 结合原题和证据判断。`, check.matches, matches);
+    if (unitIssue) issue(unitIssue.code, unitIssue.code === "numeric_answer_context_missing" ? `${location}/evidence_index` : `${location}/scale`, unitIssue.message);
     if (actualEvidence && check.actual !== null && unitIssue?.code === "numeric_answer_context_missing") {
       const candidates = representation === "submission" ? answerEvidenceCandidates(request, audit, check.actual) : [];
       issue("numeric_answer_missing", `${location}/evidence_index`, `${check.label} 的原始数值 ${check.actual} 未出现在 correctness_evidence[${check.evidence_index}]；actual 保留最终回答原数值，不能先换算、补0或使用自行推导值。请选择包含真实原数值的最终回答证据。`,
         { number: check.actual, quote: actualEvidence.quote },
         candidates.length ? { evidence_indices: candidates } : undefined);
     }
-    if (value.is_correct === true && !matches)
-      issue("numeric_correctness_contradiction", "/is_correct", "存在未通过的标准数值核对，不能判全部正确；先核查数值、单位、口径是否选对");
-    if (value.is_correct === null && !matches)
-      issue("numeric_uncertainty_contradiction", "/is_correct", "数值核对已确认缺失、不等价或不同量纲时必须明确判false，不能把已知错误改写成待核实。");
   });
   return issues;
 }

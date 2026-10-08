@@ -175,7 +175,7 @@ test("peer deferred final leaves and JSON excerpts cannot bypass the source boun
     const text = "原请求日期为12日。".repeat(2000);
     peer.messages[1]!.content = text;
     const material = (request.input.reference_materials as any).B;
-    material.final_answer = JSON.stringify({ deferred_final_material: 0 });
+    material.final_answer = "";
     material.final_evidence = [];
     material.deferred_final_material = [{ message_index: 1, path: "/content", total_chars: text.length }];
     const leaf = evidenceSources(peer.messages[1]).find(source => source.kind === (json ? "json" : "text") && source.path === (json ? "" : "/content"))!;

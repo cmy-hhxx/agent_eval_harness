@@ -25,7 +25,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     if (index < selected.length && selected[index] === undefined) return []; // Keep the reference's original error.
     if (index < selected.length && componentFor(request, selected[index])) return [];
     return [{ category: "evidence", code: "problem_tool_evidence_invalid", path: `${path}/tool_evidence_indices/${position}`,
-      message: "工具责任只能选择本 finding 原 evidence 数组中本方真实工具调用或返回的位置；不能选择最终回答、指令、peer 工具或其他未引用工具。工具参与不证明工具失误；没有责任证据时保留待定位。",
+      message: "工具责任只能选择本 finding 原 evidence 数组中本方真实工具调用或返回的位置；不能选择最终回答、指令、peer 工具或其他未引用工具。工具参与不证明工具失误；已确认标准不符而没有工具错误证据时，归模型的取数与结果校验逻辑。",
       actual: index, expected: { tool_evidence_choices: choices,
         repair_action: "核对本条原证据及具体责任后选择 finding_evidence_index；需要其他证据先读取并加入本条 evidence，不从全部调用工具中猜名称。" } }];
   });

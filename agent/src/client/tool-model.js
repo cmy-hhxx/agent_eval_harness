@@ -27,9 +27,9 @@ function webSearchModel(model,args,output,status){
  const queryCount=queries.length||attempts.length;
  const completed=attempts.filter(attempt=>attempt.state==='succeeded').length;
  const failed=attempts.filter(attempt=>attempt.state==='failed').length;
- const receiptStatus=model.state==='ok'&&failed?(completed?`部分完成（${completed}/${attempts.length}）`:`未完成（0/${attempts.length}）`):status;
- const summary=[query?`搜索“${query}”`:'搜索外部资料',queryCount>1?`${queryCount} 种查询`:null,category,model.state==='ok'&&results?`${results.length} 条结果`:null,receiptStatus].filter(Boolean).join(' · ');
- if(model.state==='error'||!results)return {summary};
+ const receiptStatus=['ok','error'].includes(model.state)&&failed?(completed?`部分完成（${completed}/${attempts.length}）`:`未完成（0/${attempts.length}）`):status;
+ const summary=[query?`搜索“${query}”`:'搜索外部资料',queryCount>1?`${queryCount} 种查询`:null,category,results?`${results.length} 条结果`:null,receiptStatus].filter(Boolean).join(' · ');
+ if(!results)return {summary};
  const items=results.map(searchItem);
  const groups=[];
  if(attempts.length)groups.push({label:'查询记录',items:attempts.map((attempt,index)=>({title:`查询 ${Number.isInteger(attempt.queryIndex)?attempt.queryIndex+1:index+1}`,description:string(attempt.query),badge:{label:attempt.state==='succeeded'?'已完成':attempt.state==='failed'?'未完成':'状态未知',tone:attempt.state==='succeeded'?'success':attempt.state==='failed'?'error':'neutral'},fields:searchFields({'实际查询':attempt.searchQuery,'域名限制':Array.isArray(attempt.domains)?attempt.domains.filter(value=>typeof value==='string').join('、')||undefined:undefined,'地区':attempt.country,'语言':attempt.language,'页':attempt.page,'结果数':attempt.resultCount,'耗时（毫秒）':attempt.elapsedMs,'用量':attempt.credits,'错误':attempt.error})}))});

@@ -60,6 +60,19 @@ function check(expected: string, actual: string | null, scale = "1"): Attributio
 const code = (wanted: string) => (error: unknown) => error instanceof ValidationError &&
   !!error.issues?.some((issue) => issue.code === wanted);
 
+test("double rounding remains an arithmetic observation rather than overriding an evidenced judgment", () => {
+  const value = taskFixture("计算264天占409个交易日的比例。", "64.5%", "264/409，约64.55%。",
+    "264/409×100=64.547677…%，按一位或两位小数分别为64.5%和64.55%。两者来自同一计算，展示精度不同，不构成答案错误。",
+    [{ ...check("64.5", "64.55"), matches: false }]);
+  value.validate();
+  const result = submit(value);
+  registry.validate({ agent: "attribution", profile: "default", request: value.request }, result, audit);
+  assert.equal(result.numeric_checks[0].matches, false, "the arithmetic observation remains honest");
+  assert.equal(result.is_correct, true);
+  assert.equal(result.core_assessment.meets_core, true);
+  assert.equal(result.correctness_reason, value.result.correctness_reason);
+});
+
 test("citation numbers cannot borrow a table header unit to replace missing data", () => {
   const answer = "| 名称 | 耗时(天) |\n|---|---|\n| 测试 | 未提供[^12] |";
   assert.throws(fixture("耗时为12天", answer, [check("12", "12")]).validate,
@@ -102,35 +115,32 @@ test("a fraction can retain its derived comparison without inventing a delivered
   assert.throws(value.validate, code("numeric_answer_missing"));
 });
 
-test("submitted point-value contradictions remain invalid on submission and formal result paths", () => {
+test("an evidenced wrong answer remains wrong without deriving the verdict from a numeric flag", () => {
   const wrong = taskFixture("给出长度，与标准答案按末位精度核对。", "10.0", "长度为10.5。",
-    "回答长度为10.5。", [{ ...check("10.0", "10.5"), matches: false }]);
-  assert.throws(() => submit(wrong), code("numeric_correctness_contradiction"));
-  assert.throws(wrong.validate, code("numeric_correctness_contradiction"));
+    "回答10.5与标准10.0不符，原题没有容差或其他等价依据。", [{ ...check("10.0", "10.5"), matches: false }]);
   wrong.result.is_correct = false;
-  wrong.result.correctness_reason = "回答10.5按标准末位精度核验仍不等于10.0。";
   wrong.result.core_assessment = { meets_core: false, reason: wrong.result.correctness_reason, criterion_ids: ["r1"] };
   wrong.result.criterion_assessments[0]!.status = "unmet";
   wrong.result.criterion_assessments[0]!.summary = wrong.result.correctness_reason;
-  registry.validate({ agent: "attribution", profile: "default", request: wrong.request }, submit(wrong), audit);
+  const resolved = submit(wrong);
+  registry.validate({ agent: "attribution", profile: "default", request: wrong.request }, resolved, audit);
+  assert.equal(resolved.is_correct, false);
+  assert.equal(resolved.numeric_checks[0].matches, false);
   wrong.validate();
+  wrong.result.numeric_checks[0].matches = true;
+  assert.throws(wrong.validate, code("numeric_rounding_mismatch"));
 });
 
-test("equal numerals cannot make mass and volume or percentages and percentage points equivalent", () => {
-  const incompatible = fixture("总销量为1087.4万千升", "总销量为1087.4万吨", [check("1087.4", "1087.4")]);
-  assert.throws(incompatible.validate, code("numeric_unit_mismatch"));
-  incompatible.result.numeric_checks[0].matches = false;
-  incompatible.result.is_correct = false;
-  incompatible.result.correctness_reason = "回答把体积万千升写成质量万吨，未提供密度，不能视为等价。";
-  incompatible.validate();
-  incompatible.result.numeric_checks[0].scale = "1000";
-  assert.throws(incompatible.validate, code("numeric_scale_mismatch"));
-  incompatible.result.numeric_checks[0].scale = "1";
-  incompatible.result.is_correct = true;
-  assert.throws(incompatible.validate, code("numeric_correctness_contradiction"));
-  fixture("总销量为1087.4万千升", "总销量为1087.4万千升", [check("1087.4", "1087.4")]).validate();
-  assert.throws(fixture("-0.6个百分点", "-0.6%", [check("-0.6", "-0.6")]).validate, code("numeric_unit_mismatch"));
-  fixture("-0.6个百分点", "-0.60 个百分点", [check("-0.6", "-0.60")]).validate();
+test("arithmetic equality does not override a semantic unit mismatch", () => {
+  const value = taskFixture("给出总销量。", "1087.4万千升", "总销量为1087.4万吨。",
+    "回答把体积万千升写成质量万吨，未提供密度；数值相同不能证明所求销量正确。", [check("1087.4", "1087.4")]);
+  value.result.is_correct = false;
+  value.result.core_assessment.meets_core = false;
+  value.result.criterion_assessments[0].status = "unmet";
+  value.validate();
+  const result = submit(value);
+  assert.equal(result.numeric_checks[0].matches, true);
+  assert.equal(result.is_correct, false);
 });
 
 test("unit scale is derived from the cited number's adjacent units", () => {
@@ -139,13 +149,29 @@ test("unit scale is derived from the cited number's adjacent units", () => {
   const wrong = fixture("1087.4万千升", "1087.4万升", [check("1087.4", "1087.4")]);
   assert.throws(wrong.validate, code("numeric_scale_mismatch"));
   assert.throws(fixture("10元", "5元", [check("10", "5", "2")]).validate, code("numeric_scale_mismatch"));
-  assert.throws(fixture("10", "5", [check("10", "5", "2")]).validate, code("numeric_scale_unverified"));
-  assert.throws(fixture("10元", "|数值|销量（万吨）|\n|5|3|", [check("10", "5", "2")]).validate,
-    code("numeric_scale_unverified"));
-  assert.throws(fixture("10元", "利润10元，重量10吨", [check("10", "10")]).validate,
-    code("numeric_unit_ambiguous"));
-  assert.throws(fixture("10元/股", "5元/股", [check("10", "5", "2")]).validate,
-    code("numeric_scale_unverified"));
+});
+
+test("an evidenced compound-unit conversion does not depend on a unit whitelist", () => {
+  const value = taskFixture("给出每吨能耗，以千瓦时/吨表示。", "1千瓦时/吨", "每吨能耗1000瓦时/吨。",
+    "每吨能耗1000瓦时/吨，按1000瓦时=1千瓦时换算为1千瓦时/吨，与标准相同。",
+    [check("1", "1000", "0.001")]);
+  value.validate();
+  const result = submit(value);
+  registry.validate({ agent: "attribution", profile: "default", request: value.request }, result, audit);
+  assert.equal(result.is_correct, true);
+  assert.equal(result.numeric_checks[0].matches, true);
+  assert.equal(result.correctness_reason, value.result.correctness_reason);
+});
+
+test("glass weight-box magnitudes verify the scale in the actual-to-standard direction", () => {
+  const value = fixture("9.69亿重量箱", "2023年12月产量8499.9万重量箱", [
+    { ...check("9.69", "8499.9", "0.0001"), matches: false },
+  ]);
+  value.result.is_correct = false;
+  value.validate();
+  value.result.numeric_checks[0].scale = "10000";
+  assert.throws(value.validate, code("numeric_scale_mismatch"));
+  fixture("0.84999亿重量箱", "8499.9万重量箱", [check("0.84999", "8499.9", "0.0001")]).validate();
 });
 
 test("count magnitudes in prose and table headers preserve their exact delivered numeric value", () => {
@@ -155,29 +181,21 @@ test("count magnitudes in prose and table headers preserve their exact delivered
   }
 });
 
-test("a submitted missing target cannot be called correct on submission or formal result paths", () => {
+test("a missing point value preserves the agent's supported incomplete-delivery judgment", () => {
   const missing = taskFixture("给出总销量。", "1087.4万千升", "没有查到销量。", "回答未交付总销量。",
     [{ ...check("1087.4", null), matches: false }]);
-  assert.throws(() => submit(missing), code("numeric_correctness_contradiction"));
-  assert.throws(missing.validate, code("numeric_correctness_contradiction"));
   missing.result.is_correct = false;
   missing.result.core_assessment.meets_core = false;
   missing.result.criterion_assessments[0]!.status = "unmet";
-  registry.validate({ agent: "attribution", profile: "default", request: missing.request }, submit(missing), audit);
+  const result = submit(missing);
+  registry.validate({ agent: "attribution", profile: "default", request: missing.request }, result, audit);
+  assert.equal(result.numeric_checks[0].actual, null);
+  assert.equal(result.is_correct, false);
   missing.validate();
 });
 
-test("a cropped numeric quote cannot hide the original final answer's unit", () => {
-  const cropped = fixture("1087.4万千升", "总销量为1087.4万吨。", [check("1087.4", "1087.4")]);
-  cropped.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", 4);
-  cropped.result.criterion_assessments.forEach(item => { item.evidence = cropped.result.correctness_evidence; });
-  assert.throws(cropped.validate, code("numeric_unit_mismatch"));
-  cropped.result.numeric_checks[0].matches = false;
-  cropped.result.is_correct = false;
-  cropped.validate();
+test("cropped numeric evidence still verifies a complete original token", () => {
   const repeated = fixture("1087.4万千升", "销量1087.4万千升；重量1087.4万吨。", [check("1087.4", "1087.4")]);
-  repeated.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", 2);
-  assert.throws(repeated.validate, code("numeric_unit_ambiguous"));
   repeated.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "销量1087.4");
   repeated.validate();
   const substring = fixture("1087.4万千升", "销量21087.4万千升", [check("1087.4", "1087.4")]);
@@ -193,12 +211,8 @@ test("a unit-bearing table header is tied to the cited target cell's column", ()
   valid.validate();
   valid.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, JSON.stringify(valid.request.sources.answer.value.messages[1], null, 2), "", 0, "json");
   valid.validate();
-  const otherColumn = fixture("1087.4万千升", "| 指标 | 数值 | 重量（千升） |\n| --- | --- | --- |\n| 总销量 | 10874000 | 1 |",
-    [check("1087.4", "10874000", "0.0001")]);
-  assert.throws(otherColumn.validate, code("numeric_scale_unverified"));
-  const wrong = fixture("1087.4万千升", "| 指标 | 重量（万吨） |\n| --- | --- |\n| 总销量 | 1087.4 |", [check("1087.4", "1087.4")]);
-  wrong.result.correctness_evidence[0] = canonicalEvidence(example.request.sources.answer.id, 1, "1087.4", "/content", wrong.request.sources.answer.value.messages[1].content.indexOf("1087.4"));
-  assert.throws(wrong.validate, code("numeric_unit_mismatch"));
+  valid.result.numeric_checks[0].scale = "1";
+  assert.throws(valid.validate, code("numeric_scale_mismatch"));
 });
 
 test("an explicit unit immediately before a table covers its bare numeric cells", () => {
@@ -215,19 +229,9 @@ test("a table's declared unit cannot turn a date or identifier column into a qua
   }
 });
 
-test("table unit declarations stay local and do not conceal mixed or unknown units", () => {
-  const table = "| 指标 | 数值 |\n| --- | --- |\n| 同比 | 12.9 |";
-  const declared = "最高值12.9%。\n\n单位：%\n\n" + table;
-  assert.throws(fixture("12.9%", declared + "\n\n" + table, [check("12.9", "12.9")]).validate,
-    code("numeric_unit_ambiguous"));
-  assert.throws(fixture("12.9%", "最高值12.9%。\n\n单位：%或亿元\n\n" + table,
-    [check("12.9", "12.9")]).validate, code("numeric_unit_ambiguous"));
-  assert.throws(fixture("12.9%", "最高值12.9%。\n\n单位：%\n\n以下为其他指标。\n\n" + table,
-    [check("12.9", "12.9")]).validate, code("numeric_unit_ambiguous"));
+test("an explicit column unit takes precedence over a table declaration", () => {
   fixture("12.9亿元", "单位：%\n\n| 指标 | 收入（亿元） |\n| --- | --- |\n| 收入 | 12.9 |",
     [check("12.9", "12.9")]).validate();
-  assert.throws(fixture("12.9%", declared + "\n\n销量为12.9吨。", [check("12.9", "12.9")]).validate,
-    code("numeric_unit_ambiguous"));
 });
 
 test("trading-day counts stay distinct from calendar coordinates in the same evidence", () => {
@@ -238,10 +242,14 @@ test("trading-day counts stay distinct from calendar coordinates in the same evi
   count.validate();
   assert.throws(fixture("6天", "最高价在2026年5月6日为11.49元。", [check("6", "6")]).validate,
     code("numeric_answer_context_missing"));
-  assert.throws(fixture("6天", "命中6天，另有6%。", [check("6", "6")]).validate,
-    code("numeric_unit_ambiguous"));
-  assert.throws(fixture("6天", "命中6天，另一指标为6，单位未提供。", [check("6", "6")]).validate,
-    code("numeric_unit_ambiguous"));
+});
+
+test("equal numerals with different meanings do not veto a supported count assessment", () => {
+  const value = taskFixture("给出命中天数。", "6天", "命中6天，占总天数的6%。",
+    "回答明确交付命中6天，与标准天数一致；另一个6%是比例，不能用它的单位否定天数。",
+    [{ ...check("6", "6"), mode: "exact" }]);
+  value.validate();
+  assert.equal(submit(value).is_correct, true);
 });
 
 test("a trading-day unit header identifies a count rather than a calendar coordinate", () => {
@@ -274,13 +282,4 @@ test("unverifiable conversions still require a supported pending-review state", 
   pending.result.correctness_reason = "缺少可信换算依据，待复核。";
   pending.result.correctness_evidence = [];
   assert.throws(pending.validate, code("correctness_evidence_required"));
-});
-
-test("a known numeric contradiction cannot be submitted as an uncertain verdict", () => {
-  const known = fixture("1087.4万千升", "总销量为1087.4万吨。", [{ ...check("1087.4", "1087.4"), matches: false }]);
-  known.result.is_correct = null;
-  known.result.core_assessment.meets_core = null;
-  known.result.criterion_assessments[0].status = "unknown";
-  known.result.criterion_assessments[0].evidence_status = "uncertain";
-  assert.throws(known.validate, code("numeric_uncertainty_contradiction"));
 });

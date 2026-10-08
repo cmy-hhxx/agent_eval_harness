@@ -50,7 +50,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     if (row === null) {
       if (slot.optional) return [];
       rowIssues.push({ category: "decision", code: "comparison_slot_required", path: `/comparisons/${index}`,
-        message: "本槽位为必需要求、优点或中高重要性问题，须保留双方评审；仅 optional 槽可填 null。" });
+        message: "本槽位为必需要求、优点、中高重要性问题或已记录的资源指标，须保留双方评审；仅 optional 槽可填 null。" });
       return [];
     }
     const betterCandidate = row.better_candidate ?? null;

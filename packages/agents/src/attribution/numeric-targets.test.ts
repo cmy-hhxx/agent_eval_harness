@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { numericReferenceDirectory, numericReferenceMaterials } from "./units.js";
+import { numericReferenceDirectory } from "./units.js";
+import { attributionProfile } from "./index.js";
+import example from "./fixtures/example.json" with { type: "json" };
 
 test("index names and month ranges do not become numerical answer targets", () => {
   assert.deepEqual(numericReferenceDirectory("上证50的年涨幅+12.90%，相对上证-5.51%；中证2000年涨幅+36.42%，相对上证+18.01%")
@@ -15,13 +17,16 @@ test("quantities beside index identities remain available with original precisio
     .map(item => item.expected), ["4.50", "3.25", "-2.00", "50"]);
 });
 
-test("relative-return shorthand stays visible for interpretation without pretending to be a direct unit match",()=>{
-  const input={candidate_id:"11111111-1111-4111-8111-111111111111",
-    ground_truth:{available:true,value:"上证50年涨幅12.90%，相对上证-5.51%；中证2000年涨幅36.42%，相对上证18.01%"},
-    answer:{final_answer:"上证50上涨12.90%，相对上证-5.51个百分点；中证2000上涨36.42%，相对上证18.01个百分点。"}};
-  const shown=numericReferenceMaterials(input);
-  assert.deepEqual(shown.direct.map(item=>item.expected),["12.90","36.42"]);
-  assert.deepEqual(shown.interpreted.map(item=>item.expected),["-5.51","18.01"]);
-  input.ground_truth.value="利润率变化-0.60%";input.answer.final_answer="利润率变化-0.60个百分点。";
-  assert.equal(numericReferenceMaterials(input).direct.length,1,"a definite percentage target does not bypass its unit check");
+test("candidate wording cannot alter which standard values are selectable", () => {
+  const request = structuredClone(example.request);
+  request.input.ground_truth.value = "上证50年涨幅12.90%，相对上证-5.51%；中证2000年涨幅36.42%，相对上证18.01%";
+  assert.deepEqual(numericReferenceDirectory(request.input.ground_truth.value).map(item => item.expected),
+    ["12.90", "-5.51", "36.42", "18.01"]);
+  for (const unit of ["%", "个百分点"]) {
+    request.input.answer.final_answer = `上证50上涨12.90%，相对上证-5.51${unit}；中证2000上涨36.42%，相对上证18.01${unit}。`;
+    const schema = attributionProfile.modelSubmissionSchema!(request) as {
+      properties: { numeric_checks: { items: { properties: { reference_index: { enum: number[] } } } } };
+    };
+    assert.deepEqual(schema.properties.numeric_checks.items.properties.reference_index.enum, [1, 2, 3, 4]);
+  }
 });

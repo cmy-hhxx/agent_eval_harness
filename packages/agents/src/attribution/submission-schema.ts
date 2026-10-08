@@ -1,6 +1,6 @@
 import { ValidationError, type AgentRequest } from "@eval/contracts";
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
-import { numericReferenceMaterials } from "./units.js";
+import { numericReferenceDirectory } from "./units.js";
 import { normDirectoryIssues } from "./norm-directory.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import type { TaskAnalysis } from "@eval/contracts";
@@ -26,7 +26,7 @@ export function attributionSubmissionSchema(request: AgentRequest) {
     Object.assign(schema.properties.correctness_reason,{const:""});
     Object.assign(schema.properties.correctness_evidence_indices,{maxItems:0});
   } else Object.assign(schema.properties.correctness_reason,{minLength:1});
-  const references = numericReferenceMaterials(request.input).direct;
+  const references = groundTruth.available ? numericReferenceDirectory(groundTruth.value) : [];
   if (!references.length) Object.assign(schema.properties.numeric_checks, { maxItems: 0 });
   else (schema.properties.numeric_checks.items.properties.reference_index as { enum?: number[] }).enum = references.map(item => item.reference_index + 1);
   return schema;

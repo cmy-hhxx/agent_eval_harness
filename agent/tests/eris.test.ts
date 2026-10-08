@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { createEris, type ErisDependencies } from "@eval/assistant";
 import { erisPrompt } from "@eval/prompts";
-import type { WebSearchRequest, WebReadResult } from "@eval/contracts";
+import type { WebSearchRequest, WebSearchAttempt, WebReadResult, SpecialistResult } from "@eval/contracts";
 
 test('overview material keeps exact counts while case narratives are read explicitly by run', async () => {
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected call'); };
@@ -72,6 +72,67 @@ test("Eris's public definition includes every tool resource and validates before
   assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }], "full directories omit the optional text filter; business filters are forwarded unchanged");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
+});
+
+test("raw arguments fail with field paths and allowed values before SDK coercion or I/O", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+  const list = eris.tools.find(tool => tool.name === "list_data")!;
+  for (const runId of [".", "..", "../run", "a..b", "/tmp/run"]) assert.throws(() => list.validate!({ runId }), /\/runId.*schema_pattern/);
+  for (const runId of ["run", "eval-20261008-134119", "a.b_c-1"]) list.validate!({ runId });
+  for (const args of [{ limit: "5" }, { runId: null }, { reference: {} }]) {
+    const original = structuredClone(args);
+    assert.throws(() => list.validate!(args), /参数无效.*未执行/);
+    assert.deepEqual(args, original, "validation never coerces types, drops nulls or strips extra fields");
+  }
+  const search = eris.tools.find(tool => tool.name === "search_web")!;
+  assert.throws(() => search.validate!({ queries: [{ query: "report" }], category: "finance" }), /\/category.*allowedValues.*web.*news/);
+  const read = eris.tools.find(tool => tool.name === "read_data")!;
+  assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input", offset: 0 } }), /\/reference\/offset.*schema_additionalProperties/);
+});
+
+test("cancellation blocks all new work and a summary write after source verification", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const control = new AbortController();
+  const eris = createEris({ data: { list: unexpected, search: unexpected, image: unexpected,
+    async read() { control.abort(); return { result: {}, evaluatorVersion: "fixture" }; } },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "cancel", signal: control.signal, progress() {} };
+  const save = eris.tools.find(tool => tool.name === "save_summary")!;
+  await assert.rejects(save.execute({ markdown: "summary", references: [{ reference: { runId: "run", taskId: "task" } }] }, context), { name: "AbortError" });
+  for (const tool of eris.tools) await assert.rejects(tool.execute({}, context), { name: "AbortError" });
+});
+
+test("failed operations are errors while empty search successes and partial receipts stay usable", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  let states: WebSearchAttempt["state"][] = ["failed", "failed"];
+  let specialistState: SpecialistResult["state"] = "failed";
+  const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { read: unexpected, async invoke(_, request) { return { operationId: request.operationId, kind: request.kind,
+      state: specialistState, evaluatorVersion: "fixture", error: "specialist failed" }; } },
+    web: { read: unexpected }, save: unexpected,
+    search: { async search() { return { provider: "serper", category: "web", searchedAt: "2026-10-08T00:00:00Z", elapsedMs: 1,
+      attempts: states.map((state, queryIndex) => ({ queryIndex, query: "q", searchQuery: "q", country: "cn", language: "zh-cn", page: 1,
+        state, resultCount: 0, elapsedMs: 1, ...(state === "failed" ? { error: "HTTP 429" } : {}) })),
+      results: [], excludedResults: [], totalUnique: 0, hasMore: false, creditsComplete: false }; } },
+  });
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "receipt", signal: new AbortController().signal, progress() {} };
+  const search = eris.tools.find(tool => tool.name === "search_web")!;
+  for (const sequence of [["failed", "failed"], ["failed", "succeeded"], ["succeeded"]] as WebSearchAttempt["state"][][]) {
+    states = sequence;
+    const result = await search.execute({ queries: [{ query: "q" }] }, context);
+    assert.equal(result.isError, states.every(state => state === "failed"));
+    assert.deepEqual(JSON.parse(result.content[0].text!).attempts.map((item: WebSearchAttempt) => item.state), states);
+  }
+  const specialist = eris.tools.find(tool => tool.name === "call_specialist")!;
+  const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
+  for (const state of ["failed", "cancelled", "running", "succeeded"] as const) {
+    specialistState = state;
+    const result = await specialist.execute({ operationId, kind: "attribution", inputs: [{ runId: "run", inputId: "input" }] }, context);
+    assert.equal(result.isError, ["failed", "cancelled"].includes(state));
+    assert.equal(JSON.parse(result.content[0].text!).operationId, operationId, "failed receipts retain the operation identity for reconciliation");
+  }
 });
 
 test("external search validates financial filters and forwards cancellation without source rehydration", async () => {

@@ -308,6 +308,13 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("problem_label_empty", `${location}/problem/label`, "问题名称不能为空");
     if (typeof problem.definition === "string" && !problem.definition.trim())
       issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
+    if (input.ground_truth.available && value.is_correct === false && finding.type === "problem" &&
+      finding.dimension === "correctness" && assessment?.evidence_status === "established" &&
+      (representation === "submission"
+        ? problem.model_responsible === false && Array.isArray(problem.tool_evidence_indices) && !problem.tool_evidence_indices.length
+        : strings(problem.component) && !problem.component.length))
+      issue("standard_mismatch_responsibility_required", `${location}/problem`,
+        "已确认标准不符的正确性问题必须归到对应取数、计算或结果校验逻辑，不能留空责任或写无法确定。核对本方请求与返回：有工具自身错误及传播证据才选择工具；其余归模型的取数与结果校验，不猜测具体底层故障。保留实际值、标准值及具体口径差异；标准冲突另按事实记录。");
     if (representation === "submission" || !strings(problem.component)) return;
     problem.component.forEach((component, componentIndex) => {
       if (component !== "模型自身推理" && !tools.has(component))
@@ -360,7 +367,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     if (!coverage.covered) repairErrors.push({
       category: "evidence", code: "deferred_final_material_not_read", path: `/answer/deferred_final_material/${index}`,
       candidate: "answer", message: "未完整读取延后展示的最终材料；按缺口用 read_trace 补读并继续 next_offset。展示缺失不能推定没有交付。",
-      actual: coverage.missing, expected: { message_index: material.message_index, path: material.path, start: 0, end: material.total_chars },
+      actual: coverage.missing, expected: { message_index: material.message_index, path: material.path, start: 0, end: material.total_chars,
+        read_request: { candidate: "answer", message_index: material.message_index, path: material.path,
+          offset: coverage.missing[0]!.start, max_chars: 16000 } },
     });
   });
   repairErrors.push(...finalImageReadIssues(request, audit));

@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as sdk from "#pi-sdk";
-import { object, type AssistantEvent, type AssistantRecord, type AssistantModelOptions, type AssistantScope, type JsonObject } from "@eval/contracts";
+import { canonical, errorText, object, type AssistantEvent, type AssistantRecord, type AssistantModelOptions, type AssistantScope, type JsonObject } from "@eval/contracts";
 import { providerConfig, sdkContent, transformPayload } from "./sdk-utils.js";
 import { readAssistantSource } from "./assistant-source.js";
 
@@ -26,6 +26,8 @@ export type ConversationDriverFactory = (options: ConversationDriverOptions) => 
 async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntry[]> {
   const history = options.history;
   const entries: unknown[] = [];
+  const compaction = options.records.findLast(record => record.kind === "compaction");
+  let retained = !compaction;
   let parentId: string | null = null;
   for (const record of options.records) {
     if (record.kind === "compaction") {
@@ -36,6 +38,8 @@ async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntr
     if (record.kind !== "event") continue;
     const event = record.event, messages: unknown[] = [];
     const data = event.data;
+    const entryId = String(data.entryId ?? (event.type === "user/message" ? data.id : object(data.message ?? {}).id));
+    if (compaction && entryId === compaction.firstKeptEntryId) retained = true;
     if (event.type === "user/message") messages.push({ role: "user", content: data.content, timestamp: event.time });
     if (event.type === "assistant/message") {
       const message = object(data.message), source = object(message.source);
@@ -54,8 +58,16 @@ async function restore(options: ConversationDriverOptions): Promise<sdk.FileEntr
       const requested = history.findLast((entry) => entry.type === "assistant/message" && (object(entry.data.message).content as JsonObject[]).some(block => block.type === "tool-call" && block.id === message.toolCallId));
       const block = (requested ? object(requested.data.message).content as JsonObject[] : []).find(block => block.type === "tool-call" && block.id === message.toolCallId);
       const sourceRead = object(data.meta ?? {}).sourceRead;
-      if (sourceRead && !message.isError) {
-        message.content = sdkContent((await readAssistantSource(options.tools, options.scope, String(message.toolCallId), sourceRead)).content);
+      if (sourceRead && !message.isError && retained) {
+        try {
+          const result = await readAssistantSource(options.tools, options.scope, String(message.toolCallId), sourceRead);
+          message.content = sdkContent(result.content);
+          message.isError = result.isError === true;
+        } catch (error) {
+          // A removed/unreadable source is an evidence gap, not a broken session.
+          message.content = [{ type: "text", text: `Source unavailable during replay: ${errorText(error)}` }];
+          message.isError = true;
+        }
       }
       messages.push({ role: "toolResult", toolCallId: message.toolCallId, toolName: call?.data.name ?? block?.name ?? "tool", content: message.content, isError: message.isError, timestamp: event.time });
     }
@@ -92,6 +104,7 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   const activeReads = new Set<Promise<void>>();
   const customTools: sdk.ToolDefinition[] = options.tools.map((tool) => ({
     name: tool.name, label: tool.name, description: tool.description, parameters: tool.inputSchema as sdk.ToolDefinition["parameters"], executionMode: tool.readOnly ? "parallel" : "sequential",
+    prepareArguments(args) { tool.validate?.(args); return args as Record<string, unknown>; },
     async execute(callId, args, signal) {
       while (tool.readOnly && activeReads.size >= 4) {
         await Promise.race(activeReads);
@@ -113,10 +126,38 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   await session.bindExtensions({ mode: "rpc" });
   // Agent.subscribe is awaited by Pi. AgentSession.subscribe is not: it cannot
   // be used as a persistence barrier before the next model/tool request.
-  const unsubscribe = session.agent.subscribe(async (event) => { await options.event({ ...event, ...(event.type === "message_end" ? { entryId: session.sessionManager.getLeafId() } : {}) }); });
+  const pending = new Map<string, { name: string; key: string }>();
+  const failures = new Map<string, { name: string; count: number }>();
+  let requests = 0;
+  const unsubscribe = session.agent.subscribe(async (event) => {
+    await options.event({ ...event, ...(event.type === "message_end" ? { entryId: session.sessionManager.getLeafId() } : {}) });
+    if (event.type !== "message_end") return;
+    const message = event.message;
+    if (message.role === "assistant") for (const block of message.content) {
+      if (block.type === "toolCall") pending.set(block.id, { name: block.name, key: canonical([block.name, block.arguments]) });
+    }
+    if (message.role === "toolResult") {
+      const call = pending.get(message.toolCallId);
+      pending.delete(message.toolCallId);
+      if (!call) return;
+      if (!message.isError) failures.delete(call.key);
+      else {
+        const count = (failures.get(call.key)?.count ?? 0) + 1;
+        failures.set(call.key, { name: call.name, count });
+      }
+    }
+  });
   const stream = session.agent.streamFunction;
-  session.agent.streamFunction = async (...args) => { await options.checkpoint(); return stream(...args); };
+  session.agent.streamFunction = async (...args) => {
+    await options.checkpoint();
+    const repeatedFailure = [...failures.values()].find(failure => failure.count >= 3);
+    if (repeatedFailure) throw new Error(`工具 ${repeatedFailure.name} 以相同参数失败3次，已停止重复调用；已保存结果，可更正请求后继续。`);
+    if (requests >= 32) throw new Error("本轮已达32次模型请求上限；已保存结果，可缩小范围后继续。");
+    requests++;
+    return stream(...args);
+  };
   return { prompt: async (text) => {
+      requests = 0; pending.clear(); failures.clear();
       const usage = session.getContextUsage();
       if (usage?.percent !== null && usage?.percent !== undefined && usage.percent > 75) {
         await options.checkpoint();

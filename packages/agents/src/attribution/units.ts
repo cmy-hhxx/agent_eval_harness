@@ -1,6 +1,5 @@
 import { containsNumber, matchesReference } from "./numeric.js";
 import { evidenceSources, maskCitationMarkup, parseEvidenceCoordinates, parseTraceTables } from "@eval/tools";
-import type { JsonObject } from "@eval/contracts";
 
 interface Unit { dimension: string; power: number; }
 const units = new Map<string, Unit>();
@@ -15,6 +14,7 @@ register("currency:HKD", { 港元: 0, 万港元: 4, 百万港元: 6, 亿港元: 
 register("ratio", { "%": -2, "％": -2, "‰": -3 });
 register("percentage-point", { 百分点: 0, 个百分点: 0, 基点: -2, 个基点: -2 });
 register("count:day", { 天: 0, 交易日: 0, 个交易日: 0 });
+register("glass-weight-box", { 重量箱: 0, 万重量箱: 4, 亿重量箱: 8 });
 for (const name of ["个", "家", "只", "条", "项", "份", "次", "人", "户", "股", "辆", "台"])
   register(`count:${name}`, { [name]: 0, [`万${name}`]: 4, [`亿${name}`]: 8 });
 const names = [...units.keys()].sort((a, b) => b.length - a.length);
@@ -150,20 +150,6 @@ function finalNumberUnits(message: unknown, inputId: string, quote: string, valu
 
 export interface NumericReference { reference_index: number; expected: string; context: string; }
 
-/** Relative-return shorthand needs a definition check; it is not an unambiguous point-unit comparison. */
-export function numericReferenceMaterials(input: JsonObject) {
-  const truth=input.ground_truth as {available:boolean;value:unknown};
-  const directory=truth.available?numericReferenceDirectory(truth.value):[];
-  const answer=input.answer as {final_answer?:string};
-  const text=answer.final_answer ?? "";
-  const interpreted=directory.filter(entry=>
-    /相对[^。；;\n]{0,40}(?:涨幅|涨跌|收益)|(?:涨幅|涨跌|收益)[^。；;\n]{0,40}相对/u.test(entry.context) &&
-    numberUnits(entry.context,entry.expected,true).some(item=>item.unit.dimension==="ratio") &&
-    typeof input.candidate_id==="string" &&
-    finalNumberUnits({content:text},input.candidate_id,text,entry.expected).units.some(item=>item.unit.dimension==="percentage-point"));
-  return {direct:directory.filter(entry=>!interpreted.includes(entry)),interpreted};
-}
-
 /** Quantities from the standard only; identifiers and calendar coordinates are not targets. */
 export function numericReferenceDirectory(reference: unknown): NumericReference[] {
   const found: Omit<NumericReference, "reference_index">[] = [];
@@ -223,23 +209,14 @@ export function numericUnitIssue(reference: unknown, quote: string, check: { exp
     code: "numeric_answer_context_missing",
     message: "引文中的actual必须对应原最终消息中的完整数值，不能裁出更大数值的一部分；请引用包含目标数值的完整原文片段。",
   };
-  if (expected.length > 1 || context.ambiguous) return {
-    code: "numeric_unit_ambiguous",
-    message: "引文在原最终消息中对应多个不同或未明单位，不能自行选择；扩大引文以唯一定位目标数值及单位，或缩小过宽引文。标准本身存在多个同数值不同口径时，在correctness_reason逐项说明，不提交无法定位单位的表项。",
-  };
-  if (expected.length === 1 && actual.length === 1) {
-    if (expected[0].unit.dimension !== actual[0].unit.dimension) return {
-      code: "numeric_unit_mismatch",
-      message: `标准的${expected[0].name}与回答的${actual[0].name}维度不同，不能用scale视为等价；质量与体积、百分比与百分点必须分别核对。需要密度等额外依据的推导在correctness_reason说明，不能伪装成单位等价。`,
-    };
+  // Only an unambiguous same-dimension conversion has a mechanically checkable scale.
+  // Unsupported, compound or context-dependent units remain the agent's semantic task.
+  if (expected.length === 1 && actual.length === 1 && !context.ambiguous && expected[0].unit.dimension === actual[0].unit.dimension) {
     const scale = `1e${actual[0].unit.power - expected[0].unit.power}`;
     if (!matchesReference(check.scale, scale, "1", "exact")) return {
       code: "numeric_scale_mismatch",
-      message: `由原文单位${actual[0].name}到${expected[0].name}的scale应为${scale}，不能改变倍率让数值凑到标准；同步重算matches与判词。`,
+      message: `由原文单位${actual[0].name}到${expected[0].name}的scale应为${scale}；修正倍率及算术记录，整体正确性仍按原题和证据判断。`,
     };
-  } else if (!matchesReference(check.scale, "1", "1", "exact")) return {
-    code: "numeric_scale_unverified",
-    message: "非1的scale必须由标准与最终原文中数值紧邻的同维单位、目标单元格同列的明确单位表头，或该表紧邻前一段落的单一单位声明推导；当前单位缺失、不受支持或存在歧义。请补充可定位的完整原文；币种省略、复合单位等语义推导须在correctness_reason说明，不能编造倍率。",
-  };
+  }
   return null;
 }

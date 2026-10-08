@@ -1,17 +1,12 @@
-查询共享只读评测数据目录。list_data({}) 按记录时间列运行，返回 currentRun 及完整数量统计，不附逐场叙述或结果坐标清单；list_data({runId}) 分页列出该运行的回答输入和任务引用，并返回该运行的完整 summary。
+定位已登记的本地评测运行、输入与正式任务。未知运行从 list_data({}) 开始，不填 "."、路径或猜测的 ID。
 
-问当前数据量或进度时，只需 list_data({}) 的 currentRun.summary，只取回答当前问题所需的数量；单一状态用短句，可比较的完成组成或模型进度直接用 show_chart。默认优先最近有输入且正在运行的记录，否则取最近有输入的记录，selectionReason 明示选择规则。对用户明确为“最近一轮”，不附内部编号、模型覆盖、批次、任务总数或去重解释，不遍历历史。finished 表示运行结束，不证明全部评测完成。summaryScope=run 覆盖整个运行，query、offset、limit 仅影响 items，筛选不改变 currentRun。
+- list_data({})：返回运行分页、currentRun 及其完整 summary，省略逐场叙述和来源清单。currentRun 优先最近有输入且正在运行的记录，否则最近有输入的记录，selectionReason 说明选择。
+- list_data({runId})：返回该运行的输入分页、任务 reference、comparisonGroups、完整 summary，以及正式战绩的 records / references。问原因时据此选案例，再读原问和回答。
 
-query 是字面文本筛选词，不是数据类别。查看完整输入目录时省略 query，不传 "inputs"、"tasks" 或空字符串。带 query 的空列表只表示没有匹配项；先去掉筛选词查同一运行，核对分页，再判断数据缺口，不以同一筛选词换查多个运行证明没有数据。
+query 是字面文本筛选词，不是数据类别。查看完整目录省略 query，不传 inputs、tasks 或空字符串；带筛选的空结果先去掉筛选词查同一运行。分页默认30条、最多100条，按 hasMore / nextOffset 续页。items / total 只描述当前筛选目录；summaryScope=run 的统计覆盖整轮，不受筛选分页影响，不能用目录项重算统计或把多轮相加。
 
-用户未提供内部引用时主动定位，不要求提供 runId 或 taskId。运行列表的 total 是运行数，不能回答“评测了多少条数据”；采用 currentRun.summary 的回答数与题数。目录只覆盖已登记运行；无筛选的运行目录也为空时，只说明当前没有可查询的评测记录。
+summary 中 inputCount=登记回答数，evaluatedInputCount=已归因回答数，caseCount=按批次与题目去重的题数；同题不同模型各占一条回答、跨档仍是一道题。finished 只表示运行结束。formalComparisonsAccepted 是正式结果份数，comparisonsPendingReview 是待复核份数，都不是对局场数。
 
-返回 kind、分页单位、hasMore、nextOffset；默认 30 条、最多 100 条。输入项的 reference 用于读取原始消息，任务项的 reference 用于读取正式结果，可直接传给 read_data。
+formalComparisonStats 直接给完整正式战绩：formalResultCount 是结果份数，comparisonCount 是两模型对局场数，三模型一份结果含三场。tiers 按声明档位给 models 的展示名和 wins / losses / both_good / both_bad；四类互斥结果须覆盖全部场数，tradeoff 不能覆盖 verdicts。草稿、被取代和待复核结果不计战绩。概览无需读完所有判词；作图用 {statistics:{runId,comparisonTier}} 引用完整统计，不逐条抄任务坐标。
 
-kind=inputs 还返回运行配置的 comparisonGroups；组内 models 给模型标识与展示名，comparisonTier 给声明的档位。每条输入的 model 用于定位，modelName 用于用户正文，comparisonTier 为 null 表示档位未声明。Fast 只能与 Fast 比，Expert 只能与 Expert 比，按声明和分组确认范围，不从名称猜测。配置组不代表已完成对局；分析具体案例时继续读取原问和必要回答片段，不把 caseId 或目录主题作为题目正文。
-
-formalComparisonStats 是当前运行全部已接受且未被取代的正式战绩，基于保存配置与正式 verdicts 的完整统计，直接使用，不从长正文重数。formalResultCount 是结果份数，comparisonCount 是两模型对局场数，三模型一份结果含三场。tiers 分档给对局数、模型展示名、wins/losses/both_good/both_bad 和 references；仅在指定 runId 后返回 records 与完整 references；records 给各结果的原问、scope.comparisonTier、各模型正式类别与短理由、正式点评和 tradeoff。tradeoff 的相对评价不能覆盖 verdicts 的胜负或双方均好/均差。问四模型效果直接使用战绩，主动调用 show_chart，Fast、Expert 分图；图必须揭示胜负之外的有效差异，双方均好与双方均差不能合并；仅有战绩组成时用单行 heatmap，胜负与双方均好/均差是四个互斥类别，少量数量也可用 dot，已有问题矩阵或同口径指标时按 show_chart 说明选择热力图、环形热力图或差异点图，references 用 {statistics:{runId,comparisonTier}} 引用本档完整正式统计，不逐条复制结果引用。概览无需读完所有完整判词；图中战绩只呈现一次，正文说明其对差距与可用性的含义，问原因再补读决定性案例的原问与回答；有双方均好或均差不能概括成全胜或全负。
-
-kind=inputs 中任务的 purpose 区分 comparison_formal、comparison_draft 和 comparison_verification；核验可能生成最终正式结果，但任务完成数不是对局数。summary.formalComparisonsAccepted 与 formalComparisonReferences 是正式结果份数与可读引用；comparisonsPendingReview 是待复核结果份数，不能称作对局场数。草稿、被取代和待复核结果不计战绩。缺少正式结果不补零或从配置覆盖推断已完成。
-
-summary 的 inputCount 是登记回答数，evaluatedInputCount 是完成归因的回答数，caseCount 是按 batchId + caseId 去重后的题数；同题不同模型各占一条回答，同题 Fast、Expert 仍是一道题，跨批次同编号分别计题。kind=inputs 的 total 仅为筛选后的回答数，输入下的 tasks 会重复列出共享任务，不用分页项重算完整统计。数量采用 summary，战绩采用 formalComparisonStats，具体点评才补读原材料。批次名中的数字不是样本量；状态未说明原因时不自行解释。
+输入 reference 用于原始材料，tasks 中 reference 用于正式结果，可直接传给 read_data。model 是定位标识，modelName 是展示名；comparisonTier=null 表示未声明，comparisonGroups 只是配置，不证明已完成对局。Fast、Expert 分别分析，不从名称猜档位。任务 purpose 区分正式、草稿与核验；任务数不是对局数。目录主题不是原始问句，具体点评须补读正文。

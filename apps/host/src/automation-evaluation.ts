@@ -13,7 +13,7 @@ function automationSelection(
   tasks: Pick<PlannedTask, "id" | "stage" | "dependencies" | "data">[], accepted: ReadonlySet<string>, limit: number,
 ): Set<string> {
   const selected = new Set(accepted), counts = new Map<string, number>();
-  const comparisons = tasks.filter((task) => task.stage === "comparison");
+  const comparisons = tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit);
   const group = (task: typeof tasks[number]) => (task.data as TaskData).group!.slice().sort().join("+");
   for (const task of comparisons.filter((task) => accepted.has(task.id)))
     counts.set(group(task), (counts.get(group(task)) ?? 0) + 1);
@@ -214,7 +214,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   const saved = await checkpoint(output, job.runIds[0]);
   if (!saved) return;
   const limited = limitedCheckpoint(saved, config.dailyComparisonLimitPerTier);
-  if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !limited.tasks[id]) &&
+  if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !task.data.verificationAudit && !limited.tasks[id]) &&
       !automationPauses(limited).some((pause) => !temporary(pause.category))) return "interrupted";
   job.summary = summarize([saved]);
   const exhausted = exhaustedContentReason([saved], policy), unknown = unavailableLedgerReason([saved]);

@@ -362,10 +362,11 @@ test("each answer retains its own full system and developer constraints beyond t
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("oversized final-answer blocks are deferred without duplicating their payload in evidence", async () => {
+for (const entireAnswer of [false, true]) test(`oversized final-answer blocks preserve original text and direct reads (entire answer: ${entireAnswer})`, async () => {
   const chart = JSON.stringify({ data: [{ y: { dtype: "f8", bdata: "A".repeat(1400000) } }], layout: { title: "业绩比较" } });
   const row = raw();
-  row.messages[1].content = [
+  const chartPath = entireAnswer ? "/content" : "/content/1/text";
+  row.messages[1].content = entireAnswer ? chart : [
     { type: "output_text", text: "比较结论：甲优于乙。" },
     { type: "output_text", text: chart },
     { type: "output_text", text: "图表之后的风险说明。" },
@@ -376,16 +377,23 @@ test("oversized final-answer blocks are deferred without duplicating their paylo
     for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage) && !(task.data as TaskData).verificationOf)) {
       const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
       const input = bound.request.input as any;
-      services.agents.prepare(bound);
+      const shown = parsedMaterial(services.agents.prepare(bound)) as any;
       for (const [label, material] of Object.entries(input.answer ? { answer: input.answer } : input.candidates) as [string, any][]) {
-        assert(material.final_answer.includes("比较结论"));
-        assert(material.final_answer.includes("图表之后的风险说明"));
+        if (entireAnswer) assert.equal(material.final_answer, "");
+        else {
+          assert(material.final_answer.includes("比较结论"));
+          assert(material.final_answer.includes("图表之后的风险说明"));
+        }
+        assert(!material.final_answer.includes("deferred_final_material"), "harness metadata must not appear as the candidate's answer");
         assert(JSON.stringify(material).length < 50000, "large encoded chart data must not overwhelm the model context");
         assert.deepEqual(material.deferred_final_material, [{
-          message_index: 1, path: "/content/1/text", total_chars: chart.length,
+          message_index: 1, path: chartPath, total_chars: chart.length,
         }]);
+        const displayed = shown.answer ?? shown.candidates[label];
+        assert.deepEqual(displayed.deferred_final_material[0].read_request,
+          { candidate: label, message_index: 1, path: chartPath, offset: 0, max_chars: 16000 });
         const source = bound.request.sources[label].value as RawInput;
-        assert.equal((source.messages[1].content as any[])[1].text, chart);
+        assert.equal(entireAnswer ? source.messages[1].content : (source.messages[1].content as any[])[1].text, chart);
         for (const evidence of material.final_evidence)
           assert.equal(resolveEvidence(source, evidence, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, evidence.quote);
       }
@@ -419,7 +427,6 @@ test("model materials expose copyable references while business materials and or
       const expectedFocus = structuredClone(task_focus) as any;
       if(task.stage === "attribution") {
         expected.numeric_references=[];
-        expected.numeric_interpretations=[];
         expected.finding_basis=attributionFindingBasis(expected).map(({norm_index:_n,requirement_index:_r,...item})=>item);
         delete expected.answer.norm_directory;
         expected.task_analysis.requirements.forEach((item:any)=>item.requirement_index++);
@@ -760,8 +767,10 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
     {
       identity: fakeIdentity,
       async createSession(options) {
+        let stopped = false;
         return {
           async run() {
+            if (stopped) return; // Ignore the bounded nudge so this test reaches a new attempt.
             await inspectFor(options);
             calls++;
             if (options.spec.evaluation.id === "attribution") firstTask ??= options.spec.taskId;
@@ -772,6 +781,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
               assert.equal(rejected.isError, true, "the invalid draft reaches content validation before recovery");
               const state = await readRunState(path.join(config.output.path, "test"));
               assert(state.manifest.states[options.spec.taskId].failure?.draft);
+              stopped = true;
             } else {
               if (attempt > 1 && options.spec.taskId === firstTask) {
                 assert(options.spec.recovery?.draft);

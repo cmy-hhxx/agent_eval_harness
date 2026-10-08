@@ -69,6 +69,7 @@
     },
     "numeric_checks": {
       "type": "array",
+      "description": "记录有原文证据的直接点值及换算，程序仅计算算术比较；整体正确性在 correctness_reason 结合原题、计算与证据判断。",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -98,6 +99,7 @@
             "maxLength": 80
           },
           "mode": {
+            "description": "算术观察方式：rounded 按标准末位精度舍入，exact 精确比较；不代替语义正确性判断。",
             "enum": [
               "rounded",
               "exact"

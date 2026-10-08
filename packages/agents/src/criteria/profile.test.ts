@@ -39,22 +39,35 @@ test("source bindings reject unknown selections and private scope cannot replace
   rejects(() => accepted(req, value), "criterion_source_unknown");
 });
 
-test("a condensed requirement cannot drop the source time window or dates", () => {
+test("a condensed requirement keeps the complete source as its authoritative acceptance rule", () => {
   const req = request("结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。");
   const value = draft(); value.requirements = [{ source_indices: [1], text: "给出3条信息。" }];
-  assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
-    error.issues!.some(issue => issue.code === "criterion_constraint_dropped" && String(issue.actual).includes("过去12小时")));
-  value.requirements = [{ source_indices: [1], text: "结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。" }];
-  accepted(req, value);
+  const result = accepted(req, value);
+  assert(result.requirements[0].acceptance_rule.includes(String(req.input.question)));
+  // The binding preserves the constraint; acceptance does not certify semantic coverage.
 });
 
-test("equivalent comparison writings satisfy a dropped-bound check", () => {
+test("equivalent comparison writings retain their original constraint source", () => {
   const req = request("筛选：5日均线>10日均线，90%集中度<20%。");
   const value = draft(); value.requirements = [{ source_indices: [1], text: "5日均线大于10日均线；90%集中度小于20%。" }];
   accepted(req, value);
-  value.requirements = [{ source_indices: [1], text: "均线多头排列；集中度较低。" }];
-  assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
-    error.issues!.some(issue => issue.code === "criterion_constraint_dropped"));
+});
+
+test("a comparison against a dated price does not turn the year into a numeric bound", () => {
+  const req = request("截止2026年6月5日，有多少股票低于年初的收盘价？", "低于2025年12-31（年初）的收盘价有3387家");
+  const value = draft();
+  value.requirements = [{ source_indices: [1, 2], text: "截止2026年6月5日，收盘价低于年初（2025年12月31日）的股票有3387家。" }];
+  accepted(req, value);
+});
+
+test("event names and equivalent numerical wording preserve their full source without regex verdicts", () => {
+  const question = "截止2026年6月5日，有多少股票低于924行情启动时的价格，且价格低于10元？";
+  const req = request(question, "低于2024年9-23（924行情启动时）的收盘价有559家");
+  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1, 2],
+    text: "截至2026年6月5日，核查低于‘924行情启动时’（2024年9月23日）价格且不足十元的股票数量，按559家核对。" }], scoring_points: [], red_flags: [] };
+  const value = accepted(req, submitted);
+  assert(value.requirements[0].acceptance_rule.includes(question));
+  assert.equal(value.requirements[0].text, submitted.requirements[0].text);
 });
 
 test("missing-source feedback names the private source that broke common coverage", () => {
@@ -84,16 +97,14 @@ test("reference coverage is required without making the answer visible to candid
   rejects(() => criteriaProfile.validate!(req,result,audit), "criterion_source_mismatch");
 });
 
-test("a question-only rubric cannot invent a calculated settlement date or borrow an unselected value", () => {
+test("a question-only rubric binds the original question without borrowing unselected context", () => {
   const req = request("2025年12月22日成交的日元对人民币1周掉期的交割日是哪一天");
   (req.input as unknown as CriteriaInput).candidates[0].context = [{ message_index: 1, role: "user", content: "只写31字以内。" }];
   const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1],
-    text: "回答交割日，正确日期应为2025年12月31日。" }], scoring_points: [], red_flags: [] };
-  rejects(() => accepted(req, submitted), "criterion_value_not_in_source");
-  submitted.requirements[0].text = "给出2025年12月22日成交的1周掉期交割日。";
+    text: "给出2025年12月22日成交的1周掉期交割日。" }], scoring_points: [], red_flags: [] };
   const value = accepted(req, submitted);
-  value.requirements[0].text += "正确答案是12月31日。";
-  rejects(() => criteriaProfile.validate!(req, value, audit), "criterion_value_not_in_source");
+  assert(value.requirements[0].acceptance_rule.includes(String(req.input.question)));
+  assert(!value.requirements[0].acceptance_rule.includes("只写31字以内"));
 });
 
 test("rubric numeric values may quote the selected reference with equivalent punctuation and zero padding", () => {

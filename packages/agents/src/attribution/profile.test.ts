@@ -21,6 +21,26 @@ const judgmentFixture = (result: AttributionResult = structuredClone(example.res
     return attributionJudgment(request, result);
   };
 
+test("an established standard mismatch must identify retrieval or reasoning responsibility", () => {
+  const request = structuredClone(example.request);
+  request.input.ground_truth.value = "5";
+  const result = structuredClone(example.result) as AttributionResult;
+  result.is_correct = false;
+  result.correctness_reason = "回答4与标准5不符，取数结果校验存在偏差。";
+  result.core_assessment.meets_core = false;
+  result.criterion_assessments[0].status = "unmet";
+  const finding = result.findings[0];
+  finding.type = "problem";
+  finding.problem = { component: [], label: "取数结果偏差", definition: result.correctness_reason };
+  const rejects = (action: () => unknown) => assert.throws(action, error => error instanceof ValidationError &&
+    error.issues!.some(issue => issue.code === "standard_mismatch_responsibility_required"));
+  rejects(() => attributionProfile.validate!(request, result, audit));
+  rejects(() => resolveJudgment(request, judgmentFixture(result, request), audit));
+  finding.problem.component = ["模型自身推理"];
+  attributionProfile.validate!(request, result, audit);
+  resolveJudgment(request, judgmentFixture(result, request), audit);
+});
+
 
 
 test("public attribution preserves a final-and-tool correctness bundle while numeric actuals stay on the final slot", () => {
@@ -493,6 +513,8 @@ test("all deferred final text must be read with exact candidate, path and charac
     assert(error instanceof ValidationError);
     const issue = error.issues?.find((item) => item.code === "deferred_final_material_not_read");
     assert.deepEqual(issue?.actual, [{ start: 2, end: 3 }]);
+    assert.deepEqual((issue?.expected as { read_request?: unknown })?.read_request,
+      { candidate: "answer", message_index: 1, path: "/content", offset: 2, max_chars: 16000 });
     assert.match(issue?.message ?? "", /展示缺失不能推定没有交付/);
     return true;
   });

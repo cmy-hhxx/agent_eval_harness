@@ -7,7 +7,7 @@ import { writeJsonl } from "@eval/data";
 import { runEvaluation, progressSnapshot } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import {
-  buildPlan, readRunState, reportRun, prepareComparisonRewrites, prepareFailedTasks, deliveryCoverage,
+  buildPlan, readRunState, reportRun, prepareComparisonRewrites, prepareFailedTasks, deliveryCoverage, comparisonSlots,
   comparisonRewriteReview, pilotTaskIds, type TaskData,
   validateRun as validateDelivery,
 } from "@eval/workflows/comparison";
@@ -67,13 +67,12 @@ test("slot repairs preview without mutation, preserve every other field and excl
     }
     const pendingCoverage = deliveryCoverage(after, { rewriteScopes: ["items"] });
     assert.equal(pendingCoverage.valid, false);
-    assert.equal(pendingCoverage.required_slots, 4);
     assert.equal(pendingCoverage.filled_slots, 1);
     const firstRewriteId = applied.selected[0]!.rewrite_task_id!;
     const firstRewriteReceipt = structuredClone(after.receipts[firstRewriteId]);
     const missing = await prepareComparisonRewrites(run, { scope: "items", mode: "missing", apply: true });
     assert.notEqual(missing.selected.find(item => item.source_task_id === source.id)!.rewrite_task_id, firstRewriteId);
-    assert.equal(missing.slots, 3, "filled slot stays out of the second request");
+    assert.equal(missing.slots, pendingCoverage.required_slots - 1, "filled slot stays out of the second request");
     await runEvaluation(resume);
     after = await readRunState(run);
     assert.deepEqual(after.receipts[firstRewriteId].evaluation, firstRewriteReceipt.evaluation);
@@ -101,7 +100,9 @@ test("slot repairs preview without mutation, preserve every other field and excl
     assert.deepEqual(afterRefresh, beforeRefresh, "only one text slot changes");
     const review = comparisonRewriteReview(after, [resultId], 1);
     assert.equal(review.semantic_review, "required");
-    assert.equal(review.cases[0]!.slots.length, 3, "review includes preference and every cell with source/context");
+    const reviewResult = after.receipts[source.id]!.evaluation as Parameters<typeof comparisonSlots>[0];
+    assert.equal(review.cases[0]!.slots.length, comparisonSlots(reviewResult, "all").length,
+      "review includes preference and every current cell with source/context");
     assert.deepEqual(after.manifest.executionScope, [refresh.selected[0]!.rewrite_task_id]);
     for (const [id, receipt] of historicalReceipts) {
       assert.deepEqual(after.receipts[id].evaluation, receipt.evaluation);

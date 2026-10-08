@@ -149,9 +149,10 @@ test("web search receipts distinguish partial and complete request failures, and
   assert.equal(audit.groups[1].label, "超出日期范围（1）");
   assert(audit.groups[1].items[0].fields.some((field: { value: string }) => field.value === "超出日期范围"));
   assert(result.details.caption.includes("用量完整：false"));
-  const failed = analysisToolModel("search_web", { state: "ok", output: JSON.stringify({ ...receipt,
+  const failed = analysisToolModel("search_web", { state: "error", output: JSON.stringify({ ...receipt,
     attempts: receipt.attempts.map(attempt => ({ ...attempt, state: "failed" })), results: [] }) });
   assert.equal(failed.summary, "搜索外部资料 · 2 种查询 · 新闻 · 0 条结果 · 未完成（0/2）");
+  assert.equal(failed.details.items.at(-1).groups[0].items.length, 2, "failed calls retain query receipts and errors");
 });
 
 const readResult = (lines: unknown[] = []) => ({

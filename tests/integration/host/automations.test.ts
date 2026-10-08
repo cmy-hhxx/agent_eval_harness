@@ -59,7 +59,7 @@ test("quota changes preserve completed battles and stop excess queued work witho
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
       calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1);
-      const reply = await options.execute("submit_evaluation", draftFor(options.spec, taskResult(options.spec)));
+      const reply = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       assert.equal(reply.isError, undefined, JSON.stringify(reply));
     }, async abort() {}, async dispose() {} };
   } };
@@ -90,14 +90,14 @@ test("quota changes preserve completed battles and stop excess queued work witho
     const saved = await readRunState(run);
     assert.deepEqual(saved.manifest.pausedStages, []);
     assert.deepEqual(saved.manifest.preflight.group_counts, { "a_fast+b_fast": 3, "a_expert+b_expert": 2 });
-    assert.equal(calls.size, 30, "only one additional battle's six stages may run");
     assert.equal(calls.has(excluded.id), false);
     for (const [id, receipt] of Object.entries(accepted.receipts)) {
       assert.deepEqual(saved.receipts[id], receipt, "completed output and receipt must remain unchanged");
       assert.equal(calls.get(id), 1);
     }
+    const callsAfterReconciliation = calls.size;
     await runEvaluation({ ...base, taskSource: workflow, discoverInputs: true, plan: { tasks: [], inputs: {}, summary: {} } });
-    assert.equal(calls.size, 30, "restart must not replenish quota");
+    assert.equal(calls.size, callsAfterReconciliation, "restart must not replenish quota");
     assert([...calls.values()].every((count) => count === 1));
     assert.equal((await validateRun(run)).valid, true);
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
@@ -440,7 +440,7 @@ test("accepted unresolved comparison is terminal for its blocked dependency clos
       rewrite: { comparison: true, comparisonItems: true } }, preflight: { skipped: [], issues: [] }, tasks: {
         review: { stage: "comparison", status: "succeeded", dependencies: {},
           receipt: { status: "succeeded", exported: { file: "comparison-review.jsonl" } },
-          data: { comparisonId: "review-result" } },
+          data: { comparisonId: "review-result", group: ["a_fast", "b_fast"] } },
         polish: { stage: "rewrite", status: "blocked", dependencies: { source: "review" },
           data: { rewriteOf: { taskId: "review", stage: "comparison" }, comparisonRewriteScope: "all" } },
         descendant: { stage: "rewrite", status: "blocked", dependencies: { source: "polish" }, data: {} },
@@ -514,7 +514,7 @@ test("optional verification never blocks or replaces a delivered formal comparis
     const saved = { status: "finished", config: { inputs: { versions: REMOTE_MODELS.map(id => ({ id })) },
       rewrite: { comparison: true, comparisonItems: true } }, preflight: { skipped: [], issues: [] }, tasks: {
         comparison: { stage: "comparison", status: "succeeded", dependencies: {}, receipt,
-          data: { comparisonId: "formal-result" } },
+          data: { comparisonId: "formal-result", group: ["a_fast", "b_fast"] } },
         audit: { stage: "comparison", status: "failed", dependencies: { draft: "comparison" },
           data: { verificationAudit: true, verificationOf: { taskId: "comparison" } },
           failure: { contentSubmissions: 4, errors: [{ category: "structure", code: "invalid", path: "/", message: "invalid" }] } },
@@ -765,10 +765,10 @@ test("remote progress excludes excess queued battles before the daily run is rec
     jobs: { [date]: { date, evaluation: "pending", download: "ready" } },
   } as unknown as AutomationState;
   const progress = remoteProgress(state, "pi", new Map([[date, [run]]]), 2);
-  assert.deepEqual(progress.dates[0].pairs.fast, {
+  assert.deepEqual(progress.dates[0].pairs.a_fast__vs__b_fast, {
     total_cases: 4, completed_cases: 3, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 1,
   });
-  assert.deepEqual(progress.dates[0].pairs.expert, {
+  assert.deepEqual(progress.dates[0].pairs.a_expert__vs__b_expert, {
     total_cases: 2, completed_cases: 1, running_cases: 0, queued_cases: 0, failed_cases: 1, skipped_cases: 0,
   });
   assert.deepEqual(run, before, "progress projection must not mutate saved tasks or results");

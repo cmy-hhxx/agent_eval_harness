@@ -59,6 +59,31 @@ test("only shared metrics can support a resource advantage",()=>{
  draft.comparisons[index]={importance:'medium',better_candidate:'A',a_summary:'完成用时2秒。',b_summary:'没有耗时数据。'};
  assert.throws(()=>f.registry.resolve(f.binding,draft,audit),/双方同种有效指标/);
 });
+test("recorded resource metrics require a row even when both candidates use the same amount",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ for(const candidate of Object.values(input.candidates)) {
+  candidate.original_answer_timing.finish_seconds=0; candidate.original_answer_usage.total_tokens=0;
+ }
+ const slots=comparisonSlots(f.request),index=slots.findIndex(slot=>slot.kind==='resource');
+ const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+ draft.comparisons[index]=null;
+ assert.throws(()=>f.registry.resolve(f.binding,draft,audit),error=>error instanceof ValidationError&&
+  error.issues!.some(issue=>issue.code==='comparison_slot_required'));
+ draft.comparisons[index]={importance:'low',better_candidate:null,a_summary:'完成耗时0秒，总用量0 tokens。',b_summary:'完成耗时0秒，总用量0 tokens。'};
+ const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ assert(result.decision_basis.comparisons.some(row=>row.aspect==='原始完成时长与用量'));
+});
+test("a cache anomaly does not hide valid total tokens or make their reporting methods incomparable",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ for(const candidate of Object.values(input.candidates)) candidate.original_answer_timing.finish_seconds=null;
+ Object.assign(input.candidates.A.original_answer_usage,{total_tokens:120,total_tokens_basis:'reported',issues:['缓存输入 token 超过输入 token，不能比较缓存量']});
+ Object.assign(input.candidates.B.original_answer_usage,{total_tokens:140,total_tokens_basis:'input_plus_output'});
+ const slot=comparisonSlotChoices(f.request).find(slot=>slot.kind==='resource')!;
+ assert.deepEqual(slot.advantage_candidates,['A','B']);
+ assert.deepEqual(slot.resource_metrics,{A:{finish_seconds:null,total_tokens:120},B:{finish_seconds:null,total_tokens:140}});
+ assert.deepEqual(slot.comparable_metrics,['total_tokens']);
+});
 test("submission rows are flat and bounded without repeating full schemas for each slot",()=>{
  const f=setup(),schema=comparisonProfile.modelSubmissionSchema!(f.request) as any;
  assert(!schema.properties.comparisons.prefixItems);

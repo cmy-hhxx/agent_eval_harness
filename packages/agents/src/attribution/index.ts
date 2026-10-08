@@ -5,7 +5,7 @@ import submissionSchema from "../../../../schemas/attribution/submission.schema.
 import resultSchema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
 import { resolveModelSubmission, validateModelSubmission } from "./submission.js";
-import { numericReferenceMaterials } from "./units.js";
+import { numericReferenceDirectory } from "./units.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
@@ -46,10 +46,10 @@ export const attributionProfile: AgentProfile = {
       ...(focus ? { task_focus: { ...focus, common_requirements: Array.isArray(focus.common_requirements)
         ? focus.common_requirements.map((item: any) => ({...item,requirement_index:item.requirement_index+1})) : focus.common_requirements } } : {}),
     };
-    const numeric=numericReferenceMaterials(input);
+    const truth = input.ground_truth as { available: boolean; value: unknown };
+    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
     return prompt.renderPrompt({ ...shown,
-      numeric_references: numeric.direct.map(item => ({...item,reference_index:item.reference_index+1})),
-      numeric_interpretations: numeric.interpreted.map(({expected,context})=>({expected,context})),
+      numeric_references: numeric.map(item => ({...item,reference_index:item.reference_index+1})),
     }, policy, failure);
   },
   toolNames,

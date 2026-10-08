@@ -32,6 +32,7 @@ import { createRunRepository, exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
 import { services } from "../../../tests/fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
+import { traceReadCoverage } from "@eval/tools";
 import { buildPlan, type AttributionResult } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
@@ -82,20 +83,20 @@ test("JSON text submission preserves nested rows, empty arrays and markup withou
   }finally{await fixture.close();}
 });
 
-test("invalid JSON text spends a content attempt without pretending it was a file error or repairing it",async()=>{
+test("invalid JSON text uses the loading budget and preserves content repair attempts",async()=>{
   const fixture=await harness(async options=>({async run(){
     const rejected=await options.execute("submit_evaluation",{json:'{"ok":'});
     assert.equal(rejected.isError,true);
     const feedback=JSON.parse(rejected.content[0].text!);
     assert(feedback.errors.some((issue:ValidationIssue)=>issue.code==="submission_json_invalid"));
-    assert.equal(feedback.budget.content_remaining,1);
+    assert.equal(feedback.budget.content_remaining,2);
     assert.equal((await options.execute("submit_evaluation",{json:'{"ok":true}'})).terminate,true);
   },async abort(){},async dispose(){}}),{material:"fixture",policy:{repairAttempts:1},profile:{jsonStringSubmission:true,requiredReads:()=>[]}});
   try{
     await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
     const receipt=await fixture.store.receipt(fixture.spec.taskId);
-    assert.equal(receipt!.submissionStats!.contentSubmissions,2);
-    assert.equal(receipt!.submissionStats!.fileErrors,0);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,1);
+    assert.equal(receipt!.submissionStats!.fileErrors,1);
     assert.equal(receipt!.submissionStats!.jsonRepairs,undefined);
     assert.equal(fixture.counts().posts,1);
   }finally{await fixture.close();}
@@ -130,7 +131,7 @@ test("structural JSON errors still fail instead of inventing a repair",async()=>
   try{
     await fixture.start();assert.equal((await fixture.done()).state,"succeeded");
     const receipt=await fixture.store.receipt(fixture.spec.taskId);
-    assert.equal(receipt!.submissionStats!.contentSubmissions,2);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,1);
   }finally{await fixture.close();}
 });
 
@@ -1102,7 +1103,7 @@ test("file loading feedback cannot renew exhausted protected writers or bypass t
     await fixture.start();
     const status = await fixture.done();
     assert.equal(status.state, "failed");
-    assert.match(status.error!, /File loading budget exhausted/);
+    assert.match(status.error!, /Submission loading budget exhausted/);
     assert.equal(status.failure?.contentSubmissions, 0);
     assert.equal(status.failure?.fileErrors, 3);
     assert.equal(fixture.counts().posts, 0);
@@ -1380,9 +1381,12 @@ test("changed drafts with the same errors retain repair opportunities without re
   } finally { await fixture.close(); }
 });
 test("resuming an unfinished invalid draft preserves its repair file and cumulative content count", async () => {
+  const submitted = new Set<string>();
   const fixture = await harness(async (options) => ({
     async run() {
       if (!options.spec.recovery) {
+        if (submitted.has(options.spec.attemptId)) return; // Ignore the same-session nudge to exercise explicit resume.
+        submitted.add(options.spec.attemptId);
         const draft = invalidDraft(options.spec);
         await submitFor(options, draft);
         await submitFor(options, draft);
@@ -1458,6 +1462,109 @@ test("a session that ignores the nudge fails after one bounded follow-up and can
   } finally {
     await fixture.close();
   }
+});
+
+test("a session stopping after rejected submission repairs within the same attempt", async () => {
+  let runs = 0;
+  const fixture = await harness(async options => ({
+    async run() {
+      runs++;
+      const result = await options.execute("submit_evaluation", { json: JSON.stringify({ ready: runs > 1 }) });
+      assert.equal(runs === 1 ? result.isError : result.terminate, true);
+    }, async abort() {}, async dispose() {},
+  }), { material: "fixture", policy: { repairAttempts: 1 }, profile: {
+    jsonStringSubmission: true, requiredReads: () => [],
+    submissionSchema: { type: "object", properties: { ready: { const: true } }, required: ["ready"] },
+  } });
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(runs, 2);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 2);
+  } finally { await fixture.close(); }
+});
+
+test("submission delivers missing material before charging a content attempt", async () => {
+  const material = "图表数据".repeat(12344);
+  const target: TraceRead = { candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length };
+  let delivered = "", pages = 0;
+  const fixture = await harness(async options => ({
+    async run() {
+      await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+      while (pages < 20) {
+        const result = await submitFor(options, { ok: true });
+        if (result.terminate) return;
+        assert.notEqual(result.isError, true, "material delivery is not a rejected verdict");
+        const feedback = JSON.parse(result.content[0].text!);
+        assert.equal(feedback.material_pending, true);
+        assert.equal(feedback.budget.content_remaining, 1);
+        const page = JSON.parse(result.content[1].text!);
+        assert.equal(page.offset, delivered.length);
+        delivered += page.evidence[0].quote;
+        pages++;
+      }
+      assert.fail("required material must make bounded progress");
+    }, async abort() {}, async dispose() {},
+  }), { material, policy: { maxToolCalls: 1, repairAttempts: 0 }, profile: {
+    validate(_request, _value, audit) {
+      assert(traceReadCoverage(audit, target).covered, "Host only receives a verdict after its evidence was delivered");
+    },
+  } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(delivered, material);
+    assert(pages > 1);
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(receipt.submissionStats!.contentSubmissions, 1);
+    assert.equal(receipt.audit.requiredReadCalls, pages);
+    assert.equal(fixture.counts().posts, 1);
+  } finally { await fixture.close(); }
+});
+
+test("a session resumes after automatic material delivery without rereading or charging repairs", async () => {
+  const material = "图表数据".repeat(12344), target: TraceRead = {
+    candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length,
+  };
+  let runs = 0, offset = 0, pages = 0;
+  const fixture = await harness(async options => ({
+    async run(prompt) {
+      runs++;
+      if (runs === 2) {
+        assert.equal(prompt, fixture.spec.evaluation.submissionNudge);
+      }
+      do {
+        const read = await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content", offset });
+        assert.notEqual(read.isError, true);
+        const page = JSON.parse(read.content[0].text!);
+        assert.equal(page.offset, offset);
+        offset = page.next_offset; pages++;
+      } while (runs > 1 && offset < material.length);
+      const result = await submitFor(options, { ok: true });
+      if (runs === 1) {
+        assert.equal(JSON.parse(result.content[0].text!).material_pending, true);
+        offset = JSON.parse(result.content[1].text!).next_offset;
+        pages++;
+      } else assert.equal(result.terminate, true);
+    }, async abort() {}, async dispose() {},
+  }), { material, policy: { maxToolCalls: 1, repairAttempts: 1 }, profile: {
+    validate(_request, _value, audit) {
+      const coverage = traceReadCoverage(audit, target);
+      if (!coverage.covered) throw new ValidationError([{ category: "evidence", code: "deferred_final_material_not_read",
+        path: "/answer/deferred_final_material/0", message: "补读缺失范围。", actual: coverage.missing }]);
+    },
+  } });
+  try {
+    await fixture.start();
+    assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(runs, 2);
+    assert.equal(receipt.audit.requiredReadCalls, pages);
+    assert.equal(receipt.audit.calls, pages);
+    assert.equal(traceReadCoverage(receipt.audit, target).covered, true);
+    assert.equal(receipt.submissionStats!.contentSubmissions, 1);
+  } finally { await fixture.close(); }
 });
 for (const reason of ["no-submission", "idle"] as const)
   for (const stopped of [false, true])
@@ -1645,12 +1752,15 @@ for (const [message, retryable] of [
   ['evaluation-gateway API error (529): {"message":"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)","code":"server_error"}', true],
   ["HTTP 503 Service Unavailable", true],
   ["HTTP/2 500 Internal Server Error", true],
+  ["The server had an error processing your request. Sorry about that! You can retry your request, or contact us through an Azure support request.", true],
+  ["server_error: The server encountered an internal error.", true],
   ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_01a0fc93466c7cd2907ddcf5|070ed59d2f624fb64934837f33bc1803_fc_0); expected complete JSON object", false],
   ["Invalid OpenAI Responses tool arguments: fc_123; expected JSON object", false],
   ["Evaluation validation failed: Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object", false],
   ["Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object; wrong business criteria", false],
   ["Evaluation validation failed: expected 529 characters", false],
   ["Evaluation validation failed: expected 503 characters", false],
+  ["Evaluation validation failed: The server had an error processing your request.", false],
   ["evaluation-gateway API error (422): invalid request", false],
 ] as const)
   test(`SDK error retryable=${retryable}: ${message}`, async () => {
@@ -1680,6 +1790,17 @@ for (const [message, retryable] of [
     }
   });
 
+test("an ordinary thrown error cannot impersonate an SDK provider failure", async () => {
+  const message = "The server had an error processing your request.";
+  const fixture = await harness(async () => ({ async run() { throw new Error(message); }, async abort() {}, async dispose() {} }));
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.error, message);
+    assert.equal(status.retryable, false);
+  } finally { await fixture.close(); }
+});
+
 test("an ordinary thrown error cannot impersonate an SDK malformed-arguments response", async () => {
   const message = "Invalid OpenAI Responses tool arguments: submit_evaluation (call_123); expected complete JSON object";
   const fixture = await harness(async () => ({ async run() { throw new Error(message); }, async abort() {}, async dispose() {} }));
@@ -1699,7 +1820,7 @@ const emitMalformedArguments = (options: Parameters<AgentBackend["createSession"
   options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error", rawStopReason: "completed",
     errorMessage: malformedArguments(name) } });
 
-test("SDK malformed submission receives phase feedback and shares the real Host content checkpoint", async () => {
+test("SDK malformed submission uses loading repairs and preserves the Host content budget", async () => {
   let runs = 0;
   const fixture = await harness(async options => ({ async run(prompt) {
     if (++runs === 1) { emitMalformedArguments(options, "submit_evaluation"); return; }
@@ -1707,8 +1828,9 @@ test("SDK malformed submission receives phase feedback and shares the real Host 
     assert.equal(feedback.failed_tool, "submit_evaluation");
     assert.equal(feedback.next_tool, "submit_evaluation");
     assert.equal(feedback.errors[0].code, "tool_arguments_invalid");
-    assert.equal(feedback.budget.content_remaining, 3);
-    assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 1);
+    assert.equal(feedback.budget.content_remaining, 4);
+    assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.contentSubmissions, 0);
+    assert.equal(fixture.store.state.manifest.states[fixture.spec.taskId].failure!.fileErrors, 1);
     assert.equal(fixture.counts().posts, 0, "malformed JSON never reaches Host acceptance");
     await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content", offset: 0 });
     assert.equal((await submitFor(options, { ok: true })).isError, undefined);
@@ -1717,7 +1839,7 @@ test("SDK malformed submission receives phase feedback and shares the real Host 
     fixture.spec.model.api = "openai-responses";
     await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
     assert.equal(runs, 2); assert.equal(fixture.counts().posts, 1);
-    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 2);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 1);
     const events = (await readFile(path.join(fixture.directory,"worker/attempt/events.jsonl"),"utf8")).trim().split("\n")
       .map(line => JSON.parse(line) as WorkerEvent);
     const malformed = events.filter(event => event.type === "tool_start" &&
@@ -1730,7 +1852,7 @@ test("SDK malformed submission receives phase feedback and shares the real Host 
   } finally { await fixture.close(); }
 });
 
-test("four malformed SDK submissions exhaust content repairs without a draft or transport retry", async () => {
+test("three malformed SDK submissions exhaust loading repairs without a draft or transport retry", async () => {
   let runs = 0;
   const fixture = await harness(async options => ({ async run() { runs++; emitMalformedArguments(options, "submit_evaluation"); },
     async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts" });
@@ -1738,7 +1860,8 @@ test("four malformed SDK submissions exhaust content repairs without a draft or 
     fixture.spec.model.api = "openai-responses";
     await fixture.start(); const status = await fixture.done();
     assert.equal(status.state, "failed"); assert.equal(status.retryable, false);
-    assert.equal(runs, 4); assert.equal(status.failure!.contentSubmissions, 4);
+    assert.equal(runs, 3); assert.equal(status.failure!.contentSubmissions, 0);
+    assert.equal(status.failure!.fileErrors, 3);
     assert.equal(status.failure!.draft, undefined);
     assert.equal(status.failure!.errors[0].code, "tool_arguments_invalid");
     assert.equal(fixture.counts().posts, 0); assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
@@ -1751,6 +1874,7 @@ test("malformed arguments preserve an older real draft without diagnosing identi
   const fixture = await harness(async options => ({ async run(prompt) {
     runs++;
     if (runs === 1) {
+      await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content", offset: 0 });
       assert.equal((await submitFor(options, original)).isError,true);
       emitMalformedArguments(options,"submit_evaluation"); return;
     }
@@ -1766,7 +1890,7 @@ test("malformed arguments preserve an older real draft without diagnosing identi
   try {
     fixture.spec.model.api="openai-responses";
     await fixture.start(); assert.equal((await fixture.done()).state,"succeeded");
-    assert.equal(runs,3); assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,4);
+    assert.equal(runs,3); assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,2);
   } finally { await fixture.close(); }
 });
 
@@ -1835,7 +1959,8 @@ test("malformed inspection and later malformed final preserve the immutable insp
     assert(checkpoint.inspection); assert(before.evidenceBank!.length > 0);
     assert.deepEqual(checkpoint.evidenceBank,before.evidenceBank);
     assert.deepEqual(checkpoint.inspection,before.inspection);
-    assert.equal(checkpoint.contentSubmissions,3);
+    assert.equal(checkpoint.contentSubmissions,1);
+    assert.equal(checkpoint.fileErrors,2);
     assert.equal((await submitFor(options, {ok:true})).isError,undefined);
   }, async abort() {}, async dispose() {} }), { policy: { repairAttempts: 3 }, material: "original facts", profile: inspectionProfile });
   try {
@@ -1843,7 +1968,7 @@ test("malformed inspection and later malformed final preserve the immutable insp
     await fixture.start(); assert.equal((await fixture.done()).state,"succeeded");
     const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
     assert.equal(runs,3); assert.equal(fixture.inspectionPosts(),1); assert(receipt.audit.inspection);
-    assert.equal(receipt.submissionStats!.contentSubmissions,4);
+    assert.equal(receipt.submissionStats!.contentSubmissions,2);
   } finally { await fixture.close(); }
 });
 
@@ -1879,7 +2004,7 @@ test("same-run recovery counts a malformed final without repeating an accepted i
     if (++resumed === 1) { emitMalformedArguments(options,"submit_evaluation"); return; }
     const feedback=JSON.parse(prompt);
     assert.equal(feedback.next_tool,"submit_evaluation");
-    assert.equal(feedback.budget.content_remaining,1);
+    assert.equal(feedback.budget.content_remaining,2);
     assert.equal((await submitFor(options, {ok:true})).isError,undefined);
   }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
   try {
@@ -1893,7 +2018,7 @@ test("same-run recovery counts a malformed final without repeating an accepted i
     await fixture.start(spec); const second=await fixture.done(spec.attemptId);
     assert.equal(second.state,"succeeded"); assert.equal(resumed,2); assert.equal(fixture.inspectionPosts(),1);
     const receipt=(await fixture.store.receipt(spec.taskId))!;
-    assert.equal(receipt.submissionStats!.contentSubmissions,3);
+    assert.equal(receipt.submissionStats!.contentSubmissions,2);
     assert.deepEqual(receipt.audit.inspection,first.failure!.inspection);
     assert.deepEqual(receipt.audit.evidenceBank,first.failure!.evidenceBank);
   } finally { await fixture.close(); }
@@ -1997,6 +2122,7 @@ test(`inspection preserves original JSON fields at the Host (file submission: ${
     assert.deepEqual(inspectionTool.inputSchema, fileSubmission ? { type: "object", additionalProperties: false,
       required: ["path"], properties: { path: { type: "string", minLength: 1 } } } : profile.inspection!.schema);
     assert.equal(inspectionTool.description.includes('"file_content_schema"'), fileSubmission);
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     const inspected = await inspectMaterials(options, original);
     assert.equal(inspected.isError, undefined, JSON.stringify(inspected));
     assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), original);
@@ -2023,6 +2149,7 @@ test(`inspection preserves original JSON fields at the Host (file submission: ${
 for (const kind of ["body", "missing", "malformed", "outside", "symlink"] as const)
   test(`inspection file ${kind} errors spend file budget without revealing or spending content`, async () => {
     const fixture = await harness(async options => ({ async run() {
+      await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
       let args: unknown = { path: "missing-inspection.json" };
       if (kind === "body") args = { actual: "original facts" };
       else if (kind === "malformed") {
@@ -2072,6 +2199,7 @@ for (const kind of ["body", "missing", "malformed", "outside", "symlink"] as con
 for (const fileSubmission of [false, true])
   test(`inspection and final feedback retain their actual phase (file submission: ${fileSubmission})`, async () => {
     const fixture = await harness(async options => ({ async run() {
+      await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
       const wrong = await inspectMaterials(options, { actual: "wrong" });
       const before = wrong.details as { next_tool: string; message: string; instructions: string };
       assert.equal(before.next_tool, "inspect_material");
@@ -2102,6 +2230,7 @@ for (const fileSubmission of [false, true])
 for (const fileSubmission of [false, true])
 test(`inspection and final submission preserve one content queue (file submission: ${fileSubmission})`, async () => {
   const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     if (fileSubmission) {
       await writeFile(path.join(options.workdir, "wrong-inspection.json"), JSON.stringify({ actual: "wrong" }));
       await writeFile(path.join(options.workdir, "inspection.json"), JSON.stringify({ actual: "original facts" }));
@@ -2160,6 +2289,7 @@ test("material inspection and final submission share the same content counter an
 test("three failed inspections plus a valid fourth cannot obtain a hidden fifth final submission", async () => {
   let finalAttempted = false;
   const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     for (let i = 0; i < 3; i++) assert.equal((await inspectMaterials(options, { actual: "wrong" })).isError, true);
     const success = await inspectMaterials(options, { actual: "original facts" });
     assert.equal(success.isError, undefined); assert.equal((success.details as { budget: { content_remaining: number } }).budget.content_remaining, 0);
@@ -2176,6 +2306,7 @@ test("three failed inspections plus a valid fourth cannot obtain a hidden fifth 
 
 test("same-payload transport retry does not consume another inspection draft", async () => {
   const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     assert.equal((await inspectMaterials(options, { actual: "original facts" })).isError, undefined);
     assert.equal((await submitFor(options, { ok: true })).isError, undefined);
   }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile, dropInspectionAck: true });
@@ -2188,6 +2319,7 @@ test("same-payload transport retry does not consume another inspection draft", a
 
 test("final submission before inspection is rejected and consumes the shared content budget", async () => {
   const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     const rejected = await submitFor(options, { ok: true });
     assert.equal(rejected.isError, true);
     assert(JSON.stringify(rejected).includes("inspection_required"));
@@ -2219,7 +2351,13 @@ test("inspection checkpoint is request-bound, idempotent and cannot be erased by
 test("a session ending after successful inspection gets one bounded final-submission nudge", async () => {
   let calls = 0;
   const fixture = await harness(async options => ({ async run() {
-    if (++calls === 1) await inspectMaterials(options, { actual: "original facts" });
+    if (++calls === 1) {
+      const pending = await inspectMaterials(options, { actual: "original facts" });
+      assert.equal(object(pending.details).material_pending, true);
+      assert.equal(fixture.inspectionPosts(), 0, "source delivery must not reveal the verdict or accept an inspection");
+      assert.equal(JSON.parse(pending.content[1].text!).evidence[0].quote, "original facts");
+      await inspectMaterials(options, { actual: "original facts" });
+    }
     else await submitFor(options, { ok: true });
   }, async abort() {}, async dispose() {} }), { material: "original facts", profile: inspectionProfile });
   try { await fixture.start(); assert.equal((await fixture.done()).state, "succeeded"); assert.equal(calls, 2);
@@ -2282,6 +2420,7 @@ test("ordinary recovery checkpoint cannot forge inspection or reduce an already 
 test("successful inspection delivers the complete Host context beyond ordinary tool-output limits", async () => {
   const upstream = "hidden conclusion:" + "x".repeat(32000) + "REVEALED_CONTEXT_TAIL";
   const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     const inspection = await inspectMaterials(options, { actual: "original facts" });
     assert.equal(inspection.isError, undefined);
     assert.equal((inspection.details as { accepted?: boolean }).accepted, true);

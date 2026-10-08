@@ -632,8 +632,9 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
-        assert(rules.includes("reference.evidence_index"));
-        assert(instruction.includes("读完整交付，确定要求的作用域"));
+        assert(rules.includes("numeric_checks.evidence_index"));
+        assert(rules.includes("basis_index"));
+        assert(instruction.includes("读全材料，确定适用要求"));
         assert(rules.includes("strengths") && rules.includes("problems"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));

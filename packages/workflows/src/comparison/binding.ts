@@ -44,6 +44,9 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   };
   return {
     ...material,
+    deferred_final_material: (material.deferred_final_material as { message_index: number; path: string; total_chars: number }[])
+      .map(source => ({ ...source, read_request: { candidate, message_index: source.message_index,
+        path: source.path, offset: 0, max_chars: 16000 } })),
     ...(norms ? { norm_directory: norms.map(norm => ({ ...norm,
       evidence: norm.evidence.map(item => {
         const point = parseEvidenceCoordinates(item.evidence_id);
@@ -264,7 +267,7 @@ function bindSourceTask(
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
       const deferred = finalSources.filter((source) => source.text.length > finalBlockLimit);
       const final = deferred.reduce(
-        (text, source, index) => text.replaceAll(source.text, JSON.stringify({ deferred_final_material: index })),
+        (text, source) => text.replaceAll(source.text, ""),
         contentText(raw.messages[candidate.final_index].content),
       );
       const question = candidate.question;

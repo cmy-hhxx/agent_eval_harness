@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { rewriteAgent, rewriteProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
@@ -21,7 +22,8 @@ test("pair rewrites must state the accepted preference and retain ties", () => {
     assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text }] }, audit), /已确定偏好/);
   rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text: "B组Fast更好：补充了近期事件催化，解释更贴题。" }] }, audit);
   request.input.items[0].preference = "双方都好";
-  assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text: "双方都好：A组Fast更可用。" }] }, audit), /没有整体胜者/);
+  rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id,
+    text: "双方都好：均已完成核心任务，现有差异不足以证明某一方更可用。" }] }, audit);
 });
 test("both-bad rewrites retain relative preference while keeping the accepted verdict prefix", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
@@ -55,20 +57,19 @@ test("Rewrite returns exactly the requested slots and nothing else", () => {
   assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|texts/);
 });
 
-test("verdicts have a concrete length budget while individual evidence wording is not truncated", () => {
+test("verdict length is a writing goal and does not discard necessary evidence", () => {
   const request = { agent: "rewrite", profile: "default", sources: {}, input: { kind: "comparison", items: [
     { id: "tradeoff", label: "裁决短评", text: "A更好。", preference:"A更好" },
-    { id: "comparison.0.A.summary", label: "表现", text: "给出结果。" },
   ] } };
-  const result = { rewrites: [{ id: "tradeoff", text: "A更好："+"短".repeat(156) }, { id: "comparison.0.A.summary", text: "短".repeat(160) }] };
-  const issues=()=>rewriteProfile.validateSubmission!(request,{texts:result.rewrites.map(item=>item.text)},audit);
-  assert.deepEqual(issues(),[]);
-  result.rewrites[0].text += "长";
-  assert(issues().some(issue=>issue.code==="rewrite_verdict_too_long"&&issue.path==="/texts/0"));
-  assert.equal(result.rewrites[0].text.length,161,"validation never truncates a submitted sentence");
-  result.rewrites[0].text = "A更好：给出了实际结果。";
-  result.rewrites[1].text += "长";
-  assert.deepEqual(issues(),[]);
+  const text = "A更好：给出了指定期间的实际结果，并核对了筛选条件、统计对象及数据来源。B虽然耗时更短、消耗的token更少，但只提供方法，缺少用户要求的名单和计算结果。这里的偏好依据是核心任务是否完成，资源节省作为次要因素保留；同时，A对异常数据的说明仍不充分，后续需要补充缺失值的处理过程。两方的时间与token均来自本次回答的原始记录，不把裁判消耗计入，也不因记录字段名称不同而宣称无法比较。";
+  assert(text.length > 160);
+  const valid = new Ajv2020({ strict: false }).compile(rewriteProfile.modelSubmissionSchema!(request));
+  const draft = { texts: [text] };
+  assert(valid(draft), JSON.stringify(valid.errors));
+  assert.deepEqual(rewriteProfile.validateSubmission?.(request, draft, audit) ?? [], []);
+  const result = { rewrites: [{ id: "tradeoff", text }] };
+  rewriteProfile.validate!(request, result, audit);
+  assert.equal(result.rewrites[0].text, text, "validation never truncates a submitted sentence");
 });
 
 test("rewrite number fidelity is reviewed semantically instead of rejecting numeric tokens", () => {

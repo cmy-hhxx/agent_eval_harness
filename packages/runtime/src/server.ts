@@ -28,7 +28,7 @@ import {
 import { ArtifactStore, exists, readJson, writeJson } from "@eval/data";
 import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
 import { body, json, listen, request } from "./http.js";
-import { createRegistry, textResult, ToolRuntime, type ToolRegistry, type ExecutableTool } from "@eval/tools";
+import { createRegistry, textResult, ToolRuntime, traceReadCoverage, type ToolRegistry, type ExecutableTool } from "@eval/tools";
 import { contentToolName, modelEventForLog } from "./sdk-utils.js";
 
 interface Running {
@@ -225,7 +225,7 @@ export async function startWorker(
           repeatedErrors,
           // Repeated drafts remain diagnostic. The shared content cap owns repair
           // termination; stopping after two identical drafts discards valid repairs.
-          stopped: fileErrors >= 3,
+          stopped: (spec.recovery?.fileErrors || 0) + fileErrors >= 3,
           attemptId: spec.attemptId,
         };
         record.failure = failure;
@@ -238,7 +238,7 @@ export async function startWorker(
         );
         if (failure.stopped) {
           runtime.clearDraftWrite();
-          controller.abort(new Error("File loading budget exhausted: " + errors.map((e) => e.message).join("; ")));
+          controller.abort(new Error("Submission loading budget exhausted: " + errors.map((e) => e.message).join("; ")));
           void attempt.session?.abort();
         }
         if (content && !failure.stopped) reserveFileDraft();
@@ -253,7 +253,7 @@ export async function startWorker(
             ...(fileRepair ? { draft_file: "submission-rejected.json" } : {}),
             budget: {
               content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions),
-              file_errors_remaining: Math.max(0, 3 - fileErrors),
+              file_errors_remaining: Math.max(0, 3 - (spec.recovery?.fileErrors || 0) - fileErrors),
             },
             message: inspectionPending ? spec.evaluation.toolDescriptions.inspect_material : (content && repeatedErrors > 1
               ? "本次完整 JSON 与上一稿相同，报错字段尚未修正；改变对象键顺序不算修改。请逐一修正 errors 指向的字段后再提交，累计内容预算不会重置。"
@@ -266,6 +266,34 @@ export async function startWorker(
           isError: true,
         };
       };
+      const supplyRequiredMaterial = async () => {
+        for (const target of spec.evaluation.requiredReads ?? []) {
+          const missing = traceReadCoverage(audit, target).missing[0];
+          if (!missing) continue;
+          const args = { candidate: target.candidate, message_index: target.message_index, path: target.path,
+            offset: missing.start, max_chars: 16000 };
+          emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
+          const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
+          emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
+          if (read.isError) throw new Error(read.content.map(item => item.text ?? "").join("\n"));
+          if (traceReadCoverage(audit, target).missing[0]?.start === missing.start)
+            throw new Error("Required material read made no progress");
+          reserveFileDraft();
+          // Deliver actual source pages before evaluating a draft; no acceptance or content charge yet.
+          const feedback = textResult({ accepted: false, material_pending: true,
+            next_tool: nextContentTool(), read_request: args, instructions: spec.evaluation.toolDescriptions.read_trace,
+            budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
+          });
+          return { ...feedback, content: [...feedback.content, ...read.content] };
+        }
+        return undefined;
+      };
+      const rejectedLoad = async (errors: ValidationIssue[]) => {
+        fileErrors++;
+        const feedback = await rejected(errors, failure.draft, false, false);
+        if (!failure.stopped) reserveFileDraft();
+        return feedback;
+      };
       const submitExclusive = async (load: () => Promise<unknown>, jsonText = false) => {
         if (accepted)
           return {
@@ -277,15 +305,15 @@ export async function startWorker(
           };
         controller.signal.throwIfAborted();
         if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+        const material = await supplyRequiredMaterial();
+        if (material) return material;
         let result: unknown;
         try {
           result = await load();
         } catch (error) {
           if (jsonText) {
-            submissions++;
-            runtime.clearDraftWrite();
-            return rejected(error instanceof ValidationError ? error.issues! : [{category:"structure",code:"submission_json_invalid",path:"/json",
-              message:"json 必须是完整 JSON 对象的文本，不接受 XML、Markdown、数组或标量："+errorText(error)}],failure.draft,true,false);
+            return rejectedLoad(error instanceof ValidationError ? error.issues! : [{category:"structure",code:"submission_json_invalid",path:"/json",
+              message:"json 必须是完整 JSON 对象的文本，不接受 XML、Markdown、数组或标量："+errorText(error)}]);
           }
           return rejectedFile(error);
         }
@@ -320,7 +348,9 @@ export async function startWorker(
             );
             break;
           } catch (error) {
-            if (error instanceof HttpError && error.status < 500)
+            if (error instanceof HttpError && error.status < 500) {
+              // A definitive rejection is no longer an unacknowledged submission.
+              delete record.pendingSubmission;
               return rejected(
                 error.issues || [
                   {
@@ -333,6 +363,7 @@ export async function startWorker(
                 ],
                 result,
               );
+            }
             try {
               accepted = await request<SubmissionReceipt>(
                 `${spec.hostUrl}/api/submissions/${submission.submissionId}`,
@@ -379,17 +410,15 @@ export async function startWorker(
         return readJson(file);
       };
       const rejectedFile = async (error: unknown) => {
-        fileErrors++;
-        const feedback = await rejected([{ category: "file", code: "submission_file_invalid", path: "/path",
-          actual: errorText(error), message: errorText(error) }], failure.draft, false);
-        // A failed load leaves content untouched. Reoffer one writer within its existing total cap.
-        if (!failure.stopped) reserveFileDraft();
-        return feedback;
+        return rejectedLoad([{ category: "file", code: "submission_file_invalid", path: "/path",
+          actual: errorText(error), message: errorText(error) }]);
       };
       runtime.context.inspectMaterial = (args, signal) => enqueueContent(async () => {
         signal.throwIfAborted();
         if (!spec.evaluation.inspectionSchema) throw new Error("当前任务未配置材料核查");
         if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+        const material = await supplyRequiredMaterial();
+        if (material) return material;
         let value: unknown = args;
         if (spec.evaluation.fileSubmission) {
           try { value = await loadFileContent(args); }
@@ -611,10 +640,8 @@ export async function startWorker(
           if (content) {
             await enqueueContent(async () => {
               if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
-              submissions++;
-              runtime.clearDraftWrite();
               // Count and persist the failed call without manufacturing an object or a receipt.
-              return rejected(errors, failure.draft, true, false);
+              return rejectedLoad(errors);
             });
           } else {
             try {
@@ -635,27 +662,30 @@ export async function startWorker(
             malformed_arguments: true, argument_object_available: false,
             instructions: spec.evaluation.toolDescriptions[nextTool],
             budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions),
+              file_errors_remaining: Math.max(0, 3 - (spec.recovery?.fileErrors || 0) - fileErrors),
               ...runtime.budget(explorationLimit()) } };
           emit(attempt, "tool_end", { name: tool.name, malformed_arguments: true,
             result: { ...textResult(feedback), isError: true } });
-          if (content && submissions >= 1 + spec.policy.repairAttempts) {
-            controller.abort(new Error("Submission repair budget exhausted"));
-            void attempt.session?.abort();
-            return;
-          }
+          if (controller.signal.aborted) return;
           prompt = JSON.stringify(feedback);
         }
       };
       await runModel(spec.prompt);
       if (
         !accepted &&
-        (submissions === 0 || (audit.inspection && failure.draft === undefined && !record.pendingSubmission)) &&
+        submissions < 1 + spec.policy.repairAttempts &&
+        !failure.stopped && !record.pendingSubmission &&
         !modelError &&
         !controller.signal.aborted &&
         attempt.status.state === "running"
       )
-        // A model that stopped before ever submitting still gets one bounded follow-up.
-        await runModel(spec.evaluation.submissionNudge);
+        // Keep a repairable rejection in the same session; a restart loses the already-read material.
+        // Exactly one follow-up, with the original content/tool budgets, also bounds a silent model.
+        await runModel(spec.evaluation.submissionNudge + (failure.errors.length ? "\n" + JSON.stringify({
+          errors: failure.errors, next_tool: nextContentTool(),
+          budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions),
+            file_errors_remaining: Math.max(0, 3 - (spec.recovery?.fileErrors || 0) - fileErrors), ...runtime.budget(explorationLimit()) },
+        }) : ""));
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running")
         throw new Error(modelError || "Agent ended without an accepted submission");
@@ -673,7 +703,11 @@ export async function startWorker(
         attempt.status.retryable =
           !controller.signal.aborted &&
           !attempt.status.error.startsWith("Invalid OpenAI Responses tool arguments:") &&
-          (/fetch|network|connection|terminated|ECONN|429|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
+          // Some SDK failures omit the HTTP status. Recognize provider failures only
+          // at the assistant error boundary, not in ordinary tool/validation text.
+          (modelError === attempt.status.error && [
+            "The server had an error processing your request.", "server_error:", "Error Code server_error:",
+          ].some(prefix => modelError!.startsWith(prefix)) || /fetch|network|connection|terminated|ECONN|429|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
             attempt.status.error,
           ) || /\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+(?:error|status(?:\s+code)?))?|API\s+error)\s*[:(]?\s*5\d{2}\b/i.test(
             attempt.status.error,

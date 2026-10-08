@@ -38,6 +38,8 @@ export function comparisonDeferredFinalIssues(request: AgentRequest, audit: Tool
       if (!coverage.covered) errors.push({
         category: "evidence", code: "deferred_final_material_not_read", path: `/candidates/${label}/deferred_final_material/${index}`,
         candidate: label, message: "未完整读取延后展示的最终材料；按缺口用 read_trace 补读并继续 next_offset。", actual: coverage.missing,
+        expected: { read_request: { candidate: label, message_index: material.message_index, path: material.path,
+          offset: coverage.missing[0]!.start, max_chars: 16000 } },
       });
     }
   }

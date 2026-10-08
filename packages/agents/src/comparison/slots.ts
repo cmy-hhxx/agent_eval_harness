@@ -9,14 +9,19 @@ export function comparisonResourceMetrics(input: ComparisonInput, candidate: str
   tokens = material?.original_answer_usage?.total_tokens;
  return {
   finish_seconds: typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 ? seconds : null,
-  total_tokens: typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0 && !material.original_answer_usage.issues.length ? tokens : null,
+  // Usage normalization already nulls invalid totals; cache issues do not invalidate them.
+  total_tokens: typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0 ? tokens : null,
  };
+}
+
+function comparableResourceMetrics(input: ComparisonInput) {
+ const metrics = Object.keys(input.candidates).map(candidate => comparisonResourceMetrics(input,candidate));
+ return (['finish_seconds','total_tokens'] as const).filter(key => metrics.length > 1 && metrics.every(metric => metric[key] !== null));
 }
 
 /** A time on one side and a token count on the other are not a comparable pair. */
 export function comparisonResourcesComparable(input: ComparisonInput): boolean {
- const metrics = Object.keys(input.candidates).map(candidate => comparisonResourceMetrics(input,candidate));
- return metrics.length > 1 && (metrics.every(metric => metric.finish_seconds !== null) || metrics.every(metric => metric.total_tokens !== null));
+ return comparableResourceMetrics(input).length > 0;
 }
 
 /** Empty row IDs may still have an existing source requirement through a cited finding. */
@@ -92,7 +97,7 @@ export function comparisonSlots(request: AgentRequest): ComparisonSlot[] {
   // Independent findings remain in the source assessment. A missing counterpart is not a comparison fact.
  }
  const hasResource = labels.some(label => Object.values(comparisonResourceMetrics(input,label)).some(value => value !== null));
- if (hasResource) slots.push({ aspect: '原始完成时长与用量', criterion_ids: [], shared: true, kind: 'resource', optional: true, finding_indices: empty() });
+ if (hasResource) slots.push({ aspect: '原始完成时长与用量', criterion_ids: [], shared: true, kind: 'resource', optional: false, finding_indices: empty() });
  return slots;
 }
 
@@ -156,6 +161,8 @@ export function comparisonSlotChoices(request: AgentRequest) {
  const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
  return comparisonSlots(request).map((slot, slot_index) => ({ slot_index, aspect: slot.aspect, scope: slot.shared ? 'pair' : 'source_only',
   optional: slot.optional, kind: slot.kind,
+  ...(slot.kind === 'resource' ? { resource_metrics: Object.fromEntries(Object.keys(input.candidates).map(candidate =>
+   [candidate,comparisonResourceMetrics(input,candidate)])), comparable_metrics: comparableResourceMetrics(input) } : {}),
   advantage_candidates: comparisonAdvantageCandidates(Object.fromEntries(Object.keys(input.candidates).map(candidate =>
    [candidate,comparisonSlotCellState(input,candidate,slot)])),slot.shared && (slot.kind !== 'resource' || comparisonResourcesComparable(input))),
   applicable_candidates: Object.keys(input.candidates).filter(candidate => slot.criterion_ids.length

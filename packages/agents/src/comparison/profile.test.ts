@@ -489,15 +489,15 @@ test("resolution aggregates applicable source criteria and preserves uncertain f
     error.issues!.some(issue => issue.code === "comparison_advantage_unproven"));
 });
 
-test("resource slots exist only for valid original metrics and remain optional", () => {
+test("resource slots require recorded valid metrics and cannot be omitted", () => {
  const data = pair(), candidates = (data.request.input as unknown as ComparisonInput).candidates;
  for (const candidate of Object.values(candidates)) { candidate.original_answer_timing.finish_seconds=null; candidate.original_answer_usage.total_tokens=null; }
  assert.equal(comparisonSlots(data.request).filter(slot => slot.kind === "resource").length,0);
- candidates.A.original_answer_usage.total_tokens=100; candidates.A.original_answer_usage.issues=["统计冲突"];
+ candidates.A.original_answer_usage.issues=["total_tokens 与 input_tokens + output_tokens 不一致，不能比较总量"];
  assert.equal(comparisonSlots(data.request).filter(slot => slot.kind === "resource").length,0);
- candidates.A.original_answer_usage.issues=[];
- const slots = comparisonSlots(data.request); assert.equal(slots.at(-1)!.kind,"resource"); assert.equal(slots.at(-1)!.optional,true);
- const draft = submission(data.result,data.request); assert.equal(draft.comparisons.at(-1),null);
+ candidates.A.original_answer_usage.total_tokens=100; candidates.A.original_answer_usage.issues=[];
+ const slots = comparisonSlots(data.request); assert.equal(slots.at(-1)!.kind,"resource"); assert.equal(slots.at(-1)!.optional,false);
+ const draft = submission(data.result,data.request); assert.notEqual(draft.comparisons.at(-1),null);
  validate(data.request,comparisonProfile.resolve!(data.request,draft,audit));
  candidates.A.original_answer_usage.total_tokens=null; candidates.A.original_answer_timing.finish_seconds=0;
  assert.equal(comparisonSlots(data.request).at(-1)!.kind,"resource");

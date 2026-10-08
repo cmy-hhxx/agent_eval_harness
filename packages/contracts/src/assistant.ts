@@ -130,6 +130,8 @@ export interface SpecialistGateway {
 }
 export interface AssistantTool {
   readOnly?: boolean;
+  /** Validate raw arguments before an SDK can coerce values or drop nulls. */
+  validate?(args: unknown): void;
   name: string;
   description: string;
   inputSchema: JsonObject;
