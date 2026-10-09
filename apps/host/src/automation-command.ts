@@ -1,3 +1,4 @@
+import { configurationSecrets } from "./settings.js";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { errorText, redact, REMOTE_MODELS, type InputDownload } from "@eval/contracts";
@@ -9,7 +10,8 @@ import { startAutomationDashboard } from "./automation-dashboard.js";
 import { loadAutomationConfig } from "./automation-config.js";
 import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
 import { createAutomationMonitor } from "./automation-monitor.js";
-import { boundProfiles, createModelResolver, loadConfig } from "./config.js";
+import { loadConfig } from "./config.js";
+import { createAutomationModels } from "./automation-models.js";
 import { logger } from "./composition.js";
 import { ROOT } from "./paths.js";
 
@@ -49,6 +51,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (command === "retry" && values.date && !selected(values.date))
     throw new Error("Cannot retry a date outside the configured automation range: " + values.date);
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
+  logger.addSecrets(...configurationSecrets());
   const remote = new RemoteInputs(config.sourceUrl, config.requestTimeoutMs);
   if (command === "check") {
     const days = (await remote.discover(AbortSignal.timeout(config.requestTimeoutMs))).filter((day) => selected(day.date));
@@ -63,12 +66,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (command === "run") {
     if (!process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
     logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
-    const resolve = createModelResolver(host.models);
-    for (const stage of ["criteria", "attribution", "comparison", "rewrite"]) resolve(stage);
-    for (const profile of boundProfiles(host.models)) {
-      if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
-      logger.addSecrets(process.env[profile.apiKeyEnv]!);
-    }
+    createAutomationModels(host.models, host.automation.channels);
   }
   const release = await runLock(config.stateDirectory);
   let releaseSources: (() => Promise<void>) | undefined;
@@ -162,6 +160,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         await remote.publish(remoteProgress(current, config.engine, dates), signal);
     };
     console.log(`Automations ${config.id}: ${config.fromDate} → ${config.sourceUrl}\n状态：${file}`);
+    const exhaustedChannels = new Set<string>();
     await runPipeline(state, { ...config, once: values.once }, {
       discover: async (signal) => (await remote.discover(signal)).filter((day) => selected(day.date)),
       initialize: (day) => evaluationTargets(config, output, day),
@@ -173,7 +172,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         if (detail) await logger.error(detail, { component: "automations", event, ...context });
         else await logger.event(event, { component: "automations", ...context });
         console.log(redact(`${new Date().toISOString()} ${event}${job ? " " + job.date : ""}${detail ? " " + detail : ""}`,
-          boundProfiles(host.models).map((profile) => process.env[profile.apiKeyEnv] ?? "")));
+          configurationSecrets()));
       },
       sync: async (job, day, signal, beforeReplace) => {
         const locks: (() => Promise<void>)[] = [];
@@ -187,7 +186,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
           return await replaceInputSnapshot(path.join(config.sourceDirectory, day.date), files(), signal, beforeReplace);
         } finally { for (const unlock of locks.reverse()) await unlock(); }
       },
-      evaluate: (job, signal) => evaluateDay(config, job, signal), observe,
+      evaluate: (job, signal) => evaluateDay(config, job, signal, exhaustedChannels), observe,
       publish: (current, save, signal) => publishSnapshot(config, current, save, signal),
       syncMongo: (job, signal) => syncMongoDay(config, job, signal),
     }, controller.signal);

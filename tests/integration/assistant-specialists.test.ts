@@ -1,3 +1,4 @@
+import { testSettings } from "../fixtures/settings.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -23,7 +24,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
  const worker=await startWorker({identity:fakeIdentity,async createSession(options){return {async run(){
       await inspectFor(options);calls++;if(interruptComparison&&options.spec.evaluation.id==="comparison"){interruptComparison=false;throw new Error("fixture comparison interrupted");}const result=await submitFor(options, draftFor(options.spec,taskResult(options.spec)));assert.equal(result.isError,undefined,JSON.stringify(result));},async abort(){},async dispose(){}};}},path.join(fixture.directory,"worker"));
  try {
-  const config=await loadConfig(path.join(ROOT,"configs/host.json"),{EVAL_BASE_URL:"http://127.0.0.1:1/v1"});
+  const config=await loadConfig(path.join(ROOT,"configs/host.json"),testSettings("http://127.0.0.1:1/v1"));
   config.evaluation=fixture.config;config.models=fixture.models;
   fixture.config.comparisons=[["a_fast","b_fast"],["a_expert","b_expert"]];
   const plan=await buildPlan(fixture.config);
@@ -144,7 +145,7 @@ test("three-model specialist runs share one criteria task and return all three r
   }, async abort() {}, async dispose() {},
  }; } }, path.join(fixture.directory, "worker"));
  try {
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" });
+  const config = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   config.evaluation = fixture.config; config.models = fixture.models;
   const plan = await buildPlan(fixture.config);
   await runEvaluation({ ...services, plan: { ...plan, tasks: [] }, runId: "source", output: fixture.config.output,
@@ -227,7 +228,7 @@ test("incompatible accepted attributions are independently reassessed without ch
   }, async abort() {}, async dispose() {},
  }; } }, path.join(fixture.directory, "worker"));
  try {
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" });
+  const config = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   config.evaluation = fixture.config; config.models = fixture.models;
   const plan = await buildPlan(fixture.config);
   await runEvaluation({ ...services, plan: { ...plan, tasks: [] }, runId: "source", output: fixture.config.output,

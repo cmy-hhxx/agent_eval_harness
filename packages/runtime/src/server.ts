@@ -29,7 +29,7 @@ import { ArtifactStore, exists, readJson, writeJson } from "@eval/data";
 import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
 import { body, json, listen, request } from "./http.js";
 import { createRegistry, textResult, ToolRuntime, traceReadCoverage, type ToolRegistry, type ExecutableTool } from "@eval/tools";
-import { contentToolName, modelEventForLog } from "./sdk-utils.js";
+import { contentToolName, modelEventForLog, isModelQuotaExhausted } from "./sdk-utils.js";
 
 interface Running {
   spec: AttemptSpec;
@@ -705,8 +705,11 @@ export async function startWorker(
         );
         attempt.status.errorDetail = redact(inspect(original, { depth: null, maxStringLength: null, maxArrayLength: null }),
           [process.env[spec.model.apiKeyEnv] || ""]);
+        attempt.status.modelQuotaExhausted = !controller.signal.aborted && modelError === errorText(original) &&
+          isModelQuotaExhausted(modelError);
         attempt.status.retryable =
           !controller.signal.aborted &&
+          !attempt.status.modelQuotaExhausted &&
           !attempt.status.error.startsWith("Invalid OpenAI Responses tool arguments:") &&
           // Some SDK failures omit the HTTP status. Recognize provider failures only
           // at the assistant error boundary, not in ordinary tool/validation text.

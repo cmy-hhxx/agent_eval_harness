@@ -420,7 +420,7 @@ test("the real CLI defaults to preview, requires an explicit apply and keeps rep
     const entry = fileURLToPath(new URL("../../fixtures/cli.js", import.meta.url));
     // Carry the source verification hook when present; ordinary built tests use the normal CLI.
     const imports = process.execArgv.flatMap((value, index) => value === "--import" ? [value, process.execArgv[index + 1]!] : []);
-    const exec = promisify(execFile), env = { ...process.env, EVAL_BASE_URL: "http://127.0.0.1:1/v1" };
+    const exec = promisify(execFile), env = { ...process.env };
     const configArgs = ["--config", path.join(ROOT, "configs/host.json"), "--config", configFile];
     const args = [entry, f.directory, "review-problem-occurrences", ...configArgs, "--review-file", decisionFile];
     const before = await readFile(f.file, "utf8"), protectedBefore = await snapshots(f.protectedFiles);

@@ -65,7 +65,7 @@ printf '%s\\n' "$DASHBOARD_TEST_PROCESS"
     const processCommand = options.listener === "other" ? "python -m http.server 4181"
       : options.listener === "host" ? "node dist/apps/host/src/cli.js run --run-id active-evaluation"
       : options.listener === "worker" ? "node dist/apps/worker/src/cli.js --port 4181"
-      : `node --env-file-if-exists=.env ${options.listener === "absolute-dashboard" ? root + "/" : ""}dist/apps/host/src/cli.js dashboard --port 4181`;
+      : `node ${options.listener === "absolute-dashboard" ? root + "/" : ""}dist/apps/host/src/cli.js dashboard --port 4181`;
     let result: { status: number; stdout: string; stderr: string };
     try {
       const value = await promisify(execFile)("bash", [path.join(root, "run.sh"), ...(options.args ?? ["--port", "4181"]), ...(options.debug ? ["--debug"] : [])], {
@@ -98,7 +98,7 @@ test("Dashboard startup keeps successful build diagnostics out of the terminal a
     "lsof:-nP -t -iTCP:4181 -sTCP:LISTEN",
     "npm:ls --depth=0 --silent",
     "node:scripts/build-app.mjs",
-    "node:--env-file-if-exists=.env dist/apps/host/src/cli.js dashboard --config configs/host.json --config configs/local/models.json --port 4181",
+    "node:dist/apps/host/src/cli.js dashboard --config configs/host.json --config configs/local/models.json --port 4181",
   ]);
 });
 
@@ -118,7 +118,7 @@ test("Dashboard debug startup shows preparation diagnostics; first setup builds 
     "npm:ls --depth=0 --silent",
     "node:scripts/bootstrap.mjs",
     "node:scripts/build.mjs",
-    "node:--env-file-if-exists=.env dist/apps/host/src/cli.js dashboard --config configs/host.json --config configs/local/models.json --port 4181",
+    "node:dist/apps/host/src/cli.js dashboard --config configs/host.json --config configs/local/models.json --port 4181",
   ]);
 });
 

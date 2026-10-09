@@ -117,7 +117,7 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
     const catalog = path.join(directory, "catalog");
     const args = ["--config", path.join(ROOT, "configs/host.json"), "--config", overlay, "--catalog", catalog];
     const entry = path.join(ROOT, "dist/tests/fixtures/cli.js");
-    const env = { ...process.env, EVAL_BASE_URL: "http://127.0.0.1:1/v1" };
+    const env = { ...process.env };
     const { stdout } = await exec(process.execPath, [entry, directory, "index", ...args,
       "--dataset", "competitor", "--dataset-name", "竞品对比",
       ...["a_fast", "b_fast"].flatMap((id) => ["--input", `${id}=${config.inputs.versions.find((v) => v.id === id)!.sources[0]!.path}`]),

@@ -41,4 +41,4 @@ else
   prepare '正在准备自动化看板…' node scripts/build-app.mjs
 fi
 
-exec node --env-file-if-exists=.env dist/apps/host/src/automations.js run --dashboard ${args[@]+"${args[@]}"}
+exec node dist/apps/host/src/automations.js run --dashboard ${args[@]+"${args[@]}"}

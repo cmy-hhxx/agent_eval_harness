@@ -1,3 +1,4 @@
+import { readSettings, type ApplicationSettings } from "./settings.js";
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -20,7 +21,7 @@ import { listClusteringTasks, listConfiguredProblemLibrary, listRunCases, readCa
 interface DashboardOptions {
   configPaths: string[];
   port: number;
-  /** Test seam; production discovery always uses the configured .env gateway. */
+  /** Test seam; production discovery always uses the configured config.ini channels. */
   modelCatalog?: DashboardModelLoader;
   /** Test seam; production journals always use the shared project log directory. */
   logs?: { directory: string; lockDirectory: string };
@@ -56,7 +57,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function modelReadiness(source: Record<string, unknown>) {
+function modelReadiness(source: Record<string, unknown>, configuration?: ApplicationSettings) {
   const profiles = isRecord(source.models) ? source.models : {};
   const bindings = Object.values(isRecord(source.bindings) ? source.bindings : {});
   if (!bindings.length) return { base_url_configured: false, api_key_configured: false };
@@ -71,8 +72,9 @@ function modelReadiness(source: Record<string, unknown>) {
       baseUrl = apiKey = false;
       continue;
     }
-    if (!(typeof profile.baseUrlEnv === "string" && process.env[profile.baseUrlEnv])) baseUrl = false;
-    if (!(typeof profile.apiKeyEnv === "string" && process.env[profile.apiKeyEnv])) apiKey = false;
+    const channel = configuration?.channels[String(binding.channel ?? profile.channel)];
+    if (!channel?.baseUrl) baseUrl = false;
+    if (!channel || !configuration?.environment[channel.apiKeyEnv]) apiKey = false;
   }
   return { base_url_configured: baseUrl, api_key_configured: apiKey };
 }
@@ -210,7 +212,7 @@ export async function startDashboard(options: DashboardOptions) {
     changingRuns.set(runId, undefined);
   };
   const inputs = createDashboardInputs();
-  const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths));
+  const loadModels = options.modelCatalog ?? (() => discoverDashboardModels());
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
   const readModels = async () => {
     modelCatalogPromise ??= loadModels().catch((error) => {
@@ -261,14 +263,17 @@ export async function startDashboard(options: DashboardOptions) {
       let modelCatalogError = false;
       try { modelCatalog = await readModels(); }
       catch { modelCatalogError = true; }
+      const configuration = await readSettings().catch(() => undefined);
       const settings = editableDashboardSettings(current);
-      clearUnavailableDashboardModels(settings, modelCatalog.map((model) => model.id));
+      for (const binding of Object.values(settings.bindings))
+        if (!binding.model) binding.model = configuration?.channels[String(binding.channel)]?.model ?? "";
+      clearUnavailableDashboardModels(settings, modelCatalog);
       return json(res, {
         paths: options.configPaths,
         settings,
         model_catalog: modelCatalog,
-        ...(modelCatalogError ? { model_catalog_error: "无法读取 .env 网关模型列表" } : {}),
-        environment: modelReadiness(current),
+        ...(modelCatalogError ? { model_catalog_error: "无法读取 config.ini 渠道模型列表" } : {}),
+        environment: modelReadiness(current, configuration),
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")

@@ -1,3 +1,4 @@
+import { testSettings } from "../../../../tests/fixtures/settings.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -27,7 +28,7 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
 });
 
 test("real config defaults polish each attribution and comparison, then separately enabled clustering", async () => {
-  const defaults = (await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" })).evaluation;
+  const defaults = (await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"))).evaluation;
   assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, clustering: true });
   assert.equal(defaults.clustering.enabled, false);
   const f = await fixtureConfig([[raw()], [], [raw()], []]);

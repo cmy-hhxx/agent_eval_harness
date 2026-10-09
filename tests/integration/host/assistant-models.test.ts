@@ -2,81 +2,115 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {assistantModelConfiguration,GatewayAssistantModels} from '../../../apps/host/src/assistant-models.js';
+import {assistantModelConfiguration,GatewayAssistantModels,modelIdentity} from '../../../apps/host/src/assistant-models.js';
+import {parseSettings} from '@eval/host-app/config';
 import type {ModelConfig} from '@eval/contracts';
+import {AssistantSessions} from '@eval/runtime/assistant';
+import {assistantEndpoints} from '@eval/assistant/server';
 
-const gateway: ModelConfig = {provider:'evaluation-gateway',model:'MiniMax-M3',baseUrl:'https://example.com/v1',
-  api:'openai-responses',apiKeyEnv:'EVAL_API_KEY',thinking:'medium',contextWindow:131072,maxOutputTokens:8192};
-const env = {DEEPSEEK_URL:'https://api.deepseek.com',DEEPSEEK_KEY:'fixture'};
+const gateway: ModelConfig = {provider:'evaluation-gateway',model:'shared',baseUrl:'https://example.com/v1',
+  api:'openai-responses',apiKeyEnv:'EVAL_CHANNEL_KEY_evaluation_Hgateway',thinking:'medium',contextWindow:131072,maxOutputTokens:8192};
+const configuration = () => parseSettings(`
+[channel.evaluation-gateway]
+name = 评测网关
+base_url = https://example.com/v1
+api_key = first-secret
+[channel.openai]
+name = OpenAI
+base_url = https://openai.example/v1
+api_key = second-secret
+model = shared
+[agent]
+channel = openai
+model = shared
+thinking = high
+max_output_tokens = 4096
+`);
 
-test('Eris exposes only Flash on the independent DeepSeek endpoint and honors explicit initial models and limits',()=>{
-  const configured = assistantModelConfiguration(gateway,env);
-  assert.equal(configured.model.provider,'deepseek');
-  assert.equal(configured.model.model,'deepseek-flash');
-  assert.equal(configured.model.baseUrl,env.DEEPSEEK_URL);
-  assert.equal(configured.model.apiKeyEnv,'DEEPSEEK_KEY');
-  assert.equal(configured.model.api,'openai-responses');
-  assert.equal(configured.model.supportsDeveloperRole,false);
+test('Eris inherits Attribution unless an explicit channel and model are selected',()=>{
+  const settings=configuration();
+  const configured=assistantModelConfiguration(gateway,settings);
+  assert.equal(configured.model.provider,'openai');
+  assert.equal(configured.model.model,'shared');
+  assert.equal(configured.model.apiKeyEnv,'EVAL_CHANNEL_KEY_openai');
   assert.equal(configured.model.thinking,'high');
-  assert.equal(configured.model.contextWindow,1048576);
-  assert.deepEqual(configured.gateways[1].models,[{id:'deepseek-flash',name:'DeepSeek V4.1 Flash'}]);
-  assert.deepEqual(configured.gateways[1].efforts,['off','low','high','max']);
-  assert.equal(assistantModelConfiguration(gateway,{}).model,gateway);
-  assert.equal(assistantModelConfiguration(gateway,{...env,AGENT_MODEL:'MiniMax-M3'}).model,gateway);
-  assert.equal(assistantModelConfiguration(gateway,{...env,AGENT_MODEL:'deepseek-flash'}).model.model,'deepseek-flash');
-  const limited = assistantModelConfiguration(gateway,{...env,AGENT_CONTEXT_WINDOW:'64000',AGENT_MAX_TOKENS:'4096'}).model;
-  assert.equal(limited.contextWindow,64000);assert.equal(limited.maxOutputTokens,4096);
-  for (const partial of [{DEEPSEEK_URL:env.DEEPSEEK_URL},{DEEPSEEK_KEY:'fixture'},{AGENT_MODEL:'deepseek-flash'}])
-    assert.throws(()=>assistantModelConfiguration(gateway,partial),/DEEPSEEK_URL.*DEEPSEEK_KEY/);
-  for (const value of ['0','-1','1.5','invalid'])
-    assert.throws(()=>assistantModelConfiguration(gateway,{...env,AGENT_MAX_TOKENS:value}),/AGENT_MAX_TOKENS/);
+  assert.equal(configured.model.maxOutputTokens,4096);
+  settings.agent={};
+  assert.equal(assistantModelConfiguration(gateway,settings).model.provider,'evaluation-gateway');
+  assert.equal(assistantModelConfiguration(gateway,settings).model.contextWindow,131072);
 });
 
-test('configured providers retain their routing, scoped favorites, efforts and application token limits',async()=>{
+test('same model IDs across channels retain independent routing, scoped favorites and defaults',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-model-routing-');
-  const {model,gateways}=assistantModelConfiguration(gateway,env);
+  const {model,gateways}=assistantModelConfiguration(gateway,configuration());
   const discovered:string[]=[];
   const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
     discovered.push(config.apiKeyEnv);
-    return config.provider==='deepseek'
-      ? [{id:'deepseek-flash',name:'deepseek-flash',contextWindow:1048576,maxTokens:393216},{id:'deepseek-v4-pro',name:'Pro'}]
-      : [{id:'MiniMax-M3',name:'MiniMax-M3',contextWindow:200000,maxTokens:16384}];
+    return [{id:'shared',name:'Shared model'},{id:'other',name:'Other model'}];
   });
   try {
     const catalog=await models.list('alice');
-    assert.deepEqual(catalog.models.map(row=>[row.provider,row.id]),[['evaluation-gateway','MiniMax-M3'],['deepseek','deepseek-flash']]);
-    assert.deepEqual(catalog.favorites,['deepseek-flash','MiniMax-M3']);
-    assert.deepEqual(catalog.default,{provider:'deepseek',model:'deepseek-flash',reasoningEffort:'high'});
-    assert(!JSON.stringify(catalog).includes('fixture'));
-    assert(!JSON.stringify(catalog).includes('api.deepseek.com'));
-    const resolved=await models.resolve({provider:'deepseek',model:'deepseek-flash',reasoningEffort:'max'});
-    assert.equal(resolved.baseUrl,env.DEEPSEEK_URL);assert.equal(resolved.apiKeyEnv,'DEEPSEEK_KEY');
-    assert.equal(resolved.thinking,'max');assert.equal(resolved.maxOutputTokens,8192);
-    const minimax=await models.resolve({provider:'evaluation-gateway',model:'MiniMax-M3'});
-    assert.equal(minimax.baseUrl,gateway.baseUrl);assert.equal(minimax.apiKeyEnv,'EVAL_API_KEY');
-    assert.equal(minimax.thinking,'medium');assert.equal(minimax.contextWindow,200000);assert.equal(minimax.maxOutputTokens,16384);
-    await assert.rejects(models.resolve({provider:'deepseek',model:'MiniMax-M3'}),/网关列表/);
-    await assert.rejects(models.resolve({provider:'evaluation-gateway',model:'deepseek-flash'}),/网关列表/);
-    await assert.rejects(models.resolve({provider:'deepseek',model:'deepseek-v4-pro'}),/网关列表/);
-    await assert.rejects(models.resolve({provider:'deepseek',model:'deepseek-flash',reasoningEffort:'medium'}),/推理等级/);
-    await assert.rejects(models.favorites('alice',['deepseek-v4-pro']),/可用/);
-    await models.favorites('alice',['MiniMax-M3','deepseek-flash']);
+    assert.equal(catalog.models.length,4);
+    assert.deepEqual(catalog.favorites,[modelIdentity('openai','shared'),modelIdentity('evaluation-gateway','shared')]);
+    assert.deepEqual(catalog.default,{provider:'openai',model:'shared',reasoningEffort:'high'});
+    assert(!JSON.stringify(catalog).includes('secret'));
+    assert(!JSON.stringify(catalog).includes('https://'));
+    for(const provider of ['evaluation-gateway','openai']) {
+      const resolved=await models.resolve({provider,model:'shared',reasoningEffort:'max'});
+      assert.equal(resolved.apiKeyEnv,configuration().channels[provider].apiKeyEnv);
+      assert.equal(resolved.baseUrl,configuration().channels[provider].baseUrl);
+    }
+    await models.favorites('alice',[modelIdentity('evaluation-gateway','shared')]);
     assert.equal((await models.list('alice')).default.provider,'evaluation-gateway');
-    assert.equal((await models.list('bob')).default.provider,'deepseek');
-    await models.favorites('alice',['deepseek-flash','MiniMax-M3']);
-    assert.equal((await models.list('alice')).default.provider,'deepseek');
-    assert.deepEqual(discovered,['EVAL_API_KEY','DEEPSEEK_KEY']);
+    assert.equal((await models.list('bob')).default.provider,'openai');
+    const restored=new GatewayAssistantModels(directory,model,gateways,async()=>[{id:'shared',name:'Shared'}]);
+    assert.equal((await restored.list('alice')).default.provider,'evaluation-gateway');
+    await assert.rejects(models.favorites('alice',['shared']),/可用/);
+    await assert.rejects(models.resolve({provider:'unknown',model:'shared'}),/config.ini/);
+    assert.deepEqual(discovered,['EVAL_CHANNEL_KEY_evaluation_Hgateway','EVAL_CHANNEL_KEY_openai']);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
 
-test('missing configured Flash and duplicate model identities fail visibly',async()=>{
-  const {model,gateways}=assistantModelConfiguration(gateway,env);
-  const missing=new GatewayAssistantModels('/unused',model,gateways,async config=>[
-    {id:config.provider==='deepseek'?'deepseek-v4-pro':'MiniMax-M3',name:'fixture'},
+test('channel whitelist, efforts and token limits are respected and missing configured models fail',async()=>{
+  const settings=configuration();
+  Object.assign(settings.channels.openai,{models:['shared'],efforts:['off','high','max']});
+  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  const models=new GatewayAssistantModels('/unused',model,gateways,async()=>[
+    {id:'shared',name:'Shared',maxTokens:32768},{id:'other',name:'Other'},
   ]);
-  await assert.rejects(missing.resolve({provider:'deepseek',model:'deepseek-flash'}),/DeepSeek.*缺少/);
-  const duplicate=new GatewayAssistantModels('/unused',model,gateways,async()=>[
-    {id:'MiniMax-M3',name:'MiniMax-M3'},{id:'deepseek-flash',name:'Flash'},
+  assert.equal((await models.resolve({provider:'openai',model:'shared'})).maxOutputTokens,4096);
+  await assert.rejects(models.resolve({provider:'openai',model:'other'}),/网关列表/);
+  await assert.rejects(models.resolve({provider:'openai',model:'shared',reasoningEffort:'medium'}),/推理等级/);
+  const missing=new GatewayAssistantModels('/unused',model,gateways,async()=>[{id:'other',name:'Other'}]);
+  await assert.rejects(missing.resolve({provider:'openai',model:'shared'}),/OpenAI.*缺少/);
+});
+
+test('the conversation picker keeps every channel visible when favorites only contain the original gateway',async()=>{
+  const directory=await mkdtemp(tmpdir()+'/eris-channel-picker-');
+  const settings=configuration(); settings.agent={};
+  delete settings.channels.openai.model;
+  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  const models=new GatewayAssistantModels(directory,model,gateways,async()=>[
+    {id:'shared',name:'Shared model'},{id:'other',name:'Other model'},
   ]);
-  await assert.rejects(duplicate.resolve({provider:'deepseek',model:'deepseek-flash'}),/重复的模型 ID/);
+  const sessions=new AssistantSessions({directory,url:'http://127.0.0.1:1',model,models,systemPrompt:'test',tools:[]});
+  const endpoints=assistantEndpoints(sessions);
+  const catalog=()=>endpoints.call('alice','session/modelCatalog',{args:{request:{}}},new AbortController().signal) as Promise<{
+    groups:{id:string;models:{id:string;provider:string}[]}[];default:{provider:string;model:string};
+  }>;
+  try {
+    await models.favorites('alice',[modelIdentity('evaluation-gateway','other'),modelIdentity('evaluation-gateway','shared')]);
+    const result=await catalog();
+    assert.deepEqual(result.groups.map(group=>[group.id,group.models.map(model=>model.id)]),[
+      ['evaluation-gateway',['other','shared']],['openai',['shared','other']],
+    ]);
+    assert.equal(result.default.model,'other');
+    assert.equal(result.default.provider,'evaluation-gateway');
+    const session=await sessions.create('alice');
+    await sessions.selectModel({userId:'alice',sessionId:session.sessionId},{provider:'openai',model:'shared',reasoningEffort:'high'});
+    assert.equal((await sessions.list('alice'))[0].modelSelection?.provider,'openai');
+    await models.favorites('alice',[modelIdentity('openai','shared')]);
+    assert((await catalog()).groups.every(group=>group.models.length===2),'changing favorites must never hide other channels');
+    assert(!JSON.stringify(result).includes('secret'));
+  } finally {await sessions.dispose();await rm(directory,{recursive:true,force:true});}
 });

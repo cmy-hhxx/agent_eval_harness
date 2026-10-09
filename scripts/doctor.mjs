@@ -31,6 +31,10 @@ for (const [engine, item] of Object.entries(upstream).filter(([name]) => name ==
     console.error(`${engine}: ${error.message}`);
   }
 }
+try {
+  const { readSettings, applySettings } = await import("@eval/host-app/settings");
+  applySettings(await readSettings());
+} catch (error) { failures++; console.error(`Configuration: ${error.message}`); }
 const python = process.env.EVAL_PYTHON || path.join(root, ".venv/bin/python");
 const py = spawnSync(python, ["--version"], { encoding: "utf8" });
 if (py.status !== 0 || !py.stdout.includes("3.12.12")) {

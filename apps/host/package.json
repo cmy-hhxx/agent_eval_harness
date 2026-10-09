@@ -13,6 +13,10 @@
     "./composition": {
       "types": "./composition.d.ts",
       "import": "./composition.js"
+    },
+    "./settings": {
+      "types": "./settings.d.ts",
+      "import": "./settings.js"
     }
   }
 }

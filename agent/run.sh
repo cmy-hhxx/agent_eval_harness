@@ -103,4 +103,4 @@ else
   prepare '正在准备 Eris…' node scripts/build-app.mjs
 fi
 cleanup_port
-exec node --env-file-if-exists=.env dist/apps/host/src/agent.js "$@"
+exec node dist/apps/host/src/agent.js "$@"

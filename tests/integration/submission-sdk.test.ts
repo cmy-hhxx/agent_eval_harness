@@ -5,19 +5,19 @@ import path from "node:path";
 import { object, type AgentProfile, type RunState, type ValidationIssue } from "@eval/contracts";
 import { createRunRepository } from "@eval/data";
 import { AgentRegistry, runEvaluation } from "@eval/host";
-import { createModelResolver } from "@eval/host-app/config";
-import { body, listen } from "@eval/runtime/http";
+import { createAutomationModels } from "../../apps/host/src/automation-models.js";
+import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 
 for (const engine of ["pi", "prime"] as const)
   for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} submits original JSON to Host while ordinary tool parameters stay validated`, { timeout: 60000 }, async () => {
+    test(`${engine}: ${api} falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
       const invalid = { count: "7", enabled: "true", text: 9, note: null, satisfies: false };
       const valid = { count: 7, enabled: true, text: "nine", note: null, satisfies: true };
       const drafts: unknown[] = [], gatewayErrors: string[] = [];
-      let requests = 0;
+      let requests = 0, quotaRequests = 0;
       const profile: AgentProfile = {
         id: "default", systemPrompt: "Evaluate the supplied JSON.", instructions: "Submit JSON.", submissionNudge: "Submit JSON.",
         toolNames: ["calculate"], fileSubmission: false,
@@ -38,6 +38,13 @@ for (const engine of ["pi", "prime"] as const)
       };
       const gateway = await listen(async (req, res) => {
         try {
+          if (req.url!.startsWith("/preferred/")) {
+            assert.equal(req.headers.authorization, "Bearer preferred-fixture-secret");
+            quotaRequests++;
+            return json(res, { error: { type: "insufficient_quota", code: "insufficient_quota",
+              message: "You exceeded your current quota, please check your plan and billing details." } }, 429);
+          }
+          assert.equal(req.headers.authorization, "Bearer local-fixture-secret");
           const payload = object(await body(req));
           assert(++requests <= 3, "invalid parameters and one content repair need only three model requests");
           const tools = payload.tools as Record<string, unknown>[];
@@ -100,34 +107,40 @@ for (const engine of ["pi", "prime"] as const)
       const repository = createRunRepository<RunState>({
         encode: (state) => structuredClone(state), references: () => [], resultId: (row) => String(row.id), decode: (state) => state,
       }, (task, state) => ({ id: task.id, file: "results.jsonl", row: { id: task.id, result: state.receipts[task.id].evaluation } }));
-      const previous = process.env.EVAL_API_KEY;
-      process.env.EVAL_API_KEY = "local-fixture-secret";
+      const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
+      process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "local-fixture-secret";
+      process.env.SDK_QUOTA_TEST_KEY = "preferred-fixture-secret";
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
         models.models.judge!.api = api;
         models.models.judge!.thinking = "off";
+        models.channels.openai = { ...models.models.judge, provider: "openai", baseUrl: gateway.url + "/preferred",
+          apiKeyEnv: "SDK_QUOTA_TEST_KEY" };
         const runId = `submission-${engine}-${api}`;
-        const modelForStage = createModelResolver(models);
+        const routing = createAutomationModels(models, ["openai", "evaluation-gateway"]);
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },
-          engine, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
+          engine, evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),
+          onModelQuotaExhausted: routing.onModelQuotaExhausted,
           policy: { ...config.execution, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
           agents: new AgentRegistry([{ id: "structured", profiles: { default: profile } }]), repository,
           taskSource: { id: "structured", bind: () => ({ agent: "structured", profile: "default", request: { input: {}, sources: {} } }) },
           runtime: services.runtime,
         });
         assert.deepEqual(gatewayErrors, []);
+        assert.equal(quotaRequests, 1, "exhausted credentials must be attempted only once");
         assert.equal(requests, 3);
         assert.deepEqual(drafts, [invalid, valid], "SDK preserves string, number, boolean and null submission values");
         const saved = await repository.readRun(path.join(config.output.path, runId));
-        assert.equal(saved.manifest.states["structured-task"].attempts, 1);
+        assert.equal(saved.manifest.states["structured-task"].attempts, 2);
         const receipt = saved.receipts["structured-task"];
         assert.deepEqual(receipt?.evaluation, valid);
         assert.equal(receipt?.submissionStats?.contentSubmissions, 2);
         assert.equal(receipt?.audit.calls, 0, "the rejected ordinary call never enters the application tool runtime");
       } finally {
-        if (previous === undefined) delete process.env.EVAL_API_KEY;
-        else process.env.EVAL_API_KEY = previous;
+        delete process.env.SDK_QUOTA_TEST_KEY;
+        if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
+        else process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = previous;
         await gateway.close();
         await rm(directory, { recursive: true, force: true });
       }

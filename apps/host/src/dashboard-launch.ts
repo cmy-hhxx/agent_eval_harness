@@ -76,18 +76,18 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
   let host: Awaited<ReturnType<typeof loadConfig>>;
   try {
     settings = dashboardSettings(value.settings ?? {});
-    host = await loadConfig(options.configPaths, process.env, settings);
+    host = await loadConfig(options.configPaths, undefined, settings);
   } catch (error) {
     throw new HttpError(400, errorText(error));
   }
   if (launch) {
     try {
-      const models = await (options.modelCatalog ?? (() => discoverDashboardModels(options.configPaths)))();
+      const models = await (options.modelCatalog ?? (() => discoverDashboardModels()))();
       const modelForStage = createModelResolver(host.models);
-      const available = new Set(models.map((model) => model.id));
+      const available = new Set(models.map((model) => JSON.stringify([model.channel, model.id])));
       for (const stage of Object.keys(host.models.bindings)) {
         const model = modelForStage(stage);
-        if (!available.has(model.model)) throw new Error(`阶段 ${stage} 的模型不在 .env 网关模型列表中`);
+        if (!available.has(JSON.stringify([model.provider, model.model]))) throw new Error(`阶段 ${stage} 的模型不在 config.ini 渠道模型列表中`);
       }
       for (const binding of Object.values(host.models.bindings)) {
         const profile = host.models.models[binding.profile]!;

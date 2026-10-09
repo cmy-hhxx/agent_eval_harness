@@ -6,7 +6,7 @@
 
 ## 最短路径
 
-1. 创建 `.env`，填写 `EVAL_BASE_URL` 和 `EVAL_API_KEY`。
+1. 从 `config.example.ini` 创建 `config.ini`，填写渠道的 `base_url` 和 `api_key`。
 2. 按[首页安装步骤](../README.md#最短运行路径)创建 `configs/local/models.json`，填写模型 ID。
 3. 先预检，再运行；同一个 `run-id` 会续跑未完成任务。
 
@@ -24,14 +24,33 @@ npm run eval -- report --run data/runs/comparison/pi-001
 
 工具版本由 [mise.toml](../mise.toml) 固定。安装步骤见首页。根 `.venv` 供公共 Python 代码工具使用；Prime 自身的 runtime 位于 `.runtime/prime-python`，两者独立。
 
-批量评测通过根 `.env` 注入两种底座共用的网关地址与密钥，阶段模型选择保存在配置文件；Eris 初始模型和自动化连接变量分别见 [Agent 说明](../agent/README.md)与[自动化](automations.md#启动)。批量评测的最小环境配置为：
+评测和 Eris 共用根目录 `config.ini` 的渠道。每个 `[channel.<id>]` 定义独立地址、密钥和 API，渠道 ID 是稳定的路由身份；同名模型可同时存在于多个渠道。示例见 [config.example.ini](../config.example.ini)：
 
-```dotenv
-EVAL_BASE_URL=https://api.openai.com/v1
-EVAL_API_KEY=your-key
+```ini
+[channel.evaluation-gateway]
+name = 评测网关
+base_url = https://your-gateway.example/v1
+api_key = your-gateway-key
+api = openai-responses
+
+[channel.openai]
+name = OpenAI
+base_url = https://api.openai.com/v1
+api_key = your-openai-key
+api = openai-responses
 ```
 
-将 URL 换成实际网关地址，保留网关要求的 `/v1` 路径。`npm run eval`、`npm run doctor` 和 `npm run worker` 自动读取根 `.env`；已有环境变量优先。切换 `--engine pi|prime` 不需要更换变量名或复制密钥。`.env` 不入库，示例见 [.env.example](../.env.example)。
+URL 保留渠道要求的路径。`api` 支持 `openai-responses`（缺省）和 `openai-completions`。渠道可填写默认 `model`、`thinking`、`context_window`、`max_output_tokens` 与 `supports_developer_role`；Eris 另可用逗号分隔的 `models` 限定开放模型、`efforts` 限定推理等级。渠道配置的模型必须存在于该渠道 `/models` 目录。重复 section、重复字段、无效 URL 与未知字段直接报错；支持整行 `#` / `;` 注释以及单引号或 JSON 双引号字符串，不支持行尾注释或变量插值。
+
+`config.ini` 不入库；修改后重启服务。启动入口不再读取 `.env`。`[environment]` 保存搜索、MongoDB、S3 等非模型配置，读入服务端环境并传给子进程；同名值以 INI 为准。`[environment]` 可设置 `https_proxy`、`http_proxy` 与 `no_proxy`；使用代理时将 `localhost,127.0.0.1,::1` 加入 `no_proxy`，保证本机 Host / Worker 直连。自动拉起的 Pi / Prime Worker 继承渠道密钥和代理，独立 `npm run worker` 读取同一份 INI。测试或独立部署可用 `EVAL_CONFIG_FILE` 指向另一份 INI。Eris 初始模型和自动化连接字段分别见 [Agent 说明](../agent/README.md#模型与设置)与[自动化](automations.md#启动)。
+
+JSON 配置用 `models.<profile>.channel` 引用渠道，例如 `"judge": { "channel": "evaluation-gateway", "model": "your-model-id" }`。阶段可同时覆盖渠道与模型：
+
+```json
+{"bindings":{"comparison":{"profile":"judge","channel":"openai","model":"your-openai-model-id"}}}
+```
+
+看板的阶段模型下拉框列出全部渠道，并随选择一起提交渠道 ID 和模型 ID。Eris 同样按渠道选择模型，常用列表使用渠道与模型的组合身份。自动化可通过 `[automation].channels` 指定优先顺序，额度耗尽时切换渠道，详见[自动化](automations.md#启动)。
 
 模型与评测配置通过配置文件接口注入。`--config` 可重复，文件按出现顺序深度合并，相对路径按各自文件目录解析：
 
@@ -43,8 +62,8 @@ EVAL_API_KEY=your-key
 | `comparisons` | 每组选择二至三个已登记模型，展开为独立两两比较；档位声明、缺失模型与重复模型对的规则见[对比组契约](contract.md#对比组) |
 | `reviewQuestions` | 显式语义复核问题：`[{ batch_id, case_id, questions: ["待核问题"] }]`；精确匹配批次与 case，对该 case 当前所选各候选一视同仁。问题作为归因的待核材料，不是已确认事实或指定判词；无对应输入会在预检报告 `review_case_unavailable`。重评已接受但语义有误的结果时，使用限定 case 与模型对的新 run ID |
 | `rewrite` | 文案改写：`{ comparison, attribution, clustering }`，三项默认开启，可显式设为 `false`；归因、对比及后置聚类接受后自动润色。对比默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
-| `models` | 命名模型档案：`provider`、`baseUrlEnv`、`api`（当前配置为 `openai-responses`）、`apiKeyEnv`、`thinking`（模型档案缺省 `medium`，仓库 Attribution 绑定显式覆盖为 `high`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
-| `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `model`、`thinking`、`contextWindow`、`maxOutputTokens` |
+| `models` | 命名模型档案：`channel`（引用 INI 渠道）、可选 `model` 和 `api`、`thinking`（模型档案缺省 `medium`，仓库 Attribution 绑定显式覆盖为 `high`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
+| `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `channel`、`model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认8并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
 | `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
@@ -248,7 +267,7 @@ npm run eval -- run --run-id daily-a --resume-stage rewrite \
 
 `--resume-stage` 可重复，只接受当前已暂停的阶段；它保留固定修复范围。日志统一写 `log/runtime.log`，进度输出 `stage_paused`；同错误签名是诊断线索，不证明所有样本同根因。暂停和失败会使 CLI 返回2。
 
-持续运行的 [Automations](automations.md#调度与状态) 会核对检查点，自动恢复中断任务，并对传输、超时及响应流中断退避续跑；结构、证据等持续校验错误仍保留保护性暂停。未完成任务的已确认内容提交达到当前配置累计上限时，该日期置为 blocked 并停止定时续跑，即使最后一次错误来自传输或中断；需调整累计上限或处理任务后再恢复，不因重启补满。Worker 终态提交账本不可确认时也停止自动恢复，要求显式 `automations retry`；保留已知用量，只能使用当前剩余额度。
+持续运行的 [Automations](automations.md#调度与状态) 会核对检查点，自动恢复中断任务，并对传输、超时及响应流中断退避续跑；Worker 终态提交账本不可确认也进入该恢复流程，无需手动 `retry`。已接受收据、已确认内容提交和文件错误计数保留，不推测未确认用量；下一轮只使用当前上限扣除已知用量后的余额。结构、证据等持续校验错误仍保留保护性暂停。未完成任务的已确认内容提交达到当前配置累计上限时，该日期置为 blocked 并停止定时续跑，即使最后一次错误来自传输或中断；需调整累计上限或处理任务后再恢复，不因重启补满。
 
 ### 小批验收再放量
 
@@ -368,7 +387,7 @@ npm run eval -- rewrite-comparisons --run data/runs/comparison/ID --scope verdic
 
 `stats.json` 的 `tokens` 汇总所有已记录尝试，包含失败和重试；未取得最终用量的尝试计入 `attempts_without_final_metrics`，不能视作用量为零。`input` 为未命中缓存的输入，`cacheRead` / `cacheWrite` 为缓存读取/写入 Token，`output` 为输出，`totalTokens` 为总量。`cache.model_input.hit_rate` 是缓存读取 Token 占全部输入 Token（未缓存 + 读取 + 写入）的比例，无输入时为 `null`。不存在跨 run 结果缓存。
 
-Pi / Prime 的 GPT-5.6、GPT-6 系列 Responses 评测请求使用固定 `prompt_cache_key=evaluation`，会话历史仍逐 attempt 隔离。没有材料工具、仅可提交结果的任务在首次请求使用无断点的显式模式，避免将一次性材料写入缓存；出现助手回复或工具调用历史后恢复隐式缓存，读取材料的多轮任务始终使用隐式缓存。其他模型、Chat Completions 和 Eris 会话保留 SDK 的缓存策略。此策略只修改请求缓存参数，不改提示词、材料、工具或推理参数，不更新 `evaluatorVersion`；网关须支持对应模型的 `prompt_cache_options`，实际收益以新增费用、`cacheWrite` 和完成量核对，命中率下降不一定代表费用增加。
+只有 INI 渠道显式配置 `supports_explicit_prompt_caching=true` 时，Pi / Prime 的 GPT-5.6、GPT-6 系列 Responses 评测请求才启用缓存扩展，并使用固定 `prompt_cache_key=evaluation`，会话历史仍逐 attempt 隔离。没有材料工具、仅可提交结果的任务在首次请求仅为固定系统提示词设置显式断点，避免将一次性材料写入缓存；出现助手回复或工具调用历史后恢复隐式缓存，读取材料的多轮任务始终使用隐式缓存。未声明该能力的渠道、其他模型、Chat Completions 和 Eris 会话保留 SDK 的缓存策略；模型名相同不代表不同渠道支持相同扩展。此策略只修改请求缓存参数，不改提示词、材料、工具或推理参数，不更新 `evaluatorVersion`；网关须支持对应模型的 `prompt_cache_options`，实际收益以新增费用、`cacheWrite` 和完成量核对，命中率下降不一定代表费用增加。
 
 `quality` 的首次通过率和修复次数按有内容提交计数的任务统计，包含共同标准、归因、对比、改写和聚类五个阶段；无计数的任务不推算。`attempts_per_accepted_task` / `tokens_per_accepted_task` 是累计尝试数 / Token 除以已接受任务数。P50/P95 使用各任务已记录的累计 attempt 耗时，包含失败与重试，不是单次模型响应时间；`wall_seconds` 从首次启动计时，包含中途停机到续跑之间的间隔。
 

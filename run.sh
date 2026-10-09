@@ -128,4 +128,4 @@ if [[ -f configs/local/models.json ]]; then
   configs+=(--config configs/local/models.json)
 fi
 
-exec node --env-file-if-exists=.env dist/apps/host/src/cli.js dashboard "${configs[@]}" ${args[@]+"${args[@]}"}
+exec node dist/apps/host/src/cli.js dashboard "${configs[@]}" ${args[@]+"${args[@]}"}

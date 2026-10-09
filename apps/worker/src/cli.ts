@@ -1,3 +1,4 @@
+import { readSettings, applySettings, configurationSecrets } from "@eval/host-app/settings";
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,7 @@ function logs(root: string) {
   return createFileLogger({
     directory: path.join(root, "log"),
     lockDirectory: path.join(root, ".runtime/log-writer"),
-    secrets: [process.env.EVAL_API_KEY || ""],
+    secrets: configurationSecrets(),
   });
 }
 const defaultRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -27,6 +28,7 @@ async function main() {
     },
   });
   const ROOT = path.resolve(values.root || defaultRoot);
+  if (!process.send) applySettings(await readSettings(process.env.EVAL_CONFIG_FILE || path.join(ROOT, "config.ini")));
   logger = logs(ROOT);
   if (!process.send) await logger.initialize();
   const engine = values.engine as Engine;
@@ -65,7 +67,7 @@ async function main() {
       process.exit(0);
     } catch (error) {
       await logger.error(error, { component: "worker", event: "shutdown_failed" });
-      console.error(redact(errorText(error), [process.env.EVAL_API_KEY || ""]));
+      console.error(redact(errorText(error), configurationSecrets()));
       process.exit(2);
     }
   };
@@ -77,6 +79,6 @@ async function main() {
 main().catch(async (error) => {
   // Managed startup failures reach the Host through stderr and are logged there once.
   if (!process.send) await logger.error(error, { component: "worker", event: "startup_failed" });
-  console.error(redact(errorText(error), [process.env.EVAL_API_KEY || ""]));
+  console.error(redact(errorText(error), configurationSecrets()));
   process.exitCode = 2;
 });

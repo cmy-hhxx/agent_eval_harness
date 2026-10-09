@@ -137,7 +137,7 @@ test("Eris startup keeps successful build diagnostics out of the terminal and fo
   assert.equal(result.stderr, "");
   assert(!/warn|asset list/.test(result.stdout));
   assert(result.stdout.includes("Eris: http://127.0.0.1:4190/u/alice/"));
-  assert.deepEqual(result.commands, ["npm:ls --depth=0 --silent", "node:scripts/build-app.mjs", "node:--env-file-if-exists=.env dist/apps/host/src/agent.js --port 4190 --user alice --no-open"]);
+  assert.deepEqual(result.commands, ["npm:ls --depth=0 --silent", "node:scripts/build-app.mjs", "node:dist/apps/host/src/agent.js --port 4190 --user alice --no-open"]);
 });
 
 test("Eris startup preserves build failure output and exit code without launching stale code", async () => {
@@ -151,7 +151,7 @@ test("Eris debug startup shows preparation diagnostics; first setup builds both 
   const result = await launch({ debug: true, setup: true });
   assert.equal(result.status, 0, result.stderr);
   assert(result.stderr.includes("bundler warning"));
-  assert.deepEqual(result.commands, ["npm:ls --depth=0 --silent", "node:scripts/bootstrap.mjs", "node:scripts/build.mjs", "node:--env-file-if-exists=.env dist/apps/host/src/agent.js --port 4190 --user alice --no-open --debug"]);
+  assert.deepEqual(result.commands, ["npm:ls --depth=0 --silent", "node:scripts/bootstrap.mjs", "node:scripts/build.mjs", "node:dist/apps/host/src/agent.js --port 4190 --user alice --no-open --debug"]);
 });
 
 test("Eris startup accepts equals port syntax and checks only the final selected port", async () => {

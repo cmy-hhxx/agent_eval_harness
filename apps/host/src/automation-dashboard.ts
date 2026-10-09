@@ -1,3 +1,4 @@
+import { configurationSecrets } from "./settings.js";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -69,7 +70,7 @@ export async function startAutomationDashboard(options: {
     res.setHeader("cache-control", "no-store");
     if (req.method !== "GET") throw new HttpError(405, "Read-only dashboard");
     const send = (value: unknown) => json(res, JSON.parse(redact(JSON.stringify(value),
-      [process.env[options.config.publication.mongoUriEnv] ?? "", process.env.EVAL_API_KEY ?? ""])));
+      [process.env[options.config.publication.mongoUriEnv] ?? "", ...configurationSecrets()])));
     if (url.pathname === "/api/errors") return send(await errors(url.searchParams));
     if (url.pathname === "/api/status") {
       if (!snapshot || Date.now() - sampledAt >= 1000) {

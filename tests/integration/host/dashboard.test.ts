@@ -1,3 +1,4 @@
+import { testSettings, writeTestSettings } from "../../fixtures/settings.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -40,7 +41,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
     clustering: config.clustering,
     models: {
       judge: {
-        provider: "test-gateway", baseUrlEnv: "EVAL_BASE_URL", apiKeyEnv: "EVAL_API_KEY",
+        channel: "evaluation-gateway",
         api: "openai-completions", model: "fixture-model", thinking: "off",
         contextWindow: 8192, maxOutputTokens: 2048,
       },
@@ -202,9 +203,9 @@ test("dashboard exposes every gateway model's public identity", () => {
     { id: "GEMINI-3", name: "Gemini 3" },
     { id: "gpt4o", name: "GPT-4o" },
   ];
-  assert.deepEqual(toDashboardModels(catalog), catalog);
-  assert.deepEqual(toDashboardModels([{ id: "claude-4", name: "Claude 4", contextWindow: 64000, maxTokens: 4096 }]),
-    [{ id: "claude-4", name: "Claude 4" }]);
+  assert.deepEqual(toDashboardModels(catalog, "test"), catalog.map(model => ({ ...model, channel: "test", name: `test / ${model.name}` })));
+  assert.deepEqual(toDashboardModels([{ id: "claude-4", name: "Claude 4", contextWindow: 64000, maxTokens: 4096 }], "test"),
+    [{ id: "claude-4", channel: "test", name: "test / Claude 4" }]);
 });
 
 test("dashboard fallback separates execution failures, dependency blocks and cancellations", async () => {
@@ -232,16 +233,15 @@ test("dashboard fallback separates execution failures, dependency blocks and can
   }
 });
 
-test("dashboard discovers all models from the .env gateway without leaking credentials", async () => {
+test("dashboard discovers all models from config.ini channels without leaking credentials", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
   const gatewayServer = await listen(async (req, res, url) => {
     assert.equal(url.pathname, "/v1/models");
     assert.equal(req.headers.authorization, "Bearer private-gateway-key");
     return json(res, { data: [{ id: "claude-4", name: "Claude 4" }, { id: "gemini-3" }] });
   });
-  process.env.EVAL_BASE_URL = gatewayServer.url + "/v1";
-  process.env.EVAL_API_KEY = "private-gateway-key";
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gatewayServer.url + "/v1", "private-gateway-key");
   const dashboard = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
   const launch = (model: string) => fetch(dashboard.url + "/api/dashboard/runs", {
     method: "POST", headers: { "content-type": "application/json", origin: dashboard.url },
@@ -254,20 +254,19 @@ test("dashboard discovers all models from the .env gateway without leaking crede
     assert(!config.includes("private-gateway-key"));
     assert(!config.includes(gatewayServer.url));
     assert.deepEqual(JSON.parse(config).model_catalog, [
-      { id: "claude-4", name: "Claude 4" }, { id: "gemini-3", name: "gemini-3" },
+      { channel: "evaluation-gateway", id: "claude-4", name: "评测网关 / Claude 4" }, { channel: "evaluation-gateway", id: "gemini-3", name: "评测网关 / gemini-3" },
     ]);
     assert.deepEqual(JSON.parse(config).environment, { base_url_configured: true, api_key_configured: true });
     const unavailable = await launch("unlisted");
     assert.equal(unavailable.status, 400);
-    assert.match((await unavailable.json()).error, /不在 \.env 网关模型列表/);
+    assert.match((await unavailable.json()).error, /不在 config.ini 渠道模型列表/);
     const available = await launch("claude-4");
     assert.equal(available.status, 400);
     assert.match((await available.json()).error, /没有可评对比组/);
   } finally {
     await dashboard.close();
     await gatewayServer.close();
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
-    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
@@ -522,14 +521,13 @@ test("dashboard dates respond while source scanning is blocked", async () => {
 
 test("dashboard start reuses preview planning and invalidates changed sources", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
-  process.env.EVAL_BASE_URL = gateway;
-  process.env.EVAL_API_KEY = "fixture";
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gateway, "fixture");
   const original = fileSourceReader.lines;
   let scans = 0;
   fileSourceReader.lines = async function* (...args) { scans++; yield* original(...args); };
   const server = await startDashboard({ configPaths: [fixture.configFile], port: 0,
-    modelCatalog: async () => [{ id: "gpt-fixture", name: "GPT fixture" }] });
+    modelCatalog: async () => [{ channel: "evaluation-gateway", id: "gpt-fixture", name: "GPT fixture" }] });
   const payload = { runId: "empty-preview", batch: ["absent"], settings: {
     bindings: Object.fromEntries(["criteria", "attribution", "comparison", "rewrite", "clustering"].map((stage) => [stage, { model: "gpt-fixture" }])),
   } };
@@ -552,8 +550,7 @@ test("dashboard start reuses preview planning and invalidates changed sources", 
     assert.equal(scans, selectionScans + 1, "only the changed source needs reparsing");
   } finally {
     fileSourceReader.lines = original;
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
-    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await server.close();
     await rm(fixture.directory, { recursive: true, force: true });
   }
@@ -561,8 +558,8 @@ test("dashboard start reuses preview planning and invalidates changed sources", 
 
 test("dashboard preflight reuses date inventory across sample counts", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL;
-  process.env.EVAL_BASE_URL = gateway;
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gateway);
   const original = fileSourceReader.lines;
   let scans = 0;
   fileSourceReader.lines = async function* (...args) { scans++; yield* original(...args); };
@@ -586,7 +583,7 @@ test("dashboard preflight reuses date inventory across sample counts", async () 
     assert.equal(scans, inventoryScans, "changing sample count must not rescan unchanged files");
   } finally {
     fileSourceReader.lines = original;
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await server.close();
     await rm(fixture.directory, { recursive: true, force: true });
   }
@@ -914,16 +911,14 @@ test("dashboard counts one finding across components and topics while retaining 
 
 test("dashboard HTTP keeps secrets out, previews without writing a run, and rejects unsafe changes", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL;
-  const previousKey = process.env.EVAL_API_KEY;
-  process.env.EVAL_BASE_URL = gateway;
-  process.env.EVAL_API_KEY = "private-key-do-not-expose";
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gateway, "private-key-do-not-expose");
   const server = await startDashboard({
     configPaths: [fixture.configFile],
     port: 0,
     modelCatalog: async () => [
-      { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
-      { id: "claude-4", name: "Claude 4" },
+      { channel: "evaluation-gateway", id: "gpt-5.6-luna", name: "GPT 5.6 Luna" },
+      { channel: "evaluation-gateway", id: "claude-4", name: "Claude 4" },
     ],
   });
   const get = async (route: string) => fetch(server.url + route);
@@ -940,7 +935,7 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert(!text.includes(gateway));
     const dashboardConfig = JSON.parse(text);
     assert.deepEqual(dashboardConfig.model_catalog, [
-      { id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, { id: "claude-4", name: "Claude 4" },
+      { channel: "evaluation-gateway", id: "gpt-5.6-luna", name: "GPT 5.6 Luna" }, { channel: "evaluation-gateway", id: "claude-4", name: "Claude 4" },
     ]);
     assert.equal(dashboardConfig.settings.bindings.attribution.model, "");
     const referencePage = await get("/reference");
@@ -991,7 +986,7 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
       runId: "new-run", batch: ["absent"], settings: { bindings: { comparison: { model: "unlisted" } } },
     });
     assert.equal(unavailable.status, 400);
-    assert.match((await unavailable.json()).error, /不在 \.env 网关模型列表/);
+    assert.match((await unavailable.json()).error, /不在 config.ini 渠道模型列表/);
     assert.equal(await exists(path.join(fixture.config.output.path, "new-run")), false);
     const checkpoint = await readFile(path.join(fixture.run, "state.json"), "utf8");
     const resumed = await (await post("/api/dashboard/preview", { runId: "run-one", batch: ["unrelated"] })).json();
@@ -1011,16 +1006,15 @@ test("dashboard HTTP keeps secrets out, previews without writing a run, and reje
     assert.equal((await get("/api/dashboard/runs/run-one/cases/detail?batch=b1&case=q1")).status, 200);
   } finally {
     await server.close();
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
-    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
 
 test("dashboard forwards controls to the locked Host without exposing its token", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL;
-  process.env.EVAL_BASE_URL = gateway;
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gateway);
   const calls: unknown[] = [];
   const host = await listen(async (req, res, url) => {
     if (url.pathname === "/api/progress") return json(res, {
@@ -1047,7 +1041,7 @@ test("dashboard forwards controls to the locked Host without exposing its token"
   } finally {
     await dashboard.close();
     await host.close();
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
@@ -1104,9 +1098,8 @@ test("dashboard deletion requires same origin and an idle run, then removes only
 
 test("dashboard blocks deletion throughout launch preparation and releases the reservation when launch fails", async () => {
   const fixture = await setup();
-  const previousUrl = process.env.EVAL_BASE_URL, previousKey = process.env.EVAL_API_KEY;
-  process.env.EVAL_BASE_URL = gateway;
-  process.env.EVAL_API_KEY = "fixture-key";
+  const previousUrl = process.env.EVAL_CONFIG_FILE;
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(fixture.directory, gateway, "fixture-key");
   let modelRequestStarted!: () => void, finishModels!: () => void;
   const requested = new Promise<void>((resolve) => { modelRequestStarted = resolve; });
   const modelsReady = new Promise<void>((resolve) => { finishModels = resolve; });
@@ -1136,8 +1129,7 @@ test("dashboard blocks deletion throughout launch preparation and releases the r
   } finally {
     finishModels();
     await dashboard.close();
-    if (previousUrl === undefined) delete process.env.EVAL_BASE_URL; else process.env.EVAL_BASE_URL = previousUrl;
-    if (previousKey === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY = previousKey;
+    if (previousUrl === undefined) delete process.env.EVAL_CONFIG_FILE; else process.env.EVAL_CONFIG_FILE = previousUrl;
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });
@@ -1145,7 +1137,7 @@ test("dashboard blocks deletion throughout launch preparation and releases the r
 test("run-scoped settings are validated with the same model and execution configuration as CLI", async () => {
   const fixture = await setup();
   try {
-    const host = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
+    const host = await loadConfig([fixture.configFile], testSettings(gateway), {
       bindings: { comparison: { model: "one-run-only", thinking: "high" } },
       execution: { concurrency: 3, retries: 0 },
       rewrite: { attribution: true },
@@ -1154,31 +1146,31 @@ test("run-scoped settings are validated with the same model and execution config
     assert.equal(host.models.bindings.attribution.model, undefined);
     assert.equal(host.evaluation.execution.concurrency, 3);
     assert.equal(host.evaluation.rewrite.attribution, true);
-    const original = await loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway });
+    const original = await loadConfig(fixture.configFile, testSettings(gateway));
     assert.equal(original.evaluation.execution.concurrency, 2);
     const defaultConfigFile = path.join(fixture.directory, "default-config.json");
     await writeJson(defaultConfigFile, {
       ...await readJson<Record<string, unknown>>(fixture.configFile),
       execution: {},
     });
-    const defaultConfig = await loadConfig(defaultConfigFile, { EVAL_BASE_URL: gateway });
+    const defaultConfig = await loadConfig(defaultConfigFile, testSettings(gateway));
     assert.equal(defaultConfig.evaluation.execution.concurrency, 8);
-    const withClustering = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
+    const withClustering = await loadConfig([fixture.configFile], testSettings(gateway), {
       clustering: { enabled: false },
     });
     assert.equal(withClustering.evaluation.clustering.enabled, false);
     await assert.rejects(
-      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { clustering: { enabled: "yes" } }),
+      loadConfig([fixture.configFile], testSettings(gateway), { clustering: { enabled: "yes" } }),
       /聚类设置/,
     );
-    await assert.rejects(loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway }, { execution: { concurrency: 0 } }), /execution.concurrency/);
-    await assert.rejects(loadConfig(fixture.configFile, { EVAL_BASE_URL: gateway }, { bindings: { unknown: { model: "x" } } }), /未知阶段/);
+    await assert.rejects(loadConfig(fixture.configFile, testSettings(gateway), { execution: { concurrency: 0 } }), /execution.concurrency/);
+    await assert.rejects(loadConfig(fixture.configFile, testSettings(gateway), { bindings: { unknown: { model: "x" } } }), /未知阶段/);
     const settings = editableDashboardSettings({
       models: { judge: { model: "fixture-model", thinking: "low" } },
       bindings: { comparison: { profile: "judge" }, mystery: { profile: "judge" } },
     });
     assert.deepEqual(Object.keys(settings.bindings), ["comparison"]);
-    assert.deepEqual(settings.bindings.comparison, { model: "fixture-model", thinking: "low" });
+    assert.deepEqual(settings.bindings.comparison, { channel: "", model: "fixture-model", thinking: "low" });
     assert.deepEqual(settings.rewrite, { attribution: true, comparison: true, clustering: true });
     assert.equal(settings.clustering.enabled, false);
     const stages = ["criteria", "attribution", "comparison", "rewrite", "clustering"];
@@ -1199,21 +1191,21 @@ test("run-scoped settings are validated with the same model and execution config
       { attribution: false, comparison: false, clustering: false });
     const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
     assert.deepEqual(fairSettings.comparisons, [["a_fast", "b_fast"], ["a_expert", "b_expert"]]);
-    const selected = await loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, {
+    const selected = await loadConfig([fixture.configFile], testSettings(gateway), {
       versions: ["a_fast", "b_fast"],
     });
     assert.deepEqual(selected.evaluation.inputs.versions.map((version) => version.id), ["a_fast", "b_fast"]);
     assert.deepEqual(selected.evaluation.comparisons, [["a_fast", "b_fast"]]);
     await assert.rejects(
-      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast"] }),
+      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast"] }),
       /至少选择两个模型/,
     );
     await assert.rejects(
-      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast", "ghost"] }),
+      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "ghost"] }),
       /未登记的模型/,
     );
     await assert.rejects(
-      loadConfig([fixture.configFile], { EVAL_BASE_URL: gateway }, { versions: ["a_fast", "a_expert"] }),
+      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "a_expert"] }),
       /没有可比较的组合/,
     );
   } finally {

@@ -1,3 +1,4 @@
+import { testSettings, writeTestSettings } from "./settings.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -100,9 +101,8 @@ export async function fixtureConfig(
   clustering = false,
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
-  const host = await loadConfig(path.join(ROOT, "configs/host.json"), {
-    EVAL_BASE_URL: "http://127.0.0.1:1/v1",
-  });
+  process.env.EVAL_CONFIG_FILE = await writeTestSettings(directory);
+  const host = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   const config = host.evaluation;
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };

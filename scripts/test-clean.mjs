@@ -30,8 +30,7 @@ const run = (command, args) =>
       env: {
         ...process.env,
         PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
-        EVAL_BASE_URL: "http://127.0.0.1:1/v1",
-        EVAL_API_KEY: "",
+        EVAL_CONFIG_FILE: path.join(checkout, "config.ini"),
         HUSKY: "0",
       },
     });
@@ -61,6 +60,7 @@ try {
     await cp(path.join(root, file), path.join(checkout, file));
     if (debug) diagnostic.copied.push(file);
   }
+  await writeFile(path.join(checkout, "config.ini"), "[channel.evaluation-gateway]\nbase_url=http://127.0.0.1:1/v1\napi_key=\n");
   await recordStage("copied");
   // Share only download caches; never reuse installed packages, builds or virtualenvs.
   await symlink(path.join(root, ".cache"), path.join(checkout, ".cache"));

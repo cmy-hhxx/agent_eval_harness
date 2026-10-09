@@ -58,8 +58,8 @@ for (const engine of ["pi", "prime"] as const)
     const repository = createRunRepository<RunState>({ encode: state => structuredClone(state), references: () => [],
       resultId: row => String(row.id), decode: state => state },
     (task, state) => ({ id: task.id, file: "results.jsonl", row: { id: task.id, result: state.receipts[task.id].evaluation } }));
-    const previous = process.env.EVAL_API_KEY, previousOffline = process.env.PI_OFFLINE;
-    process.env.EVAL_API_KEY = "local-fixture-secret"; process.env.PI_OFFLINE = "1";
+    const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway, previousOffline = process.env.PI_OFFLINE;
+    process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "local-fixture-secret"; process.env.PI_OFFLINE = "1";
     const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
     const worker = await startWorker(backend,path.join(directory,"worker"));
     try {
@@ -95,7 +95,7 @@ for (const engine of ["pi", "prime"] as const)
       }
       assert.deepEqual(starts.at(-1)!.args,{ok:true});
     } finally {
-      if (previous === undefined) delete process.env.EVAL_API_KEY; else process.env.EVAL_API_KEY=previous;
+      if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway; else process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway=previous;
       if (previousOffline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE=previousOffline;
       await worker.close(); await gateway.close(); await rm(directory,{recursive:true,force:true});
     }

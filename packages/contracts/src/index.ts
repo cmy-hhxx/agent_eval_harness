@@ -37,6 +37,8 @@ export interface ModelConfig {
   thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /** Explicit endpoint capability; false preserves system instructions as system messages. */
   supportsDeveloperRole?: boolean;
+  /** Opt in only on endpoints supporting prompt_cache_breakpoint and prompt_cache_options. */
+  supportsExplicitPromptCaching?: boolean;
   contextWindow: number;
   maxOutputTokens: number;
 }
@@ -373,6 +375,8 @@ export interface AttemptStatus {
   error?: string;
   errorDetail?: string;
   retryable?: boolean;
+  /** Confirmed provider quota/balance exhaustion at the model error boundary. */
+  modelQuotaExhausted?: boolean;
   failure?: FailureContext;
 }
 export interface AttemptRecord {

@@ -14,6 +14,7 @@ export interface ModelProfile {
   thinking?: Thinking;
   /** Gateway capability, independent of the model name and endpoint URL. */
   supportsDeveloperRole?: boolean;
+  supportsExplicitPromptCaching?: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
 }
@@ -21,6 +22,7 @@ export interface ModelProfile {
 /** Binds an evaluation stage to a profile and optionally overrides parameters. */
 export interface StageBinding {
   profile: string;
+  channel?: string;
   model?: string;
   thinking?: Thinking;
   contextWindow?: number;
@@ -28,21 +30,31 @@ export interface StageBinding {
 }
 
 export interface ModelCatalog {
+  channels: Record<string, ModelProfile>;
   models: Record<string, ModelProfile>;
   bindings: Record<string, StageBinding>;
 }
 
+function routedProfile(catalog: ModelCatalog, binding: StageBinding): ModelProfile {
+  const profile = catalog.models[binding.profile];
+  if (!profile) throw new Error(`Unknown model profile "${binding.profile}"`);
+  if (!binding.channel || binding.channel === profile.provider) return profile;
+  const channel = catalog.channels[binding.channel];
+  if (!channel) throw new Error(`Unknown channel "${binding.channel}"`);
+  return { ...profile, provider: channel.provider, baseUrl: channel.baseUrl, apiKeyEnv: channel.apiKeyEnv,
+    api: channel.api, supportsDeveloperRole: channel.supportsDeveloperRole,
+    supportsExplicitPromptCaching: channel.supportsExplicitPromptCaching };
+}
+
 export function boundProfiles(catalog: ModelCatalog): ModelProfile[] {
-  const names = new Set(Object.values(catalog.bindings).map((binding) => binding.profile));
-  return [...names].flatMap((name) => (catalog.models[name] ? [catalog.models[name]] : []));
+  return Object.values(catalog.bindings).map(binding => routedProfile(catalog, binding));
 }
 
 export function createModelResolver(catalog: ModelCatalog): (stage: string) => ModelConfig {
   return (stage) => {
     const binding = catalog.bindings[stage];
     if (!binding) throw new Error(`No model binding configured for stage "${stage}"`);
-    const profile = catalog.models[binding.profile];
-    if (!profile) throw new Error(`Unknown model profile "${binding.profile}" for stage "${stage}"`);
+    const profile = routedProfile(catalog, binding);
     const model = binding.model ?? profile.model;
     if (!model)
       throw new Error(
@@ -64,6 +76,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       model,
       thinking,
       ...(profile.supportsDeveloperRole !== undefined ? { supportsDeveloperRole: profile.supportsDeveloperRole } : {}),
+      ...(profile.supportsExplicitPromptCaching !== undefined ? { supportsExplicitPromptCaching: profile.supportsExplicitPromptCaching } : {}),
       contextWindow,
       maxOutputTokens,
     };

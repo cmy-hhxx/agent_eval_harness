@@ -5,8 +5,8 @@ import {zh, en} from '../../../vendor/deepseek/packages/client/ui-settings-model
 
 const namespace = 'assistant.models';
 const dictionaries = {
-  zh: {...zh, title: '常用模型', close: '关闭', fetchModels: '勾选常用模型', fetchTitle: '常用模型', fetchDescription: '选择输入框中可切换的网关模型', fetchAdopt: '保存选择'},
-  en: {...en, title: 'Favorite models', close: 'Close', fetchModels: 'Choose favorites', fetchTitle: 'Favorite models', fetchDescription: 'Choose gateway models for the conversation selector', fetchAdopt: 'Save selection'},
+  zh: {...zh, title: '常用模型', close: '关闭', fetchModels: '勾选常用模型', fetchTitle: '常用模型', fetchDescription: '选择各渠道优先显示的模型', fetchAdopt: '保存选择'},
+  en: {...en, title: 'Favorite models', close: 'Close', fetchModels: 'Choose favorites', fetchTitle: 'Favorite models', fetchDescription: 'Choose models to show first in each channel', fetchAdopt: 'Save selection'},
 };
 
 function ModelsSection({remote, t}) {
@@ -16,7 +16,9 @@ function ModelsSection({remote, t}) {
   const load = async (refresh = false) => {
     const response = await remote.models({refresh});
     if (!response.ok) throw new Error(response.error.message);
-    return response.value;
+    const data = response.value;
+    return {...data, models: data.models.map(model => ({...model,
+      id: JSON.stringify([model.provider, model.id]), name: `${model.providerName} / ${model.name}`}))};
   };
   useEffect(() => {
     let active = true;

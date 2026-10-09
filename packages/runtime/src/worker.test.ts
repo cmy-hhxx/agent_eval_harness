@@ -1777,7 +1777,15 @@ test("token budget aborts at the model response boundary", async () => {
   }
 });
 
-for (const [message, retryable] of [
+for (const [message, retryable, quota = false] of [
+  ['429 {"code":"insufficient_quota","message":"You exceeded your current quota"}', false, true],
+  ["You exceeded your current quota, please check your plan and billing details.", false, true],
+  ["402 Insufficient Balance", false, true],
+  ["API error: 额度已耗尽", false, true],
+  ["429 rate_limit_exceeded: tokens per minute quota exceeded", true],
+  ["429 quota_exceeded: tokens per minute", true],
+  ["429 subscription_sharing_usage_limit_exceeded", false, true],
+  ["401 Invalid API key; check your billing details", false],
   ["Connection error.", true],
   ["terminated", true],
   ["Request timed out.", true],
@@ -1816,20 +1824,22 @@ for (const [message, retryable] of [
       const status = await fixture.done();
       assert.equal(status.error, message);
       assert.equal(status.retryable, retryable);
+      assert.equal(status.modelQuotaExhausted, quota);
       assert.equal(status.failure?.errors[0]?.category, retryable ? "transport" : "interruption");
     } finally {
       await fixture.close();
     }
   });
 
-test("an ordinary thrown error cannot impersonate an SDK provider failure", async () => {
-  const message = "The server had an error processing your request.";
+for (const message of ["The server had an error processing your request.", "insufficient_quota"])
+test(`an ordinary thrown error cannot impersonate an SDK provider failure: ${message}`, async () => {
   const fixture = await harness(async () => ({ async run() { throw new Error(message); }, async abort() {}, async dispose() {} }));
   try {
     await fixture.start();
     const status = await fixture.done();
     assert.equal(status.error, message);
     assert.equal(status.retryable, false);
+    assert.equal(status.modelQuotaExhausted, false);
   } finally { await fixture.close(); }
 });
 

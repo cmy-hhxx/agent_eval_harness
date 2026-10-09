@@ -13,6 +13,8 @@ import {
   type Thinking,
 } from "./models.js";
 export * from "./models.js";
+export * from "./settings.js";
+import { readSettings, applySettings, type ApplicationSettings } from "./settings.js";
 
 const API_KINDS: ModelProfile["api"][] = ["openai-completions", "openai-responses"];
 const EXECUTION_DEFAULTS = {
@@ -32,7 +34,6 @@ const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   minSupport: 1,
   maxCasesPerTask: 100,
 };
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 type ConfigObject = Record<string, unknown>;
 
 export interface HostConfig {
@@ -40,8 +41,9 @@ export interface HostConfig {
   evaluatorVersion: string;
   /** Workflow-facing evaluation inputs and budgets. Contains no model configuration. */
   evaluation: EvalConfig;
-  /** Model profiles and per-stage bindings, resolved against the environment. */
+  /** Model profiles and per-stage bindings, resolved against config.ini channels. */
   models: ModelCatalog;
+  automation: ApplicationSettings["automation"];
 }
 
 function isObject(value: unknown): value is ConfigObject {
@@ -54,10 +56,6 @@ function mergeConfig(base: ConfigObject, overlay: ConfigObject): ConfigObject {
     merged[key] = isObject(previous) && isObject(value) ? mergeConfig(previous, value) : value;
   }
   return merged;
-}
-function envName(value: unknown, label: string): string {
-  if (typeof value !== "string" || !ENV_NAME.test(value)) throw new Error(`Invalid ${label}`);
-  return value;
 }
 function optionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;
@@ -265,7 +263,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   return config;
 }
 
-function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog {
+function buildModels(source: ConfigObject, configuration: ApplicationSettings): ModelCatalog {
   const rawModels = source.models;
   if (!isObject(rawModels) || !Object.keys(rawModels).length)
     throw new Error("Missing models; configure at least one model profile");
@@ -275,34 +273,33 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
   const models: Record<string, ModelProfile> = {};
   for (const [name, value] of Object.entries(rawModels)) {
     if (!isObject(value)) throw new Error(`Invalid models.${name}`);
-    const provider = optionalString(value.provider, `models.${name}.provider`);
-    if (!provider) throw new Error(`Missing models.${name}.provider`);
-    const baseUrlEnv = envName(value.baseUrlEnv, `models.${name}.baseUrlEnv`);
-    const baseUrl = env[baseUrlEnv];
-    if (!baseUrl) throw new Error(`Missing ${baseUrlEnv}; configure the model endpoint in .env`);
-    const endpoint = new URL(baseUrl);
-    if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password)
-      throw new Error(`Invalid ${baseUrlEnv} for models.${name}`);
-    const api = value.api;
+    for (const field of Object.keys(value))
+      if (!["channel", "api", "model", "thinking", "contextWindow", "maxOutputTokens", "supportsDeveloperRole"].includes(field))
+        throw new Error(`Invalid models.${name}.${field}; configure the endpoint in config.ini`);
+    const channelId = optionalString(value.channel, `models.${name}.channel`);
+    const channel = channelId ? configuration.channels[channelId] : undefined;
+    if (!channel) throw new Error(`Unknown models.${name}.channel in config.ini`);
+    const api = value.api ?? channel.api;
     if (!API_KINDS.includes(api as ModelProfile["api"])) throw new Error(`Invalid models.${name}.api`);
     const supportsDeveloperRole = optionalBoolean(value.supportsDeveloperRole, `models.${name}.supportsDeveloperRole`);
     models[name] = {
-      provider,
-      baseUrl,
+      ...channel,
       api: api as ModelProfile["api"],
-      apiKeyEnv: envName(value.apiKeyEnv, `models.${name}.apiKeyEnv`),
-      model: optionalString(value.model, `models.${name}.model`),
-      thinking: optionalThinking(value.thinking, `models.${name}.thinking`),
+      model: optionalString(value.model, `models.${name}.model`) ?? channel.model,
+      thinking: optionalThinking(value.thinking, `models.${name}.thinking`) ?? channel.thinking,
       ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
-      contextWindow: optionalPositiveInteger(value.contextWindow, `models.${name}.contextWindow`),
-      maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `models.${name}.maxOutputTokens`),
+      contextWindow: optionalPositiveInteger(value.contextWindow, `models.${name}.contextWindow`) ?? channel.contextWindow,
+      maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `models.${name}.maxOutputTokens`) ?? channel.maxOutputTokens,
     };
   }
   const bindings: Record<string, StageBinding> = {};
   for (const [stage, value] of Object.entries(rawBindings)) {
     if (!isObject(value) || typeof value.profile !== "string" || !models[value.profile])
       throw new Error(`Invalid bindings.${stage}; it must reference a defined model profile`);
+    const channel = optionalString(value.channel, `bindings.${stage}.channel`);
+    if (channel && !configuration.channels[channel]) throw new Error(`Unknown bindings.${stage}.channel in config.ini`);
     bindings[stage] = {
+      ...(channel ? { channel } : {}),
       profile: value.profile,
       model: optionalString(value.model, `bindings.${stage}.model`),
       thinking: optionalThinking(value.thinking, `bindings.${stage}.thinking`),
@@ -310,12 +307,12 @@ function buildModels(source: ConfigObject, env: NodeJS.ProcessEnv): ModelCatalog
       maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `bindings.${stage}.maxOutputTokens`),
     };
   }
-  return { models, bindings };
+  return { models, bindings, channels: configuration.channels };
 }
 
 const DASHBOARD_STAGES = ["criteria", "attribution", "comparison", "rewrite", "clustering"] as const;
 const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
-const DASHBOARD_BINDING = ["model", "thinking"] as const;
+const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 
 export function editableDashboardSettings(source: Record<string, unknown>) {
   const execution = isObject(source.execution) ? source.execution : {};
@@ -347,6 +344,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
         const profile = models[String(binding.profile)];
         const defaults = isObject(profile) ? profile : {};
         return [stage, {
+          channel: binding.channel ?? defaults.channel ?? "",
           model: binding.model ?? defaults.model ?? "",
           thinking: binding.thinking ?? defaults.thinking ?? DEFAULT_THINKING,
         }];
@@ -429,16 +427,18 @@ export async function loadEvaluation(sources: string | string[], settings?: unkn
 
 export async function loadConfig(
   sources: string | string[],
-  env = process.env,
+  configuration?: ApplicationSettings,
   settings?: unknown,
 ): Promise<HostConfig> {
   const { source, versions } = await mergedSource(sources, settings);
   const evaluatorVersion = readEvaluatorVersion(source);
-  const base = buildEvaluation(source), models = buildModels(source, env);
+  configuration ??= await readSettings();
+  applySettings(configuration);
+  const base = buildEvaluation(source), models = buildModels(source, configuration);
   const evaluation = versions ? selectVersions(base, versions) : base;
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");
-  return { evaluatorVersion, evaluation, models };
+  return { evaluatorVersion, evaluation, models, automation: configuration.automation };
 }

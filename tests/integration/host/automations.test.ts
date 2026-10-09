@@ -6,7 +6,7 @@ import { DEFAULT_POLICY, REMOTE_MODELS, emptyUsage, type AgentBackend, type Remo
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { RemoteInputs } from "@eval/runtime/client";
-import type { AutomationJob, AutomationState } from "@eval/automations";
+import { runPipeline, type AutomationJob, type AutomationState } from "@eval/automations";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
 import { assertStatisticsLog, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
@@ -272,11 +272,7 @@ test("automation defers unfinished clustering and later classifies attributions 
 });
 
 test("automation resumes current outputs across evaluator changes and delivers complete Mongo and statistics rows", { timeout: 60_000 }, async (t) => {
-  const previousBaseUrl = process.env.EVAL_BASE_URL;
-  process.env.EVAL_BASE_URL = "http://127.0.0.1:1/v1";
   t.after(() => {
-    if (previousBaseUrl === undefined) delete process.env.EVAL_BASE_URL;
-    else process.env.EVAL_BASE_URL = previousBaseUrl;
   });
   const { directory, config, modelForStage } = await fixtureConfig();
   let controller = new AbortController();
@@ -490,7 +486,7 @@ test("automation and restart honor the current stage repair cap without refundin
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("automation blocks an unavailable final submission ledger until explicit recovery without inventing costs", async () => {
+test("automation retries an unavailable final submission ledger without inventing or refunding costs", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-09-29", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
@@ -504,26 +500,79 @@ test("automation blocks an unavailable final submission ledger until explicit re
     } as unknown as Checkpoint;
     const file = path.join(directory, `daily-${date}`, "state.json");
     await writeJson(file, saved);
-    assert.equal(checkpointRecovery([saved], { repairAttempts: 2 }), undefined);
-    assert.deepEqual(automaticResumeStages(saved, { repairAttempts: 2 }), []);
+    assert.equal(checkpointRecovery([saved], { repairAttempts: 2 }), "transient");
+    assert.deepEqual(automaticResumeStages(saved, { repairAttempts: 2 }), ["rewrite"]);
     const outcome = evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 }, 300);
-    assert.equal(outcome.status, "blocked");
-    assert.equal(outcome.transient, false);
-    assert.match(outcome.error!, /ledger.*unknown.*explicit recovery/i);
-    const job = { date, runIds: [], evaluation: "retry", evaluationAttempts: 4, nextEvaluationAt: 100 } as unknown as AutomationJob;
-    assert.equal(await recoverEvaluation(settings, directory, job, { repairAttempts: 2 }), undefined);
+    assert.equal(outcome.status, "retry");
+    assert.equal(outcome.transient, true);
+    assert.match(outcome.error!, /submission_ledger_unavailable/);
+    const job = { date, runIds: [], evaluation: "blocked", evaluationAttempts: 4, nextEvaluationAt: 100 } as unknown as AutomationJob;
+    assert.equal(await recoverEvaluation(settings, directory, job, { repairAttempts: 2 }), "transient");
     assert.equal(job.evaluation, "blocked");
     assert.equal(job.evaluationAttempts, 4);
-    assert.equal(job.nextEvaluationAt, 0);
+    assert.equal(job.nextEvaluationAt, 100, "the pipeline retains the cooldown across restarts");
     assert.equal(saved.tasks.unknown.failure!.contentSubmissions, 1, "unknown final cost is never guessed");
-    job.evaluation = "pending"; job.resumePaused = true;
+    saved.tasks.unknown.status = "cancelled";
+    await writeJson(file, saved);
     assert.equal(await recoverEvaluation(settings, directory, job, { repairAttempts: 2 }), "interrupted");
-    assert.equal(job.evaluation, "pending", "an explicit retry may spend the known remaining cap");
+    saved.tasks.unknown.failure!.errors.push({ category: "structure", code: "invalid", path: "/", message: "invalid content" });
+    saved.pausedStages![0].category = "structure";
+    assert.equal(evaluationOutcome([saved], summarize([saved]), { repairAttempts: 2 }, 300).status, "blocked",
+      "an unavailable ledger must not override a content validation pause");
     saved.tasks.unknown.failure!.contentSubmissions = 3;
     await writeJson(file, saved);
     assert.equal(await recoverEvaluation(settings, directory, job, { repairAttempts: 2 }), undefined);
-    assert.equal(job.evaluation, "blocked", "explicit recovery cannot refund confirmed costs");
+    assert.equal(job.evaluation, "blocked", "automatic recovery cannot refund confirmed costs");
     assert.match(job.evaluationError!, /unknown.*3\/3/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("the pipeline reopens a blocked ledger checkpoint and retries until recovery without a retry command", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const date = "2026-10-08", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
+      unknown: { stage: "rewrite", status: "failed", data: {}, dependencies: {}, failure: {
+        contentSubmissions: 1, fileErrors: 2,
+        errors: [{ category: "transport", code: "submission_ledger_unavailable", path: "/", message: "final status unavailable" }],
+        repeatedErrors: 0, stopped: false, attemptId: "uncertain-attempt",
+      } },
+      accepted: { stage: "rewrite", status: "succeeded", data: {}, receipt: { acceptedAt: 1 } },
+    }, pausedStages: [{ stage: "rewrite", category: "transport", code: "submission_ledger_unavailable", path: "/", taskIds: ["unknown"], at: 1 }],
+    } as unknown as Checkpoint;
+    const file = path.join(directory, `daily-${date}`, "state.json");
+    await writeJson(file, saved);
+    const rows = Object.fromEntries(REMOTE_MODELS.map(model => [model, 1])) as RemoteDay["rows"];
+    const job: AutomationJob = { date, runIds: [`daily-${date}`], observed: rows, downloaded: rows, adopted: false,
+      download: "ready", evaluation: "blocked", checkedAt: Date.now(), evaluationAttempts: 0,
+      downloadAttempts: 0, nextDownloadAt: 0, nextEvaluationAt: 0 };
+    const state: AutomationState = { id: "recovery-test", sourceUrl: "http://source.invalid", status: "stopped",
+      startedAt: 0, updatedAt: 0, jobs: { [date]: job } };
+    const controller = new AbortController(), events: string[] = [];
+    let attempts = 0;
+    await runPipeline(state, { ...settings, retryMs: 1, pollMs: 10_000 }, {
+      discover: async () => [{ date, rows }],
+      initialize: async () => { throw new Error("existing date must be reused"); },
+      sync: async () => { throw new Error("ready inputs must be reused"); },
+      recover: current => recoverEvaluation(settings, directory, current, { repairAttempts: 2 }),
+      evaluate: async current => {
+        attempts++;
+        assert.equal(current.resumePaused, undefined, "recovery does not require a manual override");
+        const checkpoint = await readJson<Checkpoint>(file);
+        assert.deepEqual(automaticResumeStages(checkpoint, { repairAttempts: 2 }), ["rewrite"]);
+        if (attempts === 1) return evaluationOutcome([checkpoint], summarize([checkpoint]), { repairAttempts: 2 }, 300);
+        return { status: "completed", summary: { ...summarize([checkpoint]), stages: {
+          rewrite: { total: 2, completed: 2, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 },
+        } } };
+      },
+      save: async current => { if (current.jobs[date].evaluation === "completed") controller.abort(); },
+      event: async name => { events.push(name); },
+    }, AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]));
+    assert.equal(attempts, 2);
+    assert.equal(job.evaluation, "completed");
+    assert.ok(events.includes("evaluation_retry"));
+    assert.equal(events.includes("evaluation_blocked"), false);
+    assert.deepEqual(await readJson(file), saved, "scheduling preserves accepted receipts and confirmed submission history");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

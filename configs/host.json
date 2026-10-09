@@ -83,13 +83,11 @@
   },
   "models": {
     "judge": {
-      "provider": "evaluation-gateway",
-      "baseUrlEnv": "EVAL_BASE_URL",
       "api": "openai-responses",
-      "apiKeyEnv": "EVAL_API_KEY",
       "thinking": "medium",
       "contextWindow": 524288,
-      "maxOutputTokens": 32768
+      "maxOutputTokens": 32768,
+      "channel": "evaluation-gateway"
     }
   },
   "bindings": {

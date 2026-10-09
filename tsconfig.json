@@ -84,6 +84,9 @@
       ],
       "@eval/assistant/server": [
         "./agent/src/server/index.ts"
+      ],
+      "@eval/host-app/settings": [
+        "./apps/host/src/settings.ts"
       ]
     }
   },

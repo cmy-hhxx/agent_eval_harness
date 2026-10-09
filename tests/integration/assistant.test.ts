@@ -22,6 +22,56 @@ async function settled(sessions: AssistantSessions, id: string, requestId: strin
   );
 }
 
+test("Eris Responses requests preserve optional tool arguments through Pi", { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "assistant-responses-"));
+  const scope = { userId: "alice", sessionId: randomUUID() };
+  const requests: JsonObject[] = [], queries: unknown[] = [], errors: unknown[] = [];
+  const previousSecret = process.env.ASSISTANT_TEST_KEY;
+  process.env.ASSISTANT_TEST_KEY = "fixture-secret";
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const eris = createEris({
+    data: { list: async query => { queries.push(query); return { kind: "runs", total: 1, items: [{ runId: "fixture-run" }] }; },
+      read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
+  });
+  const gateway = await listen(async (req, res) => {
+    assert.equal(req.url, "/v1/responses");
+    const payload = object(await body(req)); requests.push(payload);
+    const hasResult = (payload.input as JsonObject[]).some(item => item.type === "function_call_output");
+    const item = hasResult
+      ? { type: "message", id: "msg-overview", role: "assistant", status: "completed", content: [{ type: "output_text", text: "找到一次评测运行。", annotations: [] }] }
+      : { type: "function_call", id: "fc-overview", call_id: "call-overview", name: "list_data", arguments: "{}" };
+    const events = [
+      { type: "response.output_item.added", output_index: 0, item: hasResult ? { ...item, content: [] } : { ...item, arguments: "" } },
+      { type: "response.output_item.done", output_index: 0, item },
+      { type: "response.completed", response: { id: `resp-${requests.length}`, status: "completed", output: [item], usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 } } },
+    ];
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end(events.map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
+  });
+  const model: ModelConfig = { provider: "openai", model: "gpt-6-luna", api: "openai-responses", baseUrl: gateway.url + "/v1",
+    apiKeyEnv: "ASSISTANT_TEST_KEY", thinking: "off", contextWindow: 65536, maxOutputTokens: 4096 };
+  const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model, ...eris, onError: error => errors.push(error) });
+  try {
+    await sessions.create(scope.userId, scope.sessionId);
+    const requestId = randomUUID();
+    await sessions.prompt(scope.userId, { sessionId: scope.sessionId, requestId, mode: "queue", content: [{ type: "text", text: "现在评测的进度如何？" }] });
+    assert.equal((await settled(sessions, scope.sessionId, requestId)).requests[requestId], "completed", JSON.stringify(errors));
+    assert.equal(requests.length, 2, "the overview tool result reaches the next model request");
+    for (const payload of requests) for (const tool of payload.tools as JsonObject[]) {
+      assert.equal(tool.strict, false, `${tool.name}: Responses must not promote optional arguments to required`);
+      assert.deepEqual(tool.parameters, eris.tools.find(source => source.name === tool.name)!.inputSchema);
+    }
+    assert.deepEqual(queries, [{}], "list_data reaches the data source without invented runId or query values");
+    const result = (requests[1].input as JsonObject[]).find(item => item.type === "function_call_output")!;
+    assert.equal(JSON.parse(String(result.output)).items[0].runId, "fixture-run");
+    assert.deepEqual(errors, []);
+  } finally {
+    await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });
+    if (previousSecret === undefined) delete process.env.ASSISTANT_TEST_KEY; else process.env.ASSISTANT_TEST_KEY = previousSecret;
+  }
+});
+
 test("stopping during conversation preparation never starts a model turn", { timeout: 10000 }, async (t) => {
   for (const phase of ["models", "driver"] as const) for (const stop of ["cancel", "dispose"] as const)
     await t.test(`${stop} while preparing ${phase}`, async () => {

@@ -6,7 +6,7 @@ import { AssistantSessions, serveAssistant } from "@eval/runtime/assistant";
 import { assistantEndpoints } from "@eval/assistant/server";
 import { createEris } from "@eval/assistant";
 import { createSerperSearch, createWebReader } from "@eval/tools";
-import { loadConfig, createModelResolver, DEFAULT_THINKING } from "./config.js";
+import { loadConfig, createModelResolver, readSettings, configurationSecrets } from "./config.js";
 import { ROOT } from "./paths.js";
 import { logger } from "./composition.js";
 import { assistantModelConfiguration, GatewayAssistantModels } from "./assistant-models.js";
@@ -19,14 +19,12 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invali
 const userId = assistantUser(values.user!);
 const sources = [path.join(ROOT, "configs/host.json")];
 if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(path.join(ROOT, "configs/local/models.json"));
-const config = await loadConfig(sources);
-const gatewayModel = process.env.AGENT_MODEL && process.env.AGENT_MODEL !== 'deepseek-flash' ? {
-  provider: "evaluation-gateway", baseUrl: process.env.EVAL_BASE_URL!, api: "openai-responses" as const, apiKeyEnv: "EVAL_API_KEY", model: process.env.AGENT_MODEL,
-  thinking: DEFAULT_THINKING, contextWindow: Number(process.env.AGENT_CONTEXT_WINDOW ?? 131072), maxOutputTokens: Number(process.env.AGENT_MAX_TOKENS ?? 8192),
-} : createModelResolver(config.models)("attribution");
-const { model, gateways } = assistantModelConfiguration(gatewayModel);
+const configuration = await readSettings();
+const config = await loadConfig(sources, configuration);
+logger.addSecrets(...configurationSecrets());
+const { model, gateways } = assistantModelConfiguration(createModelResolver(config.models)("attribution"), configuration);
 for (const gateway of gateways)
-  if (!gateway.model.baseUrl || !process.env[gateway.model.apiKeyEnv]) throw new Error(`请在根目录 .env 中配置 ${gateway.model.apiKeyEnv} 和对应网关地址`);
+  if (!process.env[gateway.model.apiKeyEnv]) throw new Error(`请在 config.ini 的 channel.${gateway.model.provider} 中配置 api_key`);
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
   directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model, gateways),
   ...createEris({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader(), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),

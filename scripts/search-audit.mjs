@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, parseEnv } from "node:util";
+import { parseArgs } from "node:util";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const fixturePath = path.join(root, "tests/fixtures/search-audit.json");
@@ -10,7 +10,7 @@ const usage = `Financial search audit (explicit paid network run)
   node scripts/search-audit.mjs --live --output .artifacts/search-audit-<run>
   node scripts/search-audit.mjs --live --case apple-annual-sales --output .artifacts/search-audit-<rerun>
 
-Requires current npm run build:app output and SEARCH_API_KEY in the environment or root .env.
+Requires current npm run build:app output and SEARCH_API_KEY in the root config.ini [environment].
 Without --live and --output the script makes no requests. --case may be repeated.
 Full run: 36 Serper HTTP requests (normally 36 credits), each asking for ten results;
 at most twelve direct source reads, only of returned planned candidates matching gold.
@@ -120,10 +120,10 @@ async function main() {
   if (new Set(selected).size !== selected.length || selected.some((id) => !fixture.cases.some((entry) => entry.id === id)))
     throw new Error("--case must name unique ids in the fixed fixture");
   const cases = fixture.cases.filter((entry) => selected.includes(entry.id));
-  const environment = await readFile(path.join(root, ".env"), "utf8").then(parseEnv).catch((error) => {
-    if (error.code === "ENOENT") return {}; throw error;
-  });
-  const apiKey = process.env.SEARCH_API_KEY?.trim() || environment.SEARCH_API_KEY?.trim();
+  const { readSettings, applySettings } = await import("@eval/host-app/settings");
+  const settings = await readSettings();
+  applySettings(settings);
+  const apiKey = settings.environment.SEARCH_API_KEY?.trim();
   if (!apiKey) throw new Error("SEARCH_API_KEY is required for --live");
   const { createSerperSearch, createWebReader } = await import("@eval/tools");
   const output = path.resolve(root, values.output);

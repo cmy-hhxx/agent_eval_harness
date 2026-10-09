@@ -99,10 +99,10 @@ test("dashboard renders gateway models with eight-way concurrency, medium thinki
   assert.equal(editableDashboardSettings({}).execution.concurrency, 8);
   const page = await controller(() => ({
     paths: ["configs/host.json"], environment: {},
-    model_catalog: [{ id: "claude-4", name: "Claude 4" }, { id: "gpt-5.6", name: "GPT 5.6" }],
+    model_catalog: [{ channel: "evaluation-gateway", id: "claude-4", name: "Claude 4" }, { channel: "openai", id: "gpt-5.6", name: "GPT 5.6" }],
     settings: editableDashboardSettings({
       ...source,
-      models: { judge: { model: "claude-4" } },
+      models: { judge: { channel: "evaluation-gateway", model: "claude-4" } },
       bindings: Object.fromEntries(["criteria", "attribution", "comparison", "rewrite", "clustering"]
         .map((stage) => [stage, { profile: "judge" }])),
     }),
@@ -113,8 +113,8 @@ test("dashboard renders gateway models with eight-way concurrency, medium thinki
     const selects = [...page.document.querySelectorAll("[data-model-stage]")];
     assert.equal(selects.length, 5);
     for (const select of selects) {
-      assert.deepEqual([...select.options].map((option) => option.value), ["", "claude-4", "gpt-5.6"]);
-      assert.equal(select.value, "claude-4");
+      assert.deepEqual([...select.options].map((option) => option.value), ["", JSON.stringify(["evaluation-gateway", "claude-4"]), JSON.stringify(["openai", "gpt-5.6"])]);
+      assert.equal(select.value, JSON.stringify(["evaluation-gateway", "claude-4"]));
     }
     for (const select of page.document.querySelectorAll("[data-thinking-stage]")) {
       assert.equal(select.value, "medium");

@@ -10,7 +10,8 @@ import { primeBackend } from "@eval/runtime/prime";
 import { fakeIdentity } from "../fixtures/comparison.js";
 
 for (const engine of ["pi", "prime"] as const)
-  test(`${engine}: Responses cache controls reach the gateway and repairs preserve task history`, { timeout: 60000 }, async () => {
+  for (const supportsExplicitPromptCaching of [false, true])
+  test(`${engine}: Responses cache extension support=${supportsExplicitPromptCaching} preserves task history`, { timeout: 60000 }, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "eval-sdk-cache-"));
     const requests: Record<string, unknown>[] = [];
     const gateway = await listen(async (req, res) => {
@@ -45,8 +46,8 @@ for (const engine of ["pi", "prime"] as const)
           engine: backend.identity, evidenceBank: [],
           evaluation: { id: "fixture", profile: "default", systemPrompt: "Preserve these exact rules.",
             outputSchema: { type: "object" }, toolNames, fileSubmission: false, toolDescriptions: {}, submissionNudge: "Submit." },
-          model: { provider: "fixture", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,
-            model: "gpt-6-luna", thinking: "high", contextWindow: 200000, maxOutputTokens: 8192 },
+          model: { provider: "openai", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,
+            model: "gpt-6-luna", thinking: "high", contextWindow: 200000, maxOutputTokens: 8192, supportsExplicitPromptCaching },
           policy: DEFAULT_POLICY, prompt: `Exact material ${index}`, inputs: [], hostUrl: gateway.url,
           deadline: Date.now() + 30000,
         };
@@ -72,15 +73,16 @@ for (const engine of ["pi", "prime"] as const)
       }
       assert.equal(executed, 1);
       assert.equal(requests.length, 4);
-      assert.deepEqual(requests.map((r) => r.prompt_cache_options), [
+      assert.deepEqual(requests.map((r) => r.prompt_cache_options), supportsExplicitPromptCaching ? [
         { mode: "explicit" }, { mode: "implicit" }, { mode: "explicit" }, { mode: "implicit" },
-      ]);
+      ] : [undefined, undefined, undefined, undefined]);
       for (const payload of requests) {
-        assert.equal(payload.prompt_cache_key, "evaluation");
+        if (supportsExplicitPromptCaching) assert.equal(payload.prompt_cache_key, "evaluation");
         assert.equal(payload.max_output_tokens, 8192);
         assert.equal(payload.parallel_tool_calls, false);
         assert.equal(object(payload.reasoning).effort, "high");
-        assert(!Object.hasOwn(payload, "prompt_cache_retention"));
+        if (supportsExplicitPromptCaching) assert(!Object.hasOwn(payload, "prompt_cache_retention"));
+        else assert(!JSON.stringify(payload).includes("prompt_cache_breakpoint"), "ordinary OpenAI channels reject this extension");
         assert(JSON.stringify(payload.input).includes("Preserve these exact rules."));
         assert.deepEqual((payload.tools as { name: string }[]).map((tool) => tool.name), ["submit_evaluation"]);
         assert(JSON.stringify(payload.tools).includes("Preserve this description."));
@@ -90,6 +92,12 @@ for (const engine of ["pi", "prime"] as const)
       assert.deepEqual(repairInput.slice(0, firstInput.length), firstInput);
       const sharedPrefix = (request: Record<string, unknown>) => {
         const first = object((request.input as unknown[])[0]);
+        if (!supportsExplicitPromptCaching) {
+          assert.equal(typeof first.content, "string");
+          assert((first.content as string).startsWith("Preserve these exact rules."));
+          assert((first.content as string).includes(directory));
+          return "Preserve these exact rules.";
+        }
         assert(Array.isArray(first.content));
         const blocks = first.content as { text: string; prompt_cache_breakpoint?: unknown }[];
         assert.deepEqual(blocks[0], { type: "input_text", text: "Preserve these exact rules.",

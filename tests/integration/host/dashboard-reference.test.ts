@@ -1,3 +1,4 @@
+import { testSettings } from "../../fixtures/settings.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -15,7 +16,7 @@ import { ROOT } from "../../fixtures/services.js";
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 
 async function referencePage() {
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), { EVAL_BASE_URL: "http://127.0.0.1:1/v1" });
+  const config = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   const reference = dashboardReference(config.evaluation, config.evaluatorVersion);
   const dom = new JSDOM(await readFile(path.join(ROOT, "apps/host/dashboard/reference.html"), "utf8"));
   try {

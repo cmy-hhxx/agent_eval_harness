@@ -165,7 +165,7 @@ test("tool schema inlining rejects external, unresolved, non-schema and circular
 const model: ModelConfig = {
   provider: "fixture", baseUrl: "http://127.0.0.1:1/v1", api: "openai-responses",
   apiKeyEnv: "FIXTURE_KEY", model: "gpt-6-luna", thinking: "high",
-  contextWindow: 200000, maxOutputTokens: 8192,
+  contextWindow: 200000, maxOutputTokens: 8192, supportsExplicitPromptCaching: true,
 };
 test("provider capabilities preserve explicit max reasoning and opt-out of developer roles", () => {
   const defaultProvider = providerConfig(model).models[0]!;
@@ -196,6 +196,17 @@ const request = () => ({
   reasoning: { effort: "high" },
   prompt_cache_key: "random-sdk-session",
   prompt_cache_retention: "24h",
+});
+
+test("Responses channels do not receive explicit cache extensions without declaring support", () => {
+  for (const support of [undefined, false]) {
+    const config = { ...model, provider: "openai", model: "gpt-6-luna", supportsExplicitPromptCaching: support };
+    const value = request();
+    transformPayload(value, config, evaluation([]));
+    assert.equal(JSON.stringify(value).includes("prompt_cache_breakpoint"), false);
+    assert.equal("prompt_cache_options" in value, false);
+    assert.equal(value.input[0].content, "Exact rules and attempt workspace");
+  }
 });
 
 test("both provider APIs retain the current inspection and final model schemas without changing history", () => {

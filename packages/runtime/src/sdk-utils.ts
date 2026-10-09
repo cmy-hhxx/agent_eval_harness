@@ -1,6 +1,13 @@
 import type { EvaluationSpec, ModelConfig, ToolContent, ToolResult } from "@eval/contracts";
 import { object, SUBMISSION_JSON_SCHEMA } from "@eval/contracts";
 
+/** Call only for a provider/model failure, never for tool output or validation feedback. */
+export function isModelQuotaExhausted(message: string): boolean {
+  if (/\b(?:insufficient_quota|billing_hard_limit_reached|insufficient_balance|subscription_sharing_usage_limit_exceeded)\b/i.test(message)) return true;
+  if (/rate.?limit|tokens? per (?:minute|second)|requests? per (?:minute|second)|\b(?:TPM|RPM)\b/i.test(message)) return false;
+  return /\b(?:quota_exceeded|usage_limit_reached)\b|exceeded your current quota|\bquota (?:exceeded|exhausted)\b|\binsufficient (?:credits?|balance|quota)\b|\bout of (?:credits?|budget)\b|\b(?:credit|balance|budget)s? (?:exhausted|depleted)\b|余额不足|额度(?:已)?(?:用尽|耗尽|不足)|配额(?:已)?(?:耗尽|用完)/i.test(message);
+}
+
 export function inlineToolSchema(schema: Record<string, unknown> | boolean): Record<string, unknown> | boolean {
   const single = new Set(["items", "additionalItems", "additionalProperties", "unevaluatedItems", "unevaluatedProperties", "contains", "propertyNames", "not", "if", "then", "else", "contentSchema"]);
   const maps = new Set(["properties", "patternProperties", "dependentSchemas", "dependencies"]);
@@ -130,7 +137,7 @@ export function transformPayload(
     payload.tools = payload.tools.filter((value) => activeNames.includes(String(
       (config.api === "openai-completions" ? object(object(value).function) : object(value)).name,
     )));
-  if (evaluation && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
+  if (evaluation && config.supportsExplicitPromptCaching === true && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
     // The SDK appends an attempt-specific workspace after the fixed instructions.
     // Cache the exact common prefix without removing or changing that suffix.
     const first = Array.isArray(payload.input) ? object(payload.input[0]) : {};

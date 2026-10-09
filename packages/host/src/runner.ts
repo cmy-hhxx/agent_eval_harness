@@ -45,6 +45,8 @@ export interface RunOptions extends EvaluationServices {
   plan: TaskPlan;
   policy: Policy;
   modelForStage: (stage: string) => ModelConfig;
+  /** Return true only after selecting a different channel for subsequent attempts. */
+  onModelQuotaExhausted?: (model: ModelConfig) => boolean;
   concurrency: number;
   retries: number;
   skipFailed?: boolean;
@@ -638,7 +640,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           }
         }
         if (!contentLedgerConfirmed) {
-          const message = "Worker 最终提交账本不可用，无法确认剩余内容额度；已停止本次自动重试，可显式续跑同一 run。";
+          const message = "Worker 最终提交账本不可用，无法确认剩余内容额度；已保留已确认计数并结束本轮尝试，等待同一 run 续跑。";
           state.reason = state.reason ? `${state.reason}；${message}` : message;
           const previous = state.failure;
           state.failure = {
@@ -663,9 +665,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           path: "/",
           message: state.reason || "No committed receipt",
         }]);
-      const pause = controller.signal.aborted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, errors);
+      const rerouted = !receipt && !controller.signal.aborted && !paused(task) && !state.failure?.stopped &&
+        contentLedgerConfirmed && contentRemaining(task) > 0 &&
+        (record.status ?? status)?.modelQuotaExhausted === true && options.onModelQuotaExhausted?.(model) === true &&
+        options.modelForStage(task.stage).provider !== model.provider;
+      const pause = controller.signal.aborted || rerouted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, errors);
       if (!receipt && !controller.signal.aborted) await options.logger?.error(state.reason || "No committed receipt", {
-        component: "host", event: "attempt_failed", run_id: options.runId, task_id: task.id,
+        component: "host", event: rerouted ? "model_channel_switched" : "attempt_failed", run_id: options.runId, task_id: task.id,
+        ...(rerouted ? { from_channel: model.provider, to_channel: options.modelForStage(task.stage).provider,
+          reason: "model_quota_exhausted" } : {}),
         attempt_id: spec.attemptId, stage: task.stage, errors,
         detail: status?.errorDetail ?? record.status?.errorDetail,
       });
@@ -706,7 +714,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (controller.signal.aborted || paused(task) || state.failure?.stopped ||
         !contentLedgerConfirmed || contentRemaining(task) <= 0) return;
-      if (status?.retryable) {
+      if (rerouted) {
+        // A new channel has its own transport budget; content accounting remains unchanged.
+        retries.transport = 0;
+      } else if (status?.retryable) {
         if (retries.transport++ >= options.retries) return;
       } else if (
         state.failure?.draft &&
@@ -714,7 +725,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       ) {
         if (retries.content++ >= 1) return;
       } else return;
-      const retryDelay = status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
+      const retryDelay = !rerouted && status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
       state.status = "pending";
       state.nextRetryAt = Date.now() + retryDelay;
       await current.save();

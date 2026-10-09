@@ -6,7 +6,7 @@ import type { Engine, WorkerEvent } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
 import { object, SUBMISSION_FILE_SCHEMA } from "@eval/contracts";
-import { createModelResolver } from "@eval/host-app/config";
+import { createModelResolver, parseSettings, applySettings } from "@eval/host-app/config";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
 import { criteriaProfile } from "@eval/agents/criteria";
@@ -18,7 +18,7 @@ import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult, inspect
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
-    `${engine}: real vendored SDK over HTTP worker, three stages, optional verification and resume`,
+    `${engine}: real vendored SDK over HTTP worker, multiple channels, three stages, optional verification and resume`,
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -33,7 +33,7 @@ for (const engine of ["pi", "prime"] as Engine[])
       const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 4 };
       const gateway = await listen(async (req, res) => {
         try {
-          assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
+          assert.equal(req.headers.authorization, req.url!.startsWith("/second/") ? "Bearer second-channel-secret" : "Bearer integration-fixture-secret");
           const payload = object(await body(req));
           requests.push(payload);
           const tools = payload.tools as {
@@ -76,6 +76,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             assert.equal(sourceIndices.uniqueItems, true);
             assert.equal(properties.acceptance_rule, undefined);
           }
+          assert.equal(req.url!.startsWith("/second/"), !criteria && !attribution, "Comparison routes to its own channel even with the same model ID");
           const stage = criteria ? "criteria" : attribution ? "attribution" : verification ? "verification" : "comparison";
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
           const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
@@ -208,11 +209,19 @@ for (const engine of ["pi", "prime"] as Engine[])
           res.end(String(error));
         }
       });
-      const previous = process.env.EVAL_API_KEY;
-      process.env.EVAL_API_KEY = "integration-fixture-secret";
+      const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
+      process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "integration-fixture-secret";
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
         models.models.judge!.thinking = "xhigh";
+        const channels = parseSettings(`[channel.second]
+base_url=${gateway.url}/second
+api_key=second-channel-secret
+api=openai-completions
+`);
+        applySettings(channels);
+        models.channels = { ...models.channels, ...channels.channels };
+        models.bindings.comparison.channel = "second";
         const modelForStage = createModelResolver(models);
         config.execution.timeoutSeconds = 45;
         config.execution.idleTimeoutSeconds = 15;
@@ -293,8 +302,9 @@ for (const engine of ["pi", "prime"] as Engine[])
           assert.equal(String(payload.max_completion_tokens), "32768");
         }
       } finally {
-        if (previous === undefined) delete process.env.EVAL_API_KEY;
-        else process.env.EVAL_API_KEY = previous;
+        if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
+        else process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = previous;
+        delete process.env.EVAL_CHANNEL_KEY_second;
         await gateway.close();
         await rm(directory, { recursive: true, force: true });
       }

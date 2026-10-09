@@ -23,7 +23,7 @@ TypeScript Host 编排 JSON 评测，Agent 通过 Profile 提供提示词、Sche
 
 ## Eris 评测助手
 
-配置根目录 `.env` 后运行 `bash agent/run.sh`。模型、对话、专业评测调用与恢复见 [Agent 使用说明](agent/README.md)。批量评测看板使用 `bash run.sh`。
+配置根目录 `config.ini` 后运行 `bash agent/run.sh`。模型、对话、专业评测调用与恢复见 [Agent 使用说明](agent/README.md)。批量评测看板使用 `bash run.sh`。
 
 ## 离线评测汇报
 
@@ -34,7 +34,7 @@ TypeScript Host 编排 JSON 评测，Agent 通过 Profile 提供提示词、Sche
 ```bash
 mise trust
 mise install
-cp .env.example .env
+cp config.example.ini config.ini
 mkdir -p configs/local
 cp configs/models.example.json configs/local/models.json
 npm run bootstrap
@@ -42,7 +42,7 @@ npm run build
 npm run doctor
 ```
 
-在 `.env` 填写两种底座共用的 `EVAL_BASE_URL` 和 `EVAL_API_KEY`，在 `configs/local/models.json` 填入网关模型 ID，然后运行：
+在 `config.ini` 填写两种底座共用的渠道的 `base_url` 和 `api_key`，在 `configs/local/models.json` 填入网关模型 ID，然后运行：
 
 ```bash
 npm run eval -- preflight

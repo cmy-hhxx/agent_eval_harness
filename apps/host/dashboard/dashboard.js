@@ -564,10 +564,10 @@ function renderConfig() {
   ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
   const gatewayModels = config.model_catalog || [];
   const modelOptions = (selected) => gatewayModels.length
-    ? `<option value="" ${selected ? "" : "selected"}>未选模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(model.id)}" ${model.id === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`
+    ? `<option value="" ${selected ? "" : "selected"}>未选模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(JSON.stringify([model.channel, model.id]))}" ${JSON.stringify([model.channel, model.id]) === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`
     : `<option value="" selected>${escapeHtml(config.model_catalog_error || "网关未返回可用模型")}</option>`;
   $("#model-fields").innerHTML = `<div class="model-fields-head" aria-hidden="true"><span>阶段</span><span>模型</span><span>推理</span></div>${Object.entries(settings.bindings || {}).map(([stage, binding]) => {
-    const selected = gatewayModels.some((model) => model.id === binding.model) ? binding.model : "";
+    const selected = gatewayModels.some((model) => model.channel === binding.channel && model.id === binding.model) ? JSON.stringify([binding.channel, binding.model]) : "";
     return `
     <div class="model-field-row"><span class="model-stage">${escapeHtml(stageLabel(stage))}</span><select data-model-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}模型 ID" ${gatewayModels.length ? "" : "disabled"}>${modelOptions(selected)}</select><select data-thinking-stage="${escapeHtml(stage)}" aria-label="${escapeHtml(stageLabel(stage))}推理等级">${thinkingLevels.map((level) => `<option value="${level}" ${binding.thinking === level ? "selected" : ""}>${level}</option>`).join("")}</select></div>`;
   }).join("")}`;
@@ -589,7 +589,8 @@ function launchPayload() {
   document.querySelectorAll("[data-model-stage]").forEach((input) => {
     const stage = input.dataset.modelStage;
     const thinking = document.querySelector(`[data-thinking-stage="${stage}"]`).value;
-    bindings[stage] = { ...(input.value.trim() ? { model: input.value.trim() } : {}), thinking };
+    const selected = input.value ? JSON.parse(input.value) : undefined;
+    bindings[stage] = { ...(selected ? { channel: selected[0], model: selected[1] } : {}), thinking };
   });
   return {
     runId: state.runId, engine: $("#engine").value,

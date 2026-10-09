@@ -1,3 +1,4 @@
+import { configurationSecrets } from "./settings.js";
 import { parseArgs } from "node:util";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -218,9 +219,10 @@ dashboard: --port 4173 在本机启动控制看板`,
   }
   const host = await loadConfig(
     values.config,
-    process.env,
+    undefined,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
+  logger.addSecrets(...configurationSecrets());
   if (command === "review-problem-occurrences") {
     if (!values["review-file"]) throw new Error("--review-file required");
     if (values.run || values["run-id"] || values.input || values.output || values.batch || values.case || values["limit-cases"])
@@ -309,7 +311,7 @@ dashboard: --port 4173 在本机启动控制看板`,
   for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
   for (const profile of boundProfiles(host.models))
     if (!process.env[profile.apiKeyEnv])
-      throw new Error(`Missing ${profile.apiKeyEnv}; configure the model key in .env`);
+      throw new Error(`Missing ${profile.apiKeyEnv}; configure the model key in config.ini`);
   const controller = new AbortController(),
     interrupt = () => controller.abort(new Error("User interrupted"));
   process.once("SIGINT", interrupt);
@@ -353,6 +355,6 @@ dashboard: --port 4173 在本机启动控制看板`,
 }
 main().catch(async (error) => {
   await logger.error(error, { component: "host", event: "command_failed", run_id: logRunId });
-  console.error(redact(errorText(error), [process.env.EVAL_API_KEY || ""]));
+  console.error(redact(errorText(error), configurationSecrets()));
   process.exitCode = 2;
 });

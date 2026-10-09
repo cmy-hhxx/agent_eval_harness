@@ -93,6 +93,9 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   const loader = new sdk.DefaultResourceLoader({ cwd: workdir, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt,
     extensionFactories: [(api) => { api.on("before_provider_request", (event) => {
       const payload = object(transformPayload(event.payload, config));
+      // Responses may promote omitted strict mode to all-required arguments. Keep the tool's optional fields intact.
+      if (config.api === "openai-responses" && Array.isArray(payload.tools))
+        for (const tool of payload.tools) if (tool.type === "function") tool.strict = false;
       // DeepSeek enables thinking when reasoning is omitted, including for a non-reasoning SDK model.
       if (config.provider === 'deepseek' && config.api === 'openai-responses' && config.thinking === 'off') payload.reasoning = {effort:'none'};
       return payload;

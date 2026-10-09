@@ -4,7 +4,8 @@ import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
 import { comparisonWorkflow, expandComparisonPairs, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
-import { boundProfiles, createModelResolver, loadConfig } from "./config.js";
+import { configurationSecrets, loadConfig } from "./config.js";
+import { createAutomationModels } from "./automation-models.js";
 import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
 
@@ -134,20 +135,14 @@ function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): str
   }));
   return exhausted.length ? `Content submission budget exhausted: ${exhausted.join("; ")}. Adjust the cumulative cap or resolve the unfinished work.` : undefined;
 }
-function unavailableLedgerReason(states: Checkpoint[]): string | undefined {
-  const unknown = states.flatMap(state => Object.entries(state.tasks).filter(([, task]) =>
-    isAutomationTask(task) && !task.receipt && task.failure?.errors.some(issue => issue.code === "submission_ledger_unavailable"))
-    .map(([id]) => `${state.runId ?? "run"}/${id}`));
-  return unknown.length ? `Final content submission ledger is unavailable: ${unknown.join(", ")}; explicit recovery is required.` : undefined;
-}
 export function automaticResumeStages(state: Checkpoint, policy: RepairPolicy): string[] {
-  if (exhaustedContentReason([state], policy) || unavailableLedgerReason([state])) return [];
+  if (exhaustedContentReason([state], policy)) return [];
   return automationPauses(state).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
 }
 
 /** Authority comes from Host receipts and failure categories, never the dashboard's old error text. */
 export function checkpointRecovery(states: Checkpoint[], policy: RepairPolicy): "interrupted" | "transient" | undefined {
-  if (exhaustedContentReason(states, policy) || unavailableLedgerReason(states)) return;
+  if (exhaustedContentReason(states, policy)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
   const tasks = states.flatMap((state) => Object.values(state.tasks).filter(isAutomationTask));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
@@ -204,7 +199,7 @@ function waitingForInputs(states: Checkpoint[], summary: EvaluationSummary, limi
 }
 
 export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, limit: number, empty = false): EvaluationOutcome {
-  const blocked = exhaustedContentReason(states, policy) ?? unavailableLedgerReason(states);
+  const blocked = exhaustedContentReason(states, policy);
   if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
   const review = terminalReviewReason(states);
   if (review) return { status: "blocked", summary, transient: false, error: review };
@@ -230,13 +225,12 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !task.data.verificationAudit && !limited.tasks[id]) &&
       !automationPauses(limited).some((pause) => !temporary(pause.category))) return "interrupted";
   job.summary = summarize([saved]);
-  const exhausted = exhaustedContentReason([saved], policy), unknown = unavailableLedgerReason([saved]);
-  if (exhausted || unknown && !job.resumePaused) {
+  const exhausted = exhaustedContentReason([saved], policy);
+  if (exhausted) {
     job.evaluation = "blocked"; job.nextEvaluationAt = 0;
-    job.evaluationError = exhausted ?? unknown;
+    job.evaluationError = exhausted;
     return;
   }
-  if (unknown && job.resumePaused) return "interrupted";
   const selection = saved.config as EvalConfig;
   if (job.mongo?.synced && Object.values(saved.tasks).some((task) =>
     task.data.rewriteOf?.stage === "comparison" && task.data.comparisonRewriteScope !== "all"))
@@ -285,17 +279,13 @@ export async function evaluationTargets(config: AutomationConfig, output: string
   return { runIds, adopted: false };
 }
 
-export async function evaluateDay(config: AutomationConfig, job: AutomationJob, signal: AbortSignal): Promise<EvaluationOutcome> {
+export async function evaluateDay(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, exhaustedChannels: Set<string>): Promise<EvaluationOutcome> {
   const resumePaused = job.resumePaused;
   delete job.resumePaused;
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   const workflow = createAutomationWorkflow(config.dailyComparisonLimitPerTier);
-  const modelForStage = createModelResolver(host.models);
-  for (const stage of ["criteria", "attribution", "comparison", "rewrite"]) modelForStage(stage);
-  for (const profile of boundProfiles(host.models)) {
-    if (!process.env[profile.apiKeyEnv]) throw new Error(`Missing ${profile.apiKeyEnv}`);
-    logger.addSecrets(process.env[profile.apiKeyEnv]!);
-  }
+  const routing = createAutomationModels(host.models, host.automation.channels, exhaustedChannels);
+  logger.addSecrets(...configurationSecrets());
   let empty = false, skipped = 0, issues = 0;
   const checkpoints: Checkpoint[] = [];
   for (const runId of job.runIds) {
@@ -314,7 +304,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
     await runEvaluation({
       ...services, runId, output: evaluation.output, engine: config.engine, evaluatorVersion: host.evaluatorVersion,
       taskSource: workflow,
-      config: evaluation, plan, policy: evaluation.execution, modelForStage,
+      config: evaluation, plan, policy: evaluation.execution, ...routing,
       concurrency: evaluation.execution.concurrency, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
       discoverInputs: true, signal,

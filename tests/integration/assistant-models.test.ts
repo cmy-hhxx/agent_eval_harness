@@ -1,3 +1,4 @@
+import {parseSettings, applySettings} from "@eval/host-app/config";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
@@ -5,7 +6,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {waitForTestState} from '../fixtures/wait.js';
-import {assistantModelConfiguration,GatewayAssistantModels} from '../../apps/host/src/assistant-models.js';
+import {assistantModelConfiguration,GatewayAssistantModels,modelIdentity} from '../../apps/host/src/assistant-models.js';
 import {AssistantSessions} from '@eval/runtime/assistant';
 import {body,listen} from '@eval/runtime/http';
 import {assistantDirectory} from '@eval/data';
@@ -22,7 +23,7 @@ test('gateway catalog, scoped favorites and durable model/effort switching reach
  let sessions=new AssistantSessions(options);
  try{
   assert.equal((await models.list('alice')).models.length,2);
-  await models.favorites('alice',['analysis-b']);assert.deepEqual((await models.list('alice')).favorites,['analysis-b']);assert.deepEqual((await models.list('bob')).favorites,['analysis-a']);
+  await models.favorites('alice',[modelIdentity('gateway','analysis-b')]);assert.deepEqual((await models.list('alice')).favorites,[modelIdentity('gateway','analysis-b')]);assert.deepEqual((await models.list('bob')).favorites,[modelIdentity('gateway','analysis-a')]);
   await assert.rejects(models.favorites('alice',['unknown']),/可用/);await assert.rejects(models.resolve({provider:'outside',model:'analysis-b'}),/网关/);
   const {sessionId}=await sessions.create('alice'),scope={userId:'alice',sessionId};
   const send=async()=>{
@@ -40,8 +41,8 @@ test('gateway catalog, scoped favorites and durable model/effort switching reach
 
 test('DeepSeek Flash uses its own credentials and Responses API through Pi tools, restart and reasoning switching', {timeout:30000}, async()=>{
  const directory=await mkdtemp(tmpdir()+'/assistant-deepseek-');
- const previous={evaluation:process.env.EVAL_API_KEY,deepseek:process.env.DEEPSEEK_KEY};
- process.env.EVAL_API_KEY='evaluation-fixture';process.env.DEEPSEEK_KEY='deepseek-fixture';
+ const previous={evaluation:process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"],deepseek:process.env.EVAL_CHANNEL_KEY_deepseek};
+ process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"]='evaluation-fixture';process.env.EVAL_CHANNEL_KEY_deepseek='deepseek-fixture';
  const requests:{url:string;payload:JsonObject}[]=[],errors:unknown[]=[];
  let toolCalls=0;
  const gateway=await listen(async(req,res)=>{
@@ -83,8 +84,27 @@ test('DeepSeek Flash uses its own credentials and Responses API through Pi tools
   emit('response.completed',{response:{id:`resp-${requestNumber}`,object:'response',status:'completed',output,usage:{input_tokens:40,output_tokens:10,total_tokens:50,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:reasoning?5:0}}}});
   res.end();
  });
- const evaluation:ModelConfig={provider:'evaluation-gateway',model:'MiniMax-M3',api:'openai-completions',baseUrl:gateway.url+'/evaluation',apiKeyEnv:'EVAL_API_KEY',thinking:'low',contextWindow:32000,maxOutputTokens:2048};
- const {model,gateways}=assistantModelConfiguration(evaluation,{DEEPSEEK_URL:gateway.url+'/deepseek',DEEPSEEK_KEY:'configured'});
+ const evaluation:ModelConfig={provider:'evaluation-gateway',model:'MiniMax-M3',api:'openai-completions',baseUrl:gateway.url+'/evaluation',apiKeyEnv:'EVAL_CHANNEL_KEY_evaluation_Hgateway',thinking:'low',contextWindow:32000,maxOutputTokens:2048};
+ const settings=parseSettings(`[channel.evaluation-gateway]
+base_url=${gateway.url}/evaluation
+api_key=evaluation-fixture
+api=openai-completions
+[channel.deepseek]
+name=DeepSeek
+base_url=${gateway.url}/deepseek
+api_key=deepseek-fixture
+model=deepseek-flash
+models=deepseek-flash
+thinking=high
+efforts=off,low,high,max
+supports_developer_role=false
+context_window=1048576
+max_output_tokens=8192
+[agent]
+channel=deepseek
+`);
+ applySettings(settings);
+ const {model,gateways}=assistantModelConfiguration(evaluation,settings);
  const models=new GatewayAssistantModels(directory,model,gateways);
  const options={directory,url:'http://127.0.0.1:1',model,models,systemPrompt:'System instructions',tools:[{name:'lookup',readOnly:true,description:'Read fixture',inputSchema:{type:'object',properties:{}},execute:async()=>{toolCalls++;return {content:[{type:'text' as const,text:'42'}]};}}],onError:(error:unknown)=>errors.push(error)};
  let sessions=new AssistantSessions(options);
@@ -116,7 +136,7 @@ test('DeepSeek Flash uses its own credentials and Responses API through Pi tools
   assert.deepEqual(errors,[]);
  }finally{
   await sessions.dispose();await gateway.close();await rm(directory,{recursive:true,force:true});
-  if(previous.evaluation===undefined)delete process.env.EVAL_API_KEY;else process.env.EVAL_API_KEY=previous.evaluation;
-  if(previous.deepseek===undefined)delete process.env.DEEPSEEK_KEY;else process.env.DEEPSEEK_KEY=previous.deepseek;
+  if(previous.evaluation===undefined)delete process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"];else process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"]=previous.evaluation;
+  if(previous.deepseek===undefined)delete process.env.EVAL_CHANNEL_KEY_deepseek;else process.env.EVAL_CHANNEL_KEY_deepseek=previous.deepseek;
  }
 });
