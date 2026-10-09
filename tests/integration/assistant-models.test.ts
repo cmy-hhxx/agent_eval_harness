@@ -10,36 +10,35 @@ import {assistantModelConfiguration,GatewayAssistantModels,modelIdentity} from '
 import {AssistantSessions} from '@eval/runtime/assistant';
 import {body,listen} from '@eval/runtime/http';
 import {assistantDirectory} from '@eval/data';
-import {assistantEndpoints} from '@eval/assistant/server';
-import {object,type ModelConfig,type JsonObject} from '@eval/contracts';
+import {object,type ModelConfig,type AssistantModelDirectory,type JsonObject} from '@eval/contracts';
 
 test('gateway catalog, scoped favorites and durable model/effort switching reach the next driver',async()=>{
  const directory=await mkdtemp(tmpdir()+'/assistant-models-'),requests:string[]=[];
- const server=createServer((request,response)=>{requests.push(request.url!);assert.equal(request.headers.authorization,'Bearer fixture');response.setHeader('content-type','application/json');response.end(JSON.stringify({data:[{id:'analysis-a'},{id:'analysis-b',context_window:64000}]}));});
+ const server=createServer((request,response)=>{requests.push(request.url!);assert.equal(request.headers.authorization,'Bearer fixture');response.setHeader('content-type','application/json');response.end(JSON.stringify({data:[{id:'gpt-6-luna'},{id:'gpt-5.6-luna',context_window:64000}]}));});
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
- const config:ModelConfig={provider:'gateway',model:'analysis-a',api:'openai-completions',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}`,apiKeyEnv:'ASSISTANT_MODEL_TEST_KEY',thinking:'low',contextWindow:32000,maxOutputTokens:2048};process.env.ASSISTANT_MODEL_TEST_KEY='fixture';
+ const config:ModelConfig={provider:'gateway',model:'gpt-6-luna',api:'openai-completions',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}`,apiKeyEnv:'ASSISTANT_MODEL_TEST_KEY',thinking:'low',contextWindow:32000,maxOutputTokens:2048};process.env.ASSISTANT_MODEL_TEST_KEY='fixture';
  const models=new GatewayAssistantModels(directory,config,[{name:'评测网关',model:config}]),used:ModelConfig[]=[];
  const options={directory,url:'http://127.0.0.1:1',model:config,models,systemPrompt:'test',tools:[],driver:async({model,event}:import('@eval/runtime/assistant').ConversationDriverOptions)=>({async prompt(text:string){used.push(model);await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});await event({type:'turn_end'});await event({type:'agent_end'});},async steer(){},async abort(){},async dispose(){}})};
  let sessions=new AssistantSessions(options);
  try{
   assert.equal((await models.list('alice')).models.length,2);
-  await models.favorites('alice',[modelIdentity('gateway','analysis-b')]);assert.deepEqual((await models.list('alice')).favorites,[modelIdentity('gateway','analysis-b')]);assert.deepEqual((await models.list('bob')).favorites,[modelIdentity('gateway','analysis-a')]);
-  await assert.rejects(models.favorites('alice',['unknown']),/可用/);await assert.rejects(models.resolve({provider:'outside',model:'analysis-b'}),/网关/);
+  await models.favorites('alice',[modelIdentity('gateway','gpt-5.6-luna')]);assert.deepEqual((await models.list('alice')).favorites,[modelIdentity('gateway','gpt-5.6-luna')]);assert.deepEqual((await models.list('bob')).favorites,[modelIdentity('gateway','gpt-6-luna')]);
+  await assert.rejects(models.favorites('alice',['unknown']),/可用/);await assert.rejects(models.resolve({provider:'outside',model:'gpt-5.6-luna'}),/网关/);
   const {sessionId}=await sessions.create('alice'),scope={userId:'alice',sessionId};
   const send=async()=>{
    const requestId=randomUUID();
    await sessions.prompt('alice',{sessionId,requestId,mode:'queue',content:[{type:'text',text:'test'}]});
    await waitForTestState(()=>sessions.list('alice'),items=>items[0].requests[requestId]==='completed',`Assistant model request ${requestId} did not complete`);
   };
-  await send();assert.equal(used[0].model,'analysis-b');
+  await send();assert.equal(used[0].model,'gpt-5.6-luna');
   assert((await models.list('alice')).models.every(model=>model.reasoning?.efforts.some(effort=>effort.id==='max')));
-  await sessions.selectModel(scope,{provider:'gateway',model:'analysis-a',reasoningEffort:'max'});await send();assert.equal(used[1].model,'analysis-a');assert.equal(used[1].thinking,'max');
+  await sessions.selectModel(scope,{provider:'gateway',model:'gpt-6-luna',reasoningEffort:'max'});await send();assert.equal(used[1].model,'gpt-6-luna');assert.equal(used[1].thinking,'max');
   await sessions.dispose();sessions=new AssistantSessions(options);await send();assert.equal(used[2].thinking,'max');
   assert.deepEqual(requests,['/models']);
  }finally{await sessions.dispose();await new Promise<void>(resolve=>server.close(()=>resolve()));delete process.env.ASSISTANT_MODEL_TEST_KEY;await rm(directory,{recursive:true,force:true});}
 });
 
-test('DeepSeek Flash uses its own credentials and Responses API through Pi tools, restart and reasoning switching', {timeout:30000}, async()=>{
+test('Pi retains explicit DeepSeek Responses routing, tools and reasoning independently of the Luna picker', {timeout:30000}, async()=>{
  const directory=await mkdtemp(tmpdir()+'/assistant-deepseek-');
  const previous={evaluation:process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"],deepseek:process.env.EVAL_CHANNEL_KEY_deepseek};
  process.env["EVAL_CHANNEL_KEY_evaluation_Hgateway"]='evaluation-fixture';process.env.EVAL_CHANNEL_KEY_deepseek='deepseek-fixture';
@@ -105,14 +104,14 @@ channel=deepseek
 `);
  applySettings(settings);
  const {model,gateways}=assistantModelConfiguration(evaluation,settings);
- const models=new GatewayAssistantModels(directory,model,gateways);
+ const models:AssistantModelDirectory={
+  async list(){return {models:[],favorites:[],default:{provider:model.provider,model:model.model,reasoningEffort:model.thinking}};},
+  async resolve(selection){const gateway=gateways.find(gateway=>gateway.model.provider===selection.provider)!;return {...gateway.model,model:selection.model,thinking:selection.reasoningEffort??gateway.model.thinking};},
+  async favorites(){},async readFavorites(){return [];},
+ };
  const options={directory,url:'http://127.0.0.1:1',model,models,systemPrompt:'System instructions',tools:[{name:'lookup',readOnly:true,description:'Read fixture',inputSchema:{type:'object',properties:{}},execute:async()=>{toolCalls++;return {content:[{type:'text' as const,text:'42'}]};}}],onError:(error:unknown)=>errors.push(error)};
  let sessions=new AssistantSessions(options);
  try{
-  const catalog=await assistantEndpoints(sessions).call('alice','session/modelCatalog',{args:{request:{}}},new AbortController().signal) as {groups:{id:string;name:string;models:{id:string}[]}[];routableProviders:string[]};
-  assert.deepEqual(catalog.groups.map(group=>[group.id,group.models.map(model=>model.id)]),[['evaluation-gateway',['MiniMax-M3']],['deepseek',['deepseek-flash']]]);
-  assert.deepEqual(catalog.routableProviders,['evaluation-gateway','deepseek']);
-  assert(!JSON.stringify(catalog).includes('deepseek-fixture'));
   const {sessionId}=await sessions.create('alice'),scope={userId:'alice',sessionId};
   const send=async()=>{
    const requestId=randomUUID();await sessions.prompt('alice',{sessionId,requestId,mode:'queue',content:[{type:'text',text:'test'}]});

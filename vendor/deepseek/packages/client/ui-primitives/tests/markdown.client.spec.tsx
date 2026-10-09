@@ -61,8 +61,11 @@ describe('MarkdownText', () => {
     expect(screen.getByRole('link', { name: 'https://deepseek.com' })).toBeTruthy()
   })
 
-  it('closes punctuation-terminated strong emphasis before adjacent CJK text', () => {
+  it('closes strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
     const cases = [
+      ['**Fast：**B组目前占优', 'Fast：'],
+      ['**场数：**105场', '场数：'],
+      ['**结论（暂定）**A组领先', '结论（暂定）'],
       ['**注意：**内容', '注意：'],
       ['**Notice:**内容', 'Notice:'],
       ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）'],

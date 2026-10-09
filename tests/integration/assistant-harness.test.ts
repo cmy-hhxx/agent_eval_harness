@@ -10,6 +10,49 @@ import { body, listen } from "@eval/runtime/http";
 import { AssistantJournal, assistantDirectory } from "@eval/data";
 import { object, type AssistantTool, type JsonObject, type ModelConfig } from "@eval/contracts";
 
+test("early user messages retain stable compaction boundaries and replay exactly once", { timeout: 15000 }, async () => {
+  const directory=await mkdtemp(path.join(tmpdir(),"eris-admission-compaction-"));
+  const scope={userId:"test",sessionId:crypto.randomUUID()}, env="ERIS_COMPACTION_TEST_KEY",previous=process.env[env];
+  process.env[env]="fixture";
+  const payloads:JsonObject[][]=[],errors:unknown[]=[];
+  const gateway=await listen(async(req,res)=>{
+    const messages=object(await body(req)).messages as JsonObject[];payloads.push(messages);
+    const count=payloads.length,chunk={id:"fixture",object:"chat.completion.chunk",created:1,model:"fixture"};
+    res.writeHead(200,{"content-type":"text/event-stream"});
+    res.write(`data: ${JSON.stringify({...chunk,choices:[{index:0,delta:{role:"assistant",content:count===3?"已核对早期问题。":"已收到。"},finish_reason:null}]})}\n\n`);
+    res.write(`data: ${JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:"stop"}],usage:{prompt_tokens:count===2?60000:100,completion_tokens:10,total_tokens:count===2?60010:110}})}\n\n`);
+    res.end("data: [DONE]\n\n");
+  });
+  const options={directory,url:"http://127.0.0.1:1",systemPrompt:"核对收到的问题。",tools:[],onError:(error:unknown)=>errors.push(error),
+    model:{provider:"fixture",model:"fixture",api:"openai-completions",baseUrl:gateway.url+"/v1",apiKeyEnv:env,thinking:"off",contextWindow:65536,maxOutputTokens:4096} as ModelConfig};
+  let sessions=new AssistantSessions(options);
+  const send=async(text:string)=>{
+    const requestId=crypto.randomUUID();await sessions.prompt(scope.userId,{...scope,requestId,mode:"queue",content:[{type:"text",text}]});
+    for(let n=0;n<1000;n++){
+      const status=(await sessions.list(scope.userId))[0].requests[requestId];
+      assert.notEqual(status,"interrupted",JSON.stringify(errors));
+      if(status==="completed")return requestId;
+      await delay(10);
+    }
+    throw new Error("Compaction request did not settle");
+  };
+  try {
+    await sessions.create(scope.userId,scope.sessionId);
+    await send("早期问题");const retainedText="需要保留的材料 "+"evidence ".repeat(12000);
+    const retainedId=await send(retainedText);await send("压缩期间发送的问题");
+    const journal=await AssistantJournal.load(directory,scope),compaction=journal.records.findLast(record=>record.kind==="compaction");
+    assert(compaction && compaction.kind==="compaction");assert.equal(compaction.firstKeptEntryId,retainedId);
+    await sessions.dispose();sessions=new AssistantSessions(options);await send("重启后继续");
+    assert.equal(payloads.length,5,"three turns, one compaction and one restored turn");
+    for(const [index,messages] of [payloads[3],payloads[4]].entries()){
+      for(const text of [retainedText,"压缩期间发送的问题"])
+        assert.equal(messages.filter(message=>message.role==="user" && (typeof message.content==="string" ? message.content : (message.content as JsonObject[]).map(part=>part.text??"").join(""))===text).length,1,
+          `payload ${index}: ${JSON.stringify(messages.map(message=>({role:message.role,preview:JSON.stringify(message.content).slice(0,80)})))}`);
+    }
+    assert.match(JSON.stringify(payloads[4]),/已核对早期问题/);assert.deepEqual(errors,[]);
+  } finally {await sessions.dispose();await gateway.close();await rm(directory,{recursive:true,force:true});if(previous===undefined)delete process.env[env];else process.env[env]=previous;}
+});
+
 for (const scenario of ["repair", "repeat", "unknown", "budget", "reset"] as const) test(`Eris harness: ${scenario}`, { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-harness-"));
   const scope = { userId: "test", sessionId: crypto.randomUUID() };

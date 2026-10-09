@@ -247,9 +247,6 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const event = object(raw), message = event.message ? object(event.message) : undefined;
     const turnStep = () => ({ turn: value.turn, step: value.step });
     switch (event.type) {
-      case "agent_start":
-        value.turn++; value.step = 0;
-        await this.append(value, "turn/start", { turn: value.turn }); break;
       case "turn_start":
         value.step++;
         await this.append(value, "step/start", turnStep()); break;
@@ -270,13 +267,13 @@ export class AssistantSessions implements AssistantSessionRuntime {
       }
       case "message_end": {
         if (message?.role === "user") {
+          // The opening input is already durable before model setup or compaction.
+          if (value.activeMessage) { value.activeMessage = undefined; break; }
           const content = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
           const pending = value.journal.inbox["next-step"][0];
-          const current = value.activeMessage ?? pending;
-          if (!value.activeMessage && pending) await this.splice(value, "next-step", 0, 1, []);
-          const accepted = current ?? createUserMessage({ content, source: { kind: "user", rpcId: value.prompt?.requestId } });
+          if (pending) await this.splice(value, "next-step", 0, 1, []);
+          const accepted = pending ?? createUserMessage({ content, source: { kind: "user", rpcId: value.prompt?.requestId } });
           await this.append(value, "user/message", { ...accepted, content, ...(event.entryId ? { entryId: event.entryId } : {}) }, true);
-          value.activeMessage = undefined;
           const rpcId = object(accepted.source).rpcId;
           if (typeof rpcId === "string" && rpcId !== value.prompt?.requestId) await this.requestState(value, rpcId, "completed");
         }
@@ -335,6 +332,11 @@ export class AssistantSessions implements AssistantSessionRuntime {
           index = value.journal.inbox["next-turn"].length - 1;
         }
         value.activeMessage = value.journal.inbox["next-turn"][index];
+        const openingMessage = value.activeMessage;
+        const history = [...value.journal.events], records = [...value.journal.records];
+        value.turn++; value.step = 0;
+        await this.append(value, "turn/start", { turn: value.turn });
+        await this.append(value, "user/message", openingMessage, true);
         await this.splice(value, "next-turn", index, 1, []);
         value.journal.state.status = "running";
         await this.requestState(value, prompt.requestId, "running");
@@ -354,20 +356,17 @@ export class AssistantSessions implements AssistantSessionRuntime {
           await this.append(value, "assistant/model-used", { selection });
           await this.append(value, "request/context", { contextWindow: model.contextWindow });
           checkStopped();
-          value.driver ??= await (this.options.driver ?? createPiConversation)({ ...this.options, model, scope: value.journal.state, workdir: value.journal.directory, history: value.journal.events, records: value.journal.records,
+          value.driver ??= await (this.options.driver ?? createPiConversation)({ ...this.options, model, scope: value.journal.state, workdir: value.journal.directory, history, records,
             compact: (summary, firstKeptEntryId, tokensBefore) => value.journal.append({ kind: "compaction", summary, firstKeptEntryId, tokensBefore }),
             event: (event) => this.modelEvent(value, event), checkpoint: async () => { await value.writes; await value.journal.flush(); },
             progress: (callId, result) => this.progress(value, callId, result),
           });
           checkStopped();
-          await value.driver.prompt((value.activeMessage!.content as { text: string }[]).map((part) => part.text).join("\n"));
+          await value.driver.prompt((openingMessage.content as { text: string }[]).map((part) => part.text).join("\n"), String(openingMessage.id));
           await this.requestState(value, prompt.requestId, value.stopping || value.lastFailure ? "interrupted" : "completed");
         } catch (error) {
           const stopped = value.stopping || this.disposed;
-          if (value.activeMessage && value.journal.events.findLast((event) => event.type === "turn/start" || event.type === "turn/end")?.type !== "turn/start") {
-            value.turn++; await this.append(value, "turn/start", { turn: value.turn });
-          }
-          if (value.activeMessage) { await this.append(value, "user/message", value.activeMessage, true); value.activeMessage = undefined; }
+          value.activeMessage = undefined;
           await this.closeTurn(value, stopped
             ? { kind: "aborted", reason: { kind: "user" } }
             : { kind: "error", error: { code: "ASSISTANT_ERROR", message: errorText(error) } });
@@ -451,10 +450,12 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const value = await this.target(scope);
     if ("url" in value) { await this.forward(value, scope.userId, "session/selectModel", { request: {sessionId:scope.sessionId,...selection} }); return; }
     const next = value.mutation.then(async () => {
+      let model = this.options.model;
       if (!this.options.models) {
         if (selection.provider !== this.options.model.provider || selection.model !== this.options.model.model) throw new Error("Unknown model");
-      } else await this.options.models.resolve(selection);
+      } else model = await this.options.models.resolve(selection);
       await this.append(value, "assistant/model-selection", { selection });
+      if (value.journal.state.status !== "running") await this.append(value, "request/context", { contextWindow: model.contextWindow });
     });
     value.mutation = next.then(() => {}, () => {}); await next;
   }

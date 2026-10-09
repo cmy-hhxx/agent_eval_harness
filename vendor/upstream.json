@@ -27,6 +27,8 @@
     "directory": "vendor/deepseek",
     "license": "MIT; component-specific licenses retained in copied package directories",
     "local_changes": [
+      "Standalone Markdown images are centered within the message column; inline image buttons retain inline layout.",
+      "Markdown strong emphasis can close after non-ASCII punctuation before adjacent Latin letters or digits, preserving ASCII CommonMark behavior. Regression tests cover the Eris mixed-language labels while streaming, settling and restoring.",
       "AssistantMarkdown renders consecutive provider text fragments as one Markdown document with a stable first-block key. Authored newlines and non-text boundaries remain intact; split emphasis, tables and links render correctly in both streaming and restored replies. Regression tests exercise the actual assistant component with the Eris fragment pattern.",
       "Original attachment MessageImages/ImageGallery and lightbox are reused for source-reference tool inspection; bytes are resolved by the application only on expansion. Attachment presentation and CSS are unchanged, and upstream image behavior tests are retained.",
       "Web-only source composition: UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies. A staged refresh replaces the selected source graph without retaining deleted files. Aliases and source exports are recorded in sources.json; ordinary builds do not use the adjacent repository, Desktop carriers, native addons or Windows packaging.",

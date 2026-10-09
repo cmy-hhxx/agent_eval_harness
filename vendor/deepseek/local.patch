@@ -839,7 +839,7 @@ diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.s
 new file mode 100644
 --- /dev/null
 +++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,78 @@
 +// @vitest-environment jsdom
 +import { cleanup, render } from '@testing-library/react'
 +import { afterEach, describe, expect, it } from 'vitest'
@@ -878,6 +878,24 @@ new file mode 100644
 +    expect(container.querySelectorAll('p')).toHaveLength(2)
 +  })
 +
++  it('keeps mixed-language labels bold while streaming, settling and restoring', () => {
++    const text = '**Fast：**B组目前占优。**Expert：**胜负接近。\n\n**边界：**整体归因尚未完成。'
++    const live = render(reply([], true))
++    for (let end = 1; end <= text.length; end++) {
++      live.rerender(reply([textBlock(text.slice(0, end))], true))
++    }
++    const check = (container: HTMLElement) => {
++      expect([...container.querySelectorAll('strong')].map(node => node.textContent))
++        .toEqual(['Fast：', 'Expert：', '边界：'])
++      expect(container.textContent).not.toContain('**')
++    }
++    check(live.container)
++    live.rerender(reply([textBlock(text)]))
++    check(live.container)
++    live.unmount()
++    check(render(reply([textBlock(text)])).container)
++  })
++
 +  it('keeps the same document mounted as a fragment completes and the reply settles', () => {
 +    const live = render(reply([textBlock('**Fast 档（4')], true))
 +    const paragraph = live.container.querySelector('p')
@@ -900,3 +918,61 @@ new file mode 100644
 +    expect(container.querySelectorAll('p')).toHaveLength(2)
 +  })
 +})
+diff --git a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
+index aba740d..ce31590 100644
+--- a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
++++ b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
+@@ -1,4 +1,4 @@
+-/** Let asterisk strong emphasis close after punctuation when CJK prose continues without whitespace. */
++/** Let asterisk strong emphasis close after non-ASCII punctuation or before adjacent CJK prose. */
+
+ import { attention } from 'micromark-core-commonmark'
+ import { unicodePunctuation } from 'micromark-util-character'
+@@ -54,7 +54,7 @@ const tokenizeCjkFriendlyAttention: Tokenizer = function (effects, ok, nok) {
+     const markerCount = token.end.offset - token.start.offset
+     const cjkStrongClose = markerCount >= 2
+       && unicodePunctuation(previous)
+-      && isCjkCharacter(code)
++      && (isCjkCharacter(code) || (previous !== null && previous > 0x7f))
+     const close = commonMarkClose || cjkStrongClose
+
+     token._open = open
+diff --git a/packages/client/ui-primitives/tests/markdown.client.spec.tsx b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
+index c655a00..00a7c2e 100644
+--- a/packages/client/ui-primitives/tests/markdown.client.spec.tsx
++++ b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
+@@ -61,8 +61,11 @@ describe('MarkdownText', () => {
+     expect(screen.getByRole('link', { name: 'https://deepseek.com' })).toBeTruthy()
+   })
+
+-  it('closes punctuation-terminated strong emphasis before adjacent CJK text', () => {
++  it('closes strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
+     const cases = [
++      ['**Fast：**B组目前占优', 'Fast：'],
++      ['**场数：**105场', '场数：'],
++      ['**结论（暂定）**A组领先', '结论（暂定）'],
+       ['**注意：**内容', '注意：'],
+       ['**Notice:**内容', 'Notice:'],
+       ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）'],
+
+diff --git a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
+index d543741..8ae4b1a 100644
+--- a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
++++ b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
+@@ -294,7 +294,7 @@
+   width: auto;
+   max-width: 100%;
+   height: auto;
+-  margin: 0;
++  margin: 0 auto;
+   border-radius: var(--dsw-radius-md);
+   background: var(--dsw-alias-bg-base);
+   object-fit: contain;
+@@ -454,6 +454,7 @@
+   cursor: zoom-in;
+ }
+ .imageButton .image { max-width: min(100%, 640px); max-height: 360px; }
++.markdown p > .imageButton:only-child { display: block; width: fit-content; margin-inline: auto; }
+ .imageButton:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
+ .previewName {
+   display: block;

@@ -14,6 +14,7 @@ export default defineConfig({
     "packages/client/ui-conversation/tests/{conversation-assembler.client,conversation-routing.client,conversation-store.client,draft-document.client,draft-hub.client,input-reference-submit.client,service-orchestration.client}.spec.ts",
     "packages/client/ui-conversation/tests/queue-dock.client.spec.tsx",
     "packages/client/ui-primitives/tests/markdown-{plain-text,incremental,render-units,dom-parity}.client.spec.{ts,tsx}",
+    "packages/client/ui-primitives/tests/markdown.client.spec.tsx",
     "packages/client/ui-primitives/tests/{menu-group.client,state-dot.client,text-shimmer.client,tooltip.client}.spec.tsx",
     "packages/client/ui-commands/tests/{popup.client,popup-view.client}.spec.{ts,tsx}",
     "packages/client/ui-chat/tests/{chat-view.client,chat-stats.client,running-status.client,reasoning-row.client,process-groups.client,tool-preparation.client,turn-process-tail.client,turn-usage-panel.client,transcript-view-policy.client}.spec.{ts,tsx}",

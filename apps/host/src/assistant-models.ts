@@ -13,14 +13,15 @@ export interface AssistantGateway {
 }
 
 export function assistantModelConfiguration(gatewayModel: ModelConfig, configuration: ApplicationSettings) {
+  const selected = configuration.agent;
   const gateways: AssistantGateway[] = Object.values(configuration.channels).map(channel => ({
     name: channel.name,
     model: { ...channel, model: channel.model ?? "", thinking: channel.thinking ?? DEFAULT_THINKING,
-      contextWindow: channel.contextWindow ?? 131072, maxOutputTokens: channel.maxOutputTokens ?? 8192,
-      ...(channel.provider === gatewayModel.provider ? gatewayModel : {}) },
+      maxOutputTokens: channel.maxOutputTokens ?? 8192,
+      ...(channel.provider === gatewayModel.provider ? gatewayModel : {}),
+      contextWindow: selected.contextWindow ?? 512000 },
     models: channel.models?.map(id => ({ id, name: id })), efforts: channel.efforts,
   }));
-  const selected = configuration.agent;
   const gateway = gateways.find(item => item.model.provider === (selected.channel ?? gatewayModel.provider));
   if (!gateway) throw new Error('Eris 默认渠道未在 config.ini 中配置');
   const model: ModelConfig = { ...gateway.model,
@@ -47,7 +48,9 @@ export class GatewayAssistantModels implements AssistantModelDirectory {
     if (refresh || !this.loading) this.loading = Promise.all(this.gateways.map(async gateway=>{
       const rows = await this.discover(gateway.model);
       if (gateway.models?.some(model=>!rows.some(row=>row.id===model.id))) throw new Error(`${gateway.name} 中缺少配置的模型`);
-      return rows.filter(row=>!gateway.models || gateway.models.some(model=>model.id===row.id)).map(row=>({...row,
+      return rows.filter(row=>/^gpt-\d+(?:\.\d+)?-luna(?:-|$)/i.test(row.id)
+        && (!gateway.models || gateway.models.some(model=>model.id===row.id))).map(row=>({...row,
+        contextWindow: gateway.model.contextWindow,
         name:gateway.models?.find(model=>model.id===row.id)?.name ?? row.name,
         provider:gateway.model.provider,providerName:gateway.name,
         reasoning:{defaultEffort:gateway.model.thinking,efforts:(gateway.efforts ?? THINKING_LEVELS).map(id=>({id,name:id}))},

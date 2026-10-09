@@ -294,7 +294,7 @@
   width: auto;
   max-width: 100%;
   height: auto;
-  margin: 0;
+  margin: 0 auto;
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-base);
   object-fit: contain;
@@ -454,6 +454,7 @@
   cursor: zoom-in;
 }
 .imageButton .image { max-width: min(100%, 640px); max-height: 360px; }
+.markdown p > .imageButton:only-child { display: block; width: fit-content; margin-inline: auto; }
 .imageButton:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
 .previewName {
   display: block;

@@ -1,4 +1,4 @@
-/** Let asterisk strong emphasis close after punctuation when CJK prose continues without whitespace. */
+/** Let asterisk strong emphasis close after non-ASCII punctuation or before adjacent CJK prose. */
 
 import { attention } from 'micromark-core-commonmark'
 import { unicodePunctuation } from 'micromark-util-character'
@@ -54,7 +54,7 @@ const tokenizeCjkFriendlyAttention: Tokenizer = function (effects, ok, nok) {
     const markerCount = token.end.offset - token.start.offset
     const cjkStrongClose = markerCount >= 2
       && unicodePunctuation(previous)
-      && isCjkCharacter(code)
+      && (isCjkCharacter(code) || (previous !== null && previous > 0x7f))
     const close = commonMarkClose || cjkStrongClose
 
     token._open = open

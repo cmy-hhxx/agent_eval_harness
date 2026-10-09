@@ -5,7 +5,7 @@ import { providerConfig, sdkContent, transformPayload } from "./sdk-utils.js";
 import { readAssistantSource } from "./assistant-source.js";
 
 export interface ConversationDriver {
-  prompt(text: string): Promise<void>;
+  prompt(text: string, messageId?: string): Promise<void>;
   steer(text: string): Promise<void>;
   abort(): Promise<void>;
   dispose(): Promise<void>;
@@ -125,14 +125,21 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
       } finally { activeReads.delete(slot); release(); }
     },
   }));
-  const { session } = await sdk.createAgentSession({ cwd: workdir, agentDir, modelRuntime: runtime, model, thinkingLevel: config.thinking, settingsManager: settings, sessionManager: sdk.SessionManager.inMemory(workdir, { id: options.scope.sessionId }, [{ type: "session", id: options.scope.sessionId, cwd: workdir, timestamp: new Date().toISOString() }, ...await restore(options)]), resourceLoader: loader, noTools: "builtin", tools: customTools.map((tool) => tool.name), customTools });
+  const { session } = await sdk.createAgentSession({ cwd: workdir, agentDir, modelRuntime: runtime, model, thinkingLevel: config.thinking, settingsManager: settings, sessionManager: sdk.SessionManager.inMemory(workdir, { id: options.scope.sessionId }, [{ type: "session", version: sdk.CURRENT_SESSION_VERSION, id: options.scope.sessionId, cwd: workdir, timestamp: new Date().toISOString() }, ...await restore(options)]), resourceLoader: loader, noTools: "builtin", tools: customTools.map((tool) => tool.name), customTools });
   await session.bindExtensions({ mode: "rpc" });
   // Agent.subscribe is awaited by Pi. AgentSession.subscribe is not: it cannot
   // be used as a persistence barrier before the next model/tool request.
   const pending = new Map<string, { name: string; key: string }>();
   const failures = new Map<string, { name: string; count: number }>();
   let requests = 0;
+  let openingMessageId: string | undefined;
+  // Compaction must refer to the user ID already persisted by AssistantSessions.
+  const userEntryIds = new Map<string, string>();
   const unsubscribe = session.agent.subscribe(async (event) => {
+    if (event.type === "message_end" && event.message.role === "user" && openingMessageId) {
+      userEntryIds.set(session.sessionManager.getLeafId()!, openingMessageId);
+      openingMessageId = undefined;
+    }
     await options.event({ ...event, ...(event.type === "message_end" ? { entryId: session.sessionManager.getLeafId() } : {}) });
     if (event.type !== "message_end") return;
     const message = event.message;
@@ -159,13 +166,14 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
     requests++;
     return stream(...args);
   };
-  return { prompt: async (text) => {
+  return { prompt: async (text, messageId) => {
+      openingMessageId = messageId;
       requests = 0; pending.clear(); failures.clear();
       const usage = session.getContextUsage();
       if (usage?.percent !== null && usage?.percent !== undefined && usage.percent > 75) {
         await options.checkpoint();
         const compacted = await session.compact();
-        await options.compact(compacted.summary, compacted.firstKeptEntryId, compacted.tokensBefore);
+        await options.compact(compacted.summary, userEntryIds.get(compacted.firstKeptEntryId) ?? compacted.firstKeptEntryId, compacted.tokensBefore);
       }
       await session.prompt(text);
     }, steer: async (text) => { await session.steer(text); }, abort: () => session.abort(),

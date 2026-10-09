@@ -10,7 +10,7 @@ export function seriesPalette(names) {
   return names.map((_,i) => researchColors[reserved[i] ?? available.shift() ?? i%4]);
 }
 export function categoryPalette(names) {
-  const fixed = name => new Map(Object.entries({'通过':chartTheme.earth,'完成':chartTheme.earth,'失败':chartTheme.terracotta,'退回':chartTheme.terracotta,'待核':chartTheme.denim,'双方均好':chartTheme.denim,'双方均差':chartTheme.navy})).get(name)
+  const fixed = name => new Map(Object.entries({'通过':chartTheme.earth,'完成':chartTheme.earth,'失败':chartTheme.terracotta,'退回':chartTheme.terracotta,'待核':chartTheme.denim,'双方均好':chartTheme.denim,'双方均差':chartTheme.navy,'双方都答得好':chartTheme.denim,'双方都答得差':chartTheme.navy})).get(name)
     ?? (/^([A-D])(?=$|[\s:：·/(_-]|组|組)/i.test(name.trim()) ? researchColors[name.trim()[0].toUpperCase().charCodeAt(0)-65] : null);
   const reserved = new Set(names.map(fixed).filter(Boolean));
   const pool = [chartTheme.royal,chartTheme.coral,chartTheme.earth,chartTheme.denim,chartTheme.terracotta,chartTheme.navy].filter(c=>!reserved.has(c));

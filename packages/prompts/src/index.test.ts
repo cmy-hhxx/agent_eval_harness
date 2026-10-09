@@ -123,8 +123,8 @@ test("Eris keeps decision and evidence rules without repeating tool parameter ma
   for (const rule of [
     /currentRun.summary/, /inputCount.*登记.*evaluatedInputCount.*已归因/,
     /formalComparisonStats.comparisonCount/, /结果份数不等于对局场数/,
-    /Fast 只能与 Fast 比，Expert 只能与 Expert 比/, /双好或双差不能概括为全胜、全负/,
-    /完整原问和双方关键回答/, /首次断点.*结果影响/,
+    /Fast 只能与 Fast 比，Expert 只能与 Expert 比/, /双方都答得好、双方都答得差分别保留/,
+    /完整原问和双方关键回答/, /不能只读胜方/, /四类合计须与该档场数一致/,
     /材料事实、正式判词和你的分析/, /不改写正式结果/,
     /相同失败参数不原样重发/, /保留已成功结果/, /原 operationId 查询状态/,
     /有依赖则等上一步返回真实引用/, /相互独立.*最多4路并发/,
@@ -132,7 +132,9 @@ test("Eris keeps decision and evidence rules without repeating tool parameter ma
     /期末借款不是年度加权平均利率/, /估算不能冒充实际值/,
     /与参考答案一致不证明经济含义正确/, /完整、正确和用户要求/,
   ]) assert.match(systemPrompt, rule);
-  assert.doesNotMatch(systemPrompt, /默认必须有图|不超过60字|每次回复固定形态/);
+  assert.doesNotMatch(systemPrompt, /默认必须有图|不超过60字|每次回复固定形态|点评优先三行/);
+  assert.match(systemPrompt, /按意思分短段，每段讲清一件事/);
+  assert.match(systemPrompt, /不编造网址/);
   assert.match(systemPrompt, /单一事实、纯文字机制和更正可以直接回答/);
   assert.match(toolDescriptions.read_data, /offset \/ limit 是顶层字段、与 reference 同级/);
   assert.match(toolDescriptions.list_data, /query 是字面文本筛选词，不是数据类别/);

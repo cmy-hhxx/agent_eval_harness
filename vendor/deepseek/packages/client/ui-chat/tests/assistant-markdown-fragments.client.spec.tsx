@@ -36,6 +36,24 @@ describe('assistant Markdown across provider text fragments', () => {
     expect(container.querySelectorAll('p')).toHaveLength(2)
   })
 
+  it('keeps mixed-language labels bold while streaming, settling and restoring', () => {
+    const text = '**Fast：**B组目前占优。**Expert：**胜负接近。\n\n**边界：**整体归因尚未完成。'
+    const live = render(reply([], true))
+    for (let end = 1; end <= text.length; end++) {
+      live.rerender(reply([textBlock(text.slice(0, end))], true))
+    }
+    const check = (container: HTMLElement) => {
+      expect([...container.querySelectorAll('strong')].map(node => node.textContent))
+        .toEqual(['Fast：', 'Expert：', '边界：'])
+      expect(container.textContent).not.toContain('**')
+    }
+    check(live.container)
+    live.rerender(reply([textBlock(text)]))
+    check(live.container)
+    live.unmount()
+    check(render(reply([textBlock(text)])).container)
+  })
+
   it('keeps the same document mounted as a fragment completes and the reply settles', () => {
     const live = render(reply([textBlock('**Fast 档（4')], true))
     const paragraph = live.container.querySelector('p')

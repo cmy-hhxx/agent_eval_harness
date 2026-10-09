@@ -10,6 +10,41 @@ import { object, type AssistantEvent, type JsonObject, type ModelConfig } from "
 import { createAssistantMessage, createToolResultMessage } from "../../packages/runtime/src/deepseek.js";
 
 async function until(fn:()=>Promise<boolean>){for(let n=0;n<200;n++){if(await fn())return;await delay(10);}throw new Error("Timed out");}
+test("opening messages stay visible through slow preparation, compaction and reconnect without duplicate replay", async () => {
+ const directory=await mkdtemp(tmpdir()+"/assistant-admission-");
+ const gate=()=>{let resolve=()=>{};const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};};
+ const prepared=gate(), prepare=gate(), compacting=gate(), compact=gate();
+ const sessions=new AssistantSessions({directory,url:"http://127.0.0.1:1",model:{provider:"test",model:"test"} as ModelConfig,systemPrompt:"test",tools:[],driver:async options=>{
+  assert(!options.history.some(event=>event.type==="user/message"),"the opening input is passed to prompt, not replayed twice");
+  assert(!options.records.some(record=>record.kind==="event" && record.event.type==="user/message"));
+  prepared.resolve(); await prepare.promise;
+  return {async prompt(text,messageId){
+   compacting.resolve();await compact.promise;
+   assert.equal(messageId,requestId);
+   await options.event({type:"agent_start"});await options.event({type:"turn_start"});
+   await options.event({type:"message_end",entryId:"sdk-user-id",message:{role:"user",content:[{type:"text",text}]}});
+   await options.event({type:"turn_end"});await options.event({type:"agent_end"});
+  },async steer(){},async abort(){prepare.resolve();compact.resolve();},async dispose(){}};
+ }});
+ const requestId=randomUUID();
+ try {
+  const scope=await sessions.create("local");
+  await sessions.prompt("local",{sessionId:scope.sessionId,requestId,mode:"queue",content:[{type:"text",text:"这条消息要一直可见"}]});
+  const check=async()=>{
+   const page=object(await sessions.page(scope)),events=(page.records as {event:AssistantEvent}[]).map(row=>row.event);
+   const messages=events.filter(event=>event.type==="user/message");
+   assert.equal(messages.length,1);assert.equal(messages[0].data.id,requestId);
+   assert.equal(events.filter(event=>event.type==="turn/start").length,1);
+   const signal=new AbortController(),follow=sessions.events(scope,signal.signal)[Symbol.asyncIterator]();
+   try { assert(JSON.stringify((await follow.next()).value).includes("这条消息要一直可见")); }
+   finally {signal.abort();await follow.return?.();}
+  };
+  await prepared.promise;await check();
+  prepare.resolve();await compacting.promise;await check();
+  compact.resolve();await until(async()=>(await sessions.list("local"))[0].requests[requestId]==="completed");await check();
+ } finally {prepare.resolve();compact.resolve();await sessions.dispose();await rm(directory,{recursive:true,force:true});}
+});
+
 test("durable inbox supports edit, removal and steering; progress uses upstream tool events",async()=>{
  const directory=await mkdtemp(tmpdir()+"/assistant-queue-");let release=()=>{};let driver!:ConversationDriverOptions;
  const errors:unknown[]=[],seen:string[]=[];

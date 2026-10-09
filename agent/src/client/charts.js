@@ -46,8 +46,8 @@ function seriesIndexes(chart) {
 }
 const resultColor = name => {
   const label = name.replace(/\s+/g, '').toLowerCase();
-  if (['双方均好', '双方都好', 'bothgood'].includes(label)) return bothGoodColor;
-  if (['双方均差', '双方都差', 'bothbad'].includes(label)) return bothBadColor;
+  if (['双方均好', '双方都好', '双方都答得好', 'bothgood'].includes(label)) return bothGoodColor;
+  if (['双方均差', '双方都差', '双方都答得差', 'bothbad'].includes(label)) return bothBadColor;
   return null;
 };
 const dotColor = (chart, category, seriesIndex, colorIndex) => chart.series.length === 1
@@ -503,7 +503,7 @@ export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh
   const english = !language.startsWith('zh');
   const legend = chart.series.length > 1 && ['dot', 'scatter', 'bubble', 'dumbbell', 'slope', 'bump', 'ecdf'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
-    position: 'relative', margin: '14px 0', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
+    position: 'relative', margin: '14px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
     border: `1px solid ${borderColor}`, borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
   } }, h('figcaption', null,
     h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600 } }, chart.title),

@@ -7,10 +7,10 @@ import {GatewayAssistantModels,modelIdentity} from '../../dist/apps/host/src/ass
 import {assistantEndpoints} from '@eval/assistant/server';
 
 const directory=await mkdtemp(tmpdir()+'/eris-model-channels-');
-const model={provider:'gateway',model:'shared',baseUrl:'https://first.invalid/v1',api:'openai-responses',apiKeyEnv:'FIRST_TEST_KEY',thinking:'high',contextWindow:32000,maxOutputTokens:2048};
+const model={provider:'gateway',model:'gpt-6-luna',baseUrl:'https://first.invalid/v1',api:'openai-responses',apiKeyEnv:'FIRST_TEST_KEY',thinking:'high',contextWindow:512000,maxOutputTokens:2048};
 const openai={...model,provider:'openai',model:'',baseUrl:'https://second.invalid/v1',apiKeyEnv:'SECOND_TEST_KEY'};
-const models=new GatewayAssistantModels(directory,model,[{name:'评测网关',model},{name:'OpenAI',model:openai}],async()=>['shared','other','extra'].map(id=>({id,name:id})));
-await models.favorites('local',[modelIdentity('gateway','other')]);
+const models=new GatewayAssistantModels(directory,model,[{name:'评测网关',model},{name:'OpenAI',model:openai}],async()=>['gpt-6-luna','gpt-5.6-luna','gpt-5.6-luna-deeptopic-0825','gpt-6-sol','deepseek-chat'].map(id=>({id,name:id})));
+await models.favorites('local',[modelIdentity('gateway','gpt-5.6-luna')]);
 const used=[];
 const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({
  directory,url,model,models,systemPrompt:'test',tools:[],driver:async({model,event})=>({
@@ -29,20 +29,20 @@ try {
  const page=await browser.newPage({viewport:{width:1440,height:960},locale:'zh-CN'});
  await page.goto(server.url);
  const input=page.locator('[contenteditable=true]');await input.waitFor();
- await page.getByRole('button',{name:/other/}).click();
+ await page.getByRole('button',{name:/gpt-5.6-luna/}).click();
  await page.getByRole('menuitem',{name:/^模型/}).click();
  await page.getByText('OpenAI',{exact:true}).waitFor();
  assert.equal(await page.getByRole('menuitemradio').count(),6,'favorites from one channel must not hide another channel');
- assert.equal((await page.getByRole('menuitemradio').allTextContents())[0],'other','favorites stay first within their channel');
- await page.getByRole('searchbox',{name:'搜索模型…',exact:true}).fill('shared');
+ assert.equal((await page.getByRole('menuitemradio').allTextContents())[0],'gpt-5.6-luna','favorites stay first within their channel');
+ await page.getByRole('searchbox',{name:'搜索模型…',exact:true}).fill('gpt-6-luna');
  assert.equal(await page.getByRole('menuitemradio').count(),2,'identical model IDs remain independently selectable');
- await page.getByRole('menuitemradio',{name:'shared',exact:true}).nth(1).click();
+ await page.getByRole('menuitemradio',{name:'gpt-6-luna',exact:true}).nth(1).click();
  await input.fill('验证渠道');await input.press('Enter');
  await page.getByText('渠道选择成功',{exact:true}).waitFor();
  assert.equal(used.length,1);assert.equal(used[0].provider,'openai');
  assert.equal(used[0].baseUrl,openai.baseUrl);assert.equal(used[0].apiKeyEnv,openai.apiKeyEnv);
- await page.reload();await page.getByRole('button',{name:/shared/}).waitFor();
- await page.getByRole('button',{name:/shared/}).click();await page.getByRole('menuitem',{name:/^模型/}).click();
- assert.equal(await page.getByRole('menuitemradio',{name:'shared',exact:true}).nth(1).getAttribute('aria-checked'),'true');
+ await page.reload();await page.getByRole('button',{name:/gpt-6-luna/}).waitFor();
+ await page.getByRole('button',{name:/gpt-6-luna/}).click();await page.getByRole('menuitem',{name:/^模型/}).click();
+ assert.equal(await page.getByRole('menuitemradio',{name:'gpt-6-luna',exact:true}).nth(1).getAttribute('aria-checked'),'true');
  console.log('Channel picker, favorite ordering, same-name routing and reload: passed');
 } finally {await browser?.close();await server.close();await rm(directory,{recursive:true,force:true});}
