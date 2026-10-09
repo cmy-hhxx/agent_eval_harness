@@ -7,7 +7,7 @@ export interface AssistantOwnership {
   claim(scope: AssistantScope, executor: AssistantExecutor): Promise<() => Promise<void>>;
 }
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
-export interface AnalysisQuery { runId?: string; query?: string; offset?: number; limit?: number }
+export interface AnalysisQuery { runId?: string; view?: "inputs" | "comparisons"; query?: string; offset?: number; limit?: number }
 export interface AnalysisDataSource {
   list(query: AnalysisQuery): Promise<JsonObject>;
   read(reference: AnalysisReference, options?: { offset?: number; limit?: number }): Promise<JsonObject>;

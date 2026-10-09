@@ -9,6 +9,7 @@ export interface ErisDependencies {
   specialists: SpecialistGateway;
   search: WebSearchProvider;
   web: WebReader;
+  code: { execute: AssistantTool["execute"]; read: AssistantTool["execute"] };
   save(scope: AssistantScope, markdown: string): Promise<JsonObject>;
 }
 
@@ -18,22 +19,40 @@ export const erisToolNames = Object.keys(schemas) as (keyof typeof schemas)[];
 // for source locators; repeating the entire result there doubles the journal.
 const textResult = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value) }] });
 
+function resultPage(value: unknown, options: { offset?: number; limit?: number } = {}) {
+  const text = JSON.stringify(value), offset = options.offset ?? 0, limit = options.limit ?? 8000;
+  const end = Math.min(text.length, offset + limit);
+  return { text: text.slice(offset, end), total: text.length, offset, limit, unit: "characters",
+    hasMore: end < text.length, nextOffset: end < text.length ? end : null };
+}
+
+/** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
+function directorySummary(summary: JsonObject): JsonObject {
+  const { formalComparisonReferences: _formal, comparisonReviewReferences: _review, ...progress } = summary;
+  const statistics = summary.formalComparisonStats as JsonObject | undefined;
+  if (!statistics) return progress;
+  const { records: _records, ...counts } = statistics;
+  const tiers = (counts.tiers as JsonObject[]).map(({ references: _sources, ...tier }) => tier);
+  return { ...progress, formalComparisonStats: { ...counts, tiers } };
+}
+
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
     list_data: async (value) => {
       const result = await options.data.list(value as JsonObject);
       const current = result.currentRun as JsonObject | undefined;
-      const summary = current?.summary as JsonObject | undefined;
-      const statistics = summary?.formalComparisonStats as JsonObject | undefined;
-      if (result.kind !== "runs" || !statistics) return textResult(result);
-      // The initial overview carries counts. Case narratives are requested by runId when needed.
-      // Keep the data source intact: chart provenance validation still reads its complete references.
-      const { records: _records, ...counts } = statistics;
-      const { formalComparisonReferences: _references, ...progress } = summary!;
-      const tiers = (counts.tiers as JsonObject[]).map(({ references: _sources, ...tier }) => tier);
-      return textResult({ ...result, currentRun: { ...current, summary: { ...progress, formalComparisonStats: { ...counts, tiers } } } });
+      // Apply to every page, including empty searches. Chart validation still reads complete provenance.
+      return textResult({ ...result,
+        ...(result.summary ? { summary: directorySummary(result.summary as JsonObject) } : {}),
+        ...(current?.summary ? { currentRun: { ...current, summary: directorySummary(current.summary as JsonObject) } } : {}),
+      });
     },
-    read_data: async (value) => { const args = value as { reference: AnalysisReference; offset?: number; limit?: number }; const result = textResult(await options.data.read(args.reference, args)); return args.reference.taskId ? result : { ...result, details: { sourceRead: { tool: "read_data", args } } }; },
+    read_data: async (value) => {
+      const args = value as { reference: AnalysisReference; offset?: number; limit?: number };
+      const data = await options.data.read(args.reference, args);
+      return args.reference.taskId ? textResult({ kind: "accepted-result", reference: args.reference, ...resultPage(data, args) })
+        : { ...textResult(data), details: { sourceRead: { tool: "read_data", args } } };
+    },
     search_data: async (value) => { const args = value as { reference: AnalysisReference; query: string; offset?: number; limit?: number }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
     search_web: async (value, context) => {
       const result = await options.search.search(value as WebSearchRequest, context.signal);
@@ -42,11 +61,18 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     read_web: async (value, context) => textResult(await options.web.read(value as WebReadRequest, context.signal)),
     view_image: async (value) => ({ ...await options.data.image((value as { reference: AnalysisReference }).reference), details: { sourceRead: { tool: "view_image", args: value } } }),
     calculate: async (value) => { const args = value as { operation: string; operands: string[] }; return textResult(calculate(args.operation, args.operands)); },
+    execute_code: (value, context) => options.code.execute(value, context),
+    read_code_output: (value, context) => options.code.read(value, context),
     call_specialist: async (value, context) => {
       const result = await options.specialists.invoke(context.scope, value as SpecialistRequest, context.signal, context.progress);
-      return { ...textResult(result), isError: result.state === "failed" || result.state === "cancelled" };
+      const { result: body, ...receipt } = result;
+      return { ...textResult({ ...receipt, ...(body === undefined ? {} : { result: resultPage(body) }) }), isError: result.state === "failed" || result.state === "cancelled" };
     },
-    read_specialist: async (value, context) => textResult(await options.specialists.read(context.scope, (value as { operationId: string }).operationId)),
+    read_specialist: async (value, context) => {
+      const args = value as { operationId: string; offset?: number; limit?: number };
+      const { result, ...receipt } = await options.specialists.read(context.scope, args.operationId);
+      return textResult({ ...receipt, ...(result === undefined ? {} : { result: resultPage(result, args) }) });
+    },
     show_chart: async (value, context) => {
       const { references = [], ...chart } = value as ChartSpec & { references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
       validateChart(chart);
@@ -107,7 +133,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => ({ path, code, expected }));
       throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(validate.errors)}`);
     };
-    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_specialist", "show_chart"].includes(name),
+    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart"].includes(name),
       validate: validateArgs,
       async execute(value, context) {
         context.signal.throwIfAborted();

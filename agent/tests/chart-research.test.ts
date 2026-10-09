@@ -23,7 +23,7 @@ const samples = [
 ];
 const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'chart', signal: new AbortController().signal, progress() {} };
 const unexpected = async (): Promise<never> => { throw new Error('Unexpected dependency'); };
-const eris = createEris({ data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, save: unexpected, search: { search: unexpected }, web: { read: unexpected } });
+const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, save: unexpected, search: { search: unexpected }, web: { read: unexpected } });
 const tool = eris.tools.find(t => t.name === 'show_chart')!;
 
 test('all research charts pass the public tool contract and remain readable after serialization', async () => {

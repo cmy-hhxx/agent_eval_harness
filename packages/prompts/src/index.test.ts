@@ -124,7 +124,7 @@ test("Eris keeps decision and evidence rules without repeating tool parameter ma
     /currentRun.summary/, /inputCount.*登记.*evaluatedInputCount.*已归因/,
     /formalComparisonStats.comparisonCount/, /结果份数不等于对局场数/,
     /Fast 只能与 Fast 比，Expert 只能与 Expert 比/, /双方都答得好、双方都答得差分别保留/,
-    /完整原问和双方关键回答/, /不能只读胜方/, /四类合计须与该档场数一致/,
+    /常规分析默认读取评测输出/, /不把读取双方原始回答作为前置条件/, /四类合计须与该档场数一致/,
     /材料事实、正式判词和你的分析/, /不改写正式结果/,
     /相同失败参数不原样重发/, /保留已成功结果/, /原 operationId 查询状态/,
     /有依赖则等上一步返回真实引用/, /相互独立.*最多4路并发/,
@@ -133,11 +133,27 @@ test("Eris keeps decision and evidence rules without repeating tool parameter ma
     /与参考答案一致不证明经济含义正确/, /完整、正确和用户要求/,
   ]) assert.match(systemPrompt, rule);
   assert.doesNotMatch(systemPrompt, /默认必须有图|不超过60字|每次回复固定形态|点评优先三行/);
+  assert.doesNotMatch(systemPrompt, /默认两轮|定位1–2个/);
+  assert.match(systemPrompt, /execute_code.*复算与验证/);
+  assert.match(systemPrompt, /先摘要定位.*评测结果页.*必要时下钻原始消息/);
   assert.match(systemPrompt, /按意思分短段，每段讲清一件事/);
   assert.match(systemPrompt, /不编造网址/);
-  assert.match(systemPrompt, /单一事实、纯文字机制和更正可以直接回答/);
+  assert.match(systemPrompt, /默认用文字回答/);
+  assert.match(systemPrompt, /单题点评、少数案例、单一事实、纯文字机制和更正不用图表/);
+  assert.match(systemPrompt, /表格用于查数，不用于摆放几段优缺点/);
+  assert.match(systemPrompt, /用户喜欢或讨厌某个模型，不改变证据支持的判断/);
+  assert.match(systemPrompt, /优缺点按分量写，不给双方凑相同条数/);
+  assert.match(systemPrompt, /必要限定.*只说一次/);
+  assert.doesNotMatch(systemPrompt + toolDescriptions.show_chart, /先图后评|先取证、再作图|多项对照可用简短表格/);
+  for (const prompt of [systemPrompt, toolDescriptions.list_data, toolDescriptions.read_data])
+    assert.doesNotMatch(prompt, /案例先读完整原问|正式结果不能代替原始问句和回答|先读这些引用的消息目录/);
+  assert.match(toolDescriptions.read_data, /仅在用户要求复核、评测信息不足、结论矛盾或疑似误判/);
+  assert.match(toolDescriptions.list_data, /先用正式结果 reference 读取评测输出/);
   assert.match(toolDescriptions.read_data, /offset \/ limit 是顶层字段、与 reference 同级/);
   assert.match(toolDescriptions.list_data, /query 是字面文本筛选词，不是数据类别/);
+  assert.match(toolDescriptions.list_data, /view:"comparisons",limit:1/);
+  assert.match(toolDescriptions.list_data, /inputs\[\]\.reference/);
+  assert.match(toolDescriptions.show_chart, /statistics 不能放在工具顶层/);
   assert.match(toolDescriptions.search_web, /queries 必填.*query 在每个项内/);
   assert.match(toolDescriptions.search_web, /category 只有 web（默认）和 news/);
   assert.match(toolDescriptions.read_web, /find 未命中只说明已提取范围/);
@@ -149,10 +165,12 @@ test("chart guidance retains source boundaries and quantitative requirements", (
   const chart = toolDescriptions.show_chart;
   for (const rule of [
     /图必须比一句话多交付信息/, /不编主观分数或置信带/,
+    /成批样本的统计、多个可比期间的数据/, /不按类别数或单元格数判断/,
+    /最少点数只是绘制条件，不是统计充分或显著的证明/,
     /dumbbell.*两组同口径/, /waterfall.*可加总/, /histogram.*程序分箱和计数/,
     /A组皇家蓝，B组珊瑚橙/, /不随赢家或涨跌改变.*不按类别位置猜测身份/,
     /双方都好、双方都差分别用丹宁蓝和海军蓝/,
-    /正式战绩汇总用 \{statistics:\{runId,comparisonTier\}\}/,
+    /正式战绩汇总用 "references":\[\{"statistics":\{"runId":.*"comparisonTier":"Fast"\}\}\]/,
     /taskId 不放在 references 项的顶层/, /不在校验失败后换成运行引用/,
     /外部网页、研报、行情、公告等材料作图不传 references/,
     /annotations.*默认省略.*最多3处/, /原因与推导写在正文/,

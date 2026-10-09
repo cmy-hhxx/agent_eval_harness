@@ -39,8 +39,11 @@ export function CircularChart({ chart, width }) {
   const labels = [], marks = [], categoryCount = chart.categories.length, colors = categoryPalette(chart.categories), groupColors = seriesPalette(chart.series.map(s=>s.name));
   const hasOuter = ['rose','radar','chord'].includes(chart.type);
   const labelWidth = Math.max(44, ...chart.categories.map((name,i) => chartTextWidth(chart.type==='radar' ? name : `${name} ${number(chart.series[0].values[i])}`,11)));
-  const plotWidth = hasOuter ? Math.max(310, width, 220+labelWidth*2+32) : Math.max(270,Math.min(width,400));
-  const height = chart.type === 'waffle' ? 210 : 260, cx=plotWidth/2, cy=height/2, radius=96;
+  const plotWidth = hasOuter ? Math.max(310, width, 220+labelWidth*2+32) : Math.max(270,width);
+  const total = chart.type === 'waffle' ? decimalSum(chart.series[0].values) : 0;
+  const columns = Math.ceil(Math.sqrt(total * 2.4)), rows = total ? Math.ceil(total / columns) : 0;
+  const cell = total ? Math.min(24, (plotWidth - 16) / columns) : 0;
+  const height = chart.type === 'waffle' ? rows * cell + 16 : 260, cx=plotWidth/2, cy=height/2, radius=96;
   let legend = null;
   const legendItems = (names, values, format = number) => h('div', { style: { display: 'flex', gap: 12, overflowX: 'auto', fontSize: 12, whiteSpace: 'nowrap', margin: '5px 0' } }, names.map((name,i) =>
     h('span', { key: i, style: { flexShrink: 0, color: theme.ink } }, h('i', { style: { display:'inline-block',width:7,height:7,background:names===chart.categories?colors[i%colors.length]:groupColors[i%groupColors.length],marginRight:5 } }), `${name}${values ? ` ${format(values[i])}` : ''}`)));
@@ -79,7 +82,7 @@ export function CircularChart({ chart, width }) {
     });
     legend=legendItems(chart.series.map(s=>s.name));
   } else if (chart.type === 'waffle') {
-    const values=chart.series[0].values,total=decimalSum(values),columns=Math.ceil(Math.sqrt(total)),rows=Math.ceil(total/columns),cell=Math.min(18,(plotWidth-16)/columns,(height-20)/rows),left=(plotWidth-columns*cell)/2,top=(height-rows*cell)/2;
+    const values=chart.series[0].values,left=(plotWidth-columns*cell)/2,top=8;
     let index=0;values.forEach((value,ci)=>{for(let i=0;i<value;i++,index++)marks.push(h('rect',{key:index,x:left+(index%columns)*cell+1,y:top+Math.floor(index/columns)*cell+1,width:cell-2,height:cell-2,rx:2,fill:colors[ci%colors.length],'data-waffle-cell':true,'aria-label':chart.categories[ci]}));});
     legend=h('div',null,legendItems(chart.categories,values),h('div',{style:{fontSize:11,color:theme.muted}},`1格 = 1${chart.unit} · n=${total}`));
   } else if (chart.type === 'chord') {
@@ -96,6 +99,6 @@ export function CircularChart({ chart, width }) {
     });
   }
   return h('div',{'data-circular-chart':chart.type},legend,
-    h('div',{style:{overflowX:'auto',maxWidth:'100%'}},h('svg',{width:plotWidth,height,viewBox:`0 0 ${plotWidth} ${height}`,role:'group','aria-label':chart.title,'data-chart-type':chart.type,onKeyDown:inspect,style:{display:'block',fontFamily:'inherit',fontVariantNumeric:'tabular-nums'}},...marks,...outerLabels(labels,cx,cy,radius,plotWidth))),
+    h('div',{style:{overflowX:'auto',maxWidth:'100%'}},h('svg',{width:plotWidth,height,viewBox:`0 0 ${plotWidth} ${height}`,role:'group','aria-label':chart.title,'data-chart-type':chart.type,onKeyDown:inspect,style:{display:'block',margin:'0 auto',fontFamily:'inherit',fontVariantNumeric:'tabular-nums'}},...marks,...outerLabels(labels,cx,cy,radius,plotWidth))),
     h('div',{'aria-live':'polite',style:{fontSize:12,color:theme.muted,minHeight:reading?18:0}},reading));
 }

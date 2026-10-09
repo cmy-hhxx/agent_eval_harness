@@ -35,7 +35,7 @@ try {
  assert.equal(await page.getByRole('menuitemradio').count(),6,'favorites from one channel must not hide another channel');
  assert.equal((await page.getByRole('menuitemradio').allTextContents())[0],'gpt-5.6-luna','favorites stay first within their channel');
  await page.getByRole('searchbox',{name:'搜索模型…',exact:true}).fill('gpt-6-luna');
- assert.equal(await page.getByRole('menuitemradio').count(),2,'identical model IDs remain independently selectable');
+ assert.equal(await page.getByRole('menuitemradio',{name:'gpt-6-luna',exact:true}).count(),2,'identical model IDs remain independently selectable among fuzzy matches');
  await page.getByRole('menuitemradio',{name:'gpt-6-luna',exact:true}).nth(1).click();
  await input.fill('验证渠道');await input.press('Enter');
  await page.getByText('渠道选择成功',{exact:true}).waitFor();

@@ -711,6 +711,30 @@ test("established resource advantages can still support a winner when both share
   assert.equal(result.decision_basis.comparisons[1].assessments.B.evidence_status, "established");
 });
 
+test("an absent overall preference cannot silently turn a resource advantage into a winner", () => {
+  const data = pair(), input = data.request.input as unknown as ComparisonInput;
+  input.candidates.A.original_answer_timing.finish_seconds = 6.597;
+  input.candidates.B.original_answer_timing.finish_seconds = 7.391;
+  for (const preference of [null, undefined]) {
+    const draft = submission(data.result, data.request);
+    const slot = comparisonSlots(data.request).findIndex(item => item.kind === "resource");
+    draft.comparisons[slot] = { importance: "medium", better_candidate: "A" };
+    draft.preference = preference;
+    draft.tradeoff = "双方结果相同，等待时间的微小差异不足以决定胜负。";
+    const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
+    assert.deepEqual(result.ranking, [["A", "B"]], "the resolver must preserve the submitted overall preference");
+    assert.throws(() => validate(data.request, result), (error: unknown) => error instanceof ValidationError &&
+      !!error.issues?.some(issue => issue.code === "ranking_ignores_advantage"), "contradictory importance must be repaired before acceptance");
+    draft.comparisons[slot]!.importance = "low";
+    const tied = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
+    validate(data.request, tied);
+    assert.deepEqual(tied.ranking, [["A", "B"]]);
+    draft.preference = "A";
+    assert.throws(() => comparisonProfile.resolve!(data.request, draft, audit), (error: unknown) => error instanceof ValidationError &&
+      !!error.issues?.some(issue => issue.code === "preference_unproven"));
+  }
+});
+
 test("both-bad candidates remain tied while the short rationale may retain relative value", () => {
   const data = pair(); fail(data, "A"); fail(data, "B");
   data.result.ranking = [["A", "B"]];
@@ -878,9 +902,11 @@ test("uncertain findings cannot be decisive and one-sided material advantages ca
   data.result.decision_basis.comparisons[0].better_candidates = ["A"] as never[];
   assert.throws(() => validate(data.request, data.result), /uncertain finding 的比较行/);
   data.request.input.attributions.A.findings[0].assessment.evidence_status = "established";
-  assert.throws(() => validate(data.request, data.result), /不能判都好/);
+  assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
+    !!error.issues?.some(issue => issue.code === "ranking_ignores_advantage"));
   data.result.ranking = [["B"], ["A"]];
-  assert.throws(() => validate(data.request, data.result), /优势方排后/);
+  assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
+    !!error.issues?.some(issue => issue.code === "ranking_ignores_advantage"));
   data.result.ranking = [["A"], ["B"]]; validate(data.request, data.result);
 });
 

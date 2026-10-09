@@ -226,7 +226,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     }
     if (advantage(first) !== advantage(second)) {
       const better = advantage(first) ? first : second; const worse = better === first ? second : first;
-      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "仅一方有已确认的中高重要性优势，不能判都好或把优势方排后；核查本项 better_candidate、importance 和整场 preference，按实质差异写 tradeoff。", undefined, value.ranking, expected);
+      if (tierOf(better) >= tierOf(worse)) issue("ranking_ignores_advantage", "/ranking", "本项中高重要性单方优势与整场 preference 不一致。先核对实际影响：差异不足以改变结果、决策或使用成本时，将该项 importance 改为 low，保留 preference=null；确有实质优势则明确选择优势方。tradeoff 须说明同一取舍，不能仅为通过校验强选赢家。", undefined, value.ranking, expected);
     }
   }
   if (errors.length) throw new ValidationError(errors);

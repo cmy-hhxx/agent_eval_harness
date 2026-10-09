@@ -19,7 +19,7 @@ export function assistantModelConfiguration(gatewayModel: ModelConfig, configura
     model: { ...channel, model: channel.model ?? "", thinking: channel.thinking ?? DEFAULT_THINKING,
       maxOutputTokens: channel.maxOutputTokens ?? 8192,
       ...(channel.provider === gatewayModel.provider ? gatewayModel : {}),
-      contextWindow: selected.contextWindow ?? 512000 },
+      contextWindow: selected.contextWindow ?? 1048576 },
     models: channel.models?.map(id => ({ id, name: id })), efforts: channel.efforts,
   }));
   const gateway = gateways.find(item => item.model.provider === (selected.channel ?? gatewayModel.provider));

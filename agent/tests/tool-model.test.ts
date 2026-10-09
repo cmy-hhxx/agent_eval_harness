@@ -25,6 +25,21 @@ test("chart summaries distinguish the chart type and execution state without exp
   assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });
 });
 
+test("comparison pages show the question, outcome and both answer references in tool details", () => {
+  const result = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "comparisons", total: 200,
+    items: [{ questionPreview: "均线如何设置？", reference: { runId: "run", taskId: "battle" },
+      outcomes: [{ resultLabel: "B组Fast胜" }], inputs: [
+        { modelName: "A组Fast", reference: { runId: "run", inputId: "answer-a" } },
+        { modelName: "B组Fast", reference: { runId: "run", inputId: "answer-b" } },
+      ] }], summary: { inputCount: 400, caseCount: 200 } }) });
+  assert.equal(result.summary, "查询正式对战 · 200 场匹配 · 本页 1 场");
+  assert.equal(result.details.items[0].title, "均线如何设置？");
+  assert.equal(result.details.items[0].description, "B组Fast胜");
+  assert.deepEqual(result.details.items[0].groups[0].items.map((item: { title: string }) => item.title), ["A组Fast", "B组Fast"]);
+  assert.match(JSON.stringify(result.details), /answer-a/);
+  assert.match(JSON.stringify(result.details), /answer-b/);
+});
+
 test("calculation summaries tolerate rejected arguments and incomplete streaming calls", () => {
   for (const operands of ["1", {}, 1, null, undefined]) {
     const args = JSON.stringify({ operation: "add", operands });

@@ -29,7 +29,7 @@ test("Eris Responses requests preserve optional tool arguments through Pi", { ti
   const previousSecret = process.env.ASSISTANT_TEST_KEY;
   process.env.ASSISTANT_TEST_KEY = "fixture-secret";
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: async query => { queries.push(query); return { kind: "runs", total: 1, items: [{ runId: "fixture-run" }] }; },
       read: unexpected, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
@@ -142,7 +142,7 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const previousSecret = process.env.ASSISTANT_TEST_KEY;
   process.env.ASSISTANT_TEST_KEY = "fixture-model-secret";
-  const eris = createEris({
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: {
       list: unexpected, search: unexpected, image: unexpected,
       async read(ref) { assert.deepEqual(ref, reference); return { result: accepted, evaluatorVersion: "fixture" }; },
@@ -178,7 +178,7 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
       assert.equal(search.results[0].url, sourceUrl);
       assert.equal(search.results[0].date, "2026-09-20");
       assert(!Number.isNaN(Date.parse(search.searchedAt)));
-      assert.deepEqual(JSON.parse(String(results[0].content)).result, accepted, "external facts leave accepted conclusions intact");
+      assert.deepEqual(JSON.parse(JSON.parse(String(results[0].content)).text).result, accepted, "external facts leave accepted conclusions intact");
     }
     if (results.length >= 3) {
       const raw = JSON.parse(String(results[2].content));

@@ -18,6 +18,20 @@ function render(chart: Record<string, unknown>) {
   return new JSDOM(renderToStaticMarkup(createElement(AnalysisChart, { chart: parsed }))).window.document;
 }
 
+test('waffle uses a centered landscape grid with one equally sized cell per battle', () => {
+  const document = render({ ...base, type: 'waffle', categories: ['B组胜', '双方答好', '双方答差', 'A组胜'], series: [{ name: '对局数', values: [60, 41, 5, 27] }] });
+  const svg = document.querySelector('[data-chart-type=waffle]')!;
+  const cells = [...svg.querySelectorAll('[data-waffle-cell]')];
+  const width = Number(svg.getAttribute('width')), height = Number(svg.getAttribute('height'));
+  const left = Math.min(...cells.map(cell => Number(cell.getAttribute('x'))));
+  const right = Math.max(...cells.map(cell => Number(cell.getAttribute('x')) + Number(cell.getAttribute('width'))));
+  assert.equal(cells.length, 133);
+  assert.equal(new Set(cells.map(cell => cell.getAttribute('width'))).size, 1);
+  assert(Math.abs(left - (width - right)) < 1, 'grid centered in its full plot');
+  assert((right - left) / height > 1.6, 'avoid a tiny square in a wide figure');
+  assert((right - left) / width > .7, 'grid uses the available card width');
+});
+
 test('a chart stands alone and its notes add only the supplied explanation', () => {
   const note = '缺少回款明细，尚不能解释差异';
   const document = render({ ...base, type: 'dumbbell', categories: ['营收', '现金流'],

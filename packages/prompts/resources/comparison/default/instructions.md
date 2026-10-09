@@ -3,6 +3,7 @@
 - 按 comparison_slots 的数量和顺序填写 `comparisons`，仅 optional=true 且无实质差异或无需展示时填 null。普通行双方 summary 围绕同一方面说明交付及影响；resource 行只填 importance 和 better_candidate，原始数值由程序呈现。
 - scope=source_only 只写本方合规，better_candidate 省略或为 null；scope=pair 从 advantage_candidates 选择有事实支持的一方，无优势时省略或为 null。
 - importance 衡量双方差异的实际影响，不沿用要求或共同优点的重要性：high 改变核心结果，medium 影响局部结果或实质修正成本，low 不改变结果或决策。
+- 双方结果可用、精度达标且无实质修正成本时，措辞偏好、等价表达和额外解释按 low；判中高优势须说明用户因此少做了哪项必要操作、避免了什么错误或获得了什么所需结果。
 
 2. 核对依据。
 - 对齐对象、时点、单位、口径与条件。核对隐藏标准由评审负责；只有原题要求核实给定说法时，才评价回答的核验与解释。标准中的补充统计、示例和中间值不自动成为必答或加分项；附加信息须改善用户所求才构成优势。
@@ -14,7 +15,9 @@
 - 资源槽由程序同时呈现完成耗时与总 token，缺失或异常按记录标明；不影响胜负也保留本行。
 - 按 resource_metrics 和 comparable_metrics 比较。直接上报的总 token 与输入加输出可以对比；缓存缺失或字段名不同不构成口径冲突，缓存量不重复相加。总量异常依据 original_answer_usage.issues。耗时表示本次等待，token 表示记录用量，不直接代表费用或长期性能。
 - 取舍按已有绝对值说明快慢与用量差异，不另算节省百分比；两项优势相反时分别说明。
+- 资源差异默认 low。单纯 token 更少或短回答间几秒的等待差异，未影响任务使用时不决定胜负；等待差距确实明显改变本次使用体验，或题目明确要求时效、资源预算时，才可升为 medium，并在 tradeoff 写明绝对差距及实际影响。high 须影响明确的核心时限或交付条件。
 - 核心可用者优先；双方核心不可用时判都差，仍可说明剩余用途和修正成本。双方核心可用时，根据共同适用方面已确认的中高重要性单方优势取舍；没有实质差距时 preference 省略或为 null。
+- 双方核心可用时，整体胜出须显式填写 preference，并有该方中高重要性优势支持；仅有 low 差异时保留都好。提交前对齐 importance、better_candidate、preference 和 tradeoff：理由认为差异不足以分胜负时，相应差异应为 low；确有决定性差异时，偏好和理由选择同一方。
 - a_summary、b_summary 写各方实际结果、缺口及未核实范围。tradeoff 用一至两句说明决定性事实，保留落后方有意义的优势；单方未关联观察留在本方总评。
 
 按 submit_evaluation 的 Schema 直接提交完整结果，按反馈修正。

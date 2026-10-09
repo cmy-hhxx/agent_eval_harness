@@ -105,6 +105,26 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       { comparisonTier: "Expert", comparisonCount: 1, outcomes: { win: 0, both_good: 1, both_bad: 0 } },
     ]);
     assert(stats.tiers.every((tier) => tier.models.length === 2 && tier.models.every((model) => model.both_good === 1 && model.comparisonCount === 1)));
+    const first = await source.list({ runId: "source", view: "comparisons", query: "计算2+2", limit: 1 });
+    assert(first.kind === "comparisons");
+    assert.equal(first.total, 2, "question search must find accepted battles without reading raw messages");
+    assert.equal(first.items.length, 1);
+    assert.equal(first.nextOffset, 1);
+    assert.equal(first.items[0].questionPreview, "计算2+2");
+    assert.equal(first.items[0].inputs.length, 2);
+    for (const input of first.items[0].inputs) {
+      assert.equal(input.reference.runId, "source");
+      assert.equal(saved.inputs[input.reference.inputId]!.version, input.model);
+      assert.equal(input.comparisonTier, first.items[0].comparisonTier);
+    }
+    const next = await source.list({ runId: "source", view: "comparisons", offset: first.nextOffset!, limit: 1 });
+    assert(next.kind === "comparisons");
+    assert.equal(next.hasMore, false);
+    assert.notDeepEqual(next.items[0].reference, first.items[0].reference);
+    const empty = await source.list({ runId: "source", view: "comparisons", query: "不存在的原问" });
+    assert(empty.kind === "comparisons");
+    assert.equal(empty.total, 0);
+    assert.deepEqual(empty.summary.formalComparisonStats, stats, "case search must not change aggregate denominators");
     const runs = await source.list({ query: "no-match" });
     assert(runs.kind === "runs");
     assert.deepEqual(runs.currentRun!.summary.formalComparisonStats, stats, "history filtering cannot change current formal standings");

@@ -37,7 +37,7 @@ test('Eris inherits Attribution unless an explicit channel and model are selecte
   assert.equal(configured.model.maxOutputTokens,4096);
   settings.agent={};
   assert.equal(assistantModelConfiguration(gateway,settings).model.provider,'evaluation-gateway');
-  assert.equal(assistantModelConfiguration(gateway,settings).model.contextWindow,512000);
+  assert.equal(assistantModelConfiguration(gateway,settings).model.contextWindow,1048576);
 });
 
 test('same model IDs across channels retain independent routing, scoped favorites and defaults',async()=>{
@@ -51,7 +51,7 @@ test('same model IDs across channels retain independent routing, scoped favorite
   try {
     const catalog=await models.list('alice');
     assert.equal(catalog.models.length,4);
-    assert(catalog.models.every(model=>model.contextWindow===512000));
+    assert(catalog.models.every(model=>model.contextWindow===1048576));
     await assert.rejects(models.resolve({provider:'openai',model:'gpt-6-sol'}),/网关列表/);
     assert.deepEqual(catalog.favorites,[modelIdentity('openai','gpt-6-luna'),modelIdentity('evaluation-gateway','gpt-6-luna')]);
     assert.deepEqual(catalog.default,{provider:'openai',model:'gpt-6-luna',reasoningEffort:'high'});
@@ -59,7 +59,7 @@ test('same model IDs across channels retain independent routing, scoped favorite
     assert(!JSON.stringify(catalog).includes('https://'));
     for(const provider of ['evaluation-gateway','openai']) {
       const resolved=await models.resolve({provider,model:'gpt-6-luna',reasoningEffort:'max'});
-      assert.equal(resolved.contextWindow,512000);
+      assert.equal(resolved.contextWindow,1048576);
       assert.equal(resolved.apiKeyEnv,configuration().channels[provider].apiKeyEnv);
       assert.equal(resolved.baseUrl,configuration().channels[provider].baseUrl);
     }
@@ -113,7 +113,7 @@ test('the conversation picker keeps every channel visible when favorites only co
     await sessions.selectModel({userId:'alice',sessionId:session.sessionId},{provider:'openai',model:'gpt-6-luna',reasoningEffort:'high'});
     assert.equal((await sessions.list('alice'))[0].modelSelection?.provider,'openai');
     const projections=await sessions.projections({userId:'alice',sessionId:session.sessionId}) as {values:{contextPressure:{contextWindow:number}}};
-    assert.equal(projections.values.contextPressure.contextWindow,512000,'the selected model refreshes capacity without requiring a model request');
+    assert.equal(projections.values.contextPressure.contextWindow,1048576,'the selected model refreshes capacity without requiring a model request');
     await models.favorites('alice',[modelIdentity('openai','gpt-6-luna')]);
     assert((await catalog()).groups.every(group=>group.models.length===2),'changing favorites must never hide other channels');
     assert(!JSON.stringify(result).includes('secret'));

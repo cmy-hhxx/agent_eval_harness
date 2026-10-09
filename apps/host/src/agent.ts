@@ -10,6 +10,7 @@ import { loadConfig, createModelResolver, readSettings, configurationSecrets } f
 import { ROOT } from "./paths.js";
 import { logger } from "./composition.js";
 import { assistantModelConfiguration, GatewayAssistantModels } from "./assistant-models.js";
+import { LocalAnalysisCode } from "./assistant-code.js";
 import { LocalAnalysisData } from "./assistant-data.js";
 import { LocalSpecialists } from "./assistant-specialists.js";
 
@@ -27,7 +28,7 @@ for (const gateway of gateways)
   if (!process.env[gateway.model.apiKeyEnv]) throw new Error(`请在 config.ini 的 channel.${gateway.model.provider} 中配置 api_key`);
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
   directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model, gateways),
-  ...createEris({ data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader(), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
+  ...createEris({ code: new LocalAnalysisCode(path.join(ROOT, "data/assistant"), path.join(ROOT, ".venv/bin/python")), data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader(), save: async (scope, markdown) => { const artifact = await writeAssistantArtifact(path.join(ROOT, "data/assistant"), scope, markdown); return { ...artifact, url: `${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${artifact.name}` }; } }),
   onError: (error) => { void logger.error(error, { component: "assistant", event: "error" }); },
 }), (userId, sessionId, id) => readAssistantArtifact(path.join(ROOT, "data/assistant"), { userId, sessionId }, id)), onError: (error) => { void logger.error(error, { component: "assistant-http", event: "error" }); } });
 const url = `${server.url}/u/${userId}/`;

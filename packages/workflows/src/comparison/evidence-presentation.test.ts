@@ -93,6 +93,24 @@ test("cited tool returns precede recent unrelated material within the same sourc
   assert(initial.reduce((n, item) => n + canonical(item.value).length + item.evidence.reduce((sum, e) => sum + e.quote.length, 0), 0) <= 1000);
 });
 
+test("uncited tool returns precede newer planning records within the source budget", () => {
+  const fact = "成交量[20260930 14:30-20260930 15:00]：11228580股。";
+  for (const returned of [
+    { type: "tool_result", output: fact },
+    { type: "function_call_output", output: fact },
+    { role: "tool", content: fact },
+  ]) {
+    const source: RawInput = { messages: [{ role: "user", content: "查询尾盘成交量。" }, returned,
+      { type: "llm_turn", output: "准备汇总成交量。".repeat(10) },
+      { type: "tool_call", input: { command: "补充查询。".repeat(10) } },
+      { role: "assistant", content: "尾盘成交量1122.86万股。" }] };
+    const before = structuredClone(source), binding = bindMaterial(source, 500);
+    const initial = (binding.request.input.answer as { initial_material: InitialMaterial }).initial_material;
+    assert(initial.some(item => item.message_index === 1 && canonical(item.value).includes(fact)));
+    assert.deepEqual(source, before);
+  }
+});
+
 test("a cited source inside an oversized return is shown intact with original evidence coordinates", () => {
   const result = { serial_number: "ABC1234", title: "产量", content: "当月产量25，全年累计300。" };
   const source: RawInput = { messages: [{ role: "tool", content: [result, { unrelated: "其他原始内容。".repeat(4000) }] },

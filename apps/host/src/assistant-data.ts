@@ -13,7 +13,9 @@ export class LocalAnalysisData implements AnalysisDataSource {
   constructor(readonly directory: string) {}
   run(id: string) { return path.join(this.directory, safeId(id)); }
   async list(query: AnalysisQuery) {
-    const offset = query.offset ?? 0, limit = Math.min(query.limit ?? 30, 100);
+    const comparisonView = query.view === "comparisons";
+    if (query.view && !query.runId) throw new Error("view 需要 runId；先用 list_data({}) 获取 currentRun.runId。");
+    const offset = query.offset ?? 0, limit = Math.min(query.limit ?? (comparisonView ? 5 : 30), comparisonView ? 20 : 100);
     if (!query.runId) {
       const names = await exists(this.directory) ? await localFiles.list(this.directory) : [];
       const items = [];
@@ -55,13 +57,26 @@ export class LocalAnalysisData implements AnalysisDataSource {
       const models = group.map(model);
       return { comparisonTier: models[0]!.comparisonTier, models: models.map(({ model, modelName }) => ({ model, modelName })) };
     });
+    const summary = analysisProgress(saved);
+    const formalComparisonStats = await readAnalysisComparisonStats(this.run(query.runId), summary.formalComparisonReferences.map((reference) => reference.taskId));
+    if (comparisonView) {
+      const filtered = query.query ? formalComparisonStats.records.filter(record => JSON.stringify(record).includes(query.query!)) : formalComparisonStats.records;
+      const items = filtered.slice(offset, offset + limit).map(({ reference, question, scope }) => ({
+        reference, questionPreview: question.slice(0, 300), questionChars: question.length,
+        comparisonTier: scope.comparisonTier, case: scope.case,
+        inputs: Object.values(saved.tasks[reference.taskId]!.inputIds).map(inputId => ({
+          ...model(saved.inputs[inputId]!.version), reference: { runId: query.runId!, inputId },
+        })),
+        outcomes: scope.comparisons.map(({ result, resultLabel, winnerModel }) => ({ result, resultLabel, winnerModel })),
+      }));
+      return { kind: "comparisons" as const, ...page(filtered.length, offset, limit, "items"), items,
+        evaluatorVersion: saved.evaluatorVersion, summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
+    }
     const items = Object.entries(saved.inputs).map(([inputId, input]) => ({ reference: { runId: query.runId!, inputId }, runId: query.runId!, inputId, batchId: input.batch_id, caseId: input.case_id, ...model(input.version),
       tasks: Object.entries(saved.tasks).filter(([, task]) => Object.values(task.inputIds).includes(inputId)).map(([taskId, task]) => ({ reference: { runId: query.runId!, taskId }, taskId, stage: task.stage, purpose: analysisTaskPurpose(task), status: task.status })) }));
     const filtered = query.query ? items.filter((item) => JSON.stringify(item).includes(query.query!)) : items;
-    const summary = analysisProgress(saved);
     return { kind: "inputs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion,
-      summaryScope: "run" as const, summary: { ...summary,
-        formalComparisonStats: await readAnalysisComparisonStats(this.run(query.runId), summary.formalComparisonReferences.map((reference) => reference.taskId)) } };
+      summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
   }
   async raw(reference: AnalysisReference) {
     if (!reference.inputId) throw new Error("inputId is required");

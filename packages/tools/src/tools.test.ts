@@ -56,6 +56,33 @@ test("trace search finds numeric tool fields and returns an exact structured quo
     await rm(ctx.workdir, { recursive: true, force: true });
   }
 });
+test("tool-return search locates original values before repeated model history and opens the complete source", async () => {
+  const ctx = await context();
+  try {
+    const source = { messages: [
+      { type: "llm_turn", input_messages: { content: "成交量查询。".repeat(40) } },
+      { type: "tool_result", output: { "成交量[20260929]": 10 } },
+      { type: "function_call_output", output: { "成交量[20260930 14:30-20260930 15:00]": 11228580, unit: "股" } },
+      { role: "tool", content: "当日成交量47588689股。" },
+      { type: "llm_turn", output: "成交量1122.86万股。" },
+      { role: "assistant", content: "成交量1122.86万股。" },
+    ] };
+    ctx.inputs.set("A", source);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace", "read_trace"]));
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "成交量", scope: "tool_returns" }, new AbortController().signal);
+    assert(!result.isError, JSON.stringify(result));
+    const page = result.details as { total: number; matches: { evidence: { message_index: number; quote: string };
+      read_request: { candidate: string; message_index: number; path: string } }[] };
+    assert.deepEqual([...new Set(page.matches.map(match => match.evidence.message_index))], [3, 2, 1]);
+    const matched = page.matches.find(match => match.evidence.quote.includes("11228580"))!;
+    assert(matched, "search the metric even when the answer rounds and changes units");
+    const read = await runtime.execute("read_trace", matched.read_request, new AbortController().signal);
+    assert(!read.isError, JSON.stringify(read));
+    assert((read.details as { evidence: { quote: string }[] }).evidence.some(item => item.quote.includes('"unit": "股"')));
+    const all = await runtime.execute("search_trace", { candidate: "A", query: "成交量" }, new AbortController().signal);
+    assert((all.details as { total: number }).total > page.total, "all-message search remains available for instructions and history");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("trace paths select structured objects and scalar fields with program-generated JSON coordinates", async () => {
   const ctx = await context();
   try {

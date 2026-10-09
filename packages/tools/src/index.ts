@@ -62,7 +62,10 @@ const calculationSchema = schema({
   operation: { enum: ["add", "subtract", "multiply", "divide"] },
   operands: { type: "array", items: str, minItems: 2, maxItems: 20 },
 });
-async function executeCode(ctx: ToolContext, value: unknown, signal: AbortSignal): Promise<ToolResult> {
+export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution" | "artifacts"> & {
+  audit: Pick<ToolContext["audit"], "artifacts">;
+  policy: Pick<ToolContext["policy"], "codeTimeoutSeconds" | "maxOutputChars">;
+}, value: unknown, signal: AbortSignal): Promise<ToolResult> {
   const args = value as {
     language: "python" | "shell";
     code: string;
@@ -358,6 +361,7 @@ export const builtinTools: ExecutableTool[] = [
       {
         candidate: str,
         query: { type: "string", minLength: 1, maxLength: 500 },
+        scope: { enum: ["all", "tool_returns"] },
         offset: index,
       },
       ["candidate", "query"],
@@ -366,12 +370,18 @@ export const builtinTools: ExecutableTool[] = [
       const args = value as {
         candidate: string;
         query: string;
+        scope?: "all" | "tool_returns";
         offset?: number;
       };
       const offset = args.offset ?? 0;
       const matches: { path: string; evidence: ReturnType<typeof cite>; read: TraceRead }[] = [];
       let total = 0;
-      record(ctx, args.candidate).messages.forEach((m, i) => {
+      const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }));
+      const selected = args.scope === "tool_returns" ? messages.filter(({ message }) => {
+        const value = object(message);
+        return value.role === "tool" || ["function_call_output", "tool_result"].includes(String(value.type));
+      }).reverse() : messages;
+      selected.forEach(({ message: m, index: i }) => {
         for (const source of evidenceSources(m)) {
           const { path: location, text } = source;
           let start = 0,
@@ -397,7 +407,8 @@ export const builtinTools: ExecutableTool[] = [
       if (offset > total) throw new Error("offset 超出检索结果范围");
       const shown = matches;
       const page = () => textResult({
-        matches: shown.map(({ path, evidence }) => ({ path, evidence: displayEvidence(evidence) })),
+        matches: shown.map(({ path, evidence }) => ({ path, evidence: displayEvidence(evidence),
+          read_request: { candidate: args.candidate, message_index: evidence.message_index, path } })),
         total,
         next_offset: offset + shown.length,
         has_more: offset + shown.length < total,

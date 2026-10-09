@@ -5,7 +5,7 @@ import { toolRowModel } from '../../../vendor/deepseek/packages/client/ui-tool/s
 import { analysisToolModel } from './tool-model.js';
 import { TurnCharts } from './charts.js';
 import { MessageImages } from '../../../vendor/deepseek/packages/client/ui-attachment/src/client/MessageImages.tsx';
-const names={list_data:['查询评测数据','List evaluations'],read_data:['读取材料','Read material'],search_data:['搜索消息','Search messages'],search_web:['搜索外部资料','Search the web'],read_web:['读取网页原文','Read web source'],view_image:['查看图片','View image'],calculate:['计算','Calculate'],show_chart:['显示图表','Show chart'],call_specialist:['专业评测','Specialist evaluation'],read_specialist:['读取专业结果','Read accepted result'],save_summary:['保存总结','Save summary'],specialist_output:['专业任务输出','Specialist output']};
+const names={list_data:['查询评测数据','List evaluations'],read_data:['读取材料','Read material'],search_data:['搜索消息','Search messages'],search_web:['搜索外部资料','Search the web'],read_web:['读取网页原文','Read web source'],view_image:['查看图片','View image'],calculate:['计算','Calculate'],execute_code:['代码核验','Run code'],read_code_output:['读取代码输出','Read code output'],show_chart:['显示图表','Show chart'],call_specialist:['专业评测','Specialist evaluation'],read_specialist:['读取专业结果','Read accepted result'],save_summary:['保存总结','Save summary'],specialist_output:['专业任务输出','Specialist output']};
 function AnalysisTool({toolName,block,cwd,home,openFile,inspect,useDisclosure,t,remote,sessionId}){
  const model=toolRowModel(toolName,block,cwd,home);
  const disclosure=useDisclosure();

@@ -150,10 +150,10 @@ try{
  assert.equal(await page.locator('[data-variant=think]').count(),1,'reasoning must use the upstream collapsible reasoning row');
  assert.equal(await page.getByRole('button',{name:/gpt-6-luna/}).count(),1,'the configured gateway model must have an upstream selection control');
 
- const chart=page.locator('[data-turn-charts] figure[data-gpt-6-luna-previewhart=dot]').first();
+ const chart=page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').first();
  await chart.getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(await page.locator('[data-turn-process]').getAttribute('aria-expanded'),'false','the completed work steps stay collapsed by default');
- assert.equal(await page.locator('figure[data-gpt-6-luna-previewhart]').count(),1,'the accepted chart appears once beside the answer without opening work steps');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'the accepted chart appears once beside the answer without opening work steps');
  assert.equal(await chart.locator('svg[role=img]').count(),1);
  assert.equal(await chart.locator('[data-chart-mark=dot]').count(),2,'the chart draws the receipt values as positioned SVG points');
  assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
@@ -163,7 +163,7 @@ try{
  assert.equal(await chart.locator('[data-chart-accessible-data]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','accessible observations do not take up visible space');
  assert.equal(chartDisplays,1,'rendering reads the saved receipt');
  await page.setViewportSize({width:375,height:900});
- await page.waitForFunction(()=>document.querySelector('figure[data-gpt-6-luna-previewhart] svg')?.getAttribute('data-chart-template')==='comparison-compact');
+ await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison-compact');
  assert(await chart.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth),'the entire comparison fits the narrow answer column');
  assert(await chart.evaluate(node=>node.scrollWidth<=node.clientWidth),'the comparison does not conceal a group behind horizontal scrolling');
  for(const label of ['A组Fast','B组Fast','6','5'])assert((await chart.locator('svg').textContent()).includes(label),`${label} remains directly readable at 375px`);
@@ -178,7 +178,7 @@ try{
  assert(Math.abs((narrowDots[0].x-zero)/(narrowDots[1].x-zero)-6/5)<0.001,'dot positions retain the actual ratio from a common zero');
  await page.screenshot({path:shots+'/chart-narrow.png',fullPage:true});
  await page.setViewportSize({width:1440,height:1000});
- await page.waitForFunction(()=>document.querySelector('figure[data-gpt-6-luna-previewhart] svg')?.getAttribute('data-chart-template')==='comparison');
+ await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison');
  await chart.screenshot({path:shots+'/fast-chart.png'});
 
  // The upstream Turn process owns both the thought and the business tool.
@@ -191,7 +191,7 @@ try{
  for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
  const chartRow=page.locator('[data-tool=show_chart][data-state=ok]').getByRole('button').first();
  assert.equal(await chartRow.getAttribute('aria-expanded'),'false','a successful chart is visible without opening its tool details');
- assert.equal(await page.locator('figure[data-gpt-6-luna-previewhart]').count(),1,'expanded work steps do not duplicate accepted charts or display rejected charts');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'expanded work steps do not duplicate accepted charts or display rejected charts');
  await chartRow.click();await chartRow.click();
  await chart.waitFor({state:'visible'});
  assert.equal(chartDisplays,1,'tool disclosure changes use the persisted chart receipt');
@@ -278,14 +278,14 @@ try{
  await page.getByRole('menuitem',{name:'完全展开',exact:true}).click();
  await settings.getByRole('button',{name:'详细',exact:true}).click();
  await page.getByRole('menuitem',{name:'简洁',exact:true}).click();
- assert.equal(await page.locator('figure[data-gpt-6-luna-previewhart]').count(),1,'compact work-step mode retains exactly one chart beside the answer');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'compact work-step mode retains exactly one chart beside the answer');
  await chart.waitFor({state:'visible'});
  await settings.getByRole('button',{name:'中文',exact:true}).click();
  await page.getByRole('menuitem',{name:'English',exact:true}).click();
  await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();
  await page.reload();
- await page.locator('[data-turn-charts] figure[data-gpt-6-luna-previewhart=dot]').first().waitFor({state:'visible'});
- assert.equal(await page.locator('figure[data-gpt-6-luna-previewhart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
+ await page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').first().waitFor({state:'visible'});
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
  assert.equal(chartDisplays,1,'refresh does not repeat the chart tool');
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Steer',exact:true}).waitFor();
@@ -337,7 +337,7 @@ try{
  const commandSearch=page.getByRole('textbox',{name:'筛选选项',exact:true});
  await commandSearch.waitFor();
  assert.equal(await commandSearch.getAttribute('placeholder'),'搜索模型…');
- await commandSearch.fill('anb');
+ await commandSearch.fill('5.6luna');
  await page.getByRole('option',{name:'gpt-5.6-luna',exact:true}).waitFor();
  assert.equal(await page.getByRole('option').count(),1,'the model command shares fuzzy filtering with the composer picker');
  await commandSearch.press('Tab');
@@ -361,7 +361,7 @@ try{
  await restoredRead.getByRole('link',{name:webReadUrl+'#page=8',exact:true}).waitFor();
  assert((await restoredRead.innerText()).includes('130: '+webReadText),'refresh retains source evidence coordinates and exact text');
  assert.equal(webReads,1,'refresh renders persisted web source text without another network request');
- await page.locator('figure[data-gpt-6-luna-previewhart=dot]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
+ await page.locator('figure[data-analysis-chart=dot]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(chartDisplays,1,'refresh renders the stored chart without executing the tool again');
  await page.getByRole('button',{name:/gpt-5.6-luna/}).click();
  await page.getByRole('menuitem',{name:/^模型/}).click();
@@ -377,7 +377,7 @@ try{
  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  for(const [label,example] of Object.entries(templateExamples)){
   await page.locator('[contenteditable=true]').fill('图表模板测试示例：'+label);await page.locator('[contenteditable=true]').press('Enter');
-  const exampleChart=page.locator(`figure[data-gpt-6-luna-previewhart=${example.type}]`).last();
+  const exampleChart=page.locator(`figure[data-analysis-chart=${example.type}]`).last();
   await exampleChart.getByRole('heading',{name:example.title,exact:true}).waitFor();
   await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
   await exampleChart.getByText('来源：'+example.source,{exact:true}).waitFor();
@@ -448,7 +448,7 @@ try{
   await mobilePage.locator('[contenteditable=true]').fill('图表模板测试示例：时间趋势');
   await mobilePage.locator('[contenteditable=true]').press('Enter');
   await mobilePage.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
-  const mobileTrend=mobilePage.locator('figure[data-gpt-6-luna-previewhart=line]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['时间趋势'].title,exact:true})});
+  const mobileTrend=mobilePage.locator('figure[data-analysis-chart=line]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['时间趋势'].title,exact:true})});
   await mobileTrend.getByRole('heading',{name:templateExamples['时间趋势'].title,exact:true}).waitFor();
   await mobileTrend.locator('[data-chart-tails]').waitFor({state:'visible'});
   assert(await mobileTrend.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth+1),'ordinary A/B date trends fit the narrow figure without horizontal scrolling');
@@ -474,7 +474,7 @@ try{
   await mobilePage.locator('[contenteditable=true]').fill('图表模板测试示例：长数字组成');
   await mobilePage.locator('[contenteditable=true]').press('Enter');
   await mobilePage.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
-  const mobileComposition=mobilePage.locator('figure[data-gpt-6-luna-previewhart=pie]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['长数字组成'].title,exact:true})});
+  const mobileComposition=mobilePage.locator('figure[data-analysis-chart=pie]').filter({has:mobilePage.getByRole('heading',{name:templateExamples['长数字组成'].title,exact:true})});
   await mobileComposition.scrollIntoViewIfNeeded();
   assert(await mobileComposition.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'long composition labels and exact scientific values do not overflow the mobile figure');
   const compositionBounds=await mobileComposition.boundingBox();
@@ -489,12 +489,12 @@ try{
  }finally{await mobileContext.close();}
  const recordedCharts=chartDisplays;
  await page.reload();
- await page.locator('figure[data-gpt-6-luna-previewhart]').first().waitFor();
+ await page.locator('figure[data-analysis-chart]').first().waitFor();
  const older=page.getByRole('button',{name:'加载更早',exact:true});
  if(await older.count())await older.click();
- for(const example of Object.values(templateExamples))await page.locator(`figure[data-gpt-6-luna-previewhart=${example.type}]`).getByRole('heading',{name:example.title,exact:true}).waitFor();
- await page.locator('figure[data-gpt-6-luna-previewhart=dot]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
- assert.equal(await page.locator('figure[data-gpt-6-luna-previewhart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across the recorded chart types');
+ for(const example of Object.values(templateExamples))await page.locator(`figure[data-analysis-chart=${example.type}]`).getByRole('heading',{name:example.title,exact:true}).waitFor();
+ await page.locator('figure[data-analysis-chart=dot]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across the recorded chart types');
  assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  await page.goto(server.url+'/u/local/chart-gallery.html');
  await page.getByRole('heading',{name:'科研图形模板',exact:true}).waitFor();

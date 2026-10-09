@@ -138,13 +138,13 @@ test("resource summaries preserve measured values and missing data independently
  input.candidates.B.original_answer_usage.total_tokens=11599;
  const index=comparisonSlots(f.request).findIndex(slot=>slot.kind==='resource');
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
- draft.comparisons[index]={importance:'medium',better_candidate:'B'};
+ draft.comparisons[index]={importance:'low',better_candidate:'B'};
  const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
  f.registry.validate(f.binding,result,audit);
  const row=result.decision_basis.comparisons.find(row=>!row.criterion_ids.length)!;
  assert.equal(row.assessments.A.summary,'完成耗时：16.652 秒；总 token：22264。');
  assert.equal(row.assessments.B.summary,'完成耗时：10.706 秒；总 token：11599。');
- assert.equal(row.importance,'medium'); assert.deepEqual(row.better_candidates,['B']);
+ assert.equal(row.importance,'low'); assert.deepEqual(row.better_candidates,['B']);
  Object.assign(draft.comparisons[index]!,{a_summary:'盘中报价并非当日收盘价。',b_summary:'节省91.9%。'});
  assert.throws(()=>f.registry.resolve(f.binding,draft,audit),/additional properties/);
  draft.comparisons[index]={importance:'low'};

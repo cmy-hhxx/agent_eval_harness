@@ -29,5 +29,5 @@
 
 - Agent 规则改动同步提示词、Schema、解析、业务校验与测试；公共规则见[仓库约束](../../AGENTS.md#模块边界)。
 - 比较流程由 Workflow 组合：`review.ts` 管归因补查，`verification-preparation.ts` 准备可选核验，`commentary.ts` 选择与回填改写槽位，`problem-library.ts` 通过 Data 锁更新问题库。语义见[数据契约](../contract.md)。
-- 看板、问题库和 Eris 只读取 Workflow 的公开投影；[analysis-progress.ts](../../packages/workflows/src/comparison/analysis-progress.ts) 统计任务进度，[analysis-comparison.ts](../../packages/workflows/src/comparison/analysis-comparison.ts) 汇总正式战绩。[应用专业网关](../../apps/host/src/assistant-specialists.ts) 构造小计划并复用 Host。
+- 看板、问题库和 Eris 只读取 Workflow 的公开投影；[analysis-progress.ts](../../packages/workflows/src/comparison/analysis-progress.ts) 统计任务进度，[analysis-comparison.ts](../../packages/workflows/src/comparison/analysis-comparison.ts) 汇总正式战绩。[应用专业网关](../../apps/host/src/assistant-specialists.ts) 构造小计划并复用 Host；[代码核验装配](../../apps/host/src/assistant-code.ts) 复用通用执行器并提供会话产物分页。
 - Eris 的数据、搜索、专业任务和会话接口在 [Contracts](../../packages/contracts/src/assistant.ts)；工具与界面入口见[修改 Eris](../../agent/README.md#修改-eris)，运行与恢复见[架构](../architecture.md#独立分析助手)。

@@ -6,14 +6,14 @@
       "runId": {
         "type": "string",
         "minLength": 1,
-        "description": "省略时列出评测运行及 currentRun 的完整 summary，当前数量和进度直接使用它；提供时列出该运行的回答输入、任务引用及完整 summary。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。",
+        "description": "省略时列评测运行和 currentRun 的统计计数；提供时按 view 分页列目录。summary 仅含整轮计数，不含整批判词。必须是真实运行标识，不是路径；未知时先调用 list_data({})。",
         "maxLength": 181,
         "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
       },
       "query": {
         "type": "string",
         "minLength": 1,
-        "description": "可选的字面文本筛选词，用于匹配运行名或输入目录内容；不是数据类别。查看完整输入目录时省略，不传 inputs、tasks 或空字符串。空筛选结果不代表该运行没有数据。"
+        "description": "可选字面文本筛选词，不是数据类别；inputs 搜索标识与模型名，comparisons 搜索原问、模型和正式判词。查看目录时省略，不传 inputs、tasks 或空字符串。"
       },
       "offset": {
         "type": "integer",
@@ -22,10 +22,52 @@
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 100
+        "maximum": 100,
+        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。找一场用 view: comparisons, limit: 1。"
+      },
+      "view": {
+        "type": "string",
+        "enum": [
+          "inputs",
+          "comparisons"
+        ],
+        "description": "指定 runId 后选择目录：inputs（默认）列回答标识；comparisons 分页列已接受的正式对战、原问预览和双方原文 reference。找一场案例用 comparisons。"
       }
     },
-    "required": []
+    "required": [],
+    "allOf": [
+      {
+        "if": {
+          "required": [
+            "view"
+          ]
+        },
+        "then": {
+          "required": [
+            "runId"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "view": {
+              "const": "comparisons"
+            }
+          },
+          "required": [
+            "view"
+          ]
+        },
+        "then": {
+          "properties": {
+            "limit": {
+              "maximum": 20
+            }
+          }
+        }
+      }
+    ]
   },
   "read_data": {
     "type": "object",
@@ -99,7 +141,7 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 16000,
-        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；正文按 UTF-16 字符，默认8000、最多16000。"
+        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；消息正文和正式结果按 UTF-16 字符，默认8000、最多16000。"
       }
     },
     "required": [
@@ -111,39 +153,17 @@
           "properties": {
             "reference": {
               "required": [
-                "taskId"
-              ]
+                "inputId"
+              ],
+              "not": {
+                "required": [
+                  "messageIndex"
+                ]
+              }
             }
           }
         },
         "then": {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "offset"
-                ]
-              },
-              {
-                "required": [
-                  "limit"
-                ]
-              }
-            ]
-          }
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "reference": {
-              "required": [
-                "messageIndex"
-              ]
-            }
-          }
-        },
-        "else": {
           "properties": {
             "limit": {
               "maximum": 100
@@ -526,6 +546,17 @@
         "type": "string",
         "minLength": 1,
         "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "字符偏移，从0开始；续页使用返回的 nextOffset。"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16000,
+        "description": "每页 UTF-16 字符数，默认8000，最多16000。"
       }
     },
     "required": [
@@ -982,7 +1013,8 @@
               }
             }
           ]
-        }
+        },
+        "description": "本地评测来源数组。战绩例：\"references\":[{\"statistics\":{\"runId\":\"真实运行ID\",\"comparisonTier\":\"Fast\"}}]。statistics 必须位于 references 数组项内，不能放在工具顶层。外部材料省略 references。"
       },
       "xValues": {
         "type": "array",
@@ -1884,5 +1916,68 @@
         }
       }
     ]
+  },
+  "execute_code": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "language",
+      "code"
+    ],
+    "properties": {
+      "language": {
+        "enum": [
+          "python",
+          "shell"
+        ],
+        "description": "python 使用项目 Python 标准库环境；shell 使用 Bash。"
+      },
+      "code": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200000,
+        "description": "完整可执行脚本；print 或 stdout 输出需要核对的数字、断言、样本，避免打印全量原文。"
+      },
+      "timeout_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 60,
+        "description": "单次执行超时，默认60秒。"
+      },
+      "outputs": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "需要保留为可读产物的相对文件路径。"
+      }
+    }
+  },
+  "read_code_output": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        "description": "execute_code 返回 artifacts[].id，不能传文件名或路径。"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "字符偏移，从0开始；续页使用返回的 nextOffset。"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16000,
+        "description": "每页 UTF-16 字符数，默认8000，最多16000。"
+      }
+    }
   }
 }

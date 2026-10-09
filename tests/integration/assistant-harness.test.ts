@@ -53,7 +53,7 @@ test("early user messages retain stable compaction boundaries and replay exactly
   } finally {await sessions.dispose();await gateway.close();await rm(directory,{recursive:true,force:true});if(previous===undefined)delete process.env[env];else process.env[env]=previous;}
 });
 
-for (const scenario of ["repair", "repeat", "unknown", "budget", "reset"] as const) test(`Eris harness: ${scenario}`, { timeout: 15000 }, async () => {
+for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as const) test(`Eris harness: ${scenario}`, { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-harness-"));
   const scope = { userId: "test", sessionId: crypto.randomUUID() };
   const env = "ERIS_HARNESS_TEST_KEY", previous = process.env[env];
@@ -61,7 +61,7 @@ for (const scenario of ["repair", "repeat", "unknown", "budget", "reset"] as con
   let modelCalls = 0, executions = 0;
   const errors: unknown[] = [];
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: async () => { executions++; return { kind: "runs", currentRun: null, items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
   });
@@ -79,7 +79,7 @@ for (const scenario of ["repair", "repeat", "unknown", "budget", "reset"] as con
       assert.equal(executions, 1, "invalid calls never execute; independent valid calls still finish");
       assert.equal(outputs.length, 2, "both success and rejection reach the model before repair");
     }
-    const done = scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7;
+    const done = scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7 || scenario === "extended" && modelCalls === 35;
     let args: JsonObject = {};
     if (scenario === "repair" && modelCalls === 1) args = { limit: "5" };
     if (scenario === "repeat") args = modelCalls % 2 ? { runId: ".", query: "." } : { query: ".", runId: "." };
@@ -109,20 +109,20 @@ for (const scenario of ["repair", "repeat", "unknown", "budget", "reset"] as con
   };
   try {
     await sessions.create(scope.userId, scope.sessionId);
-    assert.equal(await run(), ["repair", "reset"].includes(scenario) ? "completed" : "interrupted");
-    assert.equal(modelCalls, scenario === "budget" ? 32 : scenario === "reset" ? 7 : 3);
-    assert.equal(executions, scenario === "budget" ? 32 : scenario === "repair" ? 2 : scenario === "reset" ? 6 : 0);
+    assert.equal(await run(), ["repair", "reset", "extended"].includes(scenario) ? "completed" : "interrupted");
+    assert.equal(modelCalls, scenario === "extended" ? 35 : scenario === "reset" ? 7 : 3);
+    assert.equal(executions, scenario === "extended" ? 34 : scenario === "repair" ? 2 : scenario === "reset" ? 6 : 0);
     const rows = (await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
     const results = rows.filter(row => row.event?.type === "tool/result");
-    assert.equal(results.length, scenario === "repair" ? 3 : scenario === "reset" ? 6 : modelCalls, "every result is durable even when the loop stops");
+    assert.equal(results.length, scenario === "extended" ? 34 : scenario === "repair" ? 3 : scenario === "reset" ? 6 : modelCalls, "every result is durable even when the loop stops");
     if (scenario === "repeat" || scenario === "unknown") {
       assert.match(JSON.stringify(rows), /相同参数失败3次/);
       assert.equal(await run(), "interrupted");
       assert.equal(modelCalls, 6, "loop accounting resets for the next user request");
     }
-    if (scenario === "budget") assert.match(JSON.stringify(rows), /32次模型请求上限/);
+    if (scenario === "extended") assert.deepEqual(errors, [], "productive investigation continues beyond 32 requests");
     // Pi may surface provider wrapper failures as model error messages rather than throws.
-    for (const error of errors) assert.match(String(error), /相同参数失败3次|32次模型请求上限/);
+    for (const error of errors) assert.match(String(error), /相同参数失败3次/);
   } finally {
     await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });
     if (previous === undefined) delete process.env[env]; else process.env[env] = previous;

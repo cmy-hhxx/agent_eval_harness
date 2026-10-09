@@ -85,7 +85,6 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   let ranking: string[][];
   if (failed.length === labels.length) ranking = [labels];
   else if (failed.length) ranking = [passed, failed];
-  else if (advantages.length === 1) ranking = [[advantages[0]], labels.filter(label => label !== advantages[0])];
   else if (preference && advantages.includes(preference)) ranking = [[preference], labels.filter(label => label !== preference)];
   else if (preference) throw new ValidationError([{ category: "decision", code: "preference_unproven", path: "/preference",
     message: "偏好须有该候选已确认的中高重要性共同优势支持；没有实质优势时 preference=null。" }]);

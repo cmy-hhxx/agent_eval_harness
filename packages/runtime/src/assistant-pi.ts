@@ -89,7 +89,10 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   await runtime.setRuntimeApiKey(config.provider, secret);
   const model = runtime.getModel(config.provider, config.model);
   if (!model) throw new Error("Configured model unavailable");
-  const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off", packages: [] });
+  // Compaction must refer to the user ID already persisted by AssistantSessions.
+  const userEntryIds = new Map<string, string>();
+  let compactionFailure: Error | undefined;
+  const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: Math.ceil(config.contextWindow * 0.2) }, retry: { enabled: false }, cacheWarming: "off", packages: [] });
   const loader = new sdk.DefaultResourceLoader({ cwd: workdir, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt,
     extensionFactories: [(api) => { api.on("before_provider_request", (event) => {
       const payload = object(transformPayload(event.payload, config));
@@ -99,7 +102,22 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
       // DeepSeek enables thinking when reasoning is omitted, including for a non-reasoning SDK model.
       if (config.provider === 'deepseek' && config.api === 'openai-responses' && config.thinking === 'off') payload.reasoning = {effort:'none'};
       return payload;
-    }); }],
+    });
+      api.on("session_before_compact", async () => {
+        if (compactionFailure) return { cancel: true };
+        await options.checkpoint();
+        return undefined;
+      });
+      // Pi awaits this hook before issuing the next request, including within a tool loop.
+      api.on("session_compact", async ({ compactionEntry }) => {
+        try {
+          await options.compact(compactionEntry.summary, userEntryIds.get(compactionEntry.firstKeptEntryId) ?? compactionEntry.firstKeptEntryId, compactionEntry.tokensBefore);
+        } catch (error) { compactionFailure = new Error(`上下文压缩记录保存失败：${errorText(error)}`); }
+      });
+      api.on("session_compact_failed", ({ aborted, errorMessage }) => {
+        if (!aborted) compactionFailure = new Error(`上下文压缩失败：${errorMessage ?? "未生成摘要"}`);
+      });
+    }],
   });
   await loader.reload();
   // Pi batches independent reads; the application bounds their I/O. A batch
@@ -131,16 +149,14 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   // be used as a persistence barrier before the next model/tool request.
   const pending = new Map<string, { name: string; key: string }>();
   const failures = new Map<string, { name: string; count: number }>();
-  let requests = 0;
   let openingMessageId: string | undefined;
-  // Compaction must refer to the user ID already persisted by AssistantSessions.
-  const userEntryIds = new Map<string, string>();
   const unsubscribe = session.agent.subscribe(async (event) => {
     if (event.type === "message_end" && event.message.role === "user" && openingMessageId) {
       userEntryIds.set(session.sessionManager.getLeafId()!, openingMessageId);
       openingMessageId = undefined;
     }
-    await options.event({ ...event, ...(event.type === "message_end" ? { entryId: session.sessionManager.getLeafId() } : {}) });
+    // Low-level agent_end can precede Pi's compact-and-retry. Close the user turn only after prompt settles.
+    if (event.type !== "agent_end") await options.event({ ...event, ...(event.type === "message_end" ? { entryId: session.sessionManager.getLeafId() } : {}) });
     if (event.type !== "message_end") return;
     const message = event.message;
     if (message.role === "assistant") for (const block of message.content) {
@@ -160,22 +176,17 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   const stream = session.agent.streamFunction;
   session.agent.streamFunction = async (...args) => {
     await options.checkpoint();
+    if (compactionFailure) throw compactionFailure;
     const repeatedFailure = [...failures.values()].find(failure => failure.count >= 3);
     if (repeatedFailure) throw new Error(`工具 ${repeatedFailure.name} 以相同参数失败3次，已停止重复调用；已保存结果，可更正请求后继续。`);
-    if (requests >= 32) throw new Error("本轮已达32次模型请求上限；已保存结果，可缩小范围后继续。");
-    requests++;
     return stream(...args);
   };
   return { prompt: async (text, messageId) => {
       openingMessageId = messageId;
-      requests = 0; pending.clear(); failures.clear();
-      const usage = session.getContextUsage();
-      if (usage?.percent !== null && usage?.percent !== undefined && usage.percent > 75) {
-        await options.checkpoint();
-        const compacted = await session.compact();
-        await options.compact(compacted.summary, userEntryIds.get(compacted.firstKeptEntryId) ?? compacted.firstKeptEntryId, compacted.tokensBefore);
-      }
+      pending.clear(); failures.clear(); compactionFailure = undefined;
       await session.prompt(text);
+      if (compactionFailure) throw compactionFailure;
+      await options.event({ type: "agent_end" });
     }, steer: async (text) => { await session.steer(text); }, abort: () => session.abort(),
     async dispose() { await session.abort(); unsubscribe(); session.dispose(); },
   };

@@ -3,7 +3,7 @@
   "sourceUrl": "http://117.50.195.94:2256",
   "fromDate": "2026-10-08",
   "completedDates": [],
-  "hostConfigs": ["host.json", "local/models.json"],
+  "hostConfigs": ["host.json", "local/models.json", "automations-host.json"],
   "stateDirectory": "../data/automations/remote-evaluation",
   "sourceDirectory": "../data/sources/automations/remote-evaluation",
   "runPrefix": "daily-",

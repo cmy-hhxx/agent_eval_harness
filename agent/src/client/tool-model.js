@@ -67,10 +67,12 @@ export function analysisToolModel(name,model){
  let summary=`评测分析 · ${status}`;
  if(name==='list_data'){
   const progress=output?.kind==='runs'?output.currentRun?.summary:output?.summary;
-  summary=progress?`${output.kind==='runs'?'最近一轮':'本轮'} · ${progress.inputCount} 条回答 · ${progress.caseCount} 道题`:output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'次运行':output.kind==='inputs'?'条回答':'项结果'}`;
+  summary=output?.kind==='comparisons'?`查询正式对战 · ${output.total} 场匹配 · 本页 ${output.items?.length??0} 场`:progress?`${output.kind==='runs'?'最近一轮':'本轮'} · ${progress.inputCount} 条回答 · ${progress.caseCount} 道题`:output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'次运行':output.kind==='inputs'?'条回答':'项结果'}`;
  }
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
  if(name==='search_data')summary=[args.query===undefined?'搜索对话':`搜索“${args.query}”`,output?.total===undefined?status:`${output.total} 条匹配消息`].join(' · ');
+ if(name==='execute_code')summary=`${args.language==='shell'?'Shell':'Python'} 代码核验 · ${status}`;
+ if(name==='read_code_output')summary=`读取代码输出 · ${status}`;
  if(name==='view_image')summary=`查看对话图片 · ${status}`;
  if(name==='calculate'){
   const result=model.state==='ok'?(output?.result??(typeof output==='string'||typeof output==='number'?output:null)):null;
@@ -83,7 +85,12 @@ export function analysisToolModel(name,model){
  if(name==='specialist_output')summary='实时专业分析';
  if(model.state==='error'||!model.output)return {summary};
  if(output?.sourceRead){const ref=output.sourceRead.args?.reference;return {summary,details:{items:[{title:referenceText(ref),fields:fields(ref)}]}};}
+ if(name==='execute_code'&&output)return {summary,details:{items:[{fields:searchFields({'退出码':output.exit_code,'超时':output.timed_out,'已取消':output.cancelled,'耗时（秒）':output.duration_seconds})},...['stdout','stderr'].filter(key=>output[key]).map(key=>({title:key,fields:[],code:{text:output[key],language:'text'}})),...rows(output.artifacts).map(item=>({title:item.name,fields:fields(item)}))]}};
  if(name==='specialist_output')return {summary,details:{items:[{title:'专业任务输出',fields:[],markdown:model.output}]}};
+ if(name==='list_data'&&output?.kind==='comparisons')return {summary,details:{items:rows(output.items).map(row=>({
+  title:string(row.questionPreview),description:rows(row.outcomes).map(outcome=>outcome.resultLabel).filter(Boolean).join(' · '),
+  fields:fields({...row.reference,...row.case}),groups:[{label:'回答',items:rows(row.inputs).map(input=>({title:string(input.modelName),fields:fields(input.reference)}))}],
+ })),empty:'没有匹配的正式对战'}};
  if(output&&typeof output==='object'){
   const rows=output.items??output.matches??output.messages;
   const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.operationId??output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{}),...(output.url?{markdown:`[下载总结](${output.url})`}:{})}];

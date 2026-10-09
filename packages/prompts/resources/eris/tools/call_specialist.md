@@ -1,1 +1,3 @@
 调用独立 Attribution 或 Comparison 小任务。inputs 只传登记的 runId + inputId；Attribution 传一条，Comparison 传2–3个不同模型、同档位的同题回答。Fast 只能与 Fast 比，Expert 只能与 Expert 比；调用前根据目录 comparisonTier 和 comparisonGroups 核对，不按名称猜档位。缺少档位声明或混档时不能发起比较。Comparison 返回每对模型的正式结果；3个模型返回3对结果，汇总按档位分别报告。attributions 是可选的已接受归因引用，逐项以inputId对应本会话operationId或已有runId + taskId；仅与本次共享判据完全一致且通过当前验证时复用，否则独立重评并保留原收据。重试前先用read_specialist查询返回的operationId状态，已接受时不重复执行。
+
+成功回执中的 result 是 JSON 文本首页，最多8000字符；result.hasMore 为 true 时，用 read_specialist({operationId,offset:result.nextOffset}) 继续读取，不重复启动评测。失败回执仍保留 operationId 与状态。

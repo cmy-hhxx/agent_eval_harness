@@ -9,7 +9,7 @@ const chart = {
 };
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
 function chartTool(data: ErisDependencies["data"], specialists: ErisDependencies["specialists"] = { invoke: unexpected, read: unexpected }) {
-  return createEris({ data, specialists, search: { search: unexpected }, web: { read: unexpected }, save: unexpected }).tools.find((tool) => tool.name === "show_chart")!;
+  return createEris({ code: { execute: unexpected, read: unexpected }, data, specialists, search: { search: unexpected }, web: { read: unexpected }, save: unexpected }).tools.find((tool) => tool.name === "show_chart")!;
 }
 const noData = { list: unexpected, read: unexpected, search: unexpected, image: unexpected };
 

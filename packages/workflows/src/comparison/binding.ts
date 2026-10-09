@@ -302,12 +302,10 @@ function bindSourceTask(
       for (const { evidence_id, message_index, quote } of cited.values())
         addInitial(message_index, quote, [{ evidence_id, message_index, quote }]);
       const priority = raw.messages
-        .map((_, i) => i)
-        .sort(
-          (a, b) =>
-            Number(!["user", "assistant"].includes(raw.messages[a].role || "")) -
-              Number(!["user", "assistant"].includes(raw.messages[b].role || "")) || b - a,
-        );
+        .map((message, index) => ({ index, returned: message.role === "tool" ||
+          ["function_call_output", "tool_result"].includes(message.type || "") }))
+        .sort((a, b) => Number(b.returned) - Number(a.returned) || b.index - a.index)
+        .map(item => item.index);
       for (const i of priority) {
         if (i === candidate.final_index) continue;
         if (["system", "developer"].includes(raw.messages[i].role || "")) continue;

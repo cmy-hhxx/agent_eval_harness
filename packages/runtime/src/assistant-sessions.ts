@@ -299,7 +299,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
             message: createAssistantMessage({ content: blocks, source: { provider: message.provider, model: message.model, replayState: { ...replay, blocks: (message.content as JsonObject[]).map(({ text: _text, thinking: _thinking, arguments: _args, ...metadata }) => metadata) } } }),
             ...(usage ? { usage } : {}), stream: value.attempt?.stream.snapshot() ?? [], ...(message.stopReason === "aborted" ? { interrupted: true } : {}),
           }, true);
-          if (message.stopReason === "error") value.lastFailure = String(message.errorMessage ?? "模型请求失败");
+          value.lastFailure = message.stopReason === "error" ? String(message.errorMessage ?? "模型请求失败") : undefined;
           if (value.attempt) this.frame(value, { type: "end", attemptId: value.attempt.id, index: value.attempt.index, outcome: { kind: "committed", eventType: "assistant/message", seq: settled.seq } });
           value.attempt = undefined;
         }
