@@ -137,7 +137,7 @@ test("absent standard answers leave deterministic correctness fields to the prog
   attributionProfile.validate!(request, resolved, audit);
   assert.deepEqual(draft, original, "resolution does not insert program fields into the submitted draft");
 });
-test("model parameters require correctness judgments only for a trusted available standard answer", () => {
+test("model correctness fields stay required and use fixed empty values without a trusted standard answer", () => {
   const request = structuredClone(example.request);
   const registered = structuredClone(attributionProfile.submissionSchema);
   const fields = ["is_correct", "correctness_reason", "correctness_evidence_indices"] as const;

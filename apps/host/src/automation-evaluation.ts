@@ -328,15 +328,17 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   return evaluationOutcome(checkpoints, summary, host.evaluation.execution, config.dailyComparisonLimitPerTier, empty);
 }
 
+const emptyPairCounts = () => ({
+  total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
+});
+
 export function remoteDateProgress(date: string, runs: Checkpoint[], limit: number) {
   const planned = expandComparisonPairs(runs.flatMap((run) => [
     ...(run.config as EvalConfig).comparisons,
     ...Object.values(run.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
   ]));
   const pairName = (group: string[]) => [...group].sort().join("__vs__");
-  const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), {
-    total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
-  }]));
+  const pairs = Object.fromEntries(planned.map((pair) => [pairName(pair), emptyPairCounts()]));
   const statuses = new Map<string, { pair: string; statuses: string[] }>();
   const add = (group: string[], batch: string, id: string, status: string) => {
     if (group.length !== 2) throw new Error("Remote progress requires two-candidate comparison tasks");
@@ -372,7 +374,11 @@ export function remoteProgress(state: AutomationState, engine: AutomationConfig[
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||
     ["pending", "evaluating", "retry"].includes(job.evaluation));
   return {
-    run_id: `automation-${state.id}`, engine, started_at: state.startedAt, updated_at: Date.now(), dates,
+    run_id: `automation-${state.id}`, engine, started_at: state.startedAt, updated_at: Date.now(),
+    dates: dates.map(({ date, pairs }) => ({ date, pairs: {
+      fast: pairs.a_fast__vs__b_fast ?? emptyPairCounts(),
+      expert: pairs.a_expert__vs__b_expert ?? emptyPairCounts(),
+    } })),
     status: active ? (state.status === "stopped" ? "interrupted" : "running") :
       Object.values(state.jobs).some((job) => job.evaluation === "blocked") ? "interrupted" : "finished",
   };

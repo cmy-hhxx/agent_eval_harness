@@ -65,7 +65,8 @@ for (const engine of ["pi", "prime"] as const)
             assert.equal(feedback.budget?.content_remaining, 2);
             const currentBudget = JSON.parse(frames.at(-1)!).budget;
             assert.equal(currentBudget.content_remaining, 2);
-            assert.equal(currentBudget.exploration.remaining, 15);
+            assert.equal(currentBudget.exploration.remaining, config.execution.maxToolCalls + 3,
+              "one content repair adds three exploration calls to the configured budget");
             assert.equal(currentBudget.required_reads.covered, true);
           }
           const name = requests === 1 ? "calculate" : "submit_evaluation";

@@ -135,7 +135,7 @@ test("Pi Worker persists choices before returning them and reuses their prefix a
   }
 });
 
-test("Host automatically continues a failed model draft with the same committed evidence directory", { timeout: 15000 }, async () => {
+test("Host resumes after one same-session draft reminder with the committed evidence directory and submission count", { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "evidence-bank-host-retry-")), runId = "bank-auto";
   const run = path.join(directory, "runs", runId), task = { id: "bank-task", stage: "bank", inputIds: { answer: id }, dependencies: {}, data: {} };
   const source = { messages: [{ content: "原答一。" }, { content: "来源二。" }] };
@@ -150,10 +150,13 @@ test("Host automatically continues a failed model draft with the same committed 
   const workflow: WorkflowDefinition = { id: "bank", plan: async () => plan, bind: () => binding };
   const codec: RunCodec<RunState> = { encode: value => structuredClone(value), decode: value => value, references: () => [], resultId: row => String(row.id) };
   const repository = createRunRepository(codec, (task, state) => ({ id: task.id, file: "proofs.jsonl", row: { id: task.id, result: state.receipts[task.id]!.evaluation } }));
-  const started: AttemptSpec[] = [], prefix = [ref, second];
+  const started: AttemptSpec[] = [], runs: number[] = [], prefix = [ref, second];
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
+    const sessionIndex = started.length;
     started.push(structuredClone(options.spec));
+    runs.push(0);
     return { async run() {
+      runs[sessionIndex]++;
       if (started.length === 1) {
         const read = await options.execute("read_trace", { candidate: "answer", message_index: 1, path: "/content" });
         const displayed = JSON.parse(read.content[0]!.text!).evidence[0];
@@ -166,6 +169,7 @@ test("Host automatically continues a failed model draft with the same committed 
       assert.deepEqual(options.spec.evidenceBank, prefix);
       assert.deepEqual(options.spec.recovery!.evidenceBank, prefix);
       assert.deepEqual(options.spec.recovery!.draft, { proof: { evidence_index: 999 } });
+      assert.equal(options.spec.recovery!.contentSubmissions, 2);
       assert(!options.spec.prompt.includes(second));
       assert.equal((await options.execute("submit_evaluation", { proof: { evidence_index: 2 } })).terminate, true);
     }, async abort() {}, async dispose() {} };
@@ -182,7 +186,8 @@ test("Host automatically continues a failed model draft with the same committed 
     assert.equal(summary.execution_task_statuses.succeeded, 1);
     const saved = await repository.readRun(run), receipt = saved.receipts[task.id]!;
     assert.equal(saved.manifest.states[task.id]!.attempts, 2);
-    assert.equal(receipt.submissionStats!.contentSubmissions, 2);
+    assert.deepEqual(runs, [2, 1], "one same-session reminder precedes the resumed attempt");
+    assert.deepEqual(receipt.submissionStats, { contentSubmissions: 3, fileErrors: 0 });
     assert.deepEqual(receipt.audit.evidenceBank, prefix);
     assert.deepEqual(receipt.submitted, { proof: { evidence_index: 2 } });
     assert.equal((receipt.evaluation as { proof: { evidence_id: string } }).proof.evidence_id, second);

@@ -55,7 +55,7 @@ function publicPair() {
     audit.inspection = { id: "real-inspection-checkpoint", value: value as unknown as Record<string, unknown>, proof: { traceReads: [], viewedImages: [] } };
     return value;
   };
-  const final = (indices: number[]) => comparisonVerificationSubmission(request, { concern_matches: indices.length ?
+  const final = (indices: number[]) => comparisonVerificationSubmission({ concern_matches: indices.length ?
     [{ concern_index: 0, finding_indices: indices, observation: "既有问题与实际行为相同。" }] : [] });
   return { request, input, audit, binding, registry, inspection, final };
 }

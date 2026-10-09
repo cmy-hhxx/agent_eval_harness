@@ -45,7 +45,7 @@ JSONL 每行必须满足[输入契约](contract.md#输入)。远端日期用于�
 
 ## 进度上报
 
-POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来源日期分组，每日分别提供 `fast` 与 `expert`；每组包含以下六个非负整数，零值也保留：
+POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来源日期分组，`pairs` 固定且仅包含 `fast` 与 `expert`，分别对应 A/B Fast 与 A/B Expert；不可直接发送内部模型组合键或额外 baseline 配对。刚发现、尚无 Host 检查点的日期也提供这两组零计数。每组包含以下六个非负整数，零值也保留：
 
 ```json
 {

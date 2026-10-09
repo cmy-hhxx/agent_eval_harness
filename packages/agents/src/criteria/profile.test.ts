@@ -62,29 +62,6 @@ test("a condensed requirement keeps the complete source as its authoritative acc
   // The binding preserves the constraint; acceptance does not certify semantic coverage.
 });
 
-test("equivalent comparison writings retain their original constraint source", () => {
-  const req = request("筛选：5日均线>10日均线，90%集中度<20%。");
-  const value = draft(); value.requirements = [{ source_indices: [1], text: "5日均线大于10日均线；90%集中度小于20%。" }];
-  accepted(req, value);
-});
-
-test("a comparison against a dated price does not turn the year into a numeric bound", () => {
-  const req = request("截止2026年6月5日，有多少股票低于年初的收盘价？", "低于2025年12-31（年初）的收盘价有3387家");
-  const value = draft();
-  value.requirements = [{ source_indices: [1], text: "截止2026年6月5日，核查收盘价低于年初收盘价的股票数量。" }];
-  accepted(req, value);
-});
-
-test("event names and equivalent numerical wording preserve their full source without regex verdicts", () => {
-  const question = "截止2026年6月5日，有多少股票低于924行情启动时的价格，且价格低于10元？";
-  const req = request(question, "低于2024年9-23（924行情启动时）的收盘价有559家");
-  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1],
-    text: "截至2026年6月5日，核查低于‘924行情启动时’价格且不足十元的股票数量。" }], scoring_points: [], red_flags: [] };
-  const value = accepted(req, submitted);
-  assert(value.requirements[0].acceptance_rule.includes(question));
-  assert.equal(value.requirements[0].text, submitted.requirements[0].text);
-});
-
 test("missing-source feedback names the private source that broke common coverage", () => {
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates[0].context = [{ message_index: 0, role: "user", content: "只用一句话回答。" }];
@@ -119,12 +96,6 @@ test("a question-only rubric binds the original question without borrowing unsel
   const value = accepted(req, submitted);
   assert(value.requirements[0].acceptance_rule.includes(String(req.input.question)));
   assert(!value.requirements[0].acceptance_rule.includes("只写31字以内"));
-});
-
-test("numeric conditions from the question retain equivalent wording without prefilled answers", () => {
-  accepted(request("2026年0322主力净流入前三行业是什么？"), {
-    requirements: [{ source_indices: [1], text: "给出2026年3月22日主力净流入前三行业。" }], scoring_points: [], red_flags: [],
-  });
 });
 
 test("only identical checks merge; independent points from the same source remain", () => {

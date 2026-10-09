@@ -793,7 +793,7 @@ test("local evaluation counts preserve rewrite failure while the remote projecti
       observed: { a_fast: 1, b_fast: 1, a_expert: 0, b_expert: 0 }, adopted: false, download: "ready", checkedAt: 1,
       downloadAttempts: 0, evaluationAttempts: 3, nextDownloadAt: 0, nextEvaluationAt: 0 } } }, "pi", [remoteDateProgress("2026-09-29", [state], 300)]);
   assert.equal(progress.status, "interrupted");
-  assert.equal(progress.dates[0].pairs.a_fast__vs__b_fast.completed_cases, 1);
+  assert.equal(progress.dates[0].pairs.fast.completed_cases, 1);
 });
 
 test("interrupted and dependency-blocked tasks are not reported as evaluation failures", () => {
@@ -817,26 +817,35 @@ test("remote progress satisfies the required six-count contract and separates sk
     jobs: { [date]: { date, runIds: ["test"], observed: { a_fast: 5, b_fast: 4, a_expert: 0, b_expert: 0 },
       adopted: false, download: "ready", evaluation: "evaluating", checkedAt: 1,
       downloadAttempts: 0, evaluationAttempts: 1, nextDownloadAt: 0, nextEvaluationAt: 0 } },
-  }, "pi", [remoteDateProgress(date, [run], 300)]);
+  }, "pi", [remoteDateProgress(date, [run], 300), remoteDateProgress("2026-10-08", [], 300)]);
   const fields = ["total_cases", "completed_cases", "running_cases", "queued_cases", "failed_cases", "skipped_cases"];
-  // Mirror the current /evaluation-progress boundary, including exact keys for empty pairs.
+  // Mirror the external contract, including pair names before a date has any Host checkpoint.
   const server = await listen(async (req, res) => {
     const received = await body(req) as typeof progress;
-    for (const entry of received.dates) for (const counts of Object.values(entry.pairs)) {
-      if (Object.keys(counts).length !== fields.length || fields.some((key) => !Object.hasOwn(counts, key))) {
-        json(res, { error: "invalid pair counts" }, 400); return;
+    for (const entry of received.dates) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || Object.keys(entry.pairs).sort().join(",") !== "expert,fast") {
+        json(res, { error: "invalid date or comparison pairs" }, 400); return;
+      }
+      for (const counts of Object.values(entry.pairs)) {
+        if (Object.keys(counts).length !== fields.length || fields.some((key) => !Object.hasOwn(counts, key) ||
+          !Number.isSafeInteger(counts[key as keyof typeof counts]) || counts[key as keyof typeof counts] < 0)) {
+          json(res, { error: "invalid pair counts" }, 400); return;
+        }
       }
     }
     json(res, { saved: true });
   });
   try {
     await new RemoteInputs(server.url, 1000).publish(progress, AbortSignal.timeout(3000));
-    assert.deepEqual(progress.dates[0].pairs.a_fast__vs__b_fast, {
+    assert.deepEqual(progress.dates[0].pairs.fast, {
       total_cases: 7, completed_cases: 1, running_cases: 1, queued_cases: 3, failed_cases: 1, skipped_cases: 1,
     });
-    assert.deepEqual(progress.dates[0].pairs.a_expert__vs__b_expert, {
+    assert.deepEqual(progress.dates[0].pairs.expert, {
       total_cases: 0, completed_cases: 0, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0,
     });
+    assert.deepEqual(progress.dates[1].pairs, {
+      fast: progress.dates[0].pairs.expert, expert: progress.dates[0].pairs.expert,
+    }, "newly discovered dates must report both pairs with zero counts before a run exists");
   } finally { await server.close(); }
 });
 
@@ -859,24 +868,28 @@ test("remote progress excludes excess queued battles before the daily run is rec
     jobs: { [date]: { date, evaluation: "pending", download: "ready" } },
   } as unknown as AutomationState;
   const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 2)]);
-  assert.deepEqual(progress.dates[0].pairs.a_fast__vs__b_fast, {
+  assert.deepEqual(progress.dates[0].pairs.fast, {
     total_cases: 4, completed_cases: 3, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 1,
   });
-  assert.deepEqual(progress.dates[0].pairs.a_expert__vs__b_expert, {
+  assert.deepEqual(progress.dates[0].pairs.expert, {
     total_cases: 2, completed_cases: 1, running_cases: 0, queued_cases: 0, failed_cases: 1, skipped_cases: 0,
   });
   assert.deepEqual(run, before, "progress projection must not mutate saved tasks or results");
 });
 
-test("remote progress includes every configured baseline pair", () => {
+test("local progress retains baseline pairs while the remote boundary reports only Fast and Expert", () => {
   const date = "2026-09-30", ids = ["a_fast", "b_fast", "baseline"];
   const run = { config: { comparisons: [ids] }, tasks: {
     one: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
   const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
-  const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 300)]);
-  assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), ["a_fast__vs__b_fast", "a_fast__vs__baseline", "b_fast__vs__baseline"].sort());
-  assert.equal(progress.dates[0].pairs.a_fast__vs__baseline.completed_cases, 1);
+  const local = remoteDateProgress(date, [run], 300), before = structuredClone(local);
+  assert.deepEqual(Object.keys(local.pairs).sort(), ["a_fast__vs__b_fast", "a_fast__vs__baseline", "b_fast__vs__baseline"].sort());
+  assert.equal(local.pairs.a_fast__vs__baseline.completed_cases, 1);
+  const progress = remoteProgress(state, "pi", [local]);
+  assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), ["expert", "fast"]);
+  assert.equal(progress.dates[0].pairs.fast.completed_cases, 0, "baseline battles cannot inflate the A/B pair");
+  assert.deepEqual(local, before);
 });
 
 test("remote progress retains accepted pairs after selection changes and keeps review requests queued", () => {
@@ -886,10 +899,11 @@ test("remote progress retains accepted pairs after selection changes and keeps r
     review: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison-review.jsonl" } } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
   const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
-  const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 300)]).dates[0].pairs;
-  assert.equal(progress.a_fast__vs__b_fast.completed_cases, 1);
-  assert.equal(progress.a_fast__vs__baseline.completed_cases, 0);
-  assert.equal(progress.a_fast__vs__baseline.queued_cases, 1);
+  const local = remoteDateProgress(date, [run], 300);
+  const progress = remoteProgress(state, "pi", [local]).dates[0].pairs;
+  assert.equal(progress.fast.completed_cases, 1);
+  assert.equal(local.pairs.a_fast__vs__baseline.completed_cases, 0);
+  assert.equal(local.pairs.a_fast__vs__baseline.queued_cases, 1);
 });
 
 test("an unpaired input date persists its preflight for progress without making model calls", async () => {

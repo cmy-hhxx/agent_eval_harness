@@ -74,13 +74,32 @@ test("Eris's public definition includes every tool resource and validates before
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });
 
+test("Eris model-facing tool schemas contain no regex lookaround", () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+  const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+  const inspect = (value: unknown, path: string): void => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const location = `${path}.${key}`;
+      if (key === "pattern" && typeof child === "string")
+        assert.doesNotMatch(child, /\(\?(?:[=!]|<[=!])/, `Invalid JSON schema: regex lookaround is not supported. Found at ${location}.`);
+      inspect(child, location);
+    }
+  };
+  for (const tool of eris.tools) inspect(tool.inputSchema, tool.name);
+});
+
 test("raw arguments fail with field paths and allowed values before SDK coercion or I/O", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
   const list = eris.tools.find(tool => tool.name === "list_data")!;
-  for (const runId of [".", "..", "../run", "a..b", "/tmp/run"]) assert.throws(() => list.validate!({ runId }), /\/runId.*schema_pattern/);
-  for (const runId of ["run", "eval-20261008-134119", "a.b_c-1"]) list.validate!({ runId });
+  for (const runId of [".", "..", "../run", "a..b", "a..", "a.b..c", "/tmp/run", "a/b", "a\\b", "_run", "-run", "a b", "运行"])
+    assert.throws(() => list.validate!({ runId }), /\/runId.*schema_pattern/);
+  assert.throws(() => list.validate!({ runId: "" }), /\/runId.*schema_minLength/);
+  assert.throws(() => list.validate!({ runId: "a".repeat(182) }), /\/runId.*schema_/);
+  for (const runId of ["a", "run", "eval-20261008-134119", "a.b_c-1", "a.", "a.b.", "a.-_b", "a".repeat(181)]) list.validate!({ runId });
   for (const args of [{ limit: "5" }, { runId: null }, { reference: {} }]) {
     const original = structuredClone(args);
     assert.throws(() => list.validate!(args), /参数无效.*未执行/);

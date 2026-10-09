@@ -7,7 +7,8 @@
         "type": "string",
         "minLength": 1,
         "description": "省略时列出评测运行及 currentRun 的完整 summary，当前数量和进度直接使用它；提供时列出该运行的回答输入、任务引用及完整 summary。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。",
-        "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$"
+        "maxLength": 181,
+        "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
       },
       "query": {
         "type": "string",
@@ -37,7 +38,8 @@
           "runId": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
             "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
@@ -162,7 +164,8 @@
           "runId": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
             "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
@@ -319,7 +322,8 @@
           "runId": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
             "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
           },
           "inputId": {
@@ -393,7 +397,8 @@
             "runId": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "maxLength": 181,
+              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
               "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "inputId": {
@@ -427,7 +432,8 @@
             "runId": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "maxLength": 181,
+              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
               "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "taskId": {
@@ -553,7 +559,8 @@
                 "runId": {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "maxLength": 181,
+                  "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
                   "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "taskId": {
@@ -785,7 +792,8 @@
             "runId": {
               "type": "string",
               "minLength": 1,
-              "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+              "maxLength": 181,
+              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
               "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
             },
             "operationId": {
@@ -800,7 +808,8 @@
                 "runId": {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "maxLength": 181,
+                  "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
                   "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "inputId": {
@@ -858,7 +867,8 @@
                 "runId": {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^[a-zA-Z0-9](?!.*\\.\\.)[a-zA-Z0-9_.-]{0,180}$",
+                  "maxLength": 181,
+                  "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
                   "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
                 },
                 "comparisonTier": {

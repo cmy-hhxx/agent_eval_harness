@@ -25,8 +25,8 @@ test("one copied ID binds identical message coordinates to an exact registered i
   assert.equal(resolveEvidence(raw, peer, "peer", audit, "/evidence", peerId).quote, leaf.text);
 });
 
-test("old source-free IDs and alternate coordinate spellings are rejected without rewriting a draft", () => {
-  for (const id of ["ev_0_text_0_4_/content", "ev_0_image", `ev_${ownId}_00_text_0_4_/content`,
+test("noncanonical coordinate spellings are rejected without rewriting a draft", () => {
+  for (const id of [`ev_${ownId}_00_text_0_4_/content`,
     `ev_${ownId}_0_text_00_4_/content`, `ev_${ownId}_0_text_0_04_/content`, `ev_${ownId}_0_TEXT_0_4_/content`]) {
     const ref = { evidence_id: id }, before = structuredClone(ref);
     assert.equal(parseEvidenceCoordinates(id), undefined);

@@ -18,7 +18,7 @@ import { services } from "../fixtures/services.js";
 /** Real SDK strict parsing followed by a same-session Runtime repair, with no external gateway. */
 for (const engine of ["pi", "prime"] as const)
   for (const truncated of [false,true])
-  test(`${engine}: ${truncated ? "incomplete tool arguments retain length" : "malformed completed tool arguments receive bounded feedback"} before a valid submission`, { timeout: 60000 }, async () => {
+  test(`${engine}: ${truncated ? "incomplete tool arguments retain length" : "malformed completed tool arguments use the loading repair budget"} before a valid submission`, { timeout: 60000 }, async () => {
     const { directory, config, models } = await fixtureConfig();
     const inputId = randomUUID(), taskId = "malformed-task", runId = "malformed-sdk";
     const errors: string[] = [];
@@ -78,7 +78,7 @@ for (const engine of ["pi", "prime"] as const)
       const saved = await repository.readRun(path.join(config.output.path,runId));
       assert.equal(saved.manifest.states[taskId].attempts,1,"parameter repair does not use a transport attempt");
       assert.deepEqual(saved.receipts[taskId]?.evaluation,{ok:true});
-      assert.deepEqual(saved.receipts[taskId]?.submissionStats,{contentSubmissions:truncated ? 1 : 2,fileErrors:0});
+      assert.deepEqual(saved.receipts[taskId]?.submissionStats,{contentSubmissions:1,fileErrors:truncated ? 0 : 1});
       const file = path.join(config.output.path,runId,"_internal/tasks",taskId,"attempt-001/events.jsonl.gz");
       const events = gunzipSync(await readFile(file)).toString().trim().split("\n").map(line=>JSON.parse(line) as WorkerEvent);
       const providerArguments = events.filter(event => event.type === "model" && object(event.data).type === "provider_tool_arguments")

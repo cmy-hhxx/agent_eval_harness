@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { parseEvidenceCoordinates, projectEvidenceReferences, ValidationError, type AgentRequest, type AgentBinding, type ToolAudit } from "@eval/contracts";
 import { cite, evidenceId, evidenceSources, messageContentSources, selectEvidenceSource } from "@eval/tools";
-import { comparisonSourceReviews, comparisonVerificationSubmission, requestComparisonSubmission, comparisonInspectionSubmission as inspectionSubmission } from "../../../../tests/fixtures/comparison-submission.js";
+import { comparisonVerificationSubmission as finalFor, requestComparisonSubmission, comparisonInspectionSubmission as inspectionSubmission } from "../../../../tests/fixtures/comparison-submission.js";
 import { comparisonAgent, comparisonProfile, comparisonScope } from "./index.js";
 import type { ComparisonResult, ComparisonVerificationInput, ComparisonMaterialInspection } from "./types.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
@@ -40,9 +40,6 @@ function inspect(registry:AgentRegistry,binding:AgentBinding,value:unknown,audit
   const canonical = registry.resolveInspection(binding,projectEvidenceReferences(inspectionSubmission(binding.request, value as ComparisonMaterialInspection),bank),audit);
   const revealed = registry.inspectCanonical(binding,canonical,audit);
   return registry.projectMaterial(binding,revealed,bank);
-}
-function finalFor(request: AgentRequest, value: Record<string, unknown> = { concern_matches: [] }) {
-  return { ...comparisonVerificationSubmission(request), ...value };
 }
 test("fixed checks bind complete actual leaves without model answer selections", () => {
   const { request } = pair(), registry = new AgentRegistry([comparisonAgent]), audit = emptyAudit();
@@ -177,7 +174,7 @@ test("constraint counterevidence survives a correct main deliverable and cannot 
   assert.deepEqual(inspection.concerns[0]!.answer_evidence, [counterevidence]);
   assert.notDeepEqual(inspection.concerns[0]!.answer_evidence, delivery.answer_evidence);
   const checkpoint = inspected(request, inspection, audit);
-  assert.equal((registry.resolve(binding, finalFor(request), checkpoint) as ComparisonResult).status, "needs_review");
+  assert.equal((registry.resolve(binding, finalFor(), checkpoint) as ComparisonResult).status, "needs_review");
   const proofBefore = structuredClone(checkpoint.inspection);
   assert.doesNotThrow(() => registry.inspectCanonical(binding, inspection, checkpoint));
   assert.deepEqual(checkpoint.inspection, proofBefore, "restoration uses the accepted canonical check, without rebinding model positions");
@@ -191,7 +188,7 @@ test("constraint counterevidence survives a correct main deliverable and cannot 
   const unknown = registry.resolveInspection(binding, unresolved, audit) as unknown as ComparisonMaterialInspection;
   assert.equal(unknown.checks[0]!.result, "unverified", "a correct main deliverable cannot turn unverified constraints into supported");
   assert.deepEqual(unknown.checks[0]!.answer_evidence, delivery.answer_evidence);
-  assert.equal((registry.resolve(binding, finalFor(request), inspected(request, unknown, audit)) as ComparisonResult).status, "needs_review");
+  assert.equal((registry.resolve(binding, finalFor(), inspected(request, unknown, audit)) as ComparisonResult).status, "needs_review");
 });
 const reviews = [{ candidate: "A", criterion_ids: ["sum"], finding_indices: [0], reason: "实际来源内容与判词冲突。" }];
 
@@ -244,13 +241,13 @@ test("revealed and restored inspection lists only mechanically eligible numeric 
     repeatedErrors: 0, stopped: false, attemptId: "next", evidenceBank: [...audit.evidenceBank!], inspection: checkpointAudit.inspection });
   assert(resumed.includes("eligible_match_choices"));
   const match = { concern_index: 0, finding_indices: [2], observation: "同坐标的strength不代表已建立的问题。" };
-  assert.throws(() => registry.resolve(binding, finalFor(request, { concern_matches: [match] }), checkpointAudit), error => {
+  assert.throws(() => registry.resolve(binding, finalFor({ concern_matches: [match] }), checkpointAudit), error => {
     assert(error instanceof ValidationError);
     const issue = error.issues!.find(item => item.code === "inspection_match_finding")!;
     assert.deepEqual((issue.expected as { eligible_findings: unknown[] }).eligible_findings, expected.eligible_match_choices[0]!.eligible_findings);
     return true;
   });
-  const pending = registry.resolve(binding, finalFor(request, { concern_matches: [{ ...match, finding_indices: [0] }] }), checkpointAudit) as ComparisonResult;
+  const pending = registry.resolve(binding, finalFor({ concern_matches: [{ ...match, finding_indices: [0] }] }), checkpointAudit) as ComparisonResult;
   assert.equal(pending.status, "needs_review");
   assert(pending.review_requests.some(review => review.candidate === "B" && review.reason === value.concerns[1]!.reason));
   assert.deepEqual(checkpointAudit.inspection, before);
@@ -262,21 +259,21 @@ test("verification requires separate blind and revealed inputs and immutable dra
   const binding = { agent: "comparison", profile: "verification", request, projectModelInput: projectEvidenceReferences, modelInput: { original: "actual" }, inspectionInput: { draft: "upstream" } };
   const prepared = registry.prepare(binding);
   assert(!prepared.prompt.includes("upstream")); assert(prepared.evaluation.inspectionSchema);
-  assert.throws(() => registry.resolve(binding, finalFor(request, { concern_matches: [] }), emptyAudit()), /先调用 inspect_material/);
+  assert.throws(() => registry.resolve(binding, finalFor({ concern_matches: [] }), emptyAudit()), /先调用 inspect_material/);
   const value = checks(request), inspectionAudit=emptyAudit(), revealed = inspect(registry,binding, value, inspectionAudit);
   assert.equal(revealed.draft, "upstream"); assert.deepEqual(revealed.material_inspection, projectEvidenceReferences(value,inspectionAudit.evidenceBank!));
   const audit = inspected(request, value), resumed = prepared.renderAttempt({ timeoutSeconds: 10, idleTimeoutSeconds: 10, maxToolCalls: 12,
     repairAttempts: 2, codeTimeoutSeconds: 5, maxOutputChars: 16000 }, { errors: [], contentSubmissions: 1, fileErrors: 0,
     repeatedErrors: 0, stopped: false, attemptId: "next", inspection: audit.inspection });
-  assert(resumed.includes("upstream")); assert.deepEqual(registry.resolve(binding, finalFor(request, { concern_matches: [] }), audit), request.input.comparison_draft);
+  assert(resumed.includes("upstream")); assert.deepEqual(registry.resolve(binding, finalFor({ concern_matches: [] }), audit), request.input.comparison_draft);
 });
 
 test("successful inspection preserves exact draft without mutating source or copying a new verdict", () => {
   const { request, result } = pair(), before = structuredClone(request), audit = inspected(request);
-  const value = profile.resolve!(request, finalFor(request, { concern_matches: [] }), audit) as ComparisonResult; profile.validate!(request, value, audit);
+  const value = profile.resolve!(request, finalFor({ concern_matches: [] }), audit) as ComparisonResult; profile.validate!(request, value, audit);
   assert.deepEqual(value, result); value.ranking[0]!.push("invented"); assert.deepEqual(request, before);
   assert.throws(() => profile.validate!(request, { ...result, decision_basis: { ...result.decision_basis, tradeoff: "另造判词" } }, audit), /不得改写排名/);
-  assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: [], ranking: [["A"]] }), audit), ValidationError);
+  assert.throws(() => profile.resolve!(request, { ...finalFor(), ranking: [["A"]] }, audit), ValidationError);
 });
 
 test("sparse source-review choices preserve unresolved checks without copying empty rows", () => {
@@ -388,7 +385,7 @@ test("deferred final text and real image views remain required", () => {
     return true;
   });
   const reads = emptyAudit(); reads.traceReads.push({ candidate: "A", message_index: 1, path: "/content", kind: "text", start: 0, end: 5 });
-  const audit = inspected(request, checks(request), reads), result = profile.resolve!(request, finalFor(request, { concern_matches: [] }), audit); profile.validate!(request, result, audit);
+  const audit = inspected(request, checks(request), reads), result = profile.resolve!(request, finalFor({ concern_matches: [] }), audit); profile.validate!(request, result, audit);
   (request.sources.B!.value as { messages: { content: unknown }[] }).messages[1]!.content = "data:image/png;base64,aA==";
   const value = checks(request); value.checks[1]!.answer_evidence = [{ evidence_id: evidenceId(request.sources.B!.id, 1, "image"), observation: "实际图片给出4" }];
   assert.throws(() => inspected(request, value, audit), /必须先 view_image/); audit.viewedImages.push("B:1"); assert.doesNotThrow(() => inspected(request, value, audit));
@@ -398,11 +395,11 @@ test("checkpoint concerns cannot disappear; unmatched discovery creates bounded 
   const { request } = pair(), value = checks(request);
   value.concerns = [{ candidate: "A", criterion_ids: ["sum"], answer_evidence: value.checks[0]!.answer_evidence, source_evidence: [], reason: "原材料所示结果须核查。" }];
   const audit = inspected(request, value), before = structuredClone(audit.inspection);
-  assert.equal((profile.resolve!(request, finalFor(request, { concern_matches: [] }), audit) as ComparisonResult).status,"needs_review");
-  const result = profile.resolve!(request, finalFor(request, { concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
+  assert.equal((profile.resolve!(request, finalFor({ concern_matches: [] }), audit) as ComparisonResult).status,"needs_review");
+  const result = profile.resolve!(request, finalFor({ concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
   assert(result.review_requests.some(item => item.finding_indices.length === 0 && item.reason === value.concerns[0]!.reason));
   profile.validate!(request, result, audit); assert.deepEqual(audit.inspection, before);
-  assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "已有对应" }] }), audit), /established problem/);
+  assert.throws(() => profile.resolve!(request, finalFor({ concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "已有对应" }] }), audit), /established problem/);
 });
 
 test("already established same-source defects can be matched without forcing perpetual review", () => {
@@ -410,8 +407,8 @@ test("already established same-source defects can be matched without forcing per
   input.attributions.A!.findings[0]!.type = "problem";
   value.concerns = [{ candidate: "A", criterion_ids: ["sum"], answer_evidence: value.checks[0]!.answer_evidence, source_evidence: [], reason: "实际同一行为已由来源记录。" }];
   const audit = inspected(request, value), match = { concern_index: 0, finding_indices: [0], observation: "对应同一实际错误及来源责任证据。" };
-  assert.deepEqual(profile.resolve!(request, finalFor(request, { concern_matches: [match] }), audit), input.comparison_draft);
-  assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: [
+  assert.deepEqual(profile.resolve!(request, finalFor({ concern_matches: [match] }), audit), input.comparison_draft);
+  assert.throws(() => profile.resolve!(request, finalFor({ concern_matches: [
     { ...match, concern_index: 999 }, match, { ...match, concern_index: 1000 },
   ] }), audit), (error: unknown) => {
     assert(error instanceof ValidationError);
@@ -421,8 +418,8 @@ test("already established same-source defects can be matched without forcing per
     assert(error.issues!.every(issue => (issue.expected as { concern_count: number }).concern_count === 1));
     return true;
   });
-  assert.deepEqual(profile.resolve!(request, finalFor(request, { concern_matches: [match] }), audit), input.comparison_draft);
-  assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: [
+  assert.deepEqual(profile.resolve!(request, finalFor({ concern_matches: [match] }), audit), input.comparison_draft);
+  assert.throws(() => profile.resolve!(request, finalFor({ concern_matches: [
     { ...match, finding_indices: [999] }, { ...match, concern_index: 999 },
   ] }), audit), (error: unknown) => {
     assert(error instanceof ValidationError);
@@ -432,9 +429,9 @@ test("already established same-source defects can be matched without forcing per
     return true;
   });
   for (const matches of [[{ ...match, concern_index: 999 }], [match, match], [{ ...match, finding_indices: [999] }]])
-    assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: matches }), audit), ValidationError);
+    assert.throws(() => profile.resolve!(request, finalFor({ concern_matches: matches }), audit), ValidationError);
   input.attributions.A!.findings[0]!.assessment.evidence_status = "uncertain";
-  assert.throws(() => profile.resolve!(request, finalFor(request, { concern_matches: [match] }), audit), /established problem/);
+  assert.throws(() => profile.resolve!(request, finalFor({ concern_matches: [match] }), audit), /established problem/);
 });
 
 test("matching an accurate problem preserves a separate review of its necessary-condition core impact at the public entry", () => {
@@ -458,7 +455,7 @@ test("matching an accurate problem preserves a separate review of its necessary-
   const canonical = registry.resolveInspection(binding,
     projectEvidenceReferences(inspectionSubmission(request, value), toolAudit.evidenceBank = []), toolAudit) as unknown as ComparisonMaterialInspection;
   const audit = inspected(request, canonical, toolAudit), reason = "已有 problem 准确记录5而非4，但正确结果是原核心必要交付，来源虽判 partial 仍判 core=true，须纠正核心影响。";
-  const submission = finalFor(request, {
+  const submission = finalFor({
     concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "同一本方最终回答2+2=5、同一结果错误与回答责任，缺陷事实已准确记录。" }],
     source_reviews: [{ slot_index: 0, candidate: "A", reason }],
   });
@@ -511,13 +508,13 @@ test("same criterion cannot match a different actual answer claim at the public 
   const audit = inspected(request, value), binding = { agent: "comparison", profile: "verification", request,
     projectModelInput: projectEvidenceReferences, modelInput: { original: "blind" }, inspectionInput: { draft: "revealed" } };
   const match = { concern_index: 0, finding_indices: [0], observation: "尝试只凭同一要求关联两个不同事实。" };
-  assert.throws(() => registry.resolve(binding, finalFor(request, { concern_matches: [match] }), audit), (error: unknown) => {
+  assert.throws(() => registry.resolve(binding, finalFor({ concern_matches: [match] }), audit), (error: unknown) => {
     assert(error instanceof ValidationError); assert.equal(error.issues![0]!.code, "inspection_match_finding"); return true;
   });
-  const pending = registry.resolve(binding, finalFor(request, { concern_matches: [] }), audit) as ComparisonResult;
+  const pending = registry.resolve(binding, finalFor({ concern_matches: [] }), audit) as ComparisonResult;
   assert.equal(pending.status, "needs_review"); assert.equal(pending.review_requests[0]!.reason, value.concerns[0]!.reason);
   finding.evidence = [canonicalEvidence(request.sources.A!.id, 1, second, "/content", first.length)];
-  assert.deepEqual(registry.resolve(binding, finalFor(request, { concern_matches: [match] }), audit), input.comparison_draft);
+  assert.deepEqual(registry.resolve(binding, finalFor({ concern_matches: [match] }), audit), input.comparison_draft);
 });
 
 test("a real JSON message excerpt covering the actual answer leaf matches without decoding quoted strings", () => {
@@ -535,7 +532,7 @@ test("a real JSON message excerpt covering the actual answer leaf matches withou
     answer_evidence: value.checks[0]!.answer_evidence, reason: "同一实际交付行为已记录。" }];
   const audit = inspected(request, value), binding = { agent: "comparison", profile: "verification", request,
     projectModelInput: projectEvidenceReferences, modelInput: { original: "blind" }, inspectionInput: { draft: "revealed" } };
-  const final = finalFor(request, { concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "同一实际回答与责任链。" }] });
+  const final = finalFor({ concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "同一实际回答与责任链。" }] });
   for (const [start, end] of [[0, json.text.length], [content.start, content.end], [leaf.start, leaf.end]]) {
     const quote = json.text.slice(start, end);
     assert(!quote.includes(answer), "actual newlines and quotes are escaped in the genuine JSON excerpt");
@@ -556,9 +553,9 @@ test("a real JSON message excerpt covering the actual answer leaf matches withou
 
 test("pending source review cannot be confirmed or silently removed", () => {
   const { request, input } = pair(), audit = inspected(request);
-  input.comparison_draft = profile.resolve!(request, finalFor(request, { concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
-  assert.deepEqual(profile.resolve!(request, finalFor(request, { concern_matches: [] }),audit),input.comparison_draft);
-  const result = profile.resolve!(request, finalFor(request, { concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "B", reason: reviews[0].reason }] }), audit) as ComparisonResult;
+  input.comparison_draft = profile.resolve!(request, finalFor({ concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
+  assert.deepEqual(profile.resolve!(request, finalFor({ concern_matches: [] }),audit),input.comparison_draft);
+  const result = profile.resolve!(request, finalFor({ concern_matches: [], source_reviews: [{ slot_index: 0, candidate: "B", reason: reviews[0].reason }] }), audit) as ComparisonResult;
   assert.equal(result.review_requests.length, 2); profile.validate!(request, result, audit);
   assert.throws(() => profile.validate!(request, { ...result, review_requests: result.review_requests.filter(item => item.candidate === "B"), assessments: { ...result.assessments, A: { ...result.assessments.A!, meets_core: true } } }, audit), /必须保留/);
 });
@@ -676,12 +673,12 @@ test("a source-only norm outside fixed requirements can request one proof-bound 
   const revealed = inspect(registry,f.binding, f.value, f.audit);
   assert.deepEqual(revealed.material_inspection, projectEvidenceReferences(f.value,f.audit.evidenceBank!));
   const audit = inspected(f.request, f.value), review = { candidate: "A", criterion_ids: [], finding_indices: [], reason: f.value.concerns[0]!.reason };
-  const result = registry.resolve(f.binding, finalFor(f.request, { concern_matches: [] }), audit) as ComparisonResult;
+  const result = registry.resolve(f.binding, finalFor({ concern_matches: [] }), audit) as ComparisonResult;
   registry.validate(f.binding, result, audit);
   assert.deepEqual(result.review_requests, [review]);
   assert.deepEqual(result.task_analysis, before.task_analysis);
   assert.deepEqual(f.input, before, "source-only discovery cannot rewrite common judgments or ranking");
-  assert.deepEqual(registry.resolve(f.binding, finalFor(f.request, { concern_matches: [] }),audit),result);
+  assert.deepEqual(registry.resolve(f.binding, finalFor({ concern_matches: [] }),audit),result);
   assert.throws(() => comparisonProfile.validate!(f.request, result, emptyAudit()), /至少一个标准或既有 finding/);
 });
 
@@ -695,13 +692,13 @@ test("an established unbound private instruction problem can match its original 
   assert.equal(comparisonScope(f.request).findings.A![index]!.scope, "source_only");
   const audit = inspected(f.request, f.value);
   const match = { concern_index: 0, finding_indices: [index], observation: "Same original norm and actual response; private compliance does not change the common task result." };
-  const result = registry.resolve(f.binding, finalFor(f.request, { concern_matches: [match] }), audit);
+  const result = registry.resolve(f.binding, finalFor({ concern_matches: [match] }), audit);
   registry.validate(f.binding, result, audit); assert.deepEqual(result, f.input.comparison_draft);
   const wrong = f.input.attributions.A!.findings[index]!;
   const unrelated = "## Unrelated\nan unrelated clause";
   (f.request.sources.A!.value as { messages: { content: string }[] }).messages[0]!.content += "\n\n" + unrelated;
   wrong.evidence = [canonicalEvidence(f.request.sources.A!.id, 0, unrelated, "/content", f.rule.length + 2), canonicalEvidence(f.request.sources.A!.id, 2, "2+2=4")];
-  assert.throws(() => registry.resolve(f.binding, finalFor(f.request, { concern_matches: [match] }), audit), /真实规范/);
+  assert.throws(() => registry.resolve(f.binding, finalFor({ concern_matches: [match] }), audit), /真实规范/);
 });
 
 test("source-only concerns close selected own SYS or DEV anchors and require actual own answer", () => {
@@ -733,9 +730,9 @@ test("source-only concerns close selected own SYS or DEV anchors and require act
 
 test("model reviews only select existing source slots and cannot invent an empty-reference rule", () => {
  const registry=new AgentRegistry([comparisonAgent]), f=localInstructionPair(), audit=inspected(f.request,f.value);
- const source_reviews=comparisonSourceReviews(f.request); source_reviews.push({ slot_index: 999, candidate: "A", reason: "invented local rule" });
- assert.throws(() => registry.resolve(f.binding, finalFor(f.request, {concern_matches:[],source_reviews}),audit),/comparison_slots.*slot_index/);
- const result=registry.resolve(f.binding, finalFor(f.request, {concern_matches:[]}),audit) as ComparisonResult;
+ const source_reviews=[{ slot_index: 999, candidate: "A", reason: "invented local rule" }];
+ assert.throws(() => registry.resolve(f.binding, finalFor({concern_matches:[],source_reviews}),audit),/comparison_slots.*slot_index/);
+ const result=registry.resolve(f.binding, finalFor({concern_matches:[]}),audit) as ComparisonResult;
  assert.deepEqual(result.review_requests,[{candidate:"A",criterion_ids:[],finding_indices:[],reason:f.value.concerns[0]!.reason}]);
  const forged=structuredClone(result); forged.review_requests[0]!.reason="invented local rule";
  assert.throws(() => profile.validate!(f.request,forged,audit),/至少一个标准或既有 finding/);
@@ -820,11 +817,11 @@ test("verification schema accepts only nonempty indexed review choices", () => {
   const rowSchema = (schema.properties as { source_reviews: { items: { required?: string[] } } }).source_reviews.items;
   assert.deepEqual(rowSchema.required, ["slot_index", "candidate", "reason"]);
   const audit = inspected(request);
-  assert.doesNotThrow(() => registry.resolve(binding, finalFor(request), audit));
+  assert.doesNotThrow(() => registry.resolve(binding, finalFor(), audit));
   assert.throws(() => registry.resolve(binding, { concern_matches: [] }, audit), ValidationError);
   assert.throws(() => registry.resolve(binding, { concern_matches: [], source_reviews: false }, audit),
     (error: unknown) => error instanceof ValidationError && error.issues!.every(issue => issue.path === "/source_reviews" && issue.code === "schema_type"));
-  const result = registry.resolve(binding, finalFor(request, { concern_matches: [],
+  const result = registry.resolve(binding, finalFor({ concern_matches: [],
     source_reviews: [{ slot_index: 0, candidate: "A", reason: reviews[0].reason }] }), audit) as ComparisonResult;
   assert.equal(result.status, "needs_review");
   registry.validate(binding, result, audit);
@@ -862,7 +859,7 @@ test("a finding explicitly covering both real private norms can match a selected
     projectEvidenceReferences(inspectionSubmission(f.request, value), toolAudit.evidenceBank = []), toolAudit) as unknown as ComparisonMaterialInspection;
   const audit = inspected(f.request, checked, toolAudit), matches = checked.concerns.map((_, concern_index) => ({ concern_index,
     finding_indices: [index], observation: "Same actual missing closing question, complete governing rule and owner responsibility; primary index names the related layout rule." }));
-  const confirmed = registry.resolve(f.binding, finalFor(f.request, { concern_matches: matches }), audit);
+  const confirmed = registry.resolve(f.binding, finalFor({ concern_matches: matches }), audit);
   registry.validate(f.binding, confirmed, audit); assert.deepEqual(confirmed, f.input.comparison_draft);
   const known = f.input.attributions.A!.findings[index]!, original = structuredClone(known);
   for (const evidence of [
@@ -872,7 +869,7 @@ test("a finding explicitly covering both real private norms can match a selected
     [canonicalEvidence(f.request.sources.A!.id, 0, f.rule, "/content", other.length + 2), canonicalEvidence(f.request.sources.A!.id, 1, "计算2+2")],
   ]) {
     known.evidence = evidence;
-    assert.throws(() => registry.resolve(f.binding, finalFor(f.request, { concern_matches: matches }), audit), error =>
+    assert.throws(() => registry.resolve(f.binding, finalFor({ concern_matches: matches }), audit), error =>
       error instanceof ValidationError && error.issues!.some(issue => ["inspection_match_finding", "inspection_match_coverage"].includes(issue.code)));
   }
   Object.assign(known, structuredClone(original));
@@ -888,7 +885,7 @@ test("private norm concerns retain valid trigger facts alongside the complete ow
   f.value.concerns[0]!.source_evidence.push(trigger);
   assert.doesNotThrow(() => inspect(registry,f.binding, f.value, f.audit));
   const audit = inspected(f.request, f.value);
-  const result = registry.resolve(f.binding, finalFor(f.request, { concern_matches: [] }), audit);
+  const result = registry.resolve(f.binding, finalFor({ concern_matches: [] }), audit);
   registry.validate(f.binding, result, audit);
   const withoutNorm = structuredClone(f.value); withoutNorm.concerns[0]!.source_evidence = [trigger];
   assert.throws(() => inspect(registry,f.binding, withoutNorm, f.audit), /本方完整 SYS\/DEV/);
@@ -977,11 +974,11 @@ test("contradicted checks require precise concerns and full inspected scope cann
   const proof = inspected(request, canonical, audit), finding = input.attributions.A!.findings[0]!;
   finding.type = "problem"; finding.evidence = [cite(source.id, 1, leaf, 0, first.length)];
   const match = { concern_index: 0, finding_indices: [0], observation: "已有第一项问题不能替代第二项反证。" };
-  assert.throws(() => registry.resolve(binding, finalFor(request, { concern_matches: [match] }), proof),
+  assert.throws(() => registry.resolve(binding, finalFor({ concern_matches: [match] }), proof),
     error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "inspection_match_finding"));
-  assert.equal((registry.resolve(binding, finalFor(request), proof) as ComparisonResult).status, "needs_review");
+  assert.equal((registry.resolve(binding, finalFor(), proof) as ComparisonResult).status, "needs_review");
   finding.evidence = [cite(source.id, 1, leaf, first.length, leaf.text.length)];
-  assert.deepEqual(registry.resolve(binding, finalFor(request, { concern_matches: [match] }), proof), input.comparison_draft);
+  assert.deepEqual(registry.resolve(binding, finalFor({ concern_matches: [match] }), proof), input.comparison_draft);
   const removed = structuredClone(canonical); removed.concerns = [];
   assert.throws(() => inspected(request, removed), /具体反证/);
 });
@@ -999,7 +996,7 @@ test("unverified checks preserve ordinary unknowns but review definite upstream 
     if (definite === "decisive") { input.attributions.A!.findings[0].type = "problem"; input.comparison_draft.decision_basis.decisive_findings = [{ candidate: "A", finding_index: 0 }]; }
     // This resolver test isolates the gate; formal source consistency remains independently validated.
     const audit = inspected(request, value), checkpoint = structuredClone(audit.inspection);
-    const result = profile.resolve!(request, finalFor(request), audit) as ComparisonResult;
+    const result = profile.resolve!(request, finalFor(), audit) as ComparisonResult;
     assert.equal(result.status, definite === "none" ? "decided" : "needs_review");
     assert.deepEqual(audit.inspection, checkpoint); assert.equal((audit.inspection.value as unknown as ComparisonMaterialInspection).checks[0].result, "unverified");
     assert.equal(original.task_analysis.requirements[0].id, input.task_analysis.requirements[0].id);
@@ -1009,7 +1006,7 @@ test("unverified checks preserve ordinary unknowns but review definite upstream 
 test("a not-applicable check retains its actual scope explanation without manufacturing an error", () => {
   const { request } = pair(), value = checks(request); value.checks[0].result = "not_applicable";
   value.checks[0].observation = "原条件未触发，实际文本也未执行该动作。";
-  const audit = inspected(request, value), result = profile.resolve!(request, finalFor(request), audit) as ComparisonResult;
+  const audit = inspected(request, value), result = profile.resolve!(request, finalFor(), audit) as ComparisonResult;
   assert.equal(result.status, "decided"); assert.equal((audit.inspection.value as unknown as ComparisonMaterialInspection).checks[0].result, "not_applicable");
 });
 
@@ -1026,7 +1023,7 @@ test("independent satisfaction or an inactive condition cannot silently confirm 
       modelInput: { original: "blind" }, inspectionInput: { draft: "revealed" } }, toolAudit = emptyAudit();
     const canonical = registry.resolveInspection(binding, projectEvidenceReferences(inspectionSubmission(request, value), toolAudit.evidenceBank = []), toolAudit) as unknown as ComparisonMaterialInspection;
     const audit = inspected(request, canonical, toolAudit), before = structuredClone({ request, inspection: audit.inspection });
-    const pending = registry.resolve(binding, finalFor(request), audit) as ComparisonResult;
+    const pending = registry.resolve(binding, finalFor(), audit) as ComparisonResult;
     assert.equal(pending.status, "needs_review", `${result}/${status}`);
     assert.deepEqual(pending.review_requests, [{ candidate: "A", criterion_ids: ["sum"], finding_indices: [], reason: value.checks[0].observation }]);
     registry.validate(binding, pending, audit);
@@ -1042,7 +1039,7 @@ test("an inactive requirement conflicts with its established problem, while sati
     const problem = input.attributions.A!.findings[0]; problem.type = "problem"; problem.importance = "low";
     problem.text = "同要求的局部质量问题";
     value.checks[0].result = result; value.checks[0].observation = "原条件在当前任务没有触发，已关联的问题须核对其适用范围。";
-    const audit = inspected(request, value), before = structuredClone(input), resolved = profile.resolve!(request, finalFor(request), audit) as ComparisonResult;
+    const audit = inspected(request, value), before = structuredClone(input), resolved = profile.resolve!(request, finalFor(), audit) as ComparisonResult;
     assert.equal(resolved.status, result === "not_applicable" ? "needs_review" : "decided");
     if (result === "not_applicable") {
       assert.deepEqual(resolved.review_requests, [{ candidate: "A", criterion_ids: ["sum"], finding_indices: [0], reason: value.checks[0].observation }]);
@@ -1063,7 +1060,7 @@ test("inspection conflicts preserve uncertain facts, conditional exemptions and 
     value.checks[0].result = result;
     // Isolate the consistency gate; uncertain source judgments remain independently validated.
     const audit = inspected(request, value), before = structuredClone(input);
-    assert.deepEqual(profile.resolve!(request, finalFor(request), audit), input.comparison_draft, `${result}/${status}`);
+    assert.deepEqual(profile.resolve!(request, finalFor(), audit), input.comparison_draft, `${result}/${status}`);
     assert.deepEqual(input, before);
   }
   const { request, input } = pair();
@@ -1072,7 +1069,7 @@ test("inspection conflicts preserve uncertain facts, conditional exemptions and 
   const problem = input.attributions.A!.findings[0]; problem.type = "problem"; problem.assessment.requirement_index = 1;
   const complete = checks(request); complete.checks[0].result = "not_applicable";
   const audit = inspected(request, complete);
-  assert.deepEqual(profile.resolve!(request, finalFor(request), audit), input.comparison_draft, "another requirement's problem cannot conflict with this check");
+  assert.deepEqual(profile.resolve!(request, finalFor(), audit), input.comparison_draft, "another requirement's problem cannot conflict with this check");
 });
 
 test("derived concerns retain real raw check error paths and aggregate source evidence without hidden fields", () => {
@@ -1092,7 +1089,7 @@ test("derived concerns retain real raw check error paths and aggregate source ev
 test("canonical validation cannot restore a decided draft after dropping derived unverified review", () => {
   const { request, input } = pair(), value = checks(request);
   value.checks[0].result = "unverified"; value.checks[0].observation = "原材料未能确证原先按既定事实使用的同一要求。";
-  const audit = inspected(request, value), pending = profile.resolve!(request, finalFor(request), audit) as ComparisonResult;
+  const audit = inspected(request, value), pending = profile.resolve!(request, finalFor(), audit) as ComparisonResult;
   assert.equal(pending.status, "needs_review"); assert.doesNotThrow(() => profile.validate!(request, pending, audit));
   assert.throws(() => profile.validate!(request, input.comparison_draft, audit), (error: unknown) =>
     error instanceof ValidationError && error.issues!.some(issue => issue.code === "verification_unverified_removed"));
@@ -1103,7 +1100,7 @@ test("verification reports independent match and row-count failures in one repai
   material.concerns.push({ candidate: "A", criterion_ids: [input.task_analysis.requirements[0]!.id],
     answer_evidence: material.checks[0]!.answer_evidence, source_evidence: [], reason: "同一交付存在尚需核查的来源问题。" });
   const audit = inspected(request, material);
-  assert.throws(() => profile.resolve!(request, finalFor(request, {
+  assert.throws(() => profile.resolve!(request, finalFor({
     concern_matches: [{ concern_index: 0, finding_indices: [999], observation: "定位既有问题。" }], source_reviews: [{ slot_index: 999, candidate: "A", reason: "另一独立选择无效。" }],
   }), audit), (error: unknown) => {
     assert(error instanceof ValidationError);

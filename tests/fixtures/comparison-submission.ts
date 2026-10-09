@@ -15,23 +15,9 @@ export function comparisonInspectionSubmission(request: AgentRequest, value: Com
    }) })) };
 }
 
-function sourceReviews(result: ComparisonResult | undefined, slots: ComparisonSlot[], candidates: string[]) {
- return slots.map(slot => Object.fromEntries(candidates.map(candidate => [candidate,
-  result?.review_requests.filter(review => review.candidate === candidate &&
-   (slot.criterion_ids.some(id => review.criterion_ids.includes(id)) ||
-    slot.finding_indices[candidate]?.some(index => review.finding_indices.includes(index))))
-   .map(review => review.reason).join('；') || null])));
-}
-
-/** Final verification only selects cells that need review, without copied associations. */
-export function comparisonSourceReviews(request: AgentRequest, result?: ComparisonResult) {
- const input = request.input as { candidates: Record<string, unknown> };
- return sourceReviews(result, comparisonSlots(request), Object.keys(input.candidates)).flatMap((row, slot_index) =>
-  Object.entries(row).flatMap(([candidate, reason]) => reason === null ? [] : [{ slot_index, candidate, reason }]));
-}
-
-export function comparisonVerificationSubmission(request: AgentRequest, selections: Partial<ComparisonVerificationSubmission> = {}): ComparisonVerificationSubmission {
- return { concern_matches: [], source_reviews: comparisonSourceReviews(request), ...selections };
+/** Verification choices are explicit; never infer them from an upstream verdict. */
+export function comparisonVerificationSubmission(selections: Partial<ComparisonVerificationSubmission> = {}): ComparisonVerificationSubmission {
+ return { concern_matches: [], source_reviews: [], ...selections };
 }
 
 /** Fixtures use the current thin submission; the canonical result remains a separate contract. */

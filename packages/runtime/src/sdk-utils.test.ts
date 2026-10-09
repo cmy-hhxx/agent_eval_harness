@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ModelConfig, ToolResult } from "@eval/contracts";
+import type { AttributionSubmission } from "@eval/agents/attribution";
+import type { ComparisonSubmission } from "@eval/agents/comparison";
+import type { ClusteringSubmission } from "@eval/agents/clustering";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, transformPayload } from "./sdk-utils.js";
 
 test("initial and restored checkpoints select the current content tool without a file fallback", () => {
@@ -40,8 +43,8 @@ test("SDK keeps only registered reserved writers, submissions and uncovered mand
   assert.deepEqual(activeToolNames({ content: [], details: { budget: { exploration: { remaining: 1 } } } }, names, "submit_evaluation"), names);
 });
 
-test("tool schema inlining preserves real Criteria validation, array types and the original schema", () => {
-  const source = JSON.parse(readFileSync("schemas/criteria/result.schema.json", "utf8"));
+test("tool schema inlining preserves Criteria source selections, array constraints and the original schema", () => {
+  const source = JSON.parse(readFileSync("schemas/criteria/submission.schema.json", "utf8"));
   const before = structuredClone(source);
   const inline = inlineToolSchema(source) as Record<string, unknown>;
   assert(!JSON.stringify(inline).includes('"$ref"'));
@@ -49,18 +52,19 @@ test("tool schema inlining preserves real Criteria validation, array types and t
   assert.deepEqual(source, before);
   const originalValidate = new Ajv2020({ strict: false }).compile(source);
   const inlineValidate = new Ajv2020({ strict: false }).compile(inline);
-  const criterion = { id: "r1", text: "Return ready", applies_to: [], acceptance_rule: "Contains ready" };
-  const valid = { task_type: "fixture", goal: "Return ready", requirements: [criterion], scoring_points: [], red_flags: [] };
-  for (const [applies_to, expected] of [
-    [[], true], [["11111111-1111-4111-8111-111111111111"], true],
-    ["", false], [{ item: "11111111-1111-4111-8111-111111111111" }, false],
-    [["bad-uuid"], false], [["11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"], false],
+  const criterion = { source_indices: [1], text: "Return ready" };
+  const valid = { requirements: [criterion], scoring_points: [], red_flags: [] };
+  for (const [source_indices, expected] of [
+    [[1], true], [[1, 2], true],
+    [[], false], [1, false], [{ item: 1 }, false],
+    [[0], false], [[1.5], false], [["1"], false], [[1, 1], false],
   ] as const) {
-    const sample = { ...valid, requirements: [{ ...criterion, applies_to }] };
+    const sample = { ...valid, requirements: [{ ...criterion, source_indices }] };
     assert.equal(originalValidate(sample), expected);
     assert.equal(inlineValidate(sample), expected);
   }
-  for (const sample of [{ ...valid, requirements: [] }, { ...valid, extra: true }, { ...valid, goal: "" }]) {
+  for (const sample of [{ ...valid, requirements: [] }, { ...valid, extra: true },
+    { ...valid, requirements: [{ ...criterion, text: "" }] }]) {
     assert.equal(originalValidate(sample), false);
     assert.equal(inlineValidate(sample), false);
   }
@@ -88,19 +92,41 @@ test("tool schema references preserve sibling constraints through conjunction an
   assert.equal(inlineToolSchema(false), false);
 });
 
-for (const stage of ["attribution", "comparison", "rewrite", "clustering"]) {
-  test(`tool schema inlining preserves ${stage} fixture acceptance and required fields`, () => {
-    const source = JSON.parse(readFileSync(`schemas/${stage}/result.schema.json`, "utf8"));
-    const fixture = JSON.parse(readFileSync(`packages/agents/src/${stage}/fixtures/example.json`, "utf8")).result;
+// These payloads exercise the model-facing schema transport; Agent tests own business validation.
+const submissions = {
+  attribution: {
+    summary: "回答完成计算。", is_correct: true, correctness_reason: "与标准一致。", correctness_evidence_indices: [1],
+    meets_core: true, core_reason: "给出所求结果。", core_requirements: [1],
+    criterion_assessments: [{ status: "met", evidence_status: "established", summary: "结果正确。", evidence_indices: [1] }],
+    numeric_checks: [{ label: "结果", reference_index: 1, actual: "4", scale: "1", mode: "exact", evidence_index: 1 }],
+    strengths: [], problems: [],
+  } satisfies AttributionSubmission,
+  comparison: {
+    a_summary: "已完成。", b_summary: "已完成。", preference: null, tradeoff: "双方均完成核心要求。",
+    comparisons: [{ importance: "high", better_candidate: null, a_summary: "结果正确。", b_summary: "结果正确。" },
+      { importance: "low", better_candidate: null }],
+  } satisfies ComparisonSubmission,
+  rewrite: { texts: ["双方均完成核心要求。"] },
+  clustering: {
+    assignments: [{ item_id: "O1", class_id: "C1" }, { item_id: "O2", new_class_index: 0 }],
+    new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。" }],
+    merges: [],
+  } satisfies ClusteringSubmission,
+};
+for (const [stage, fixture] of Object.entries(submissions)) {
+  test(`tool schema inlining preserves ${stage} submission acceptance and required fields`, () => {
+    const source = JSON.parse(readFileSync(`schemas/${stage}/submission.schema.json`, "utf8"));
+    const before = structuredClone(source);
     const inline = inlineToolSchema(source);
     const validators = [source, inline].map((schema) => new Ajv2020({ strict: false }).compile(schema));
     for (const validate of validators) assert.equal(validate(fixture), true, JSON.stringify(validate.errors));
     for (const key of source.required) {
-      const invalid = structuredClone(fixture);
+      const invalid: Record<string, unknown> = structuredClone(fixture);
       delete invalid[key];
       for (const validate of validators) assert.equal(validate(invalid), false, key);
     }
     assert(!JSON.stringify(inline).includes('"$ref"'));
+    assert.deepEqual(source, before);
   });
 }
 
