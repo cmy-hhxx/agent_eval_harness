@@ -8,8 +8,6 @@ import type { EvalConfig } from "@eval/workflows/comparison";
 export interface AutomationConfig extends PipelineOptions {
   id: string;
   sourceUrl: string;
-  fromDate: string;
-  throughDate?: string;
   completedDates: string[];
   hostConfigs: string[];
   stateDirectory: string;

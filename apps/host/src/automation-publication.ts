@@ -3,13 +3,13 @@ import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type Pub
 import { appendStatisticsLog, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
 import { PublicationStatistics, publishableComparisons, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
-import type { AutomationJob, AutomationState } from "@eval/automations";
+import { automationDateSelected, type AutomationJob, type AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
 import { loadConfig } from "./config.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
-async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
+export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
   const host = await loadConfig(config.hostConfigs);
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
   async function* inputs(): AsyncGenerator<PublicationInput> {
@@ -53,7 +53,8 @@ async function publicationSnapshot(config: AutomationConfig, job: AutomationJob,
   async function* results(): AsyncGenerator<PublicationResult> {
     for (const { id, state } of runs) {
       if (!state) continue;
-      const requireItems = !job.adopted || (state.config as EvalConfig).rewrite.comparisonItems === true;
+      const requireItems = (automationDateSelected(config, job.date) && !job.adopted) ||
+        (state.config as EvalConfig).rewrite.comparisonItems === true;
       const ready = publishableComparisons(state, requireItems);
       if (!ready.size) continue;
       const labels = new Map(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit)

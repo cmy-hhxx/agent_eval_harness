@@ -9,13 +9,26 @@ import { RemoteInputs } from "@eval/runtime/client";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
-import { buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
+import { assertStatisticsLog, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
 import { automationEvaluationConfig, loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
+import { automationCommand } from "../../../apps/host/src/automation-command.js";
+import { publicationSnapshot, syncMongoDay } from "../../../apps/host/src/automation-publication.js";
 import { automaticResumeStages, createAutomationWorkflow, checkpointRecovery, evaluationOutcome, evaluationTargets, recoverEvaluation, summarize, remoteDateProgress, remoteProgress } from "../../../apps/host/src/automation-evaluation.js";
 import { submitFor, inspectFor, attributionResult, comparisonResult, draftFor, fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
 const automationWorkflow = createAutomationWorkflow(300);
+
+test("automation refuses an explicit retry outside its configured date range", async () => {
+  const { directory } = await fixtureConfig();
+  try {
+    const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const file = path.join(directory, "automations.json");
+    await writeJson(file, { ...config, fromDate: "2026-10-08", stateDirectory: path.join(directory, "state") });
+    await assert.rejects(automationCommand(["retry", "--config", file, "--date", "2026-10-07"]),
+      /Cannot retry a date outside the configured automation range/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("completed quota stays completed despite unpaired inputs, including after restart", async () => {
   const rows = Array.from({ length: 300 }, (_, index) => raw(`q${index}`));
@@ -258,11 +271,17 @@ test("automation defers unfinished clustering and later classifies attributions 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("automation resumes each evaluation rewrite without running clustering or repeating accepted tasks", { timeout: 60_000 }, async (t) => {
+test("automation resumes current outputs across evaluator changes and delivers complete Mongo and statistics rows", { timeout: 60_000 }, async (t) => {
+  const previousBaseUrl = process.env.EVAL_BASE_URL;
+  process.env.EVAL_BASE_URL = "http://127.0.0.1:1/v1";
+  t.after(() => {
+    if (previousBaseUrl === undefined) delete process.env.EVAL_BASE_URL;
+    else process.env.EVAL_BASE_URL = previousBaseUrl;
+  });
   const { directory, config, modelForStage } = await fixtureConfig();
   let controller = new AbortController();
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
-  const date = "2026-09-29", source = path.join(directory, "source");
+  const date = "2026-10-08", source = path.join(directory, "source");
   for (const model of REMOTE_MODELS)
     await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("q1", "4", "2+2=5")].map((record) => ({ ...record, batch_id: date })));
   const evaluation = automationEvaluationConfig(config, source, date);
@@ -302,7 +321,7 @@ test("automation resumes each evaluation rewrite without running clustering or r
       const previous = restart ? comparisonCodec.encode(await readRunState(run)) : undefined;
       const result = await runEvaluation({
         ...services, runId, output: evaluation.output, config: evaluation, plan, modelForStage,
-        evaluatorVersion: fakeEvaluatorVersion, engine: "pi", identity: fakeIdentity,
+        evaluatorVersion: restart ? "fixture-next" : fakeEvaluatorVersion, engine: "pi", identity: fakeIdentity,
         policy: evaluation.execution, concurrency: 1, retries: 0, retryDelaySeconds: 0,
         discoverInputs: true, workerUrls: [worker.url], signal: AbortSignal.any([controller.signal, t.signal]),
         resumeStages: previous ? automaticResumeStages(previous, DEFAULT_POLICY) : [],
@@ -332,6 +351,45 @@ test("automation resumes each evaluation rewrite without running clustering or r
     assert.equal(deliveryCoverage(saved, { rewriteScopes: ["verdicts", "items"] }).valid, true);
     for (const [id, count] of calls) assert.equal(count, interruptedTasks.has(id) ? 2 : 1);
     assert.equal((await validateRun(run)).valid, true);
+    assert.deepEqual(new Set(Object.values(saved.receipts).map(receipt => receipt.evaluatorVersion)),
+      new Set([fakeEvaluatorVersion, "fixture-next"]));
+    const hostFile = path.join(directory, "host.json");
+    await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...evaluation });
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")),
+      hostConfigs: [hostFile], sourceDirectory: source };
+    settings.publication = { ...settings.publication, mongoUriEnv: "PATH" };
+    const job = { date, runIds: [runId], adopted: false, download: "ready" } as AutomationJob;
+    const stats = new PublicationStatistics(evaluation.comparisons);
+    const delivered = await syncMongoDay(settings, job, t.signal, {
+      snapshot: publicationSnapshot,
+      mongo: async (_settings, batch, inputs, results) => {
+        assert.equal(batch, date);
+        let inputCount = 0, comparisonCount = 0;
+        for await (const input of inputs) { stats.addInput(input); inputCount++; }
+        for await (const result of results) {
+          stats.addResult(result); comparisonCount++;
+          const receipt = Object.values(saved.receipts).find(item => item.exported && item.exported.id === result.row.comparison_id && !item.exported.auxiliary)!;
+          assert.deepEqual(result.row, receipt.exported!.row, "delivery preserves the full current result and its evaluator provenance");
+          assert.equal(result.row.status, "decided");
+        }
+        return { inputs: inputCount, comparisons: comparisonCount, inserted: comparisonCount, updated: 0 };
+      },
+    });
+    assert.equal(delivered.comparisons, counts.readyComparisons);
+    assert(delivered.comparisons > 0);
+    assertStatisticsLog(stats.record("current-automation-output", Date.now()));
+    // A narrower, valid presentation scope stays usable after its date becomes read-only history.
+    const checkpoint = comparisonCodec.encode(saved);
+    (checkpoint.config as typeof config).rewrite.comparisonItems = false;
+    for (const task of Object.values(checkpoint.tasks))
+      if (task.data.rewriteOf?.stage === "comparison") task.data.comparisonRewriteScope = "verdicts";
+    await writeJson(path.join(run, "state.json"), checkpoint);
+    for (const [fromDate, expected] of [[date, 0], ["2026-10-09", delivered.comparisons]] as const) {
+      const snapshot = await publicationSnapshot({ ...settings, fromDate }, job, t.signal);
+      let count = 0;
+      for await (const _row of snapshot.results()) count++;
+      assert.equal(count, expected, "only active dates must meet the current full-rewrite requirement");
+    }
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });

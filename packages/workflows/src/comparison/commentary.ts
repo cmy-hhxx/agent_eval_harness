@@ -12,7 +12,7 @@ export interface CommentaryLookup {
 export function verdictSlotId(first: string, second: string): string {
   return `verdict.${[first, second].sort().join("__vs__")}.reason`;
 }
-function isResourceRow(row: ComparisonResult["decision_basis"]["comparisons"][number]): boolean {
+export function isResourceRow(row: ComparisonResult["decision_basis"]["comparisons"][number]): boolean {
   return !row.criterion_ids.length && Object.values(row.assessments).every(cell => !cell.finding_indices.length);
 }
 export function attributionSlots(result: AttributionResult): RewriteItem[] {

@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { errorText, redact, REMOTE_MODELS, type InputDownload } from "@eval/contracts";
 import { hasLiveRunOwner, readJson, replaceInputSnapshot, runLock, writeJson } from "@eval/data";
 import { RemoteInputs } from "@eval/runtime/client";
-import { runPipeline, sameRows, nextPublicationAt, type AutomationState } from "@eval/automations";
+import { automationDateSelected, runPipeline, sameRows, nextPublicationAt, type AutomationState } from "@eval/automations";
 import { publishSnapshot, syncMongoDay } from "./automation-publication.js";
 import { startAutomationDashboard } from "./automation-dashboard.js";
 import { loadAutomationConfig } from "./automation-config.js";
@@ -45,9 +45,11 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     console.log(JSON.stringify({ ...state, ownerAlive: await hasLiveRunOwner(config.stateDirectory) }, null, 2));
     return;
   }
+  const selected = (date: string) => automationDateSelected(config, date);
+  if (command === "retry" && values.date && !selected(values.date))
+    throw new Error("Cannot retry a date outside the configured automation range: " + values.date);
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   const remote = new RemoteInputs(config.sourceUrl, config.requestTimeoutMs);
-  const selected = (date: string) => date >= config.fromDate && (!config.throughDate || date <= config.throughDate);
   if (command === "check") {
     const days = (await remote.discover(AbortSignal.timeout(config.requestTimeoutMs))).filter((day) => selected(day.date));
     const entries = [];
@@ -150,7 +152,10 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       let available = false;
       for (const job of Object.values(current.jobs)) {
         const view = await monitor(job);
-        if (view.summary) { job.summary = view.summary; available = true; }
+        if (view.summary) {
+          if (selected(job.date)) job.summary = view.summary;
+          available = true;
+        }
         dates.push(view.progress);
       }
       if (config.publishProgress && available)
@@ -192,7 +197,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       await logger.error(error, { component: "automations", event: "progress_failed" });
     }
     await writeJson(file, state);
-    process.exitCode = controller.signal.aborted ? 130 : state.pollError || ["retry", "uncertain"].includes(state.publication?.status ?? "") || Object.values(state.jobs).some((job) =>
+    process.exitCode = controller.signal.aborted ? 130 : state.pollError || ["retry", "uncertain"].includes(state.publication?.status ?? "") || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
       job.download !== "ready" || ["retry", "blocked", "pending"].includes(job.evaluation) ||
       job.mongo?.status === "retry") ? 2 : 0;
   } finally {

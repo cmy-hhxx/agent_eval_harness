@@ -55,15 +55,20 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("publication requires nonempty text for the verdict and every comparison cell", () => {
-  const row: JsonObject = { comparison_id: "comparison", decision_basis: { comparisons: [{}, {}] }, rewritten: { rewrites: [
+test("publication requires nonempty verdict and content rewrites while recorded resource cells keep their original text", () => {
+  const findings = { a_fast: { finding_indices: [0] }, b_fast: { finding_indices: [0] } };
+  const row: JsonObject = { comparison_id: "comparison", decision_basis: { comparisons: [
+    { criterion_ids: ["r1"], assessments: findings },
+    { criterion_ids: [], assessments: { a_fast: { finding_indices: [] }, b_fast: { finding_indices: [] } } },
+    { criterion_ids: [], assessments: findings },
+  ] }, rewritten: { rewrites: [
     { id: "verdict.A__vs__B.reason", text: "双方都好：给出相同结果。" },
     { id: "comparison.0.A.summary", text: "给出了结果。" },
     { id: "comparison.0.B.summary", text: "给出了结果。" },
-    { id: "comparison.1.A.summary", text: "来源明确。" },
-    { id: "comparison.1.B.summary", text: "  " },
+    { id: "comparison.2.A.summary", text: "来源明确。" },
+    { id: "comparison.2.B.summary", text: "  " },
   ] } };
-  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /comparison\.1\.B\.summary/);
+  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /comparison\.2\.B\.summary/);
   const items = (row.rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
   items[4].text = "来源明确。";
   assertCompleteComparisonRewrite(row, ["B", "A"]);

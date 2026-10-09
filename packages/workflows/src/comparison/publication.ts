@@ -3,7 +3,8 @@ import type { Checkpoint } from "./codec.js";
 import type { EvalConfig } from "./types.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import statisticsLogSchema from "../../../../schemas/workflow/statistics-log.schema.json" with { type: "json" };
-import { verdictSlotId } from "./commentary.js";
+import { isResourceRow, verdictSlotId } from "./commentary.js";
+import type { ComparisonResult } from "./types.js";
 import { expandComparisonPairs } from "./input.js";
 
 const logAjv = new Ajv2020({ allErrors: true });
@@ -17,9 +18,12 @@ export function assertStatisticsLog(record: unknown): asserts record is JsonObje
 
 /** Check the actual merged JSONL text before publishing a complete comparison rewrite. */
 export function assertCompleteComparisonRewrite(row: JsonObject, labels: string[]): void {
-  const comparisons = (row.decision_basis as { comparisons: unknown[] }).comparisons;
+  const comparisons = (row.decision_basis as ComparisonResult["decision_basis"]).comparisons;
   const required = labels.flatMap((first, index) => labels.slice(index + 1).map((second) => verdictSlotId(first, second)));
-  comparisons.forEach((_, index) => labels.forEach((label) => required.push(`comparison.${index}.${label}.summary`)));
+  comparisons.forEach((comparison, index) => {
+    if (Array.isArray(comparison.criterion_ids) && isResourceRow(comparison)) return;
+    labels.forEach((label) => required.push(`comparison.${index}.${label}.summary`));
+  });
   const rewritten = row.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
   const filled = new Set(rewritten?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
   const missing = required.filter((id) => !filled.has(id));

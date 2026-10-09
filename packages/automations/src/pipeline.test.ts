@@ -7,7 +7,42 @@ import { runPipeline, nextPublicationAt, PUBLICATION_INTERVAL_MS, type Automatio
 const day = (date: string, rows = 1): RemoteDay => ({ date, rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, rows])) as RemoteDay["rows"] });
 const fresh = (): AutomationState => ({ id: "test", sourceUrl: "http://test", status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} });
 const summary: EvaluationSummary = { stages: { rewrite: { total: 2, completed: 2, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 } }, skipped: 0, issues: 0, readyComparisons: 1 };
-const options = { pollMs: 100, refreshMs: 100_000, retryMs: 10, maxEvaluationAttempts: 2 };
+const options = { fromDate: "2026-09-01", pollMs: 100, refreshMs: 100_000, retryMs: 10, maxEvaluationAttempts: 2 };
+
+test("date boundaries preserve saved history across recovery, polling and every delivery lane", async (t) => {
+  const state = fresh(), historical = "2026-10-07", current = "2026-10-08", future = "2026-10-09";
+  await runPipeline(state, { ...options, once: true }, services({
+    discover: async () => [day(historical), day(current), day(future)],
+  }), t.signal);
+  for (const date of [historical, future]) {
+    const job = state.jobs[date];
+    job.evaluation = "pending";
+    job.download = "installing";
+    job.mongo = { status: "running", attempts: 1, nextAt: 0 };
+    job.evaluationError = "saved failure";
+  }
+  state.jobs[current].evaluation = "pending";
+  state.publication = { status: "pending", attempts: 0, nextAt: 0 };
+  const preserved = [historical, future].map(date => structuredClone(state.jobs[date]));
+  const recovered: string[] = [], downloaded: string[] = [], evaluated: string[] = [], uploaded: string[] = [];
+  let published = 0;
+  await runPipeline(state, { ...options, fromDate: current, throughDate: current, once: true }, services({
+    discover: async () => [day("2026-10-06"), day(historical, 2), day(current, 2), day(future, 2)],
+    recover: async job => { recovered.push(job.date); return "interrupted"; },
+    sync: async job => { downloaded.push(job.date); return { changed: true, bytes: 10 }; },
+    evaluate: async job => { evaluated.push(job.date); return { status: "completed", summary }; },
+    syncMongo: async job => { uploaded.push(job.date); return { inputs: 8, comparisons: 1, inserted: 1, updated: 0 }; },
+    publish: async snapshot => {
+      published++;
+      assert.deepEqual([historical, future].map(date => snapshot.jobs[date]), preserved,
+        "cumulative statistics still receive the unchanged history");
+    },
+  }), t.signal);
+  for (const calls of [recovered, downloaded, evaluated, uploaded]) assert.deepEqual([...new Set(calls)], [current]);
+  assert.equal(published, 1);
+  assert.equal(state.jobs["2026-10-06"], undefined, "out-of-range discoveries are not registered");
+  assert.deepEqual([historical, future].map(date => state.jobs[date]), preserved);
+});
 
 test("settled historical dates refresh daily while recent dates and changed counts remain responsive", async (t) => {
   const now = Date.parse("2026-10-08T16:05:00Z"); // October 9 in Beijing.

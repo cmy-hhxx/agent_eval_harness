@@ -58,6 +58,8 @@ export interface AutomationState {
   jobs: Record<string, AutomationJob>;
 }
 export interface PipelineOptions {
+  fromDate: string;
+  throughDate?: string;
   pollMs: number;
   refreshMs: number;
   retryMs: number;
@@ -78,6 +80,9 @@ export interface PipelineServices {
 }
 export const sameRows = (a: RemoteDay["rows"] | undefined, b: RemoteDay["rows"]) =>
   !!a && REMOTE_MODELS.every((model) => a[model] === b[model]);
+
+export const automationDateSelected = (options: Pick<PipelineOptions, "fromDate" | "throughDate">, date: string) =>
+  date >= options.fromDate && (!options.throughDate || date <= options.throughDate);
 
 function refreshInterval(job: AutomationJob, now: number, recentInterval: number): number {
   const day = 24 * 60 * 60_000;
@@ -102,7 +107,8 @@ export async function runPipeline(
     return next;
   };
   const backoff = (attempt: number) => Math.min(options.retryMs * 2 ** Math.min(attempt - 1, 10), 30 * 60_000);
-  for (const job of Object.values(state.jobs)) {
+  const activeJobs = () => Object.values(state.jobs).filter(job => automationDateSelected(options, job.date));
+  for (const job of activeJobs()) {
     delete job.sourceReady;
     if (!job.adopted && services.recover) {
       try {
@@ -155,9 +161,9 @@ export async function runPipeline(
 
   async function poll() {
     try {
-      const days = await services.discover(activeSignal);
+      const days = (await services.discover(activeSignal)).filter(day => automationDateSelected(options, day.date));
       const ready = new Set(days.map((day) => day.date));
-      for (const job of Object.values(state.jobs)) job.sourceReady = ready.has(job.date);
+      for (const job of activeJobs()) job.sourceReady = ready.has(job.date);
       const failures: string[] = [];
       for (const day of days) {
         let job = state.jobs[day.date];
@@ -378,7 +384,7 @@ export async function runPipeline(
         polling = guarded(poll(), () => { polling = undefined; });
       // Let the first catalog check settle before an upload can pin stale inputs.
       if (polls === 0) { await polling; continue; }
-      const jobs = Object.values(state.jobs).sort((a, b) => a.date.localeCompare(b.date));
+      const jobs = activeJobs().sort((a, b) => a.date.localeCompare(b.date));
       if (services.publish && !state.publication) {
         state.publication = { status: "pending", attempts: 0, nextAt: nextPublicationAt(now) };
         await save();
