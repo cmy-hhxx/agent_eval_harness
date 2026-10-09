@@ -1,6 +1,7 @@
 import type { PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
 import type { RewriteResult } from "@eval/agents/rewrite";
 import type { TaskData } from "./types.js";
+import { sourceSlots } from "./commentary.js";
 
 export function sourceRewriteTasks(tasks: PlannedTask[], sourceTaskId: string): PlannedTask[] {
   return tasks.filter(task => task.stage === "rewrite" && (task.data as TaskData).rewriteOf!.taskId === sourceTaskId);
@@ -19,8 +20,11 @@ export function acceptedRewrites<T extends Pick<SubmissionReceipt, "acceptedAt">
 export function acceptedRewriteProjection(state: RunState, sourceTaskId: string) {
   const accepted = acceptedRewrites(state.manifest.tasks, state.receipts, sourceTaskId);
   if (!accepted.length) return undefined;
+  const source = (accepted[0]!.task.data as TaskData).rewriteOf!;
+  const slots = new Set(sourceSlots(source.stage, state.receipts[sourceTaskId]!.evaluation, "all").map(item => item.id));
   const rewrites = new Map<string, RewriteResult["rewrites"][number]>(), owners = new Map<string, string>();
   for (const { task, receipt } of accepted) for (const item of (receipt.evaluation as RewriteResult).rewrites) {
+    if (!slots.has(item.id)) continue;
     rewrites.set(item.id, item);
     owners.set(item.id, task.id);
   }

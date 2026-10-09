@@ -104,7 +104,7 @@ for (const objective of [false, true])
           task_analysis: structuredClone(receipts.get("criteria")!.evaluation) as ComparisonResult["task_analysis"],
           ranking: [[aFast], [bFast]],
           assessments: {
-            [aFast]: { meets_core: true, core_failure_refs: [], summary: `候选${aFast}与候选${bFast}相比，候选${aFast}更完整。` },
+            [aFast]: { meets_core: true, core_failure_refs: [], summary: `【候选${aFast}】与【候选${bFast}】相比，【候选${aFast}】更完整。` },
             [bFast]: {
               meets_core: false, core_failure_refs: ["r1"],
               summary: `候选${bFast}结果错误。`,
@@ -113,8 +113,8 @@ for (const objective of [false, true])
           decision_basis: {
             tradeoff: "候选B的优点不能抵消候选A的优势。",
             comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [aFast], assessments: {
-              [aFast]: { status: "met", evidence_status: "established", summary: `候选${aFast}给出正确结果。`, finding_indices: [0] },
-              [bFast]: { status: "unmet", evidence_status: "established", summary: `候选${bFast}结果错误。`, finding_indices: [0] },
+              [aFast]: { status: "met", evidence_status: "established", summary: `【候选${aFast}】给出正确结果。`, finding_indices: [0] },
+              [bFast]: { status: "unmet", evidence_status: "established", summary: `【候选${bFast}】结果错误。`, finding_indices: [0] },
             } }],
             decisive_findings: [
               { candidate: aFast, finding_index: 0 },
@@ -165,7 +165,7 @@ for (const objective of [false, true])
           `${displayA}与${displayB}相比，${displayA}更完整。`,
         );
         const fullNarrative = structuredClone(result);
-        fullNarrative.decision_basis.tradeoff = `候选${aFast}正确完成核心计算，候选${bFast}结果错误。`.repeat(6);
+        fullNarrative.decision_basis.tradeoff = `【候选${aFast}】正确完成核心计算，【候选${bFast}】结果错误。`.repeat(6);
         validateEvaluation(task, snapshots, fullNarrative, emptyAudit(), dependencies);
         const expanded = comparisonRow(snapshots, task, fullNarrative, receipts, {
           a_fast: "A组Fast", b_fast: "B组Fast",

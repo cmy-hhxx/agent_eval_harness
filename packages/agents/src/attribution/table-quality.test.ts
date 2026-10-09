@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AgentRequest, ToolAudit } from "@eval/contracts";
 import { ValidationError } from "@eval/contracts";
-import { parseTraceTables, resolveEvidence, type TableCheckResult } from "@eval/tools";
+import { parseTraceTables, type TableCheckResult } from "@eval/tools";
 import { attributionProfile } from "./index.js";
 import { attributionTableChecks, attributionTablePlan, attributionTableReview } from "./table-review.js";
 import type { AttributionResult } from "./types.js";
@@ -47,6 +47,20 @@ test("citation markup does not create a code/name table conflict", () => {
   const final = data.tables.find(table => table.message_index === 2)!;
   assert.match(final.rows[0].evidence.quote, /电科思仪\[\^1\]/u);
   attributionProfile.validate!(data.request, data.result, data.audit);
+});
+
+test("a first-pass semantic resolution can explain a full name or letter-case difference without inventing a problem", () => {
+  const data = fixture("| 代码 | 名称 |\n|---|---|\n| 588000.SH | 华夏上证科创板50成份ETF |"), raw = data.request.sources.answer.value as { messages: { content: string }[] };
+  raw.messages[1].content = "| 基金代码 | 基金简称 |\n|---|---|\n| 588000.SH | 华夏科创50etf |";
+  const checks = attributionTableChecks(raw, INPUT_ID, 2);
+  Object.assign(data.request.input.answer as object, { table_check_results: checks });
+  const row = checks[0].rows[0];
+  data.result.table_resolutions = [{ table_id: checks[0].answer_table_id, row_index: row.row_index, outcome: "supported",
+    reason: "代码588000.SH一致，来源使用基金简称，回答使用全称，ETF大小写不改变对象。",
+    evidence: [row.answer.evidence, ...row.sources.map(source => source.evidence)] }];
+  attributionProfile.validate!(data.request, data.result, data.audit);
+  assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
+  assert.deepEqual(data.result.findings, []);
 });
 
 function resolutionFixture(messages: Record<string, unknown>[], quote: string,
@@ -169,7 +183,6 @@ test("unparsed or unrelated source formats leave every actual entity answer row 
     const review = attributionTableReview(data.request, data.result);
     assert.deepEqual(review.errors, []);
     assert.deepEqual(review.concerns, [], "program format limits must not force a factual verdict or repeat source review");
-    assert.deepEqual(review.confirmed_conflicts, []);
     assert.deepEqual({ raw, result: data.result, audit: data.audit }, before);
     const hidden = structuredClone(data.request);
     (hidden.input.answer as { table_check_results: TableCheckResult[] }).table_check_results = [];
@@ -197,17 +210,13 @@ test("the request schema requires table results and permits only declared doubt 
   assert(validate.errors?.some(error => error.keyword === "enum" && error.instancePath.endsWith("/status")));
 });
 
-test("verified table conflicts cannot disappear from attribution findings", () => {
+test("unresolved literal differences remain advisory without forcing a problem finding or rejecting submission", () => {
   const data = fixture();
-  rejects(data, "table_conflict_unreported");
-  const feedback = attributionTableReview(data.request, data.result).errors.find((item) => item.code === "table_conflict_unreported")!;
-  const suggestions = (feedback.expected as { suggested_evidence: { reference: { evidence_id: string }; quote: string }[] }).suggested_evidence;
-  assert(suggestions.length > 1);
-  for (const suggestion of suggestions) {
-    assert.equal(Object.hasOwn(suggestion, "evidence_id"), false);
-    assert.deepEqual(Object.keys(suggestion.reference), ["evidence_id"]);
-    assert.equal(resolveEvidence(data.request.sources.answer.value as { messages: unknown[] }, suggestion.reference, "answer", data.audit, "/evidence", INPUT_ID).quote, suggestion.quote);
-  }
+  attributionProfile.validate!(data.request, data.result, data.audit);
+  const review = attributionTableReview(data.request, data.result);
+  assert.deepEqual(review.errors, []);
+  assert.equal(review.concerns.length, 2);
+  assert(review.concerns.every(item => item.kind === "unresolved_conflict"));
 });
 
 test("corrected entity pairs, case-insensitive exchanges and a missing suffix are not falsely accused", () => {
@@ -227,17 +236,16 @@ test("explicitly different exchanges remain conflicting for the same six-digit c
   const data = fixture("| 代码 | 名称 |\n|---|---|\n| 301689.SH | 电科思仪 |\n| 920748.SZ | 路桥信息 |");
   const checks = (data.request.input.answer as { table_check_results: TableCheckResult[] }).table_check_results;
   assert.deepEqual(checks[0].summary, { matched: 0, conflict: 2, unverified: 0, ambiguous: 0 });
-  rejects(data, "table_conflict_unreported");
+  assert.equal(attributionTableReview(data.request, data.result).concerns.length, 2);
 });
 
-test("source truncation triggers review without manufacturing a confirmed problem", () => {
+test("source truncation records uncertainty without manufacturing a confirmed problem", () => {
   const data = fixture("| 代码 | 名称 |\n|---|---|\n| 301689.SZ | 电科思仪 |\n| 123456.SZ | 未展示的标的 |");
   attributionProfile.validate!(data.request, data.result, data.audit);
   const review = attributionTableReview(data.request, data.result);
   assert.equal(review.errors.length, 0);
   assert.deepEqual(review.concerns.map(item => [item.kind, item.table_id, item.row_index]),
     [["unverified", data.tables[1].table_id, 1]]);
-  assert.deepEqual(review.confirmed_conflicts, []);
   assert.match(review.concerns.map(concern => concern.reason).join(" "), /不证明答案错误/);
 });
 
@@ -245,7 +253,6 @@ test("an explicit unknown cell is not mistaken for an asserted code without a so
   const data = fixture("| 代码 | 公司名称 |\n|---|---|\n| 301689.SZ | 电科思仪 |\n| 待核实 | 来源未展示标的 |");
   attributionProfile.validate!(data.request, data.result, data.audit);
   assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
-  assert.deepEqual(attributionTableReview(data.request, data.result).confirmed_conflicts, []);
 });
 
 test("a conflict can be accepted when both original rows support an explicit problem", () => {
@@ -268,19 +275,17 @@ test("a conflict can be accepted when both original rows support an explicit pro
   }));
   attributionProfile.validate!(data.request, data.result, data.audit);
   assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
-  assert.deepEqual(attributionTableReview(data.request, data.result).confirmed_conflicts,
-    data.tables[1].rows.map((_, row_index) => ({ table_id: data.tables[1].table_id, row_index, finding_indices: [row_index] })));
 });
 
-test("independent review can resolve a row from a literal tool source outside Markdown tables", () => {
+test("either attribution pass can resolve a row from a complete tool source outside Markdown tables", () => {
   const source = "另一标的的股票代码为123456.SZ。";
   for (const field of ["content", "output", "result"]) {
     const data = resolutionFixture([{ role: "tool", type: "function_call_output", name: "lookup", [field]: source }], source);
     assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
     attributionProfile.validate!(data.request, data.result, data.audit);
     delete data.request.input.review_context;
-    rejects(data, "table_resolution_invalid");
-    assert.deepEqual(attributionTableReview(data.request, data.result, { accepted: true }).concerns, []);
+    attributionProfile.validate!(data.request, data.result, data.audit);
+    assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
   }
 });
 
@@ -296,8 +301,11 @@ test("supported resolutions cannot discard a known conflicting source row", () =
   const source = "电科思仪的股票代码为688255.SH。";
   const data = resolutionFixture([{ role: "tool", name: "lookup", content: source }], source,
     "| 代码 | 名称 |\n|---|---|\n| 688255.SH | 电科思仪 |\n| 920748.BJ | 路桥信息 |", 0);
-  data.result.table_resolutions![0].evidence.push({ ...data.tables[0].rows[0].evidence });
   rejects(data, "table_resolution_unsupported");
+  data.result.table_resolutions![0].evidence.push({ ...data.tables[0].rows[0].evidence });
+  data.result.table_resolutions![0].reason = "已对照早期行和后续原始查询，后续更正了该标的代码；保留两处原文以供核查。";
+  assert.deepEqual(attributionTableReview(data.request, data.result).errors, []);
+  assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);
 });
 
 test("source resolutions preserve the complete returned leaf and ignore input or metadata", () => {

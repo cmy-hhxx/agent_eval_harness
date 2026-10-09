@@ -19,6 +19,9 @@ function pair() {
     { type: "final_answer", role: "assistant", content: BODY, metadata: BODY }] };
   const material: ComparisonInput["candidates"][string] = { candidate_id: ID, final_message_index: 2,
     answer_generation: { available: true, message_type: "llm_turn", matches_captured_final: true, message_index: 1, captured_final_message_index: 2,
+      input_contexts: [{ message_index: 1, path: "/input_messages",
+        total_chars: (() => { const range = selectEvidenceSource(evidenceSources(raw.messages[1]), "/input_messages")!; return range.end - range.start; })(),
+        read_request: { message_index: 1, path: "/input_messages", offset: 0, max_chars: 16000 } }],
       blocks: [{ path: "/output/0/content", total_chars: BODY.length }] },
     deferred_final_material: [], original_answer_timing: { finish_seconds: null }, original_answer_usage: { total_tokens: null, issues: [] } };
   const generation = evidenceId(ID, 1, "text", "/output/0/content", 0, BODY.length),

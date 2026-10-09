@@ -1,4 +1,4 @@
-import { answerTurnContexts, cite, evidenceSources } from "@eval/tools";
+import { answerTurnContexts, cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 import type { RawInput } from "./types.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -25,6 +25,12 @@ export interface AnswerGeneration {
   message_index: number;
   captured_final_message_index: number;
   matches_captured_final: boolean | null;
+  input_contexts: {
+    message_index: number;
+    path: string;
+    total_chars: number;
+    read_request: { message_index: number; path: string; offset: 0; max_chars: 16000 };
+  }[];
   blocks: {
     path: string;
     total_chars: number;
@@ -39,7 +45,8 @@ export function getAnswerGeneration(raw: RawInput, inputId: string, finalIndex?:
   const capturedIndex = finalIndex ?? raw.messages.findLastIndex(message => message.type === "final_answer");
   if (!Number.isInteger(capturedIndex) || capturedIndex < 0 || capturedIndex >= raw.messages.length ||
     raw.messages[capturedIndex]!.type !== "final_answer") return null;
-  const messageIndex = answerTurnContexts(raw, capturedIndex).at(-1)?.message_index;
+  const contexts = answerTurnContexts(raw, capturedIndex);
+  const messageIndex = contexts.at(-1)?.message_index;
   if (messageIndex === undefined) return null;
   if (raw.messages.slice(messageIndex + 1, capturedIndex).some(message => message.role === "user" || message.type === "user_question")) return null;
   const message = raw.messages[messageIndex]!, output = message.output;
@@ -64,13 +71,20 @@ export function getAnswerGeneration(raw: RawInput, inputId: string, finalIndex?:
   const matches = finalBlocks && finalBlocks.every(text => typeof text === "string")
     ? finalBlocks.length === knownBlocks.length && finalBlocks.every((text, index) => text === knownBlocks[index]!.text) : null;
   return { available: true, message_type: "llm_turn", message_index: messageIndex,
-    captured_final_message_index: capturedIndex, matches_captured_final: matches, blocks: knownBlocks };
+    captured_final_message_index: capturedIndex, matches_captured_final: matches, blocks: knownBlocks,
+    input_contexts: contexts.map(context => {
+      const range = selectEvidenceSource(evidenceSources(raw.messages[context.message_index]), context.path)!;
+      return { ...context, total_chars: range.end - range.start,
+        read_request: { ...context, offset: 0, max_chars: 16000 } };
+    }) };
 }
 
 /** Strictly equal text is already shown as the captured final; every block remains independently readable. */
 export function answerGenerationPresentation(generation: AnswerGeneration | null, candidate: string) {
   if (!generation) return null;
-  return { ...generation, blocks: generation.blocks.map(({ text, ...block }) => ({ ...block,
+  return { ...generation, input_contexts: generation.input_contexts.map(context => ({ ...context,
+    read_request: { ...context.read_request, candidate },
+  })), blocks: generation.blocks.map(({ text, ...block }) => ({ ...block,
     ...(generation.matches_captured_final === true ? {} : { text }),
     read_request: { ...block.read_request, candidate },
   })) };

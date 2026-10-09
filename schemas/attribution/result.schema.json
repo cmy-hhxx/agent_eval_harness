@@ -71,7 +71,7 @@
     },
     "standard_conflict": {
       "type": "boolean",
-      "description": "仅在已核实本方工具返回或独立来源支持回答值、而导入标准与之冲突（口径不同或上游数据不一致）时填 true；模型自身错误、口径未核实或标准已正确应用时填 false。"
+      "description": "标准答案是否存在已证实的错误；默认 false，证据门槛见评审指引。"
     },
     "task_analysis": {
       "type": "object",
@@ -281,7 +281,7 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "description": "有证据支持的责任组件；使用确切工具名或模型自身推理，逐个在 definition 中说明责任；根因尚未定位时为空数组，在 definition 说明已知来源和待查原因。"
+                "description": "有证据支持的责任组件；使用确切工具名、上下文组装与传递或模型自身推理，逐个在 definition 中说明责任；根因尚未定位时为空数组，说明已确认的具体问题及影响。"
               },
               "label": {
                 "type": "string",
@@ -510,7 +510,7 @@
     "table_resolutions": {
       "type": "array",
       "maxItems": 100,
-      "description": "Only independent review may resolve a specific unresolved table row using source evidence.",
+      "description": "An evidence-backed judgment of an unresolved table row.",
       "items": {
         "type": "object",
         "additionalProperties": false,

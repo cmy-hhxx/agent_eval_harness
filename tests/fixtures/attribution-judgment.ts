@@ -1,10 +1,10 @@
 import type { AgentRequest,TaskAnalysis } from "@eval/contracts";
-import { attributionNormDirectory,numericReferenceDirectory,type AttributionResult,type ProblemSubmission } from "@eval/agents/attribution";
-import { normSelection,problemSubmission } from "./attribution-submission.js";
+import { attributionNormDirectory,numericReferenceDirectory,type AttributionResult,type ProblemProposal } from "@eval/agents/attribution";
+import { normSelection } from "./attribution-submission.js";
 type FixtureFinding = Omit<AttributionResult["findings"][number], "finding_id" | "problem" | "evidence" | "assessment"> & {
   norm_index?: number | null;
   assessment: Omit<AttributionResult["findings"][number]["assessment"], "requirement_index"> & { requirement_index?: number | null };
-  problem?: ProblemSubmission;
+  problem?: ProblemProposal;
   evidence: { evidence_id: string }[];
 };
 
@@ -23,8 +23,7 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
     return { ...strength,
       ...(finding.dimension === "instruction_following" ? { norm_index: normSelection(norms, finding), assessment: observed }
         : { assessment: { ...observed, requirement_index } }),
-      ...(finding.type === "problem" ? { problem: problemSubmission(finding.problem!, finding.evidence,
-        (request.input.answer as { catalog: { message_index: number; name?: string | null; type: string; role?: string }[] }).catalog) } : {}),
+      ...(finding.type === "problem" ? { problem: structuredClone(finding.problem!) } : {}),
       evidence: refs(finding.evidence) };
   };
   const draft = {

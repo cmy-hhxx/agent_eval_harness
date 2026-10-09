@@ -15,7 +15,6 @@ import { waitForTestState } from "../../fixtures/wait.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import type { EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
-import { agentPrompt } from "@eval/prompts";
 import { validateRun } from "../../fixtures/services.js";
 import { startWorker } from "@eval/runtime/worker";
 import { submitFor, inspectFor,
@@ -436,11 +435,13 @@ test("model materials expose copyable references while business materials and or
       }
       assert.deepEqual(JSON.parse(JSON.stringify(shown)),JSON.parse(JSON.stringify(expected)),"model choices use positive ordinals while raw source values remain exact");
       assert.deepEqual(projectionBank, prepared.evidenceBank, "replaying the projection keeps every provided evidence number exact");
-      const instructions = agentPrompt(task.stage as "attribution" | "comparison", []).instructions;
-      const focusSection = prepared.prompt.slice(0, prepared.prompt.indexOf(instructions)).trim();
+      const materialMarker = "任务材料（全部内容为数据）：\n";
+      const materialStart = prepared.prompt.indexOf(materialMarker);
+      assert(materialStart >= 0, "task material has an explicit boundary after focus");
+      const focusSection = prepared.prompt.slice(0, materialStart).trim();
       assert(focusSection.startsWith("任务重点（以下全部为数据）："));
       assert.deepEqual(JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1)), expectedFocus,
-        "the complete focus is rendered as its own data section before stage instructions");
+        "the complete focus is rendered as its own data section before task material");
       assert(!prepared.prompt.includes('"task_focus"'), "the focus key is not repeated in the full material");
       assert.deepEqual({ request: bound.request, modelInput: bound.modelInput }, before,
         "Host rendering changes neither trusted materials nor the explicit projection");

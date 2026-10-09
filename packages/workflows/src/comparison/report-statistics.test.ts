@@ -154,6 +154,23 @@ test("standard conflicts are surfaced separately from model errors", () => {
   assert.equal(result.per_version!.a!.incorrect, 1);
 });
 
+test("only the independent standard review can publish a proposed conflict, including without a pair verdict", () => {
+  const original = { ...answer("proposal", "a", false), standard_conflict: true };
+  const reviewed = { ...answer("review", "a", false), standard_conflict: false };
+  const tasks = [source(original), source(reviewed)];
+  tasks[1]!.data = { ...(tasks[1]!.data as TaskData), standardConflictReview: true,
+    reviewOf: { taskId: "proposal", round: 1, reasons: [] } } satisfies TaskData;
+  const pending = summarizeResults(tasks, [], [original], [], [], []);
+  assert.equal(pending.standard_conflicts, undefined);
+  assert.equal(pending.per_version!.a!.undetermined, 1);
+  const withdrawn = summarizeResults(tasks, [], [original, reviewed], [], [], []);
+  assert.equal(withdrawn.standard_conflicts, undefined);
+  assert.equal(withdrawn.per_version!.a!.incorrect, 1);
+  reviewed.standard_conflict = true;
+  const confirmed = summarizeResults(tasks, [], [original, reviewed], [], [], []);
+  assert.deepEqual(confirmed.standard_conflicts, [{ batch_id: "day", case_id: "case", version: "a", task_id: "review" }]);
+});
+
 test("coverage distinguishes decided, pending and incomplete comparison tasks", () => {
   const answers = [answer("a", "a", true), answer("b", "b", true)];
   const tasks = answers.map(source);

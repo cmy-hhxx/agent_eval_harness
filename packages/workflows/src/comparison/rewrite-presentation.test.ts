@@ -32,6 +32,45 @@ test("Workflow binds ordered text to original slot identities and rejects missin
   assert.throws(()=>registry.resolve(binding,{texts:draft.texts.slice(1)},emptyAudit()),/数量必须与槽位一致/);
 });
 
+test("Rewrite receives real names with the original responsibility and resource values when blind positions reverse", () => {
+  for (const sample of [
+    {
+      blind: "【候选B】未验证历史时点；【候选A】用时8.654秒、15,388 tokens，【候选B】用时10.242秒、34,804 tokens。",
+      real: "A组Fast未验证历史时点；B组Fast用时8.654秒、15,388 tokens，A组Fast用时10.242秒、34,804 tokens。",
+    },
+    {
+      blind: "【候选A】准确列出3,253.60万元和5,012.24万元两笔成交价；【候选B】把5,122.43万元评估值写成实际作价。【候选A】用时8.519秒、14,301 tokens。",
+      real: "B组Fast准确列出3,253.60万元和5,012.24万元两笔成交价；A组Fast把5,122.43万元评估值写成实际作价。B组Fast用时8.519秒、14,301 tokens。",
+    },
+  ]) {
+    const result = comparisonResult();
+    result.decision_basis.tradeoff = sample.blind;
+    const binding = bindRewrite("comparison", result, { A: "B组Fast", B: "A组Fast" });
+    const original = binding.request.input.items as RewriteItem[];
+    const shown = binding.modelInput!.items as RewriteItem[];
+    assert(original[0].text.includes(sample.real));
+    assert(shown[0].text.includes(sample.real));
+    assert(!JSON.stringify(shown).includes("【候选"));
+    assert.equal(result.decision_basis.tradeoff, sample.blind);
+  }
+});
+
+test("comparison rewrite preserves the blind identity map beside unmodified candidate prose", () => {
+  const result = comparisonResult();
+  result.decision_basis.tradeoff = "候选B耗时4.627秒，快于候选A的10.143秒；候选A总用量2,718个token，低于候选B的19,077个。基金A/B类保持不变。";
+  const binding = bindRewrite("comparison", result, { A: "B组Fast", B: "A组Fast" });
+  const items = binding.request.input.items as RewriteItem[];
+  const mapping = JSON.stringify({ 候选A: "B组Fast", 候选B: "A组Fast" });
+  assert(items[0].text.includes(result.decision_basis.tradeoff));
+  assert.equal(items[0].label, "B组Fast与A组Fast的偏好及理由");
+  assert(items.every(item => item.context?.split("\n")[0] === mapping));
+  assert.equal(items[1].label, "计算结果 · B组Fast的逐项点评（只改写本格）");
+  assert(items[1].context!.includes("同项对照，不能写成本格事实：A组Fast："));
+  assert(items[1].forbiddenPrefixes!.includes("A组Fast："));
+  const shown = binding.modelInput!.items as RewriteItem[];
+  assert(shown.every(item => item.context?.split("\n")[0] === mapping));
+});
+
 test("Rewrite projects protocol seeds in verdicts and readonly cells without changing exact slot metadata", () => {
   const result = comparisonResult();
   result.ranking = [["A"], ["B"]];
@@ -72,7 +111,8 @@ test("all attribution rewrite slots preserve protocol attributes and figures in 
   const binding = bindRewrite("attribution", result);
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 22);
+  assert.equal(shown.length, 12);
+  assert(original.every(item => !item.id.includes(".assessment.")));
   assert(shown.every(item => item.text === "＜vis-html ref=html-7b1ac344 /＞保留24.2%、15.1%；x＜0且x＞5；已有＜visual＞。"));
   assert(original.every(item => item.text === text));
   assert(shown.every(item => !Object.hasOwn(item,"id")));

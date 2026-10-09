@@ -36,7 +36,7 @@ test("shared Criteria source combinations keep instruction provenance in either 
     assert.deepEqual(common.applies_to, []);
     const source_indices = normFirst ? [common.source_index, 1] : [1, common.source_index];
     const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices, text: "用JSON给出计算结果。" },
-      { source_indices: [2], text: "核查本项要求的实际交付。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
+      { source_indices: [1], text: "核查计算结果的准确性。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
     criteriaProfile.validate!(criteriaRequest, task, audit);
     assert.deepEqual(task.requirements[0]!.applies_to, []);
     input.task_analysis = task;
@@ -316,14 +316,14 @@ test("source blockers are program-owned after a single structural repair", () =>
  registry.validate({ agent:"comparison",profile:"default",request:data.request },result,audit);
 });
 
-test("source-review schema requires typed scope and keeps unresolved or invalid material blocking", () => {
+test("source-review schema keeps invalid material blocking without deciding literal differences", () => {
   const data = pair(), validator = new Ajv2020({ strict: false }).compile(comparisonProfile.requestSchema);
   Object.assign(data.request.input, { source_review: { A: [{ kind: "unverified", reason: "未确认的行。", requires_review: false }] } });
   assert(validator(data.request.input), JSON.stringify(validator.errors));
   for (const kind of ["unresolved_conflict", "invalid_material"]) {
     const input = structuredClone(data.request.input) as unknown as ComparisonInput;
     input.source_review!.A[0].kind = kind as "unresolved_conflict" | "invalid_material";
-    assert.equal(validator(input), false);
+    assert.equal(validator(input), kind !== "invalid_material");
     input.source_review!.A[0].requires_review = true;
     assert(validator(input), JSON.stringify(validator.errors));
   }

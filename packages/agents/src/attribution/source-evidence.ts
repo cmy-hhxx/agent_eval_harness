@@ -29,7 +29,8 @@ export function referenceMaterialIssues(request: AgentRequest): ValidationIssue[
       continue;
     }
     ids.add(source.id);
-    if (material.question !== object(request.input.answer)?.question)
+    if (typeof material.question !== "string" || material.question.replace(/\s+/gu, "") !==
+      String(object(request.input.answer)?.question ?? "").replace(/\s+/gu, ""))
       issues.push(fail(`${path}/question`, "peer 事实材料必须属于同一个原问题", material.question));
     if (material.original_user_timestamp !== originalUserTimestamp({ messages }))
       issues.push(fail(`${path}/original_user_timestamp`, "peer 时间必须保留原末条 user 消息 timestamp，不得用评测时间或自由文本代替", material.original_user_timestamp));
@@ -49,7 +50,6 @@ function sourceFor(request: AgentRequest, source: unknown, path: string) {
     throw new ValidationError([fail(path, "正式 foreign 证据只能指向本复核 reference_materials 中登记的 peer 来源", source)]);
   return { key: source as string, entry };
 }
-const correctnessPath = (path: string) => /^\/?correctness_evidence(?:\/|\[|$)/u.test(path);
 /** Select a source solely from the complete program-generated ID, never a model-provided source label. */
 function sourceForReference(request: AgentRequest, ref: EvidenceReference, path: string) {
   if (Object.hasOwn(ref, "source")) throw new ValidationError([fail(path,
@@ -65,10 +65,6 @@ function sourceForReference(request: AgentRequest, ref: EvidenceReference, path:
 }
 export function resolveAttributionEvidence(request: AgentRequest, ref: EvidenceReference, audit: ToolAudit, path: string): Evidence {
   const selected = sourceForReference(request, ref, path);
-  if (selected.key !== "answer" && correctnessPath(path)) throw new ValidationError([{
-    category: "evidence", code: "evidence_final_required", path, candidate: selected.key,
-    message: "对错及 numeric_checks.actual 的证据必须是本方最终回答，peer 事实证据不能冒充本方 actual", actual: ref,
-  }]);
   const evidence = resolveEvidence(selected.entry.value as { messages: unknown[] }, ref, selected.key, audit, path, selected.entry.id);
   return selected.key === "answer" ? evidence : { ...evidence, source: selected.key, source_input_id: selected.entry.id };
 }
@@ -139,7 +135,7 @@ export function correctnessEvidenceScopeIssues(request: AgentRequest, evidence: 
   const issues: ValidationIssue[] = [];
   if (evidence.length && evidence.every(item => item !== undefined) && !evidence.some(actual)) issues.push({
     category: "evidence", code: "evidence_final_required", path: "/correctness_evidence", candidate: "answer",
-    message: `对错证据束须至少引用本方最终消息 ${finalIndex} 的实际交付；本方工具和规范只能作为辅助事实。`,
+    message: `对错证据束须至少引用本方最终消息 ${finalIndex} 的实际交付；工具、规范和已登记的 peer 原始事实只能作为辅助依据。`,
     expected: finalIndex,
   });
   if (Array.isArray(numericChecks)) numericChecks.forEach((entry, index) => {

@@ -5,8 +5,7 @@ import resultSchema from "../../../../schemas/comparison/result.schema.json" wit
 import submissionSchema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import verificationSubmissionSchema from "../../../../schemas/comparison/verification-submission.schema.json" with { type: "json" };
 import { validateEvaluation, comparisonFinalImageIssues, comparisonDeferredFinalIssues } from "./validate.js";
-import { resolveComparison } from "./resolve.js";
-import { comparisonSlotChoices } from "./slots.js";
+import { resolveComparison, comparisonSubmissionSchema } from "./resolve.js";
 import type { ComparisonInput } from "./types.js";
 import { comparisonIssueContext } from "./submission-feedback.js";
 import { resolveVerification, validateVerification, validateMaterialInspection, inspectionSchema, modelInspectionSchema, resolveMaterialInspection, inspectionMatchContext } from "./verification.js";
@@ -24,14 +23,11 @@ export const comparisonProfile: AgentProfile = {
 
   requestSchema,
   submissionSchema,
-  modelSubmissionSchema(request) {
-    const schema = structuredClone(submissionSchema), choices = comparisonSlotChoices(request);
-    Object.assign(schema.properties.comparisons, { minItems: choices.length, maxItems: choices.length });
-    return schema;
-  },
+  modelSubmissionSchema: comparisonSubmissionSchema,
   evidenceSelections: true,
   resultSchema,
   ...agentPrompt("comparison", toolNames),
+  jsonStringSubmission: true,
   toolNames,
   validate: validateEvaluation,
   validateSubmission: (request, _draft, audit) => [

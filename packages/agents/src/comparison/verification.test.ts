@@ -67,7 +67,10 @@ test("program check scope preserves complete confirmed generation and captured c
   source.value = { messages: [{ role: "user", content: "计算2+2" }, { type: "llm_turn", input_messages: [{ role: "user", content: "计算2+2" }],
     output: [{ role: "assistant", content: blocks }], metadata: "不属于回答的旁注" }, { type: "final_answer", role: "assistant", content: "4。" }] };
   input.candidates.A!.final_message_index = 2;
-  input.candidates.A!.answer_generation = { available: true, message_type: "llm_turn", matches_captured_final: false,
+  input.candidates.A!.answer_generation = { available: true,
+    input_contexts: [{ message_index: 1, path: "/input_messages",
+      total_chars: (() => { const range = selectEvidenceSource(evidenceSources((source.value as { messages: unknown[] }).messages[1]), "/input_messages")!; return range.end - range.start; })(),
+      read_request: { message_index: 1, path: "/input_messages", offset: 0, max_chars: 16000 } }], message_type: "llm_turn", matches_captured_final: false,
     message_index: 1, captured_final_message_index: 2, blocks: blocks.map((block, index) => ({ path: `/output/0/content/${index}/text`, total_chars: block.text.length, text: block.text,
       reference: { evidence_id: evidenceId(source.id, 1, "text", `/output/0/content/${index}/text`, 0, block.text.length) },
       read_request: { message_index: 1, path: `/output/0/content/${index}/text`, offset: 0, max_chars: 16000 } })) };
@@ -100,7 +103,10 @@ test("unavailable generation keeps real final scope and metadata cannot imperson
   const wire = projectEvidenceReferences(inspectionSubmission(request, checks(request)), audit.evidenceBank = []);
   const canonical = registry.resolveInspection(binding, wire, audit) as unknown as ComparisonMaterialInspection;
   assert.deepEqual(canonical.checks[0]!.answer_evidence, [{ evidence_id: evidenceId(source.id, 2, "text", "/content", 0, 5) }]);
-  input.candidates.A!.answer_generation = { available: true, message_type: "llm_turn", matches_captured_final: true, message_index: 1,
+  input.candidates.A!.answer_generation = { available: true,
+    input_contexts: [{ message_index: 1, path: "/input_messages",
+      total_chars: (() => { const range = selectEvidenceSource(evidenceSources((source.value as { messages: unknown[] }).messages[1]), "/input_messages")!; return range.end - range.start; })(),
+      read_request: { message_index: 1, path: "/input_messages", offset: 0, max_chars: 16000 } }], message_type: "llm_turn", matches_captured_final: true, message_index: 1,
     captured_final_message_index: 2, blocks: [{ path: "/metadata/text", total_chars: 5, ...{ text: "2+2=4",
       reference: { evidence_id: evidenceId(source.id, 1, "text", "/metadata/text", 0, 5) },
       read_request: { message_index: 1, path: "/metadata/text", offset: 0, max_chars: 16000 } } }] };
@@ -359,7 +365,10 @@ test("canonical generation evidence must be proven final assistant prose, exclud
     output: [{ role: "assistant", content: generation }] }, { type: "llm_turn", input_messages: [{ role: "user", content: "独立规划" }],
     output: [{ role: "assistant", content: "planner" }] }, { type: "final_answer", role: "assistant", content: "4" }] };
   input.candidates.A!.final_message_index = 3;
-  input.candidates.A!.answer_generation = { available: true, message_type: "llm_turn", matches_captured_final: false, message_index: 1, captured_final_message_index: 3, blocks: [{ path: "/output/0/content", total_chars: generation.length }] };
+  input.candidates.A!.answer_generation = { available: true,
+    input_contexts: [{ message_index: 1, path: "/input_messages",
+      total_chars: (() => { const range = selectEvidenceSource(evidenceSources((source.value as { messages: unknown[] }).messages[1]), "/input_messages")!; return range.end - range.start; })(),
+      read_request: { message_index: 1, path: "/input_messages", offset: 0, max_chars: 16000 } }], message_type: "llm_turn", matches_captured_final: false, message_index: 1, captured_final_message_index: 3, blocks: [{ path: "/output/0/content", total_chars: generation.length }] };
   const raw = source.value as { messages: unknown[] }, value = checks(request), leaf = evidenceSources(raw.messages[1]).find(item => item.path === "/output/0/content")!;
   value.checks[0]!.answer_evidence = [{ evidence_id: cite(source.id, 1, leaf, 0, leaf.text.length).evidence_id }]; assert.doesNotThrow(() => inspected(request, value));
   const role = evidenceSources(raw.messages[1]).find(item => item.path === "/output/0/role")!;

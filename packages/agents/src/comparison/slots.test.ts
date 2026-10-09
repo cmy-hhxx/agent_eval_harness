@@ -70,6 +70,18 @@ test("fixed rows reject missing or extra positions and do not accept program-own
  const fresh=setup();Object.assign(fresh.draft.comparisons[0]!,{status:'met'});
  assert.throws(()=>fresh.registry.resolve(fresh.binding,fresh.draft,audit),/additional properties/);
 });
+test("direct resolution enforces the same row ownership as the model submission",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ input.candidates.A.original_answer_timing.finish_seconds=1;
+ const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+ const slots=comparisonSlots(f.request),criterion=slots.findIndex(slot=>slot.kind==='criterion'),resource=slots.findIndex(slot=>slot.kind==='resource');
+ const accepted=structuredClone(draft);
+ draft.comparisons[criterion]={importance:'medium'};
+ assert.throws(()=>comparisonProfile.resolve!(f.request,draft,audit),error=>error instanceof ValidationError&&
+  error.issues!.some(issue=>issue.path===`/comparisons/${criterion}/a_summary`));
+ Object.assign(accepted.comparisons[resource]!,{a_summary:'这不是资源数据。',b_summary:'这不是资源数据。'});
+ assert.throws(()=>comparisonProfile.resolve!(f.request,accepted,audit),/additional properties/);
+});
 test("source uncertainty cannot become a comparative advantage",()=>{
  const f=setup();f.request.input.attributions.B.criterion_assessments[0].evidence_status='uncertain';
  f.draft.comparisons[0]!.better_candidate='A';
@@ -83,7 +95,7 @@ test("only shared metrics can support a resource advantage",()=>{
  const slots=comparisonSlots(f.request),index=slots.findIndex(slot=>slot.kind==='resource');
  assert(index>=0);assert.deepEqual(comparisonSlotChoices(f.request)[index].advantage_candidates,[]);
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
- draft.comparisons[index]={importance:'medium',better_candidate:'A',a_summary:'完成用时2秒。',b_summary:'没有耗时数据。'};
+ draft.comparisons[index]={importance:'medium',better_candidate:'A'};
  assert.throws(()=>f.registry.resolve(f.binding,draft,audit),/双方同种有效指标/);
 });
 test("recorded resource metrics require a row even when both candidates use the same amount",()=>{
@@ -94,9 +106,8 @@ test("recorded resource metrics require a row even when both candidates use the 
  const slots=comparisonSlots(f.request),index=slots.findIndex(slot=>slot.kind==='resource');
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
  draft.comparisons[index]=null;
- assert.throws(()=>f.registry.resolve(f.binding,draft,audit),error=>error instanceof ValidationError&&
-  error.issues!.some(issue=>issue.code==='comparison_slot_required'));
- draft.comparisons[index]={importance:'low',better_candidate:null,a_summary:'完成耗时0秒，总用量0 tokens。',b_summary:'完成耗时0秒，总用量0 tokens。'};
+ assert.throws(()=>f.registry.resolve(f.binding,draft,audit));
+ draft.comparisons[index]={importance:'low',better_candidate:null};
  const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
  f.registry.validate(f.binding,result,audit);
  assert(result.decision_basis.comparisons.some(row=>row.aspect==='原始完成时长与用量'));
@@ -111,9 +122,34 @@ test("a cache anomaly does not hide valid total tokens or make their reporting m
  assert.deepEqual(slot.resource_metrics,{A:{finish_seconds:null,total_tokens:120},B:{finish_seconds:null,total_tokens:140}});
  assert.deepEqual(slot.comparable_metrics,['total_tokens']);
 });
-test("submission rows are flat and bounded without repeating full schemas for each slot",()=>{
+test("submission slots reuse typed row definitions and reserve resource prose for the program",()=>{
  const f=setup(),schema=comparisonProfile.modelSubmissionSchema!(f.request) as any;
- assert(!schema.properties.comparisons.prefixItems);
- assert.deepEqual(Object.keys(schema.properties.comparisons.items.properties).sort(),['a_summary','b_summary','better_candidate','importance']);
+ assert.deepEqual(schema.properties.comparisons.prefixItems,comparisonSlots(f.request).map(slot=>({$ref:`#/$defs/${slot.kind==='resource'?'resource':'commentary'}`})));
+ assert.deepEqual(Object.keys(schema.$defs.commentary.properties).sort(),['a_summary','b_summary','better_candidate','importance']);
+ assert.deepEqual(Object.keys(schema.$defs.resource.properties).sort(),['better_candidate','importance']);
  assert.equal(schema.properties.comparisons.minItems,comparisonSlots(f.request).length);
+});
+
+test("resource summaries preserve measured values and missing data independently of authored commentary",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ input.candidates.A.original_answer_timing.finish_seconds=16.652;
+ input.candidates.A.original_answer_usage.total_tokens=22264;
+ input.candidates.B.original_answer_timing.finish_seconds=10.706;
+ input.candidates.B.original_answer_usage.total_tokens=11599;
+ const index=comparisonSlots(f.request).findIndex(slot=>slot.kind==='resource');
+ const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+ draft.comparisons[index]={importance:'medium',better_candidate:'B'};
+ const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ const row=result.decision_basis.comparisons.find(row=>!row.criterion_ids.length)!;
+ assert.equal(row.assessments.A.summary,'完成耗时：16.652 秒；总 token：22264。');
+ assert.equal(row.assessments.B.summary,'完成耗时：10.706 秒；总 token：11599。');
+ assert.equal(row.importance,'medium'); assert.deepEqual(row.better_candidates,['B']);
+ Object.assign(draft.comparisons[index]!,{a_summary:'盘中报价并非当日收盘价。',b_summary:'节省91.9%。'});
+ assert.throws(()=>f.registry.resolve(f.binding,draft,audit),/additional properties/);
+ draft.comparisons[index]={importance:'low'};
+ input.candidates.B.original_answer_timing.finish_seconds=null;
+ input.candidates.B.original_answer_usage.total_tokens=null;
+ const missing=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ assert.equal(missing.decision_basis.comparisons.find(row=>!row.criterion_ids.length)!.assessments.B.summary,'完成耗时：无有效记录；总 token：无有效记录。');
 });

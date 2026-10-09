@@ -139,7 +139,7 @@
     },
     "standard_conflict": {
       "type": "boolean",
-      "description": "仅在已核实本方工具返回或独立来源支持回答值、而导入标准与之冲突（口径不同或上游数据不一致）时填 true；模型自身错误、口径未核实或标准已正确应用时填 false。"
+      "description": "默认 false。初评有原始披露或完整底层复算直接反证时填 true 提请复核，无须当时已看到对方答案；独立复核仅在双方最终所求结果一致且直接反证成立时保留 true。"
     },
     "image_observations": {
       "type": "array",
@@ -344,16 +344,6 @@
             ],
             "minimum": 1
           },
-          "model_responsible": {
-            "type": "boolean"
-          },
-          "tool_evidence_indices": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
           "label": {
             "type": "string",
             "minLength": 1
@@ -361,6 +351,15 @@
           "definition": {
             "type": "string",
             "minLength": 1
+          },
+          "component": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "明确选择实际出错的责任方：模型自身推理、上下文组装与传递或本方工具原名。引用正确来源不等于给来源记责；未定位填 []。"
           }
         },
         "required": [
@@ -373,10 +372,9 @@
           "evidence_status",
           "evidence_indices",
           "basis_index",
-          "model_responsible",
-          "tool_evidence_indices",
           "label",
-          "definition"
+          "definition",
+          "component"
         ]
       }
     }

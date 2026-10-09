@@ -19,9 +19,10 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).verificationOf, undefined);
     const schema = comparisonProfile.submissionSchema as any;
-    assert(schema.properties.comparisons.items.properties.a_summary);
-    assert(!schema.properties.comparisons.items.properties.source_review);
-    assert(!schema.properties.comparisons.items.properties.assessments);
+    assert(schema.$defs.commentary.properties.a_summary);
+    assert(schema.$defs.commentary.properties.b_summary);
+    assert(!schema.$defs.commentary.properties.source_review);
+    assert(!schema.$defs.commentary.properties.assessments);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 

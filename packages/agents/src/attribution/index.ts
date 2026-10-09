@@ -1,4 +1,5 @@
 import { agentPrompt } from "@eval/prompts";
+export { standardConflictReviewInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -18,7 +19,7 @@ export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact", "check_table",
+  "read_artifact",
 ];
 const prompt = agentPrompt("attribution", toolNames);
 export const attributionProfile: AgentProfile = {

@@ -21,7 +21,7 @@ const judgmentFixture = (result: AttributionResult = structuredClone(example.res
     return attributionJudgment(request, result);
   };
 
-test("an established standard mismatch must identify retrieval or reasoning responsibility", () => {
+test("a wrong answer stays wrong without forcing an unsupported model responsibility", () => {
   const request = structuredClone(example.request);
   request.input.ground_truth.value = "5";
   const result = structuredClone(example.result) as AttributionResult;
@@ -32,13 +32,11 @@ test("an established standard mismatch must identify retrieval or reasoning resp
   const finding = result.findings[0];
   finding.type = "problem";
   finding.problem = { component: [], label: "取数结果偏差", definition: result.correctness_reason };
-  const rejects = (action: () => unknown) => assert.throws(action, error => error instanceof ValidationError &&
-    error.issues!.some(issue => issue.code === "standard_mismatch_responsibility_required"));
-  rejects(() => attributionProfile.validate!(request, result, audit));
-  rejects(() => resolveJudgment(request, judgmentFixture(result, request), audit));
-  finding.problem.component = ["模型自身推理"];
   attributionProfile.validate!(request, result, audit);
-  resolveJudgment(request, judgmentFixture(result, request), audit);
+  const accepted = resolveJudgment(request, judgmentFixture(result, request), audit) as AttributionResult;
+  assert.equal(accepted.is_correct, false);
+  assert.equal(accepted.core_assessment.meets_core, false);
+  assert.deepEqual(accepted.findings[0].problem!.component, []);
 });
 
 
@@ -328,7 +326,7 @@ test("problem components must name a tool from the answer call chain", () => {
   attributionProfile.validate!(request, finding("Search"), audit);
   const multiple = finding("Search");
   multiple.findings[0]!.problem.component = ["Search", "FinQuery", "模型自身推理"];
-  assert.throws(() => attributionProfile.validate!(request, multiple, audit), /必须引用该工具/);
+  assert.throws(() => attributionProfile.validate!(request, multiple, audit), /必须引用本方对应工具/);
   multiple.findings[0]!.evidence.push(canonicalEvidence(INPUT_ID, 2, "查询失败"));
   attributionProfile.validate!(request, multiple, audit);
   multiple.findings[0]!.problem.component = [];
@@ -339,20 +337,20 @@ test("problem components must name a tool from the answer call chain", () => {
   }
   const unsupported = finding("FinQuery");
   unsupported.findings[0]!.evidence = [canonicalEvidence(INPUT_ID, 3, "2+2=4")];
-  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用该工具/);
+  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用本方对应工具/);
   unsupported.findings[0]!.evidence = [canonicalEvidence(INPUT_ID, 1, "检索超时")];
-  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用该工具/);
+  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用本方对应工具/);
   const suspected = finding("FinQuery") as AttributionResult;
   suspected.findings[0]!.assessment.evidence_status = "uncertain";
   suspected.findings[0]!.assessment.requirement_index = null;
   attributionProfile.validate!(request, suspected, audit);
   attributionProfile.validate!(request, { ...suspected, findings: [] }, audit);
-  assert.throws(() => attributionProfile.validate!(request, finding("search"), audit), /调用链中的工具名/);
+  assert.throws(() => attributionProfile.validate!(request, finding("search"), audit), /本方工具名/);
   attributionProfile.validate!(request, finding("模型自身推理"), audit);
   for (const component of ["Context Recall", "上下文召回", "检索阶段", "WebSearch", "NotATool"])
     assert.throws(
       () => attributionProfile.validate!(request, finding(component), audit),
-      /调用链中的工具名/,
+      /本方工具名/,
       component,
     );
 });
@@ -429,7 +427,7 @@ test("bound judgments cover applicable criteria while the program derives every 
     assert.equal(item.status, "not_applicable");
     assert.equal(item.evidence_status, "established");
     assert.deepEqual(item.evidence, []);
-    assert.equal(item.summary, "该判据的 applies_to 不包含当前候选，本候选不适用。");
+    assert.equal(item.summary, "这项要求不适用于本回答。");
   }
   assert.deepEqual(draft, before, "derived results do not modify the model submission");
   const formal = structuredClone(result);
@@ -563,7 +561,7 @@ test("incoming problem associations cannot coexist with established satisfaction
     .find(source => source.path === "/content")!;
   const normRef = { evidence_id: cite(INPUT_ID, 0, source, 0, source.text.length).evidence_id };
   const problem = { ...draft.findings[0]!, type: "problem" as const,
-    problem: { model_responsible: true, tool_evidence_indices: [], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
+    problem: { component: ["模型自身推理"], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
     evidence: [...draft.findings[0]!.evidence, normRef] };
   const submitted = { ...draft, findings: [problem] };
   const before = structuredClone({ request, submitted, audit });

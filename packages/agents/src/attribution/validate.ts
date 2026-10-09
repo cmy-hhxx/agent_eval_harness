@@ -14,9 +14,10 @@ import { attributionTableReview } from "./table-review.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 import { instructionEvidenceIssues, instructionSubmissionIssues } from "./instructions.js";
 import { submissionEvidenceIssues } from "./submission-evidence.js";
-import { correctnessEvidenceScopeIssues, foreignActualIssues, ownEvidence, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
+import { correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
+import { responsibilityComponent } from "./responsibility.js";
 
 interface Input {
   candidate_id: string;
@@ -47,18 +48,9 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
     : [];
 }
 
-function tableResolutionScopeIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
-  const value = object(draft);
-  if (!value || !Array.isArray(value.table_resolutions) || !value.table_resolutions.length) return [];
-  if ((request.input as { review_context?: unknown }).review_context) return [];
-  return [{ category: "decision", code: "table_resolution_without_review", path: "/table_resolutions",
-    message: "本任务没有 review_context，table_resolutions 必须为空数组；表格或代码疑点写入 problems 的 finding，不提交复核结论。",
-    actual: value.table_resolutions.length, expected: { table_resolutions: [] } }];
-}
-
 /** Business rules that can be checked before evidence references are resolved. */
 export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
-  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...tableResolutionScopeIssues(request, draft), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
+  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
     ...instructionSubmissionIssues(request, draft, audit)];
 }
 
@@ -301,24 +293,17 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
         : "正式结果中 type=strength 的 problem 必须为 null", finding.problem);
     if (finding.type === "problem" && !problem)
       issue("problem_required", `${location}/problem`, representation === "submission"
-        ? "type=problem 必须提交 problem 对象，填写 model_responsible、tool_evidence_indices、label、definition"
+        ? "type=problem 必须提交 problem 对象，填写 component、label、definition"
         : "type=problem 必须有包含 component、label、definition 的正式问题对象");
     if (!problem) return;
     if (typeof problem.label === "string" && !problem.label.trim())
       issue("problem_label_empty", `${location}/problem/label`, "问题名称不能为空");
     if (typeof problem.definition === "string" && !problem.definition.trim())
       issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
-    if (input.ground_truth.available && value.is_correct === false && value.standard_conflict !== true && finding.type === "problem" &&
-      finding.dimension === "correctness" && assessment?.evidence_status === "established" &&
-      (representation === "submission"
-        ? problem.model_responsible === false && Array.isArray(problem.tool_evidence_indices) && !problem.tool_evidence_indices.length
-        : strings(problem.component) && !problem.component.length))
-      issue("standard_mismatch_responsibility_required", `${location}/problem`,
-        "已确认标准不符的正确性问题必须归到对应取数、计算或结果校验逻辑，不能留空责任或写无法确定。核对本方请求与返回：有工具自身错误及传播证据才选择工具；其余归模型的取数与结果校验，不猜测具体底层故障。若已核实来源支持回答而与标准冲突，按事实标记 standard_conflict，不能强行把标准错误归责给回答或工具；其他独立错误仍逐项归因。");
     if (representation === "submission" || !strings(problem.component)) return;
     problem.component.forEach((component, componentIndex) => {
-      if (component !== "模型自身推理" && !tools.has(component))
-        issue("problem_component_not_tool", `${location}/problem/component/${componentIndex}`, "正式 problem.component 每项必须是该回答调用链中的工具名，或「模型自身推理」", component);
+      if (component !== "模型自身推理" && component !== "上下文组装与传递" && !tools.has(component))
+        issue("problem_component_invalid", `${location}/problem/component/${componentIndex}`, "正式 problem.component 必须是本方工具名、「上下文组装与传递」或「模型自身推理」", component);
     });
   });
   return errors;
@@ -328,7 +313,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as Input;
   const value = result as AttributionResult;
-  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...tableResolutionScopeIssues(request, result)];
+  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result")];
   repairErrors.push(...attributionTableReview(request, value).errors);
   repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
@@ -339,21 +324,14 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (value.has_standard_answer !== input.ground_truth.available)
     issue("standard_answer_mismatch", "/has_standard_answer", "has_standard_answer 必须与本题是否有标准答案一致", value.has_standard_answer, input.ground_truth.available);
   repairErrors.push(...numericLedgerIssues(request, value, "result"));
-  const toolMessages = new Set(["function_call", "function_call_output", "tool_call", "tool_result"]);
-  const tools = new Set(input.answer.catalog.flatMap((message) =>
-    message.name && (toolMessages.has(message.type) || message.role === "tool") ? [message.name] : [],
-  ));
-  const toolLocations = new Map(input.answer.catalog
-    .filter((message) => message.name && (toolMessages.has(message.type) || message.role === "tool"))
-    .map((message) => [message.message_index, message.name]));
   value.findings.forEach((finding, index) => {
     for (const component of finding.problem?.component ?? []) {
-      if (tools.has(component) &&
-        !finding.evidence.some((item) => ownEvidence(item) && toolLocations.get(item.message_index) === component))
+      if (component !== "模型自身推理" &&
+        !finding.evidence.some((item) => responsibilityComponent(request, item) === component))
         issue(
           "problem_component_evidence_missing",
           `/findings/${index}/evidence`,
-          "每个工具型 component 必须引用该工具的调用或返回证据，不能仅凭最终回答或其他工具定位根因",
+          "每个链路 component 必须引用本方对应工具或实际模型输入的证据，不能仅凭最终回答定位根因",
           component,
         );
     }

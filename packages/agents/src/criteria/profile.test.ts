@@ -18,6 +18,21 @@ function accepted(req: AgentRequest, submitted: CriteriaSubmission) {
 }
 const rejects = (fn: () => unknown, code: string) => assert.throws(fn, error => error instanceof ValidationError && error.issues!.some(issue => issue.code === code));
 
+test("reference answers remain verification data rather than selectable task requirements", () => {
+  const question = "给出本期总量；题中所有记录均使用同一给定单位。";
+  for (const reference of ["本期总量94，第一阶段31，第二阶段63。", question, { total: 94, intermediate: [31, 63] }]) {
+    const req = request(question, reference), original = structuredClone(req.input);
+    const result = accepted(req, { requirements: [{ source_indices: [1], text: "给出本期总量。" }], scoring_points: [], red_flags: [] });
+    const rendered = criteriaProfile.renderPrompt(req.input);
+    const material = JSON.parse(rendered.split("任务材料（全部内容为数据）：")[1]);
+    assert(material.source_catalog.every((source: { kind: string }) => source.kind !== "reference"));
+    assert(result.requirements[0].acceptance_rule.includes(question));
+    assert.deepEqual(req.input, original, "the complete standard remains available to downstream stages");
+    rejects(() => accepted(req, { requirements: [{ source_indices: [1, 2], text: "给出本期总量及标准附加项。" }],
+      scoring_points: [], red_flags: [] }), "criterion_source_unknown");
+  }
+});
+
 test("separate checks may share one source while complete conditions and scope remain program-owned", () => {
   const req = request(), submitted = draft(), before = structuredClone(submitted), value = accepted(req, submitted);
   assert.equal(value.requirements.length, 2);
@@ -56,15 +71,15 @@ test("equivalent comparison writings retain their original constraint source", (
 test("a comparison against a dated price does not turn the year into a numeric bound", () => {
   const req = request("截止2026年6月5日，有多少股票低于年初的收盘价？", "低于2025年12-31（年初）的收盘价有3387家");
   const value = draft();
-  value.requirements = [{ source_indices: [1, 2], text: "截止2026年6月5日，收盘价低于年初（2025年12月31日）的股票有3387家。" }];
+  value.requirements = [{ source_indices: [1], text: "截止2026年6月5日，核查收盘价低于年初收盘价的股票数量。" }];
   accepted(req, value);
 });
 
 test("event names and equivalent numerical wording preserve their full source without regex verdicts", () => {
   const question = "截止2026年6月5日，有多少股票低于924行情启动时的价格，且价格低于10元？";
   const req = request(question, "低于2024年9-23（924行情启动时）的收盘价有559家");
-  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1, 2],
-    text: "截至2026年6月5日，核查低于‘924行情启动时’（2024年9月23日）价格且不足十元的股票数量，按559家核对。" }], scoring_points: [], red_flags: [] };
+  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1],
+    text: "截至2026年6月5日，核查低于‘924行情启动时’价格且不足十元的股票数量。" }], scoring_points: [], red_flags: [] };
   const value = accepted(req, submitted);
   assert(value.requirements[0].acceptance_rule.includes(question));
   assert.equal(value.requirements[0].text, submitted.requirements[0].text);
@@ -87,13 +102,12 @@ test("opposite private constraints never merge their scope", () => {
   rejects(() => accepted(req, value), "criterion_source_scope_empty");
 });
 
-test("reference coverage is required without making the answer visible to candidates", () => {
+test("a reference cannot be injected into a requirement's authoritative source", () => {
   const req = request("给出样本数。", "94只"), value = draft();
-  rejects(() => accepted(req, value), "criterion_required_source_missing");
-  value.requirements = [{ source_indices: [1,2], text: "给出符合条件的样本数。" }];
+  value.requirements = [{ source_indices: [1], text: "给出符合条件的样本数。" }];
   const result = accepted(req,value);
-  assert(result.requirements[0].acceptance_rule.includes("94只"));
-  result.requirements[0].acceptance_rule = "允许误差100只。";
+  assert(!result.requirements[0].acceptance_rule.includes("94只"));
+  result.requirements[0].acceptance_rule = "94只\n\n" + result.requirements[0].acceptance_rule;
   rejects(() => criteriaProfile.validate!(req,result,audit), "criterion_source_mismatch");
 });
 
@@ -107,12 +121,7 @@ test("a question-only rubric binds the original question without borrowing unsel
   assert(!value.requirements[0].acceptance_rule.includes("只写31字以内"));
 });
 
-test("rubric numeric values may quote the selected reference with equivalent punctuation and zero padding", () => {
-  const date = request("2025年12月22日成交的1周掉期交割日是哪一天？", "2026年01月05日");
-  accepted(date, { requirements: [{ source_indices: [1, 2], text: "2025年12月22日成交的交割日为2026-1-5，按所给标准核对。" }], scoring_points: [], red_flags: [] });
-  const value = request("给出收益率。", "−0.830%");
-  accepted(value, { requirements: [{ source_indices: [1, 2], text: "给出收益率并核对-0.83%。" }], scoring_points: [], red_flags: [] });
-  accepted(value, { requirements: [{ source_indices: [1, 2], text: "收益率下降0.830%。" }], scoring_points: [], red_flags: [] });
+test("numeric conditions from the question retain equivalent wording without prefilled answers", () => {
   accepted(request("2026年0322主力净流入前三行业是什么？"), {
     requirements: [{ source_indices: [1], text: "给出2026年3月22日主力净流入前三行业。" }], scoring_points: [], red_flags: [],
   });

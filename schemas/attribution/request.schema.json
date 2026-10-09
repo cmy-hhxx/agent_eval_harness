@@ -998,7 +998,8 @@
             "message_index",
             "captured_final_message_index",
             "matches_captured_final",
-            "blocks"
+            "blocks",
+            "input_contexts"
           ],
           "properties": {
             "available": {
@@ -1058,6 +1059,60 @@
                         "minLength": 1
                       }
                     }
+                  },
+                  "read_request": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "message_index",
+                      "path",
+                      "offset",
+                      "max_chars"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "offset": {
+                        "const": 0
+                      },
+                      "max_chars": {
+                        "const": 16000
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "input_contexts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "message_index",
+                  "path",
+                  "total_chars",
+                  "read_request"
+                ],
+                "properties": {
+                  "message_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "total_chars": {
+                    "type": "integer",
+                    "minimum": 1
                   },
                   "read_request": {
                     "type": "object",

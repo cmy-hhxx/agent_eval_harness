@@ -1,5 +1,5 @@
 import { canonical, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { compareTraceTableRows, displayEvidence, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
+import { compareTraceTableRows, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
 import type { AttributionResult, Evidence } from "./types.js";
 import { ownEvidence } from "./source-evidence.js";
 
@@ -19,14 +19,6 @@ function sameCode(left: string, right: string): boolean {
   const a = pattern.exec(left), b = pattern.exec(right);
   return !!a && !!b && a[1] === b[1] && (!a[2] || !b[2] || a[2].toUpperCase() === b[2].toUpperCase());
 }
-function literalPairStatement(text: string, name: string, code: string): boolean {
-  text = entityText(text); name = entityText(name); code = entityText(code);
-  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const expression = new RegExp(`^(?:查询(?:结果|返回)\\s*[:：]\\s*)?${escape(name)}(?:的)?(?:股票|证券)?代码\\s*(?:为|是|[:：=])\\s*([A-Za-z0-9][A-Za-z0-9_.-]*?)[。.!]?$`, "u");
-  const match = expression.exec(text.trim());
-  return !!match && sameCode(match[1], code);
-}
-
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -133,8 +125,8 @@ export interface TableReviewConcern {
   reason: string;
 }
 
-/** Recompute from source records, never trust a model-supplied comparison verdict. */
-export function attributionTableReview(request: AgentRequest, result: AttributionResult, options: { accepted?: boolean } = {}) {
+/** Recompute evidence coverage; semantic equivalence is the agent's cited judgment. */
+export function attributionTableReview(request: AgentRequest, result: AttributionResult) {
   const raw = request.sources.answer.value as { messages: unknown[] };
   const inputId = request.sources.answer.id;
   const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
@@ -142,7 +134,6 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
   const fullChecks = plans.map(plan => compareTraceTableRows(raw, plan, inputId));
   const material = attributionTableChecks(raw, inputId, finalIndex);
   const errors: ValidationIssue[] = [], concerns: TableReviewConcern[] = [];
-  const confirmedConflicts: { table_id: string; row_index: number; finding_indices: number[] }[] = [];
   const provided = (request.input.answer as { table_check_results?: unknown }).table_check_results;
   if (!Array.isArray(provided) || canonical(provided) !== canonical(material)) {
     errors.push({ category: "evidence", code: Array.isArray(provided) ? "table_check_results_mismatch" : "table_check_results_missing",
@@ -156,10 +147,10 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
     const key = `${resolution.table_id}:${resolution.row_index}`;
     const planIndex = plans.findIndex(plan => plan.answer_table_id === resolution.table_id);
     const row = fullChecks[planIndex]?.rows.find(row => row.row_index === resolution.row_index);
-    if ((!options.accepted && !request.input.review_context) || !resolution.reason.trim() || resolutions.has(key) ||
+    if (!resolution.reason.trim() || resolutions.has(key) ||
       !row || rowStatus(row, plans[planIndex]) === "matched") {
       errors.push({ category: "evidence", code: "table_resolution_invalid", path: `/table_resolutions/${index}`,
-        message: "仅独立复核可提交给定表格行的核验结论，每行一次，不能绕过来源核对。" });
+        message: "只能提交已有疑点行的核验结论，每行一次，须解释并引用原始证据。" });
       continue;
     }
     resolutions.set(key, resolution);
@@ -173,12 +164,8 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
       const resolution = resolutions.get(`${plan.answer_table_id}:${row.row_index}`);
       let resolved = false;
       if (resolution) {
-        const nameColumn = plan.sources[0].key_columns[0].answer;
-        const codeColumn = plan.sources[0].value_columns[0].answer;
-        const name = row.answer.cells[nameColumn], code = row.answer.cells[codeColumn];
-        // A later positive statement can fill a missing source row, but cannot
-        // erase an already observed conflict. Keep each returned leaf intact.
-        const originalSupport = status === "unverified" && resolution.evidence.some(item => {
+        // Keep every compared row; do not decide aliases or source meaning with a text pattern.
+        const originalSupport = resolution.evidence.some(item => {
           const peer = item.source === undefined ? undefined : record((request.input.reference_materials as Record<string, unknown> | undefined)?.[item.source]);
           const source = item.source === undefined ? undefined : request.sources[item.source];
           const chosen = ownEvidence(item) ? { raw, finalIndex } : peer?.grader_only === true && source &&
@@ -186,7 +173,7 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
             Array.isArray(record(source.value)!.messages) && typeof peer.final_message_index === "number"
             ? { raw: source.value as { messages: unknown[] }, finalIndex: peer.final_message_index } : undefined;
           return !!chosen && item.message_index < chosen.finalIndex && independentReturnText(chosen.raw.messages, item.message_index).some(text =>
-            text.trim() === item.quote.trim() && literalPairStatement(text, name, code));
+            text.trim() === item.quote.trim() || row.sources.some(source => hasEvidence([item], source.evidence) && text.includes(item.quote)));
         });
         const completeEvidence = hasEvidence(resolution.evidence, row.answer.evidence) &&
           row.sources.every(source => hasEvidence(resolution.evidence, source.evidence));
@@ -209,19 +196,10 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         continue;
       }
       const findings = result.findings.filter(finding => finding.type === "problem" && supports(finding.evidence, row));
-      if (status === "conflict") {
-        const findingIndices = result.findings.flatMap((finding, index) => finding.type === "problem" &&
-          finding.assessment.evidence_status === "established" && supports(finding.evidence, row) ? [index] : []);
-        if (findingIndices.length) confirmedConflicts.push({ table_id: plan.answer_table_id,
-          row_index: row.row_index, finding_indices: findingIndices });
-      }
-      if (!findings.length) errors.push({ category: "evidence", code: "table_conflict_unreported", path: "/findings",
-        message: `${location}与来源存在字面对应冲突，须引用两侧原文在 finding 中说明事实、别名/范围或不确定性，不能遗漏。`,
-        expected: { status, suggested_evidence: [row.answer.evidence, ...row.sources.map(source => source.evidence)].map(displayEvidence) } });
       if (!resolved && (status === "ambiguous" || !findings.some(finding => finding.assessment.evidence_status === "established")))
         concerns.push({ kind: "unresolved_conflict", table_id: plan.answer_table_id, row_index: row.row_index,
           reason: `${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。` });
     }
   }
-  return { plans, errors, concerns, confirmed_conflicts: confirmedConflicts };
+  return { plans, errors, concerns };
 }

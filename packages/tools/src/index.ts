@@ -247,7 +247,6 @@ export const builtinTools: ExecutableTool[] = [
           throw new Error("本次工具输出上限无法容纳一个完整表格目录条目；请用 read_trace 读取目标消息");
         return result;
       }
-      if (args.message_index !== undefined) throw new Error("message_index 仅用于表格目录，核验直接使用 table_index");
       const request: TableCheckRequest = { answer_table_id: selectedTable(args.answer_table_index).table_id,
         sources: args.sources!.map(({ table_index, ...mapping }) => ({ ...mapping, table_id: selectedTable(table_index).table_id })) };
       const checked = compareTraceTableRows(raw, request, registeredInputId(ctx, args.candidate));
@@ -306,24 +305,25 @@ export const builtinTools: ExecutableTool[] = [
         source_offset?: number;
       };
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
-      const selected = selectEvidenceSource(sources, args.path);
+      const path = args.path || undefined;
+      const selected = selectEvidenceSource(sources, path);
       if (!selected) throw new Error("路径不存在；先省略 path 读取该消息，再选择真实字段路径");
       const { source, start, end: selectionEnd } = selected;
       const totalChars = selectionEnd - start;
-      if (args.path !== undefined && args.source_offset !== undefined) throw new Error("source_offset 仅用于整条消息的文本路径目录");
+      if (path !== undefined && (args.source_offset ?? 0) > 0) throw new Error("非零 source_offset 仅用于整条消息的文本路径目录，读取具体路径时使用正文 offset");
       const offset = args.offset ?? 0;
       if (offset > totalChars) throw new Error(`offset 超出当前来源长度 ${totalChars}，请使用上次返回的 next_offset`);
       const paths = sources.filter((item) => item.kind === "text");
       const sourceOffset = args.source_offset ?? 0;
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
-      const showDirectory = args.path === undefined;
+      const showDirectory = path === undefined;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
       const page = (end: number) => {
         const evidence = cite(registeredInputId(ctx, args.candidate), args.message_index, source, start + offset, start + end);
         const quotable = !!evidence.quote && !overlapsImagePlaceholder(source.text, start + offset, start + end);
         return {
           source: { kind: source.kind, path: source.path },
-          ...(args.path !== undefined ? { selection_path: args.path } : {}),
+          ...(path !== undefined ? { selection_path: path } : {}),
           evidence: quotable ? [displayEvidence(evidence)] : [],
           // Text is shown once, paired with its ID; image placeholders have no evidence ID.
           ...(!quotable ? { text: evidence.quote } : {}),

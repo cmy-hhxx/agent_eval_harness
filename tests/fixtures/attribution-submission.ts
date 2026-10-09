@@ -1,5 +1,5 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
-import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission, type ProblemProposal, type ProblemSubmission } from "@eval/agents/attribution";
+import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
@@ -30,19 +30,6 @@ export function normSelection(directory: NormChoice[], finding: AttributionResul
   throw new Error(`Fixture finding ${finding.finding_id} has no unique genuine norm owner: ${selected.map(item => item.norm_index).join(",")}`);
 }
 
-/** Invert known canonical fixture responsibility without treating other source citations as responsible. */
-export function problemSubmission(problem: ProblemProposal, evidence: AttributionResult["correctness_evidence"],
-  catalog: { message_index: number; name?: string | null; type: string; role?: string }[]): ProblemSubmission {
-  return { model_responsible: problem.component.includes("模型自身推理"),
-    tool_evidence_indices: problem.component.filter(component => component !== "模型自身推理").map(component => {
-      const index = evidence.findIndex(item => item.source === undefined && item.source_input_id === undefined &&
-        catalog.some(message => message.message_index === item.message_index && message.name === component &&
-          (["function_call", "function_call_output", "tool_call", "tool_result"].includes(message.type) || message.role === "tool")));
-      if (index < 0) throw new Error(`Fixture responsibility has no own selected evidence: ${component}`);
-      return index;
-    }), label: problem.label, definition: problem.definition };
-}
-
 /** Build the current model payload directly from a known formal fixture and its provided source directory. */
 export function attributionSubmission(request: AgentRequest, result: AttributionResult, audit: ToolAudit): AttributionSubmission {
   const bank=audit.evidenceBank??=[],images=new Map<number,string>();
@@ -70,9 +57,8 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
       status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
-      const observed=observation(row),problem=problemSubmission(row.problem!,row.evidence,
-        (request.input.answer as {catalog:{message_index:number;name?:string|null;type:string;role?:string}[]}).catalog);
-      return {...observed,impact:row.assessment.impact,...problem,tool_evidence_indices:problem.tool_evidence_indices.map(index=>observed.evidence_indices[index])};
+      const observed=observation(row),problem=structuredClone(row.problem!);
+      return {...observed,impact:row.assessment.impact,...problem};
     }),
     numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
       reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),

@@ -603,27 +603,29 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
     const submissionTools: Record<string, string> = {};
     const nudge = (await readFile(path.join(prompts, "shared/nudge.md"), "utf8")).trim();
     const evidenceGuide = (await readFile(path.join(prompts, "shared/evidence.md"), "utf8")).trim();
+    const commentary = (await readFile(path.join(prompts, "shared/commentary.md"), "utf8")).trim();
     for (const stage of ["criteria", "attribution", "comparison"]) {
       const system = (await readFile(path.join(prompts, stage, "default/system.md"), "utf8")).trim();
       const instruction = (await readFile(path.join(prompts, stage, "default/instructions.md"), "utf8")).trim();
-      systems[stage] = system;
       instructions[stage] = instruction;
       const task = plan.tasks.find((item) => item.stage === stage)!;
       const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
       const prepared = prepare(task, plan.inputs, dependencies);
-      assert.equal(prepared.evaluation.systemPrompt, system);
+      const evidenceInSystem = prepared.evaluation.toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name));
+      systems[stage] = system + "\n\n" + commentary + "\n\n" + instruction + (evidenceInSystem ? "\n" + evidenceGuide + "\n" : "");
+      assert.equal(prepared.evaluation.systemPrompt, systems[stage]);
       assert.equal(prepared.evaluation.submissionNudge, nudge);
-      if (stage === "criteria") assert(prepared.prompt.startsWith(instruction + "\n任务材料"));
+      if (stage === "criteria") assert(prepared.prompt.startsWith("任务材料（全部内容为数据）：\n"));
       else {
         assert(prepared.prompt.startsWith("任务重点（以下全部为数据）："));
-        assert(prepared.prompt.indexOf("计算2+2") < prepared.prompt.indexOf(instruction));
-        assert(prepared.prompt.includes(instruction + "\n" + evidenceGuide + "\n\n任务材料"));
+        assert(prepared.prompt.indexOf("计算2+2") < prepared.prompt.indexOf("任务材料（全部内容为数据）："));
+        assert(!prepared.prompt.includes(instruction), "stage instructions are sent once in the system prompt");
       }
       assert(prepared.prompt.includes("计算2+2"));
       assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
       for (const [name, description] of Object.entries(prepared.evaluation.toolDescriptions))
         assert.equal(description, (await readFile(path.join(prompts, "tools", `${name}.md`), "utf8")).trim());
-      const rules = system + "\n" + instruction;
+      const rules = prepared.evaluation.systemPrompt;
       submissionTools[stage] = prepared.evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
       assert(rules.includes(submissionTools[stage]));
       assert.deepEqual(Object.keys(prepared.evaluation.toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
@@ -632,9 +634,10 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
-        assert(rules.includes("numeric_checks.evidence_index"));
+        assert(rules.includes("numeric_checks"));
+        assert(rules.includes("evidence_index 选择本方最终回答中原值或缺失范围的证据编号"));
         assert(rules.includes("basis_index"));
-        assert(instruction.includes("读全材料，确定适用要求"));
+        assert(instruction.includes("完整原文直接引用"));
         assert(rules.includes("strengths") && rules.includes("problems"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
@@ -653,10 +656,12 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
         const rows = submission.properties.comparisons as any;
-        assert.equal(rows.items.type.includes("object"),true);
+        const rowDefinitions = (submission as any).$defs;
+        assert.equal(rowDefinitions.commentary.type.includes("object"),true);
         assert(rows.minItems>0);assert.equal(rows.maxItems,rows.minItems);
-        assert.deepEqual(rows.items.required,["importance","a_summary","b_summary"]);
-        assert(!rows.items.properties.assessments);
+        assert.deepEqual(rowDefinitions.commentary.required,["importance","a_summary","b_summary"]);
+        assert.deepEqual(rowDefinitions.resource.required,["importance"]);
+        assert(!rowDefinitions.commentary.properties.assessments);
 
       }
     }
@@ -742,7 +747,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
-      /调用链|具体工具|组件/,
+      /problem\.component|上下文组装与传递|模型自身推理/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

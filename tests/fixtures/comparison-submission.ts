@@ -46,6 +46,7 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
     : slot.criterion_ids.some(id => row.criterion_ids.includes(id)) || Object.entries(slot.finding_indices).some(([label,indices]) =>
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return null;
+   if (slot.kind === 'resource') return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null };
    return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,
     a_summary: row?.assessments.A?.summary ?? result.assessments.A.summary,
     b_summary: row?.assessments.B?.summary ?? result.assessments.B.summary };

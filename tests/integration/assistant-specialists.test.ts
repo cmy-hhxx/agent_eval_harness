@@ -217,7 +217,7 @@ test("incompatible accepted attributions are independently reassessed without ch
    const output = taskResult(options.spec);
    if (revised && options.spec.evaluation.id === "criteria")
     (output as CriteriaSubmission).requirements = [
-     { source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [2], text: "核对标准结果。" },
+     { source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [1], text: "核查计算结果的准确性。" },
     ];
    if (revised && options.spec.evaluation.id === "attribution")
     assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,

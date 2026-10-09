@@ -47,15 +47,8 @@ export interface CoreAssessment {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Evidence-backed responsible tools and/or 模型自身推理; definition explains each role; empty when responsibility is unresolved. */
+  /** Evidence-backed tools, 上下文组装与传递 and/or 模型自身推理; empty when responsibility is unresolved. */
   component: string[];
-  label: string;
-  definition: string;
-}
-/** Model choices bind responsibility to original selected evidence; canonical components are program-owned. */
-export interface ProblemSubmission {
-  model_responsible: boolean;
-  tool_evidence_indices: number[];
   label: string;
   definition: string;
 }
@@ -123,7 +116,7 @@ export interface AttributionSubmission {
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];
-  problems: (ObservationSubmission & ProblemSubmission & {impact:string})[];
+  problems: (ObservationSubmission & ProblemProposal & {impact:string})[];
   numeric_checks: {
     label: string; reference_index: number; actual: string | number | null; scale: string;
     mode: "rounded" | "exact"; evidence_index: number;

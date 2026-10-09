@@ -225,7 +225,12 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     assert.equal(calls, expectedCalls + 2);
     const afterItems = await rows(comparisonFile);
     const cells = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => item.id.startsWith("comparison."));
-    assert.equal(cells.length, (afterItems[0]!.decision_basis as any).comparisons.length * 2);
+    const comparisonRows = (afterItems[0]!.decision_basis as any).comparisons as {
+      criterion_ids: string[]; assessments: Record<string, { finding_indices: number[] }>;
+    }[];
+    const commentaryRows = comparisonRows.filter(row => row.criterion_ids.length > 0 ||
+      Object.values(row.assessments).some(assessment => assessment.finding_indices.length > 0));
+    assert.equal(cells.length, commentaryRows.length * 2);
     assert(cells.length > 0);
     assert(cells.every((item: any) => item.text.startsWith("精简：")));
     (afterItems[0]!.rewritten as any).rewrites = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => !item.id.startsWith("comparison."));

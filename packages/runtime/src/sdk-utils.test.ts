@@ -159,7 +159,7 @@ test("provider capabilities preserve explicit max reasoning and opt-out of devel
     assert.deepEqual(payload[field], [{ role: "system", content: "system contract" }, original[field]![1], original[field]![2]]);
   }
 });
-const evaluation = (toolNames: string[]) => ({ toolNames, outputSchema: { type: "object" }, fileSubmission: false });
+const evaluation = (toolNames: string[]) => ({ systemPrompt: "Exact rules", toolNames, outputSchema: { type: "object" }, fileSubmission: false });
 const request = () => ({
   model: model.model,
   input: [
@@ -180,7 +180,7 @@ test("both provider APIs retain the current inspection and final model schemas w
   const pathSchema = { type: "object", additionalProperties: false, required: ["path"],
     properties: { path: { type: "string", minLength: 1 } } };
   for (const api of ["openai-completions", "openai-responses"] as const) for (const fileSubmission of [false, true]) {
-    const contract = { toolNames: ["inspect_material"], fileSubmission, inspectionSchema, outputSchema };
+    const contract = { systemPrompt: "Exact rules", toolNames: ["inspect_material"], fileSubmission, inspectionSchema, outputSchema };
     const before = structuredClone(contract);
     const history = [{ role: "user", content: "Original facts" },
       { role: "assistant", content: JSON.stringify({ detail: {}, text: 'quoted "text"\\path\nline' }) }];
@@ -205,6 +205,10 @@ test("evaluation caching changes only request controls, preserving content and g
   const { prompt_cache_retention: _retention, ...expected } = before;
   assert.deepEqual(result, {
     ...expected, prompt_cache_key: "evaluation", prompt_cache_options: { mode: "explicit" },
+    input: [{ role: "developer", content: [
+      { type: "input_text", text: "Exact rules", prompt_cache_breakpoint: { mode: "explicit" } },
+      { type: "input_text", text: " and attempt workspace" },
+    ] }, before.input[1]],
     max_output_tokens: 8192, parallel_tool_calls: false,
   });
   const another = request();
@@ -227,7 +231,25 @@ test("material-reading tasks and submission repairs retain multi-turn history ca
     const before = structuredClone(payload.input);
     const result = transformPayload(payload, model, evaluation([])) as Record<string, unknown>;
     assert.deepEqual(result.prompt_cache_options, { mode: "implicit" });
-    assert.deepEqual(result.input, before);
+    const input = result.input as { content?: unknown }[];
+    assert.deepEqual(input.slice(1), before.slice(1), "task and tool history stay verbatim");
+    assert.equal((input[0].content as { text: string }[]).map(part => part.text).join(""),
+      before[0].content, "splitting the fixed prefix preserves all system text");
+  }
+});
+
+test("cache boundaries preserve the complete system text, roles and multimodal history", () => {
+  for (const role of ["developer", "system"]) {
+    const first = { role, content: "Exact rules\n\n<cwd>\n/attempt/unique\n</cwd>" };
+    const image = { role: "user", content: [{ type: "input_image", image_url: "data:image/png;base64,eA==" }] };
+    const payload = { ...request(), input: [first, image] };
+    const before = structuredClone(payload);
+    const result = transformPayload(payload, model, evaluation([])) as Record<string, unknown>;
+    const input = result.input as { role: string; content: unknown }[];
+    assert.equal(input[0].role, role);
+    assert.equal((input[0].content as { text: string }[]).map(block => block.text).join(""), before.input[0].content);
+    assert.deepEqual(input.slice(1), before.input.slice(1));
+    assert.deepEqual(transformPayload(payload, model, evaluation([])), result, "reapplying controls is idempotent");
   }
 });
 

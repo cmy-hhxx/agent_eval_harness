@@ -101,7 +101,7 @@ export function providerConfig(config: ModelConfig) {
 export function transformPayload(
   value: unknown,
   config: ModelConfig,
-  evaluation?: Pick<EvaluationSpec, "toolNames" | "outputSchema" | "inspectionSchema" | "fileSubmission" | "jsonStringSubmission">,
+  evaluation?: Pick<EvaluationSpec, "systemPrompt" | "toolNames" | "outputSchema" | "inspectionSchema" | "fileSubmission" | "jsonStringSubmission">,
   activeNames?: readonly string[],
 ): unknown {
   const payload = object(value);
@@ -131,6 +131,17 @@ export function transformPayload(
       (config.api === "openai-completions" ? object(object(value).function) : object(value)).name,
     )));
   if (evaluation && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
+    // The SDK appends an attempt-specific workspace after the fixed instructions.
+    // Cache the exact common prefix without removing or changing that suffix.
+    const first = Array.isArray(payload.input) ? object(payload.input[0]) : {};
+    if (["system", "developer"].includes(String(first.role)) && typeof first.content === "string" &&
+      evaluation.systemPrompt && first.content.startsWith(evaluation.systemPrompt)) {
+      const suffix = first.content.slice(evaluation.systemPrompt.length);
+      first.content = [
+        { type: "input_text", text: evaluation.systemPrompt, prompt_cache_breakpoint: { mode: "explicit" } },
+        ...(suffix ? [{ type: "input_text", text: suffix }] : []),
+      ];
+    }
     // Cache accounting belongs to the evaluation workload, not an ephemeral SDK session.
     payload.prompt_cache_key = "evaluation";
     const initialRequest = Array.isArray(payload.input) && payload.input.every((item) =>

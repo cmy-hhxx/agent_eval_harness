@@ -157,6 +157,8 @@ export interface TaskData {
   criteriaScope?: string;
   /** Attribution reassessment lineage; accepted source receipts remain unchanged. */
   reviewOf?: { taskId: string; round: number; reasons: string[] };
+  /** One independent evidence check before a proposed standard conflict reaches consumers. */
+  standardConflictReview?: true;
   /** User-selected semantic checks, applied equally to the case's candidate answers. */
   reviewQuestions?: string[];
   /** A primary comparison may request one bounded attribution pass for unaligned material observations. */

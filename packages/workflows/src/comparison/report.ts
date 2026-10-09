@@ -158,7 +158,9 @@ export function summarizeResults(
       answer(identity.batch_id, identity.case_id, version).references.add(source);
   }
   const currentSources = new Map<string, { tasks: Set<string>; inputs: Set<string> }>();
-  for (const task of tasks) if (task.stage === "attribution") {
+  const proposed = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
+    .map(task => (task.data as TaskData).reviewOf!.taskId));
+  for (const task of tasks) if (task.stage === "attribution" && !proposed.has(task.id)) {
     const candidate = (task.data as TaskData).candidates.A;
     const key = answerKey(candidate.batch_id, candidate.case_id, candidate.version);
     let source = currentSources.get(key);
@@ -203,7 +205,7 @@ export function summarizeResults(
       diagnostics.push({ metric: "correctness", code: "conflicting_attribution_conclusions", batch_id: value.batch_id,
         case_id: value.case_id, version: value.version, task_ids: selected.map((row) => row.task_id), values: [...conclusions] });
     }
-    for (const row of value.rows.filter((item) => item.standard_conflict === true)) {
+    for (const row of selected.filter((item) => item.standard_conflict === true)) {
       standardConflicts.push({ batch_id: value.batch_id, case_id: value.case_id, version: value.version, task_id: row.task_id });
       diagnostics.push({ metric: "standard", code: "standard_conflict", batch_id: value.batch_id,
         case_id: value.case_id, version: value.version, task_ids: [row.task_id] });
@@ -346,7 +348,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
     comparisons.push(row);
     receipt.exported = { id: String(row.comparison_id), row };
-    const view = polishComparisonRow(row, task, names, commentary);
+    const view = polishComparisonRow(row, task, commentary);
     const analysis = view.task_analysis as ComparisonResult["task_analysis"];
     const reviews = view.evaluations as Record<
       string,

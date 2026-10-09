@@ -186,8 +186,11 @@ test("public judgment bindings keep global indices and separate blind originals 
     const label = stage === "attribution" ? "answer" : "A";
     assert.equal(focus.answers[label]!.question_timestamp, "2026-09-24T22:07:25.270Z");
     assert.equal(focus.answers[label]!.final_answer, "A 完整最终回答。");
-    const prompt = agentPrompt(stage, []).renderPrompt(shown);
-    assert(prompt.indexOf(JSON.stringify(focus.question)) < prompt.indexOf(agentPrompt(stage, []).instructions));
+    const profile = agentPrompt(stage, []);
+    const prompt = profile.renderPrompt(shown);
+    assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
+    assert(prompt.indexOf(JSON.stringify(focus.question)) >= 0);
+    assert(!prompt.includes(profile.instructions), "stage instructions are not repeated in task material");
     assert(prompt.indexOf(JSON.stringify(focus.question)) < prompt.indexOf(JSON.stringify(focus.answers[label]!.final_answer)),
       "the focus question precedes the duplicated complete answer");
     assert(prompt.includes(analysis.requirements[1]!.text));

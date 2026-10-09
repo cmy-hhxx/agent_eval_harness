@@ -1,12 +1,18 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { schemaIssues, ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { comparisonText } from "@eval/prompts";
+import { comparisonText, comparisonResourceText } from "@eval/prompts";
 import schema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import { criterionAppliesToPair } from "./pair-scope.js";
-import { comparisonSlots, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonSlots, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
-const validator = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+/** Model-facing and local validation share the same program-owned row identities. */
+export function comparisonSubmissionSchema(request: AgentRequest) {
+  const result = structuredClone(schema), slots = comparisonSlots(request);
+  Object.assign(result.properties.comparisons, { minItems: slots.length, maxItems: slots.length,
+    prefixItems: slots.map(slot => ({ $ref: `#/$defs/${slot.kind === "resource" ? "resource" : "commentary"}` })) });
+  return result;
+}
 
 /** Preserve source core context; failure refs include only proven requirements common to this pair. */
 export function comparisonCoreFailureRefs(input: ComparisonInput, candidate: string): string[] {
@@ -35,13 +41,11 @@ export function pendingComparison(request: AgentRequest, summaries: Record<strin
 }
 
 export function resolveComparison(request: AgentRequest, draft: unknown): ComparisonResult {
+  const validator = new Ajv2020({ allErrors: true, strict: false }).compile(comparisonSubmissionSchema(request));
   if (!validator(draft)) throw new ValidationError(schemaIssues(validator.errors, draft));
   const value = draft as unknown as ComparisonSubmission, input = request.input as unknown as ComparisonInput;
   const preference = value.preference ?? null;
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
-  if (value.comparisons.length !== slots.length) throw new ValidationError([{ category: "decision", code: "comparison_slot_count",
-    path: "/comparisons", actual: value.comparisons.length, expected: slots.length,
-    message: `comparisons 须按 comparison_slots 的同一顺序填写恰好 ${slots.length} 行；每行填写双方 summary、importance 和 better_candidate，不提交关联 ID 或索引。` }]);
   const reviews = requiredSourceReviews(request);
   if (reviews.length) return pendingComparison(request, Object.fromEntries(labels.map(label => [label, { summary: label === "A" ? value.a_summary : value.b_summary }])), reviews);
   const rowIssues: ValidationIssue[] = [];
@@ -60,7 +64,8 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       better_candidates: betterCandidate ? [betterCandidate] : [],
       assessments: Object.fromEntries(labels.map(label => {
         const state = comparisonSlotCellState(input,label,slot);
-        return [label, { summary: state.status === "not_applicable" ? comparisonText("not_applicable") : (label === "A" ? row.a_summary : row.b_summary),
+        return [label, { summary: slot.kind === "resource" ? comparisonResourceText(comparisonResourceMetrics(input,label))
+          : state.status === "not_applicable" ? comparisonText("not_applicable") : (label === "A" ? row.a_summary! : row.b_summary!),
           finding_indices: [...slot.finding_indices[label]], ...state }];
       })) };
     if (betterCandidate && slot.shared && !comparisonAdvantageCandidates(resolved.assessments,

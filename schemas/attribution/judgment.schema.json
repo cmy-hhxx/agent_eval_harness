@@ -41,7 +41,7 @@
     },
     "standard_conflict": {
       "type": "boolean",
-      "description": "仅在已核实本方工具返回或独立来源支持回答值、而导入标准与之冲突（口径不同或上游数据不一致）时填 true；模型自身错误、口径未核实或标准已正确应用时填 false。"
+      "description": "默认 false。初评有原始披露或完整底层复算直接反证时填 true 提请复核，无须当时已看到对方答案；独立复核仅在双方最终所求结果一致且直接反证成立时保留 true。"
     },
     "summary": {
       "type": "string",
@@ -162,26 +162,11 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "model_responsible",
-              "tool_evidence_indices",
               "label",
-              "definition"
+              "definition",
+              "component"
             ],
             "properties": {
-              "model_responsible": {
-                "type": "boolean",
-                "description": "是否有具体证据支持模型自身的独立责任；引用工具返回本身不代表工具有责任。"
-              },
-              "tool_evidence_indices": {
-                "type": "array",
-                "minItems": 0,
-                "uniqueItems": true,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                "description": "本 finding 提交的 evidence 数组中证明本方工具自身失误的零起始位置，须对应本方真实工具调用或返回。没有工具失误证据时填 []，不能选择仅作正确来源或反证的工具。"
-              },
               "label": {
                 "type": "string",
                 "minLength": 1
@@ -189,6 +174,15 @@
               "definition": {
                 "type": "string",
                 "minLength": 1
+              },
+              "component": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "明确选择实际出错的责任方：模型自身推理、上下文组装与传递或本方工具原名。引用正确来源不等于给来源记责；未定位填 []。"
               }
             }
           },
@@ -432,7 +426,7 @@
     "table_resolutions": {
       "type": "array",
       "maxItems": 100,
-      "description": "Only independent review may resolve a specific unresolved table row using source evidence.",
+      "description": "An evidence-backed judgment of an unresolved table row.",
       "items": {
         "type": "object",
         "additionalProperties": false,

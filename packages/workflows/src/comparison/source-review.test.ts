@@ -34,92 +34,32 @@ function fixture() {
     }])) } as unknown as JsonObject };
   const reviews = () => Object.fromEntries(Object.entries(sources).map(([label, value]) => [label,
     attributionTableReview({ sources: { answer: value }, input: { answer: { final_message_index: 2,
-      table_check_results: attributionTableChecks(value.value, value.id, 2) } } }, attributions[label], { accepted: true })]));
+      table_check_results: attributionTableChecks(value.value, value.id, 2) } } }, attributions[label])]));
   return { request, sources, attributions, analysis, reviews };
 }
 
-test("a closed common core failure leaves unrelated missing rows visible without forcing another review", () => {
-  const data = fixture(), request = structuredClone(data.request), reviews = data.reviews(), before = structuredClone(reviews);
-  const result = comparisonSourceReview(data.request, reviews);
-  assert.deepEqual(Object.keys(result), ["B"]);
-  assert.deepEqual(result.B.map(item => [item.kind, item.requires_review]), [["unverified", false]]);
-  assert.match(result.B[0].reason, /不证明答案错误/);
-  assert.deepEqual(data.request, request);
-  assert.deepEqual(reviews, before);
-  assert.equal(data.attributions.B.core_assessment.meets_core, false);
-});
-
-test("unknown cores, uncertain common failure and insufficient conflict findings retain the review gate", () => {
-  const changes = [
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.core_assessment.meets_core = null; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.A.core_assessment.meets_core = null; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.criterion_assessments[0].evidence_status = "uncertain"; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.A.criterion_assessments[0].evidence_status = "uncertain"; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.findings[0].importance = "medium"; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.findings[0].assessment.evidence_status = "uncertain"; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.findings[0].assessment.requirement_index = null; },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.findings[0].evidence.pop(); },
-    (data: ReturnType<typeof fixture>) => { data.attributions.B.task_analysis = { ...data.analysis, goal: "来源标准不同" }; },
-  ];
-  for (const change of changes) {
-    const data = fixture(); change(data);
-    assert(comparisonSourceReview(data.request, data.reviews()).B.every(item => item.requires_review));
+test("table matching concerns remain visible without overriding any semantic core judgment", () => {
+  for (const core of [true, false, null]) {
+    const data = fixture();
+    data.attributions.B.core_assessment.meets_core = core;
+    data.sources.A.value.messages[2].content += "\n| 555555 | 别名 |";
+    data.sources.B.value.messages[1].content += "\n| 444444 | 已匹配 |";
+    const before = structuredClone(data.request), reviews = data.reviews(), initial = structuredClone(reviews);
+    const result = comparisonSourceReview(data.request, reviews);
+    assert(result.A.some(item => item.kind === "unverified"));
+    assert(result.B.some(item => item.kind === "unresolved_conflict"));
+    assert(Object.values(result).flat().every(item => !item.requires_review));
+    assert.deepEqual(data.request, before);
+    assert.deepEqual(reviews, initial);
   }
 });
 
-test("private failures and explicitly cited private norms cannot waive a missing source row", () => {
-  const privateFailure = fixture();
-  privateFailure.analysis.requirements[0].applies_to = [privateFailure.sources.B.id];
-  for (const result of Object.values(privateFailure.attributions)) result.task_analysis = structuredClone(privateFailure.analysis);
-  assert(comparisonSourceReview(privateFailure.request, privateFailure.reviews()).B.every(item => item.requires_review));
-  const privateNorm = fixture(), norm = "本回答必须以风险提示开头。";
-  privateNorm.sources.B.value.messages[0] = { role: "system", content: norm };
-  privateNorm.attributions.B.findings[0].evidence.push(canonicalEvidence(privateNorm.sources.B.id, 0, norm));
-  assert(comparisonSourceReview(privateNorm.request, privateNorm.reviews()).B.every(item => item.requires_review));
-});
-
-test("a counterpart's missing rows or any unresolved ambiguity keep both unknowns blocking", () => {
-  const counterpart = fixture();
-  counterpart.sources.A.value.messages[2].content += "\n| 555555 | 对方未展示标的 |";
-  const both = comparisonSourceReview(counterpart.request, counterpart.reviews());
-  assert(both.A.every(item => item.requires_review));
-  assert(both.B.every(item => item.requires_review));
-  const ambiguous = fixture();
-  ambiguous.sources.B.value.messages[1].content += "\n| 444444 | 已匹配 |";
-  const mixed = comparisonSourceReview(ambiguous.request, ambiguous.reviews());
-  assert(mixed.B.some(item => item.kind === "unresolved_conflict"));
-  assert(mixed.B.some(item => item.kind === "unverified"));
-  assert(mixed.B.every(item => item.requires_review));
-});
-
-test("two confirmed core failures keep the unverified rows non-blocking", () => {
-  const data = fixture();
-  data.attributions.A.core_assessment.meets_core = false;
-  const result = comparisonSourceReview(data.request, data.reviews());
-  assert(result.B.length > 0);
-  assert(result.B.every(item => !item.requires_review));
-});
-
-test("invalid recomputed material cannot be hidden behind a confirmed failure", () => {
+test("invalid recomputed material remains blocking independently of the core judgment", () => {
   const data = fixture(), reviews = data.reviews();
   reviews.B = attributionTableReview({ sources: { answer: data.sources.B }, input: { answer: {
     final_message_index: 2, table_check_results: [],
-  } } }, data.attributions.B, { accepted: true });
+  } } }, data.attributions.B);
   const result = comparisonSourceReview(data.request, reviews);
-  assert(result.B.some(item => item.kind === "invalid_material"));
-  assert(result.B.every(item => item.requires_review));
-});
-
-test("divergent core dates for one shared requirement keep the pair pending", () => {
-  const data = fixture();
-  data.attributions.A.findings[0].text = "远端交割日 2025年12月31日（周三）";
-  data.attributions.B.findings[0].type = "strength";
-  data.attributions.B.findings[0].text = "远端交割日 2026年1月5日（周一）";
-  const result = comparisonSourceReview(data.request, data.reviews());
-  for (const label of ["A", "B"] as const) {
-    const item = result[label]!.find(entry => entry.kind === "unresolved_conflict" && entry.reason.includes("不同结论"));
-    assert(item?.requires_review);
-    assert.match(item!.reason, /2025年12月31日/);
-    assert.match(item!.reason, /2026年1月5日/);
-  }
+  assert(result.B.some(item => item.kind === "invalid_material" && item.requires_review));
+  assert(result.B.filter(item => item.kind !== "invalid_material").every(item => !item.requires_review));
 });

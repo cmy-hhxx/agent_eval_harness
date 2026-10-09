@@ -151,6 +151,13 @@ test("check_table registers a bounded JSON inventory and records only recomputab
   } while (offset);
   assert.deepEqual(seen, Array.from({ length: 9 }, (_, i) => i));
   assert.deepEqual(ctx.audit.tableChecks, [formalRequest]);
+  // Directory filters have no effect after selecting globally numbered tables.
+  for (const message_index of [0, 1]) {
+    const result = await invoke({ ...request, message_index });
+    assert(!result.isError, JSON.stringify(result));
+    assert.equal(JSON.parse(result.content[0].text!).summary.conflict, 9);
+  }
+  assert.deepEqual(ctx.audit.tableChecks, [formalRequest]);
   const invalid = await invoke({ ...request, candidate: "outside" });
   assert(invalid.isError);
   assert.deepEqual(ctx.audit.tableChecks, [formalRequest]);

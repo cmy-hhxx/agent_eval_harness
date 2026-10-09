@@ -22,7 +22,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
       message:"没有标准答案时不能声明标准冲突；事实和交付按实际核验结果记录。"});
   if(value.standard_conflict===true&&standard&&value.is_correct!==false)
     issues.push({category:"decision",code:"standard_conflict_correctness",path:"/standard_conflict",actual:value.is_correct,
-      message:"声明标准冲突时 is_correct 必须为 false；与标准一致或答案确实正确时填 false。"});
+      message:"声明标准冲突时，is_correct=false 仅表示与标准答案不一致；若与标准答案一致，则 standard_conflict=false。"});
   const task = request.input.task_analysis as unknown as TaskAnalysis;
   const criteria = [...task.requirements, ...task.scoring_points, ...task.red_flags]
     .filter(item => !item.applies_to.length || item.applies_to.includes(request.input.candidate_id as string));
@@ -84,16 +84,12 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
           expected:basis.filter(item=>item.norm_index !== null).map(item=>item.basis_index),
           message:"指令遵循须选择有真实规范来源的依据。"});
       const ruleBound=row.dimension === "instruction_following" || selected?.kind === "own_rule";
-      const numbers = [...new Set([...list(row.evidence_indices), ...list(row.tool_evidence_indices)])];
-      const evidence = numbers.map(number => reference(number, list(row.evidence_indices).includes(number)
-        ? `${path}/evidence_indices/${list(row.evidence_indices).indexOf(number)}`
-        : `${path}/tool_evidence_indices/${list(row.tool_evidence_indices).indexOf(number)}`));
+      const evidence = references(row.evidence_indices, `${path}/evidence_indices`);
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
         ...(ruleBound ? {norm_index:selected?.norm_index ?? null} : {}),
         assessment: { observation: row.text, evidence_status: row.evidence_status, impact: type === "strength" ? row.reason : row.impact,
           ...(ruleBound ? {} : {requirement_index:selected?.requirement_index ?? null}) },
-        ...(type === "problem" ? {problem: {model_responsible:row.model_responsible,
-          tool_evidence_indices:[...new Set(list(row.tool_evidence_indices).map(number=>numbers.indexOf(number)))],label:row.label,definition:row.definition}} : {}),
+        ...(type === "problem" ? {problem: {component:row.component,label:row.label,definition:row.definition}} : {}),
       };
     }),
     ...(Object.hasOwn(value,"table_resolutions") ? { table_resolutions: list(value.table_resolutions).map(object).map((row,index) => ({
@@ -105,7 +101,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
 }
 
 /** Repair addresses always name fields the model can actually submit. */
-function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSubmission>, _submitted: unknown, audit: ToolAudit): ValidationIssue[] {
+function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSubmission>): ValidationIssue[] {
   const positiveChoices=(entry:unknown):unknown => {
     if(Array.isArray(entry))return entry.map(positiveChoices);
     if(!entry||typeof entry!=="object")return entry;
@@ -144,17 +140,6 @@ function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSub
       expected={...fields,...(fields.required_field==="correctness_evidence"?{required_field:"correctness_evidence_indices"}:{}),
         ...(Array.isArray(fields.remove_fields)?{remove_fields:fields.remove_fields.map((field:unknown)=>field==="correctness_evidence"?"correctness_evidence_indices":field)}:{})};
     }
-    const responsibility=/^\/findings\/(\d+)\/problem\/tool_evidence_indices\/(\d+)$/u.exec(issue.path);
-    if(responsibility) {
-      const row=Number(responsibility[1]),position=Number(responsibility[2]);
-      actual=bound.rows[row]?.row.tool_evidence_indices?.[position];
-      const choices=list(object(issue.expected).tool_evidence_choices).map(choice=>({
-        evidence_index:(audit.evidenceBank??[]).indexOf(bound.judgment.findings[row]?.evidence[choice.finding_evidence_index]?.evidence_id)+1,
-        tool_name:choice.tool_name,
-      })).filter(choice=>choice.evidence_index>0);
-      expected={tool_evidence_choices:choices};
-      message="tool_evidence_indices 直接选择证据目录中证明本方工具自身失误的编号；不填写本条 evidence 数组的位置，不把最终回答、规范或对方工具归为本方工具责任。";
-    }
     const path=addressed ? addressed.path+finding![2]
       .replace(/\/(?:assessment\/requirement_index|norm_index)$/u,"/basis_index")
       .replace(/\/(?:assessment|problem)\//u,"/").replace(/\/problem$/u,"") : issue.path;
@@ -171,7 +156,7 @@ function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSub
 
 export function validateModelSubmission(request: AgentRequest, value: unknown, audit: ToolAudit): ValidationIssue[] {
   const bound = bindSubmission(request,value,audit);
-  return [...bound.issues, ...modelIssues(validateJudgment(request,bound.judgment,audit),bound,value,audit)];
+  return [...bound.issues, ...modelIssues(validateJudgment(request,bound.judgment,audit),bound)];
 }
 
 export function resolveModelSubmission(request: AgentRequest, value: unknown, audit: ToolAudit): unknown {
@@ -183,5 +168,5 @@ export function resolveModelSubmission(request: AgentRequest, value: unknown, au
     validateEvaluation(request,result,audit);
     return result;
   }
-  catch (error) { if (!(error instanceof ValidationError)) throw error; throw new ValidationError(modelIssues(error.issues!,bound,value,audit)); }
+  catch (error) { if (!(error instanceof ValidationError)) throw error; throw new ValidationError(modelIssues(error.issues!,bound)); }
 }

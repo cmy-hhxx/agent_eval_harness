@@ -57,7 +57,7 @@ async function resumeExperiment(change: "none" | "rubric" | "reference" | "sourc
           }
           if (stage === "criteria" && expanded && change === "rubric") {
             const criteria = result as import("@eval/agents/criteria").CriteriaSubmission;
-            criteria.requirements = [{ source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [2], text: "核对标准结果。" }];
+            criteria.requirements = [{ source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [1], text: "核查计算结果的准确性。" }];
           }
           const response = await submitFor(options, draftFor(options.spec, result));
           assert.equal(response.isError, undefined, JSON.stringify(response));
@@ -174,8 +174,10 @@ for (const change of ["rubric", "reference"] as const)
       assert.equal(expanded.manifest.tasks.filter((task) => task.stage === "attribution" && expanded.receipts[task.id]).length, 5);
       const newCriteria = expanded.manifest.tasks.find((task) => task.stage === "criteria" && !acceptedIds.has(task.id))!;
       const criteria = expanded.receipts[newCriteria.id].evaluation;
-      assert.notDeepEqual(criteria, original.receipts[originalRows[0].criteria_task_id].evaluation,
-        "source-based criteria preserve both changed source selections and changed reference text");
+      const originalCriteria = original.receipts[originalRows[0].criteria_task_id].evaluation;
+      if (change === "reference") assert.deepEqual(criteria, originalCriteria,
+        "changed reference data does not change the original task requirements");
+      else assert.notDeepEqual(criteria, originalCriteria, "changed task criteria require fresh assessments");
       const inputs = await loadRunInputs(expanded.manifest);
       for (const review of reviews) {
         const data = review.data as TaskData;
@@ -192,6 +194,8 @@ for (const change of ["rubric", "reference"] as const)
         assert.deepEqual(binding.request.input.review_context, { reasons: data.reviewOf!.reasons },
           "the unverified marker belongs to model presentation, not the trusted request");
         assert.equal(binding.request.sources.answer.id, review.inputIds.answer);
+        if (change === "reference") assert.deepEqual(binding.request.input.ground_truth,
+          { available: true, value: "4（整数）" }, "independent reassessment receives the changed reference despite identical criteria");
       }
       for (const row of rows.filter((item) => item.comparison_id !== originalRows[0].comparison_id)) {
         assert.equal(row.criteria_task_id, newCriteria.id);

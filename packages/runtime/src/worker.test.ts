@@ -66,7 +66,7 @@ const fileProfile: Partial<AgentProfile> = {
 };
 
 test("JSON text submission preserves nested rows, empty arrays and markup without a model-written file", async()=>{
-  const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",tool_evidence_indices:[]}],values:[false,null,0]};
+  const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",component:[]}],values:[false,null,0]};
   const fixture=await harness(async options=>({async run(){
     const tool=options.tools.find(tool=>tool.name==="submit_evaluation")!;
     assert.deepEqual(tool.inputSchema,{type:"object",additionalProperties:false,required:["json"],properties:{json:{type:"string",minLength:2}}});
@@ -100,6 +100,38 @@ test("invalid JSON text uses the loading budget and preserves content repair att
     assert.equal(receipt!.submissionStats!.jsonRepairs,undefined);
     assert.equal(fixture.counts().posts,1);
   }finally{await fixture.close();}
+});
+
+test("surplus closing punctuation after a complete JSON object is repaired without changing values", async () => {
+  const original = { text: '正文中的 } ] 和 "引号"', values: [null, false, 0], nested: { rows: [] } };
+  const fixture = await harness(async options => ({ async run() {
+    assert.equal((await options.execute("submit_evaluation", { json: JSON.stringify(original) + "}\n]" })).terminate, true);
+  }, async abort() {}, async dispose() {} }), { material: "fixture", profile: {
+    jsonStringSubmission: true, requiredReads: () => [], submissionSchema: { type: "object" },
+  } });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = await fixture.store.receipt(fixture.spec.taskId);
+    assert.deepEqual(receipt!.evaluation, original);
+    assert.equal(receipt!.submissionStats!.jsonRepairs, 1);
+    assert.equal(receipt!.submissionStats!.fileErrors, 0);
+  } finally { await fixture.close(); }
+});
+
+test("trailing content and incomplete JSON are not discarded as closing punctuation", async () => {
+  for (const json of ['{"ok":true}{"other":false}', '{"ok":true},"other":false}', '{"ok":true', '{"ok":true} explanation']) {
+    const fixture = await harness(async options => ({ async run() {
+      const rejected = await options.execute("submit_evaluation", { json });
+      assert.equal(rejected.isError, true);
+      assert((rejected.details as { errors: ValidationIssue[] }).errors.some(issue => issue.code === "submission_json_invalid"));
+      assert.equal((await options.execute("submit_evaluation", { json: '{"ok":true}' })).terminate, true);
+    }, async abort() {}, async dispose() {} }), { material: "fixture",
+      profile: { jsonStringSubmission: true, requiredReads: () => [] } });
+    try {
+      await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+      assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.jsonRepairs, undefined);
+    } finally { await fixture.close(); }
+  }
 });
 
 test("unescaped quotes inside JSON strings are escaped deterministically and audited",async()=>{

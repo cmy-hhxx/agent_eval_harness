@@ -62,7 +62,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
         message: `${field} 必须包含可核对的要求或验收规则`, actual: criterion[field],
       });
     });
-  for (const source of catalogue.filter((source) => source.kind === "question" || source.kind === "reference"))
+  for (const source of catalogue.filter((source) => source.kind === "question"))
     if (!requiredSources.has(source.source_index)) errors.push({
       category: "decision", code: "criterion_required_source_missing", path: "/requirements",
       message: `${source.kind} 来源 ${source.source_index} 必须至少保留在一条适用于全部候选的 requirements 中；多条私有要求的作用域并集不算公共覆盖。单独保留此来源或与真正共同适用的来源合并，不能降为加分项或红线。`,

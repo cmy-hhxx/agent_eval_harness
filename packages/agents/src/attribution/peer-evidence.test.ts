@@ -49,7 +49,7 @@ function fixture() {
     type: "problem", dimension: "correctness", stage: "final_answer", importance: "high",
     text: "UTC日期错误", reason: "原请求UTC日期为12日，实际回答为13日。", evidence: [ownRef, peerRef],
     assessment: { requirement_index: 0, observation: "UTC日期相差一天", evidence_status: "established", impact: "核心日期不可用" },
-    problem: { model_responsible: false, tool_evidence_indices: [], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
+    problem: { component: [], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
   }], criterion_assessments: [{ criterion_id: "r1", status: "unmet", evidence_status: "established",
     summary: "回答日期与原请求UTC日期不一致。", evidence: [ownRef, peerRef] }],
     core_assessment: { meets_core: false, reason: "日期错误。", requirement_indices: [0] } };
@@ -91,6 +91,16 @@ test("model schema uses numeric selections for both peer and self evidence", () 
     assert(!(preparedSchema.evaluation.outputSchema.properties as any).strengths.items.properties.evidence);
   }
   assert.equal((prepared.evaluation.outputSchema.properties as any).correctness_evidence_indices.maxItems,0);
+});
+test("registered same-question evidence allows formatting whitespace without allowing another question", () => {
+  const { request, binding, draft } = fixture();
+  const peer = (request.input.reference_materials as any).B;
+  peer.question = "按原请求时间\n说明 今天日期";
+  (request.sources.B.value as any).messages[0].content = peer.question;
+  prepareFixtureEvidence(registry, binding);
+  registry.validate(binding, resolveJudgment(request, draft, audit()), audit());
+  peer.question = "按原请求时间说明今天气温";
+  hasIssue(() => resolveJudgment(request, draft, audit()), "evidence_source_invalid");
 });
 test("unknown sources, explicit answer aliases, missing registrations and different business scope fail the public entry without rewriting a draft", () => {
   for (const source of ["B", "other", "answer", "../B"]) {
@@ -149,7 +159,25 @@ test("foreign facts cannot replace this candidate's actual delivery or numeric c
   const numeric = fixture();
   numeric.request.input.ground_truth = { available: true, value: "4" };
   const numericDraft = { ...numeric.draft, is_correct: false, correctness_reason: "结果不同", correctness_evidence: [numeric.ref("B", 1, "/content")] };
-  hasIssue(() => resolveJudgment((numeric.binding).request, numericDraft, audit()), "evidence_final_required", "/correctness_evidence/0");
+  hasIssue(() => resolveJudgment((numeric.binding).request, numericDraft, audit()), "evidence_final_required", "/correctness_evidence");
+});
+
+test("correctness may cite registered peer original facts alongside own delivery, but numeric actual and peer final stay separate", () => {
+  const { request, binding, draft, ref } = fixture();
+  request.input.ground_truth = { available: true, value: "12" };
+  const original = ref("B", 0, "/timestamp"), own = ref("answer", 1, "/content");
+  const judgment = { ...draft, is_correct: false, correctness_reason: "实际回答13日，原始请求时间及标准答案为12日。",
+    correctness_evidence: [own, original] };
+  prepareFixtureEvidence(registry, binding);
+  const result = resolveJudgment(request, judgment, audit()) as AttributionResult;
+  registry.validate(binding, result, audit());
+  assert.equal(result.correctness_evidence[1]!.source_input_id, peerId);
+  const numeric = { ...judgment, numeric_checks: [{ label: "日期", reference_index: 0, actual: "12", scale: "1", mode: "exact", evidence_index: 1 }] };
+  hasIssue(() => resolveJudgment(request, numeric, audit()), "evidence_final_required", "/numeric_checks/0/evidence_index");
+  hasIssue(() => resolveJudgment(request, { ...judgment, correctness_evidence: [original] }, audit()),
+    "evidence_final_required", "/correctness_evidence");
+  hasIssue(() => resolveJudgment(request, { ...judgment, correctness_evidence: [own, ref("B", 1, "/content")] }, audit()),
+    "peer_final_not_independent", "/correctness_evidence/1");
 });
 
 test("a peer final answer cannot establish own correctness even alongside own actual delivery", () => {
@@ -218,6 +246,9 @@ test("registered original answer generation is final prose while its sibling too
   material.final_evidence = [{ ...ref("B", 2, "/content"), message_index: 2, quote: text }];
   const generation = ref("B", 1, "/output/0/content/0/text");
   material.answer_generation = { available: true, message_type: "llm_turn", message_index: 1,
+    input_contexts: [{ message_index: 1, path: "/input_messages",
+      total_chars: (() => { const range = selectEvidenceSource(evidenceSources(peer.messages[1]), "/input_messages")!; return range.end - range.start; })(),
+      read_request: { message_index: 1, path: "/input_messages", offset: 0, max_chars: 16000 } }],
     captured_final_message_index: 2, matches_captured_final: true, blocks: [{ path: "/output/0/content/0/text", text,
       total_chars: String(text).length, reference: generation,
       read_request: { message_index: 1, path: "/output/0/content/0/text", offset: 0, max_chars: 16000 } }] };
@@ -345,9 +376,10 @@ test("review peer independent tool facts resolve missing table rows without posi
   hasIssue(() => registry.validate(binding, forged, audit()), "table_resolution_unsupported");
   own.messages[1].content = table(["000001 | Alpha", "000003 | Beta"]);
   answer.table_check_results = attributionTableChecks(own, INPUT_ID, 2);
-  draft.table_resolutions[0]!.evidence.push({ evidence_id: answer.table_check_results[0].rows[0].sources[0].evidence.evidence_id });
   const conflicting = resolveJudgment(binding.request, draft, audit());
   hasIssue(() => registry.validate(binding, conflicting, audit()), "table_resolution_unsupported");
+  draft.table_resolutions[0]!.evidence.push({ evidence_id: answer.table_check_results[0].rows[0].sources[0].evidence.evidence_id });
+  registry.validate(binding, resolveJudgment(binding.request, draft, audit()), audit());
 });
 
 test("an input UUID from another task is rejected before raw-coordinate resolution without altering the draft", () => {

@@ -4,12 +4,14 @@ import { numericReferenceDirectory } from "./units.js";
 import { normDirectoryIssues } from "./norm-directory.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import type { TaskAnalysis } from "@eval/contracts";
+import { responsibilityChoices } from "./responsibility.js";
 
 /** The tool contract and repair feedback share the same request-derived shape. */
 export function attributionSubmissionSchema(request: AgentRequest) {
   const issues = normDirectoryIssues(request);
   if (issues.length) throw new ValidationError(issues);
   const schema = structuredClone(submissionSchema);
+  Object.assign(schema.properties.problems.items.properties.component.items, { enum: responsibilityChoices(request) });
   const analysis=request.input.task_analysis as unknown as TaskAnalysis;
   const checkCount=[...analysis.requirements,...analysis.scoring_points,...analysis.red_flags]
     .filter(item=>!item.applies_to.length||item.applies_to.includes(request.input.candidate_id as string)).length;

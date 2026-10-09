@@ -181,18 +181,18 @@ test("final scope ignores forged request evidence and requires actual image view
   assert(resolve(value).findings[0]!.evidence.some(item => item.quote.startsWith("[图像观察]")));
 });
 
-test("responsibility indices bind original evidence before appended norm and final; every finding keeps its own program ID", () => {
+test("explicit responsibility requires own evidence before appended norm and final; every finding keeps its own program ID", () => {
   const value = scenario([{ role: "system", content: rule }, { role: "user", content: "计算2+2" },
     { role: "tool", type: "tool_result", name: "Calc", content: "2+2=4" }, { role: "assistant", content: "2+2=4" }]);
   const problem = { ...value.finding, type: "problem" as const, evidence: [value.ref(2)],
-    problem: { model_responsible: true, tool_evidence_indices: [0], label: "执行交付偏差", definition: "模型和工具责任分别核对。" } };
+    problem: { component: ["模型自身推理", "Calc"], label: "执行交付偏差", definition: "模型和工具责任分别核对。" } };
   value.submitted.findings = Array.from({ length: 9 }, () => structuredClone(problem));
   const result = resolve(value);
   assert.equal(result.findings.length, 9); assert.equal(result.findings[8]!.finding_id, "f8");
   assert.deepEqual(result.findings[8]!.problem!.component, ["模型自身推理", "Calc"]);
   assert.deepEqual(result.findings[8]!.evidence.map(item => item.quote), ["2+2=4", rule, "2+2=4"]);
-  problem.evidence.push(value.ref(3)); problem.problem.tool_evidence_indices = [1]; value.submitted.findings = [problem];
-  assert.throws(() => resolve(value), issue("problem_tool_evidence_invalid"));
+  problem.evidence = [value.ref(3)]; value.submitted.findings = [problem];
+  assert.throws(() => resolve(value), issue("problem_component_evidence_missing"));
 });
 
 test("accepted canonical proof is validated without replaying selectors, rebinding a reordered directory, or appending scopes", () => {

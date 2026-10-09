@@ -112,11 +112,11 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     .find(source => source.kind === "context" && source.text === question + "\n" + condition)!;
   assert.deepEqual(source.applies_to, [candidates.A!.input_id]);
   const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [
-    { source_indices: [1], text: "核查本项要求的实际交付。" }, { source_indices: [2], text: "核查本项要求的实际交付。" },
+    { source_indices: [1], text: "核查本项要求的实际交付。" },
     { source_indices: [source.source_index], text: "核查本项要求的实际交付。" },
   ], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
-  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [], [candidates.A!.input_id]]);
+  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [candidates.A!.input_id]]);
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
@@ -127,12 +127,12 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; criterion_instruction_sources: Record<string, {
     message_index: number; path: string; quote: string }[]> };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" }]);
-  assert.deepEqual(answer.criterion_instruction_sources.r3, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" },
+  assert.deepEqual(answer.criterion_instruction_sources.r2, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" },
     { ...canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text"), path: "/content/1/text" }]);
   assert.deepEqual(answer.norm_directory.filter(norm => norm.requirement_index !== null).map(norm => ({ roles: norm.roles, requirement_index: norm.requirement_index,
     quotes: norm.evidence.map(origin => origin.quote) })), [
     { roles: ["user"], requirement_index: 0, quotes: [question] },
-    { roles: ["user"], requirement_index: 2, quotes: [question, condition] },
+    { roles: ["user"], requirement_index: 1, quotes: [question, condition] },
   ]);
   const contextNorms = answer.norm_directory.filter(norm => norm.requirement_index === null);
   const metadataNorm = contextNorms.find(norm => norm.evidence.some(origin => origin.quote === metadataParagraph))!;
@@ -144,7 +144,7 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     "already bound question and complete condition are not bundled again with unrelated USER context");
   const shown = binding.modelInput!.answer as { final_evidence: { quote: string; reference: { evidence_id: string } }[];
     criterion_instruction_sources: Record<string, { quote: string; reference: { evidence_id: string } }[]> };
-  for (const id of ["r1", "r3"]) for (const entry of shown.criterion_instruction_sources[id]!)
+  for (const id of ["r1", "r2"]) for (const entry of shown.criterion_instruction_sources[id]!)
     assert.equal(resolveEvidence(trace, entry.reference, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, entry.quote);
   const finalRef = shown.final_evidence.find(entry => entry.quote === final)!.reference;
   assert.equal(resolveEvidence(trace, finalRef, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, final);
@@ -152,13 +152,13 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   const finalNumber=choose(finalRef);
   const draft:AttributionSubmission = { is_correct:false,correctness_reason:"回答1.25个百分点与标准-0.6不同。",correctness_evidence_indices:[finalNumber],
     numeric_checks:[{label:"利率变化百分点",reference_index:1,actual:"1.25",scale:"1",mode:"rounded",evidence_index:finalNumber}],
-    criterion_assessments:rubric.requirements.map(item=>({status:item.id==="r3"?"met":"unmet",evidence_status:"established",summary:"核对真实问题、结果及条件。",evidence_indices:[finalNumber]})),
-    meets_core:false,core_reason:"所求数值与标准不一致。",core_requirements:[1,2],summary:"所求数值未对齐标准。",strengths:[],problems:[] };
+    criterion_assessments:rubric.requirements.map(item=>({status:item.id==="r2"?"met":"unmet",evidence_status:"established",summary:"核对真实问题、结果及条件。",evidence_indices:[finalNumber]})),
+    meets_core:false,core_reason:"所求数值与标准不一致。",core_requirements:[1],summary:"所求数值未对齐标准。",strengths:[],problems:[] };
   {
     const request = binding.request;
     const resolved = registry.resolve(binding,draft,reads) as AttributionResult;
     assert.deepEqual(resolved.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text")]);
-    assert.deepEqual(resolved.criterion_assessments[2]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"),
+    assert.deepEqual(resolved.criterion_assessments[1]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"),
       canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text")]);
     attributionProfile.validate!(request, resolved, emptyAudit());
     const normOnly = structuredClone(draft);
@@ -173,12 +173,12 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   const otherTask: PlannedTask = { ...task, id: randomUUID(), inputIds: { answer: candidates.B!.input_id },
     data: { ...(task.data as TaskData), candidates: { A: candidates.B! } } };
   const other = bindTask(otherTask, inputs, { criteria: receipt }, { tasks: [criteriaTask, otherTask] });
-  assert.equal((other.request.input.answer as { criterion_instruction_sources: Record<string, unknown> }).criterion_instruction_sources.r3, undefined);
+  assert.equal((other.request.input.answer as { criterion_instruction_sources: Record<string, unknown> }).criterion_instruction_sources.r2, undefined);
   const otherNorms = (other.request.input.answer as { norm_directory: AttributionNorm[] }).norm_directory;
   assert.deepEqual(otherNorms.map(norm => norm.requirement_index), [0]);
   assert(otherNorms.every(norm => norm.evidence.every(origin => origin.source_input_id === undefined &&
     resolveEvidence(inputs[candidates.B.input_id], { evidence_id: origin.evidence_id }, "answer", emptyAudit(), "/evidence", candidates.B.input_id).quote === question)));
-  assert.deepEqual(rubric.requirements[2]!.applies_to, [candidates.A!.input_id]);
+  assert.deepEqual(rubric.requirements[1]!.applies_to, [candidates.A!.input_id]);
 });
 
 test("a headed private norm keeps all leaf origins without being promoted by a short task description", () => {

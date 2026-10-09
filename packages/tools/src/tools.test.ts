@@ -365,6 +365,27 @@ test("artifact pages preserve escaped text and complete JSON without creating ne
     assert.equal((await runtime.execute("read_artifact", { id: artifact.id, offset: text.length + 1 }, new AbortController().signal)).isError, true);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+test("trace reads accept neutral directory defaults and an empty root path without losing evidence", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 10;
+    ctx.inputs.set("A", { messages: [{ content: "模型实际输入" }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const read = (args: Record<string, unknown>) => runtime.execute("read_trace",
+      { candidate: "A", message_index: 0, offset: 0, max_chars: 1000, ...args }, new AbortController().signal);
+    const plain = await read({ path: "/content" });
+    const withDefaults = await read({ path: "/content", source_offset: 0 });
+    assert(!withDefaults.isError, JSON.stringify(withDefaults));
+    assert.deepEqual(JSON.parse(withDefaults.content[0].text!), JSON.parse(plain.content[0].text!));
+    const root = await read({ path: "", source_offset: 0 });
+    assert(!root.isError, JSON.stringify(root));
+    assert.deepEqual(JSON.parse(root.content[0].text!).text_sources, [{ path: "/content", chars: 6 }]);
+    assert.equal(ctx.audit.traceReads.length, 3);
+    const conflicting = await read({ path: "/content", source_offset: 1 });
+    assert.equal(conflicting.isError, true);
+    assert.match(JSON.stringify(conflicting), /source_offset/u);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("text source directories have independent pagination and expose every path", async () => {
   const ctx = await context();
   try {

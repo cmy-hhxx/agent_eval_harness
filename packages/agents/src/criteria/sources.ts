@@ -54,6 +54,6 @@ export function criteriaSources(input: CriteriaInput): CriterionSource[] {
 
 /** Selection is separate from provenance: complete own SYS/DEV still ground accepted results. */
 export function eligibleCriterionSource(source: CriterionSource): boolean {
-  return source.role !== "system" && source.role !== "developer" &&
+  return source.kind !== "reference" && source.role !== "system" && source.role !== "developer" &&
     !(source.kind === "context" && /^(?:# 上下文[（(]内部信息|# 本轮提供的附件和 URL 内容|---用户提问结束---|NER 抽取结果|下文为系统自动生成的元数据)/u.test(source.text.trimStart()));
 }

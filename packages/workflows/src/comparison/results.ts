@@ -24,9 +24,8 @@ export function display<T>(value: T, names: Record<string, string>, key = ""): T
       key === "quote"
         ? value
         : value.replace(
-            /【候选([A-Z])】|候选\s*([A-Z])(?![A-Za-z0-9_])|(?:中枢\s*A\s*\/\s*B|A\s*\/\s*B\s*\/\s*C|(?:公司|方案|情景|选项|计划|路径|项目|中枢)\s*[A-Z])|(?<![A-Za-z0-9_全])([A-Z])(?![A-Za-z0-9_]|组|\s*(?:股|[+＋]\s*H|浪|类|级|轮|款|型))/gu,
-            (match, bracketed: string | undefined, candidate: string | undefined, bare: string | undefined) =>
-              names[bracketed || candidate || bare || ""] || match,
+            /【候选([A-Z])】/g,
+            (marker, label: string) => names[label] ?? marker,
           )
     ) as T;
   if (Array.isArray(value)) return value.map((v) => display(v, names)) as T;

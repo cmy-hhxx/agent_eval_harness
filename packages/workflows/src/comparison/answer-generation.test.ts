@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveEvidence } from "@eval/tools";
+import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { answerGenerationPresentation, getAnswerGeneration } from "./answer-generation.js";
 import type { RawInput } from "./types.js";
 
@@ -114,8 +114,26 @@ test("a later independent planner cannot replace the actual answer generation", 
   const generation = getAnswerGeneration(raw, evidenceInputId)!;
   assert.equal(generation.message_index, 1);
   assert.equal(generation.blocks[0]!.text, "实际回答");
+  assert.deepEqual(generation.input_contexts.map(context => context.message_index), [1]);
   raw.messages[1]!.input_messages = undefined;
   assert.equal(getAnswerGeneration(raw, evidenceInputId), null, "cannot confirm a generation with only unrelated planner material");
+});
+
+test("actual model input directory preserves answer history and nested input paths without copying text", () => {
+  const raw = fixture("第一步", "最终回答");
+  raw.messages.splice(2, 0, { type: "llm_turn", input_messages: { messages: [
+    { role: "assistant", content: "第一步" }, { role: "tool", content: "部分返回" },
+  ] }, output: [{ role: "assistant", content: "最终回答" }] });
+  const generation = getAnswerGeneration(raw, evidenceInputId)!;
+  assert.deepEqual(generation.input_contexts.map(context => [context.message_index, context.path]),
+    [[1, "/input_messages"], [2, "/input_messages/messages"]]);
+  const view = answerGenerationPresentation(generation, "B")!;
+  for (const context of view.input_contexts) {
+    const range = selectEvidenceSource(evidenceSources(raw.messages[context.message_index]), context.path)!;
+    assert.equal(context.total_chars, range.end - range.start);
+    assert.deepEqual(context.read_request, { candidate: "B", message_index: context.message_index, path: context.path, offset: 0, max_chars: 16000 });
+    assert.equal(Object.hasOwn(context, "text"), false);
+  }
 });
 
 test("full generation remains unchanged by projection and unknown presentation stays null", () => {

@@ -50,7 +50,7 @@ function referenceProfile(stage: string, profile: AgentProfile, name: string) {
   schemas.result = profile.resultSchema!;
   const prompts: Record<string, string> = { system: profile.systemPrompt, instructions: profile.instructions, submissionNudge: profile.submissionNudge };
   if (stage === "criteria") {
-    for (const [key, resource] of [["taskType", "task_type"], ["sourceRule", "source_rule"], ["referenceRule", "reference_rule"]] as const) {
+    for (const [key, resource] of [["taskType", "task_type"], ["sourceRule", "source_rule"]] as const) {
       prompts[key] = criteriaText(resource);
       sources[key] = ["packages/prompts/resources/criteria/default/" + resource + ".md"];
     }
@@ -92,7 +92,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
     clustering: config.clustering,
     sharedPrompts: Object.fromEntries(sharedPromptResources().map(({ name, text, source }) => [name, { text, source }])),
     stages: [
-      { id: "criteria", name: "共同标准", unit: "同问题与标准答案范围", input: "问题、标准答案与候选 USER 指令来源", output: "原文来源选择生成的要求、得分点、红线与固定验收规则", dependency: "输入预检通过", file: "criteria.jsonl", profiles: [referenceProfile("criteria", criteriaAgent.profiles.default, "共同标准")] },
+      { id: "criteria", name: "共同标准", unit: "同问题与标准答案范围", input: "问题与候选 USER 指令来源", output: "原文来源选择生成的要求、得分点、红线与固定验收规则", dependency: "输入预检通过", file: "criteria.jsonl", profiles: [referenceProfile("criteria", criteriaAgent.profiles.default, "共同标准")] },
       { id: "attribution", name: "归因", unit: "单条回答", input: "共同标准、本方完整规范、最终交付与原始调用链", output: "标准评估、核心可用性、标准答案核对、发现与证据", dependency: "共同标准已接受", file: "attribution.jsonl", profiles: [referenceProfile("attribution", attributionAgent.profiles.default, "单回答归因")] },
       { id: "comparison", name: "对比", unit: "同批次、同 case 的两条候选", input: "共同标准、双方归因、真实规范与原始材料", output: "正式裁决或证据不足结果；可选复核结果单独保存", dependency: "共同标准与双方归因已接受；可选复核依赖已接受的正式裁决", file: "comparison.jsonl / comparison-review.jsonl / comparison-verification.jsonl", profiles: [referenceProfile("comparison", comparisonAgent.profiles.default, "对比评测"), referenceProfile("comparison", comparisonAgent.profiles.verification, "可选复核")] },
       { id: "rewrite", name: "改写", unit: "已接受结果的文本槽位", input: "槽位 ID、原文与已确定偏好；无原始证据", output: "同 ID 的润色文本", dependency: "源结果已接受；对比已裁决；对应开关开启", file: "源结果的 rewritten 字段", profiles: [referenceProfile("rewrite", rewriteAgent.profiles.default, "文本改写")] },
@@ -100,7 +100,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
     ],
     flow: {
       steps: [
-        { id: "criteria", name: "共同标准", stage: "criteria", profile: "default", input: "问题、标准答案与 USER 来源", output: "原文标准与适用范围" },
+        { id: "criteria", name: "共同标准", stage: "criteria", profile: "default", input: "问题与 USER 来源", output: "原文标准与适用范围" },
         { id: "attribution", name: "单回答归因", stage: "attribution", profile: "default", input: "本方完整规范与实际材料", output: "已接受归因" },
         { id: "comparison", name: "对比评测", stage: "comparison", profile: "default", input: "双方归因与真实材料", output: "正式裁决或证据不足结果" },
       ],

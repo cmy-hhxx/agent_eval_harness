@@ -11,7 +11,7 @@ import { writeJson, writeJsonl } from "@eval/data";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
 import type { AttributionResult, ComparisonResult, RawInput, TaskData } from "@eval/workflows/comparison";
 import { comparisonSubmission } from "./comparison-submission.js";
-import { problemSubmission, normSelection } from "./attribution-submission.js";
+import { normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 
@@ -72,7 +72,7 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
   };
 }
 function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
-  return { requirements: [{ text: "核查本轮交付及标准结果。", source_indices: sources.filter((source) => source.kind === "question" || source.kind === "reference").map((source) => source.source_index) }],
+  return { requirements: [{ text: "完成用户所求结果。", source_indices: sources.filter((source) => source.kind === "question").map((source) => source.source_index) }],
     scoring_points: [], red_flags: [] };
 }
 export function criteriaResult(input: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },
@@ -449,8 +449,8 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
         reference_index:references.find(item => item.expected === expected)!.reference_index,evidence_index:correctness[row.evidence_index]})),
       strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
       problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
-        const observed=observation(row),problem=problemSubmission(row.problem!,row.evidence,material.answer!.catalog);
-        return {...observed,impact:row.assessment.impact,...problem,tool_evidence_indices:problem.tool_evidence_indices.map(index=>observed.evidence_indices[index])};
+        const observed=observation(row),problem=structuredClone(row.problem!);
+        return {...observed,impact:row.assessment.impact,...problem};
       }),
       image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
     };

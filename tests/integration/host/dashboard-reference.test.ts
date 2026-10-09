@@ -110,7 +110,7 @@ test("reference profiles expose independent inspection and the current canonical
     assert.equal(primary.requestBoundSubmission, true);
     assert.equal(verification.requestBoundSubmission, false);
     for (const stage of reference.stages) for (const profile of stage.profiles) {
-      assert.equal(profile.fileSubmission, stage.id === "comparison");
+      assert.equal(profile.fileSubmission, stage.id === "comparison" && profile.id === "verification");
       assert.deepEqual(Object.keys(profile.toolSchemas), Object.keys(profile.toolDescriptions));
       for (const [name, schema] of Object.entries(profile.toolSchemas)) {
         assert.deepEqual(schema, name === "submit_evaluation_file" || name === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA
@@ -155,7 +155,7 @@ test("reference shared prompts retain live text and definition disclosures survi
   const click = (selector: string) => document.querySelector(selector).click();
   try {
     assert.deepEqual(reference.sharedPrompts, Object.fromEntries(sharedPromptResources().map(({ name, text, source }) => [name, { text, source }])));
-    assert.deepEqual(Object.keys(reference.sharedPrompts), ["material", "evidence", "taskFocus", "budget", "recovery", "nudge"]);
+    assert.deepEqual(Object.keys(reference.sharedPrompts), ["material", "commentary", "evidence", "taskFocus", "budget", "recovery", "nudge"]);
     click('[data-section="contracts"]');
     click('[data-stage="shared"]');
     for (const [key, resource] of Object.entries(reference.sharedPrompts)) {

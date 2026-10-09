@@ -12,40 +12,14 @@
     "comparisons": {
       "type": "array",
       "items": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "additionalProperties": false,
-        "required": [
-          "importance",
-          "a_summary",
-          "b_summary"
-        ],
-        "properties": {
-          "importance": {
-            "enum": [
-              "high",
-              "medium",
-              "low"
-            ]
+        "anyOf": [
+          {
+            "$ref": "#/$defs/commentary"
           },
-          "better_candidate": {
-            "enum": [
-              "A",
-              "B",
-              null
-            ]
-          },
-          "a_summary": {
-            "type": "string",
-            "minLength": 1
-          },
-          "b_summary": {
-            "type": "string",
-            "minLength": 1
+          {
+            "$ref": "#/$defs/resource"
           }
-        }
+        ]
       }
     },
     "preference": {
@@ -66,6 +40,67 @@
     "b_summary": {
       "type": "string",
       "minLength": 1
+    }
+  },
+  "$defs": {
+    "commentary": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "importance",
+        "a_summary",
+        "b_summary"
+      ],
+      "properties": {
+        "importance": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "better_candidate": {
+          "enum": [
+            "A",
+            "B",
+            null
+          ]
+        },
+        "a_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "b_summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "importance"
+      ],
+      "properties": {
+        "importance": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "better_candidate": {
+          "enum": [
+            "A",
+            "B",
+            null
+          ]
+        }
+      }
     }
   }
 }

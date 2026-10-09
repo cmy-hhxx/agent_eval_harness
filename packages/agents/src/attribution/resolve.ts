@@ -8,10 +8,11 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { resolveAttributionEvidence } from "./source-evidence.js";
-import type { Evidence, ProblemSubmission } from "./types.js";
+import type { Evidence, ProblemProposal } from "./types.js";
 import { resolveProblemSubmission } from "./responsibility.js";
 import schema from "../../../../schemas/attribution/judgment.schema.json" with { type: "json" };
 import { parseTraceTables } from "@eval/tools";
+import { attributionNotApplicableText } from "@eval/prompts";
 import { instructionEvidenceContext } from "./instructions.js";
 import { validateJudgment, submissionCoreRequirements } from "./validate.js";
 import { resolveNumericChecks, type NumericSubmissionCheck } from "./numeric-ledger.js";
@@ -23,7 +24,7 @@ type DraftFinding = {
   norm_index?: number | null;
   assessment: { requirement_index?: number | null; observation: string };
   [key: string]: unknown;
-} & ({ type: "strength" } | { type: "problem"; problem: ProblemSubmission });
+} & ({ type: "strength" } | { type: "problem"; problem: ProblemProposal });
 type DraftCriterionAssessment = { criterion_id: string; evidence: EvidenceRef[]; [key: string]: unknown };
 
 const validate = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
@@ -66,7 +67,7 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
   const findings = submissionFindingEntries(value).map(({ finding: entry, path }, index) => {
     const finding = entry as DraftFinding;
     const selected = resolveSelected(finding.evidence, `${path}/evidence`);
-    // Responsibility indices refer only to the original submitted evidence, before program additions.
+    // Validate responsibility against submitted evidence before attaching instruction context.
     const problem = finding.type === "problem"
       ? resolveProblemSubmission(request, finding.problem, selected, `${path}/problem`) : null;
     const ruleBound=Object.hasOwn(finding,"norm_index");
@@ -92,7 +93,7 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
     criterion_assessments: orderedCriteria.map(criterion => {
       if (criterion.applies_to.length && !criterion.applies_to.includes(request.input.candidate_id as string)) return {
         criterion_id: criterion.id, status: "not_applicable", evidence_status: "established",
-        summary: "该判据的 applies_to 不包含当前候选，本候选不适用。", evidence: [],
+        summary: attributionNotApplicableText, evidence: [],
       };
       const { assessment, index } = submitted.get(criterion.id)!;
       return { ...structuredClone(assessment), evidence: withNorms(assessment.evidence, criterion, `/criterion_assessments/${index}/evidence`) };

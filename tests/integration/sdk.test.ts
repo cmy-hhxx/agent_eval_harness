@@ -30,7 +30,7 @@ for (const engine of ["pi", "prime"] as Engine[])
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 2, verification: 4 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 4 };
       const gateway = await listen(async (req, res) => {
         try {
           assert.equal(req.headers.authorization, "Bearer integration-fixture-secret");
@@ -80,8 +80,8 @@ for (const engine of ["pi", "prime"] as Engine[])
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
           const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
           const descriptions = profile.toolDescriptions;
-          assert.equal(fileSubmission, !criteria && !attribution, "Attribution submits its fixed shallow payload directly");
-          assert.equal(Boolean(directSubmit), criteria || attribution, "shallow Criteria and Attribution submit native JSON");
+          assert.equal(fileSubmission, verification, "only independent verification submits a file");
+          assert.equal(Boolean(directSubmit), !verification, "ordinary evaluation submits directly");
           if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
           for (const tool of tools) {
             if (["submit_evaluation_file", "inspect_material"].includes(tool.function.name)) {
@@ -147,7 +147,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           );
           let name: string, args: unknown;
           const previousCall = messages.flatMap(message => message.tool_calls ?? []).at(-1)?.function.name;
-          if (criteria || attribution) {
+          if (!verification) {
             name = "submit_evaluation";
             args = evaluation;
             if(attribution && engine === "pi" && !rejected)(args as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;

@@ -190,6 +190,9 @@ function bindSourceTask(
     if (!source || !data.rewriteOf)
       throw new Error("改写任务缺少已接受的源结果：" + data.rewriteOf?.taskId);
     const slots = sourceSlots(data.rewriteOf.stage, source.evaluation, data.comparisonRewriteScope);
+    const identityContext = data.rewriteOf.stage === "comparison"
+      ? JSON.stringify(Object.fromEntries(Object.entries(data.rewriteNames!).map(([label, name]) => [`候选${label}`, name])))
+      : undefined;
     if (data.rewriteSlotIds && (!data.rewriteSlotIds.length || new Set(data.rewriteSlotIds).size !== data.rewriteSlotIds.length ||
       data.rewriteSlotIds.some((id) => !slots.some((item) => item.id === id))))
       throw new Error("改写任务含未知、重复或空槽位选择：" + task.id);
@@ -205,7 +208,9 @@ function bindSourceTask(
             ? `${data.rewriteNames!.A} ${item.label}`
             : display(item.label, data.rewriteNames!),
           text: display(item.text, data.rewriteNames!),
-          ...(item.context ? { context: display(item.context, data.rewriteNames!) } : {}),
+          ...(identityContext || item.context ? {
+            context: [identityContext, item.context && display(item.context, data.rewriteNames!)].filter(Boolean).join("\n"),
+          } : {}),
           ...(item.forbiddenPrefixes ? { forbiddenPrefixes: display(item.forbiddenPrefixes, data.rewriteNames!) } : {}),
           ...(item.preference ? { preference: display(item.preference, data.rewriteNames!) } : {}),
         })),
@@ -247,7 +252,7 @@ function bindSourceTask(
     const registered = context.tasks.flatMap(item => Object.values((item.data as TaskData).candidates))
       .find(candidate => candidate.input_id === peer.input_id);
     if (key === "answer" || task.inputIds[key] !== peer.input_id || !registered || !isDeepStrictEqual(registered, peer) ||
-      own.batch_id !== peer.batch_id || own.case_id !== peer.case_id || own.question !== peer.question ||
+      own.batch_id !== peer.batch_id || own.case_id !== peer.case_id || own.question.replace(/\s+/gu, "") !== peer.question.replace(/\s+/gu, "") ||
       !inputs[peer.input_id] || !data.reviewOf || !context.tasks.some(item => item.stage === "comparison" &&
         Object.values(item.inputIds).includes(own.input_id) && Object.values(item.inputIds).includes(peer.input_id) &&
         Object.values(item.dependencies).some(id => id === task.id || id === data.reviewOf!.taskId)))
@@ -271,14 +276,31 @@ function bindSourceTask(
         contentText(raw.messages[candidate.final_index].content),
       );
       const question = candidate.question;
-      let used = final.length + question.length;
       const instructions = instructionSources(raw, candidate.input_id, candidate.final_index);
-      used += instructions.reduce((total, source) => total + canonical(source.content).length, 0);
+      const citations = citationInventory(raw, candidate.input_id, candidate.final_index);
+      // Question, answer and instructions are already separate required material.
+      // Keep this budget available for the evidence needed to judge that answer.
+      let used = 0;
       const initial: {
         message_index: number;
         value: unknown;
         evidence: ReturnType<typeof cite>[];
       }[] = [];
+      const addInitial = (message_index: number, value: unknown, evidence: ReturnType<typeof cite>[]) => {
+        const text = canonical(value);
+        const cost = text.length + evidence.reduce((total, item) => total + item.quote.length, 0);
+        if (used + cost > (data.initialContextChars ?? 16000) || text.includes("data:image/")) return;
+        initial.push({ message_index, value, evidence });
+        used += cost;
+      };
+      // A citation may identify a small complete source inside a very large return.
+      // Prefer original returns over duplicate renderer projections; neither proves the claim.
+      const cited = new Map(citations.references.flatMap(reference => {
+        const returned = reference.sources.filter(source => source.origin === "tool_return");
+        return (returned.length ? returned : reference.sources).map(source => [source.evidence_id, source] as const);
+      }));
+      for (const { evidence_id, message_index, quote } of cited.values())
+        addInitial(message_index, quote, [{ evidence_id, message_index, quote }]);
       const priority = raw.messages
         .map((_, i) => i)
         .sort(
@@ -294,18 +316,13 @@ function bindSourceTask(
             ([key]) => !["input_messages", "model", "model_parameters"].includes(key),
           ),
         );
-        const text = canonical(value);
         // Evidence must describe the projected material actually shown, and its quotes count
         // against the same budget. Raw-only fields stay behind read_trace for progressive
         // disclosure instead of inflating the first prompt with quotes from hidden content.
         const evidence = evidenceSources(value)
           .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
           .map((source) => cite(candidate.input_id, i, source, 0, source.text.length));
-        const cost = text.length + evidence.reduce((total, item) => total + item.quote.length, 0);
-        if (used + cost <= (data.initialContextChars ?? 16000) && !text.includes("data:image/")) {
-          initial.push({ message_index: i, value, evidence });
-          used += cost;
-        }
+        addInitial(i, value, evidence);
       }
       initial.sort((a, b) => a.message_index - b.message_index);
       return [
@@ -324,7 +341,7 @@ function bindSourceTask(
           })),
           initial_material: initial,
           instruction_sources: instructions,
-          citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
+          citation_inventory: citations,
           catalog: traceCatalog(raw),
           input_file: `inputs/${label}.json`,
           original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
@@ -356,7 +373,7 @@ function bindSourceTask(
     const review = attributionTableReview({ input: { answer: { final_message_index: candidate.final_index,
       table_check_results: attributionTableChecks(inputs[candidate.input_id] as RawInput, candidate.input_id, candidate.final_index) } },
       sources: { answer: { id: candidate.input_id, value: inputs[candidate.input_id] } } },
-    attributions[label] as AttributionResult, { accepted: true });
+    attributions[label] as AttributionResult);
     return [[label, review]];
   }));
   const sourceReview = attribution ? {} : comparisonSourceReview({ sources,

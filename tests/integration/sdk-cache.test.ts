@@ -88,6 +88,18 @@ for (const engine of ["pi", "prime"] as const)
       const firstInput = requests[0].input as unknown[];
       const repairInput = requests[1].input as unknown[];
       assert.deepEqual(repairInput.slice(0, firstInput.length), firstInput);
+      const sharedPrefix = (request: Record<string, unknown>) => {
+        const first = object((request.input as unknown[])[0]);
+        assert(Array.isArray(first.content));
+        const blocks = first.content as { text: string; prompt_cache_breakpoint?: unknown }[];
+        assert.deepEqual(blocks[0], { type: "input_text", text: "Preserve these exact rules.",
+          prompt_cache_breakpoint: { mode: "explicit" } });
+        assert(blocks.slice(1).map(block => block.text).join("").includes(directory),
+          "the SDK workspace remains available after the reusable prefix");
+        return blocks[0];
+      };
+      assert.deepEqual(sharedPrefix(requests[0]), sharedPrefix(requests[2]),
+        "different attempt directories must share the fixed system prefix");
       assert(JSON.stringify(repairInput).includes("Repair the rejected field."));
       assert(!JSON.stringify(requests[2].input).includes("Exact material 0"), "cache keys must not share conversation history");
     } finally {

@@ -68,6 +68,8 @@ Worker 清理会话和工作区后才报告终态，Host 收齐记录及工具�
 
 Adapter 向模型注册工具时展开本地静态 JSON Pointer 引用，拒绝外部、循环或动态引用。提交工具的 SDK 层只检查完整 JSON 对象，原始 Schema 与业务校验由 Host 执行；普通工具继续使用 SDK 参数校验。Responses 流核对调用 ID 与终态参数，缺终态或 HTTP/API 5xx 按传输故障处理。内容、文件加载和传输分别使用有界预算，详细入口及反馈见[提交方式与反馈](contract.md#提交方式与反馈)。
 
+GPT-5.6 / GPT-6 系列的 Responses 评测请求在固定系统提示词末尾设置显式缓存边界，SDK 追加的工作目录和日期保留在边界之后；文本、角色、工具和生成参数不变。纯提交任务首轮只缓存该共用前缀，材料读取和修稿轮保留隐式历史缓存；不预热、不复用判词或跨任务会话。两种 SDK 共用 Runtime 的请求转换。命中取决于服务端实际支持和可用缓存，以返回的缓存读取、写入和普通输入用量验证，不能只看总 token。机制依据 [OpenAI Prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)。
+
 本机看板使用应用层 `/api/dashboard`：配置解析与预检复用 CLI，运行由独立 CLI 子进程执行，控制请求转发到持锁 Host。日期盘点和新运行预检可复用轻量输入索引，执行与续跑仍重读来源；结果详情按任务读取正式 JSONL。界面不承担调度或写结果，操作见[本机看板](usage.md#本机运行看板)，呈现规则见 [PRODUCT.md](../PRODUCT.md)。
 
 ## 接口和底座路由

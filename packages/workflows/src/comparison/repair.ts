@@ -32,12 +32,15 @@ export async function prepareClustering(run: string, selection: { apply?: boolea
   try {
     const state = await readRunState(run), tasks = state.manifest.tasks;
     const base = tasks.filter(task => task.stage === "attribution" && !(task.data as TaskData).reviewOf);
-    const unfinished = tasks.filter(task => task.stage === "attribution" && (!(task.data as TaskData).reviewOf || (task.data as TaskData).coverageReview) &&
+    const unfinished = tasks.filter(task => task.stage === "attribution" && (!(task.data as TaskData).reviewOf ||
+      (task.data as TaskData).coverageReview || (task.data as TaskData).standardConflictReview) &&
       ["pending", "running"].includes(state.manifest.states[task.id].status));
     if (unfinished.length) throw new Error("归因尚未全部结束，不能开始聚类：" + unfinished.map(task => task.id).join(", "));
     // A later accepted source review owns the same answer; unfinished optional reviews do not gate maintenance.
+    const proposals = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
+      .map(task => (task.data as TaskData).reviewOf!.taskId));
     const accepted = tasks.filter(task => task.stage === "attribution" &&
-      state.manifest.states[task.id].status === "succeeded" && state.receipts[task.id]);
+      !proposals.has(task.id) && state.manifest.states[task.id].status === "succeeded" && state.receipts[task.id]);
     const latest = new Map<string, PlannedTask>();
     for (const task of accepted) {
       const inputId = task.inputIds.answer, prior = latest.get(inputId);
@@ -87,7 +90,7 @@ export async function prepareClustering(run: string, selection: { apply?: boolea
       await freeze(run, state, selectedTasks.map(task => task.id));
     }
     return { applied: !!selection.apply, count: selected.length,
-      attribution_answers: latest.size, excluded_attributions: base.filter(task => !state.receipts[task.id]).length,
+      attribution_answers: latest.size, excluded_attributions: base.filter(task => !latest.has(task.inputIds.answer)).length,
       rewrite_tasks: selectedTasks.filter(task => task.stage === "rewrite").length,
       protected_accepted: Object.keys(state.receipts).length, selected };
   } finally { await release(); }

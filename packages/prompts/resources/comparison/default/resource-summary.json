@@ -1,0 +1,5 @@
+{
+  "summary": "完成耗时：{seconds}；总 token：{tokens}。",
+  "seconds": "{value} 秒",
+  "unrecorded": "无有效记录"
+}

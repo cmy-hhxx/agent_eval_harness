@@ -51,6 +51,8 @@ export interface ComparisonInput {
     candidate_id: string;
     final_message_index: number;
     answer_generation?: { available: true; message_type: "llm_turn"; matches_captured_final: boolean | null; message_index: number; captured_final_message_index: number;
+      input_contexts: { message_index: number; path: string; total_chars: number;
+        read_request: { message_index: number; path: string; offset: number; max_chars: number } }[];
       blocks: { path: string; total_chars: number }[] } | null;
     deferred_final_material: { message_index: number; path: string; total_chars: number }[];
     original_answer_timing: { finish_seconds: number | null };
@@ -140,8 +142,9 @@ export interface ComparisonSlot {
 export interface SubmittedComparison {
   importance: "high" | "medium" | "low";
   better_candidate?: string | null;
-  a_summary: string;
-  b_summary: string;
+  /** Omitted for recorded-resource rows; their wording is derived from measurements. */
+  a_summary?: string;
+  b_summary?: string;
 }
 /** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
 export interface ComparisonSubmission {

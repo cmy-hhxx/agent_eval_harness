@@ -22,8 +22,7 @@ function scope(input: CriteriaInput, sources: CriterionSource[]): string[] {
 }
 
 function rule(sources: CriterionSource[]): string {
-  return [...new Set(sources.map(source => source.text)), criteriaText("source_rule"), ...(sources.some((source) => source.kind === "reference")
-    ? [criteriaText("reference_rule")] : [])].join("\n\n");
+  return [...new Set(sources.map(source => source.text)), criteriaText("source_rule")].join("\n\n");
 }
 
 export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnalysis {
@@ -60,7 +59,7 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       applies_to: applies.length === input.candidates.length ? [] : applies, acceptance_rule: rule(sources) };
     entries.push({ group, sourceIndices: criterion.source_indices, criterion: resolved });
   });
-  for (const source of catalogue.filter((source) => source.kind === "question" || source.kind === "reference"))
+  for (const source of catalogue.filter((source) => source.kind === "question"))
     if (!required.has(source.source_index)) {
       const positions = new Map(input.candidates.map((candidate, index) => [candidate.candidate_id, index + 1]));
       const merged = entries.filter(entry => entry.group === "requirements").flatMap((entry, index) => {
@@ -98,9 +97,8 @@ export function matchCriterionSources(input: CriteriaInput, criterion: TaskCrite
   const complete = (selected: CriterionSource[]): CriterionSource[] | undefined => {
     const texts = new Set(selected.map((source) => source.text));
     // Identical question/context paragraphs render once, but retain both their coverage and scope.
-    const mandatory = catalogue.filter((source) => (source.kind === "question" || source.kind === "reference")
-      && !selected.includes(source) && texts.has(source.text)
-      && (source.kind !== "reference" || criterion.acceptance_rule === rule([...selected, source])));
+    const mandatory = catalogue.filter((source) => source.kind === "question"
+      && !selected.includes(source) && texts.has(source.text));
     const initial = [...selected, ...mandatory];
     const finish = (sources: CriterionSource[]): CriterionSource[] | undefined => {
       const applies = scope(input, sources);

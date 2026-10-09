@@ -511,20 +511,25 @@ export async function startWorker(
           let decoded:unknown;
           try { decoded=JSON.parse(text); }
           catch(error) {
+            const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
+            // Only discard surplus closing punctuation after an already complete, parseable value.
+            // Any second value, field, prose, or incomplete structure still requires model repair.
+            if (position > 0 && [...text.slice(position)].every(char => "}] \t\r\n".includes(char))) {
+              try { decoded=JSON.parse(text.slice(0,position)); } catch {/**/}
+            }
             const controlEscaped = escapeControlCharacters(text);
-            if (controlEscaped !== undefined) { try { decoded=JSON.parse(controlEscaped); } catch {/**/} }
+            if (decoded === undefined && controlEscaped !== undefined) { try { decoded=JSON.parse(controlEscaped); } catch {/**/} }
             if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
               const quoting = escapeStringQuotes(controlEscaped ?? text);
               if (quoting) { try { decoded=JSON.parse(quoting.text); } catch {/**/} }
-              if (decoded && typeof decoded === "object" && !Array.isArray(decoded)) jsonRepairs++;
             }
             if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
-              const position=Number(/position (\d+)/u.exec(errorText(error))?.[1]??0);
               throw new ValidationError([{category:"structure",code:"submission_json_invalid",path:"/json",
                 message:"JSON 正文语法错误，无法安全修复："+errorText(error)+
                   "。正文里的英文双引号必须转义（前置反斜杠）或改用中文引号“”；只修正报错位置附近，保持其他内容不变。",
                 actual:{position,excerpt:text.slice(Math.max(0,position-100),position+100)}}]);
             }
+            jsonRepairs++;
           }
           if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("评审正文必须为对象");
           return decoded;
