@@ -1,13 +1,16 @@
 import { memo, useCallback, useMemo } from 'react'
-import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+import { MarkdownFenceProvider } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownFence } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeViewProps, PresentationInjected, TurnTailOwnerProps } from '../contract/slots.ts'
 import { AssistantMarkdown } from './AssistantMarkdown.tsx'
 
 type AssistantNodeViewProps = ChatNodeViewProps<'assistant-step'> & InjectFace<PresentationInjected>
+  & PropsRenderSlots<'conversation.chat.fence' | 'conversation.chat.visuals'>
 
 /** Streaming, settled, and interrupted Assistant states share one keyed renderer instance. */
 export const AssistantNodeView = memo(function AssistantNodeView({
-  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, t,
+  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, renderSlot, t,
 }: AssistantNodeViewProps) {
   const data = node.data
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
@@ -29,7 +32,12 @@ export const AssistantNodeView = memo(function AssistantNodeView({
     && turnProcess.spec.inlineReasoning
     && !turnProcess.open
   const revealProcess = useCallback(() => { turnProcess?.setOpen(true) }, [turnProcess])
+  const renderFence = useCallback((fence: MarkdownFence) => fence.language !== 'chart' ? null
+    : renderSlot('conversation.chat.fence', { ...fence, turn: data.turn }, { entryKey: fence.language }), [renderSlot, data.turn])
   return (
+    <MarkdownFenceProvider renderFence={renderFence}>
+    {groupPart === 'response' && turnProcess?.spec.answerStep === data.step
+      && renderSlot('conversation.chat.visuals', { turn: data.turn })}
     <AssistantMarkdown
       blocks={data.blocks}
       groupPart={groupPart}
@@ -43,5 +51,6 @@ export const AssistantNodeView = memo(function AssistantNodeView({
       mentions={mentions}
       t={t}
     />
+    </MarkdownFenceProvider>
   )
 })

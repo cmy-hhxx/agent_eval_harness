@@ -9,7 +9,7 @@ const chart = {
 };
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
 function chartTool(data: ErisDependencies["data"], specialists: ErisDependencies["specialists"] = { invoke: unexpected, read: unexpected }) {
-  return createEris({ code: { execute: unexpected, read: unexpected }, data, specialists, search: { search: unexpected }, web: { read: unexpected }, save: unexpected }).tools.find((tool) => tool.name === "show_chart")!;
+  return createEris({ code: { execute: unexpected, read: unexpected }, data, specialists, search: { search: unexpected }, web: { read: unexpected } }).tools.find((tool) => tool.name === "show_chart")!;
 }
 const noData = { list: unexpected, read: unexpected, search: unexpected, image: unexpected };
 
@@ -41,7 +41,8 @@ test("external material charts skip provenance references instead of borrowing a
   const { references: _, ...external } = chart;
   const response = await tool.execute(external, context);
   assert.equal(response.details, undefined, "external charts have no local source coordinates to store");
-  assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify({ kind: "chart", chart: external }) }]);
+  const receipt = JSON.parse(response.content[0].text!);
+  assert.deepEqual(receipt, { kind: "chart", chart: external });
   await assert.rejects(tool.execute({ ...chart, references: [] }, context), /references/);
 });
 
@@ -50,7 +51,8 @@ test("chart output keeps source coordinates in metadata and preserves measured v
   const tool = chartTool({ ...noData, async list(query) { calls.push(query); return { kind: "inputs", total: 56, evaluatorVersion: "fixture" }; } });
   const response = await tool.execute(chart, context);
   const { references: _, ...spec } = chart;
-  assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify({ kind: "chart", chart: spec }) }]);
+  const receipt = JSON.parse(response.content[0].text!);
+  assert.deepEqual(receipt, { kind: "chart", chart: spec });
   assert.deepEqual(response.details, { references: [{ runId: "evaluation-internal", evaluatorVersion: "fixture" }] });
   assert.deepEqual(calls, [{ runId: "evaluation-internal", limit: 1 }]);
   assert(!response.content[0].text?.includes("evaluation-internal"));

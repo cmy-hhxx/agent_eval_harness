@@ -28,13 +28,14 @@ export function researchLayout(chart, width, deltaUnit, numbers) {
   const rowNames = matrix ? [...chart.series.map(s => s.name), ...(delta ? [differenceLabel(chart, deltaUnit)] : [])]
     : chart.type === 'interval' ? chart.categories.flatMap(category => chart.series.map(s => chart.series.length === 1 ? category : `${category} · ${s.name}`))
     : chart.categories;
-  const labelWidth = Math.max(30, ...rowNames.map(name => chartTextWidth(name)));
-  const longestNumber = Math.max(16, ...numbers.map(number => chartTextWidth(number, 11)));
+  const labelWidth = Math.max(30, ...rowNames.map(name => chartTextWidth(name, chart.type === 'heatmap' ? 14 : 12)));
+  const longestNumber = Math.max(16, ...numbers.map(number => chartTextWidth(number, chart.type === 'heatmap' ? 14 : 11)));
   if (matrix) {
     const cell = Math.max(chart.type === 'bubble_matrix' ? 42 : 32, longestNumber + 14,
-      ...chart.categories.map(name => chartTextWidth(name) + 16));
-    return { width: Math.max(width, labelWidth + 28 + chart.categories.length * cell + 18),
-      height: rowNames.length * (chart.type === 'bubble_matrix' ? 42 : 30) + (chart.type === 'heatmap' ? 70 : 48), labelWidth };
+      ...chart.categories.map(name => chartTextWidth(name, chart.type === 'heatmap' ? 14 : 12) + (chart.type === 'heatmap' ? 8 : 16)));
+    const showColorScale = chart.type === 'heatmap' && (chart.categories.length > 12 || chart.series.some(series => series.values.includes(null)));
+    return { width: Math.max(width, labelWidth + chart.categories.length * cell + (chart.type === 'heatmap' ? 20 : 46)),
+      height: rowNames.length * (chart.type === 'bubble_matrix' ? 42 : 30) + (chart.type === 'heatmap' ? showColorScale ? 64 : 40 : 48), labelWidth, showColorScale };
   }
   if (chart.type === 'dumbbell') return { width: Math.max(width, labelWidth + longestNumber * 3 + 220), height: chart.categories.length * 28 + 48, labelWidth };
   if (chart.type === 'interval') return { width: Math.max(width, labelWidth + longestNumber * 3 + 200), height: rowNames.length * 34 + 48, labelWidth };

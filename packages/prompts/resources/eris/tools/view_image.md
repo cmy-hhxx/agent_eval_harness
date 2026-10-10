@@ -1,1 +1,1 @@
-按输入引用及 messageIndex 读取原始消息中的图片，仅查看已有材料。
+查看原始消息中的已有图片。reference 使用目录或搜索返回的 runId + inputId + messageIndex。

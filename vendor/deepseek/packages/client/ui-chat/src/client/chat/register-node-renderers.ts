@@ -42,6 +42,10 @@ export function registerChatNodeRenderers(
     key: 'assistant-step',
     locale: NS,
     inject: () => ({ hooks: { presentation } }),
+    children: {
+      'conversation.chat.fence': { kind: 'keyed', scope: 'session' },
+      'conversation.chat.visuals': { kind: 'list', scope: 'session' },
+    },
   }, AssistantNodeView))
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
     name: 'conversation.chat.node',

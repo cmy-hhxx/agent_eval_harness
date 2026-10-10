@@ -32,7 +32,7 @@ test("Eris Responses requests preserve optional tool arguments through Pi", { ti
   const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: async query => { queries.push(query); return { kind: "runs", total: 1, items: [{ runId: "fixture-run" }] }; },
       read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   });
   const gateway = await listen(async (req, res) => {
     assert.equal(req.url, "/v1/responses");
@@ -129,7 +129,7 @@ test("stopping during conversation preparation never starts a model turn", { tim
     });
 });
 
-test("Eris cross-checks financial sources, saves cited summaries and restores search and raw evidence without re-querying", { timeout: 30000 }, async () => {
+test("Eris cross-checks financial sources, answers inline and restores search and raw evidence without re-querying", { timeout: 30000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "assistant-search-"));
   const scope = { userId: "alice", sessionId: randomUUID() };
   const reference = { runId: "finance-run", taskId: "finance-comparison" };
@@ -137,7 +137,7 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
   const query = "人民银行 2026年9月 利率 公告";
   const markdown = `正式结果：模型 A 缺少利率口径。\n\n外部核对：[央行公告](${sourceUrl})，发布日期 2026-09-20。`;
   const accepted = { conclusion: "模型 A 缺少利率口径。" };
-  const saved: string[] = [], errors: unknown[] = [];
+  const errors: unknown[] = [];
   let searches = 0, readings = 0;
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const previousSecret = process.env.ASSISTANT_TEST_KEY;
@@ -160,7 +160,6 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
       assert.deepEqual(args, { url: sourceUrl, find: "利率" }); assert(!signal.aborted);
       return { requestedUrl: sourceUrl, url: sourceUrl, title: "央行公告", format: "html", retrievedAt: "2026-10-02T00:00:00.000Z", elapsedMs: 10, publicationDate: "2026-09-20", dateAssessment: { status: "not_requested", basis: "page_metadata", date: "2026-09-20" }, lines: [{ number: 1, text: "2026年9月20日 利率公告" }, { number: 2, text: "央行发布利率口径。" }], matches: [{ line: 1 }, { line: 2 }], totalLines: 2, truncated: false, limitations: [] };
     } },
-    async save(_, text) { saved.push(text); return { name: "summary.md", url: "/summary.md" }; },
   });
   const gateway = await listen(async (req, res) => {
     const request = object(await body(req));
@@ -171,21 +170,22 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
     const results = messages.filter(message => message.role === "tool");
     const next = results.length === 0 ? { name: "read_data", arguments: { reference } }
       : results.length === 1 ? { name: "search_web", arguments: { queries: [{ query, domains: ["pbc.gov.cn"] }] } }
-      : results.length === 2 ? { name: "read_web", arguments: { url: sourceUrl, find: "利率" } }
-      : results.length === 3 ? { name: "save_summary", arguments: { markdown, references: [{ reference }] } } : undefined;
+      : results.length === 2 ? { name: "read_web", arguments: { url: sourceUrl, find: "利率" } } : undefined;
     if (results.length >= 2) {
       const search = JSON.parse(String(results[1].content));
       assert.equal(search.results[0].url, sourceUrl);
       assert.equal(search.results[0].date, "2026-09-20");
       assert(!Number.isNaN(Date.parse(search.searchedAt)));
-      assert.deepEqual(JSON.parse(JSON.parse(String(results[0].content)).text).result, accepted, "external facts leave accepted conclusions intact");
+      const acceptedSummary = JSON.parse(String(results[0].content));
+      assert.equal(acceptedSummary.view, "summary");
+      assert.deepEqual(acceptedSummary.result, accepted, "external facts leave accepted conclusions intact");
     }
     if (results.length >= 3) {
       const raw = JSON.parse(String(results[2].content));
       assert.equal(raw.lines[1].number, 2); assert.equal(raw.lines[1].text, "央行发布利率口径。");
     }
     const delta = next ? { role: "assistant", tool_calls: [{ index: 0, id: `financial-call-${results.length}`, type: "function", function: { name: next.name, arguments: JSON.stringify(next.arguments) } }] }
-      : { role: "assistant", content: `已结合正式结果与[央行公告](${sourceUrl})保存总结。` };
+      : { role: "assistant", content: markdown };
     const chunk = { id: "financial-fixture", object: "chat.completion.chunk", created: 1, model: "fixture" };
     res.writeHead(200, { "content-type": "text/event-stream" });
     res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
@@ -197,14 +197,14 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
   let sessions = new AssistantSessions(options);
   try {
     await sessions.create(scope.userId, scope.sessionId);
-    const prompt: AssistantPrompt = { ...scope, requestId: randomUUID(), mode: "queue", content: [{ type: "text", text: "用央行公告交叉核对这份点评，保存总结。" }] };
+    const prompt: AssistantPrompt = { ...scope, requestId: randomUUID(), mode: "queue", content: [{ type: "text", text: "用央行公告交叉核对这份点评，并说明结果。" }] };
     await sessions.prompt(scope.userId, prompt);
     assert.equal((await settled(sessions, scope.sessionId, prompt.requestId)).requests[prompt.requestId], "completed", JSON.stringify(errors));
     assert.equal(searches, 1); assert.equal(readings, 1);
-    assert.deepEqual(saved, [markdown]);
     const journal = await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8");
     assert(!journal.includes("fixture-serper-secret"));
     const rows = journal.trim().split("\n").map(line => JSON.parse(line));
+    assert(journal.includes(JSON.stringify(markdown)), "the answer is retained in the conversation");
     const searchRecord = rows.find(row => row.event?.type === "tool/result" && row.event.data.message?.toolCallId === "financial-call-1");
     assert(searchRecord, "search result is recorded for later conversation and inspection");
     assert(!searchRecord.event.data.meta?.sourceRead, "external search must not be re-executed as a local source reader");
@@ -218,7 +218,6 @@ test("Eris cross-checks financial sources, saves cited summaries and restores se
     assert.equal((await settled(sessions, scope.sessionId, next.requestId)).requests[next.requestId], "completed", JSON.stringify(errors));
     assert.equal(searches, 1, "resume uses the persisted retrieval timestamp and sources without another paid request");
     assert.equal(readings, 1, "resume uses persisted raw evidence without another network read");
-    assert.deepEqual(saved, [markdown]);
     assert.deepEqual(errors, []);
   } finally {
     await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });

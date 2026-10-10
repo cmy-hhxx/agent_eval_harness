@@ -73,6 +73,14 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "view": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "details"
+        ],
+        "description": "仅正式结果使用：默认 summary 完整返回点评、判决与归因，过滤 evidence 字段；details 按字符分页读取含证据的完整结果。"
+      },
       "reference": {
         "type": "object",
         "additionalProperties": false,
@@ -141,13 +149,57 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 16000,
-        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；消息正文和正式结果按 UTF-16 字符，默认8000、最多16000。"
+        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；消息正文和正式结果 details 按 UTF-16 字符，默认8000、最多16000。summary 不分页，省略 offset / limit。"
       }
     },
     "required": [
       "reference"
     ],
     "allOf": [
+      {
+        "if": {
+          "properties": {
+            "reference": {
+              "required": [
+                "taskId"
+              ]
+            }
+          }
+        },
+        "then": {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "offset"
+                ]
+              },
+              {
+                "required": [
+                  "limit"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "view"
+            ],
+            "properties": {
+              "view": {
+                "const": "details"
+              }
+            }
+          }
+        },
+        "else": {
+          "not": {
+            "required": [
+              "view"
+            ]
+          }
+        }
+      },
       {
         "if": {
           "properties": {
@@ -542,6 +594,14 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "view": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "details"
+        ],
+        "description": "默认 summary 完整返回点评、判决与归因，过滤 evidence 字段；details 按字符分页读取含证据的完整结果。"
+      },
       "operationId": {
         "type": "string",
         "minLength": 1,
@@ -550,91 +610,42 @@
       "offset": {
         "type": "integer",
         "minimum": 0,
-        "description": "字符偏移，从0开始；续页使用返回的 nextOffset。"
+        "description": "仅 details 使用；字符偏移从0开始，续页使用返回的 nextOffset。"
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
         "maximum": 16000,
-        "description": "每页 UTF-16 字符数，默认8000，最多16000。"
+        "description": "仅 details 使用；每页 UTF-16 字符数，默认8000，最多16000。"
       }
     },
     "required": [
       "operationId"
-    ]
-  },
-  "save_summary": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "markdown": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200000
-      },
-      "references": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "operationId": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-            },
-            "reference": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "runId": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 181,
-                  "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
-                },
-                "taskId": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "runId",
-                "taskId"
-              ]
-            }
-          },
-          "oneOf": [
-            {
-              "required": [
-                "operationId"
-              ],
-              "not": {
-                "required": [
-                  "reference"
-                ]
-              }
-            },
-            {
-              "required": [
-                "reference"
-              ],
-              "not": {
-                "required": [
-                  "operationId"
-                ]
-              }
-            }
+    ],
+    "if": {
+      "anyOf": [
+        {
+          "required": [
+            "offset"
           ]
         },
-        "minItems": 1
-      }
+        {
+          "required": [
+            "limit"
+          ]
+        }
+      ]
     },
-    "required": [
-      "markdown",
-      "references"
-    ]
+    "then": {
+      "required": [
+        "view"
+      ],
+      "properties": {
+        "view": {
+          "const": "details"
+        }
+      }
+    }
   },
   "read_web": {
     "type": "object",
@@ -679,6 +690,161 @@
         "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
       }
     }
+  },
+  "show_comparison": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "reference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "required": [
+          "runId",
+          "taskId"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "\\S"
+      },
+      "candidates": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "description": "comparisonScope 中的 model 标识，不是 modelName。"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "\\S",
+              "description": "用一句话概括这份回答实际给出的答案，具体用途与不足放对应卡片。"
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16,
+                    "pattern": "\\S"
+                  },
+                  "evidence": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60,
+                    "pattern": "\\S",
+                    "description": "一句依据，合并必要的事实与回答做法，保留关键差异；不把回答断言当作已核验事实。"
+                  },
+                  "impact": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 36,
+                    "pattern": "\\S",
+                    "description": "一个明确影响，直接说明用户能做什么或哪个判断失去依据，不重复前句。"
+                  },
+                  "assessment": {
+                    "enum": [
+                      "strength",
+                      "problem",
+                      "uncertain"
+                    ],
+                    "description": "按本分支正式归因标记优点、已确认问题或待核实；已确认错误用 problem，不按总胜负改变性质。"
+                  },
+                  "highlights": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "maxProperties": 1,
+                    "additionalProperties": false,
+                    "description": "可省略；最多选择一个字段中的唯一连续短语，整图含顶部理由最多2处，不填写HTML或样式。",
+                    "properties": {
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16,
+                        "pattern": "\\S"
+                      },
+                      "impact": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16,
+                        "pattern": "\\S"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "title",
+                  "evidence",
+                  "impact",
+                  "assessment"
+                ]
+              }
+            }
+          },
+          "required": [
+            "model",
+            "summary",
+            "paths"
+          ]
+        }
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160,
+        "pattern": "\\S",
+        "description": "顶部结论的决定性理由，一次讲清为何这样比较；具体缺陷留在卡片，不在末尾再次转折，正式判词由程序绑定。"
+      },
+      "reasonHighlight": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16,
+        "pattern": "\\S",
+        "description": "可省略；仅突出reason中唯一出现的决定性短语，整图含分支高亮最多2处，不填写HTML或样式。"
+      },
+      "caveat": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100,
+        "pattern": "\\S",
+        "description": "底部只放日期、档位、比较范围或标准答案等口径；不追加优劣判词，图文合计最多提一次无标准答案。"
+      }
+    },
+    "required": [
+      "reference",
+      "title",
+      "candidates",
+      "reason"
+    ]
   },
   "show_chart": {
     "type": "object",

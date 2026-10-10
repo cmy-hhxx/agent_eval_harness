@@ -175,6 +175,8 @@ upstream.deepseek = {
   directory: "vendor/deepseek",
   license: "MIT; component-specific licenses retained in copied package directories",
   local_changes: [
+    "Chat transcript side padding exposes --dsh-chat-inline-padding while retaining upstream composer clearance by default. Eris uses 16px on viewports up to 480px without changing composer or desktop geometry.",
+    "Assistant responses expose an application-owned visuals slot at the canonical final answer, plus a keyed Markdown fence slot. Eris renders accepted chart receipts once before the final response, keeps charts at the tail when no final answer exists, ignores chart placeholders, and renders bounded plain-text flow steps. Ordinary code fences retain the upstream renderer, streaming parser and safety behavior.",
     "Standalone Markdown images are centered within the message column; inline image buttons retain inline layout.",
     "Markdown strong emphasis can close after non-ASCII punctuation before adjacent Latin letters or digits, preserving ASCII CommonMark behavior. Regression tests cover the Eris mixed-language labels while streaming, settling and restoring.",
     "AssistantMarkdown renders consecutive provider text fragments as one Markdown document with a stable first-block key. Authored newlines and non-text boundaries remain intact; split emphasis, tables and links render correctly in both streaming and restored replies. Regression tests exercise the actual assistant component with the Eris fragment pattern.",

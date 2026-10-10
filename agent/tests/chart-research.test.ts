@@ -23,7 +23,7 @@ const samples = [
 ];
 const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'chart', signal: new AbortController().signal, progress() {} };
 const unexpected = async (): Promise<never> => { throw new Error('Unexpected dependency'); };
-const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, save: unexpected, search: { search: unexpected }, web: { read: unexpected } });
+const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
 const tool = eris.tools.find(t => t.name === 'show_chart')!;
 
 test('all research charts pass the public tool contract and remain readable after serialization', async () => {
@@ -57,6 +57,28 @@ test('research chart geometry preserves unknown pairs, raw distribution counts a
   assert.equal(data.differenceUnit({ ...samples[0], unit: '%' }), '百分点');
   assert.equal(data.chartReading(samples[1], { sourceSeries: 1, categoryIndex: 1 }, 0), '乙 · B组：未知');
   assert.equal(data.chartReading(samples[2], { sourceSeries: 0, categoryIndex: 2 }, 0), '丙 · 时间：9 秒 · A组：30 次');
+});
+
+test('complete heatmaps place readable tier columns above the observed counts without a redundant colour scale', () => {
+  const chart = { ...base, type: 'heatmap', categories: ['Fast', 'Expert'], series: [
+    { name: 'A组胜', values: [54, 99] }, { name: 'B组胜', values: [94, 78] },
+    { name: '双方都好', values: [61, 47] }, { name: '双方都差', values: [10, 11] },
+  ] };
+  const options = researchOption(chart, 246);
+  assert.equal(options.xAxis.position, 'top');
+  assert.deepEqual(options.xAxis.data, ['Fast', 'Expert']);
+  assert.deepEqual(options.yAxis.data, chart.series.map(series => series.name));
+  assert.equal(options.series[0].label.fontSize, 14);
+  assert.equal(options.visualMap.show, false);
+  assert.equal(options.series[0].data.length, 8);
+  assert.deepEqual(options.series[0].data.map((point: { value: number[] }) => point.value[2]), [54, 99, 94, 78, 61, 47, 10, 11]);
+  const document = new JSDOM(renderToStaticMarkup(createElement(ResearchChart, { chart, width: 246, english: false }))).window.document;
+  assert(parseFloat(document.querySelector<HTMLElement>('[tabindex]')!.style.height) <= 165, 'four rows keep a compact canvas');
+  const narrow = new JSDOM(renderToStaticMarkup(createElement(ResearchChart, { chart, width: 199, english: false }))).window.document;
+  assert.equal(parseFloat(narrow.querySelector<HTMLElement>('[tabindex]')!.style.width), 199, 'both tier columns fit a 320px conversation without shrinking labels');
+  assert.equal(researchOption({ ...chart, series: chart.series.map((series, index) => index ? series : { ...series, values: [54, null] }) }).visualMap.show, true);
+  const dense = { ...chart, categories: Array.from({ length: 13 }, (_, index) => String(index)), series: [{ name: '记录', values: Array(13).fill(1) }] };
+  assert.equal(researchOption(dense).visualMap.show, true, 'a dense matrix with hidden numeric labels still keeps its colour scale');
 });
 
 test('invalid analytic shapes and unsupported annotations fail before source access', async () => {

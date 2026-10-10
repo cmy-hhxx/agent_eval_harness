@@ -8,3 +8,51 @@
 .eris-chart-action:hover { filter: brightness(.97); }
 
 .eris-analysis-chart { box-shadow: 0 2px 9px #0B1F5406; }
+
+@media (max-width: 480px) {
+  :root { --dsh-chat-inline-padding: 16px; }
+}
+
+.eris-comparison-visual { container: comparison / inline-size; }
+.eris-comparison { width: 100%; max-width: 780px; margin: 20px auto 0; color: #293241; font-size: 14px; line-height: 1.6; }
+.eris-comparison-slice { display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: 18px; padding: 20px 0; border-top: 1px solid #d9dde3; }
+.eris-comparison-slice-heading { min-width: 0; padding-top: 4px; }
+.eris-comparison-slice-number { display: block; margin-bottom: 6px; color: #687080; font-size: 14px; font-variant-numeric: tabular-nums; }
+.eris-comparison-slice-heading > strong { display: block; font-size: 14px; line-height: 1.6; }
+.eris-comparison-question { display: flex; align-items: center; justify-content: center; min-height: 70px; padding: 12px 18px; box-sizing: border-box; border: 1px solid #d9dde3; border-radius: 4px; background: #fff; text-align: center; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.eris-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.eris-comparison-grid[data-comparison-grid="usefulness"] { align-items: start; }
+.eris-comparison-answer, .eris-comparison-candidate { min-width: 0; padding: 16px; box-sizing: border-box; border: 1px solid #d9dde3; border-radius: 4px; background: #fff; }
+.eris-comparison-answer { display: flex; flex-direction: column; justify-content: center; min-height: 112px; text-align: center; }
+.eris-comparison-heading, .eris-comparison-path-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; overflow-wrap: anywhere; }
+.eris-comparison-heading { justify-content: center; margin-bottom: 10px; font-size: 16px; }
+.eris-comparison-outcome, .eris-comparison-assessment { font-size: 14px; white-space: nowrap; }
+.eris-comparison-outcome { font-weight: 600; }
+.eris-comparison-outcome.is-win, .eris-comparison-outcome.is-both_good, .eris-comparison-assessment.is-strength { color: #216342; }
+.eris-comparison-outcome.is-loss, .eris-comparison-outcome.is-both_bad, .eris-comparison-assessment.is-problem { color: #a13827; }
+.eris-comparison-assessment.is-uncertain { color: #785819; }
+.eris-comparison-usefulness-heading { padding-bottom: 10px; text-align: center; font-size: 16px; font-weight: 600; }
+.eris-comparison-path { padding: 12px 0; border-top: 1px solid #e2e5e9; }
+.eris-comparison-path:last-child { padding-bottom: 0; }
+.eris-comparison-path-heading { justify-content: space-between; margin-bottom: 6px; font-size: 15px; }
+.eris-comparison-support { margin: 0; color: #626872; overflow-wrap: anywhere; }
+.eris-comparison-impact { margin: 6px 0 0; padding-left: 10px; border-left: 2px solid #737a84; color: #293241; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.eris-comparison-impact > [data-comparison-content], .eris-comparison-summary > [data-comparison-content] { display: block; }
+.eris-comparison-summary { margin: 0; min-width: 0; color: #293241; overflow-wrap: anywhere; }
+.eris-comparison-highlight { color: #24282e; background: #fff16a; font-weight: 600; border-radius: 1px; box-decoration-break: clone; }
+.eris-comparison-phrase { display: inline-block; max-width: 100%; vertical-align: bottom; }
+.eris-comparison-value { display: inline-block; width: max-content; max-width: 100%; vertical-align: bottom; overflow-wrap: anywhere; }
+.eris-comparison-transitions { padding: 0 0 12px 122px; }
+.eris-comparison-arrow { display: block; width: 14px; height: 14px; margin: 0 auto; color: #343434; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.eris-comparison-conclusion { margin-bottom: 20px; overflow-wrap: anywhere; }
+.eris-comparison-conclusion > strong { display: block; margin-bottom: 8px; color: #202e43; font-size: 20px; line-height: 1.4; text-align: center; }
+.eris-comparison-conclusion > [data-comparison-reason] { display: block; }
+.eris-comparison-caveat { max-width: 780px; margin: 16px auto 20px; padding-top: 12px; border-top: 1px solid #e5e8ed; color: #687080; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+@container comparison (max-width: 600px) {
+  .eris-comparison-slice { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 18px 0; }
+  .eris-comparison-slice-heading { display: flex; align-items: baseline; gap: 10px; padding: 0; }
+  .eris-comparison-slice-number { margin: 0; }
+  .eris-comparison-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .eris-comparison-answer { min-height: 0; }
+  .eris-comparison-transitions { display: none; }
+}

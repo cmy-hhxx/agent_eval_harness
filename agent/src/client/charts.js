@@ -3,6 +3,7 @@ import { CircularChart } from './chart-circular.js';
 import { circularTypes, validStructureChart } from './chart-structure-data.js';
 import { RadialHeatmap } from './chart-radial.js';
 import { researchTypes } from './chart-data.js';
+import { ComparisonDiagram, comparisonFromToolOutput } from './comparison-diagram.js';
 
 import { chartTheme, researchColors } from './chart-theme.js';
 const colors = researchColors;
@@ -127,22 +128,39 @@ export function chartsFromToolData(data) {
   for (const block of pending) {
     if (!block) continue;
     if (Array.isArray(block.subCalls)) pending.push(...block.subCalls);
-    if (block.kind !== 'tool-result' || block.call?.name !== 'show_chart' || block.isError || !Array.isArray(block.content) || seen.has(block.callId)) continue;
+    if (block.kind !== 'tool-result' || !['show_chart', 'show_comparison'].includes(block.call?.name) || block.isError || !Array.isArray(block.content) || seen.has(block.callId)) continue;
     const output = block.content.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n');
-    const chart = chartFromToolOutput(output, 'ok');
-    if (chart) { seen.add(block.callId); charts.push({ callId: block.callId, chart }); }
+    const chart = block.call.name === 'show_chart' ? chartFromToolOutput(output, 'ok') : null;
+    const diagram = block.call.name === 'show_comparison' ? comparisonFromToolOutput(output, 'ok') : null;
+    if (chart || diagram) {
+      seen.add(block.callId); charts.push({ callId: block.callId, ...(chart ? { chart } : { diagram }) });
+    }
   }
   return charts;
 }
 
-/** Public completed-Turn extension; its data source only changes for this Turn's tool nodes. */
-export const TurnCharts = memo(function TurnCharts({ turn, useChat }) {
+function useTurnCharts(turn, useChat) {
   const nodes = useChat(snapshot => snapshot.nodes);
-  const source = useMemo(() => nodes.turnDataSource(turn.turn, 'tool-call'), [nodes, turn.turn]);
+  const source = useMemo(() => nodes.turnDataSource(turn, 'tool-call'), [nodes, turn]);
   const data = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
-  const charts = useMemo(() => chartsFromToolData(data), [data]);
-  return charts.length ? h('div', { 'data-turn-charts': turn.turn }, charts.map(({ callId, chart }) =>
-    h(AnalysisChart, { key: callId, chart, language: typeof document === 'undefined' ? 'zh' : document.documentElement.lang }))) : null;
+  return useMemo(() => chartsFromToolData(data), [data]);
+}
+
+/** The final response displays its Turn's accepted receipts, independent of Markdown. */
+export const TurnCharts = memo(function TurnCharts({ turn, useChat }) {
+  const charts = useTurnCharts(turn, useChat);
+  return charts.length ? h('div', { 'data-turn-charts': turn }, charts.map(({ callId, chart, diagram }) => diagram
+    ? h(ComparisonDiagram, { key: callId, diagram })
+    : h(AnalysisChart, { key: callId, chart, language: typeof document === 'undefined' ? 'zh' : document.documentElement.lang }))) : null;
+});
+
+/** An interrupted or failed Turn can have accepted charts without a final response. */
+export const TurnChartFallback = memo(function TurnChartFallback({ turn, useChat }) {
+  const nodes = useChat(snapshot => snapshot.nodes);
+  const source = useMemo(() => nodes.turnDataSource(turn.turn, 'turn-process'), [nodes, turn.turn]);
+  const processes = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
+  return processes.at(-1)?.answerStep != null ? null
+    : h('div', { 'data-turn-chart-fallback': turn.turn }, h(TurnCharts, { turn: turn.turn, useChat }));
 });
 
 function useWidth() {
@@ -505,14 +523,14 @@ export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
     position: 'relative', margin: '14px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
     border: `1px solid ${borderColor}`, borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
-  } }, h('figcaption', null,
+  } }, h('figcaption', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px' } },
     h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600 } }, chart.title),
-    h('div', { style: { marginTop: 3, fontSize: 12, lineHeight: 1.45 } }, `${chart.scope} · ${chart.unit}`)),
-  legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 12 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
+    h('span', { 'data-chart-unit': true, style: { fontSize: 14, lineHeight: 1.45 } }, chart.unit)),
+  h('p', { 'data-chart-metadata': true, style: visuallyHidden }, `${chart.scope} · ${english ? 'Source' : '来源'}：${chart.source}`),
+  legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 14 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
     h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
   h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
     : chart.type === 'dot' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
   h(AccessibleValues, { chart, english }),
-  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 12, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null,
-  h('footer', { style: { marginTop: 5, fontSize: 11, lineHeight: 1.45 } }, `${english ? 'Source' : '来源'}：${chart.source}`));
+  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 14, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null);
 });

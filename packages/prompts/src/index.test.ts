@@ -117,65 +117,77 @@ test("only blind comparison prompts prescribe candidate markers", () => {
   assert.match(agentPrompt("rewrite", []).instructions, /已有真实组别、模型称谓和业务字母保持原义，不重命名为候选标记/);
 });
 
-test("Eris keeps decision and evidence rules without repeating tool parameter manuals", () => {
-  const { systemPrompt, toolDescriptions, recoveryMessage } = erisPrompt(["list_data", "read_data", "call_specialist", "show_chart", "search_web", "read_web"]);
-  assert(systemPrompt.length < 4000, "system policy stays compact; parameter manuals belong to tools");
-  for (const rule of [
-    /currentRun.summary/, /inputCount.*登记.*evaluatedInputCount.*已归因/,
-    /formalComparisonStats.comparisonCount/, /结果份数不等于对局场数/,
-    /Fast 只能与 Fast 比，Expert 只能与 Expert 比/, /双方都答得好、双方都答得差分别保留/,
-    /常规分析默认读取评测输出/, /不把读取双方原始回答作为前置条件/, /四类合计须与该档场数一致/,
-    /材料事实、正式判词和你的分析/, /不改写正式结果/,
-    /相同失败参数不原样重发/, /保留已成功结果/, /原 operationId 查询状态/,
-    /有依赖则等上一步返回真实引用/, /相互独立.*最多4路并发/,
-    /within_range 不证明当时已公开/, /未命中不是反证/,
-    /期末借款不是年度加权平均利率/, /估算不能冒充实际值/,
-    /与参考答案一致不证明经济含义正确/, /完整、正确和用户要求/,
-  ]) assert.match(systemPrompt, rule);
-  assert.doesNotMatch(systemPrompt, /默认必须有图|不超过60字|每次回复固定形态|点评优先三行/);
-  assert.doesNotMatch(systemPrompt, /默认两轮|定位1–2个/);
-  assert.match(systemPrompt, /execute_code.*复算与验证/);
-  assert.match(systemPrompt, /先摘要定位.*评测结果页.*必要时下钻原始消息/);
-  assert.match(systemPrompt, /按意思分短段，每段讲清一件事/);
-  assert.match(systemPrompt, /不编造网址/);
-  assert.match(systemPrompt, /默认用文字回答/);
-  assert.match(systemPrompt, /单题点评、少数案例、单一事实、纯文字机制和更正不用图表/);
-  assert.match(systemPrompt, /表格用于查数，不用于摆放几段优缺点/);
-  assert.match(systemPrompt, /用户喜欢或讨厌某个模型，不改变证据支持的判断/);
-  assert.match(systemPrompt, /优缺点按分量写，不给双方凑相同条数/);
-  assert.match(systemPrompt, /必要限定.*只说一次/);
-  assert.doesNotMatch(systemPrompt + toolDescriptions.show_chart, /先图后评|先取证、再作图|多项对照可用简短表格/);
-  for (const prompt of [systemPrompt, toolDescriptions.list_data, toolDescriptions.read_data])
-    assert.doesNotMatch(prompt, /案例先读完整原问|正式结果不能代替原始问句和回答|先读这些引用的消息目录/);
-  assert.match(toolDescriptions.read_data, /仅在用户要求复核、评测信息不足、结论矛盾或疑似误判/);
-  assert.match(toolDescriptions.list_data, /先用正式结果 reference 读取评测输出/);
-  assert.match(toolDescriptions.read_data, /offset \/ limit 是顶层字段、与 reference 同级/);
-  assert.match(toolDescriptions.list_data, /query 是字面文本筛选词，不是数据类别/);
-  assert.match(toolDescriptions.list_data, /view:"comparisons",limit:1/);
-  assert.match(toolDescriptions.list_data, /inputs\[\]\.reference/);
-  assert.match(toolDescriptions.show_chart, /statistics 不能放在工具顶层/);
-  assert.match(toolDescriptions.search_web, /queries 必填.*query 在每个项内/);
-  assert.match(toolDescriptions.search_web, /category 只有 web（默认）和 news/);
-  assert.match(toolDescriptions.read_web, /find 未命中只说明已提取范围/);
-  assert.match(recoveryMessage, /结果未知当作未执行/);
-});
-
-test("chart guidance retains source boundaries and quantitative requirements", () => {
-  const { toolDescriptions } = erisPrompt(["show_chart"]);
-  const chart = toolDescriptions.show_chart;
-  for (const rule of [
-    /图必须比一句话多交付信息/, /不编主观分数或置信带/,
-    /成批样本的统计、多个可比期间的数据/, /不按类别数或单元格数判断/,
-    /最少点数只是绘制条件，不是统计充分或显著的证明/,
-    /dumbbell.*两组同口径/, /waterfall.*可加总/, /histogram.*程序分箱和计数/,
-    /A组皇家蓝，B组珊瑚橙/, /不随赢家或涨跌改变.*不按类别位置猜测身份/,
-    /双方都好、双方都差分别用丹宁蓝和海军蓝/,
-    /正式战绩汇总用 "references":\[\{"statistics":\{"runId":.*"comparisonTier":"Fast"\}\}\]/,
-    /taskId 不放在 references 项的顶层/, /不在校验失败后换成运行引用/,
-    /外部网页、研报、行情、公告等材料作图不传 references/,
-    /annotations.*默认省略.*最多3处/, /原因与推导写在正文/,
-  ]) assert.match(chart, rule);
-  assert.doesNotMatch(chart, /不超过60字|保证正文不超过两行/);
+test("Eris keeps a compact policy and explicit tool interfaces", () => {
+  const names = ["list_data", "read_data", "call_specialist", "read_specialist", "show_chart", "show_comparison", "search_web", "read_web", "execute_code", "read_code_output", "calculate", "search_data", "view_image"];
+  const { systemPrompt, toolDescriptions, recoveryMessage } = erisPrompt(names);
+  assert(systemPrompt.length < 1700, "system policy states the goal and shared principles; tool mechanics belong to tools");
+  assert(systemPrompt.length + Object.values(toolDescriptions).join("").length < 7500, "the full Eris instruction set stays concise");
+  for (const rule of [/自主调查/, /过滤 evidence/, /需要查证时再读详情/, /不改写正式结果/, /Fast、Expert 分别比较/, /未知值保持未知/, /show_comparison/, /自动.*回答开头/, /正式判词由程序确定/]) assert.match(systemPrompt, rule);
+  assert.doesNotMatch(systemPrompt, /默认用文字回答|单题点评.*不用图表|最多600字|默认两轮|100–250字|只选决定胜负的一处差异|不再列成表格/);
+  assert.match(systemPrompt, /结论先行/);
+  assert.match(systemPrompt, /总结、报告、表格.*对话展示，不生成下载链接/);
+  assert.match(systemPrompt, /仅图片可下载，来源网页仍可正常引用/);
+  assert.match(systemPrompt, /按关键维度列 Markdown 对照表/);
+  assert.match(systemPrompt, /✅已达成.*⚠️待核验.*❌已确认错误.*—不适用/);
+  assert.match(systemPrompt, /相对胜方也可能有错误/);
+  assert.match(systemPrompt, /2–4 条 bullet point.*哪一方.*哪一步.*证据.*影响/);
+  assert.match(systemPrompt, /责任归到材料能支持的环节/);
+  assert.match(systemPrompt, /真实标准答案.*标准值或要求.*双方实际答案以及差距/);
+  assert.match(systemPrompt, /没有标准答案.*仅在影响理解处简提一次/);
+  assert.match(systemPrompt, /不在首尾重复免责声明/);
+  assert.match(systemPrompt, /用户问了什么→回答给了什么→对用户有什么用/);
+  assert.match(systemPrompt, /一句依据＋一个明确影响/);
+  assert.doesNotMatch(systemPrompt, /核验发现|回答处理|判断影响|论证链/);
+  assert.match(systemPrompt, /不因胜方而降级已确认错误/);
+  assert.match(systemPrompt, /依据缺口不等于预测必错/);
+  assert.match(systemPrompt, /材料与正式结论冲突时明示/);
+  assert.match(toolDescriptions.read_data, /summary/);
+  assert.match(toolDescriptions.read_data, /details/);
+  assert.match(toolDescriptions.read_data, /rewritten/);
+  assert.match(toolDescriptions.read_specialist, /operationId/);
+  assert.match(toolDescriptions.call_specialist, /同档/);
+  assert.match(toolDescriptions.list_data, /formalComparisonStats/);
+  assert.match(toolDescriptions.list_data, /comparisons/);
+  assert.match(toolDescriptions.search_web, /queries/);
+  assert.match(toolDescriptions.read_web, /nextStartLine/);
+  assert.match(toolDescriptions.show_chart, /statistics.*runId/);
+  assert.match(toolDescriptions.show_chart, /自动/);
+  assert.match(toolDescriptions.show_comparison, /组名、胜负和判词由正式结果绑定/);
+  assert.match(toolDescriptions.show_comparison, /reason 在顶部一次说清决定胜负的差异/);
+  assert.match(toolDescriptions.show_comparison, /不强制好坏平衡或先夸后反转/);
+  assert.match(toolDescriptions.show_comparison, /summary 用一句概括实际给出的答案，不写好坏评价/);
+  assert.match(toolDescriptions.show_comparison, /paths 再解释对用户的具体帮助与影响/);
+  assert.match(toolDescriptions.show_comparison, /每项围绕一个用户用途，重复内容合并/);
+  assert.match(toolDescriptions.show_comparison, /title 点明具体帮助或障碍，最多16字/);
+  assert.match(toolDescriptions.show_comparison, /evidence 写一句依据.*尽量40字内、最多60字/);
+  assert.match(toolDescriptions.show_comparison, /impact 只写一个明确影响.*尽量24字内、最多36字/);
+  assert.match(toolDescriptions.show_comparison, /不为缩短而失真/);
+  assert.match(toolDescriptions.show_comparison, /title 保留用户问题的核心诉求，不用分析诊断替代问句/);
+  assert.match(toolDescriptions.show_comparison, /核心问题只在图顶显示一次，卡片不重复问句/);
+  assert.match(toolDescriptions.show_comparison, /核验事实.*原题明确要求/);
+  assert.match(toolDescriptions.show_comparison, /依据与影响自然承接，不同义复述或重复 summary，不加抽象栏目标签/);
+  assert.match(toolDescriptions.show_comparison, /整图按“用户问了什么→回答给了什么→对用户有什么用”组织/);
+  assert.match(toolDescriptions.show_comparison, /为用途判断提供支撑，不强行建立因果/);
+  assert.match(toolDescriptions.show_comparison, /不堆无关事实/);
+  assert.match(toolDescriptions.show_comparison, /给出时间窗不证明预测可靠/);
+  assert.match(toolDescriptions.show_comparison, /不能编造过程或未查明的外部事实/);
+  assert.match(toolDescriptions.show_comparison, /evidence 写“实际只有5个交易日，B却按8个来推算。”，impact 写“企稳日期的推算依据出错。”/);
+  assert.match(toolDescriptions.show_comparison, /默认省略 highlights 和 reasonHighlight/);
+  assert.match(toolDescriptions.show_comparison, /path.highlights 从 evidence、impact 至多选择1个字段/);
+  assert.match(toolDescriptions.show_comparison, /原文中唯一出现的连续短语，最多16字/);
+  assert.match(toolDescriptions.show_comparison, /整图含 reasonHighlight 合计最多2处/);
+  assert.match(toolDescriptions.show_comparison, /不要每项高亮、整段高亮或自动高亮全部数字.*HTML 或 Markdown/);
+  assert.match(toolDescriptions.show_comparison, /caveat 仅放日期、档位、比较范围或标准答案口径，不放新的负面判词/);
+  assert.match(toolDescriptions.show_comparison, /顶部显示正式判定与 reason.*共享核心问题、并列双方 summary、并列双方 paths 三层.*底部仅口径/);
+  assert.match(toolDescriptions.show_comparison, /答案等高，用途面板按内容自然展开，不为对齐补字/);
+  assert.doesNotMatch(toolDescriptions.show_comparison, /统一比较结论位于底部/);
+  assert.doesNotMatch(systemPrompt, /mermaid|flow 围栏/);
+  assert.doesNotMatch(systemPrompt + toolDescriptions.show_chart, /chartId|```chart/);
+  assert.match(toolDescriptions.show_chart, /null 表示未知/);
+  assert.match(toolDescriptions.show_chart, /真实.*增减/);
+  assert.match(toolDescriptions.show_chart, /守恒无环流量/);
+  assert.match(toolDescriptions.show_chart, /不生成置信带/);
+  assert(recoveryMessage.length > 0);
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {

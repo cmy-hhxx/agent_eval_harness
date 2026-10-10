@@ -24,10 +24,11 @@ import type {} from 'mdast-util-math'
 import { normalizeUri } from 'micromark-util-sanitize-uri'
 import type { CodeToolbarLabels } from '../CodeToolbar.tsx'
 import { CodeBlock } from './CodeBlock.tsx'
+import type { CodeBlockProps } from './CodeBlock.tsx'
 import { parseFileLink } from './file-link.ts'
 import { renderTexToReact } from './katex.tsx'
 import { LinkIconMedium, classifyLinkPath } from '../LinkIcon.tsx'
-import { useMarkdownDelegate } from './MarkdownDelegate.tsx'
+import { useMarkdownDelegate, useMarkdownFence } from './MarkdownDelegate.tsx'
 import { HoverCard } from '../HoverCard.tsx'
 import { ImageLightbox } from '../ImageLightbox.tsx'
 import { ImagePreview } from '../ImagePreview.tsx'
@@ -391,7 +392,7 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
     return <Fragment key={key}>{renderTexToReact(`${node.value}\n`, true)}</Fragment>
   }
   return (
-    <CodeBlock
+    <MarkdownCodeBlock
       key={key}
       // The replaced hast pipeline appended one synthetic newline that
       // CodeBlock's display trim removes; feeding the bare value would make
@@ -409,6 +410,12 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
       toolbarLabels={context.labels.code.toolbarLabels}
     />
   )
+}
+
+function MarkdownCodeBlock(props: CodeBlockProps): ReactNode {
+  const renderFence = useMarkdownFence()
+  return renderFence?.({ language: props.lang, code: props.code, streaming: props.streaming === true })
+    ?? <CodeBlock {...props} />
 }
 
 /** A list is loose when it or any of its items is spread; every item then keeps its paragraphs. */

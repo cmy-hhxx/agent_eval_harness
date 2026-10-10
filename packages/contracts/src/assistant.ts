@@ -8,6 +8,7 @@ export interface AssistantOwnership {
 }
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
 export interface AnalysisQuery { runId?: string; view?: "inputs" | "comparisons"; query?: string; offset?: number; limit?: number }
+export interface AnalysisResultReadOptions { view?: "summary" | "details"; offset?: number; limit?: number }
 export interface AnalysisDataSource {
   list(query: AnalysisQuery): Promise<JsonObject>;
   read(reference: AnalysisReference, options?: { offset?: number; limit?: number }): Promise<JsonObject>;

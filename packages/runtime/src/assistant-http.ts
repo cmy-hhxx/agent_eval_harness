@@ -10,7 +10,6 @@ export interface AssistantEndpoints {
   call(userId: string, endpoint: string, payload: unknown, signal: AbortSignal): Promise<unknown>;
   stream(userId: string, endpoint: string, payload: unknown, signal: AbortSignal): Promise<AsyncIterable<unknown>>;
   dispose(): Promise<void>;
-  artifact?(userId: string, sessionId: string, id: string): Promise<Uint8Array>;
 }
 export async function serveAssistant(options: { port: number; userId: string; webDirectory: string; endpoints(url: string): AssistantEndpoints; onError?(error: unknown): void }) {
   const contexts = new Set<Context>();
@@ -60,12 +59,6 @@ export async function serveAssistant(options: { port: number; userId: string; we
         return;
       }
       if (req.method !== "GET") { res.writeHead(405); res.end(); return; }
-      const artifact = /^artifacts\/([\w-]+)\/([\w-]+)\.md$/.exec(route.resource);
-      if (artifact && endpoints.artifact) {
-        const content = await endpoints.artifact(route.userId, artifact[1], artifact[2]);
-        res.writeHead(200, { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="${artifact[2]}.md"`, "cache-control": "no-store" });
-        res.end(content); return;
-      }
       const resource = route.resource || "index.html";
       const file = path.resolve(options.webDirectory, decodeURIComponent(resource));
       if (!file.startsWith(path.resolve(options.webDirectory) + path.sep)) { res.writeHead(404); res.end(); return; }

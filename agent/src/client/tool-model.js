@@ -63,6 +63,7 @@ export function analysisToolModel(name,model){
  const status=statusText(model,output);
  if(name==='search_web')return webSearchModel(model,args,output,status);
  if(name==='read_web')return webReadModel(model,args,output,status);
+ if(name==='show_comparison')return {summary:`显示比较图 · ${status}`};
  if(name==='show_chart')return {summary:`显示${({dot:'点图',line:'趋势图',pie:'环形组成图',dumbbell:'差异点图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',bump:'排名变化图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'比例环',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
  if(name==='list_data'){
@@ -81,7 +82,6 @@ export function analysisToolModel(name,model){
  }
  if(name==='call_specialist')summary=`${specialistLabel[args.kind]??'专业评测'} · ${status}`;
  if(name==='read_specialist')summary=`读取专业结论 · ${status}`;
- if(name==='save_summary')summary=model.state==='ok'?'总结已保存':`保存总结 · ${status}`;
  if(name==='specialist_output')summary='实时专业分析';
  if(model.state==='error'||!model.output)return {summary};
  if(output?.sourceRead){const ref=output.sourceRead.args?.reference;return {summary,details:{items:[{title:referenceText(ref),fields:fields(ref)}]}};}
@@ -93,7 +93,7 @@ export function analysisToolModel(name,model){
  })),empty:'没有匹配的正式对战'}};
  if(output&&typeof output==='object'){
   const rows=output.items??output.matches??output.messages;
-  const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.operationId??output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{}),...(output.url?{markdown:`[下载总结](${output.url})`}:{})}];
+  const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.operationId??output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{})}];
   return {summary,details:{items,empty:'没有匹配的结果'}};
  }
  return {summary};

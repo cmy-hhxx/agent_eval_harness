@@ -1,8 +1,9 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { schemaIssues, type AnalysisDataSource, type AnalysisReference, type AssistantScope, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 import { validateChart, type ChartSpec } from "./chart.js";
+import { comparisonDiagram, type ComparisonDiagramInput } from "./comparison-diagram.js";
 
 export interface ErisDependencies {
   data: AnalysisDataSource;
@@ -10,7 +11,6 @@ export interface ErisDependencies {
   search: WebSearchProvider;
   web: WebReader;
   code: { execute: AssistantTool["execute"]; read: AssistantTool["execute"] };
-  save(scope: AssistantScope, markdown: string): Promise<JsonObject>;
 }
 
 export const erisToolNames = Object.keys(schemas) as (keyof typeof schemas)[];
@@ -24,6 +24,17 @@ function resultPage(value: unknown, options: { offset?: number; limit?: number }
   const end = Math.min(text.length, offset + limit);
   return { text: text.slice(offset, end), total: text.length, offset, limit, unit: "characters",
     hasMore: end < text.length, nextOffset: end < text.length ? end : null };
+}
+
+/** Filter evidence containers only at the model boundary; accepted rows remain untouched. */
+function resultSummary(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(resultSummary);
+  if (value === null || typeof value !== "object") return value;
+  const { rewritten, ...fields } = value as Record<string, unknown>;
+  return { ...(rewritten === undefined ? {} : { rewritten: resultSummary(rewritten) }),
+    ...Object.fromEntries(Object.entries(fields)
+      .filter(([key]) => key !== "evidence" && !key.endsWith("_evidence"))
+      .map(([key, child]) => [key, resultSummary(child)])) };
 }
 
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
@@ -48,9 +59,11 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       });
     },
     read_data: async (value) => {
-      const args = value as { reference: AnalysisReference; offset?: number; limit?: number };
+      const args = value as { reference: AnalysisReference } & AnalysisResultReadOptions;
       const data = await options.data.read(args.reference, args);
-      return args.reference.taskId ? textResult({ kind: "accepted-result", reference: args.reference, ...resultPage(data, args) })
+      return args.reference.taskId ? textResult(args.view === "details"
+        ? { kind: "accepted-result", reference: args.reference, view: "details", ...resultPage(data, args) }
+        : { ...data, view: "summary", result: resultSummary(data.result) })
         : { ...textResult(data), details: { sourceRead: { tool: "read_data", args } } };
     },
     search_data: async (value) => { const args = value as { reference: AnalysisReference; query: string; offset?: number; limit?: number }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
@@ -66,12 +79,18 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     call_specialist: async (value, context) => {
       const result = await options.specialists.invoke(context.scope, value as SpecialistRequest, context.signal, context.progress);
       const { result: body, ...receipt } = result;
-      return { ...textResult({ ...receipt, ...(body === undefined ? {} : { result: resultPage(body) }) }), isError: result.state === "failed" || result.state === "cancelled" };
+      return { ...textResult({ ...receipt, view: "summary", ...(body === undefined ? {} : { result: resultSummary(body) }) }), isError: result.state === "failed" || result.state === "cancelled" };
     },
     read_specialist: async (value, context) => {
-      const args = value as { operationId: string; offset?: number; limit?: number };
+      const args = value as { operationId: string } & AnalysisResultReadOptions;
       const { result, ...receipt } = await options.specialists.read(context.scope, args.operationId);
-      return textResult({ ...receipt, ...(result === undefined ? {} : { result: resultPage(result, args) }) });
+      return textResult({ ...receipt, view: args.view ?? "summary", ...(result === undefined ? {} : { result: args.view === "details" ? resultPage(result, args) : resultSummary(result) }) });
+    },
+    show_comparison: async (value) => {
+      const args = value as ComparisonDiagramInput;
+      const result = await options.data.read(args.reference);
+      return { ...textResult({ kind: "comparison-diagram", diagram: comparisonDiagram(args, result) }),
+        details: { reference: args.reference, evaluatorVersion: result.evaluatorVersion } };
     },
     show_chart: async (value, context) => {
       const { references = [], ...chart } = value as ChartSpec & { references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
@@ -101,27 +120,8 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
           citations.push({ reference: item.reference, ...(result.evaluatorVersion ? { evaluatorVersion: result.evaluatorVersion } : {}) });
         }
       }
-      return citations.length
-        ? { ...textResult({ kind: "chart", chart }), details: { references: citations } }
-        : textResult({ kind: "chart", chart });
-    },
-    save_summary: async (value, context) => {
-      const args = value as { markdown: string; references: { operationId?: string; reference?: AnalysisReference }[] };
-      const citations: unknown[] = [];
-      for (const item of args.references) {
-        context.signal.throwIfAborted();
-        if (item.operationId) {
-          const result = await options.specialists.read(context.scope, item.operationId);
-          if (result.state !== "succeeded") throw new Error("总结只能引用已接受的专业结果");
-          citations.push({ operationId: item.operationId, evaluatorVersion: result.evaluatorVersion, reference: result.reference });
-        } else if (item.reference?.taskId) {
-          const result = await options.data.read(item.reference);
-          if (!result.result) throw new Error("正式结果不存在");
-          citations.push({ reference: item.reference, evaluatorVersion: result.evaluatorVersion });
-        } else throw new Error("总结缺少正式结果引用");
-      }
-      context.signal.throwIfAborted();
-      return { ...textResult(await options.save(context.scope, args.markdown)), details: { references: citations } };
+      const result = textResult({ kind: "chart", chart });
+      return citations.length ? { ...result, details: { references: citations } } : result;
     },
   };
   const ajv = new Ajv2020({ allErrors: true, strict: false });
@@ -133,7 +133,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => ({ path, code, expected }));
       throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(validate.errors)}`);
     };
-    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart"].includes(name),
+    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart", "show_comparison"].includes(name),
       validate: validateArgs,
       async execute(value, context) {
         context.signal.throwIfAborted();

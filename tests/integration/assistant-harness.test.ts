@@ -63,7 +63,7 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: async () => { executions++; return { kind: "runs", currentRun: null, items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   });
   const tools: AssistantTool[] = scenario === "reset" ? [{
     name: "list_data", description: "read changing state", readOnly: true, inputSchema: { type: "object", properties: {} },

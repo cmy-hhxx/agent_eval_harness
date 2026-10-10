@@ -8,7 +8,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import { ROOT } from "../../tests/fixtures/services.js";
 
-const { AnalysisChart, chartFromToolOutput, chartsFromToolData, TurnCharts } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/charts.js")).href);
+const { AnalysisChart, chartFromToolOutput, chartsFromToolData, TurnCharts, TurnChartFallback } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/charts.js")).href);
+const { IgnoredChart } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/inline-visuals.js")).href);
+const { ComparisonDiagram, comparisonFromToolOutput } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/comparison-diagram.js")).href);
 const receipt = (chart: Record<string, unknown>) => JSON.stringify({ kind: "chart", chart });
 const base = { title: "FAST 同档对战", scope: "已完成的 2 场 FAST 对战", unit: "场", source: "本次正式对比结果",
   categories: ["A 组胜", "B 组胜"], series: [{ name: "FAST", values: [1, 1] }] };
@@ -41,6 +43,7 @@ test('a chart stands alone and its notes add only the supplied explanation', () 
     'the figure has no table view, switch or automatic repetition of the largest difference');
   assert.equal(document.querySelector('[data-chart-annotations] li')!.textContent, note,
     'the numbered note does not repeat the category, series, value or unit');
+  assert.equal(document.querySelector<HTMLElement>('[data-chart-annotations]')!.style.fontSize, '14px', 'necessary annotations remain readable without small print');
 });
 
 test("dot plot places zero, positive and negative observations on their true coordinates", () => {
@@ -118,7 +121,7 @@ test("chart metadata and accessible observations remain text without executing s
   assert.equal(document.querySelectorAll("script,img,a,iframe").length, 0);
   assert.equal(document.querySelector("h3")!.textContent, attack);
   assert(document.querySelector("figcaption")!.textContent!.includes(attack));
-  assert.match(document.querySelector("figcaption")!.textContent!, / · 场/);
+  assert.equal(document.querySelector('[data-chart-unit]')!.textContent, '场');
   assert.match(document.querySelector("figure")!.textContent!, /来源：/);
   assert.equal(document.querySelectorAll('[data-chart-actions], table').length, 0);
   const accessibleContainer = document.querySelector<HTMLElement>('[data-chart-accessible-data]')!;
@@ -133,12 +136,12 @@ test("chart metadata and accessible observations remain text without executing s
   assert.equal(svg.getAttribute("width"), "514", "the bounded chart retains a pixel coordinate system instead of shrinking its text");
   assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "514");
   assert.equal(document.querySelector('[data-chart-legend]'), null, 'a single series does not repeat a redundant legend');
-  assert.equal(document.querySelector('footer')!.textContent, `来源：${attack}`);
-  assert.equal(document.querySelector<HTMLElement>('footer')!.style.borderTop, '', 'the source has no extra footer divider');
+  assert.equal(document.querySelector('footer'), null, 'source descriptions do not add visible small print');
+  assert.equal(document.querySelector('[data-chart-metadata]')!.textContent, `${attack} · 来源：${attack}`);
   assert.equal(document.querySelectorAll('svg title').length, 0, 'charts expose accessible names without browser hover text');
 });
 
-test('short chart summaries stay compact without losing actual values, scope or source', () => {
+test('chart faces keep only the title and unit while scope and source remain accessible metadata', () => {
   const composition = render({ ...base, type: 'pie', title: '17 次运行中 6 次完成', scope: '17 次运行的当前状态',
     categories: ['已完成', '中断'], series: [{ name: '运行', values: [6, 11] }] });
   const ring = composition.querySelector('svg')!;
@@ -146,8 +149,12 @@ test('short chart summaries stay compact without losing actual values, scope or 
   assert.equal(composition.querySelector('[data-chart-total]')!.textContent, '17');
   assert.deepEqual([...composition.querySelectorAll('[data-chart-composition-value]')].map(node => node.textContent), ['6', '11']);
   assert.deepEqual([...composition.querySelectorAll('[data-chart-share]')].map(node => node.textContent), ['35.29%', '64.71%']);
-  assert(composition.querySelector('figcaption')!.textContent!.includes('17 次运行的当前状态'));
-  assert.equal(composition.querySelector('footer')!.textContent, `来源：${base.source}`);
+  assert.equal(composition.querySelector('figcaption')!.textContent, '17 次运行中 6 次完成场');
+  const metadata = composition.querySelector<HTMLElement>('[data-chart-metadata]')!;
+  assert.equal(metadata.textContent, `17 次运行的当前状态 · 来源：${base.source}`);
+  assert.equal(metadata.style.clipPath, 'inset(50%)');
+  assert.equal(metadata.hasAttribute('aria-hidden'), false, 'scope and source remain available to assistive readers');
+  assert.equal(composition.querySelector('footer'), null);
   const dots = render({ ...base, type: 'dot', categories: ['覆盖', '已完成', '中断', '未知'],
     series: [{ name: '数量', values: [17, 6, 11, null] }] });
   assert(Number(dots.querySelector('svg')!.getAttribute('height')) <= 200, 'four short rows fit a compact reading area');
@@ -404,7 +411,7 @@ test("completed-Turn charts use accepted results, deduplicate call identities an
     { root: { ...accepted, callId: "different-tool", call: { name: "read_data" } } },
     { root: { phase: "start", name: "show_chart", callId: "preparing-chart", argsRaw: receipt(chart), subCalls: [] } },
     { root: { kind: "tool-result", callId: "parent", call: { name: "call_specialist" }, content: [], isError: false,
-      subCalls: [{ ...accepted, callId: "chart-two" }] } },
+      subCalls: [{ ...accepted, callId: "chart-two", content: [{ type: "text", text: receipt(chart) }] }] } },
   ];
   const results = chartsFromToolData(data);
   assert.deepEqual(results.map((entry: { callId: string }) => entry.callId), ["chart-one", "chart-two"]);
@@ -412,17 +419,204 @@ test("completed-Turn charts use accepted results, deduplicate call identities an
   assert.equal(chartsFromToolData([{ root: { ...accepted, content: [{ type: "text", text: "invalid receipt" }] } }]).length, 0);
 });
 
-test("the public Turn-tail renderer reads only its Turn's tool source and renders outside work-step disclosures", () => {
+test("response charts read only their Turn's accepted receipts without a Markdown reference", () => {
   const data = [{ root: { kind: "tool-result", callId: "chart-one", call: { name: "show_chart" }, isError: false,
     content: [{ type: "text", text: receipt({ ...base, type: "dot" }) }], subCalls: [] } }];
   const requests: unknown[] = [];
   const nodes = { turnDataSource(turn: number, kind: string) {
     requests.push([turn, kind]);
-    return { getSnapshot: () => data, subscribe: () => () => {} };
+    return { getSnapshot: () => turn === 7 && kind === 'tool-call' ? data : [], subscribe: () => () => {} };
   } };
   const useChat = (select: (snapshot: unknown) => unknown) => select({ nodes });
-  const document = new JSDOM(renderToStaticMarkup(createElement(TurnCharts, { turn: { turn: 7 }, useChat }))).window.document;
+  const document = new JSDOM(renderToStaticMarkup(createElement(TurnCharts, { turn: 7, useChat }))).window.document;
   assert.deepEqual(requests, [[7, "tool-call"]]);
   assert.equal(document.querySelectorAll('[data-turn-charts="7"] figure').length, 1);
   assert.equal(document.querySelectorAll('[data-step-process], [data-tool]').length, 0);
+  assert.equal(renderToStaticMarkup(createElement(TurnCharts, { turn: 8, useChat })), '', 'another turn cannot display these receipts');
+});
+
+test('accepted charts stay at the tail only when cancellation or failure leaves no final answer', () => {
+  const data = [{ root: { kind: 'tool-result', callId: 'chart-one', call: { name: 'show_chart' }, isError: false,
+    content: [{ type: 'text', text: receipt({ ...base, type: 'dot' }) }], subCalls: [] } }];
+  const processes = [{ answerStep: null as number | null }];
+  const nodes = { turnDataSource(turn: number, kind: string) {
+    assert.equal(turn, 7);
+    assert(['tool-call', 'turn-process'].includes(kind), 'placement never reads or parses answer text');
+    return { getSnapshot: () => kind === 'tool-call' ? data : processes, subscribe: () => () => {} };
+  } };
+  const useChat = (select: (snapshot: unknown) => unknown) => select({ nodes });
+  const tail = () => new JSDOM(renderToStaticMarkup(createElement(TurnChartFallback, { turn: { turn: 7 }, useChat }))).window.document;
+  assert.equal(tail().querySelectorAll('[data-turn-chart-fallback] figure').length, 1);
+  processes[0].answerStep = 2;
+  assert.equal(tail().querySelectorAll('figure').length, 0, 'a final answer owns the charts, with no duplicate at the tail');
+});
+
+test('chart fences are empty placeholders even when a real answer mistypes or repeats a chart identifier', () => {
+  for (const code of ['', '5eece766-4811-4742-b81c-a3411b3e926e', 'first\nsecond', '<script>run()</script>']) {
+    for (const streaming of [false, true]) assert.equal(renderToStaticMarkup(createElement(IgnoredChart, { code, streaming })), '');
+  }
+});
+
+const comparison = {
+  title: '中国船舶当前的 EMA20 是多少',
+  candidates: [
+    { model: 'b_expert', name: 'B组Expert', outcome: 'both_good', summary: '给出9月30日 EMA20 为38.192元。', paths: [
+      { title: '核心数值', evidence: 'B给出9月30日 EMA20 为38.192元', impact: '数值可直接使用', assessment: 'strength' },
+    ] },
+    { model: 'a_expert', name: 'A组Expert', outcome: 'both_good', summary: '给出9月30日 EMA20 为38.192元。', paths: [
+      { title: '核心数值', evidence: 'A给出同一日期 EMA20 为38.192元', impact: '核心数值可用', assessment: 'strength' },
+      { title: '日期口径', evidence: '当前口径缺少核验，A沿用9月30日数据', impact: '不能确认当前时点适用', assessment: 'uncertain' },
+    ] },
+  ],
+  verdict: '双方均好', reason: '数值与数据日期相同', caveat: '对比口径：9月30日 EMA20',
+};
+const comparisonReceipt = (diagram: Record<string, unknown>) => JSON.stringify({ kind: 'comparison-diagram', diagram });
+
+test('comparison receipts separate question, answers and usefulness without pairing independent branches', () => {
+  const parsed = comparisonFromToolOutput(comparisonReceipt(comparison), 'ok');
+  assert.deepEqual(parsed, comparison);
+  const document = new JSDOM(renderToStaticMarkup(createElement(ComparisonDiagram, { diagram: parsed }))).window.document;
+  assert.equal(document.querySelector('[data-comparison-question]')!.textContent, comparison.title);
+  assert.deepEqual([...document.querySelectorAll('[data-comparison-slice]')].map(node => node.getAttribute('data-comparison-slice')), ['question', 'answer', 'usefulness']);
+  assert.deepEqual([...document.querySelectorAll('[data-comparison-slice-title]')].map(node => node.textContent), ['用户问了什么', '回答给了什么', '对用户有什么用']);
+  assert.deepEqual([...document.querySelectorAll('[data-comparison-name]')].map(node => [node.getAttribute('data-comparison-name'), node.textContent]),
+    comparison.candidates.map(candidate => [candidate.model, candidate.name]), 'receipt order never relabels B as A');
+  for (const candidate of comparison.candidates) {
+    const lane = document.querySelector(`[data-comparison-candidate="${candidate.model}"]`)!;
+    const answer = document.querySelector(`[data-comparison-answer="${candidate.model}"]`)!;
+    assert.equal(answer.querySelector('[data-comparison-outcome]')!.getAttribute('data-comparison-outcome'), candidate.outcome);
+    assert.equal(answer.querySelector('[data-comparison-summary] [data-comparison-content]')!.textContent, candidate.summary);
+    assert(answer.compareDocumentPosition(lane) & 4, 'answers precede the separate usefulness slice');
+    assert.equal(lane.querySelector('[data-comparison-usefulness]')!.textContent, candidate.name, 'usefulness retains its owner when slices stack on mobile');
+    assert.deepEqual([...document.querySelectorAll(`[data-comparison-arrow="${candidate.model}"]`)].map(node => [node.getAttribute('data-comparison-source'), node.getAttribute('data-comparison-target')]),
+      [[`${candidate.model}:answer`, `${candidate.model}:usefulness`]], 'each candidate has one short arrow from its answer to user usefulness');
+    const paths = [...lane.querySelectorAll('[data-comparison-path]')];
+    assert.equal(paths.length, candidate.paths.length);
+    for (const [index, path] of candidate.paths.entries()) {
+      assert.equal(paths[index]!.querySelector('[data-comparison-path-title]')!.textContent, path.title);
+      assert.equal(paths[index]!.querySelector('[data-comparison-assessment]')!.getAttribute('data-comparison-assessment'), path.assessment);
+      assert.deepEqual([...paths[index]!.querySelectorAll('[data-comparison-stage]')].map(node => [node.getAttribute('data-comparison-stage'), node.querySelector('[data-comparison-content]')!.textContent]),
+        [['evidence', path.evidence], ['impact', path.impact]]);
+      assert.equal(paths[index]!.querySelector('[data-comparison-support]')!.textContent, path.evidence, 'one supplied evidence sentence leads to one impact');
+      assert.equal(paths[index]!.querySelectorAll('.eris-comparison-impact').length, 1, 'the user impact is a separate conclusion line');
+      assert.equal(paths[index]!.querySelectorAll('svg').length, 0, 'usefulness cards contain prose rather than internal arrow chains');
+    }
+  }
+  assert.equal(document.querySelector('[data-comparison-verdict]')!.textContent, comparison.verdict);
+  assert.equal(document.querySelector('[data-comparison-reason]')!.textContent, comparison.reason);
+  const caveat = document.querySelector('[data-comparison-caveat]')!;
+  assert.equal(caveat.textContent, comparison.caveat);
+  assert.equal(caveat.closest('[data-analysis-comparison]'), null, 'a limitation does not become an incoming reason for the verdict');
+  assert.equal(caveat.querySelectorAll('svg,path').length, 0);
+  assert.equal(document.querySelectorAll('[data-comparison-conclusion]').length, 1, 'both candidates share one conclusion');
+  assert(document.querySelector('[data-comparison-conclusion]')!.compareDocumentPosition(document.querySelector('[data-comparison-grid]')!) & 4, 'the shared formal conclusion appears first');
+  assert.equal(document.querySelectorAll('svg').length, 2, 'the fixed template contains exactly one arrow per candidate');
+  assert([...document.querySelectorAll('svg')].every(node => node.closest('.eris-comparison-transitions') && !node.closest('[data-comparison-path]')), 'desktop transitions occupy their own short row rather than routing through prose');
+});
+
+test('comparison parsing hides failures and malformed receipts while supplied markup remains literal text', () => {
+  for (const state of ['error', 'pending', 'running']) assert.equal(comparisonFromToolOutput(comparisonReceipt(comparison), state), null);
+  for (const output of ['', 'not JSON', JSON.stringify({ diagram: comparison }), receipt(comparison)]) assert.equal(comparisonFromToolOutput(output, 'ok'), null);
+  const invalid = [
+    { ...comparison, candidates: comparison.candidates.slice(0, 1) },
+    { ...comparison, candidates: [...comparison.candidates, comparison.candidates[0]] },
+    { ...comparison, candidates: [comparison.candidates[0], comparison.candidates[0]] },
+    { ...comparison, candidates: [{ ...comparison.candidates[0], summary: '' }, comparison.candidates[1]] },
+    { ...comparison, candidates: [{ ...comparison.candidates[0], outcome: 'equal' }, comparison.candidates[1]] },
+    { ...comparison, candidates: [{ ...comparison.candidates[0], outcome: ['win'] }, comparison.candidates[1]] },
+    ...[[], Array(4).fill(comparison.candidates[0]!.paths[0]), [null], [{ ...comparison.candidates[0]!.paths[0], evidence: null }],
+      [{ ...comparison.candidates[0]!.paths[0], extra: true }],
+      [{ ...comparison.candidates[0]!.paths[0], assessment: 'win' }], [{ ...comparison.candidates[0]!.paths[0], assessment: ['strength'] }],
+      [{ ...comparison.candidates[0]!.paths[0], title: '超'.repeat(17) }], [{ ...comparison.candidates[0]!.paths[0], evidence: '超'.repeat(61) }],
+      [{ ...comparison.candidates[0]!.paths[0], impact: '超'.repeat(37) }]]
+      .map(paths => ({ ...comparison, candidates: [{ ...comparison.candidates[0], paths }, comparison.candidates[1]] })),
+    { ...comparison, title: '' }, { ...comparison, verdict: 1 }, { ...comparison, reason: [] }, { ...comparison, caveat: {} },
+    { ...comparison, candidates: [{ ...comparison.candidates[0], summary: '超'.repeat(81) }, comparison.candidates[1]] },
+    { ...comparison, title: '超'.repeat(41) }, { ...comparison, reason: '超'.repeat(161) }, { ...comparison, caveat: '超'.repeat(101) },
+  ];
+  for (const diagram of invalid) assert.equal(comparisonFromToolOutput(comparisonReceipt(diagram), 'ok'), null);
+  const attack = '<img src=x>';
+  const diagram = { ...comparison, title: attack, candidates: comparison.candidates.map(candidate => ({ ...candidate, name: attack, summary: attack,
+    paths: candidate.paths.map(path => ({ ...path, title: attack, evidence: attack, impact: attack })) })),
+    verdict: attack, reason: attack, caveat: attack, html: '<script>alert(1)</script>', edges: ['b_expert -> verdict'], style: { display: 'none' } };
+  const parsed = comparisonFromToolOutput(comparisonReceipt(diagram), 'ok');
+  assert(parsed);
+  const document = new JSDOM(renderToStaticMarkup(createElement(ComparisonDiagram, { diagram: parsed }))).window.document;
+  assert.equal(document.querySelectorAll('script,img,a,iframe,foreignObject,[onerror],[onclick]').length, 0);
+  assert.equal(document.querySelector('[data-comparison-stage] [data-comparison-content]')!.textContent, attack);
+  assert.equal(document.querySelector('[data-comparison-caveat]')!.textContent, attack);
+  assert.equal(document.querySelectorAll('[data-comparison-path]').length, 3, 'arbitrary fields cannot supply connections or branches');
+  assert.equal(document.querySelector<HTMLElement>('[data-analysis-comparison]')!.style.display, '', 'arbitrary fields cannot supply styles');
+});
+
+test('comparison prose preserves complete time phrases without changing their text', () => {
+  const diagram = { ...comparison, reason: '1–3周的预测不能直接等同于10月中下旬企稳' };
+  const document = new JSDOM(renderToStaticMarkup(createElement(ComparisonDiagram, { diagram }))).window.document;
+  const reason = document.querySelector('[data-comparison-reason]')!;
+  assert.equal(reason.textContent, diagram.reason);
+  assert.deepEqual([...reason.querySelectorAll('.eris-comparison-value')].map(node => node.textContent), ['1–3周', '10月中下旬']);
+});
+
+test('comparison emphasis preserves original phrases and renders supplied markup as text', () => {
+  const attack = '<img src=x>';
+  const first = comparison.candidates[0];
+  const path = { ...first.paths[0], evidence: `原文含${attack}，数值为38.192元`, highlights: { evidence: attack } };
+  const diagram = { ...comparison, reasonHighlight: '数据日期', candidates: [{ ...first, paths: [path] }, comparison.candidates[1]] };
+  const parsed = comparisonFromToolOutput(comparisonReceipt(diagram), 'ok');
+  assert(parsed);
+  const document = new JSDOM(renderToStaticMarkup(createElement(ComparisonDiagram, { diagram: parsed }))).window.document;
+  assert.equal(document.querySelector('[data-comparison-stage="evidence"] [data-comparison-content]')!.textContent, path.evidence);
+  assert.equal(document.querySelector('[data-comparison-reason]')!.textContent, diagram.reason);
+  assert.deepEqual([...document.querySelectorAll('[data-comparison-highlight]')].map(node => [node.tagName, node.textContent]),
+    [['STRONG', '数据日期'], ['STRONG', attack]]);
+  assert.equal(document.querySelectorAll('script,img,a,iframe,foreignObject,[onerror],[onclick]').length, 0);
+  assert.equal(document.querySelectorAll('.eris-comparison-stage-label').length, 0, 'natural sentences require no abstract stage labels');
+});
+
+test('comparison receipts reject absent, ambiguous, oversized or unrelated highlight phrases', () => {
+  const first = comparison.candidates[0];
+  const withHighlights = (highlights: unknown, fields: Record<string, string> = {}) => ({ ...comparison,
+    candidates: [{ ...first, paths: [{ ...first.paths[0], ...fields, highlights }] }, comparison.candidates[1]] });
+  const invalid = [
+    ...[null, [], {}, '38.192元', { evidence: '' }, { evidence: ['38.192元'] }, { evidence: '未出现的文本' }, { summary: '数值可直接使用' },
+      { evidence: '38.192元', impact: '直接使用' }].map(highlights => withHighlights(highlights)),
+    withHighlights({ evidence: '38.192元' }, { evidence: '38.192元与38.192元' }),
+    withHighlights({ evidence: '超'.repeat(17) }, { evidence: '超'.repeat(17) }),
+    ...['', null, [], '未出现的文本'].map(reasonHighlight => ({ ...comparison, reasonHighlight })),
+    { ...comparison, reason: '相同相同', reasonHighlight: '相同' },
+    { ...comparison, reason: '长'.repeat(17), reasonHighlight: '长'.repeat(17) },
+  ];
+  for (const diagram of invalid) assert.equal(comparisonFromToolOutput(comparisonReceipt(diagram), 'ok'), null);
+});
+
+test('comparison emphasis allows two phrases across the entire diagram and rejects any third', () => {
+  const candidates = comparison.candidates.map(candidate => ({ ...candidate,
+    paths: candidate.paths.map(path => ({ ...path, highlights: { evidence: path.evidence.slice(0, 2) } })) }));
+  const two = { ...comparison, candidates: candidates.map(candidate => ({ ...candidate, paths: candidate.paths.slice(0, 1) })) };
+  assert.deepEqual(comparisonFromToolOutput(comparisonReceipt(two), 'ok'), two);
+  assert.equal(comparisonFromToolOutput(comparisonReceipt({ ...two, reasonHighlight: '数据日期' }), 'ok'), null, 'the shared reason consumes the same budget');
+  assert.equal(comparisonFromToolOutput(comparisonReceipt({ ...comparison, candidates }), 'ok'), null, 'the budget spans both candidates and all their paths');
+});
+
+test('comparison visuals select only successful show_comparison receipts and deduplicate recorded calls', () => {
+  const accepted = { kind: 'tool-result', callId: 'comparison-one', call: { name: 'show_comparison', argsRaw: comparisonReceipt({ ...comparison, verdict: '伪造胜者' }) },
+    content: [{ type: 'text', text: comparisonReceipt(comparison) }], isError: false, subCalls: [] };
+  const data = [
+    { root: accepted }, { root: accepted },
+    { root: { ...accepted, callId: 'failed', isError: true } },
+    { root: { ...accepted, callId: 'unrelated', call: { name: 'read_data' } } },
+    { root: { ...accepted, callId: 'wrong-receipt', content: [{ type: 'text', text: receipt({ ...base, type: 'dot' }) }] } },
+    { root: { phase: 'start', name: 'show_comparison', callId: 'pending', argsRaw: comparisonReceipt(comparison), subCalls: [] } },
+    { root: { kind: 'tool-result', callId: 'parent', call: { name: 'call_specialist' }, content: [], isError: false,
+      subCalls: [{ ...accepted, callId: 'comparison-two' }] } },
+  ];
+  const selected = chartsFromToolData(data);
+  assert.deepEqual(selected.map((entry: { callId: string }) => entry.callId), ['comparison-one', 'comparison-two']);
+  assert.deepEqual(selected[0].diagram, comparison, 'recorded short labels and formal verdict cannot be replaced by tool arguments');
+  const nodes = { turnDataSource: (turn: number) => ({ getSnapshot: () => turn === 7 ? data : [], subscribe: () => () => {} }) };
+  const useChat = (select: (snapshot: unknown) => unknown) => select({ nodes });
+  const document = new JSDOM(renderToStaticMarkup(createElement(TurnCharts, { turn: 7, useChat }))).window.document;
+  assert.equal(document.querySelectorAll('[data-analysis-comparison]').length, 2);
+  assert.equal(document.querySelectorAll('[data-step-process], [data-tool]').length, 0, 'a collapsed process does not own comparison visuals');
+  assert.equal(renderToStaticMarkup(createElement(TurnCharts, { turn: 8, useChat })), '');
 });

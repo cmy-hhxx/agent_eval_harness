@@ -11,7 +11,7 @@ import type {
   PropsStore, SlotHookFactory, SnapshotSelectorHook,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownFence, MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { createChatStore } from '../stores.ts'
 import type { ChatPresentationPolicy } from '../presentation-policy.ts'
@@ -315,6 +315,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * adds an entry; entries without content return null.
      */
     'conversation.chat.turnTail': { kind: 'list'; scope: 'session'; owner: TurnTailOwnerProps }
+    /** Application visuals before the Turn's canonical final response. */
+    'conversation.chat.visuals': { kind: 'list'; scope: 'session'; owner: { turn: number } }
+    /** Application-owned visual fences inside an Assistant's Markdown. */
+    'conversation.chat.fence': { kind: 'keyed'; scope: 'session'; owner: MarkdownFence & { turn: number }; keyProps: Record<string, object> }
     /**
      * Ordered actions for one finalized assistant message. Each entry receives
      * the durable message id; a fresh `id` adds an action and reusing one replaces

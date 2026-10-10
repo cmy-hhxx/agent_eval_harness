@@ -28,6 +28,26 @@ export interface MarkdownDelegate {
 
 const MarkdownDelegateContext = createContext<MarkdownDelegate>({})
 
+/** Optional application rendering for authored fenced blocks; null keeps the code view. */
+export interface MarkdownFence {
+  language: string | undefined
+  code: string
+  streaming: boolean
+}
+
+const MarkdownFenceContext = createContext<((fence: MarkdownFence) => ReactNode) | undefined>(undefined)
+
+export function MarkdownFenceProvider({ children, renderFence }: {
+  children: ReactNode
+  renderFence: (fence: MarkdownFence) => ReactNode
+}): ReactNode {
+  return <MarkdownFenceContext.Provider value={renderFence}>{children}</MarkdownFenceContext.Provider>
+}
+
+export function useMarkdownFence(): ((fence: MarkdownFence) => ReactNode) | undefined {
+  return useContext(MarkdownFenceContext)
+}
+
 /** Props for one Markdown navigation scope. */
 export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
   readonly children: ReactNode

@@ -13,7 +13,7 @@ test('every directory page keeps exact counts without repeating whole-run narrat
       tiers: [{ comparisonTier: 'Fast', comparisonCount: 3, both_good: 1, both_bad: 1, references: [reference], models: [{ wins: 1, losses: 0, both_good: 1, both_bad: 1 }] }] } };
   const original = structuredClone(summary);
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: async query => query.runId ? { kind: 'inputs', summary } : { kind: 'runs', currentRun: { runId: 'run', summary } }, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const tool = eris.tools.find(t => t.name === 'list_data')!;
   const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'list', signal: new AbortController().signal, progress() {} };
   const result = JSON.parse((await tool.execute({}, context)).content[0].text!);
@@ -36,7 +36,7 @@ test("Eris's public definition includes every tool resource and validates before
   const received: unknown[] = [];
   const dependencies: ErisDependencies = { code: { execute: unexpected, read: unexpected },
     data: { list: async (query) => { received.push(query); return { items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected,
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   };
   const eris = createEris(dependencies);
   const resources = new URL("../../packages/prompts/resources/eris/", import.meta.url);
@@ -66,7 +66,10 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input", taskId: "task" } }, context), /oneOf/);
   await assert.rejects(read.execute({ reference: { runId: "run" } }, context), /required/);
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input" }, limit: 101 }, context), /100/);
-  read.validate!({ reference: { runId: "run", taskId: "task" }, offset: 0, limit: 8000 });
+  read.validate!({ reference: { runId: "run", taskId: "task" }, view: "details", offset: 0, limit: 8000 });
+  assert.throws(() => read.validate!({ reference: { runId: "run", taskId: "task" }, limit: 8000 }), /view/);
+  assert.throws(() => read.validate!({ reference: { runId: "run", taskId: "task" }, view: "summary", offset: 0 }), /details/);
+  assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input" }, view: "summary" }));
   const image = eris.tools.find(tool => tool.name === "view_image")!;
   await assert.rejects(image.execute({ reference: { runId: "run", inputId: "input" } }, context), /messageIndex/);
   const specialist = eris.tools.find(tool => tool.name === "call_specialist")!;
@@ -74,32 +77,84 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run" }] }, context), /inputId/);
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run", inputId: "input", taskId: "task" }] }, context), /additional properties/);
   await assert.rejects(specialist.execute({ ...request, attributions: [{ inputId: "input", operationId: request.operationId, runId: "run", taskId: "task" }] }, context), /oneOf/);
-  const summary = eris.tools.find(tool => tool.name === "save_summary")!;
-  await assert.rejects(summary.execute({ markdown: "summary", references: [{ reference: { runId: "run", inputId: "input" } }] }, context), /additional properties/);
-  await assert.rejects(summary.execute({ markdown: "summary", references: [{ reference: { runId: "run", taskId: "task" }, operationId: request.operationId }] }, context), /oneOf/);
   assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }], "full directories omit the optional text filter; business filters are forwarded unchanged");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });
 
-test("large formal and specialist results are bounded pages with exact continuation", async () => {
+test("formal and specialist summaries omit evidence while preserving complete commentary and attribution", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const evidence = [{ evidence_id: "ev_source_4_text", message_index: 4, quote: "不应挤占点评的长原文".repeat(10000) }];
+  const row = { status: "decided", evaluations: { a: { correctness_evidence: evidence,
+    findings: [{ finding_id: "f0", type: "problem", text: "把旧数据当作现状", reason: "没有核对数据截止日",
+      evidence, assessment: { evidence_status: "established", impact: "结论不可靠" },
+      problem: { component: ["模型自身推理"], label: "时效错误", definition: "用过期数据断言现状" } }],
+    criterion_assessments: [{ summary: "完成了回答但结论过强", evidence_status: "uncertain", evidence }],
+    table_resolutions: [{ outcome: "conflict", reason: "表格口径不一致", evidence }] } },
+    verdicts: { a__vs__b: { result: "win", winner_version: "b", reason: "B保留了必要的不确定性" } },
+    decision_basis: { tradeoff: "B更稳妥，A更快" },
+    rewritten: { evaluator_version: "fixture", rewrites: [{ id: "verdict.A__vs__B.reason", text: "B更好：结论有边界，没有用旧数据断言现状。" }] } };
+  const reference = { runId: "run", taskId: "task" };
+  const data = { kind: "accepted-result", reference, result: row, evaluatorVersion: "fixture" };
+  const original = structuredClone(data);
+  const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
+  const specialistResult: SpecialistResult = { operationId, kind: "comparison", state: "succeeded", evaluatorVersion: "fixture",
+    result: { comparisons: ["ab", "ac", "bc"].map(taskId => ({ reference: { runId: "run", taskId }, result: row })) } };
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
+    data: { list: unexpected, read: async () => data, search: unexpected, image: unexpected },
+    specialists: { invoke: async () => specialistResult, read: async () => specialistResult },
+    search: { search: unexpected }, web: { read: unexpected } });
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "summary", signal: new AbortController().signal, progress() {} };
+  const read = eris.tools.find(tool => tool.name === "read_data")!;
+  const result = JSON.parse((await read.execute({ reference }, context)).content[0].text!);
+  assert.equal(result.view, "summary");
+  assert.equal(Object.keys(result.result)[0], "rewritten", "accepted polished commentary is the first result field");
+  assert.deepEqual(result.reference, reference);
+  assert.deepEqual(result.result.rewritten, row.rewritten, "accepted polished commentary remains complete, regardless of preceding evidence size");
+  assert.deepEqual(result.result.verdicts, row.verdicts);
+  assert.deepEqual(result.result.decision_basis, row.decision_basis);
+  assert.deepEqual(result.result.evaluations.a.findings[0].problem, row.evaluations.a.findings[0].problem);
+  assert.equal(result.result.evaluations.a.findings[0].assessment.evidence_status, "established");
+  assert.equal(result.result.evaluations.a.criterion_assessments[0].evidence_status, "uncertain");
+  assert.equal(result.result.evaluations.a.correctness_evidence, undefined);
+  assert.equal(result.result.evaluations.a.findings[0].evidence, undefined);
+  assert.equal(result.result.evaluations.a.criterion_assessments[0].evidence, undefined);
+  assert.deepEqual(result.result.evaluations.a.table_resolutions, [{ outcome: "conflict", reason: "表格口径不一致" }]);
+  assert.equal(result.text, undefined, "summary is a complete JSON object, never a partial character page");
+  assert(JSON.stringify(result).length < 3000);
+  const details = JSON.parse((await read.execute({ reference, view: "details", limit: 16000 }, context)).content[0].text!);
+  assert.equal(details.text, JSON.stringify(data).slice(0, 16000));
+  assert.match(details.text, /ev_source_4_text.*不应挤占点评的长原文/);
+  for (const [name, args] of [["read_specialist", { operationId }], ["call_specialist", { operationId, kind: "comparison", inputs: [{ runId: "run", inputId: "a" }, { runId: "run", inputId: "b" }] }]] as const) {
+    const receipt = JSON.parse((await eris.tools.find(tool => tool.name === name)!.execute(args, context)).content[0].text!);
+    assert.equal(receipt.view, "summary");
+    assert.equal(receipt.result.comparisons.length, 3);
+    assert.deepEqual(receipt.result.comparisons.map((pair: { reference: unknown }) => pair.reference), ["ab", "ac", "bc"].map(taskId => ({ runId: "run", taskId })));
+    for (const pair of receipt.result.comparisons) assert.deepEqual(pair.result, result.result);
+  }
+  assert.deepEqual(data, original, "projection must never mutate the accepted result or its evidence");
+});
+
+test("explicit formal and specialist details are bounded pages with exact continuation", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
   const data = { result: { explanation: "证据🙂".repeat(30000) }, evaluatorVersion: "fixture" };
   const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
   const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: unexpected, read: async () => data, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: async () => ({ operationId, kind: "comparison", state: "succeeded", ...data }) },
-    search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+    search: { search: unexpected }, web: { read: unexpected } });
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "page", signal: new AbortController().signal, progress() {} };
   const read = eris.tools.find(tool => tool.name === "read_data")!;
   const reference = { runId: "run", taskId: "task" };
-  const first = JSON.parse((await read.execute({ reference }, context)).content[0].text!);
+  const first = JSON.parse((await read.execute({ reference, view: "details" }, context)).content[0].text!);
   assert.equal(first.text.length, 8000);
   assert(first.hasMore);
-  const next = JSON.parse((await read.execute({ reference, offset: first.nextOffset, limit: 16000 }, context)).content[0].text!);
+  const next = JSON.parse((await read.execute({ reference, view: "details", offset: first.nextOffset, limit: 16000 }, context)).content[0].text!);
   assert.equal(first.text + next.text, JSON.stringify(data).slice(0, 24000));
   const specialist = eris.tools.find(tool => tool.name === "read_specialist")!;
-  const page = JSON.parse((await specialist.execute({ operationId, offset: 12000, limit: 100 }, context)).content[0].text!);
+  assert.throws(() => specialist.validate!({ operationId, offset: 12000 }), /view/);
+  assert.throws(() => specialist.validate!({ operationId, view: "summary", limit: 100 }), /details/);
+  const page = JSON.parse((await specialist.execute({ operationId, view: "details", offset: 12000, limit: 100 }, context)).content[0].text!);
   assert.equal(page.result.text, JSON.stringify(data.result).slice(12000, 12100));
   assert.equal(page.state, "succeeded");
   const code = eris.tools.find(tool => tool.name === "execute_code")!;
@@ -112,7 +167,7 @@ test("large formal and specialist results are bounded pages with exact continuat
 test("Eris model-facing tool schemas contain no regex lookaround", () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const inspect = (value: unknown, path: string): void => {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {
@@ -128,7 +183,7 @@ test("Eris model-facing tool schemas contain no regex lookaround", () => {
 test("raw arguments fail with field paths and allowed values before SDK coercion or I/O", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const list = eris.tools.find(tool => tool.name === "list_data")!;
   for (const runId of [".", "..", "../run", "a..b", "a..", "a.b..c", "/tmp/run", "a/b", "a\\b", "_run", "-run", "a b", "运行"])
     assert.throws(() => list.validate!({ runId }), /\/runId.*schema_pattern/);
@@ -146,15 +201,13 @@ test("raw arguments fail with field paths and allowed values before SDK coercion
   assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input", offset: 0 } }), /\/reference\/offset.*schema_additionalProperties/);
 });
 
-test("cancellation blocks all new work and a summary write after source verification", async () => {
+test("cancellation blocks all new tool work", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const control = new AbortController();
-  const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, search: unexpected, image: unexpected,
-    async read() { control.abort(); return { result: {}, evaluatorVersion: "fixture" }; } },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected }, save: unexpected });
+  const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "cancel", signal: control.signal, progress() {} };
-  const save = eris.tools.find(tool => tool.name === "save_summary")!;
-  await assert.rejects(save.execute({ markdown: "summary", references: [{ reference: { runId: "run", taskId: "task" } }] }, context), { name: "AbortError" });
+  control.abort();
   for (const tool of eris.tools) await assert.rejects(tool.execute({}, context), { name: "AbortError" });
 });
 
@@ -165,7 +218,7 @@ test("failed operations are errors while empty search successes and partial rece
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
     specialists: { read: unexpected, async invoke(_, request) { return { operationId: request.operationId, kind: request.kind,
       state: specialistState, evaluatorVersion: "fixture", error: "specialist failed" }; } },
-    web: { read: unexpected }, save: unexpected,
+    web: { read: unexpected },
     search: { async search() { return { provider: "serper", category: "web", searchedAt: "2026-10-08T00:00:00Z", elapsedMs: 1,
       attempts: states.map((state, queryIndex) => ({ queryIndex, query: "q", searchQuery: "q", country: "cn", language: "zh-cn", page: 1,
         state, resultCount: 0, elapsedMs: 1, ...(state === "failed" ? { error: "HTTP 429" } : {}) })),
@@ -199,7 +252,7 @@ test("external search validates financial filters and forwards cancellation with
   };
   const eris = createEris({ code: { execute: unexpected, read: unexpected },
     data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, save: unexpected,
+    specialists: { invoke: unexpected, read: unexpected },
     search: { async search(request, signal) { calls.push({ request, signal }); return result; } }, web: { read: unexpected },
   });
   const tool = eris.tools.find(tool => tool.name === "search_web")!;
@@ -222,43 +275,11 @@ test("external search validates financial filters and forwards cancellation with
   assert.equal(response.details, undefined, "search results are durable once; inspection and recovery must not issue a fresh paid search");
 });
 
-test("summaries keep verified source locators in metadata instead of the delivered Markdown", async () => {
-  const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
-  const reference = { runId: "evaluation-internal", taskId: "comparison-internal" };
-  const saved: string[] = [];
-  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({ code: { execute: unexpected, read: unexpected },
-    data: {
-      list: unexpected, search: unexpected, image: unexpected,
-      read: async (ref) => ref.taskId === reference.taskId ? { result: { conclusion: "模型 A 回答正确。" }, evaluatorVersion: "fixture" } : {},
-    },
-    specialists: {
-      invoke: unexpected,
-      read: async (_, id) => ({ operationId: id, kind: "comparison", state: id === operationId ? "succeeded" : "running", evaluatorVersion: "fixture", reference }),
-    },
-    search: { search: unexpected }, web: { read: unexpected },
-    save: async (_, markdown) => { saved.push(markdown); return { name: "summary.md", url: "/summary.md" }; },
-  });
-  const summary = eris.tools.find(tool => tool.name === "save_summary")!;
-  const context = { scope: { userId: "alice", sessionId: "session" }, callId: "summary", signal: new AbortController().signal, progress() {} };
-  const markdown = "模型 A 回答正确。\n\n依据：回答给出了可核对的计算过程。";
-  const result = await summary.execute({ markdown, references: [{ operationId }, { reference }] }, context);
-  assert.deepEqual(saved, [markdown]);
-  assert.deepEqual(result.details, { references: [
-    { operationId, evaluatorVersion: "fixture", reference },
-    { reference, evaluatorVersion: "fixture" },
-  ] });
-  assert.deepEqual(result.content, [{ type: "text", text: JSON.stringify({ name: "summary.md", url: "/summary.md" }) }]);
-  await assert.rejects(summary.execute({ markdown, references: [{ operationId: "51b9dc2a-1292-4c4c-a71d-2db0b3f64d96" }] }, context), /已接受/);
-  await assert.rejects(summary.execute({ markdown, references: [{ operationId }, { reference: { ...reference, taskId: "missing" } }] }, context), /正式结果不存在/);
-  assert.deepEqual(saved, [markdown], "every reference is verified before writing an artifact");
-});
-
  test("web reading validates coordinates and stores extracted evidence without a live source reader", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const result: WebReadResult = { url: "https://www.apple.com/report.pdf", requestedUrl: "https://www.apple.com/report.pdf", title: "Annual report", format: "pdf", retrievedAt: "2026-10-02T00:00:00.000Z", elapsedMs: 10, dateAssessment: { status: "unknown", basis: "none" }, lines: [{ number: 12, page: 2, text: "Total net sales 391,035" }], matches: [{ line: 12, page: 2 }], totalLines: 100, totalPages: 3, readPages: 3, nextStartLine: 13, truncated: false, limitations: ["pdf_layout_flattened"] };
   const received: unknown[] = [];
-  const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { async read(args, signal) { received.push({ args, signal }); return result; } }, save: unexpected });
+  const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { async read(args, signal) { received.push({ args, signal }); return result; } } });
   const tool = eris.tools.find(tool => tool.name === "read_web")!;
   const context = { scope: { userId: "alice", sessionId: "session" }, callId: "read", signal: new AbortController().signal, progress() {} };
   for (const args of [{ url: "file:///tmp/report" }, { url: result.url, startLine: 0 }, { url: result.url, lineCount: 201 }, { url: result.url, find: " " }, { url: result.url, apiKey: "secret" }]) await assert.rejects(tool.execute(args, context));

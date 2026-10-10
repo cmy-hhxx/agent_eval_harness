@@ -45,6 +45,15 @@ diff --git a/packages/client/ui-chat/src/client/apply.ts b/packages/client/ui-ch
 diff --git a/packages/client/ui-chat/src/client/chat/ChatView.module.css b/packages/client/ui-chat/src/client/chat/ChatView.module.css
 --- a/packages/client/ui-chat/src/client/chat/ChatView.module.css
 +++ b/packages/client/ui-chat/src/client/chat/ChatView.module.css
+@@ -25,7 +25,7 @@
+   overflow-y: auto;
+   /* Sides = composer clearance + 16px: on narrow viewports the transcript
+      stays exactly 32px narrower than the input card (the shared width rule). */
+-  padding: 16px calc(var(--dsh-composer-side-clearance) + 16px);
++  padding: 16px var(--dsh-chat-inline-padding, calc(var(--dsh-composer-side-clearance) + 16px));
+   /* Inline-size query container: wide markdown tables size their breakout
+      against this box's content width (100cqw in AssistantMarkdown's
+      md-table-wide rule) — the CSS stand-in for deepsuite chat's JS-measured
 @@ -165,33 +165,6 @@
    overflow: hidden;
  }
@@ -143,8 +152,18 @@ diff --git a/packages/client/ui-chat/src/client/chat/RunningStatus.tsx b/package
        </span>
      </div>
 diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index 5c7a8e3..12d47db 100644
 --- a/packages/client/ui-chat/src/client/contract/slots.ts
 +++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -11,7 +11,7 @@ import type {
+   PropsStore, SlotHookFactory, SnapshotSelectorHook,
+ } from '@deepseek-ai/dsh-client-ui-slots'
+ import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+-import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { MarkdownFence, MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+ import type { createChatStore } from '../stores.ts'
+ import type { ChatPresentationPolicy } from '../presentation-policy.ts'
 @@ -262,7 +262,7 @@ export interface ChatViewInjected {
  /** Full Chat view props. */
  export type ChatViewSlotProps =
@@ -163,6 +182,17 @@ diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/cli
      /**
       * Command row keyed by the command name. The component receives the folded
       * command lifecycle and linked compaction when present. Reusing a key
+@@ -313,6 +315,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * adds an entry; entries without content return null.
+      */
+     'conversation.chat.turnTail': { kind: 'list'; scope: 'session'; owner: TurnTailOwnerProps }
++    /** Application visuals before the Turn's canonical final response. */
++    'conversation.chat.visuals': { kind: 'list'; scope: 'session'; owner: { turn: number } }
++    /** Application-owned visual fences inside an Assistant's Markdown. */
++    'conversation.chat.fence': { kind: 'keyed'; scope: 'session'; owner: MarkdownFence & { turn: number }; keyProps: Record<string, object> }
+     /**
+      * Ordered actions for one finalized assistant message. Each entry receives
+      * the durable message id; a fresh `id` adds an action and reusing one replaces
 diff --git a/packages/client/ui-chat/src/client/locale.ts b/packages/client/ui-chat/src/client/locale.ts
 --- a/packages/client/ui-chat/src/client/locale.ts
 +++ b/packages/client/ui-chat/src/client/locale.ts
@@ -496,9 +526,10 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
    })
 
 diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
+index a76b58d..4d8ba54 100644
 --- a/packages/client/ui-primitives/src/index.ts
 +++ b/packages/client/ui-primitives/src/index.ts
-@@ -41,9 +41,6 @@ export { RiskConfirmation } from './RiskConfirmation.tsx'
+@@ -42,9 +42,6 @@ export { RiskConfirmation } from './RiskConfirmation.tsx'
  export type { RiskConfirmationProps } from './RiskConfirmation.tsx'
  export { ConnectionIndicator } from './ConnectionIndicator.tsx'
  export type { ConnectionIndicatorState } from './ConnectionIndicator.tsx'
@@ -508,6 +539,16 @@ diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-pri
  export {
    PermissionIconFullAccessMedium, PermissionIconFullAccessRegular,
    PermissionIconReadOnlyMedium, PermissionIconReadOnlyRegular,
+@@ -100,7 +97,8 @@ export type {
+ export { CodeBlock } from './markdown/CodeBlock.tsx'
+ export type { CodeBlockProps } from './markdown/CodeBlock.tsx'
+ export { JsonBlock } from './markdown/JsonBlock.tsx'
+-export { MarkdownDelegateProvider } from './markdown/MarkdownDelegate.tsx'
++export { MarkdownDelegateProvider, MarkdownFenceProvider } from './markdown/MarkdownDelegate.tsx'
++export type { MarkdownFence } from './markdown/MarkdownDelegate.tsx'
+ export type { MarkdownDelegate, MarkdownDelegateProviderProps, MarkdownExternalLinkHandler } from './markdown/MarkdownDelegate.tsx'
+ export { MarkdownText } from './markdown/MarkdownText.tsx'
+ export type { MarkdownCodeLabels, MarkdownFileMentions, MarkdownLabels, MarkdownPathImages } from './markdown/MarkdownText.tsx'
 diff --git a/packages/client/ui-primitives/tests/icons.client.spec.tsx b/packages/client/ui-primitives/tests/icons.client.spec.tsx
 --- a/packages/client/ui-primitives/tests/icons.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/icons.client.spec.tsx
@@ -837,13 +878,17 @@ index 5d97a69..ba0cc36 100644
            <ProcessReasoning
 diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
 new file mode 100644
+index 0000000..63648f5
 --- /dev/null
 +++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,106 @@
 +// @vitest-environment jsdom
 +import { cleanup, render } from '@testing-library/react'
 +import { afterEach, describe, expect, it } from 'vitest'
++import type { ComponentProps } from 'react'
 +import { AssistantMarkdown } from '../src/client/chat/AssistantMarkdown.tsx'
++import { AssistantNodeView } from '../src/client/chat/AssistantNodeView.tsx'
++import { chatSnapshotFixture } from './chat-snapshot-fixture.client.ts'
 +import { useDisclosure } from '../src/client/chat/use-disclosure.ts'
 +import { useDetailedPresentation } from './presentation-fixture.client.ts'
 +import type { AssistantBlock } from '../src/client/contract/snapshot.ts'
@@ -859,6 +904,31 @@ new file mode 100644
 +    useDisclosure={useDisclosure} usePresentation={useDetailedPresentation}
 +    renderMessageImages={renderMessageImages} />
 +)
++
++describe('final-response visuals', () => {
++  it.each(['', '\n\n```chart\n5eece766-4811-4742-b81c-a3411b3e926e\n```', '\n\n```chart\none\n```\n\n```chart\ntwo\n```'])
++    ('places application visuals once before the final response, regardless of chart placeholders %s', (placeholder) => {
++      const snapshot = chatSnapshotFixture({ nodes: [{ kind: 'assistant', seq: 1, time: 1000, turn: 7, step: 2,
++        blocks: [textBlock('Final answer.' + placeholder)] }] })
++      const node = [...snapshot.nodes.values()].find(node => node.kind === 'assistant-step')!
++      const props = {
++        node, groupPart: 'response', useDisclosure, useTurnData: () => undefined, usePresentation: useDetailedPresentation,
++        renderMessageImages, fileMentions: () => undefined, openFile: () => {}, t,
++        turnProcess: { hasContent: true, foldable: true, open: false, setOpen: () => {},
++          spec: { turn: 7, controlAnchorSeq: 1, processStartSeq: 1, answerAnchorSeq: 1, answerStep: 2, inlineReasoning: false, messageCount: 1, toolCallCount: 1, subagentCount: 0 } },
++        renderSlot: (name: string, owner: { turn: number }) => name === 'conversation.chat.visuals'
++          ? <figure data-visual-turn={owner.turn}>Accepted chart</figure> : <></>,
++      } as ComponentProps<typeof AssistantNodeView>
++      const live = render(<AssistantNodeView {...props} />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(1)
++      expect(live.container.textContent?.trimEnd()).toBe('Accepted chartFinal answer.')
++      expect(live.container.querySelector('figure')?.getAttribute('data-visual-turn')).toBe('7')
++      live.rerender(<AssistantNodeView {...props} groupPart="reasoning" />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
++      live.rerender(<AssistantNodeView {...props} turnProcess={{ ...props.turnProcess!, spec: { ...props.turnProcess!.spec, answerStep: 3 } }} />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
++    })
++})
 +
 +describe('assistant Markdown across provider text fragments', () => {
 +  it.each([false, true])('keeps split emphasis and words in one paragraph (streaming=%s)', (streaming) => {
@@ -938,10 +1008,43 @@ index aba740d..ce31590 100644
 
      token._open = open
 diff --git a/packages/client/ui-primitives/tests/markdown.client.spec.tsx b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
-index c655a00..00a7c2e 100644
+index c655a00..c2a8ba7 100644
 --- a/packages/client/ui-primitives/tests/markdown.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
-@@ -61,8 +61,11 @@ describe('MarkdownText', () => {
+@@ -2,13 +2,31 @@
+ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { JsonBlock, MarkdownText } from './markdown-test-components.tsx'
+-import { LinkIconMedium, MarkdownDelegateProvider } from '../src/index.ts'
++import { LinkIconMedium, MarkdownDelegateProvider, MarkdownFenceProvider } from '../src/index.ts'
+ import { cjkFriendlyStrong } from '../src/markdown/cjkFriendlyStrong.ts'
+ import { mathCompatibility } from '../src/markdown/mathCompatibility.ts'
+
+ afterEach(cleanup)
+
+ describe('MarkdownText', () => {
++  it('renders visual fences between prose while streaming, settled and restored, preserving other code fences', () => {
++    const source = '先看结论。\n\n```flow\n目标\n影响\n```\n\n再看原因。\n\n```js\nconst x = 1\n```'
++    const view = (text: string, streaming: boolean) => <MarkdownFenceProvider renderFence={fence => fence.language === 'flow'
++      ? <figure data-test-flow>{fence.code.trim()}</figure> : null}><MarkdownText text={text} streaming={streaming} /></MarkdownFenceProvider>
++    const live = render(view('', true))
++    for (let end = 1; end <= source.length; end++) live.rerender(view(source.slice(0, end), true))
++    const check = (container: HTMLElement) => {
++      expect(container.querySelectorAll('[data-test-flow]')).toHaveLength(1)
++      expect(container.querySelector('[data-test-flow]')?.textContent).toBe('目标\n影响')
++      expect(container.querySelector('pre code')?.textContent).toContain('const x = 1')
++      const elements = [...container.querySelectorAll('p, figure')]
++      expect(elements.map(node => node.textContent)).toEqual(['先看结论。', '目标\n影响', '再看原因。'])
++    }
++    check(live.container)
++    live.rerender(view(source, false)); check(live.container)
++    live.unmount(); check(render(view(source, false)).container)
++  })
++
+   it('renders CommonMark and GFM elements as semantic DOM', () => {
+     const markdown = [
+       '# Heading',
+@@ -61,8 +79,11 @@ describe('MarkdownText', () => {
      expect(screen.getByRole('link', { name: 'https://deepseek.com' })).toBeTruthy()
    })
 
@@ -954,7 +1057,6 @@ index c655a00..00a7c2e 100644
        ['**注意：**内容', '注意：'],
        ['**Notice:**内容', 'Notice:'],
        ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）'],
-
 diff --git a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
 index d543741..8ae4b1a 100644
 --- a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
@@ -976,3 +1078,131 @@ index d543741..8ae4b1a 100644
  .imageButton:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
  .previewName {
    display: block;
+diff --git a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
+index 681e8f5..ed4b1db 100644
+--- a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
++++ b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
+@@ -28,6 +28,26 @@ export interface MarkdownDelegate {
+
+ const MarkdownDelegateContext = createContext<MarkdownDelegate>({})
+
++/** Optional application rendering for authored fenced blocks; null keeps the code view. */
++export interface MarkdownFence {
++  language: string | undefined
++  code: string
++  streaming: boolean
++}
++
++const MarkdownFenceContext = createContext<((fence: MarkdownFence) => ReactNode) | undefined>(undefined)
++
++export function MarkdownFenceProvider({ children, renderFence }: {
++  children: ReactNode
++  renderFence: (fence: MarkdownFence) => ReactNode
++}): ReactNode {
++  return <MarkdownFenceContext.Provider value={renderFence}>{children}</MarkdownFenceContext.Provider>
++}
++
++export function useMarkdownFence(): ((fence: MarkdownFence) => ReactNode) | undefined {
++  return useContext(MarkdownFenceContext)
++}
++
+ /** Props for one Markdown navigation scope. */
+ export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
+   readonly children: ReactNode
+diff --git a/packages/client/ui-primitives/src/markdown/render.tsx b/packages/client/ui-primitives/src/markdown/render.tsx
+index cdb9afc..355716f 100644
+--- a/packages/client/ui-primitives/src/markdown/render.tsx
++++ b/packages/client/ui-primitives/src/markdown/render.tsx
+@@ -24,10 +24,11 @@ import type {} from 'mdast-util-math'
+ import { normalizeUri } from 'micromark-util-sanitize-uri'
+ import type { CodeToolbarLabels } from '../CodeToolbar.tsx'
+ import { CodeBlock } from './CodeBlock.tsx'
++import type { CodeBlockProps } from './CodeBlock.tsx'
+ import { parseFileLink } from './file-link.ts'
+ import { renderTexToReact } from './katex.tsx'
+ import { LinkIconMedium, classifyLinkPath } from '../LinkIcon.tsx'
+-import { useMarkdownDelegate } from './MarkdownDelegate.tsx'
++import { useMarkdownDelegate, useMarkdownFence } from './MarkdownDelegate.tsx'
+ import { HoverCard } from '../HoverCard.tsx'
+ import { ImageLightbox } from '../ImageLightbox.tsx'
+ import { ImagePreview } from '../ImagePreview.tsx'
+@@ -391,7 +392,7 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
+     return <Fragment key={key}>{renderTexToReact(`${node.value}\n`, true)}</Fragment>
+   }
+   return (
+-    <CodeBlock
++    <MarkdownCodeBlock
+       key={key}
+       // The replaced hast pipeline appended one synthetic newline that
+       // CodeBlock's display trim removes; feeding the bare value would make
+@@ -411,6 +412,12 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
+   )
+ }
+
++function MarkdownCodeBlock(props: CodeBlockProps): ReactNode {
++  const renderFence = useMarkdownFence()
++  return renderFence?.({ language: props.lang, code: props.code, streaming: props.streaming === true })
++    ?? <CodeBlock {...props} />
++}
++
+ /** A list is loose when it or any of its items is spread; every item then keeps its paragraphs. */
+ function listLoose(list: Md.List): boolean {
+   return (list.spread ?? false) || list.children.some(listItemLoose)
+diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+index eec1a12..c33021a 100644
+--- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
++++ b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+@@ -42,6 +42,10 @@ export function registerChatNodeRenderers(
+     key: 'assistant-step',
+     locale: NS,
+     inject: () => ({ hooks: { presentation } }),
++    children: {
++      'conversation.chat.fence': { kind: 'keyed', scope: 'session' },
++      'conversation.chat.visuals': { kind: 'list', scope: 'session' },
++    },
+   }, AssistantNodeView))
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+     name: 'conversation.chat.node',
+diff --git a/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx b/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
+index 76ce74e..920c46f 100644
+--- a/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
++++ b/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
+@@ -1,13 +1,16 @@
+ import { memo, useCallback, useMemo } from 'react'
+-import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
++import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
++import { MarkdownFenceProvider } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { MarkdownFence } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { ChatNodeViewProps, PresentationInjected, TurnTailOwnerProps } from '../contract/slots.ts'
+ import { AssistantMarkdown } from './AssistantMarkdown.tsx'
+
+ type AssistantNodeViewProps = ChatNodeViewProps<'assistant-step'> & InjectFace<PresentationInjected>
++  & PropsRenderSlots<'conversation.chat.fence' | 'conversation.chat.visuals'>
+
+ /** Streaming, settled, and interrupted Assistant states share one keyed renderer instance. */
+ export const AssistantNodeView = memo(function AssistantNodeView({
+-  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, t,
++  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, renderSlot, t,
+ }: AssistantNodeViewProps) {
+   const data = node.data
+   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
+@@ -29,7 +32,12 @@ export const AssistantNodeView = memo(function AssistantNodeView({
+     && turnProcess.spec.inlineReasoning
+     && !turnProcess.open
+   const revealProcess = useCallback(() => { turnProcess?.setOpen(true) }, [turnProcess])
++  const renderFence = useCallback((fence: MarkdownFence) => fence.language !== 'chart' ? null
++    : renderSlot('conversation.chat.fence', { ...fence, turn: data.turn }, { entryKey: fence.language }), [renderSlot, data.turn])
+   return (
++    <MarkdownFenceProvider renderFence={renderFence}>
++    {groupPart === 'response' && turnProcess?.spec.answerStep === data.step
++      && renderSlot('conversation.chat.visuals', { turn: data.turn })}
+     <AssistantMarkdown
+       blocks={data.blocks}
+       groupPart={groupPart}
+@@ -43,5 +51,6 @@ export const AssistantNodeView = memo(function AssistantNodeView({
+       mentions={mentions}
+       t={t}
+     />
++    </MarkdownFenceProvider>
+   )
+ })

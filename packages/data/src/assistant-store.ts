@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { canonical, type AssistantPreferences, type AssistantEvent, type AssistantPrompt, type AssistantRecord, type AssistantScope, type AssistantSessionState } from "@eval/contracts";
@@ -137,21 +137,6 @@ export async function listAssistantSessions(root: string, userId: string): Promi
   }));
   return states.filter((state): state is AssistantSessionState => !!state).sort((a, b) => b.updatedAt - a.updatedAt);
 }
-export async function writeAssistantArtifact(root: string, scope: AssistantScope, text: string): Promise<{ id: string; name: string; bytes: number }> {
-  const id = randomUUID(), name = `${id}.md`;
-  const directory = path.join(assistantDirectory(root, scope), "artifacts");
-  await mkdir(directory, { recursive: true });
-  const handle = await open(path.join(directory, name), "wx");
-  try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
-  return { id, name, bytes: (await stat(path.join(directory, name))).size };
-}
-export async function readAssistantArtifact(root: string, scope: AssistantScope, id: string): Promise<Buffer> {
-  const directory = assistantDirectory(root, scope);
-  const state = await readJson<AssistantSessionState>(path.join(directory, "state.json"));
-  if (state.userId !== scope.userId || state.sessionId !== scope.sessionId) throw new Error("Session ownership mismatch");
-  return readFile(path.join(directory, "artifacts", `${assistantId(id)}.md`));
-}
-
 export async function readAssistantFavorites(root: string, userId: string): Promise<string[] | undefined> {
   const file = path.join(root, "users", assistantUser(userId), "preferences", "models.json");
   if (!(await exists(file))) return undefined;

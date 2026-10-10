@@ -3,7 +3,7 @@ import { object, type AssistantModelSelection, type AssistantPrompt, type Assist
 import { sessionSummary, type AssistantEndpoints } from "@eval/runtime/assistant";
 
 /** Product operations; transport framing belongs entirely to upstream Runtime. */
-export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?: AssistantEndpoints["artifact"]): AssistantEndpoints {
+export function assistantEndpoints(sessions: AssistantSessionRuntime): AssistantEndpoints {
   const workspace = async (userId: string) => {
     const rows = await sessions.list(userId);
     return { workspaceId: "analysis", title: "评测分析", path: sessions.options.directory,
@@ -11,7 +11,6 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime, artifact?:
   };
   const requestOf = (payload: unknown) => object(object(payload).args ?? {});
   return {
-    artifact,
     async call(userId, endpoint, payload) {
       const args = requestOf(payload), request = object(args.request ?? {});
       const scope = { userId, sessionId: String(request.sessionId ?? object(request.address ?? {}).sessionId ?? "") };

@@ -58,6 +58,14 @@ test("calculation summaries retain valid expressions and zero-valued results", (
   assert.equal(result.summary, "减法 · 1 − 1 = 0");
 });
 
+test("generic tool payload URLs never become generated download links", () => {
+  for (const url of ["https://source.example/report.pdf", "javascript:alert(1)", "data:text/plain,report", "../../report.md"]) {
+    const result = analysisToolModel("read_data", { state: "ok", output: JSON.stringify({ text: "原始材料", url }) });
+    assert.deepEqual(result.details.items[0].code, { text: "原始材料", language: "text" });
+    assert.equal(result.details.items[0].markdown, undefined);
+  }
+});
+
 const searchResult = (results: unknown[] = []) => ({
   provider: "serper", category: "news", searchedAt: "2026-10-02T08:30:00.000Z", elapsedMs: 1240,
   attempts: [{ queryIndex: 0, query: "央行政策利率", searchQuery: "央行政策利率 site:pbc.gov.cn", domains: ["pbc.gov.cn"],
@@ -119,7 +127,6 @@ test("web search cards render titles and snippets as plain text with separate HT
   assert.equal(link.type, "link");
   if (link.type !== "link") throw new Error("Expected source link");
   assert.equal(link.url, url);
-  assert(!item.markdown.includes("下载总结"));
 });
 
 test("web search cards keep unsafe URLs inert and prevent URL text from breaking out of its link", () => {

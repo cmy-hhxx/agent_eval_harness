@@ -2,13 +2,31 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JsonBlock, MarkdownText } from './markdown-test-components.tsx'
-import { LinkIconMedium, MarkdownDelegateProvider } from '../src/index.ts'
+import { LinkIconMedium, MarkdownDelegateProvider, MarkdownFenceProvider } from '../src/index.ts'
 import { cjkFriendlyStrong } from '../src/markdown/cjkFriendlyStrong.ts'
 import { mathCompatibility } from '../src/markdown/mathCompatibility.ts'
 
 afterEach(cleanup)
 
 describe('MarkdownText', () => {
+  it('renders visual fences between prose while streaming, settled and restored, preserving other code fences', () => {
+    const source = '先看结论。\n\n```flow\n目标\n影响\n```\n\n再看原因。\n\n```js\nconst x = 1\n```'
+    const view = (text: string, streaming: boolean) => <MarkdownFenceProvider renderFence={fence => fence.language === 'flow'
+      ? <figure data-test-flow>{fence.code.trim()}</figure> : null}><MarkdownText text={text} streaming={streaming} /></MarkdownFenceProvider>
+    const live = render(view('', true))
+    for (let end = 1; end <= source.length; end++) live.rerender(view(source.slice(0, end), true))
+    const check = (container: HTMLElement) => {
+      expect(container.querySelectorAll('[data-test-flow]')).toHaveLength(1)
+      expect(container.querySelector('[data-test-flow]')?.textContent).toBe('目标\n影响')
+      expect(container.querySelector('pre code')?.textContent).toContain('const x = 1')
+      const elements = [...container.querySelectorAll('p, figure')]
+      expect(elements.map(node => node.textContent)).toEqual(['先看结论。', '目标\n影响', '再看原因。'])
+    }
+    check(live.container)
+    live.rerender(view(source, false)); check(live.container)
+    live.unmount(); check(render(view(source, false)).container)
+  })
+
   it('renders CommonMark and GFM elements as semantic DOM', () => {
     const markdown = [
       '# Heading',

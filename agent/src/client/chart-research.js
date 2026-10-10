@@ -52,14 +52,17 @@ export function researchOption(chart, width = 560) {
   } else if (chart.type === 'heatmap') {
     const values = chart.series.flatMap(s => s.values).filter(v => v !== null), hasNegative = values.some(v => v < 0), extent = Math.max(...values.map(Math.abs));
     const min = hasNegative ? -extent : 0, max = hasNegative ? extent : Math.max(...values);
-    option.grid.bottom = 44;
+    option.grid.top = 28;
+    option.grid.right = 4;
+    option.grid.bottom = layout.showColorScale ? 30 : 8;
     const differences = pairedDifferences(chart), hasDifferences = differences.length > 0;
-    option.xAxis = { ...axis, type: 'category', data: chart.categories, splitArea: { show: false }, axisLabel: { ...axis.axisLabel, interval: 0, rotate: 0, lineHeight: 18 } };
+    option.xAxis = { ...axis, type: 'category', position: 'top', data: chart.categories, splitArea: { show: false }, axisLabel: { ...axis.axisLabel, interval: 0, rotate: 0, fontSize: 14, lineHeight: 20, margin: 8 } };
     option.yAxis.data = [...chart.series.map(s => s.name), ...(hasDifferences ? [differenceLabel(chart, differenceUnit(chart))] : [])];
-    option.visualMap = { type: 'continuous', min, max: max === min ? min + 1 : max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: Math.min(120, width - 80), itemWidth: 5, text: [display(max), display(min)], textStyle: { color: muted }, inRange: { color: heatColors(min) }, seriesIndex: 0 };
+    option.yAxis.axisLabel = { ...option.yAxis.axisLabel, fontSize: 14, lineHeight: 20 };
+    option.visualMap = { show: layout.showColorScale, type: 'continuous', min, max: max === min ? min + 1 : max, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: Math.min(120, width - 80), itemWidth: 5, text: [display(max), display(min)], textStyle: { color: muted }, inRange: { color: heatColors(min) }, seriesIndex: 0 };
     option.series = [{ type: 'heatmap', name: chart.unit,
       data: chart.series.flatMap((s, si) => s.values.flatMap((value, ci) => value === null ? [] : [{ ...point(chart, si, ci, [ci, si, value]), label: { color: heatTextColor(heatColor(value, min, max)) } }])),
-      itemStyle: { borderWidth: 2, borderColor: '#fff' }, label: { show: chart.categories.length <= 12, fontSize: 12, formatter: p => display(p.value[2]) }, emphasis: { itemStyle: { borderColor: ink, borderWidth: 2 } },
+      itemStyle: { borderWidth: 2, borderColor: '#fff' }, label: { show: chart.categories.length <= 12, fontSize: 14, formatter: p => display(p.value[2]) }, emphasis: { itemStyle: { borderColor: ink, borderWidth: 2 } },
     }, { type: 'scatter', symbolSize: 0, itemStyle: { color: 'transparent' }, label: { show: true, formatter: '—', color: '#999', opacity: 1, fontSize: 14, position: 'inside' },
       data: chart.series.flatMap((s, si) => s.values.flatMap((value, ci) => value === null ? [point(chart, si, ci, [ci, si])] : [])),
     }];
@@ -69,7 +72,7 @@ export function researchOption(chart, width = 560) {
         const ci = api.value(0), center = api.coord([ci, api.value(1)]), size = api.size([1, 1]), value = differences[ci].value;
         return { type: 'group', children: [
           { type: 'rect', shape: { x: center[0] - size[0] / 2 + 1, y: center[1] - size[1] / 2 + 2, width: size[0] - 2, height: size[1] - 4 }, style: { fill: chartTheme.ivory } },
-          { type: 'text', style: { x: center[0], y: center[1], text: value === null ? '—' : signedNumber(value), align: 'center', verticalAlign: 'middle', fill: value > 0 ? chartTheme.navy : chartTheme.royal, font: '600 11px system-ui' } },
+          { type: 'text', style: { x: center[0], y: center[1], text: value === null ? '—' : signedNumber(value), align: 'center', verticalAlign: 'middle', fill: value > 0 ? chartTheme.navy : chartTheme.royal, font: '600 14px system-ui' } },
         ] };
       },
     });

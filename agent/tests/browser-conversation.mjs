@@ -4,6 +4,7 @@ import {mkdtemp,rm,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {setTimeout as delay} from 'node:timers/promises';
 import {AssistantSessions,serveAssistant} from '@eval/runtime/assistant';
+import {readAssistantPreferences} from '@eval/data';
 import {GatewayAssistantModels,modelIdentity} from '../../dist/apps/host/src/assistant-models.js';
 import {chartTemplates} from '../src/client/chart-templates.js';
 import {assistantEndpoints} from '@eval/assistant/server';
@@ -26,6 +27,7 @@ const templateExamples={
 templateExamples['多系列趋势']={...templateExamples['时间趋势'],title:'多系列趋势（测试示例）',series:[templateExamples['时间趋势'].series[1],templateExamples['时间趋势'].series[0],{name:'C组Fast',values:[1.7,1.75,1.8,1.85,1.9]},{name:'参照Fast',values:[.8,.85,.9,.95,1]}]};
 templateExamples['长数字组成']={type:'pie',title:'长数字组成（测试示例）',scope:'离线测试；长数值与极小非零类别，不代表真实场数',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['双方均差','经营现金流与利润口径不一致且关键推导缺失'.repeat(4),'A组胜','双方均好'],series:[{name:'组成',values:[1,999999999999999.9,1,0]}]};
 templateExamples['问题矩阵']={type:'heatmap',title:'问题矩阵（测试示例）',scope:'离线测试；相同三个检查项',unit:'次',source:'浏览器测试数据，非评测结论',categories:['事实','来源','格式'],series:[{name:'A组Fast',values:[3,0,5]},{name:'B组Fast',values:[2,null,8]}],annotations:[{categoryIndex:2,seriesIndex:1,note:'格式问题较多'}]};
+templateExamples['双档战绩']={type:'heatmap',title:'两档正式对战结果',scope:'离线测试；相同结果分类',unit:'场',source:'浏览器测试数据，非评测结论',categories:['Fast','Expert'],series:[{name:'A组胜',values:[56,104]},{name:'B组胜',values:[96,81]},{name:'双方都好',values:[61,49]},{name:'双方都差',values:[11,13]}]};
 const modelColors={'A组Fast':'rgb(30, 78, 140)','B组Fast':'rgb(242, 95, 59)','C组Fast':'rgb(107, 127, 106)','参照Fast':'rgb(71, 118, 168)'};
 const chartTool={name:'show_chart',readOnly:true,description:'Show structured chart',inputSchema:{type:'object'},execute:async(chart=chartData)=>{chartDisplays++;return {content:[{type:'text',text:JSON.stringify({kind:'chart',chart})}]};}};
 const searchArgs={queries:[{query:'央行政策利率公告',domains:['pbc.gov.cn']},{query:'中国人民银行 利率 公告'},{query:'央行发布会 利率'}],category:'news',dateTo:'2026-10-02',limit:3};
@@ -49,14 +51,14 @@ const sourceText='原始问题：请核对这条回答的证据。';
 const formalReference={runId:'run-alpha',taskId:'task-internal-alpha'};
 const operationId='6a1b4a17-1039-4ead-ac32-9a37b0bf4ada';
 const evaluatorVersion='fixture-evaluator-private';
-const summaryName=operationId+'.md';
 const directoryQuery='run-private-prefix';
 const failedInputId='input-private-missing';
 const rawReadError='读取失败：taskId task-private-missing，路径 /private/eris/runs/run-alpha/result.jsonl';
 const sourceTool={name:'read_data',readOnly:true,description:'Read source',inputSchema:{type:'object'},execute:async()=>{sourceReads++;if(!sourceAvailable)throw new Error('原始材料暂时不可用');return {content:[{type:'text',text:JSON.stringify({reference:sourceArgs.reference,text:sourceText,evidence:[{evidence_id:'ev_0_text_0_4_/content',quote:'原始问题'}],total:sourceText.length,hasMore:false,nextOffset:null})}]};}};
 const thinkingGate=Promise.withResolvers();
+const visualGate=Promise.withResolvers();
 const imageTool={name:'view_image',readOnly:true,description:'Read image',inputSchema:{type:'object'},execute:async()=>({content:[{type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6G2YAAAAASUVORK5CYII='}]})};
-const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool,searchTool,webReadTool,chartTool],driver:async({event,model,scope})=>({
+const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(new AssistantSessions({directory,url,model:config,models,systemPrompt:'test',tools:[sourceTool,imageTool,searchTool,webReadTool,chartTool],driver:async({event,model})=>({
  async prompt(text){
   selected.push(model);const callId="lookup-"+selected.length;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
@@ -68,7 +70,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
    await event({type:'tool_execution_start',toolCallId:exampleCall,toolName:'show_chart',args:{...example,references:[{reference:formalReference}]}});
    await event({type:'message_end',message:{role:'toolResult',toolCallId:exampleCall,...await chartTool.execute(example),isError:false}});
    await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
-   const exampleText='图表模板测试示例，仅用于验证渲染，不代表评测结论。';
+   const exampleText='图表模板测试示例，仅用于验证渲染，不代表评测结论。'+(example.type==='line'?'\n\n```chart\nnot-accepted-chart\n```':'');
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:exampleText}});
    await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,content:[{type:'text',text:exampleText}],stopReason:'stop'}});
    await event({type:'turn_end'});await event({type:'agent_end'});return;
@@ -99,16 +101,17 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'tool_execution_start',toolCallId:'calculate-'+selected.length,toolName:'calculate',args:{operation:'add',operands:['1','2']}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'calculate-'+selected.length,content:[{type:'text',text:JSON.stringify({operation:'add',operands:['1','2'],result:'3'})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'chart-'+selected.length,toolName:'show_chart',args:{...chartData,references:[{reference:formalReference}]}});
-  await event({type:'message_end',message:{role:'toolResult',toolCallId:'chart-'+selected.length,...await chartTool.execute(),isError:false}});
+  const chartReceipt=await chartTool.execute();
+  await event({type:'message_end',message:{role:'toolResult',toolCallId:'chart-'+selected.length,...chartReceipt,isError:false}});
   await event({type:'tool_execution_start',toolCallId:'failed-chart-'+selected.length,toolName:'show_chart',args:{...chartData,type:'pie',series:[{name:'FAST',values:[5,-3]}],references:[{reference:formalReference}]}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-chart-'+selected.length,content:[{type:'text',text:'饼图数值必须非负'}],isError:true}});
-  await event({type:'tool_execution_start',toolCallId:'summary-'+selected.length,toolName:'save_summary',args:{markdown:'评测总结',references:[{operationId}]}});
-  await event({type:'message_end',message:{role:'toolResult',toolCallId:'summary-'+selected.length,content:[{type:'text',text:JSON.stringify({id:operationId,name:summaryName,bytes:Buffer.byteLength('评测总结'),url:`${url}/u/${scope.userId}/artifacts/${scope.sessionId}/${summaryName}`})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'failed-source-'+selected.length,toolName:'read_data',args:{reference:{runId:'run-alpha',inputId:failedInputId}}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-source-'+selected.length,content:[{type:'text',text:rawReadError}],isError:true}});
   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
-  await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'## 查询完成\n\n共有 12 条正式结果。'}});
-  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:'## 查询完成\n\n共有 12 条正式结果。'}],stopReason:'stop'}});
+  const answer='## 查询完成\n\n共有 12 条正式结果。\n\n先看决定性差异。\n\n优先补齐关键步骤。';
+  for(const delta of [answer.slice(0,45),answer.slice(45,85),answer.slice(85)])await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});
+  if(selected.length===1)await visualGate.promise;
+  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:answer}],stopReason:'stop'}});
   await event({type:'turn_end'});await event({type:'agent_end'});
  },async steer(){},async abort(){},async dispose(){}
 })}))});
@@ -143,6 +146,9 @@ try{
  await editQueued.waitFor({state:'hidden'});
  assert.equal(selected.length,1,'removing a queued message prevents it from starting a model request');
  thinkingGate.resolve();
+ await page.getByRole('heading',{name:'查询完成',exact:true}).waitFor();
+ assert.equal(await page.locator('[data-turn-charts]').count(),0,'charts wait for the canonical final response');
+ visualGate.resolve();
  await page.getByRole('heading',{name:'查询完成',exact:true}).waitFor();await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});await running.waitFor({state:'hidden'});await delay(200);
  await page.screenshot({path:shots+'/conversation.png',fullPage:true});
  assert((await page.locator('body').innerText()).includes('240 tok'));
@@ -154,6 +160,9 @@ try{
  await chart.getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(await page.locator('[data-turn-process]').getAttribute('aria-expanded'),'false','the completed work steps stay collapsed by default');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'the accepted chart appears once beside the answer without opening work steps');
+ assert.equal(await page.locator('[data-turn-chart-fallback] figure').count(),0,'the final response has no duplicate chart at the tail');
+ const order=await page.locator('[data-turn-charts], p').evaluateAll(nodes=>nodes.map(node=>node.matches('[data-turn-charts]')?'chart':node.textContent));
+ assert(order.indexOf('chart')<order.indexOf('共有 12 条正式结果。')&&order.indexOf('共有 12 条正式结果。')<order.indexOf('先看决定性差异。'),'charts precede the final response without repeating its prose');
  assert.equal(await chart.locator('svg[role=img]').count(),1);
  assert.equal(await chart.locator('[data-chart-mark=dot]').count(),2,'the chart draws the receipt values as positioned SVG points');
  assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
@@ -186,9 +195,9 @@ try{
  await page.locator('[data-process-activity][aria-expanded=false]').first().click();
  await page.getByRole('button',{name:/读取材料.*读取原始对话/}).first().waitFor();
  const collapsedSteps=await page.locator('body').innerText();
- for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,summaryName,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
+ for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
  assert(!/runId|inputId|taskId|operationId|evaluatorVersion/.test(collapsedSteps),'collapsed tool steps expose internal field names');
- for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','总结已保存','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
  const chartRow=page.locator('[data-tool=show_chart][data-state=ok]').getByRole('button').first();
  assert.equal(await chartRow.getAttribute('aria-expanded'),'false','a successful chart is visible without opening its tool details');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'expanded work steps do not duplicate accepted charts or display rejected charts');
@@ -207,7 +216,7 @@ try{
  assert((await webSearch.innerText()).includes(searchTime),'search details retain the actual retrieval timestamp');
  assert.equal(await webSearch.getByRole('link',{name:searchUrl,exact:true}).getAttribute('href'),searchUrl,'search result URLs are inspectable links');
  assert.equal(await webSearch.getByRole('link',{name:'伪造来源',exact:true}).count(),0,'external snippets remain plain text');
- assert.equal(await webSearch.getByRole('link',{name:'下载总结',exact:true}).count(),0,'search results are not summary artifacts');
+ assert.equal(await webSearch.locator('a[download]').count(),0,'search sources remain ordinary links');
  await webSearch.getByText('查询记录',{exact:true}).click();
  await webSearch.getByText('Serper request failed: HTTP 429',{exact:true}).waitFor();
  await webSearch.getByText('央行政策利率公告 site:pbc.gov.cn',{exact:true}).waitFor();
@@ -247,11 +256,6 @@ try{
  await page.getByText(operationId,{exact:true}).first().waitFor();
  await page.getByText(evaluatorVersion,{exact:true}).first().waitFor();
  await professional.click();
- const summary=page.getByRole('button',{name:/保存总结/}).first();
- await summary.click();await page.getByText(summaryName,{exact:true}).first().waitFor();
- const download=page.getByRole('link',{name:'下载总结',exact:true});await download.waitFor();
- const downloadUrl=new URL(await download.getAttribute('href'));
- assert.equal(downloadUrl.origin,new URL(server.url).origin);assert(downloadUrl.pathname.startsWith('/u/local/artifacts/'));assert(downloadUrl.pathname.endsWith('/'+summaryName));await summary.click();
  await page.getByRole('button',{name:/读取材料/}).first().click();
  await page.getByText(sourceText,{exact:true}).waitFor();
  await page.getByText('证据',{exact:true}).first().click();
@@ -259,6 +263,7 @@ try{
  assert.equal(sourceReads,1,'expanding the upstream tool card resolves the stored reference');
  await page.getByRole('button',{name:/查看图片/}).first().click();
  await page.getByRole('img',{name:'图片 1',exact:true}).waitFor();
+ assert.equal(await page.locator('[data-tool] a[download]:not([href^="data:image/"]), [data-tool] a[href*="/artifacts/"]').count(),0,'tool results offer no non-image file download entry');
  const material=page.getByRole('button',{name:/读取材料/}).first();
  await material.click();sourceAvailable=false;await material.click();
  await page.getByText('原始材料暂时不可用',{exact:true}).waitFor();
@@ -283,8 +288,13 @@ try{
  await settings.getByRole('button',{name:'中文',exact:true}).click();
  await page.getByRole('menuitem',{name:'English',exact:true}).click();
  await page.getByRole('dialog',{name:'Settings',exact:true}).waitFor();
+ const settingsDeadline=Date.now()+10000;
+ while((await readAssistantPreferences(directory,'local')).values.locale?.preference!=='en'){
+  assert(Date.now()<settingsDeadline,'language preference is persisted before reload');await delay(20);
+ }
  await page.reload();
  await page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').first().waitFor({state:'visible'});
+ assert.equal(await page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').count(),1,'refresh restores the accepted receipt without a Markdown reference');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
  assert.equal(chartDisplays,1,'refresh does not repeat the chart tool');
  await page.getByRole('button',{name:'Settings',exact:true}).click();
@@ -378,9 +388,13 @@ try{
  for(const [label,example] of Object.entries(templateExamples)){
   await page.locator('[contenteditable=true]').fill('图表模板测试示例：'+label);await page.locator('[contenteditable=true]').press('Enter');
   const exampleChart=page.locator(`figure[data-analysis-chart=${example.type}]`).last();
+  if(example.type==='line'){assert.equal(await page.locator('[data-visual-error=chart]').count(),0);assert(!(await page.locator('body').innerText()).includes('not-accepted-chart'),'a chart placeholder never exposes a copied identifier');}
   await exampleChart.getByRole('heading',{name:example.title,exact:true}).waitFor();
   await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
-  await exampleChart.getByText('来源：'+example.source,{exact:true}).waitFor();
+  assert.equal(await exampleChart.locator('footer').count(),0,'source descriptions do not occupy the chart face');
+  assert.equal(await exampleChart.locator('[data-chart-metadata]').textContent(),example.scope+' · 来源：'+example.source);
+  assert.equal(await exampleChart.locator('[data-chart-metadata]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)');
+  assert.equal(await exampleChart.locator('[data-chart-unit]').textContent(),example.unit);
   assert.equal(await exampleChart.locator('details,summary').count(),0,'chart values do not require opening a disclosure');
   assert.equal(await exampleChart.locator('[data-chart-actions], table, [data-chart-summary]').count(),0,'charts stay independent from tables');
   if(example.type==='line'){
@@ -425,7 +439,7 @@ try{
     assert.equal(await exampleChart.locator('[data-chart-share]').first().textContent(),'<0.01%','tiny nonzero shares are never presented as zero');
    }
   }
-  if(example.type==='heatmap'){
+  if(label==='问题矩阵'){
    await exampleChart.locator('[data-research-chart=heatmap] svg').waitFor();
    const plot=exampleChart.getByRole('img',{name:/方向键查看数值/});
    await plot.focus();await plot.press('Home');
@@ -437,7 +451,21 @@ try{
    await plot.press('Escape');
    assert.equal(await exampleChart.locator('[data-chart-annotations] li').textContent(),'格式问题较多','notes add no repeated coordinates or values');
   }
-  const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long','问题矩阵':'chart-heatmap'}[label];
+  if(label==='双档战绩'){
+   for(const width of [375,320]){
+    await page.setViewportSize({width,height:1200});
+    await exampleChart.locator('svg text').filter({hasText:'104'}).waitFor();
+    await page.waitForFunction(()=>{const matrix=[...document.querySelectorAll('[data-research-chart=heatmap]')].at(-1);return matrix.firstElementChild.scrollWidth<=matrix.firstElementChild.clientWidth+1;});
+    const labels=await exampleChart.locator('svg text').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{text:node.textContent,left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));
+    for(const text of [...example.categories,...example.series.map(series=>series.name),...example.series.flatMap(series=>series.values.map(String))])assert(labels.some(label=>label.text===text),'every tier, result and exact count is visible');
+    const bounds=await exampleChart.boundingBox();
+    for(const label of labels)assert(label.left>=bounds.x&&label.right<=bounds.x+bounds.width,'all matrix labels fit inside the narrow chart');
+    for(let i=0;i<labels.length;i++)for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j];assert(a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top,'matrix labels never overlap');}
+    await exampleChart.screenshot({path:shots+'/chart-battle-matrix-'+width+'.png'});
+   }
+   await page.setViewportSize({width:1440,height:1000});
+  }
+  const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long','问题矩阵':'chart-heatmap','双档战绩':'chart-battle-matrix'}[label];
   await exampleChart.screenshot({path:shots+'/'+screenshot+'.png'});
  }
  const mobileContext=await browser.newContext({storageState:await page.context().storageState(),viewport:{width:375,height:900},isMobile:true,hasTouch:true});
