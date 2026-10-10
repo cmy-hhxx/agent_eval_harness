@@ -19,7 +19,7 @@ const selected=[];
 let sourceReads=0;let sourceAvailable=true;
 let webSearches=0;let webReads=0;
 let chartDisplays=0;
-const chartData={type:'dot',title:'FAST：已裁决胜场',scope:'已裁决的 11 场 FAST 对战',unit:'场',source:'正式对比结果',categories:['A组Fast','B组Fast'],series:[{name:'胜场',values:[6,5]}]};
+const chartData={type:'pie',title:'FAST：已裁决胜场',scope:'已裁决的 11 场 FAST 对战',unit:'场',source:'正式对比结果',categories:['A组Fast','B组Fast'],series:[{name:'胜场',values:[6,5]}]};
 const templateExamples={
  '时间趋势':{type:'line',title:'时间趋势（测试示例）',scope:'离线测试；2026-01-01 至 2026-01-21',unit:'示例值',source:'浏览器测试数据，非评测结论',categories:['2026-01-01','2026-01-02','2026-01-03','2026-01-11','2026-01-21'],series:[{name:'A组Fast',values:[1.25,1.35,null,1.42,1.6]},{name:'B组Fast',values:[1.1,null,1.45,1.3,1.5]}]},
  '结果组成':{type:'pie',title:'结果组成（测试示例）',scope:'离线测试；12 条互斥示例记录',unit:'条',source:'浏览器测试数据，非评测结论',categories:['A组胜','B组胜','双方均好','双方均差','待定'],series:[{name:'组成',values:[5,3,2,2,0]}]},
@@ -156,7 +156,7 @@ try{
  assert.equal(await page.locator('[data-variant=think]').count(),1,'reasoning must use the upstream collapsible reasoning row');
  assert.equal(await page.getByRole('button',{name:/gpt-6-luna/}).count(),1,'the configured gateway model must have an upstream selection control');
 
- const chart=page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').first();
+ const chart=page.locator('[data-turn-charts] figure[data-analysis-chart=pie]').first();
  await chart.getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(await page.locator('[data-turn-process]').getAttribute('aria-expanded'),'false','the completed work steps stay collapsed by default');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'the accepted chart appears once beside the answer without opening work steps');
@@ -164,30 +164,13 @@ try{
  const order=await page.locator('[data-turn-charts], p').evaluateAll(nodes=>nodes.map(node=>node.matches('[data-turn-charts]')?'chart':node.textContent));
  assert(order.indexOf('chart')<order.indexOf('共有 12 条正式结果。')&&order.indexOf('共有 12 条正式结果。')<order.indexOf('先看决定性差异。'),'charts precede the final response without repeating its prose');
  assert.equal(await chart.locator('svg[role=img]').count(),1);
- assert.equal(await chart.locator('[data-chart-mark=dot]').count(),2,'the chart draws the receipt values as positioned SVG points');
- assert.deepEqual(await chart.locator('[data-chart-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
- assert.deepEqual(await chart.locator('[data-chart-mark=dot]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the reference royal blue and coral identity colours');
+ assert.equal(await chart.locator('[data-chart-mark=wedge]').count(),2,'the chart draws the receipt values as composition sectors');
+ assert.deepEqual(await chart.locator('[data-chart-composition-value]').allTextContents(),['6','5'],'exact values are directly readable on the plot');
+ assert.deepEqual(await chart.locator('[data-chart-mark=wedge]').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).fill)),[modelColors['A组Fast'],modelColors['B组Fast']],'A and B use the reference royal blue and coral identity colours');
  assert.equal(await chart.locator('[data-chart-actions], table, [data-chart-summary]').count(),0,'a standalone plot has no duplicate table, view toggle or repeated statistics');
  assert((await chart.locator('[data-chart-accessible-data]').textContent()).includes('5'),'assistive readers retain exact observations');
  assert.equal(await chart.locator('[data-chart-accessible-data]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','accessible observations do not take up visible space');
  assert.equal(chartDisplays,1,'rendering reads the saved receipt');
- await page.setViewportSize({width:375,height:900});
- await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison-compact');
- assert(await chart.locator('svg').evaluate(node=>node.clientWidth<=node.closest('figure').clientWidth),'the entire comparison fits the narrow answer column');
- assert(await chart.evaluate(node=>node.scrollWidth<=node.clientWidth),'the comparison does not conceal a group behind horizontal scrolling');
- for(const label of ['A组Fast','B组Fast','6','5'])assert((await chart.locator('svg').textContent()).includes(label),`${label} remains directly readable at 375px`);
- const plotBounds=await chart.locator('svg').boundingBox();
- for(const label of await chart.locator('[data-chart-label=category], [data-chart-value]').all()){
-  const bounds=await label.boundingBox();assert(bounds && bounds.x>=plotBounds.x-1 && bounds.x+bounds.width<=plotBounds.x+plotBounds.width+1,'both full group labels and exact values fit the narrow plot');
-  assert.equal(await label.getAttribute('font-size'),await label.getAttribute('data-chart-value')!==null?'16':'14','narrow layouts retain the compact label and value hierarchy');
- }
- const narrowDots=await chart.locator('[data-chart-mark=dot]').evaluateAll(nodes=>nodes.map(node=>({y:Number(node.getAttribute('cy')),x:Number(node.getAttribute('cx'))})));
- const zero=Number(await chart.locator('[data-zero-baseline]').first().getAttribute('x1'));
- assert(narrowDots[1].y>narrowDots[0].y,'both groups have independent visible rows');
- assert(Math.abs((narrowDots[0].x-zero)/(narrowDots[1].x-zero)-6/5)<0.001,'dot positions retain the actual ratio from a common zero');
- await page.screenshot({path:shots+'/chart-narrow.png',fullPage:true});
- await page.setViewportSize({width:1440,height:1000});
- await page.waitForFunction(()=>document.querySelector('figure[data-analysis-chart] svg')?.getAttribute('data-chart-template')==='comparison');
  await chart.screenshot({path:shots+'/fast-chart.png'});
 
  // The upstream Turn process owns both the thought and the business tool.
@@ -293,8 +276,8 @@ try{
   assert(Date.now()<settingsDeadline,'language preference is persisted before reload');await delay(20);
  }
  await page.reload();
- await page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').first().waitFor({state:'visible'});
- assert.equal(await page.locator('[data-turn-charts] figure[data-analysis-chart=dot]').count(),1,'refresh restores the accepted receipt without a Markdown reference');
+ await page.locator('[data-turn-charts] figure[data-analysis-chart=pie]').first().waitFor({state:'visible'});
+ assert.equal(await page.locator('[data-turn-charts] figure[data-analysis-chart=pie]').count(),1,'refresh restores the accepted receipt without a Markdown reference');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
  assert.equal(chartDisplays,1,'refresh does not repeat the chart tool');
  await page.getByRole('button',{name:'Settings',exact:true}).click();
@@ -371,7 +354,7 @@ try{
  await restoredRead.getByRole('link',{name:webReadUrl+'#page=8',exact:true}).waitFor();
  assert((await restoredRead.innerText()).includes('130: '+webReadText),'refresh retains source evidence coordinates and exact text');
  assert.equal(webReads,1,'refresh renders persisted web source text without another network request');
- await page.locator('figure[data-analysis-chart=dot]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
+ await page.locator('figure[data-analysis-chart=pie]').first().getByRole('heading',{name:chartData.title,exact:true}).waitFor();
  assert.equal(chartDisplays,1,'refresh renders the stored chart without executing the tool again');
  await page.getByRole('button',{name:/gpt-5.6-luna/}).click();
  await page.getByRole('menuitem',{name:/^模型/}).click();
@@ -385,6 +368,12 @@ try{
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
  await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).provider,'openai');assert.equal(selected.at(-1).model,'gpt-5.6-luna-deeptopic-0825');assert.equal(selected.at(-1).thinking,'max');
  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
+ const lateChartScripts=[];
+ const unavailableChartScript=route=>{
+  lateChartScripts.push(new URL(route.request().url()).pathname);
+  return route.fulfill({status:404,contentType:'text/plain',body:'Asset removed after rebuild'});
+ };
+ await page.route('**/*.js',unavailableChartScript);
  for(const [label,example] of Object.entries(templateExamples)){
   await page.locator('[contenteditable=true]').fill('图表模板测试示例：'+label);await page.locator('[contenteditable=true]').press('Enter');
   const exampleChart=page.locator(`figure[data-analysis-chart=${example.type}]`).last();
@@ -394,7 +383,7 @@ try{
   assert.equal(await exampleChart.locator('footer').count(),0,'source descriptions do not occupy the chart face');
   assert.equal(await exampleChart.locator('[data-chart-metadata]').textContent(),example.scope+' · 来源：'+example.source);
   assert.equal(await exampleChart.locator('[data-chart-metadata]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)');
-  assert.equal(await exampleChart.locator('[data-chart-unit]').textContent(),example.unit);
+  assert.equal(await exampleChart.locator('[data-chart-unit]').textContent(),label==='双档战绩'?'合计 471 场':`单位：${example.unit}`);
   assert.equal(await exampleChart.locator('details,summary').count(),0,'chart values do not require opening a disclosure');
   assert.equal(await exampleChart.locator('[data-chart-actions], table, [data-chart-summary]').count(),0,'charts stay independent from tables');
   if(example.type==='line'){
@@ -413,12 +402,12 @@ try{
     assert.equal(await exampleChart.locator('[data-chart-mark=line]').count(),3,'missing dates remain real gaps in the trend');
     const target=exampleChart.locator('[data-chart-hit][data-series="A组Fast"][data-date="2026-01-21"]');
     await target.focus();
-    await exampleChart.locator('[data-chart-readout]').getByText('2026-01-21 · A组Fast · 1.6 示例值',{exact:true}).waitFor();
+    await exampleChart.locator('[data-chart-readout]').getByText('2026-01-21 · A组Fast · 1.6 示例值',{exact:true}).waitFor({state:'attached'});
     assert(await target.evaluate(node=>node===document.activeElement),'a trend reading is available from keyboard focus');
     await target.press('Escape');
-    await exampleChart.locator('[data-chart-readout]').waitFor({state:'hidden'});
-    await target.hover();
-    assert.equal(await exampleChart.locator('[data-chart-readout]').isVisible(),false,'hover does not display text');
+    assert.equal(await exampleChart.locator('[data-chart-readout]').textContent(),'');
+    await exampleChart.locator('[data-chart-mark=point][data-series="A组Fast"][data-value="1.6"]').hover();
+    assert.equal(await exampleChart.locator('[data-chart-readout]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)','hover does not display text');
     await page.mouse.move(0,0);await target.evaluate(node=>node.blur());
    }
   }else if(example.type==='pie'){
@@ -443,11 +432,11 @@ try{
    await exampleChart.locator('[data-research-chart=heatmap] svg').waitFor();
    const plot=exampleChart.getByRole('img',{name:/方向键查看数值/});
    await plot.focus();await plot.press('Home');
-   await exampleChart.locator('[aria-live=polite]').getByText('事实 · A组Fast：3 次',{exact:true}).waitFor();
+   await exampleChart.locator('[aria-live=polite]').getByText('事实 · A组Fast：3 次',{exact:true}).waitFor({state:'attached'});
    await plot.press('End');
-   await exampleChart.locator('[aria-live=polite]').getByText('格式 · B组Fast − A组Fast：+3 次',{exact:true}).waitFor();
+   await exampleChart.locator('[aria-live=polite]').getByText('格式 · B组Fast − A组Fast：+3 次',{exact:true}).waitFor({state:'attached'});
    await plot.press('ArrowLeft');
-   await exampleChart.locator('[aria-live=polite]').getByText('来源 · B组Fast − A组Fast：未知',{exact:true}).waitFor();
+   await exampleChart.locator('[aria-live=polite]').getByText('来源 · B组Fast − A组Fast：未知',{exact:true}).waitFor({state:'attached'});
    await plot.press('Escape');
    assert.equal(await exampleChart.locator('[data-chart-annotations] li').textContent(),'格式问题较多','notes add no repeated coordinates or values');
   }
@@ -468,6 +457,8 @@ try{
   const screenshot={'时间趋势':'chart-trend','结果组成':'chart-composition','多系列趋势':'chart-trend-multiple','长数字组成':'chart-composition-long','问题矩阵':'chart-heatmap','双档战绩':'chart-battle-matrix'}[label];
   await exampleChart.screenshot({path:shots+'/'+screenshot+'.png'});
  }
+ assert.deepEqual(lateChartScripts,[],'new chart receipts in an open conversation render without loading more scripts');
+ await page.unroute('**/*.js',unavailableChartScript);
  const mobileContext=await browser.newContext({storageState:await page.context().storageState(),viewport:{width:375,height:900},isMobile:true,hasTouch:true});
  try{
   const mobilePage=await mobileContext.newPage();await mobilePage.goto(page.url());
@@ -493,11 +484,6 @@ try{
   assert.equal(await mobileDates.last().getAttribute('data-date'),'2026-01-21');
   assert.equal(await mobileDates.first().textContent(),'01-01');
   assert.equal(await mobileDates.last().textContent(),'01-21');
-  await mobileTrend.locator('[data-chart-hit][data-series="A组Fast"][data-date="2026-01-01"]').tap();
-  await mobileTrend.locator('[data-chart-readout]').getByText('2026-01-01 · A组Fast · 1.25 示例值',{exact:true}).waitFor();
-  await mobilePage.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  assert(await mobileTrend.locator('[data-chart-readout]').isVisible(),'a touch reading stays visible after release and rendering settle');
-  assert.equal(await mobileTrend.locator('[data-chart-readout]').textContent(),'2026-01-01 · A组Fast · 1.25 示例值','touch release retains the exact selected observation');
   await mobileTrend.screenshot({path:shots+'/chart-trend-narrow.png'});
   await mobilePage.locator('[contenteditable=true]').fill('图表模板测试示例：长数字组成');
   await mobilePage.locator('[contenteditable=true]').press('Enter');
@@ -521,7 +507,7 @@ try{
  const older=page.getByRole('button',{name:'加载更早',exact:true});
  if(await older.count())await older.click();
  for(const example of Object.values(templateExamples))await page.locator(`figure[data-analysis-chart=${example.type}]`).getByRole('heading',{name:example.title,exact:true}).waitFor();
- await page.locator('figure[data-analysis-chart=dot]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
+ await page.locator('figure[data-analysis-chart=pie]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across the recorded chart types');
  assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  await page.goto(server.url+'/u/local/chart-gallery.html');
@@ -535,7 +521,7 @@ try{
  assert.equal(await radial.locator('[data-radial-cell]').count(),12);
  const firstCell=radial.getByRole('img',{name:'事实 · A组Fast：8 次',exact:true});
  await firstCell.focus();await firstCell.press('ArrowRight');
- await radial.locator('[aria-live=polite]').getByText('来源 · A组Fast：7 次',{exact:true}).waitFor();
+ await radial.locator('[aria-live=polite]').getByText('来源 · A组Fast：7 次',{exact:true}).waitFor({state:'attached'});
  await radial.getByRole('img',{name:'来源 · A组Fast：7 次',exact:true}).press('Escape');
  await page.screenshot({path:shots+'/gallery-desktop.png',fullPage:true});
  await page.getByRole('button',{name:'比较',exact:true}).click();
@@ -554,7 +540,7 @@ try{
  await page.getByRole('searchbox',{name:'搜索模板'}).fill('');
  await page.setViewportSize({width:375,height:900});
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1),'gallery fits mobile');
- for(const id of ['radial','radial-four','bubble-matrix','violin','interval','bump','rose-issues','rings-two','progress-ring','sunburst-issues','treemap-issues','sankey-stages','chord-issues','ecdf-duration','ridge-duration']){
+ for(const id of ['radial','radial-four','bubble-matrix','violin','interval','rose-issues','rings-two','progress-rings','sunburst-issues','treemap-issues','sankey-stages','chord-issues','ecdf-duration','ridge-duration']){
   const item=page.locator(`[data-template="${id}"]`);await item.scrollIntoViewIfNeeded();
   assert(await item.evaluate(node=>node.scrollWidth<=node.clientWidth+1),`${id} fits mobile`);
   await item.screenshot({path:shots+`/gallery-${id}-narrow.png`});

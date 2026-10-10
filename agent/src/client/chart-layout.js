@@ -1,3 +1,5 @@
+import { battleTotals } from './chart-data.js';
+
 // Conservative single-line widths. Plots gain space before labels lose readability.
 export const chartTextWidth = (value, size = 12) => Array.from(String(value)).reduce((sum, c) =>
   sum + (/\s/.test(c) ? 4 : /[MWm@]/.test(c) ? 11 : /[\x00-\x7f]/.test(c) ? 7 : 12), 0) * size / 12;
@@ -24,22 +26,26 @@ export function researchLayout(chart, width, deltaUnit, numbers) {
   }
   if (chart.type==='ridgeline') return {width:Math.max(width,340),height:chart.series.length*62+60,labelWidth:Math.max(...chart.series.map(s=>chartTextWidth(s.name)))};
   const matrix = ['heatmap', 'bubble_matrix'].includes(chart.type);
-  const delta = chart.type === 'heatmap' && chart.series.length === 2;
-  const rowNames = matrix ? [...chart.series.map(s => s.name), ...(delta ? [differenceLabel(chart, deltaUnit)] : [])]
+  const battles = battleTotals(chart);
+  const delta = chart.type === 'heatmap' && chart.series.length === 2 && !battles;
+  const rowNames = matrix ? [...chart.series.map((s, i) => battles?.axis === 'rows' ? `${s.name} · ${battles.totals[i].toLocaleString('zh-CN')} 场` : s.name), ...(delta ? [differenceLabel(chart, deltaUnit)] : [])]
     : chart.type === 'interval' ? chart.categories.flatMap(category => chart.series.map(s => chart.series.length === 1 ? category : `${category} · ${s.name}`))
     : chart.categories;
   const labelWidth = Math.max(30, ...rowNames.map(name => chartTextWidth(name, chart.type === 'heatmap' ? 14 : 12)));
   const longestNumber = Math.max(16, ...numbers.map(number => chartTextWidth(number, chart.type === 'heatmap' ? 14 : 11)));
   if (matrix) {
-    const cell = Math.max(chart.type === 'bubble_matrix' ? 42 : 32, longestNumber + 14,
+    const cell = Math.max(chart.type === 'bubble_matrix' ? 42 : 44, longestNumber + 16,
+      ...(battles?.axis === 'columns' ? battles.totals.map(total => chartTextWidth(`${total.toLocaleString('zh-CN')} 场`, 14) + 12) : []),
       ...chart.categories.map(name => chartTextWidth(name, chart.type === 'heatmap' ? 14 : 12) + (chart.type === 'heatmap' ? 8 : 16)));
     const showColorScale = chart.type === 'heatmap' && (chart.categories.length > 12 || chart.series.some(series => series.values.includes(null)));
+    const top = battles?.axis === 'columns' ? 48 : 28, bottom = showColorScale ? 32 : 4;
     return { width: Math.max(width, labelWidth + chart.categories.length * cell + (chart.type === 'heatmap' ? 20 : 46)),
-      height: rowNames.length * (chart.type === 'bubble_matrix' ? 42 : 30) + (chart.type === 'heatmap' ? showColorScale ? 64 : 40 : 48), labelWidth, showColorScale };
+      height: rowNames.length * 42 + (chart.type === 'heatmap' ? top + bottom : 48),
+      labelWidth, showColorScale, top, bottom };
   }
-  if (chart.type === 'dumbbell') return { width: Math.max(width, labelWidth + longestNumber * 3 + 220), height: chart.categories.length * 28 + 48, labelWidth };
   if (chart.type === 'interval') return { width: Math.max(width, labelWidth + longestNumber * 3 + 200), height: rowNames.length * 34 + 48, labelWidth };
-  if (['slope', 'bump', 'waterfall', 'boxplot', 'violin'].includes(chart.type)) {
+  if (chart.type === 'slope') return { width: Math.max(width, 300, longestNumber * 2 + 180, ...chart.categories.map(name => chartTextWidth(name) * 2 + 40)), height: 220, labelWidth, endSpace: longestNumber + 24 };
+  if (['waterfall', 'boxplot', 'violin'].includes(chart.type)) {
     const names = ['boxplot', 'violin'].includes(chart.type) ? chart.series.map(s => s.name) : [...chart.categories, ...(chart.type === 'waterfall' ? ['合计'] : [])];
     const cell = Math.max(50, longestNumber + 18, ...names.map(name => chartTextWidth(name) + 18));
     return { width: Math.max(width, names.length * cell + 90), height: 200, labelWidth };

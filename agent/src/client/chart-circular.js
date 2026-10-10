@@ -27,7 +27,7 @@ function outerLabels(labels, cx, cy, radius, width) {
 export function CircularChart({ chart, width }) {
   const [reading, setReading] = useState('');
   const mark = label => ({ tabIndex: 0, role: 'img', 'aria-label': label, 'data-structure-mark': true,
-    onFocus: () => setReading(label), onClick: () => setReading(label), onBlur: () => setReading('') });
+    onFocus: () => setReading(label), onBlur: () => setReading('') });
   const inspect = event => {
     if (event.key === 'Escape') { setReading(''); return; }
     if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
@@ -69,7 +69,6 @@ export function CircularChart({ chart, width }) {
       marks.push(h('path',{key:`bg-${i}`,d:sectorPath(cx,cy,inner,outer,start,start+2*Math.PI),fill:theme.ivory}));
       if(value>0)marks.push(h('path',{key:i,d:sectorPath(cx,cy,inner,outer,start,start+value/chart.maxValue*2*Math.PI),fill:colors[i%colors.length],...mark(`${chart.categories[i]}：${value}/${chart.maxValue} ${chart.unit}`)}));
     });
-    if(categoryCount===1)marks.push(h('text',{key:'center',x:cx,y:cy,textAnchor:'middle',dominantBaseline:'middle',fontSize:Math.max(12,Math.min(24,52/chartTextWidth(`${number(chart.series[0].values[0]/chart.maxValue*100)}%`,12)*12)),fontWeight:600,fill:theme.ink},`${number(chart.series[0].values[0]/chart.maxValue*100)}%`));
     legend=legendItems(chart.categories,chart.series[0].values,v=>`${number(v)}/${number(chart.maxValue)}`);
   } else if (chart.type === 'radar') {
     const angle=i=>-Math.PI/2+i*2*Math.PI/categoryCount;
@@ -77,7 +76,7 @@ export function CircularChart({ chart, width }) {
     chart.categories.forEach((name,i)=>{marks.push(h('line',{key:`axis-${i}`,x1:cx,y1:cy,x2:xy(cx,cy,radius,angle(i))[0],y2:xy(cx,cy,radius,angle(i))[1],stroke:theme.grid}));labels.push({text:name,angle:angle(i)});});
     chart.series.forEach((s,si)=>{
       const points=s.values.map((value,i)=>xy(cx,cy,radius*value/chart.maxValue,angle(i)));
-      marks.push(h('polygon',{key:`series-${si}`,points:points.map(p=>p.join(',')).join(' '),fill:groupColors[si],fillOpacity:.08,stroke:groupColors[si],strokeWidth:1.8}));
+      marks.push(h('polygon',{key:`series-${si}`,points:points.map(p=>p.join(',')).join(' '),fill:groupColors[si],fillOpacity:.08,stroke:groupColors[si],strokeWidth:1.8,'data-chart-hover':true}));
       points.forEach((p,i)=>marks.push(h('circle',{key:`${si}-${i}`,cx:p[0],cy:p[1],r:3,fill:groupColors[si],...mark(`${s.name} · ${chart.categories[i]}：${s.values[i]}/${chart.maxValue} ${chart.unit}`)})));
     });
     legend=legendItems(chart.series.map(s=>s.name));
@@ -88,7 +87,7 @@ export function CircularChart({ chart, width }) {
   } else if (chart.type === 'chord') {
     const arcs=chordArcs(chart), r=radius-9;
     arcs.forEach((arc,i)=>{
-      marks.push(h('path',{key:`arc-${i}`,d:sectorPath(cx,cy,radius-7,radius,arc.from,arc.end),fill:colors[i%colors.length]}));
+      marks.push(h('path',{key:`arc-${i}`,d:sectorPath(cx,cy,radius-7,radius,arc.from,arc.end),fill:colors[i%colors.length],'data-chart-hover':true}));
       labels.push({text:`${chart.categories[i]} ${number(arc.value)}`,angle:(arc.from+arc.end)/2});
       for(let j=i+1;j<arcs.length;j++){
         const value=chart.series.find(s=>s.name===chart.categories[i]).values[j];if(!value)continue;
@@ -100,5 +99,5 @@ export function CircularChart({ chart, width }) {
   }
   return h('div',{'data-circular-chart':chart.type},legend,
     h('div',{style:{overflowX:'auto',maxWidth:'100%'}},h('svg',{width:plotWidth,height,viewBox:`0 0 ${plotWidth} ${height}`,role:'group','aria-label':chart.title,'data-chart-type':chart.type,onKeyDown:inspect,style:{display:'block',margin:'0 auto',fontFamily:'inherit',fontVariantNumeric:'tabular-nums'}},...marks,...outerLabels(labels,cx,cy,radius,plotWidth))),
-    h('div',{'aria-live':'polite',style:{fontSize:12,color:theme.muted,minHeight:reading?18:0}},reading));
+    h('div',{'aria-live':'polite',className:'eris-chart-sr-reading'},reading));
 }

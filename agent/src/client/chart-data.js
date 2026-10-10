@@ -1,7 +1,8 @@
 // Derived display data only. Source values and accepted receipts stay unchanged.
-export const researchTypes = ['dumbbell', 'heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'bump', 'interval', 'boxplot', 'violin', 'sunburst', 'treemap', 'sankey', 'ecdf', 'ridgeline'];
+export const researchTypes = ['heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'interval', 'boxplot', 'violin', 'sunburst', 'treemap', 'sankey', 'ecdf', 'ridgeline'];
 export { researchColors } from './chart-theme.js';
-export const differenceUnit = (chart, english = false) => ['%', '％'].includes(chart.unit) ? english ? 'pp' : '百分点' : chart.unit;
+export const differenceUnit = (chart, english = false) => /^(?:× \S+ )?[%％]$/.test(chart.unit)
+  ? chart.unit.replace(/[%％]$/, english ? 'pp' : '百分点') : chart.unit;
 export const compactNumber = value => {
   const rounded = Number(value.toPrecision(6)), magnitude = Math.abs(rounded);
   return magnitude !== 0 && (magnitude < 0.0001 || magnitude >= 1e7)
@@ -9,6 +10,28 @@ export const compactNumber = value => {
     : rounded.toLocaleString('zh-CN', { maximumFractionDigits: 6 });
 };
 export const signedNumber = value => `${value > 0 ? '+' : ''}${compactNumber(value)}`;
+
+// ECharts rounds numeric ticks to finite decimal precision. Scale only drawing coordinates;
+// the receipt and accessible observations retain the original measurements.
+export function researchDrawing(chart) {
+  const factor = values => {
+    const known = values.filter(v => v !== null), maximum = Math.max(0, ...known.map(Math.abs));
+    const span = known.length ? Math.max(...known) - Math.min(...known) : 0;
+    return maximum > 0 && (maximum < 1e-12 || (span > 0 && span < 1e-12))
+      ? 10 ** Math.floor(Math.log10(maximum)) || maximum : 1;
+  };
+  const valueFactor = factor(chart.series.flatMap(s => [...s.values, ...(s.lowerValues ?? []), ...(s.upperValues ?? [])]));
+  const xFactor = factor(chart.xValues ?? []);
+  if (valueFactor === 1 && xFactor === 1) return { chart, scales: [] };
+  const scaled = (values, divisor) => values.map(value => value === null ? null : value / divisor);
+  const unit = (unit, divisor) => divisor === 1 ? unit : `× ${divisor.toExponential().replace('e', 'E')} ${unit}`;
+  return { chart: { ...chart, unit: unit(chart.unit, valueFactor),
+    series: chart.series.map(s => ({ ...s, values: scaled(s.values, valueFactor),
+      ...(s.lowerValues ? { lowerValues: scaled(s.lowerValues, valueFactor), upperValues: scaled(s.upperValues, valueFactor) } : {}) })),
+    ...(chart.xValues ? { xValues: scaled(chart.xValues, xFactor), xUnit: unit(chart.xUnit, xFactor) } : {}) },
+    scales: [valueFactor === 1 ? null : `数值 ${unit(chart.unit, valueFactor)}`,
+      xFactor === 1 ? null : `${chart.xLabel} ${unit(chart.xUnit, xFactor)}`].filter(Boolean) };
+}
 function decimalParts(values) {
   if (!values.length) return { integer: 0n, exponent: 0 };
   const parts = values.map(value => {
@@ -23,6 +46,26 @@ function decimalParts(values) {
 export function decimalSum(values) {
   const { integer, exponent } = decimalParts(values);
   return Number(`${integer}e${exponent}`);
+}
+
+/** Only the complete, disjoint battle outcomes have an additive match denominator. */
+export function battleTotals(chart) {
+  if (chart.type !== 'heatmap' || chart.unit !== '场'
+    || chart.series.some(s => s.values.some(v => !Number.isSafeInteger(v) || v < 0))) return null;
+  const outcomes = names => {
+    const keys = names.map(name => name.replace(/\s+/g, '').replace(/双方(?:均|都)(?:答得)?好|双方答好/, 'both_good')
+      .replace(/双方(?:均|都)(?:答得)?差|双方答差/, 'both_bad'));
+    return keys.length === 4 && ['A组胜', 'B组胜', 'both_good', 'both_bad'].every(key => keys.includes(key));
+  };
+  const tiers = names => names.every(name => /^(Fast|Expert)$/i.test(name.trim()))
+    && new Set(names.map(name => name.trim().toLowerCase())).size === names.length;
+  const columns = outcomes(chart.series.map(s => s.name)) && tiers(chart.categories);
+  const rows = outcomes(chart.categories) && tiers(chart.series.map(s => s.name));
+  if (!columns && !rows) return null;
+  const totals = columns ? chart.categories.map((_, i) => decimalSum(chart.series.map(s => s.values[i])))
+    : chart.series.map(s => decimalSum(s.values));
+  const total = decimalSum(totals);
+  return Number.isSafeInteger(total) ? { axis: columns ? 'columns' : 'rows', totals, total } : null;
 }
 export function decimalSumsEqual(left, right) {
   const a = decimalParts(left), b = decimalParts(right), exponent = Math.min(a.exponent, b.exponent);
@@ -75,7 +118,9 @@ export function chartReading(chart, data, index) {
   if (chart.type === 'sankey') return `${data.source} → ${data.target}：${data.value} ${chart.unit}`;
   const series = chart.series[data.sourceSeries], value = series.values[data.categoryIndex];
   const detail = `${series.name}：${value === null ? '未知' : `${value} ${chart.unit}`}${chart.type === 'interval' ? ` [${series.lowerValues[data.categoryIndex]}, ${series.upperValues[data.categoryIndex]}]` : ''}${chart.type === 'bubble' ? ` · ${chart.sizeLabel}：${chart.sizeValues[data.categoryIndex]} ${chart.sizeUnit}` : ''}`;
-  return `${chart.categories[data.categoryIndex]} · ${['scatter', 'bubble'].includes(chart.type) ? `${chart.xLabel}：${chart.xValues[data.categoryIndex]} ${chart.xUnit} · ` : ''}${detail}`;
+  const battles = battleTotals(chart), total = battles?.totals[battles.axis === 'columns' ? data.categoryIndex : data.sourceSeries];
+  const share = total > 0 ? ` · 占本档 ${(value / total * 100).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : '';
+  return `${chart.categories[data.categoryIndex]} · ${['scatter', 'bubble'].includes(chart.type) ? `${chart.xLabel}：${chart.xValues[data.categoryIndex]} ${chart.xUnit} · ` : ''}${detail}${share}`;
 }
 
 export function boxSummary(values) {

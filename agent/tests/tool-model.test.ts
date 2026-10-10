@@ -18,8 +18,8 @@ test("data query summaries use full-run counts and distinguish historical runs f
 });
 
 test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
-  assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "dot" } }) }),
-    { summary: "显示点图 · 已完成" });
+  assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "heatmap" } }) }),
+    { summary: "显示热力矩阵 · 已完成" });
   assert.deepEqual(analysisToolModel("show_chart", { state: "error", bodyRaw: JSON.stringify({ type: "pie", references: [{ runId: "run-private" }] }), output: "invalid values" }),
     { summary: "显示环形组成图 · 未完成" });
   assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });

@@ -3,12 +3,12 @@
 两组对战的整体评测用一张 heatmap：categories 为 Fast、Expert，四个 series 分别是 A组胜、B组胜、双方都好、双方都差；各档分别保留真实场数，不混成总排名。单题比较用 show_comparison 的固定模板。
 
 选择能清楚回答问题的图：
-- 数值与差距：dot；两组逐项比较用 dumbbell；矩阵用 heatmap，频数矩阵用 bubble_matrix。
-- 时间与阶段：line 的 categories 用递增日期，slope 比两个阶段，bump 使用真实名次。
+- 数值与差距：用 heatmap 逐项比较，频数矩阵用 bubble_matrix。
+- 时间与阶段：line 的 categories 用递增日期，slope 比两个阶段。
 - 关系：scatter 的 xValues 是横轴观测，xLabel / xUnit 说明含义；bubble 再用 sizeValues / sizeLabel / sizeUnit 表示第三个量的面积。
 - 原始观测分布：histogram、boxplot、violin、ecdf、ridgeline；程序计算分箱、分位数与密度。
 - 组成与层级：pie、waffle、concentric、sunburst、treemap；分类须互斥可加总，waffle 一格代表一个样本。两层图的 series 是父类、categories 是叶类，values 是对应数量。
-- 多维与周期：radar、radial_heatmap、rose；指标保持同单位与可比范围。独立比例用 radial_progress；它与 radar 的 maxValue 是实际共同上限。
+- 多维与周期：radar、radial_heatmap、rose；指标保持同单位与可比范围。两个及以上独立指标的进度用 radial_progress；它与 radar 的 maxValue 是实际共同上限。
 - 贡献与关系流：waterfall 首项为起点，后续为真实增减，程序追加合计。sankey 的 categories 列节点、series.name 为起点、values 是到各节点的守恒无环流量；chord 为同样排列的对称共现矩阵，主对角线为0。
 - 已有上下界：interval 的 lowerValues / upperValues 包围实际中心值；不生成置信带。
 

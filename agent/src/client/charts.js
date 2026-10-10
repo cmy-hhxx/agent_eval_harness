@@ -2,8 +2,12 @@ import { createElement as h, memo, useEffect, useMemo, useRef, useState, useSync
 import { CircularChart } from './chart-circular.js';
 import { circularTypes, validStructureChart } from './chart-structure-data.js';
 import { RadialHeatmap } from './chart-radial.js';
-import { researchTypes } from './chart-data.js';
+// Keep rendering ready at startup; rebuilt lazy chunks can disappear while a chat stays open.
+import { ResearchChart } from './chart-research.js';
+import { battleTotals, researchTypes } from './chart-data.js';
+import { installChartHover } from './chart-hover.js';
 import { ComparisonDiagram, comparisonFromToolOutput } from './comparison-diagram.js';
+import { ChartBoundary, ChartFailure } from './chart-boundary.js';
 
 import { chartTheme, researchColors } from './chart-theme.js';
 const colors = researchColors;
@@ -51,9 +55,6 @@ const resultColor = name => {
   if (['双方均差', '双方都差', '双方都答得差', 'bothbad'].includes(label)) return bothBadColor;
   return null;
 };
-const dotColor = (chart, category, seriesIndex, colorIndex) => chart.series.length === 1
-  ? resultColor(category) ?? colors[identityIndex(category) ?? 0]
-  : seriesColor(chart.series[seriesIndex].name, colorIndex);
 function compositionColors(categories) {
   const generic = categories.filter(name => identityIndex(name) === null && resultColor(name) === null).toSorted();
   const reserved = new Set(categories.map(name => resultColor(name) ?? (identityIndex(name) === null ? null : colors[identityIndex(name)])).filter(Boolean));
@@ -61,7 +62,7 @@ function compositionColors(categories) {
   return categories.map(name => resultColor(name) ?? (identityIndex(name) === null
     ? available[generic.indexOf(name)] : colors[identityIndex(name)]));
 }
-const text = (value, maximum) => typeof value === 'string' && value.trim().length > 0 && value.length <= maximum;
+const text = (value, maximum) => typeof value === 'string' && value.trim().length > 0 && Array.from(value).length <= maximum;
 const strings = (values, maximum = 30) => Array.isArray(values) && values.length > 0 && values.length <= maximum
   && values.every(value => text(value, 120)) && new Set(values).size === values.length;
 function dateTime(value) {
@@ -77,7 +78,7 @@ export function chartFromToolOutput(output, state) {
   let receipt;
   try { receipt = JSON.parse(output); } catch { return null; }
   const chart = receipt?.kind === 'chart' ? receipt.chart : null;
-  if (!chart || !['dot', 'line', 'pie', 'radial_heatmap', ...circularTypes, ...researchTypes].includes(chart.type)
+  if (!chart || !['line', 'pie', 'radial_heatmap', ...circularTypes, ...researchTypes].includes(chart.type)
     || !['title', 'scope', 'source'].every(key => text(chart[key], 500)) || !text(chart.unit, 40)
     || !strings(chart.categories, ['scatter', 'histogram', 'bubble', 'boxplot', 'violin', 'ecdf', 'ridgeline'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > (['sankey','chord'].includes(chart.type) ? 8 : 4)
     || !chart.series.every(series => series && text(series.name, 120)
@@ -95,14 +96,12 @@ export function chartFromToolOutput(output, state) {
     || chart.series.reduce((sum, s) => sum + s.values.filter((v, i) => v !== null && chart.xValues[i] !== null && chart.sizeValues[i] !== null).length, 0) < 3)) return null;
   if (chart.type === 'bubble_matrix' && chart.series.some(s => s.values.some(v => v !== null && v < 0))) return null;
   if (chart.type === 'slope' && (chart.categories.length !== 2 || !chart.series.some(s => s.values.every(v => v !== null)))) return null;
-  if (chart.type === 'bump' && (chart.categories.length < 2 || chart.categories.length > 12 || chart.series.some(s => s.values.some(v => v !== null && (!Number.isInteger(v) || v < 1))))) return null;
   if (chart.type === 'interval' && chart.series.some(s => !Array.isArray(s.lowerValues) || !Array.isArray(s.upperValues)
     || s.lowerValues.length !== chart.categories.length || s.upperValues.length !== chart.categories.length
     || s.values.some((v, i) => v === null ? s.lowerValues[i] !== null || s.upperValues[i] !== null
       : !Number.isFinite(s.lowerValues[i]) || !Number.isFinite(s.upperValues[i]) || Math.abs(s.lowerValues[i]) > 1e15 || Math.abs(s.upperValues[i]) > 1e15 || s.lowerValues[i] > v || s.upperValues[i] < v))) return null;
   if (['boxplot', 'violin'].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === 'violin' ? 8 : 5))) return null;
   if (chart.type === 'radial_heatmap' && (chart.series.length < 2 || chart.categories.length < 3 || chart.categories.length > 12 || chart.categories.some(label => Array.from(label).length > 12))) return null;
-  if (chart.type === 'dumbbell' && (chart.series.length !== 2 || chart.categories.length < 2)) return null;
   if (['histogram', 'waterfall'].includes(chart.type) && (chart.series.length !== 1 || chart.categories.length < 2 || chart.series[0].values.includes(null))) return null;
   if (chart.annotations !== undefined && (!Array.isArray(chart.annotations) || chart.annotations.length > 3 || chart.annotations.some(a => !a
     || !Number.isInteger(a.categoryIndex) || a.categoryIndex < 0 || !Number.isInteger(a.seriesIndex) || a.seriesIndex < 0
@@ -128,13 +127,13 @@ export function chartsFromToolData(data) {
   for (const block of pending) {
     if (!block) continue;
     if (Array.isArray(block.subCalls)) pending.push(...block.subCalls);
-    if (block.kind !== 'tool-result' || !['show_chart', 'show_comparison'].includes(block.call?.name) || block.isError || !Array.isArray(block.content) || seen.has(block.callId)) continue;
-    const output = block.content.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n');
+    if (block.kind !== 'tool-result' || !['show_chart', 'show_comparison'].includes(block.call?.name) || block.isError || seen.has(block.callId)) continue;
+    const output = Array.isArray(block.content) ? block.content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n') : '';
     const chart = block.call.name === 'show_chart' ? chartFromToolOutput(output, 'ok') : null;
     const diagram = block.call.name === 'show_comparison' ? comparisonFromToolOutput(output, 'ok') : null;
     if (chart || diagram) {
       seen.add(block.callId); charts.push({ callId: block.callId, ...(chart ? { chart } : { diagram }) });
-    }
+    } else { seen.add(block.callId); charts.push({ callId: block.callId, error: '图表数据无效，无法显示' }); }
   }
   return charts;
 }
@@ -149,8 +148,9 @@ function useTurnCharts(turn, useChat) {
 /** The final response displays its Turn's accepted receipts, independent of Markdown. */
 export const TurnCharts = memo(function TurnCharts({ turn, useChat }) {
   const charts = useTurnCharts(turn, useChat);
-  return charts.length ? h('div', { 'data-turn-charts': turn }, charts.map(({ callId, chart, diagram }) => diagram
-    ? h(ComparisonDiagram, { key: callId, diagram })
+  return charts.length ? h('div', { 'data-turn-charts': turn }, charts.map(({ callId, chart, diagram, error }) => error
+    ? h(ChartFailure, { key: callId, message: error }) : diagram
+    ? h(ChartBoundary, { key: callId, title: diagram.title }, h(ComparisonDiagram, { diagram }))
     : h(AnalysisChart, { key: callId, chart, language: typeof document === 'undefined' ? 'zh' : document.documentElement.lang }))) : null;
 });
 
@@ -186,12 +186,11 @@ function niceStep(value) {
 }
 
 /** The contract bounds every value; preserve their actual span before aligning readable ticks. */
-function numericScale(chart, start, end, includeZero, tickCount = 5) {
+function numericScale(chart, start, end, tickCount = 5) {
   const values = chart.series.flatMap(series => series.values).filter(value => value !== null);
-  let lower = Math.min(...values, ...(includeZero ? [0] : [])), upper = Math.max(...values, ...(includeZero ? [0] : []));
+  let lower = Math.min(...values), upper = Math.max(...values);
   if (lower === upper) {
-    if (includeZero) upper = 1;
-    else { const padding = Math.max(Math.abs(lower) * 0.1, lower === 0 ? 1 : Number.MIN_VALUE * 10); lower -= padding; upper += padding; }
+    const padding = Math.max(Math.abs(lower) * 0.1, lower === 0 ? 1 : Number.MIN_VALUE * 10); lower -= padding; upper += padding;
   }
   const actualLower = lower, actualUpper = upper, span = upper - lower;
   const rawStep = span / Math.max(1, tickCount - 1) || span;
@@ -249,70 +248,6 @@ function annotationMarkers(chart, categoryIndex, seriesIndex, x, y) {
       h('text', { x, y: y + 3, textAnchor: 'middle', fontSize: 10, fill: paperColor }, String(index + 1)))] : []);
 }
 
-function ComparisonChart({ chart, width, english }) {
-  const identities = seriesIndexes(chart);
-  const plotWidth = Math.max(1, width), compact = plotWidth < 500, marks = [], rows = [];
-  const valueWidth = Math.min(220, Math.max(44, ...chart.series.flatMap(series => series.values.map(value => labelWidth(value === null ? (english ? 'Unknown' : '未知') : formatNumber(value), 16) + 8))));
-  const labelColumn = compact ? 0 : Math.min(180, Math.max(100, plotWidth * 0.26));
-  const left = compact ? 6 : labelColumn + 16, right = compact ? plotWidth - 6 : plotWidth - valueWidth - 12;
-  const { position: x, ticks } = numericScale(chart, left, right, true, Math.max(2, Math.min(5, Math.floor((right - left) / 70) + 1)));
-  let offset = 4;
-  chart.categories.forEach((category, categoryIndex) => {
-    if (compact) {
-      if (chart.series.length > 1) {
-        marks.push(svgLabel(category, 0, offset + 15, plotWidth, { key: `category-${categoryIndex}`, 'data-chart-label': 'category', fontWeight: 600 }));
-        offset += wrappedLines(category, plotWidth).length * 20 + 4;
-      }
-      chart.series.forEach((series, seriesIndex) => {
-        const value = series.values[categoryIndex], valueText = value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
-        const label = chart.series.length === 1 ? category : series.name;
-        const numberColumn = Math.min(valueWidth, plotWidth * 0.6), labelSpace = Math.max(14, plotWidth - numberColumn - 12);
-        const headerHeight = Math.max(wrappedLines(label, labelSpace).length * 20, wrappedLines(valueText, numberColumn, 16).length * 23);
-        marks.push(svgLabel(label, 0, offset + 15, labelSpace, { key: `label-${categoryIndex}-${seriesIndex}`, 'data-chart-label': chart.series.length === 1 ? 'category' : 'series' }));
-        marks.push(svgLabel(valueText, plotWidth, offset + 16, numberColumn, { key: `value-${categoryIndex}-${seriesIndex}`,
-          textAnchor: 'end', fontSize: 16, fontWeight: 500, 'data-chart-value': value === null ? undefined : true, 'data-chart-unknown': value === null ? true : undefined }));
-        rows.push({ category, series, categoryIndex, seriesIndex, value, top: offset + headerHeight + 2, height: 10 });
-        offset += headerHeight + 20;
-      });
-      offset += 4;
-    } else {
-      const categoryLines = wrappedLines(category, labelColumn), groupHeight = Math.max(categoryLines.length * 20 + 8,
-        chart.series.length * Math.max(30, ...chart.series.map(series => wrappedLines(series.values[categoryIndex] === null ? (english ? 'Unknown' : '未知') : formatNumber(series.values[categoryIndex]), valueWidth, 16).length * 23 + 7)));
-      marks.push(svgLabel(category, 0, offset + (groupHeight - categoryLines.length * 20) / 2 + 15, labelColumn,
-        { key: `category-${categoryIndex}`, 'data-chart-label': 'category' }));
-      chart.series.forEach((series, seriesIndex) => {
-        const value = series.values[categoryIndex], valueText = value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
-        const center = offset + groupHeight * (seriesIndex + 0.5) / chart.series.length;
-        const valueLines = wrappedLines(valueText, valueWidth, 16);
-        marks.push(svgLabel(valueText, right + 12, center - (valueLines.length - 1) * 11.5 + 5, valueWidth,
-          { key: `value-${categoryIndex}-${seriesIndex}`, fontSize: 16, fontWeight: 500, 'data-chart-value': value === null ? undefined : true,
-            'data-chart-unknown': value === null ? true : undefined }));
-        rows.push({ category, series, categoryIndex, seriesIndex, value, top: center - 5, height: 10 });
-      });
-      offset += groupHeight + 8;
-    }
-  });
-  const bottom = offset + 2;
-  const backgrounds = [];
-  for (const tick of ticks) {
-    const spans = compact ? rows.map(row => [row.top - 3, row.top + row.height + 3]) : [[0, bottom - 8]];
-    spans.forEach(([top, end], index) => backgrounds.push(h('line', { key: `grid-${tick.value}-${index}`, 'data-zero-baseline': tick.value === 0 ? true : undefined,
-      x1: tick.position, x2: tick.position, y1: coordinates(top), y2: coordinates(end), stroke: tick.value === 0 ? textColor : borderColor,
-      strokeWidth: tick.value === 0 ? 1.25 : 1 })));
-    backgrounds.push(h('text', { key: `tick-${tick.value}`, 'data-axis-tick': true, x: tick.position, y: bottom + 16, fontSize: 13, fill: textColor,
-      textAnchor: tick.position === coordinates(left) ? 'start' : tick.position === coordinates(right) ? 'end' : 'middle' }, formatNumber(tick.value)));
-  }
-  rows.forEach(({ category, series, categoryIndex, seriesIndex, value, top, height }) => {
-    if (value === null) return;
-    const end = coordinates(x(value));
-    marks.push(h('circle', { key: `dot-${categoryIndex}-${seriesIndex}`, 'data-chart-mark': 'dot', 'data-series': series.name, 'data-category': category,
-      'data-value': value, cx: end, cy: coordinates(top + height / 2), r: 4,
-      fill: dotColor(chart, category, seriesIndex, identities[seriesIndex]) }));
-    marks.push(...annotationMarkers(chart, categoryIndex, seriesIndex, Math.max(8, Math.min(plotWidth - 8, end + 10)), top - 4));
-  });
-  return svg(chart, plotWidth, bottom + 24, [...backgrounds, ...marks], compact ? 'comparison-compact' : 'comparison');
-}
-
 function separatedLabels(labels, top, bottom, spacing) {
   const ordered = labels.toSorted((a, b) => a.y - b.y);
   ordered.forEach((label, index) => { label.labelY = Math.max(label.y, index
@@ -327,7 +262,6 @@ function separatedLabels(labels, top, bottom, spacing) {
 }
 
 function TrendChart({ chart, width, english }) {
-  const [activeKey, setActiveKey] = useState(null);
   const [focused, setFocused] = useState(null);
   const identities = seriesIndexes(chart);
   const marks = [], paths = [], hits = [], labels = [], observations = [];
@@ -349,7 +283,7 @@ function TrendChart({ chart, width, english }) {
   const plotWidth = Math.max(width, tickSpace + minimumPlot + tailSpace);
   const plotHeight = bottom + (dateLabels.some(lines => lines.length > 1) ? 56 : 38);
   const left = tickSpace, right = plotWidth - tailSpace;
-  const { position: y, ticks } = numericScale(chart, bottom, top, false);
+  const { position: y, ticks } = numericScale(chart, bottom, top);
   const times = chart.categories.map(dateTime), start = times[0], duration = times.at(-1) - start;
   const x = index => left + (times[index] - start) / duration * (right - left);
   ticks.forEach(tick => {
@@ -373,16 +307,16 @@ function TrendChart({ chart, width, english }) {
       const observation = { key, date: chart.categories[index], series: series.name, value, color, x: point[0], y: point[1] };
       observations.push(observation);
       segment.push(point); last = { x: point[0], y: point[1], value, series, seriesIndex, color, height: labelHeights[seriesIndex] };
-      const highlighted = activeKey === key || focused === key;
+      const highlighted = focused === key;
       marks.push(h('circle', { key: `point-${seriesIndex}-${index}`, 'data-chart-mark': 'point', 'data-series': series.name, 'data-value': value,
         cx: point[0], cy: point[1], r: highlighted ? 5 : 2.75, fill: highlighted ? paperColor : color, stroke: color, strokeWidth: highlighted ? 2 : 0 }));
       marks.push(...annotationMarkers(chart, index, seriesIndex, point[0] + 8, point[1] - 12));
       hits.push(h('circle', { key: `hit-${key}`, 'data-chart-hit': true, 'data-chart-point-key': key, 'data-series': series.name, 'data-date': chart.categories[index], 'data-value': value,
         role: 'img', tabIndex: 0, focusable: 'true', 'aria-label': `${chart.categories[index]} · ${series.name}：${formatNumber(value)} ${chart.unit}`,
-        cx: point[0], cy: point[1], r: 22, fill: 'transparent', style: { cursor: 'crosshair', outline: 'none' },
-        onFocus: () => { setFocused(key); setActiveKey(key); }, onBlur: () => { setFocused(null); setActiveKey(null); }, onKeyDown: event => {
-          if (event.key === 'Escape') setActiveKey(null);
-          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveKey(key); }
+        cx: point[0], cy: point[1], r: 22, fill: 'transparent', pointerEvents: 'none', style: { outline: 'none' },
+        onFocus: () => setFocused(key), onBlur: () => setFocused(null), onKeyDown: event => {
+          if (event.key === 'Escape') setFocused(null);
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setFocused(key); }
         } }));
     });
     if (segment.length) segments.push(segment);
@@ -404,30 +338,12 @@ function TrendChart({ chart, width, english }) {
       fill: primaryColor, fontSize: 15, fontWeight: 600 }));
   });
   const unknown = chart.series.filter(series => series.values.every(value => value === null));
-  const selectPoint = event => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const pointerX = (event.clientX - bounds.left) * plotWidth / bounds.width;
-    const pointerY = (event.clientY - bounds.top) * plotHeight / bounds.height;
-    let nearest = null, distance = 22;
-    for (const point of observations) {
-      const candidate = Math.hypot(point.x - pointerX, point.y - pointerY);
-      if (candidate <= distance && (!nearest || candidate < distance)) { nearest = point; distance = candidate; }
-    }
-    if (event.type === 'pointerdown') {
-      event.preventDefault();
-      if (nearest) event.currentTarget.querySelector(`[data-chart-point-key="${nearest.key}"]`)?.focus();
-    }
-    setActiveKey(nearest?.key ?? null);
-  };
-  const active = observations.find(point => point.key === activeKey);
+  const active = observations.find(point => point.key === focused);
   const readout = active ? `${active.date} · ${observations.filter(point => point.x === active.x && point.y === active.y)
     .map(point => `${point.series} · ${formatNumber(point.value)} ${chart.unit}`).join(' / ')}` : '';
   return h('div', { style: { position: 'relative' } },
     h('div', { style: { overflowX: 'auto', maxWidth: '100%' } }, svg(chart, plotWidth, plotHeight,
-      [...marks.filter(mark => mark.type !== 'circle'), ...paths, ...marks.filter(mark => mark.type === 'circle'), ...hits], 'trend', {
-        onPointerDown: selectPoint,
-        onPointerLeave: event => { if (event.pointerType !== 'touch') setActiveKey(null); },
-      })),
+      [...marks.filter(mark => mark.type !== 'circle'), ...paths, ...marks.filter(mark => mark.type === 'circle'), ...hits], 'trend')),
     compact ? h('div', { 'data-chart-tails': true, style: { display: 'grid', gap: 6, marginTop: 6 } }, labels.map(label => {
       const valueText = formatNumber(label.value), stack = labelWidth(valueText, 15) > width * .45;
       return h('div', {
@@ -437,9 +353,7 @@ function TrendChart({ chart, width, english }) {
         borderTopWidth: 2, borderTopStyle: lineStyle(label.series.name, identities[label.seriesIndex]), borderTopColor: label.color } }), label.series.name),
     h('strong', { 'data-chart-value': true, 'data-series': label.series.name, 'data-endpoint-x': label.x, 'data-endpoint-y': label.y,
       style: { color: primaryColor, fontSize: 15, fontWeight: 600, maxWidth: '100%', overflowWrap: 'anywhere', textAlign: stack ? 'left' : 'right' } }, valueText)); })) : null,
-    h('div', { 'data-chart-readout': true, role: 'status', 'aria-live': 'polite', style: { position: 'absolute', top: 0, left: 0, maxWidth: '100%', boxSizing: 'border-box',
-      zIndex: 1, padding: '3px 6px', border: `1px solid ${borderColor}`, background: paperColor, color: primaryColor, pointerEvents: 'none',
-      fontSize: 13, lineHeight: 1.6, fontVariantNumeric: 'tabular-nums', visibility: active ? 'visible' : 'hidden' } },
+    h('div', { 'data-chart-readout': true, role: 'status', 'aria-live': 'polite', style: visuallyHidden },
     readout),
     unknown.length ? h('div', { 'data-chart-no-values': true, style: { marginTop: 4, color: textColor, fontSize: 13 } },
       unknown.map(series => `${series.name}：${english ? 'Unknown' : '未知'}`).join(' · ')) : null);
@@ -491,7 +405,6 @@ function CompositionChart({ chart, width, english }) {
       h('span', { 'data-chart-share': true, style: { color: textColor, fontSize: 14, gridColumn: compact ? 2 : undefined, textAlign: 'right', whiteSpace: 'nowrap' } }, formatPercentage(values[index] / total * 100)))))));
 }
 
-const actionStyle = { border: `1px solid ${borderColor}`, borderRadius: 5, background: paperColor, color: textColor, padding: '5px 9px', minHeight: 28, font: 'inherit', fontSize: 12, cursor: 'pointer' };
 // Exact observations remain available to screen readers without a second visual representation.
 function AccessibleValues({ chart, english }) {
   const valueText = value => value === null ? (english ? 'Unknown' : '未知') : formatNumber(value);
@@ -503,34 +416,28 @@ function AccessibleValues({ chart, english }) {
       chart.type === 'bubble' ? ` · ${chart.sizeLabel}：${valueText(chart.sizeValues[index])} ${chart.sizeUnit}` : '',
       total === null ? '' : ` · ${formatPercentage(chart.series[0].values[index] / total * 100)} (${formatNumber(chart.series[0].values[index])}/${formatNumber(total)})`))));
 }
-let researchModule;
-function AdvancedChart(props) {
-  const [component, setComponent] = useState(() => researchModule?.ResearchChart), [error, setError] = useState(''), [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (component) return;
-    let active = true;
-    import('./chart-research.js').then(module => { researchModule = module; if (active) { setComponent(() => module.ResearchChart); setError(''); } }).catch(error => { if (active) setError(error.message); });
-    return () => { active = false; };
-  }, [component, retry]);
-  return component ? h(component, props) : h('div', { role: error ? 'alert' : 'status', style: { minHeight: 200, display: 'grid', placeContent: 'center', fontSize: 12 } },
-    error ? h('button', { className: 'eris-chart-action', style: actionStyle, onClick: () => { setError(''); setRetry(value => value + 1); } }, '重新载入图表') : '图表载入中…');
-}
-export const AnalysisChart = memo(function AnalysisChart({ chart, language = 'zh' }) {
+export const AnalysisChart = memo(function AnalysisChart(props) {
+  return h(ChartBoundary, { title: props.chart.title }, h(ChartContent, props));
+});
+function ChartContent({ chart, language = 'zh' }) {
   const [ref, width] = useWidth();
+  useEffect(() => installChartHover(ref.current), [chart, width]);
   const identities = seriesIndexes(chart), advanced = researchTypes.includes(chart.type);
   const english = !language.startsWith('zh');
-  const legend = chart.series.length > 1 && ['dot', 'scatter', 'bubble', 'dumbbell', 'slope', 'bump', 'ecdf'].includes(chart.type);
+  const battles = battleTotals(chart);
+  const legend = chart.series.length > 1 && ['scatter', 'bubble', 'slope', 'ecdf'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
-    position: 'relative', margin: '14px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '12px', boxSizing: 'border-box', background: paperColor,
-    border: `1px solid ${borderColor}`, borderRadius: 8, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
+    position: 'relative', margin: '16px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '16px', boxSizing: 'border-box', background: paperColor,
+    border: '1px solid #E1E5EB', borderRadius: 6, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',
   } }, h('figcaption', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px' } },
-    h('h3', { style: { margin: 0, color: primaryColor, fontSize: 15, lineHeight: 1.4, fontWeight: 600 } }, chart.title),
-    h('span', { 'data-chart-unit': true, style: { fontSize: 14, lineHeight: 1.45 } }, chart.unit)),
+    h('h3', { style: { margin: 0, color: primaryColor, fontSize: 16, lineHeight: 1.4, fontWeight: 600 } }, chart.title),
+    h('span', { 'data-chart-unit': true, style: { fontSize: 14, lineHeight: 1.45, whiteSpace: battles ? 'nowrap' : undefined, maxWidth: '100%', fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' } },
+      battles ? `${english ? 'Total' : '合计'} ${formatNumber(battles.total)} ${chart.unit}` : `${english ? 'Unit: ' : '单位：'}${chart.unit}`)),
   h('p', { 'data-chart-metadata': true, style: visuallyHidden }, `${chart.scope} · ${english ? 'Source' : '来源'}：${chart.source}`),
   legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 14 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
     h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-  h('div', { 'data-chart-plot': true, style: { marginTop: 6 } }, advanced ? h(AdvancedChart, { chart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
-    : chart.type === 'dot' ? h(ComparisonChart, { chart, width, english }) : h(TrendChart, { chart, width, english })),
+  h('div', { 'data-chart-plot': true, style: { marginTop: 12 } }, advanced ? h(ResearchChart, { chart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
+    : h(TrendChart, { chart, width, english })),
   h(AccessibleValues, { chart, english }),
   chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 14, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null);
-});
+}

@@ -64,7 +64,7 @@ export function analysisToolModel(name,model){
  if(name==='search_web')return webSearchModel(model,args,output,status);
  if(name==='read_web')return webReadModel(model,args,output,status);
  if(name==='show_comparison')return {summary:`显示比较图 · ${status}`};
- if(name==='show_chart')return {summary:`显示${({dot:'点图',line:'趋势图',pie:'环形组成图',dumbbell:'差异点图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',bump:'排名变化图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'比例环',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
+ if(name==='show_chart')return {summary:`显示${({line:'趋势图',pie:'环形组成图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'多环进度图',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
  if(name==='list_data'){
   const progress=output?.kind==='runs'?output.currentRun?.summary:output?.summary;

@@ -20,6 +20,18 @@ function render(chart: Record<string, unknown>) {
   return new JSDOM(renderToStaticMarkup(createElement(AnalysisChart, { chart: parsed }))).window.document;
 }
 
+test('complete battle matrices show the actual total while partial or non-additive data only shows its unit', () => {
+  const chart = { ...base, type: 'heatmap', categories: ['Fast', 'Expert'], series: [
+    { name: 'A组胜', values: [35, 60] }, { name: 'B组胜', values: [64, 30] },
+    { name: '双方都好', values: [62, 37] }, { name: '双方都差', values: [5, 3] },
+  ] };
+  assert.equal(render(chart).querySelector('[data-chart-unit]')!.textContent, '合计 296 场');
+  const partial = { ...chart, series: chart.series.map((s, i) => i ? s : { ...s, values: [35, null] }) };
+  assert.equal(render(partial).querySelector('[data-chart-unit]')!.textContent, '单位：场');
+  assert.equal(render({ ...chart, unit: '%' }).querySelector('[data-chart-unit]')!.textContent, '单位：%');
+  assert.equal(render({ ...chart, series: chart.series.slice(0, 2) }).querySelector('[data-chart-unit]')!.textContent, '单位：场');
+});
+
 test('waffle uses a centered landscape grid with one equally sized cell per battle', () => {
   const document = render({ ...base, type: 'waffle', categories: ['B组胜', '双方答好', '双方答差', 'A组胜'], series: [{ name: '对局数', values: [60, 41, 5, 27] }] });
   const svg = document.querySelector('[data-chart-type=waffle]')!;
@@ -36,7 +48,7 @@ test('waffle uses a centered landscape grid with one equally sized cell per batt
 
 test('a chart stands alone and its notes add only the supplied explanation', () => {
   const note = '缺少回款明细，尚不能解释差异';
-  const document = render({ ...base, type: 'dumbbell', categories: ['营收', '现金流'],
+  const document = render({ ...base, type: 'heatmap', categories: ['营收', '现金流'],
     series: [{ name: 'A组', values: [4, 1] }, { name: 'B组', values: [3, 7] }],
     annotations: [{ categoryIndex: 1, seriesIndex: 1, note }] });
   assert.equal(document.querySelectorAll('[data-chart-actions], table, [data-chart-summary]').length, 0,
@@ -44,28 +56,6 @@ test('a chart stands alone and its notes add only the supplied explanation', () 
   assert.equal(document.querySelector('[data-chart-annotations] li')!.textContent, note,
     'the numbered note does not repeat the category, series, value or unit');
   assert.equal(document.querySelector<HTMLElement>('[data-chart-annotations]')!.style.fontSize, '14px', 'necessary annotations remain readable without small print');
-});
-
-test("dot plot places zero, positive and negative observations on their true coordinates", () => {
-  const document = render({ ...base, type: "dot", categories: ["利润变化", "现金流变化", "缺失"],
-    series: [{ name: "A 组", values: [10, -4, null] }, { name: "B 组", values: [5, -2, 0] }] });
-  const baseline = Number(document.querySelector("[data-zero-baseline]")!.getAttribute("x1"));
-  const dots = [...document.querySelectorAll("[data-chart-mark=dot]")];
-  assert.equal(dots.length, 5, 'missing observations do not become zero points');
-  for (const dot of dots) {
-    const value = Number(dot.getAttribute('data-value')), x = Number(dot.getAttribute('cx'));
-    if (value < 0) assert(x < baseline);
-    else if (value > 0) assert(x > baseline);
-    else assert.equal(x, baseline);
-  }
-  assert.equal(document.querySelector("[data-chart-type=dot]")!.getAttribute("role"), "img");
-  assert.match(document.querySelector("[data-chart-accessible-data]")!.textContent!, /未知/);
-  assert.deepEqual([...document.querySelectorAll("[data-chart-accessible-data] dt")].map(node => node.textContent), ["利润变化", "现金流变化", "缺失"]);
-  assert.deepEqual(new Set(dots.filter(dot => dot.getAttribute("data-series") === "A 组").map(dot => dot.getAttribute("fill"))).size, 1);
-  assert.deepEqual([...document.querySelectorAll("[data-chart-value]")].map(node => node.textContent), ["10", "5", "-4", "-2", "0"]);
-  assert([...document.querySelectorAll('[data-axis-tick]')].every(node => Number.isInteger(Number(node.textContent))));
-  assert(dots.every(dot => dot.getAttribute('r') === '4'), 'point size does not encode or distort value');
-  assert.equal(document.querySelectorAll('rect').length, 0, 'quantities are represented by position, without columns');
 });
 
 test("line chart uses elapsed time and breaks paths at missing values", () => {
@@ -116,12 +106,12 @@ test("pie chart exposes percentage, actual values and the denominator including 
 
 test("chart metadata and accessible observations remain text without executing supplied HTML", () => {
   const attack = '<script>alert(1)</script><img src="https://untrusted.example/pixel" onerror="alert(1)">';
-  const document = render({ ...base, type: "dot", title: attack, scope: attack, source: attack,
+  const document = render({ ...base, type: "heatmap", title: attack, scope: attack, source: attack,
     categories: [attack, "B 组"], series: [{ name: attack, values: [2, 1] }] });
   assert.equal(document.querySelectorAll("script,img,a,iframe").length, 0);
   assert.equal(document.querySelector("h3")!.textContent, attack);
   assert(document.querySelector("figcaption")!.textContent!.includes(attack));
-  assert.equal(document.querySelector('[data-chart-unit]')!.textContent, '场');
+  assert.equal(document.querySelector('[data-chart-unit]')!.textContent, '单位：场');
   assert.match(document.querySelector("figure")!.textContent!, /来源：/);
   assert.equal(document.querySelectorAll('[data-chart-actions], table').length, 0);
   const accessibleContainer = document.querySelector<HTMLElement>('[data-chart-accessible-data]')!;
@@ -132,9 +122,6 @@ test("chart metadata and accessible observations remain text without executing s
   assert.equal(accessibleContainer.hasAttribute('aria-hidden'), false);
   assert.equal(accessibleContainer.querySelectorAll('dt').length, 2);
   assert.equal(accessibleContainer.querySelectorAll('dd').length, 2);
-  const svg = document.querySelector("svg")!;
-  assert.equal(svg.getAttribute("width"), "514", "the bounded chart retains a pixel coordinate system instead of shrinking its text");
-  assert.equal(svg.getAttribute("viewBox")!.split(' ')[2], "514");
   assert.equal(document.querySelector('[data-chart-legend]'), null, 'a single series does not repeat a redundant legend');
   assert.equal(document.querySelector('footer'), null, 'source descriptions do not add visible small print');
   assert.equal(document.querySelector('[data-chart-metadata]')!.textContent, `${attack} · 来源：${attack}`);
@@ -149,50 +136,17 @@ test('chart faces keep only the title and unit while scope and source remain acc
   assert.equal(composition.querySelector('[data-chart-total]')!.textContent, '17');
   assert.deepEqual([...composition.querySelectorAll('[data-chart-composition-value]')].map(node => node.textContent), ['6', '11']);
   assert.deepEqual([...composition.querySelectorAll('[data-chart-share]')].map(node => node.textContent), ['35.29%', '64.71%']);
-  assert.equal(composition.querySelector('figcaption')!.textContent, '17 次运行中 6 次完成场');
+  assert.equal(composition.querySelector('figcaption')!.textContent, '17 次运行中 6 次完成单位：场');
   const metadata = composition.querySelector<HTMLElement>('[data-chart-metadata]')!;
   assert.equal(metadata.textContent, `17 次运行的当前状态 · 来源：${base.source}`);
   assert.equal(metadata.style.clipPath, 'inset(50%)');
   assert.equal(metadata.hasAttribute('aria-hidden'), false, 'scope and source remain available to assistive readers');
   assert.equal(composition.querySelector('footer'), null);
-  const dots = render({ ...base, type: 'dot', categories: ['覆盖', '已完成', '中断', '未知'],
-    series: [{ name: '数量', values: [17, 6, 11, null] }] });
-  assert(Number(dots.querySelector('svg')!.getAttribute('height')) <= 200, 'four short rows fit a compact reading area');
-  assert.deepEqual([...dots.querySelectorAll('[data-chart-value]')].map(node => node.textContent), ['17', '6', '11']);
-  assert.equal(dots.querySelector('[data-chart-unknown]')!.textContent, '未知');
   const wideTotal = render({ ...base, type: 'pie', series: [{ name: '数量', values: [60000, 60000] }] });
   const total = wideTotal.querySelector('[data-chart-total]')!;
   assert.equal(total.textContent, '120,000');
   assert.equal(total.closest('[data-chart-denominator]'), null, 'even a six-digit total moves below the smaller ring when it would collide with its centre');
   assert.match(wideTotal.querySelector('[data-chart-accessible-data]')!.textContent!, /50% \(60,000\/120,000\)/);
-});
-
-test('comparison labels wrap without dropping text and identity colours do not track the winner or input order', () => {
-  const longName = '财务研究中的经营现金流与利润口径差异'.repeat(5);
-  const document = render({ ...base, type: 'dot', categories: [longName, 'A组Fast', 'B 组Fast'], series: [{ name: '胜场', values: [1, 6, 5] }] });
-  const labels = [...document.querySelectorAll('[data-chart-label=category]')];
-  assert.equal(labels[0].textContent, longName);
-  assert(labels[0].querySelectorAll('tspan').length > 1);
-  const dots = [...document.querySelectorAll('[data-chart-mark=dot]')];
-  assert(Number(dots[1].getAttribute('cy')) > Number(dots[0].getAttribute('cy')) + 20, 'long labels receive row height instead of overlapping the next category');
-  const swapped = render({ ...base, type: 'dot', categories: ['B: Fast', 'A 组Fast'], series: [{ name: '胜场', values: [9, 2] }] });
-  assert.equal(dots[1].getAttribute('fill'), swapped.querySelector('[data-category="A 组Fast"]')!.getAttribute('fill'));
-  assert.equal(dots[2].getAttribute('fill'), swapped.querySelector('[data-category="B: Fast"]')!.getAttribute('fill'));
-  assert.notEqual(dots[1].getAttribute('fill'), dots[2].getAttribute('fill'));
-  assert.equal(dots[1].getAttribute('fill'), '#1E4E8C');
-  assert.equal(dots[2].getAttribute('fill'), '#F25F3B');
-  const generic = render({ ...base, type: 'dot', categories: ['Apple', 'ABC', 'BA'], series: [{ name: '指标', values: [1, 2, 3] }] });
-  assert.equal(new Set([...generic.querySelectorAll('[data-chart-mark=dot]')].map(node => node.getAttribute('fill'))).size, 1, 'ordinary names are not guessed to be A/B/C identities');
-  const ranking = render({ ...base, type: 'dot', categories: ['证据缺失', '口径混用'], series: [{ name: 'B组Fast', values: [2, 1] }] });
-  assert([...ranking.querySelectorAll('[data-chart-mark=dot]')].every(node => node.getAttribute('fill') === dots[1].getAttribute('fill')), 'a single-model issue ranking remains neutral grey even for a B-labelled model');
-  const binary = render({ ...base, type: 'dot' });
-  assert.deepEqual([...binary.querySelectorAll('[data-axis-tick]')].map(node => node.textContent), ['0', '1'], 'one observed count never produces fractional-count ticks');
-  for (const maximum of [5, 7]) {
-    const counts = render({ ...base, type: 'dot', series: [{ name: '胜场', values: [maximum, maximum - 1] }] });
-    const ticks = [...counts.querySelectorAll('[data-axis-tick]')].map(node => Number(node.textContent));
-    assert(ticks.every(Number.isInteger), `maximum ${maximum} still uses whole-count ticks`);
-    assert(ticks.at(-1)! >= maximum, 'integer rounding retains the full observed range');
-  }
 });
 
 test('trend labels show the last known value, avoid coincident tails and retain every observation', () => {
@@ -277,7 +231,7 @@ test('short narrow trends fit the first screen and preserve the complete calenda
   }
 });
 
-test('a narrow trend reserves exact scientific labels and exposes keyboard and pointer readouts', async () => {
+test('a trend retains exact scientific labels and keyboard readings without floating pointer text', async () => {
   const dom = new JSDOM('<div id="root"></div>');
   Object.defineProperty(dom.window.HTMLElement.prototype, 'clientWidth', { get: () => 230 });
   const previous = { window: globalThis.window, document: globalThis.document, IS_REACT_ACT_ENVIRONMENT: (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT };
@@ -299,31 +253,22 @@ test('a narrow trend reserves exact scientific labels and exposes keyboard and p
     const targets = [...dom.window.document.querySelectorAll<SVGElement>('[data-chart-hit]')];
     assert(targets.every(target => target.getAttribute('tabindex') === '0' && Number(target.getAttribute('r')) >= 22), 'exact readings have keyboard and 44px pointer targets');
     const readout = dom.window.document.querySelector<HTMLElement>('[data-chart-readout]')!;
-    assert.equal(readout.style.visibility, 'hidden');
+    assert.equal(readout.style.clipPath, 'inset(50%)');
     assert.equal(readout.style.position, 'absolute', 'inactive point readings reserve no empty row under the plot');
     await act(async () => { targets[1].focus(); });
-    assert.equal(readout.style.visibility, 'visible');
+    assert.equal(readout.style.clipPath, 'inset(50%)', 'keyboard readings stay in the accessibility tree without a floating label');
     assert.equal(readout.textContent, `2026-01-21 · A组Fast · ${label.textContent} 示例值`);
     await act(async () => { targets[1].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
-    assert.equal(readout.style.visibility, 'hidden');
+    assert.equal(readout.textContent, '', 'Escape clears the auxiliary reading');
     await act(async () => { targets[0].dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true,
       clientX: Number(targets[0].getAttribute('cx')), clientY: Number(targets[0].getAttribute('cy')) })); });
-    assert.equal(readout.textContent, '2026-01-01 · A组Fast · 1E-9 示例值');
-    for (const pointerType of ['touch', 'mouse']) {
-      const leave = new dom.window.MouseEvent('pointerout', { bubbles: true });
-      Object.defineProperty(leave, 'pointerType', { value: pointerType });
-      await act(async () => { targets[0].dispatchEvent(leave); });
-      assert.equal(readout.style.visibility, pointerType === 'touch' ? 'visible' : 'hidden', 'touch release preserves the exact reading while mouse leave clears it');
-    }
+    assert.equal(readout.textContent, '', 'pointer clicks do not create a text readout');
     const collision = { ...base, type: 'line', categories: ['2026-01-01', '2026-01-02', '2026-01-21'],
       series: [{ name: 'A组', values: [1.05, 1.05, 2] }, { name: 'B组', values: [1, 1, 2] }] };
     await act(async () => { root.render(createElement(AnalysisChart, { chart: collision })); });
     const first = dom.window.document.querySelector<SVGElement>('[data-chart-hit][data-series="A组"][data-date="2026-01-01"]')!;
-    const coveringTarget = dom.window.document.querySelector<SVGElement>('[data-chart-hit][data-series="B组"][data-date="2026-01-02"]')!;
-    assert(Math.abs(Number(first.getAttribute('cx')) - Number(coveringTarget.getAttribute('cx'))) < 22, 'the fixture has genuinely overlapping neighbouring targets');
-    await act(async () => { coveringTarget.dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true,
-      clientX: Number(first.getAttribute('cx')), clientY: Number(first.getAttribute('cy')) })); });
-    assert.equal(readout.textContent, '2026-01-01 · A组 · 1.05 场', 'pointer coordinates select the real nearest point even when another hit target receives the event');
+    await act(async () => { first.focus(); });
+    assert.equal(readout.textContent, '2026-01-01 · A组 · 1.05 场');
     const last = dom.window.document.querySelector<SVGElement>('[data-chart-hit][data-series="B组"][data-date="2026-01-21"]')!;
     await act(async () => { last.dispatchEvent(new dom.window.MouseEvent('pointermove', { bubbles: true,
       clientX: Number(last.getAttribute('cx')), clientY: Number(last.getAttribute('cy')) })); });
@@ -362,12 +307,12 @@ test('nearby representable line values retain finite geometry within the plot an
 });
 
 test("chart receipts do not render failed, incomplete, unsafe or invalid data", () => {
-  for (const state of ["preparing", "running", "error", "stopped"]) assert.equal(chartFromToolOutput(receipt({ ...base, type: "dot" }), state), null);
-  for (const output of ["", "not JSON", JSON.stringify({ chart: { ...base, type: "dot" } }), JSON.stringify({ kind: "chart", html: "<script/>" })])
+  for (const state of ["preparing", "running", "error", "stopped"]) assert.equal(chartFromToolOutput(receipt({ ...base, type: "heatmap" }), state), null);
+  for (const output of ["", "not JSON", JSON.stringify({ chart: { ...base, type: "heatmap" } }), JSON.stringify({ kind: "chart", html: "<script/>" })])
     assert.equal(chartFromToolOutput(output, "ok"), null);
   const invalid = [
-    { ...base, type: "html" }, { ...base, type: "dot", series: [{ name: "FAST", values: [1] }] },
-    { ...base, type: "dot", series: [{ name: "FAST", values: [1, "2"] }] },
+    { ...base, type: "html" }, { ...base, type: "heatmap", series: [{ name: "FAST", values: [1] }] },
+    { ...base, type: "heatmap", series: [{ name: "FAST", values: [1, "2"] }] },
     { ...base, type: "pie", series: [{ name: "FAST", values: [0, 0] }] },
     { ...base, type: "pie", series: [{ name: "FAST", values: [1, -1] }] },
     { ...base, type: "pie", categories: Array.from({ length: 7 }, (_, index) => String(index)), series: [{ name: "FAST", values: Array(7).fill(1) }] },
@@ -375,16 +320,16 @@ test("chart receipts do not render failed, incomplete, unsafe or invalid data", 
     { ...base, type: "line", categories: ["2026-01-01", "2026-01-01"] },
     { ...base, type: "line", categories: ["FAST", "Expert"] },
     { ...base, type: "line", categories: ["2026-02-30", "2026-03-04"] },
-    { ...base, type: "dot", series: [{ name: "FAST", values: [null, null] }] },
-    { ...base, type: "dot", series: [{ name: "FAST", values: [1, 2] }, { name: "FAST", values: [3, 4] }] },
-    { ...base, type: "dot", series: [{ name: "FAST", values: [1e16, 2] }] },
+    { ...base, type: "heatmap", series: [{ name: "FAST", values: [null, null] }] },
+    { ...base, type: "heatmap", series: [{ name: "FAST", values: [1, 2] }, { name: "FAST", values: [3, 4] }] },
+    { ...base, type: "heatmap", series: [{ name: "FAST", values: [1e16, 2] }] },
   ];
   for (const chart of invalid) assert.equal(chartFromToolOutput(receipt(chart), "ok"), null);
-  assert.equal(chartFromToolOutput('{"kind":"chart","chart":{"type":"dot","title":"x","scope":"x","unit":"x","source":"x","categories":["x"],"series":[{"name":"x","values":[1e400]}]}}', "ok"), null);
+  assert.equal(chartFromToolOutput('{"kind":"chart","chart":{"type":"heatmap","title":"x","scope":"x","unit":"x","source":"x","categories":["x"],"series":[{"name":"x","values":[1e400]}]}}', "ok"), null);
 });
 
 test("small nonzero chart values retain their magnitude instead of rounding to zero", () => {
-  const document = render({ ...base, type: "dot", series: [{ name: "变化", values: [1e-9, -1e-9] }] });
+  const document = render({ ...base, type: "line", categories: ["2025", "2026"], series: [{ name: "变化", values: [1e-9, -1e-9] }] });
   const labels = [...document.querySelectorAll("[data-chart-value]")].map(node => node.textContent);
   assert(labels.every(value => value!.includes("E-9")));
   assert.equal(document.querySelectorAll('[data-value="0"]').length, 0);
@@ -402,7 +347,7 @@ test("calendar labels support the server's year and month coordinates and retain
 });
 
 test("completed-Turn charts use accepted results, deduplicate call identities and ignore failures and arguments", () => {
-  const chart = { ...base, type: "dot" };
+  const chart = { ...base, type: "heatmap" };
   const accepted = { kind: "tool-result", callId: "chart-one", call: { name: "show_chart", argsRaw: JSON.stringify({ ...chart, series: [{ name: "FAST", values: [100, 0] }] }) },
     content: [{ type: "text", text: receipt(chart) }], isError: false, subCalls: [] };
   const data = [
@@ -416,12 +361,13 @@ test("completed-Turn charts use accepted results, deduplicate call identities an
   const results = chartsFromToolData(data);
   assert.deepEqual(results.map((entry: { callId: string }) => entry.callId), ["chart-one", "chart-two"]);
   assert.deepEqual(results[0].chart.series[0].values, [1, 1], "arguments cannot replace the recorded receipt values");
-  assert.equal(chartsFromToolData([{ root: { ...accepted, content: [{ type: "text", text: "invalid receipt" }] } }]).length, 0);
+  assert.deepEqual(chartsFromToolData([{ root: { ...accepted, content: [{ type: "text", text: "invalid receipt" }] } }]),
+    [{ callId: 'chart-one', error: '图表数据无效，无法显示' }], 'a corrupt successful receipt must not silently disappear');
 });
 
 test("response charts read only their Turn's accepted receipts without a Markdown reference", () => {
   const data = [{ root: { kind: "tool-result", callId: "chart-one", call: { name: "show_chart" }, isError: false,
-    content: [{ type: "text", text: receipt({ ...base, type: "dot" }) }], subCalls: [] } }];
+    content: [{ type: "text", text: receipt({ ...base, type: "heatmap" }) }], subCalls: [] } }];
   const requests: unknown[] = [];
   const nodes = { turnDataSource(turn: number, kind: string) {
     requests.push([turn, kind]);
@@ -437,7 +383,7 @@ test("response charts read only their Turn's accepted receipts without a Markdow
 
 test('accepted charts stay at the tail only when cancellation or failure leaves no final answer', () => {
   const data = [{ root: { kind: 'tool-result', callId: 'chart-one', call: { name: 'show_chart' }, isError: false,
-    content: [{ type: 'text', text: receipt({ ...base, type: 'dot' }) }], subCalls: [] } }];
+    content: [{ type: 'text', text: receipt({ ...base, type: 'heatmap' }) }], subCalls: [] } }];
   const processes = [{ answerStep: null as number | null }];
   const nodes = { turnDataSource(turn: number, kind: string) {
     assert.equal(turn, 7);
@@ -605,18 +551,20 @@ test('comparison visuals select only successful show_comparison receipts and ded
     { root: accepted }, { root: accepted },
     { root: { ...accepted, callId: 'failed', isError: true } },
     { root: { ...accepted, callId: 'unrelated', call: { name: 'read_data' } } },
-    { root: { ...accepted, callId: 'wrong-receipt', content: [{ type: 'text', text: receipt({ ...base, type: 'dot' }) }] } },
+    { root: { ...accepted, callId: 'wrong-receipt', content: [{ type: 'text', text: receipt({ ...base, type: 'heatmap' }) }] } },
     { root: { phase: 'start', name: 'show_comparison', callId: 'pending', argsRaw: comparisonReceipt(comparison), subCalls: [] } },
     { root: { kind: 'tool-result', callId: 'parent', call: { name: 'call_specialist' }, content: [], isError: false,
       subCalls: [{ ...accepted, callId: 'comparison-two' }] } },
   ];
   const selected = chartsFromToolData(data);
-  assert.deepEqual(selected.map((entry: { callId: string }) => entry.callId), ['comparison-one', 'comparison-two']);
+  assert.deepEqual(selected.map((entry: { callId: string }) => entry.callId), ['comparison-one', 'wrong-receipt', 'comparison-two']);
+  assert.equal(selected[1].error, '图表数据无效，无法显示');
   assert.deepEqual(selected[0].diagram, comparison, 'recorded short labels and formal verdict cannot be replaced by tool arguments');
   const nodes = { turnDataSource: (turn: number) => ({ getSnapshot: () => turn === 7 ? data : [], subscribe: () => () => {} }) };
   const useChat = (select: (snapshot: unknown) => unknown) => select({ nodes });
   const document = new JSDOM(renderToStaticMarkup(createElement(TurnCharts, { turn: 7, useChat }))).window.document;
   assert.equal(document.querySelectorAll('[data-analysis-comparison]').length, 2);
+  assert.equal(document.querySelectorAll('[data-chart-error]').length, 1);
   assert.equal(document.querySelectorAll('[data-step-process], [data-tool]').length, 0, 'a collapsed process does not own comparison visuals');
   assert.equal(renderToStaticMarkup(createElement(TurnCharts, { turn: 8, useChat })), '');
 });

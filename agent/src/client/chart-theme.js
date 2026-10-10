@@ -21,7 +21,7 @@ export function categoryPalette(names) {
 const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
 export const heatColors = minimum => minimum < 0
   ? [chartTheme.coral, chartTheme.ivory, chartTheme.navy]
-  : [chartTheme.ivory, chartTheme.denim, chartTheme.navy];
+  : ['#F1F5FA', '#8BADD1', '#234E80'];
 export function heatColor(value, minimum, maximum) {
   const colors = heatColors(minimum), position = maximum === minimum ? 0 : Math.max(0, Math.min(1, (value - minimum) / (maximum - minimum))) * 2;
   const index = Math.min(1, Math.floor(position)), weight = position - index;

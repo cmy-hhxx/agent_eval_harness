@@ -3,7 +3,7 @@ import { chartTheme as theme } from './chart-theme.js';
 import { boxSummary, violinDensity, compactNumber as display } from './chart-data.js';
 
 /** Additional templates share the same accepted data, axes and keyboard readout. */
-export function extendedResearchOption(option, chart, { width, palette, axis, point }) {
+export function extendedResearchOption(option, chart, { width, layout, palette, axis, point }) {
   if (chart.type === 'bubble') {
     const maximum = Math.max(...chart.sizeValues.filter(v => v !== null));
     option.xAxis = { ...axis, type: 'value', scale: true, name: `${chart.xLabel} · ${chart.xUnit}`, nameLocation: 'middle', nameGap: 34 };
@@ -12,7 +12,12 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
     option.series = chart.series.map((s, si) => ({ name: s.name, type: 'scatter',
       symbolSize: value => maximum === 0 ? 0 : 30 * Math.sqrt(value[2] / maximum),
       itemStyle: { color: palette[si], opacity: .8, borderColor: theme.royal, borderWidth: .6 },
-      data: s.values.flatMap((y, ci) => y === null || chart.xValues[ci] === null || chart.sizeValues[ci] === null ? [] : [point(chart, si, ci, [chart.xValues[ci], y, chart.sizeValues[ci]])]) }));
+      labelLayout: { hideOverlap: true },
+      data: s.values.flatMap((y, ci) => y === null || chart.xValues[ci] === null || chart.sizeValues[ci] === null ? [] : [{
+        ...point(chart, si, ci, [chart.xValues[ci], y, chart.sizeValues[ci]]),
+        ...(chart.sizeValues[ci] === 0 ? { label: { show: true, position: 'top', color: theme.ink, fontSize: 14,
+          formatter: `${chart.categories[ci]} · ${chart.sizeLabel}：0 ${chart.sizeUnit}` } } : {}),
+      }]) }));
     // Explicit size key: area, not radius, is proportional to the third metric.
     option.graphic = { type: 'text', right: 4, top: 0, style: { text: `${chart.sizeLabel} · ${chart.sizeUnit}`, fill: theme.muted, fontSize: 11 } };
   } else if (chart.type === 'bubble_matrix') {
@@ -24,15 +29,28 @@ export function extendedResearchOption(option, chart, { width, palette, axis, po
       label: { show: true, position: 'right', color: theme.ink, fontSize: 10, formatter: p => p.value[2] === null ? '—' : display(p.value[2]) },
       data: chart.series.flatMap((s, si) => s.values.map((value, ci) => ({ ...point(chart, si, ci, [ci, si, value]),
         itemStyle: { color: value === null ? 'transparent' : palette[si], borderWidth: value === null ? 1 : 0, borderColor: theme.muted } }))) }];
-  } else if (['slope', 'bump'].includes(chart.type)) {
-    const ranking = chart.type === 'bump';
-    option.grid = { ...option.grid, left: 10, right: 18, top: 18, bottom: 22 };
+  } else if (chart.type === 'slope') {
+    const values = chart.series.flatMap(s => s.values).filter(v => v !== null);
+    const low = Math.min(...values), high = Math.max(...values), span = high - low || Math.max(1, Math.abs(low) * .2);
+    const min = low - span * .2, max = high + span * .2, top = 24, bottom = layout.height - 40;
+    const labelRows = chart.categories.map((_, ci) => {
+      const rows = chart.series.flatMap((s, si) => s.values[ci] === null ? [] : [{ si, y: top + (max - s.values[ci]) / (max - min) * (bottom - top) }]).sort((a, b) => a.y - b.y);
+      rows.forEach((row, i) => { row.y = Math.max(row.y, i ? rows[i - 1].y + 22 : top); });
+      if (rows.length) {
+        rows.at(-1).y = Math.min(rows.at(-1).y, bottom);
+        for (let i = rows.length - 2; i >= 0; i--) rows[i].y = Math.min(rows[i].y, rows[i + 1].y - 22);
+      }
+      return new Map(rows.map(row => [row.si, row.y]));
+    });
+    option.grid = { left: layout.endSpace, right: layout.endSpace, top, bottom: layout.height - bottom, outerBoundsMode: 'none' };
     option.xAxis = { ...axis, type: 'category', data: chart.categories, boundaryGap: false, splitLine: { show: false }, axisLabel: { ...axis.axisLabel, interval: 0, lineHeight: 18 } };
-    option.yAxis = { ...axis, type: 'value', inverse: ranking, scale: !ranking, min: ranking ? 1 : undefined, minInterval: ranking ? 1 : 0 };
+    option.yAxis = { type: 'value', show: false, min, max };
     option.series = chart.series.map((s, si) => ({ type: 'line', name: s.name, connectNulls: false, symbol: 'circle', symbolSize: 7,
       lineStyle: { width: 2, color: palette[si] }, itemStyle: { color: palette[si], borderColor: theme.royal, borderWidth: .6 },
-      label: { show: true, color: theme.ink, fontSize: 10, formatter: p => p.value == null ? '' : display(p.value) },
-      endLabel: { show: false }, labelLayout: { hideOverlap: true },
+      label: { show: true, color: palette[si], fontSize: 12, formatter: p => p.value == null ? '' : display(p.value) },
+      labelLine: { show: true, lineStyle: { color: palette[si], width: 1 } },
+      labelLayout: p => ({ x: p.dataIndex === 0 ? layout.endSpace - 12 : width - layout.endSpace + 12,
+        y: labelRows[p.dataIndex].get(si), align: p.dataIndex === 0 ? 'right' : 'left', verticalAlign: 'middle', hideOverlap: true }),
       data: s.values.map((v, ci) => ({ ...point(chart, si, ci, v) })) }));
   } else if (chart.type === 'interval') {
     const rows = chart.categories.flatMap((category, ci) => chart.series.map((s, si) => ({ category, ci, si, s })));

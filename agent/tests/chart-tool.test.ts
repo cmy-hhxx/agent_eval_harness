@@ -4,7 +4,7 @@ import { createEris, type ErisDependencies } from "@eval/assistant";
 
 const context = { scope: { userId: "alice", sessionId: "session" }, callId: "chart", signal: new AbortController().signal, progress() {} };
 const chart = {
-  type: "dot", title: "FAST 已裁决胜场接近", scope: "FAST · 11场已裁决", unit: "场", source: "本次正式对比结果",
+  type: "heatmap", title: "FAST 已裁决胜场接近", scope: "FAST · 11场已裁决", unit: "场", source: "本次正式对比结果",
   categories: ["A组Fast", "B组Fast"], series: [{ name: "胜场", values: [6, 5] }], references: [{ runId: "evaluation-internal" }],
 };
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };

@@ -1,3 +1,4 @@
+.eris-analysis-chart [tabindex]:focus:not(:focus-visible) { outline: none; }
 .eris-chart-action:focus-visible,
 [data-radial-cell]:focus-visible,
 [data-structure-mark]:focus-visible,
@@ -6,8 +7,29 @@
   outline-offset: 2px;
 }
 .eris-chart-action:hover { filter: brightness(.97); }
-
-.eris-analysis-chart { box-shadow: 0 2px 9px #0B1F5406; }
+.eris-analysis-chart { font-variant-numeric: tabular-nums; }
+.eris-analysis-chart [data-chart-plot] svg text { pointer-events: none; }
+.eris-analysis-chart [data-chart-hover-layer] {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 240ms cubic-bezier(.22, 1, .36, 1);
+}
+.eris-analysis-chart .eris-chart-hover-mark {
+  transform-box: fill-box;
+  transform-origin: center;
+  scale: 1;
+  filter: brightness(1.035) drop-shadow(0 1px 1px #1B2B4318);
+  transition: scale 240ms cubic-bezier(.22, 1, .36, 1);
+}
+.eris-analysis-chart [data-chart-hover-layer][data-active] { opacity: 1; }
+.eris-analysis-chart [data-chart-hover-layer][data-active] .eris-chart-hover-mark {
+  scale: var(--eris-hover-scale);
+}
+@media (prefers-reduced-motion: reduce) {
+  .eris-analysis-chart [data-chart-hover-layer] { transition: none; }
+  .eris-analysis-chart [data-chart-hover-layer] .eris-chart-hover-mark { transition: none; scale: none; }
+}
+.eris-chart-sr-reading { position: absolute; width: 1px; height: 1px; min-height: 0 !important; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 @media (max-width: 480px) {
   :root { --dsh-chat-inline-padding: 16px; }

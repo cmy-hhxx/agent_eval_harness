@@ -42,7 +42,7 @@ export function RadialHeatmap({ chart, width, english }) {
       cells.map((cell, index) => h('g', { key: index },
         h('path', { d: cell.path, fill: cell.fill, stroke: cell.value === null ? '#aaa' : '#fff', strokeDasharray: cell.value === null ? '2 2' : undefined,
           'data-radial-cell': true, 'data-value': cell.value, 'data-category': chart.categories[cell.categoryIndex], 'data-series': chart.series[cell.seriesIndex].name,
-          tabIndex: 0, role: 'img', 'aria-label': readingFor(cell), onFocus: () => setReading(readingFor(cell)), onClick: () => setReading(readingFor(cell)),
+          tabIndex: 0, role: 'img', 'aria-label': readingFor(cell), onFocus: () => setReading(readingFor(cell)),
           onBlur: () => setReading(''), onKeyDown: event => {
             if (event.key === 'Escape') { setReading(''); return; }
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -60,5 +60,5 @@ export function RadialHeatmap({ chart, width, english }) {
       })),
     h('div', { 'data-radial-scale': true, style: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, fontSize: 11, color: chartTheme.muted } },
       compactNumber(minimum), h('span', { 'aria-hidden': true, style: { width: 96, height: 5, background: maximum === 0 ? chartTheme.ivory : `linear-gradient(90deg,${heatColors(minimum).join(',')})` } }), compactNumber(maximum)),
-    h('div', { 'aria-live': 'polite', style: { fontSize: 12, color: chartTheme.muted, minHeight: reading ? 18 : 0 } }, reading));
+    h('div', { 'aria-live': 'polite', className: 'eris-chart-sr-reading' }, reading));
 }

@@ -1,7 +1,7 @@
 import { calculate } from "@eval/tools";
 
 export interface ChartSpec {
-  type: "dot" | "line" | "pie" | "dumbbell" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "bump" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
+  type: "line" | "pie" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
   title: string;
   scope: string;
   unit: string;
@@ -70,6 +70,8 @@ export function validateChart(chart: ChartSpec): void {
   }
   if (["boxplot", "violin"].includes(chart.type) && chart.series.some(s => s.values.filter(v => v !== null).length < (chart.type === "violin" ? 8 : 5)))
     throw new Error("箱线图每组至少5条、小提琴图每组至少8条原始观测");
+  if (chart.type === "radial_progress" && chart.categories.length < 2)
+    throw new Error("多环进度图需要至少两个独立指标");
   const complete = ["rose", "concentric", "radial_progress", "radar", "waffle", "sunburst", "treemap", "sankey", "chord"].includes(chart.type);
   if (complete && chart.series.some(s => s.values.some(v => v === null || v < 0)))
     throw new Error("组成、层级和流量图需要完整非负数据，未知不能补零");
@@ -110,8 +112,6 @@ export function validateChart(chart: ChartSpec): void {
   if (chart.type === "radial_heatmap" && (chart.series.length < 2 || chart.categories.length < 3
     || chart.categories.length > 12 || chart.categories.some(label => Array.from(label).length > 12)))
     throw new Error("环形热力图需要2–4组同口径系列、3–12个类别，类别名最多12字");
-  if (chart.type === "dumbbell" && (chart.series.length !== 2 || chart.categories.length < 2))
-    throw new Error("差异点图需要两组同口径系列和至少两个比较项目");
   if (["waterfall", "histogram"].includes(chart.type)) {
     if (chart.series.length !== 1 || chart.categories.length < 2 || chart.series[0].values.some(value => value === null))
       throw new Error("瀑布图和分布图需要一组至少两个完整实际数值");

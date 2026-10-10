@@ -852,10 +852,8 @@
     "properties": {
       "type": {
         "enum": [
-          "dot",
           "line",
           "pie",
-          "dumbbell",
           "heatmap",
           "scatter",
           "waterfall",
@@ -864,7 +862,6 @@
           "bubble",
           "bubble_matrix",
           "slope",
-          "bump",
           "interval",
           "boxplot",
           "violin",
@@ -1397,26 +1394,6 @@
         "if": {
           "properties": {
             "type": {
-              "const": "dumbbell"
-            }
-          }
-        },
-        "then": {
-          "properties": {
-            "series": {
-              "minItems": 2,
-              "maxItems": 2
-            },
-            "categories": {
-              "minItems": 2
-            }
-          }
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "type": {
               "enum": [
                 "waterfall",
                 "histogram"
@@ -1551,38 +1528,6 @@
             "categories": {
               "minItems": 2,
               "maxItems": 2
-            }
-          }
-        }
-      },
-      {
-        "if": {
-          "properties": {
-            "type": {
-              "const": "bump"
-            }
-          }
-        },
-        "then": {
-          "properties": {
-            "categories": {
-              "minItems": 2,
-              "maxItems": 12
-            },
-            "series": {
-              "items": {
-                "properties": {
-                  "values": {
-                    "items": {
-                      "type": [
-                        "integer",
-                        "null"
-                      ],
-                      "minimum": 1
-                    }
-                  }
-                }
-              }
             }
           }
         }
@@ -1764,7 +1709,7 @@
         "then": {
           "properties": {
             "categories": {
-              "minItems": 1,
+              "minItems": 2,
               "maxItems": 6,
               "items": {
                 "maxLength": 12

@@ -7,7 +7,7 @@ export function validStructureChart(chart) {
   if (chart.annotations?.length) return false;
   const count = chart.categories.length, groups = chart.series.length;
   if (['ecdf', 'ridgeline'].includes(chart.type)) return chart.series.every(s => s.values.filter(v => v !== null).length >= (chart.type === 'ecdf' ? 2 : 8));
-  const limits = { rose: [3,10,1,1], concentric: [2,6,2,4], radial_progress: [1,6,1,1], radar: [3,8,1,4], waffle: [2,6,1,1], sunburst: [2,8,2,4], treemap: [2,8,2,4], sankey: [2,8,1,8], chord: [3,8,3,8] }[chart.type];
+  const limits = { rose: [3,10,1,1], concentric: [2,6,2,4], radial_progress: [2,6,1,1], radar: [3,8,1,4], waffle: [2,6,1,1], sunburst: [2,8,2,4], treemap: [2,8,2,4], sankey: [2,8,1,8], chord: [3,8,3,8] }[chart.type];
   if (count < limits[0] || count > limits[1] || groups < limits[2] || groups > limits[3]
     || chart.categories.some(name => Array.from(name).length > 12) || chart.series.some(s => Array.from(s.name).length > 12 || s.values.some(v => v === null || v < 0))) return false;
   if (['radar', 'radial_progress'].includes(chart.type)) return Number.isFinite(chart.maxValue) && chart.maxValue > 0 && chart.maxValue <= 1e15 && chart.series.every(s => s.values.every(v => v <= chart.maxValue));
@@ -38,10 +38,10 @@ export function validStructureChart(chart) {
 export const roseRadius = (value, maximum, inner = 18, outer = 100) => Math.sqrt(inner ** 2 + value / maximum * (outer ** 2 - inner ** 2));
 export function chordArcs(chart, gap = .08) {
   const matrix = chart.categories.map(name => chart.series.find(s => s.name === name).values);
-  const totals = matrix.map(decimalSum), total = decimalSum(totals), factor = (2 * Math.PI - gap * matrix.length) / total;
+  const totals = matrix.map(decimalSum), total = decimalSum(totals), angle = 2 * Math.PI - gap * matrix.length;
   let start = -Math.PI / 2;
   return matrix.map((row,i) => {
-    const from = start, portions = row.map(value => { const a = start; start += value * factor; return [a,start]; });
+    const from = start, portions = row.map(value => { const a = start; start += value / total * angle; return [a,start]; });
     const end = start; start += gap;
     return { from, end, value: totals[i], portions };
   });
