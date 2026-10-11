@@ -550,30 +550,33 @@ const unavailableRecall = (reason: Exclude<ProblemSampleRecall["reason"], null>)
 
 /** Resolve only this page's run, attribution and source references; no result bodies enter the library. */
 async function sampleRecalls(config: EvalConfig, occurrences: ProblemOccurrence[]): Promise<ProblemSampleRecall[]> {
+  const sourceRun = (item: ProblemOccurrence) => item.attribution?.run_id ?? item.run_id;
+  const sourceDirectory = (item: ProblemOccurrence) => item.attribution?.run ?? path.join(config.output.path, safeId(item.run_id));
   const runs = new Map<string, { directory?: string; saved?: Checkpoint; reason?: Exclude<ProblemSampleRecall["reason"], null> }>();
-  await Promise.all([...new Set(occurrences.map((item) => item.run_id))].map(async (runId) => {
+  await Promise.all([...new Map(occurrences.map(item => [sourceDirectory(item), item])).entries()].map(async ([directory, item]) => {
     try {
-      const directory = path.join(config.output.path, safeId(runId));
       const saved = await checkpoint(directory);
-      if (saved.runId !== runId || !saved.inputs || !saved.tasks)
+      if (saved.runId !== sourceRun(item) || !saved.inputs || !saved.tasks)
         throw new Error("运行状态身份或索引无效");
-      runs.set(runId, { directory, saved });
+      runs.set(directory, { directory, saved });
     } catch (error) {
-      runs.set(runId, { reason: (error as NodeJS.ErrnoException).code === "ENOENT" ? "run_missing" : "run_unavailable" });
+      runs.set(directory, { reason: (error as NodeJS.ErrnoException).code === "ENOENT" ? "run_missing" : "run_unavailable" });
     }
   }));
   const prepared = occurrences.map((occurrence) => {
-    const run = runs.get(occurrence.run_id)!;
+    const run = runs.get(sourceDirectory(occurrence))!;
     if (!run.saved || !run.directory) return { occurrence, recall: unavailableRecall(run.reason!) };
     const { saved, directory } = run;
     const candidate = saved.inputs[occurrence.input_id];
-    const task = Object.entries(saved.tasks).find(([, task]) =>
-      task.stage === "attribution" && Object.values(task.inputIds).includes(occurrence.input_id));
+    const task = Object.entries(saved.tasks).find(([id, task]) =>
+      task.stage === "attribution" && Object.values(task.inputIds).includes(occurrence.input_id) &&
+      (!occurrence.attribution || id === occurrence.attribution.task_id));
     if (!candidate || candidate.version !== occurrence.version || candidate.batch_id !== occurrence.batch_id ||
         candidate.case_id !== occurrence.case_id || !task)
       return { occurrence, recall: unavailableRecall("sample_missing") };
     const [taskId, taskState] = task;
-    if (taskState.status !== "succeeded" || !taskState.receipt?.exported)
+    if (taskState.status !== "succeeded" || !taskState.receipt?.exported || (occurrence.attribution &&
+      (taskState.receipt.submissionId !== occurrence.attribution.submission_id || taskState.receipt.evaluatorVersion !== occurrence.attribution.evaluator_version)))
       return { occurrence, recall: unavailableRecall("result_missing") };
     return { occurrence, saved, directory, candidate, taskId };
   });
@@ -617,7 +620,8 @@ async function sampleRecalls(config: EvalConfig, occurrences: ProblemOccurrence[
       } catch { return false; }
     })());
     if (!(await inputs.get(inputKey))) return unavailableRecall("input_unavailable");
-    const query = new URLSearchParams({ run: occurrence.run_id, batch: occurrence.batch_id,
+    if (path.resolve(directory!) !== path.resolve(config.output.path, sourceRun(occurrence))) return unavailableRecall("run_unavailable");
+    const query = new URLSearchParams({ run: sourceRun(occurrence), batch: occurrence.batch_id,
       case: occurrence.case_id, model: occurrence.version, task: taskId!, finding: occurrence.finding_id });
     return { available: true, reason: null, attribution_task_id: taskId!, url: `/?${query}` };
   }));
@@ -675,6 +679,7 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
     occurrences: selected.map((occurrence, index) => ({
       id: occurrence.id,
       run_id: occurrence.run_id,
+      ...(occurrence.attribution ? { attribution: occurrence.attribution, clustering_run: occurrence.clustering_run } : {}),
       task_id: occurrence.task_id,
       submission_id: occurrence.submission_id,
       input_id: occurrence.input_id,

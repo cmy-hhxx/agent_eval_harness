@@ -525,30 +525,6 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
      expect(directory.getSnapshot().current).toEqual(state().current)
    })
 
-diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
-index a76b58d..4d8ba54 100644
---- a/packages/client/ui-primitives/src/index.ts
-+++ b/packages/client/ui-primitives/src/index.ts
-@@ -42,9 +42,6 @@ export { RiskConfirmation } from './RiskConfirmation.tsx'
- export type { RiskConfirmationProps } from './RiskConfirmation.tsx'
- export { ConnectionIndicator } from './ConnectionIndicator.tsx'
- export type { ConnectionIndicatorState } from './ConnectionIndicator.tsx'
--export { FishLogo, FISH_LOGO_PATH, FISH_LOGO_VIEWBOX } from './FishLogo.tsx'
--export { BrandWordmark } from './BrandWordmark.tsx'
--export type { BrandWordmarkProps } from './BrandWordmark.tsx'
- export {
-   PermissionIconFullAccessMedium, PermissionIconFullAccessRegular,
-   PermissionIconReadOnlyMedium, PermissionIconReadOnlyRegular,
-@@ -100,7 +97,8 @@ export type {
- export { CodeBlock } from './markdown/CodeBlock.tsx'
- export type { CodeBlockProps } from './markdown/CodeBlock.tsx'
- export { JsonBlock } from './markdown/JsonBlock.tsx'
--export { MarkdownDelegateProvider } from './markdown/MarkdownDelegate.tsx'
-+export { MarkdownDelegateProvider, MarkdownFenceProvider } from './markdown/MarkdownDelegate.tsx'
-+export type { MarkdownFence } from './markdown/MarkdownDelegate.tsx'
- export type { MarkdownDelegate, MarkdownDelegateProviderProps, MarkdownExternalLinkHandler } from './markdown/MarkdownDelegate.tsx'
- export { MarkdownText } from './markdown/MarkdownText.tsx'
- export type { MarkdownCodeLabels, MarkdownFileMentions, MarkdownLabels, MarkdownPathImages } from './markdown/MarkdownText.tsx'
 diff --git a/packages/client/ui-primitives/tests/icons.client.spec.tsx b/packages/client/ui-primitives/tests/icons.client.spec.tsx
 --- a/packages/client/ui-primitives/tests/icons.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/icons.client.spec.tsx
@@ -838,156 +814,6 @@ diff --git a/packages/client/ui-workspace/src/client/shortcuts.ts b/packages/cli
      const target = current()
      if (target === undefined) return { status: 'blocked', reason: t('shortcut.noSession') }
      if (target.blank) return { status: 'blocked', reason: t('shortcut.noCompletedTurn') }
-diff --git a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
-index 5d97a69..ba0cc36 100644
---- a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
-+++ b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
-@@ -77,11 +77,22 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
-     if (groupPart === 'reasoning' && block.kind !== 'reasoning') continue
-     if (groupPart === 'response' && block.kind === 'reasoning') continue
-     switch (block.kind) {
--      case 'text':
-+      case 'text': {
-+        // Provider text items can split anywhere, including inside a word or
-+        // Markdown delimiter. Only authored newlines divide their document;
-+        // a transport block boundary must not create a paragraph or end bold.
-+        const start = i
-+        let text = block.text
-+        while (i + 1 < blocks.length) {
-+          const next = blocks[i + 1]
-+          if (next?.kind !== 'text') break
-+          text += next.text
-+          i += 1
-+        }
-         rendered.push(
-           <MarkdownText
--            key={i}
--            text={block.text}
-+            key={start}
-+            text={text}
-             streaming={streaming}
-             labels={labels}
-             fileMentions={mentions}
-@@ -89,6 +100,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
-           />,
-         )
-         break
-+      }
-       case 'reasoning':
-         rendered.push(
-           <ProcessReasoning
-diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
-new file mode 100644
-index 0000000..63648f5
---- /dev/null
-+++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
-@@ -0,0 +1,106 @@
-+// @vitest-environment jsdom
-+import { cleanup, render } from '@testing-library/react'
-+import { afterEach, describe, expect, it } from 'vitest'
-+import type { ComponentProps } from 'react'
-+import { AssistantMarkdown } from '../src/client/chat/AssistantMarkdown.tsx'
-+import { AssistantNodeView } from '../src/client/chat/AssistantNodeView.tsx'
-+import { chatSnapshotFixture } from './chat-snapshot-fixture.client.ts'
-+import { useDisclosure } from '../src/client/chat/use-disclosure.ts'
-+import { useDetailedPresentation } from './presentation-fixture.client.ts'
-+import type { AssistantBlock } from '../src/client/contract/snapshot.ts'
-+import type { ChatNodeOwnerProps, ChatViewSlotProps } from '../src/client/contract/slots.ts'
-+
-+afterEach(cleanup)
-+
-+const t = ((_key: string) => 'label') as ChatViewSlotProps['t']
-+const renderMessageImages = (() => null) as ChatNodeOwnerProps['renderMessageImages']
-+const textBlock = (text: string): AssistantBlock => ({ kind: 'text', text })
-+const reply = (blocks: readonly AssistantBlock[], streaming = false) => (
-+  <AssistantMarkdown blocks={blocks} streaming={streaming} t={t}
-+    useDisclosure={useDisclosure} usePresentation={useDetailedPresentation}
-+    renderMessageImages={renderMessageImages} />
-+)
-+
-+describe('final-response visuals', () => {
-+  it.each(['', '\n\n```chart\n5eece766-4811-4742-b81c-a3411b3e926e\n```', '\n\n```chart\none\n```\n\n```chart\ntwo\n```'])
-+    ('places application visuals once before the final response, regardless of chart placeholders %s', (placeholder) => {
-+      const snapshot = chatSnapshotFixture({ nodes: [{ kind: 'assistant', seq: 1, time: 1000, turn: 7, step: 2,
-+        blocks: [textBlock('Final answer.' + placeholder)] }] })
-+      const node = [...snapshot.nodes.values()].find(node => node.kind === 'assistant-step')!
-+      const props = {
-+        node, groupPart: 'response', useDisclosure, useTurnData: () => undefined, usePresentation: useDetailedPresentation,
-+        renderMessageImages, fileMentions: () => undefined, openFile: () => {}, t,
-+        turnProcess: { hasContent: true, foldable: true, open: false, setOpen: () => {},
-+          spec: { turn: 7, controlAnchorSeq: 1, processStartSeq: 1, answerAnchorSeq: 1, answerStep: 2, inlineReasoning: false, messageCount: 1, toolCallCount: 1, subagentCount: 0 } },
-+        renderSlot: (name: string, owner: { turn: number }) => name === 'conversation.chat.visuals'
-+          ? <figure data-visual-turn={owner.turn}>Accepted chart</figure> : <></>,
-+      } as ComponentProps<typeof AssistantNodeView>
-+      const live = render(<AssistantNodeView {...props} />)
-+      expect(live.container.querySelectorAll('figure')).toHaveLength(1)
-+      expect(live.container.textContent?.trimEnd()).toBe('Accepted chartFinal answer.')
-+      expect(live.container.querySelector('figure')?.getAttribute('data-visual-turn')).toBe('7')
-+      live.rerender(<AssistantNodeView {...props} groupPart="reasoning" />)
-+      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
-+      live.rerender(<AssistantNodeView {...props} turnProcess={{ ...props.turnProcess!, spec: { ...props.turnProcess!.spec, answerStep: 3 } }} />)
-+      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
-+    })
-+})
-+
-+describe('assistant Markdown across provider text fragments', () => {
-+  it.each([false, true])('keeps split emphasis and words in one paragraph (streaming=%s)', (streaming) => {
-+    // The provider split the real Eris reply at these positions, without newlines.
-+    const fragments = ['**Fast 档（4', ' 场）**：核心交付完整', '度持平。']
-+    const live = render(reply(fragments.map(textBlock), streaming))
-+    expect(live.container.querySelector('strong')?.textContent).toBe('Fast 档（4 场）')
-+    expect(live.container.querySelectorAll('p')).toHaveLength(1)
-+    expect(live.container.textContent).toBe('Fast 档（4 场）：核心交付完整度持平。')
-+  })
-+
-+  it('preserves authored paragraph breaks, tables and links across fragments', () => {
-+    const fragments = ['结论。\n\n| 模型 | 胜场 |\n| --', '- | --- |\n| A | 1 |\n\n见 [来', '源](https://example.com/result)。']
-+    const { container } = render(reply(fragments.map(textBlock)))
-+    expect(container.querySelectorAll('table')).toHaveLength(1)
-+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/result')
-+    expect(container.querySelectorAll('p')).toHaveLength(2)
-+  })
-+
-+  it('keeps mixed-language labels bold while streaming, settling and restoring', () => {
-+    const text = '**Fast：**B组目前占优。**Expert：**胜负接近。\n\n**边界：**整体归因尚未完成。'
-+    const live = render(reply([], true))
-+    for (let end = 1; end <= text.length; end++) {
-+      live.rerender(reply([textBlock(text.slice(0, end))], true))
-+    }
-+    const check = (container: HTMLElement) => {
-+      expect([...container.querySelectorAll('strong')].map(node => node.textContent))
-+        .toEqual(['Fast：', 'Expert：', '边界：'])
-+      expect(container.textContent).not.toContain('**')
-+    }
-+    check(live.container)
-+    live.rerender(reply([textBlock(text)]))
-+    check(live.container)
-+    live.unmount()
-+    check(render(reply([textBlock(text)])).container)
-+  })
-+
-+  it('keeps the same document mounted as a fragment completes and the reply settles', () => {
-+    const live = render(reply([textBlock('**Fast 档（4')], true))
-+    const paragraph = live.container.querySelector('p')
-+    const complete = [textBlock('**Fast 档（4'), textBlock(' 场）**：已核对。')]
-+    live.rerender(reply(complete, true))
-+    expect(live.container.querySelector('p')).toBe(paragraph)
-+    expect(live.container.querySelector('strong')?.textContent).toBe('Fast 档（4 场）')
-+    live.rerender(reply(complete))
-+    expect(live.container.querySelector('p')).toBe(paragraph)
-+    expect(live.container.textContent).toBe('Fast 档（4 场）：已核对。')
-+  })
-+
-+  it('keeps non-text boundaries between independent Markdown documents', () => {
-+    const { container } = render(reply([
-+      textBlock('**工具前'),
-+      { kind: 'tool-call', callId: 'lookup', name: 'list_data', argsRaw: '{}' },
-+      textBlock('工具后**'),
-+    ]))
-+    expect(container.querySelector('strong')).toBeNull()
-+    expect(container.querySelectorAll('p')).toHaveLength(2)
-+  })
-+})
 diff --git a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
 index aba740d..ce31590 100644
 --- a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
@@ -1078,76 +904,6 @@ index d543741..8ae4b1a 100644
  .imageButton:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
  .previewName {
    display: block;
-diff --git a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
-index 681e8f5..ed4b1db 100644
---- a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
-+++ b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
-@@ -28,6 +28,26 @@ export interface MarkdownDelegate {
-
- const MarkdownDelegateContext = createContext<MarkdownDelegate>({})
-
-+/** Optional application rendering for authored fenced blocks; null keeps the code view. */
-+export interface MarkdownFence {
-+  language: string | undefined
-+  code: string
-+  streaming: boolean
-+}
-+
-+const MarkdownFenceContext = createContext<((fence: MarkdownFence) => ReactNode) | undefined>(undefined)
-+
-+export function MarkdownFenceProvider({ children, renderFence }: {
-+  children: ReactNode
-+  renderFence: (fence: MarkdownFence) => ReactNode
-+}): ReactNode {
-+  return <MarkdownFenceContext.Provider value={renderFence}>{children}</MarkdownFenceContext.Provider>
-+}
-+
-+export function useMarkdownFence(): ((fence: MarkdownFence) => ReactNode) | undefined {
-+  return useContext(MarkdownFenceContext)
-+}
-+
- /** Props for one Markdown navigation scope. */
- export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
-   readonly children: ReactNode
-diff --git a/packages/client/ui-primitives/src/markdown/render.tsx b/packages/client/ui-primitives/src/markdown/render.tsx
-index cdb9afc..355716f 100644
---- a/packages/client/ui-primitives/src/markdown/render.tsx
-+++ b/packages/client/ui-primitives/src/markdown/render.tsx
-@@ -24,10 +24,11 @@ import type {} from 'mdast-util-math'
- import { normalizeUri } from 'micromark-util-sanitize-uri'
- import type { CodeToolbarLabels } from '../CodeToolbar.tsx'
- import { CodeBlock } from './CodeBlock.tsx'
-+import type { CodeBlockProps } from './CodeBlock.tsx'
- import { parseFileLink } from './file-link.ts'
- import { renderTexToReact } from './katex.tsx'
- import { LinkIconMedium, classifyLinkPath } from '../LinkIcon.tsx'
--import { useMarkdownDelegate } from './MarkdownDelegate.tsx'
-+import { useMarkdownDelegate, useMarkdownFence } from './MarkdownDelegate.tsx'
- import { HoverCard } from '../HoverCard.tsx'
- import { ImageLightbox } from '../ImageLightbox.tsx'
- import { ImagePreview } from '../ImagePreview.tsx'
-@@ -391,7 +392,7 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
-     return <Fragment key={key}>{renderTexToReact(`${node.value}\n`, true)}</Fragment>
-   }
-   return (
--    <CodeBlock
-+    <MarkdownCodeBlock
-       key={key}
-       // The replaced hast pipeline appended one synthetic newline that
-       // CodeBlock's display trim removes; feeding the bare value would make
-@@ -411,6 +412,12 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
-   )
- }
-
-+function MarkdownCodeBlock(props: CodeBlockProps): ReactNode {
-+  const renderFence = useMarkdownFence()
-+  return renderFence?.({ language: props.lang, code: props.code, streaming: props.streaming === true })
-+    ?? <CodeBlock {...props} />
-+}
-+
- /** A list is loose when it or any of its items is spread; every item then keeps its paragraphs. */
- function listLoose(list: Md.List): boolean {
-   return (list.spread ?? false) || list.children.some(listItemLoose)
 diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
 index eec1a12..c33021a 100644
 --- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
@@ -1206,3 +962,323 @@ index 76ce74e..920c46f 100644
 +    </MarkdownFenceProvider>
    )
  })
+diff --git a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
+index 681e8f5..d96136b 100644
+--- a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
++++ b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
+@@ -18,6 +18,8 @@ export interface MarkdownDelegate {
+   } | undefined
+   /** Ordinary HTTP(S) activation; absent handlers retain native anchor behavior. */
+   readonly openExternalLink?: MarkdownExternalLinkHandler | undefined
++  /** False renders HTTP(S) link labels as ordinary text without navigation. */
++  readonly externalLinks?: boolean | undefined
+   /**
+    * Open a decoded local destination from settled Markdown; absent handlers leave plain text.
+    * @param path - Absolute or workspace-relative file path.
+@@ -28,6 +30,26 @@ export interface MarkdownDelegate {
+
+ const MarkdownDelegateContext = createContext<MarkdownDelegate>({})
+
++/** Optional application rendering for authored fenced blocks; null keeps the code view. */
++export interface MarkdownFence {
++  language: string | undefined
++  code: string
++  streaming: boolean
++}
++
++const MarkdownFenceContext = createContext<((fence: MarkdownFence) => ReactNode) | undefined>(undefined)
++
++export function MarkdownFenceProvider({ children, renderFence }: {
++  children: ReactNode
++  renderFence: (fence: MarkdownFence) => ReactNode
++}): ReactNode {
++  return <MarkdownFenceContext.Provider value={renderFence}>{children}</MarkdownFenceContext.Provider>
++}
++
++export function useMarkdownFence(): ((fence: MarkdownFence) => ReactNode) | undefined {
++  return useContext(MarkdownFenceContext)
++}
++
+ /** Props for one Markdown navigation scope. */
+ export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
+   readonly children: ReactNode
+@@ -42,10 +64,11 @@ export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
+ export function MarkdownDelegateProvider({
+   children,
+   openExternalLink,
++  externalLinks,
+   openFile,
+   fileImages,
+ }: MarkdownDelegateProviderProps): ReactNode {
+-  const delegate = useMemo(() => ({ openExternalLink, openFile, fileImages }), [openExternalLink, openFile, fileImages])
++  const delegate = useMemo(() => ({ openExternalLink, externalLinks, openFile, fileImages }), [openExternalLink, externalLinks, openFile, fileImages])
+   return (
+     <MarkdownDelegateContext.Provider value={delegate}>
+       {children}
+diff --git a/packages/client/ui-primitives/src/markdown/render.tsx b/packages/client/ui-primitives/src/markdown/render.tsx
+index cdb9afc..c18365f 100644
+--- a/packages/client/ui-primitives/src/markdown/render.tsx
++++ b/packages/client/ui-primitives/src/markdown/render.tsx
+@@ -24,10 +24,11 @@ import type {} from 'mdast-util-math'
+ import { normalizeUri } from 'micromark-util-sanitize-uri'
+ import type { CodeToolbarLabels } from '../CodeToolbar.tsx'
+ import { CodeBlock } from './CodeBlock.tsx'
++import type { CodeBlockProps } from './CodeBlock.tsx'
+ import { parseFileLink } from './file-link.ts'
+ import { renderTexToReact } from './katex.tsx'
+ import { LinkIconMedium, classifyLinkPath } from '../LinkIcon.tsx'
+-import { useMarkdownDelegate } from './MarkdownDelegate.tsx'
++import { useMarkdownDelegate, useMarkdownFence } from './MarkdownDelegate.tsx'
+ import { HoverCard } from '../HoverCard.tsx'
+ import { ImageLightbox } from '../ImageLightbox.tsx'
+ import { ImagePreview } from '../ImagePreview.tsx'
+@@ -391,7 +392,7 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
+     return <Fragment key={key}>{renderTexToReact(`${node.value}\n`, true)}</Fragment>
+   }
+   return (
+-    <CodeBlock
++    <MarkdownCodeBlock
+       key={key}
+       // The replaced hast pipeline appended one synthetic newline that
+       // CodeBlock's display trim removes; feeding the bare value would make
+@@ -411,6 +412,12 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
+   )
+ }
+
++function MarkdownCodeBlock(props: CodeBlockProps): ReactNode {
++  const renderFence = useMarkdownFence()
++  return renderFence?.({ language: props.lang, code: props.code, streaming: props.streaming === true })
++    ?? <CodeBlock {...props} />
++}
++
+ /** A list is loose when it or any of its items is spread; every item then keeps its paragraphs. */
+ function listLoose(list: Md.List): boolean {
+   return (list.spread ?? false) || list.children.some(listItemLoose)
+@@ -550,8 +557,9 @@ function MarkdownAnchor({ href, glyph, children }: {
+   readonly glyph: boolean
+   readonly children: ReactNode[]
+ }): ReactNode {
+-  const { openExternalLink } = useMarkdownDelegate()
++  const { openExternalLink, externalLinks } = useMarkdownDelegate()
+   const external = ['http:', 'https:'].includes(new URL(href).protocol)
++  if (external && externalLinks === false) return <>{children}</>
+   const open = external ? openExternalLink : undefined
+   return (
+     <a
+diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
+index a76b58d..7ab25f3 100644
+--- a/packages/client/ui-primitives/src/index.ts
++++ b/packages/client/ui-primitives/src/index.ts
+@@ -42,9 +42,6 @@ export { RiskConfirmation } from './RiskConfirmation.tsx'
+ export type { RiskConfirmationProps } from './RiskConfirmation.tsx'
+ export { ConnectionIndicator } from './ConnectionIndicator.tsx'
+ export type { ConnectionIndicatorState } from './ConnectionIndicator.tsx'
+-export { FishLogo, FISH_LOGO_PATH, FISH_LOGO_VIEWBOX } from './FishLogo.tsx'
+-export { BrandWordmark } from './BrandWordmark.tsx'
+-export type { BrandWordmarkProps } from './BrandWordmark.tsx'
+ export {
+   PermissionIconFullAccessMedium, PermissionIconFullAccessRegular,
+   PermissionIconReadOnlyMedium, PermissionIconReadOnlyRegular,
+@@ -100,7 +97,8 @@ export type {
+ export { CodeBlock } from './markdown/CodeBlock.tsx'
+ export type { CodeBlockProps } from './markdown/CodeBlock.tsx'
+ export { JsonBlock } from './markdown/JsonBlock.tsx'
+-export { MarkdownDelegateProvider } from './markdown/MarkdownDelegate.tsx'
++export { MarkdownDelegateProvider, MarkdownFenceProvider, useMarkdownDelegate } from './markdown/MarkdownDelegate.tsx'
++export type { MarkdownFence } from './markdown/MarkdownDelegate.tsx'
+ export type { MarkdownDelegate, MarkdownDelegateProviderProps, MarkdownExternalLinkHandler } from './markdown/MarkdownDelegate.tsx'
+ export { MarkdownText } from './markdown/MarkdownText.tsx'
+ export type { MarkdownCodeLabels, MarkdownFileMentions, MarkdownLabels, MarkdownPathImages } from './markdown/MarkdownText.tsx'
+diff --git a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
+index 5d97a69..981359a 100644
+--- a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
++++ b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
+@@ -1,7 +1,7 @@
+ import { Fragment, memo, useMemo } from 'react'
+ import { fileMediaUrl } from '@deepseek-ai/dsh-util-workspace-path'
+ import type { ReactNode } from 'react'
+-import { JsonBlock, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
++import { JsonBlock, MarkdownText, MarkdownDelegateProvider, useMarkdownDelegate } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { MarkdownFileMentions, MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { ChatNodeOwnerProps, ChatViewSlotProps, UseDisclosure, UsePresentation } from '../contract/slots.ts'
+ import type { AssistantBlock } from '../contract/snapshot.ts'
+@@ -55,6 +55,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+   blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
+   reasoningHidden = false, usePresentation, revealProcess, mentions, t,
+ }: AssistantMarkdownProps) {
++  const navigation = useMarkdownDelegate()
+   // Stable per locale revision (t identity changes on switch): a fresh object
+   // per render would rebuild MarkdownText's component table every chunk.
+   const labels = useMemo(() => markdownLabels(t), [t])
+@@ -77,11 +78,22 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+     if (groupPart === 'reasoning' && block.kind !== 'reasoning') continue
+     if (groupPart === 'response' && block.kind === 'reasoning') continue
+     switch (block.kind) {
+-      case 'text':
++      case 'text': {
++        // Provider text items can split anywhere, including inside a word or
++        // Markdown delimiter. Only authored newlines divide their document;
++        // a transport block boundary must not create a paragraph or end bold.
++        const start = i
++        let text = block.text
++        while (i + 1 < blocks.length) {
++          const next = blocks[i + 1]
++          if (next?.kind !== 'text') break
++          text += next.text
++          i += 1
++        }
+         rendered.push(
+           <MarkdownText
+-            key={i}
+-            text={block.text}
++            key={start}
++            text={text}
+             streaming={streaming}
+             labels={labels}
+             fileMentions={mentions}
+@@ -89,6 +101,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+           />,
+         )
+         break
++      }
+       case 'reasoning':
+         rendered.push(
+           <ProcessReasoning
+@@ -140,6 +153,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+     }
+   }
+   return (
++    <MarkdownDelegateProvider {...navigation} externalLinks={false}>
+     <div className={css.root} data-streaming={streaming || undefined}>
+       <div className={css.body}>
+         {rendered}
+@@ -148,6 +162,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+           && <span className={css.stopped}>{t('message.stopped')}</span>}
+       </div>
+     </div>
++    </MarkdownDelegateProvider>
+   )
+ })
+
+diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
+new file mode 100644
+index 0000000..0a8edfa
+--- /dev/null
++++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
+@@ -0,0 +1,116 @@
++// @vitest-environment jsdom
++import { cleanup, render } from '@testing-library/react'
++import { afterEach, describe, expect, it } from 'vitest'
++import type { ComponentProps } from 'react'
++import { AssistantMarkdown } from '../src/client/chat/AssistantMarkdown.tsx'
++import { AssistantNodeView } from '../src/client/chat/AssistantNodeView.tsx'
++import { chatSnapshotFixture } from './chat-snapshot-fixture.client.ts'
++import { useDisclosure } from '../src/client/chat/use-disclosure.ts'
++import { useDetailedPresentation } from './presentation-fixture.client.ts'
++import type { AssistantBlock } from '../src/client/contract/snapshot.ts'
++import type { ChatNodeOwnerProps, ChatViewSlotProps } from '../src/client/contract/slots.ts'
++
++afterEach(cleanup)
++
++const t = ((_key: string) => 'label') as ChatViewSlotProps['t']
++const renderMessageImages = (() => null) as ChatNodeOwnerProps['renderMessageImages']
++const textBlock = (text: string): AssistantBlock => ({ kind: 'text', text })
++const reply = (blocks: readonly AssistantBlock[], streaming = false) => (
++  <AssistantMarkdown blocks={blocks} streaming={streaming} t={t}
++    useDisclosure={useDisclosure} usePresentation={useDetailedPresentation}
++    renderMessageImages={renderMessageImages} />
++)
++
++describe('final-response visuals', () => {
++  it.each(['', '\n\n```chart\n5eece766-4811-4742-b81c-a3411b3e926e\n```', '\n\n```chart\none\n```\n\n```chart\ntwo\n```'])
++    ('places application visuals once before the final response, regardless of chart placeholders %s', (placeholder) => {
++      const snapshot = chatSnapshotFixture({ nodes: [{ kind: 'assistant', seq: 1, time: 1000, turn: 7, step: 2,
++        blocks: [textBlock('Final answer.' + placeholder)] }] })
++      const node = [...snapshot.nodes.values()].find(node => node.kind === 'assistant-step')!
++      const props = {
++        node, groupPart: 'response', useDisclosure, useTurnData: () => undefined, usePresentation: useDetailedPresentation,
++        renderMessageImages, fileMentions: () => undefined, openFile: () => {}, t,
++        turnProcess: { hasContent: true, foldable: true, open: false, setOpen: () => {},
++          spec: { turn: 7, controlAnchorSeq: 1, processStartSeq: 1, answerAnchorSeq: 1, answerStep: 2, inlineReasoning: false, messageCount: 1, toolCallCount: 1, subagentCount: 0 } },
++        renderSlot: (name: string, owner: { turn: number }) => name === 'conversation.chat.visuals'
++          ? <figure data-visual-turn={owner.turn}>Accepted chart</figure> : <></>,
++      } as ComponentProps<typeof AssistantNodeView>
++      const live = render(<AssistantNodeView {...props} />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(1)
++      expect(live.container.textContent?.trimEnd()).toBe('Accepted chartFinal answer.')
++      expect(live.container.querySelector('figure')?.getAttribute('data-visual-turn')).toBe('7')
++      live.rerender(<AssistantNodeView {...props} groupPart="reasoning" />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
++      live.rerender(<AssistantNodeView {...props} turnProcess={{ ...props.turnProcess!, spec: { ...props.turnProcess!.spec, answerStep: 3 } }} />)
++      expect(live.container.querySelectorAll('figure')).toHaveLength(0)
++    })
++})
++
++describe('assistant Markdown across provider text fragments', () => {
++  it.each([false, true])('keeps split emphasis and words in one paragraph (streaming=%s)', (streaming) => {
++    // The provider split the real Eris reply at these positions, without newlines.
++    const fragments = ['**Fast 档（4', ' 场）**：核心交付完整', '度持平。']
++    const live = render(reply(fragments.map(textBlock), streaming))
++    expect(live.container.querySelector('strong')?.textContent).toBe('Fast 档（4 场）')
++    expect(live.container.querySelectorAll('p')).toHaveLength(1)
++    expect(live.container.textContent).toBe('Fast 档（4 场）：核心交付完整度持平。')
++  })
++
++  it.each([false, true])('preserves paragraphs and tables with plain source labels (streaming=%s)', (streaming) => {
++    const fragments = ['结论。\n\n| 模型 | 胜场 |\n| --', '- | --- |\n| A | 1 |\n\n见 [来', '源](https://example.com/result)。']
++    const { container } = render(reply(fragments.map(textBlock), streaming))
++    expect(container.querySelectorAll('table')).toHaveLength(1)
++    expect(container.querySelector('a')).toBeNull()
++    expect(container.textContent).toContain('见 来源。')
++    expect(container.querySelectorAll('p')).toHaveLength(2)
++  })
++
++  it.each([false, true])('renders authored, reference and automatic web links as text (streaming=%s)', (streaming) => {
++    const text = '见 [**机构公告**](https://example.com/a) 和 https://example.com/b。\n\n另见 [来源][ref]。\n\n[ref]: https://example.com/c\n\n`https://example.com/code`'
++    const { container } = render(reply([textBlock(text)], streaming))
++    expect(container.querySelector('a[href^="http"]')).toBeNull()
++    expect(container.querySelector('strong')?.textContent).toBe('机构公告')
++    expect(container.textContent).toContain('https://example.com/b')
++    expect(container.querySelector('code')?.textContent).toBe('https://example.com/code')
++  })
++
++  it('keeps mixed-language labels bold while streaming, settling and restoring', () => {
++    const text = '**Fast：**B组目前占优。**Expert：**胜负接近。\n\n**边界：**整体归因尚未完成。'
++    const live = render(reply([], true))
++    for (let end = 1; end <= text.length; end++) {
++      live.rerender(reply([textBlock(text.slice(0, end))], true))
++    }
++    const check = (container: HTMLElement) => {
++      expect([...container.querySelectorAll('strong')].map(node => node.textContent))
++        .toEqual(['Fast：', 'Expert：', '边界：'])
++      expect(container.textContent).not.toContain('**')
++    }
++    check(live.container)
++    live.rerender(reply([textBlock(text)]))
++    check(live.container)
++    live.unmount()
++    check(render(reply([textBlock(text)])).container)
++  })
++
++  it('keeps the same document mounted as a fragment completes and the reply settles', () => {
++    const live = render(reply([textBlock('**Fast 档（4')], true))
++    const paragraph = live.container.querySelector('p')
++    const complete = [textBlock('**Fast 档（4'), textBlock(' 场）**：已核对。')]
++    live.rerender(reply(complete, true))
++    expect(live.container.querySelector('p')).toBe(paragraph)
++    expect(live.container.querySelector('strong')?.textContent).toBe('Fast 档（4 场）')
++    live.rerender(reply(complete))
++    expect(live.container.querySelector('p')).toBe(paragraph)
++    expect(live.container.textContent).toBe('Fast 档（4 场）：已核对。')
++  })
++
++  it('keeps non-text boundaries between independent Markdown documents', () => {
++    const { container } = render(reply([
++      textBlock('**工具前'),
++      { kind: 'tool-call', callId: 'lookup', name: 'list_data', argsRaw: '{}' },
++      textBlock('工具后**'),
++    ]))
++    expect(container.querySelector('strong')).toBeNull()
++    expect(container.querySelectorAll('p')).toHaveLength(2)
++  })
++})

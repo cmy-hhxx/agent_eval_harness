@@ -1,7 +1,7 @@
 import { Fragment, memo, useMemo } from 'react'
 import { fileMediaUrl } from '@deepseek-ai/dsh-util-workspace-path'
 import type { ReactNode } from 'react'
-import { JsonBlock, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { JsonBlock, MarkdownText, MarkdownDelegateProvider, useMarkdownDelegate } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownFileMentions, MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeOwnerProps, ChatViewSlotProps, UseDisclosure, UsePresentation } from '../contract/slots.ts'
 import type { AssistantBlock } from '../contract/snapshot.ts'
@@ -55,6 +55,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
   reasoningHidden = false, usePresentation, revealProcess, mentions, t,
 }: AssistantMarkdownProps) {
+  const navigation = useMarkdownDelegate()
   // Stable per locale revision (t identity changes on switch): a fresh object
   // per render would rebuild MarkdownText's component table every chunk.
   const labels = useMemo(() => markdownLabels(t), [t])
@@ -152,6 +153,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
   }
   return (
+    <MarkdownDelegateProvider {...navigation} externalLinks={false}>
     <div className={css.root} data-streaming={streaming || undefined}>
       <div className={css.body}>
         {rendered}
@@ -160,6 +162,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           && <span className={css.stopped}>{t('message.stopped')}</span>}
       </div>
     </div>
+    </MarkdownDelegateProvider>
   )
 })
 

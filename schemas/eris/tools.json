@@ -69,6 +69,121 @@
       }
     ]
   },
+  "read_case": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "reference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+          },
+          "inputId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "inputId"
+            ],
+            "not": {
+              "required": [
+                "taskId"
+              ]
+            }
+          },
+          {
+            "required": [
+              "taskId"
+            ],
+            "not": {
+              "required": [
+                "inputId"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "required": [
+      "reference"
+    ]
+  },
+  "read_evidence": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "reference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+          },
+          "inputId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "runId",
+          "inputId"
+        ]
+      },
+      "messages": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "uniqueItems": true,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "messageIndex": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16000
+            }
+          },
+          "required": [
+            "messageIndex"
+          ]
+        },
+        "description": "同一回答中需核验的1–12个节点；各节点独立分页，默认8000、最多16000个UTF-16字符。"
+      }
+    },
+    "required": [
+      "reference",
+      "messages"
+    ]
+  },
   "read_data": {
     "type": "object",
     "additionalProperties": false,
@@ -777,7 +892,7 @@
                       "problem",
                       "uncertain"
                     ],
-                    "description": "按本分支正式归因标记优点、已确认问题或待核实；已确认错误用 problem，不按总胜负改变性质。"
+                    "description": "按本项证据标记优点、已确认问题或事实待核验。已确认遗漏必要核验用 problem，即使候选是否达标仍未知；不按总胜负改变性质。"
                   },
                   "highlights": {
                     "type": "object",

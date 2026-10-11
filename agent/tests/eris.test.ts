@@ -5,6 +5,74 @@ import { createEris, type ErisDependencies } from "@eval/assistant";
 import { erisPrompt } from "@eval/prompts";
 import type { WebSearchRequest, WebSearchAttempt, WebReadResult, SpecialistResult } from "@eval/contracts";
 
+test("batch evidence uses one source read and preserves partial errors, pages and replay coordinates", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const calls: unknown[] = [], reference = { runId: "run", inputId: "input" };
+  const messages = [{ messageIndex: 3, limit: 2000 }, { messageIndex: 7, offset: 20 }, { messageIndex: 99 }];
+  const material = { kind: "evidence", reference, requestedCount: 3, readCount: 2, items: [
+    { kind: "message", reference: { ...reference, messageIndex: 3 }, text: "真实证据", evidence: [{ evidence_id: "coordinate", quote: "真实证据" }], hasMore: true, nextOffset: 2000 },
+    { kind: "message", reference: { ...reference, messageIndex: 7 }, text: "另一段证据", hasMore: false, nextOffset: null },
+    { reference: { ...reference, messageIndex: 99 }, error: "Message index out of range" },
+  ] };
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
+    data: { list: unexpected, read: async (ref, options) => { calls.push({ ref, options }); return material; }, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+  const tool = eris.tools.find(tool => tool.name === "read_evidence");
+  assert(tool, "deep investigations need one bounded batch instead of repeated per-node calls");
+  const args = { reference, messages }, context = { scope: { userId: "test", sessionId: "test" }, callId: "batch", signal: new AbortController().signal, progress() {} };
+  const result = await tool.execute(args, context);
+  assert.deepEqual(calls, [{ ref: reference, options: { view: "evidence", messages } }]);
+  assert.deepEqual(JSON.parse(result.content[0].text!), material);
+  assert.equal(Boolean(result.isError), false, "partial failure keeps successful evidence available");
+  assert.deepEqual(result.details, { sourceRead: { tool: "read_evidence", args } });
+  assert.equal(tool.readOnly, true);
+  for (const invalid of [[], Array.from({ length: 13 }, (_, messageIndex) => ({ messageIndex })), [{ messageIndex: -1 }], [{ messageIndex: 0, limit: 16001 }]])
+    assert.throws(() => tool.validate!({ reference, messages: invalid }));
+  assert.throws(() => tool.validate!({ reference: { ...reference, taskId: "pair" }, messages }));
+  material.requestedCount = 1;
+  material.readCount = 0;
+  material.items = [material.items[2]];
+  assert.equal((await tool.execute({ reference, messages: [{ messageIndex: 99 }] }, context)).isError, true);
+});
+
+test("one case read delivers question, answers and trace maps without loading evidence bodies", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const calls: unknown[] = [];
+  const reference = { runId: "run", taskId: "pair" };
+  const material = { kind: "case", reference, question: "比较两份回答", answers: [
+    { model: "a", answer: { text: "完整回答", complete: true }, trace: { nodes: [{ messageIndex: 3, type: "tool_result", name: "search" }] } },
+  ], formal: { result: { verdicts: { result: "both_good" }, evidence: [
+    { evidence_id: "ev_11111111-1111-4111-8111-111111111111_3_text_0_10_/output", quote: "按需读取的证据正文" },
+    { evidence_id: "ev_11111111-1111-4111-8111-111111111111_3_text_20_30_/output", quote: "同一节点的另一段" },
+    { evidence_id: "ev_22222222-2222-4222-8222-222222222222_3_image", quote: "另一回答的图像观察" },
+  ] } } };
+  const eris = createEris({ code: { execute: unexpected, read: unexpected },
+    data: { list: unexpected, read: async (ref, options) => { calls.push({ ref, options }); return material; }, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+  const tool = eris.tools.find(tool => tool.name === "read_case");
+  assert(tool, "case analysis needs a direct entry instead of browsing both message directories");
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "case", signal: new AbortController().signal, progress() {} };
+  const result = await tool.execute({ reference }, context);
+  const body = JSON.parse(result.content[0].text!);
+  assert.deepEqual(calls, [{ ref: reference, options: { view: "case" } }]);
+  assert.equal(body.question, material.question);
+  assert.deepEqual(body.answers, material.answers);
+  assert.equal(body.formal.result.evidence, undefined);
+  assert.deepEqual(body.formal.result.evidence_references, [
+    { runId: "run", inputId: "11111111-1111-4111-8111-111111111111", messageIndex: 3 },
+    { runId: "run", inputId: "22222222-2222-4222-8222-222222222222", messageIndex: 3 },
+  ], "evidence stays attached to its finding and source; fragments of one node need only one direct read");
+  assert.doesNotMatch(JSON.stringify(body), /按需读取的证据正文|同一节点的另一段|另一回答的图像观察/);
+  assert.deepEqual(result.details, { sourceRead: { tool: "read_case", args: { reference } } });
+  assert.equal(tool.readOnly, true);
+  assert.throws(() => tool.validate!({ reference: { ...reference, messageIndex: 3 } }));
+  assert.throws(() => tool.validate!({ reference: { ...reference, inputId: "a" } }));
+  assert(material.formal.result.evidence, "projection preserves the accepted row");
+  await tool.execute({ reference }, { ...context, audience: "user" });
+  assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "case", audience: "user" } }, "expanded UI gets recorded reasoning and longer previews without increasing model input");
+  assert.throws(() => tool.validate!({ reference, audience: "user" }), "display audience is not a model tool argument");
+});
+
 test('every directory page keeps exact counts without repeating whole-run narratives or source lists', async () => {
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected call'); };
   const reference = { runId: 'run', taskId: 'case' };

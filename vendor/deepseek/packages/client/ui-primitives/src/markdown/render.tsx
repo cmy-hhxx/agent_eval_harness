@@ -557,8 +557,9 @@ function MarkdownAnchor({ href, glyph, children }: {
   readonly glyph: boolean
   readonly children: ReactNode[]
 }): ReactNode {
-  const { openExternalLink } = useMarkdownDelegate()
+  const { openExternalLink, externalLinks } = useMarkdownDelegate()
   const external = ['http:', 'https:'].includes(new URL(href).protocol)
+  if (external && externalLinks === false) return <>{children}</>
   const open = external ? openExternalLink : undefined
   return (
     <a

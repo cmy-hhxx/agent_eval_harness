@@ -35,7 +35,7 @@ function textReferences(value: unknown, path: string[] = [], result = new Map<st
     for (const [key,item] of Object.entries(value)) textReferences(item,[...path,key],result);
   return result;
 }
-function difference(base: unknown, value: unknown, path: string[] = [], texts = textReferences(base)): Patch {
+export function difference(base: unknown, value: unknown, path: string[] = [], texts = textReferences(base)): Patch {
   if (isDeepStrictEqual(base,value)) return [];
   if (typeof value === "string" && texts.has(value)) return [{path,from:texts.get(value)!}];
   const sameContainer = !!base && !!value && typeof base === "object" && typeof value === "object" &&
@@ -48,7 +48,7 @@ function difference(base: unknown, value: unknown, path: string[] = [], texts = 
   const a=base as Record<string,unknown>,b=value as Record<string,unknown>;
   return [...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(key=>difference(a[key],b[key],[...path,key],texts));
 }
-function restore(base: unknown, patch: Patch): unknown {
+export function restore(base: unknown, patch: Patch): unknown {
   let value=structuredClone(base);
   for(const entry of patch) {
     let replacement=entry.value;

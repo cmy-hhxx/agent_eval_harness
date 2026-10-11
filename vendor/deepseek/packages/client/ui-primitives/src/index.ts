@@ -97,7 +97,7 @@ export type {
 export { CodeBlock } from './markdown/CodeBlock.tsx'
 export type { CodeBlockProps } from './markdown/CodeBlock.tsx'
 export { JsonBlock } from './markdown/JsonBlock.tsx'
-export { MarkdownDelegateProvider, MarkdownFenceProvider } from './markdown/MarkdownDelegate.tsx'
+export { MarkdownDelegateProvider, MarkdownFenceProvider, useMarkdownDelegate } from './markdown/MarkdownDelegate.tsx'
 export type { MarkdownFence } from './markdown/MarkdownDelegate.tsx'
 export type { MarkdownDelegate, MarkdownDelegateProviderProps, MarkdownExternalLinkHandler } from './markdown/MarkdownDelegate.tsx'
 export { MarkdownText } from './markdown/MarkdownText.tsx'

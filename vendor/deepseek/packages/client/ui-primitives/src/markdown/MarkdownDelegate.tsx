@@ -18,6 +18,8 @@ export interface MarkdownDelegate {
   } | undefined
   /** Ordinary HTTP(S) activation; absent handlers retain native anchor behavior. */
   readonly openExternalLink?: MarkdownExternalLinkHandler | undefined
+  /** False renders HTTP(S) link labels as ordinary text without navigation. */
+  readonly externalLinks?: boolean | undefined
   /**
    * Open a decoded local destination from settled Markdown; absent handlers leave plain text.
    * @param path - Absolute or workspace-relative file path.
@@ -62,10 +64,11 @@ export interface MarkdownDelegateProviderProps extends MarkdownDelegate {
 export function MarkdownDelegateProvider({
   children,
   openExternalLink,
+  externalLinks,
   openFile,
   fileImages,
 }: MarkdownDelegateProviderProps): ReactNode {
-  const delegate = useMemo(() => ({ openExternalLink, openFile, fileImages }), [openExternalLink, openFile, fileImages])
+  const delegate = useMemo(() => ({ openExternalLink, externalLinks, openFile, fileImages }), [openExternalLink, externalLinks, openFile, fileImages])
   return (
     <MarkdownDelegateContext.Provider value={delegate}>
       {children}

@@ -170,7 +170,9 @@ Comparison Workflow 默认每对仅计划一个 default 节点；接受的 decid
 
 ## 问题库与聚类
 
-普通主线默认关闭聚类。显式 `cluster --run PATH --apply` 在全部归因任务已结束后，从成功且有正式收据的归因准备聚类任务；仍有 pending/running 归因时拒绝准备，失败归因跳过并列出。聚类依赖归因，不依赖对比、文案改写或可选核验；准备后在同 run 的固定范围执行。
+普通主线默认关闭聚类。`cluster --run PATH ... --run-id ID --apply` 创建独立聚类作业，固定所选 run 的已接受归因引用，不复制原始回答或归因正文，不修改来源 run。主线归因及必要补查仍 pending/running 时拒绝准备，失败归因跳过并计数；聚类不依赖对比、文案改写或可选核验。同一模型、日期、case 在多个来源重复时选接受时间最新的一份；相同时间按排序后的来源及任务遍历顺序确定，预览记录排除与重复数量。续跑重读固定 task/submission/evaluator 与输入坐标，缺失或不一致直接报错，不静默换成新的归因。
+
+独立作业先按模型汇总所有日期，再以组件、名称及完整定义精确聚合观察，跨日期支持次数一起计数。同一观察不因 `maxCasesPerTask` 拆开；分片按涉及的不同回答数控制，因此一个高频观察可超过该数值但仍只给最多三条示例。同一模型分片串行，已接受决定先持久化、再幂等应用问题库，下一片读取更新后的目录并按当前余量计算预算；不同模型可并行。多分片模型最后增加一轮全目录近义类整理，只允许复用、合并与维护，不允许无观察建类。Agent 请求用 `batch_ids` 表示所选日期。独立作业结果契约见 [clustering-job.schema.json](../schemas/workflow/clustering-job.schema.json)，进度单独引用结果文件，保留每个任务的累计尝试与内容提交次数。
 
 Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…，问题类为 C1、C2…（跨组件连续编号），组件为 P1、P2…。assignments.item_id、class_id、closest_existing、merges.into/from 与 class_updates.class_id 均引用对应短编号；组件选择仍填写名称。新类用 `assignments.new_class_index` 选择本次 `new_classes` 数组中的位置，从 0 开始；声明无需填写 key，程序生成正式结果中的 `new_classes.key` 和 `assignments.new_class_key`，不靠名称关联。同组件没有活跃类时可省略 closest_existing，程序填 null；存在候选时必须选择该组件最接近的 C 编号，缺项只反馈实际候选。Agent 在渲染材料时建立同一请求的映射，提交后精确还原真实身份，再执行组件、预算、重复归类及合并校验。未知编号或数组位置直接报错，不模糊匹配 UUID 或类名称；同一尝试的校验反馈使用相同短编号；新尝试或续跑重新根据当前材料选择，不回放上次的草稿和错误编号，避免库刷新后编号串位。正式结果和问题库继续保存原始持久化 ID，短编号不作为跨请求身份，也不写回问题库。
 
@@ -178,18 +180,20 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 数量由程序硬控，提示词只做引导：
 
-- 计划期把该模型本 run 的 `maxClassesPerModel − 活跃类数` 和 `maxComponentsPerModel − 活跃组件数` 分别均摊到全部分片；绑定任务时按该分片实际观察到的未知组件数收窄 `max_new_components`，不得突破预留份额；
+- 评测内显式开启的聚类按模型×批次分片，计划期将类与组件余量均摊到全部分片；独立作业按模型串行分片，每片使用当前问题库余量。绑定任务时均按实际观察到的未知组件数收窄 `max_new_components`；
 - 提交必须覆盖全部观察且只归一次，`class_id` 必须是库中活跃类，新类必须被至少一个观察使用且覆盖样本数达到 `minSupport`；
 - 同一组件内，`新类 label` 归一化后命中活跃类 label 或 alias 时直接拒绝，要求复用该 `class_id`；
 - `活跃类 − merges + new ≤ maxClassesPerModel`；新组件只能来自本任务观察到的组件，并受 `maxComponentsPerModel` 限制；
 - 每次归类都检查相关同组件近义类；达到 `consolidateAt` 时扩大整理范围并输出 `merges`。合并不增加当前任务的 `max_new_classes`，腾出的预算在后续规划时重算。
 - 写库按模型锁住读、合并、校验和保存；不同 run 共享同一模型时不会互相覆盖。所有模型的上限校验通过后才写文件；若有模型超出 `maxClassesPerModel` 或 `maxComponentsPerModel`（例如并发 run 或手工下调上限），本次报告不写入任何模型的库，并提示调高上限。
 
+独立作业的样本 `run_id/task_id/submission_id` 指向聚类决定，`clustering_run` 保存该作业目录，`attribution` 保存原 run 路径、run/task/submission 与评测器标识；`batch_id` 始终是原样本日期。原归因和当前聚类的身份分别可查，来源复核按这些引用回到原 Attribution source scope。
+
 类可带可选 `category_paths`：最多三条自由主题路径，每条最多三级，同一路径不能重复层级，同一类不能重复路径；每级填写简洁的单行纯文本名称，禁止 ASCII 标记分隔符 `< > [ ] { }`、C0/C1 控制字符及 Unicode 换行分隔符 U+2028/U+2029，允许普通中英文、数字、emoji、括号、斜杠和破折号。无效名称按具体层级原样返回错误并要求重新填写，不自动清理。Agent 提交与正式结果、请求中的现有目录均校验；应用目录收据时再次校验实际创建、待应用的更新及合并后的最终路径，拒绝污染写入。已应用更新按原幂等规则跳过，复用已有类时不提交新路径；被跳过的整理更新不能替代合并最终路径的校验。不重验未变更的旧目录或改写历史收据。缺失或空数组表示未组织。主题不建立新类身份或推断根因，观察的责任组件和证据确定程度保持不变。类定义只概括行为与适用边界，不新增未证明的成因、禁令或输出义务，不固定严重程度、核心可用性或胜负。类目录不是事实证据。合并保留各类路径，超过三条时必须明确整理目标类。
 
 `class_updates` 只维护当前活跃类的可选 `label/definition/category_paths`，必须有 `reason`，不修改组件或历史归因。`class_updated` 事件保存修改前后元数据、理由及 run/task/submission 身份；按 submission 与 class 幂等，重放旧维护不能回滚后来的维护。长期名称和定义不能用当前请求 O/C/P 编号解释含义，真实业务型号和错误码保留。
 
-延期不是失败或已归类，不写类或出现样本，观察与理由仍保留在正式聚类结果。显式 `recluster --task ...|--all` 创建新 UUID 任务，只重新处理尚未被后续任务承接的延期观察，并用当前目录及扣除其他未完成任务预留预算后的余量规划；原收据及本轮提交次数不变，不自动跨 run 重试。问题库统计与主题展示按 `(input_id, finding_id)` 计算独立缺陷数，多组件和多主题仍保存全部关联。
+延期不是失败或已归类，不写类或出现样本，观察与理由仍保留在正式聚类结果。评测 run 内的显式 `recluster --task ...|--all` 创建新 UUID 任务，只重新处理尚未被后续任务承接的延期观察，并用当前目录及扣除其他未完成任务预留预算后的余量规划；原收据及本轮提交次数不变，不自动跨 run 重试。独立聚类作业续跑保留已接受的延期决定；需要重新归类时以新的作业 ID 选择来源。问题库统计与主题展示按 `(input_id, finding_id)` 计算独立缺陷数，多组件和多主题仍保存全部关联。
 
 显式历史来源复核请求见 `schemas/clustering/occurrence-review.schema.json`，通过 Workflow 的 `reviewProblemOccurrences` 公开入口先沿原 Clustering 的 input 依赖重建 Attribution 观察，精确核对该组件下的 input_id、finding_id、原 source 位置、消息、原文和 evidence_status；原接受 item 与实际 assignment 必须对应这个观察及原问题类，同组件 merge lineage 可以解析到当前类，不能用同名的其他 finding 或无关类替代。text/json 证明只收完整当前自包含 evidence_id，每项至少有 owner 原材料证明，可附加原归因 source scope 中的 peer 证明；拒绝独立 source、图片证明和原 source scope 之外的输入；坐标由 Tools 重读，操作理由是显式来源审计判断，不能把坐标有效声称为程序已经验证语义。默认 preview 没有写入；模型库锁等待后二读原 Clustering scope、items/assignment、全部 Attribution 依赖的 owner/receipt 和登记 inputCatalog，原来源发生变化则拒绝。apply 使用同一个模型库锁追加 `occurrence_rejected` 事件；事件 UUID 与决定一一对应，重试同决定不新增，复用 UUID 改决定直接报错。
 
@@ -197,7 +201,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 该维护不是新的 Agent 判词，也不自动按 uncertain 状态或类名撤销，不改归因责任或恢复被撤关联。apply 只追加问题库事件，不调用 reportRun，不回写运行状态、正式结果、历史报告、stats 或 statistics-log；后续正常报告的当前库 occurrences 使用有效集合，而 assigned/new-class/merge 决定数保留已接受收据的行为账本。外部统计上传结构保持冻结。
 
-聚类任务失败时库保持不变，当天问题仍保留在 `attribution.jsonl`。
+失败的聚类任务不写库；其他已接受任务的归类保留，原问题仍保留在来源 run 的 `attribution.jsonl`。
 
 ## 改写
 
@@ -213,7 +217,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 - 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。“双方都差：”后可以说明原裁决已有的相对优劣，不改变排名、赢家字段或统计；“双方都好：”仍不得改成某方更好。当前文案按收据接受时间逐槽取最新值，同一接受时间按任务清单次序后者获胜；未触及槽位保留此前文案，重放旧收据不回滚新文案。`rewritten.evaluator_version` 取最新接受的改写收据版本，每份历史收据仍保留并独立校验其原始版本和完整评价；被覆盖的历史文本通过状态差异记录恢复。
 - 显式逐项改写只请求 `comparison.<行号>.<候选>.summary`；本格原文放在 `text`，同项对照和已确定的本项优势放在只读 `context`，不含证据；不把对照信息复制为点评前缀。Workflow 通过 `forbiddenPrefixes` 指定不可作为前缀的呈现标签，Rewrite 校验拒绝复制标签，避免将本项赢家名称贴到另一方事实前。每格先写具体得失，保留局部优势、各自约束与不确定性；仅更新这些槽位，已改写偏好、方面名、优势标记和引用保持不变。
 - 定向修复在任务数据中保存 `rewriteSlotIds`，请求必须与该非空、无重复的已知槽位集合完全对应；未知槽位在派发前拒绝。`executionScope` 保存本轮任务 UUID 清单；成功任务及其他范围外任务不会进入请求；同 run 冻结范围时不发现新增输入。准备修复保留既有源结果及文案，接受后只合并请求的槽位；旧成功任务的 attempts 和判决版本不随修复变化。CLI 选择与释放范围见[使用指南](usage.md#只补失败与同类故障熔断)。
-- 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本），不单独生成结果文件或业务日志。
+- 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。评测 run 的改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本）。独立聚类作业将槽位文案保存到 `results/rewrite.jsonl`，以 `source_task_id` 引用原聚类结果；两种工作流均不单独记录改写业务日志。
 - 看板同时展示原始输出和改写后内容，聚类详情在运行总览。问题库的类身份、归属与原始定义不被改写覆盖。
 - `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。导出保留完整已接受原文与改写，名称展开不另设点评字数上限。
 - 完整对比改写续跑时按源结果实际保存的槽位补缺，只请求缺失文字并合并回填，已有文案和源评测保留；接受后的补缺或显式定向刷新新增 UUID，相同来源、范围和槽位的未完成任务复用并保留已花提交额度。交付校验检查该源全部当前改写任务及缺失槽位，历史已接受任务不能掩盖尚未完成的刷新。

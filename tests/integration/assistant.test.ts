@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AssistantSessions } from "@eval/runtime/assistant";
 import { body, listen } from "@eval/runtime/http";
 import { assistantDirectory } from "@eval/data";
-import { object, type AssistantPrompt, type JsonObject, type ModelConfig } from "@eval/contracts";
+import { object, type AssistantPrompt, type AssistantTool, type JsonObject, type ModelConfig } from "@eval/contracts";
 import { createEris } from "@eval/assistant";
 import { createSerperSearch } from "@eval/tools";
 import { waitForTestState } from "../fixtures/wait.js";
@@ -58,6 +58,7 @@ test("Eris Responses requests preserve optional tool arguments through Pi", { ti
     await sessions.prompt(scope.userId, { sessionId: scope.sessionId, requestId, mode: "queue", content: [{ type: "text", text: "现在评测的进度如何？" }] });
     assert.equal((await settled(sessions, scope.sessionId, requestId)).requests[requestId], "completed", JSON.stringify(errors));
     assert.equal(requests.length, 2, "the overview tool result reaches the next model request");
+    for (const payload of requests) assert.equal(payload.parallel_tool_calls, true);
     for (const payload of requests) for (const tool of payload.tools as JsonObject[]) {
       assert.equal(tool.strict, false, `${tool.name}: Responses must not promote optional arguments to required`);
       assert.deepEqual(tool.parameters, eris.tools.find(source => source.name === tool.name)!.inputSchema);
@@ -300,7 +301,8 @@ test("Pi conversation checkpoints before requests, deduplicates, invokes tools, 
   });
   const model: ModelConfig = { provider: "test-gateway", baseUrl: gateway.url + "/v1", api: "openai-completions", apiKeyEnv: "ASSISTANT_TEST_KEY", model: "fixture", thinking: "off", contextWindow: 65536, maxOutputTokens: 4096 };
   let toolExecutions = 0;
-  const options = { directory, url: "http://127.0.0.1:1", model, systemPrompt: "Use lookup, then explain.", tools: [{ name: "lookup", readOnly: true, description: "Read accepted results.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, execute: async () => { toolExecutions++; return { content: [{ type: "text" as const, text: "accepted:r6" }], details: { sourceRead: { tool: "lookup", args: {} } } }; } }], onError: (error: unknown) => errors.push(error) };
+  const audiences: (string | undefined)[] = [];
+  const options = { directory, url: "http://127.0.0.1:1", model, systemPrompt: "Use lookup, then explain.", tools: [{ name: "lookup", readOnly: true, description: "Read accepted results.", inputSchema: { type: "object", properties: {}, additionalProperties: false }, execute: async (_args: unknown, context: Parameters<AssistantTool["execute"]>[1]) => { toolExecutions++; audiences.push(context.audience); return { content: [{ type: "text" as const, text: "accepted:r6" }], details: { sourceRead: { tool: "lookup", args: {} } } }; } }], onError: (error: unknown) => errors.push(error) };
   let sessions = new AssistantSessions(options);
   try {
     await sessions.create(scope.userId, scope.sessionId);
@@ -327,6 +329,7 @@ test("Pi conversation checkpoints before requests, deduplicates, invokes tools, 
     const beforeInspect = await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8");
     assert.equal((await sessions.toolResult(scope, "lookup-call")).content[0].text, "accepted:r6");
     assert.equal(toolExecutions, 3);
+    assert.deepEqual(audiences, [undefined, "model", "user"], "UI previews cannot enter model restoration");
     assert.equal(await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8"), beforeInspect, "inspection does not add source bodies or replay events");
     await assert.rejects(sessions.toolResult(scope, "unrecorded"), /没有可读取/);
     await assert.rejects(sessions.toolResult({ ...scope, userId: "bob" }, "lookup-call"), /ENOENT/);

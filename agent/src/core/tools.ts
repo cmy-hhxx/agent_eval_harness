@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 import { validateChart, type ChartSpec } from "./chart.js";
@@ -27,14 +27,24 @@ function resultPage(value: unknown, options: { offset?: number; limit?: number }
 }
 
 /** Filter evidence containers only at the model boundary; accepted rows remain untouched. */
-function resultSummary(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(resultSummary);
+function resultSummary(value: unknown, runId?: string): unknown {
+  if (Array.isArray(value)) return value.map(child => resultSummary(child, runId));
   if (value === null || typeof value !== "object") return value;
   const { rewritten, ...fields } = value as Record<string, unknown>;
-  return { ...(rewritten === undefined ? {} : { rewritten: resultSummary(rewritten) }),
+  return { ...(rewritten === undefined ? {} : { rewritten: resultSummary(rewritten, runId) }),
     ...Object.fromEntries(Object.entries(fields)
-      .filter(([key]) => key !== "evidence" && !key.endsWith("_evidence"))
-      .map(([key, child]) => [key, resultSummary(child)])) };
+      .flatMap(([key, child]) => {
+        if (key !== "evidence" && !key.endsWith("_evidence")) return [[key, resultSummary(child, runId)]];
+        if (!runId || !Array.isArray(child)) return [];
+        const references = new Map<string, AnalysisReference>();
+        for (const item of child) {
+          const coordinate = typeof item?.evidence_id === "string" ? parseEvidenceCoordinates(item.evidence_id) : undefined;
+          if (coordinate) references.set(`${coordinate.input_id}:${coordinate.message_index}`, {
+            runId, inputId: coordinate.input_id, messageIndex: coordinate.message_index,
+          });
+        }
+        return references.size ? [[`${key}_references`, [...references.values()]]] : [];
+      })) };
 }
 
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
@@ -57,6 +67,18 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         ...(result.summary ? { summary: directorySummary(result.summary as JsonObject) } : {}),
         ...(current?.summary ? { currentRun: { ...current, summary: directorySummary(current.summary as JsonObject) } } : {}),
       });
+    },
+    read_case: async (value, context) => {
+      const args = value as { reference: AnalysisReference };
+      const data = await options.data.read(args.reference, { view: "case", ...(context.audience === "user" ? { audience: "user" as const } : {}) });
+      const formal = data.formal as JsonObject | undefined;
+      return { ...textResult({ ...data, ...(formal ? { formal: { ...formal, result: resultSummary(formal.result, args.reference.runId) } } : {}) }),
+        details: { sourceRead: { tool: "read_case", args } } };
+    },
+    read_evidence: async (value) => {
+      const args = value as { reference: AnalysisReference } & Omit<Extract<AnalysisReadOptions, { view: "evidence" }>, "view">;
+      const data = await options.data.read(args.reference, { view: "evidence", messages: args.messages });
+      return { ...textResult(data), isError: data.readCount === 0, details: { sourceRead: { tool: "read_evidence", args } } };
     },
     read_data: async (value) => {
       const args = value as { reference: AnalysisReference } & AnalysisResultReadOptions;
@@ -133,7 +155,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => ({ path, code, expected }));
       throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(validate.errors)}`);
     };
-    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart", "show_comparison"].includes(name),
+    return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_case", "read_evidence", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart", "show_comparison"].includes(name),
       validate: validateArgs,
       async execute(value, context) {
         context.signal.throwIfAborted();

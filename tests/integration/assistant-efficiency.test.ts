@@ -23,6 +23,7 @@ for (const scenario of ["parallel", "writable", "cancel"] as const) test(scenari
   let release = () => {};
   const firstBatch = new Promise<void>(resolve => { release = resolve; });
   const started: number[] = [], completed: number[] = [], errors: unknown[] = [];
+  const parallelFlags: unknown[] = [];
   const lookup: AssistantTool = { name: "lookup", description: "Read independent evidence", readOnly: true,
     inputSchema: { type: "object", properties: { index: { type: "integer" } }, required: ["index"] },
     async execute(value, context) {
@@ -47,6 +48,7 @@ for (const scenario of ["parallel", "writable", "cancel"] as const) test(scenari
   };
   const gateway = await listen(async (req, res) => {
     const request = object(await body(req)); modelCalls++;
+    parallelFlags.push(request.parallel_tool_calls);
     const hasTools = (request.messages as JsonObject[]).some(message => message.role === "tool");
     if (hasTools) {
       const journal = (await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -80,6 +82,7 @@ for (const scenario of ["parallel", "writable", "cancel"] as const) test(scenari
       if (["completed", "interrupted"].includes(state.requests[requestId])) break;
       await delay(10);
     }
+    assert(parallelFlags.length > 0 && parallelFlags.every(flag => flag === true), "Eris must enable parallel calls in every actual provider payload");
     assert.equal(timedOut, false, "independent reads must start together, without waiting for earlier reads to finish");
     assert.equal(peak, scenario === "writable" ? 1 : 4);
     assert.deepEqual(started, scenario === "cancel" ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5]);

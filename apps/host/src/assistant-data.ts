@@ -1,12 +1,27 @@
 import path from "node:path";
-import { safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisQuery, type JsonObject } from "@eval/contracts";
+import { safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
 import { exists, localFiles, readJson } from "@eval/data";
-import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
 
 function page(total: number, offset: number, limit: number, unit: "items" | "messages" | "characters") {
   const end = Math.min(total, offset + limit);
   return { total, offset, limit, unit, hasMore: end < total, nextOffset: end < total ? end : null };
+}
+
+function messagePage(raw: Awaited<ReturnType<typeof readAnalysisInput>>, reference: AnalysisReference, options?: { offset?: number; limit?: number }) {
+  const offset = options?.offset ?? 0, limit = Math.min(options?.limit ?? 8000, 16000);
+  const message = raw.messages[reference.messageIndex!];
+  if (!message) throw new Error("Message index out of range");
+  const sources = evidenceSources(message).filter((item) => item.kind === "text");
+  const full = sources.map((item) => item.text).join("\n");
+  let position = 0;
+  const evidence = sources.flatMap((source) => {
+    const start = Math.max(0, offset - position), end = Math.min(source.text.length, offset + limit - position);
+    position += source.text.length + 1;
+    return end > start ? [cite(reference.inputId!, reference.messageIndex!, source, start, end)] : [];
+  });
+  return { kind: "message", reference, ...page(full.length, offset, limit, "characters"), text: full.slice(offset, offset + limit), evidence };
 }
 
 export class LocalAnalysisData implements AnalysisDataSource {
@@ -83,7 +98,18 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const locator = await locateAnalysisInput(this.run(reference.runId), reference.inputId);
     return readAnalysisInput(locator);
   }
-  async read(reference: AnalysisReference, options?: { offset?: number; limit?: number }): Promise<JsonObject> {
+  async read(reference: AnalysisReference, options?: AnalysisReadOptions): Promise<JsonObject> {
+    if (options?.view === "case") return this.case(reference, options.audience);
+    if (options?.view === "evidence") {
+      if (!reference.inputId || reference.taskId || reference.messageIndex !== undefined) throw new Error("批量证据使用 runId + inputId，节点与分页放在 messages 中。");
+      const raw = await this.raw(reference);
+      const items = options.messages.map(({ messageIndex, ...slice }) => {
+        const node = { ...reference, messageIndex };
+        if (!raw.messages[messageIndex]) return { kind: "message-error", reference: node, error: "Message index out of range" };
+        return messagePage(raw, node, slice);
+      });
+      return { kind: "evidence", reference, requestedCount: items.length, readCount: items.filter(item => item.kind === "message").length, items };
+    }
     if (reference.taskId) {
       if (reference.inputId || reference.messageIndex !== undefined) throw new Error("读取目标不明确：原始消息用 runId + inputId（可加 messageIndex），正式结果用 runId + taskId；不要混用。");
       const state = await readRunTasks(this.run(reference.runId), [reference.taskId]);
@@ -101,18 +127,20 @@ export class LocalAnalysisData implements AnalysisDataSource {
         return { reference: { ...reference, messageIndex: offset + i }, messageIndex: offset + i, role: m.role, chars: text.length, preview: text.slice(0, 160) };
       }) };
     }
-    const limit = Math.min(options?.limit ?? 8000, 16000);
-    const message = raw.messages[reference.messageIndex];
-    if (!message) throw new Error("Message index out of range");
-    const sources = evidenceSources(message).filter((item) => item.kind === "text");
-    const full = sources.map((item) => item.text).join("\n");
-    let position = 0;
-    const evidence = sources.flatMap((source) => {
-      const start = Math.max(0, offset - position), end = Math.min(source.text.length, offset + limit - position);
-      position += source.text.length + 1;
-      return end > start ? [cite(reference.inputId!, reference.messageIndex!, source, start, end)] : [];
-    });
-    return { kind: "message", reference, ...page(full.length, offset, limit, "characters"), text: full.slice(offset, offset + limit), evidence };
+    return messagePage(raw, reference, options);
+  }
+  private async case(reference: AnalysisReference, audience?: "user"): Promise<JsonObject> {
+    if (reference.messageIndex !== undefined || Boolean(reference.inputId) === Boolean(reference.taskId))
+      throw new Error("案例使用 runId + taskId 或 runId + inputId，不接受消息坐标。");
+    const run = this.run(reference.runId);
+    const saved = await readJson<Checkpoint>(path.join(run, "state.json"));
+    const formal = reference.taskId ? await this.read(reference) : undefined;
+    if (formal && !formal.comparisonScope) throw new Error("该 taskId 不是已裁决的正式比较；单条回答请使用 inputId。");
+    const ids = reference.inputId ? [reference.inputId] : Object.values(saved.tasks[reference.taskId!]!.inputIds);
+    const answers = await Promise.all(ids.map(inputId => readAnalysisAnswer(run, inputId, reference.runId, audience)));
+    const question = answers[0]?.question;
+    if (question === undefined || answers.some(answer => answer.question !== question)) throw new Error("案例的原始问题缺失或不一致。");
+    return { kind: "case", reference, question, answers: answers.map(({ question: _question, ...answer }) => answer), ...(formal ? { formal } : {}) };
   }
   async search(reference: AnalysisReference, query: string, options?: { offset?: number; limit?: number }): Promise<JsonObject> {
     if (!query) throw new Error("Search query required");

@@ -17,9 +17,12 @@ export * from "./validate.js";
 export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";
 export * from "./observations.js";
+export { prepareClusteringJob, clusteringJobWorkflow, clusteringJobRepository, reportClusteringJob,
+  type ClusteringJobConfig, type ClusteringJobSource } from "./clustering-job.js";
 export * from "./publication.js";
 export * from "./problem-occurrence-review.js";
 export * from "./analysis-progress.js";
 export * from "./analysis-comparison.js";
+export * from "./analysis-case.js";
 
 export { prepareComparisonVerification } from "./verification-preparation.js";

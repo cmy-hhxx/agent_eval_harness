@@ -7,6 +7,44 @@ import { ROOT } from "../../tests/fixtures/services.js";
 
 const { analysisToolModel } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/tool-model.js")).href);
 
+test("batch evidence details distinguish missing, partial and complete nodes without repeating quotes", () => {
+  const reference = { runId: "run", inputId: "input" };
+  const items = [
+    { reference: { ...reference, messageIndex: 3 }, text: "已读内容", evidence: [{ evidence_id: "source-3", quote: "已读内容" }], hasMore: true, nextOffset: 2000 },
+    { reference: { ...reference, messageIndex: 7 }, text: "完整内容", hasMore: false, nextOffset: null },
+    { reference: { ...reference, messageIndex: 99 }, error: "Message index out of range" },
+  ];
+  const model = analysisToolModel("read_evidence", { state: "ok", output: JSON.stringify({ kind: "evidence", items }) });
+  assert.equal(model.summary, "批量读取证据 · 读取 2/3 个节点 · 部分完成");
+  assert.deepEqual(model.details.items.map((item: { badge: { label: string } }) => item.badge.label), ["尚有后文", "已完整读取", "读取失败"]);
+  assert(model.details.items[0].fields.some((field: { label: string; value: string }) => field.label === "下一页" && field.value === "2000"));
+  assert.equal(model.details.items[0].groups[0].items[0].title, "source-3");
+  assert.equal(JSON.stringify(model.details).split("已读内容").length - 1, 1);
+  assert.equal(model.details.items[2].description, items[2].error);
+  const failure = analysisToolModel("read_evidence", { state: "error", output: JSON.stringify({ kind: "evidence", items: [items[2]] }) });
+  assert.match(failure.summary, /未完成/);
+  assert.equal(failure.details.items[0].description, items[2].error);
+  const tail = analysisToolModel("read_evidence", { state: "ok", output: JSON.stringify({ kind: "evidence", items: [{ ...items[1], offset: 2000 }] }) });
+  assert.equal(tail.details.items[0].badge.label, "已读至结尾", "the last page alone is not the complete message");
+});
+
+test("case details show each answer with an independently expandable trace map", () => {
+  const output = { kind: "case", question: "用户想比较什么", answers: [{ modelName: "B组Expert", answer: { text: "实际回答", complete: true },
+    trace: { messageCount: 40, toolCalls: 14, finalMessageIndex: 39, nodes: [
+      { messageIndex: 3, type: "tool_result", name: "memory", preview: "Error: missing argument", reference: { runId: "run", inputId: "input", messageIndex: 3 } },
+      { messageIndex: 39, type: "final_answer", reference: { runId: "run", inputId: "input", messageIndex: 39 } },
+    ] } }] };
+  const model = analysisToolModel("read_case", { state: "ok", output: JSON.stringify(output) });
+  assert.equal(model.summary, "读取案例 · 1 条回答 · 已完成");
+  assert.equal(model.details.items[0].description, output.question);
+  const groups = model.details.items[1].groups;
+  assert.equal(groups[0].items[0].code.text, "实际回答");
+  assert.equal(groups[1].label, "链路地图（2 个节点）");
+  assert.equal(groups[1].items[0].title, "3 · Tool result · memory");
+  assert.equal(groups[1].items[0].description, "Error: missing argument");
+  assert.equal(groups[1].items[1].title, "39 · Final answer");
+});
+
 test("data query summaries use full-run counts and distinguish historical runs from answers", () => {
   const summary = { inputCount: 26, caseCount: 10 };
   assert.equal(analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "runs", total: 26, currentRun: { summary }, items: [] }) }).summary,

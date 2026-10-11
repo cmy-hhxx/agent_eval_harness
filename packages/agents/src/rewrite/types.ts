@@ -11,7 +11,7 @@ export interface RewriteItem {
 }
 export interface RewriteRequest {
   kind: "attribution" | "comparison" | "clustering";
-  scope?: { batch_id: string; model: string };
+  scope?: { batch_ids: string[]; model: string };
   case?: {
     batch_id: string;
     case_id: string;

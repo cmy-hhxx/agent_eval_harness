@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { canonical, presentSource, ValidationError, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
+import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { cite, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { projectComparisonEvidence } from "./evidence-presentation.js";
@@ -15,7 +15,7 @@ import { originalAnswerUsage } from "./experience.js";
 import { traceCatalog } from "./catalog.js";
 import { citationInventory, type CitationContext, type CitationInventory } from "./citations.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
-import { rewritePresentation } from "./rewrite-presentation.js";
+import { bindRewriteItems } from "./rewrite-presentation.js";
 import { comparisonScope, comparisonSlotChoices } from "@eval/agents/comparison";
 import { attributionPresentation, tableChecksPresentation } from "./attribution-presentation.js";
 import { comparisonSourceReview } from "./source-review.js";
@@ -166,7 +166,7 @@ function bindSourceTask(
       request: {
         input: {
           model: scope.version,
-          batch_id: scope.batch_id,
+          batch_ids: [scope.batch_id],
           // Observations narrow this shard's reserved headroom, but cannot enlarge it:
           // other shards may accept new components against the same model library.
           budget: {
@@ -199,7 +199,7 @@ function bindSourceTask(
     const request = {
       input: {
         kind: data.rewriteOf.stage,
-        ...(data.rewriteScope ? { scope: data.rewriteScope } : { case: {
+        ...(data.rewriteScope ? { scope: { batch_ids: [data.rewriteScope.batch_id], model: data.rewriteScope.model } } : { case: {
           batch_id: data.case!.batch_id, case_id: data.case!.case_id,
         } }),
         items: slots.filter((item) => !data.rewriteSlotIds || data.rewriteSlotIds.includes(item.id)).map((item) => ({
@@ -217,23 +217,7 @@ function bindSourceTask(
       },
       sources: {},
     };
-    return {
-      agent: "rewrite",
-      profile: "default",
-      request,
-      resolveSubmission(value) {
-        const texts = (value as { texts: string[] }).texts;
-        if (texts.length !== request.input.items.length) throw new ValidationError([{ category:"structure",code:"rewrite_slot_count",path:"/texts",
-          actual:texts.length,expected:request.input.items.length,message:"按请求顺序返回全部文本，数量必须与槽位一致。" }]);
-        return { rewrites: request.input.items.map((item,index) => ({id:item.id,text:texts[index]})) };
-      },
-      modelInput: { ...request.input, items: request.input.items.map(({ id: _id, ...item }) => ({
-        ...item,
-        label: rewritePresentation(item.label),
-        text: rewritePresentation(item.text),
-        ...(item.context !== undefined ? { context: rewritePresentation(item.context) } : {}),
-      })) },
-    };
+    return bindRewriteItems(request.input);
   }
   if (data.stage === "comparison" && (data.group?.length ?? 0) < 2)
     throw new Error("对比组至少需要两个候选");

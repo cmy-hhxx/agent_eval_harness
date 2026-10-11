@@ -11,6 +11,8 @@ import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { loadRunInputs, readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
 import type { AttributionResult, Candidate, EvalConfig, RawInput, TaskData } from "./types.js";
+import { clusteringJobStorage, loadClusteringJobInputs, readClusteringJobSources } from "./clustering-job.js";
+import { clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
 
 export interface ProblemOccurrenceReviewResult {
   review_id: string;
@@ -84,6 +86,23 @@ function originBinding(state: RunState, taskId: string) {
     exported: exported && { task_id: exported.task_id, model: exported.model, items: exported.items }, attributions, catalog };
 }
 
+async function jobOrigin(state: RunState, taskId: string) {
+  const config = state.manifest.config as ClusteringJobConfig;
+  const task = state.manifest.tasks.find(task => task.id === taskId);
+  if (!task || !state.receipts[taskId]) fail("独立聚类来源收据缺失");
+  const sources = await readClusteringJobSources(config.clusteringJob.sources);
+  const observations = jobObservations(await loadClusteringJobInputs(config), task.data as ClusteringJobTask);
+  return { sources, observations, binding: {
+    task, submission_id: state.receipts[taskId].submissionId, evaluation: state.receipts[taskId].evaluation,
+    items: state.receipts[taskId].exported?.row.items,
+    sources: config.clusteringJob.sources.map(source => {
+      const original = sources.get(source.run)!;
+      return { source, task: original.manifest.tasks.find(task => task.id === source.task_id),
+        receipt: original.receipts[source.task_id], catalog: original.manifest.inputCatalog };
+    }),
+  } };
+}
+
 /** Explicit operator source review; preview is read-only and apply writes only the model library. */
 export async function reviewProblemOccurrences(
   config: EvalConfig,
@@ -103,30 +122,39 @@ export async function reviewProblemOccurrences(
 
   const runs = new Map<string, { directory: string; state: RunState }>();
   const revisions = new Map<string, string>();
-  const origins: { directory: string; clusteringTaskId: string; attributionTaskIds: string[]; binding: ReturnType<typeof originBinding> }[] = [];
+  const origins: { directory: string; clusteringTaskId: string; attributionTaskIds: string[]; independent: boolean; binding: unknown }[] = [];
   const targets: ProblemOccurrenceReviewTarget[] = [];
   for (const [index, item] of decision.items.entries()) {
     const occurrence = initial.occurrences.find(entry => entry.id === item.occurrence_id)!;
-    let run = runs.get(occurrence.run_id);
+    const runKey = occurrence.clustering_run ?? path.join(config.output.path, safeId(occurrence.run_id));
+    let run = runs.get(runKey);
     if (!run) {
-      const directory = path.join(config.output.path, safeId(occurrence.run_id));
-      const state = await readRunState(directory);
+      const directory = runKey;
+      const state = occurrence.clustering_run ? await clusteringJobStorage.readRun(directory) : await readRunState(directory);
       if (state.manifest.runId !== occurrence.run_id) fail("原运行身份不一致：" + occurrence.run_id);
       run = { directory, state };
-      runs.set(occurrence.run_id, run);
+      runs.set(runKey, run);
     }
     const { state, directory } = run;
     const task = state.manifest.tasks.find(task => task.id === occurrence.task_id);
     const receipt = state.receipts[occurrence.task_id];
     const scope = (task?.data as TaskData | undefined)?.scope;
+    const independent = !!occurrence.clustering_run;
+    const job = independent && task ? await jobOrigin(state, task.id) : undefined;
     if (!task || task.stage !== "clustering" || !receipt || receipt.submissionId !== occurrence.submission_id ||
-      scope?.version !== decision.model || scope.batch_id !== occurrence.batch_id)
+      (independent ? (task.data as ClusteringJobTask).model !== decision.model :
+        scope?.version !== decision.model || scope.batch_id !== occurrence.batch_id))
       fail("问题样本原 Clustering 收据或范围不一致：" + item.occurrence_id);
-    const attributionTaskId = task.dependencies[occurrence.input_id];
-    const attributionTask = state.manifest.tasks.find(task => task.id === attributionTaskId);
-    const attribution = attributionTaskId ? state.receipts[attributionTaskId] : undefined;
+    const attributionTaskId = independent ? occurrence.attribution?.task_id : task.dependencies[occurrence.input_id];
+    const sourceState = independent ? job!.sources.get(occurrence.attribution?.run ?? "") : state;
+    const attributionTask = sourceState?.manifest.tasks.find(task => task.id === attributionTaskId);
+    const attribution = attributionTaskId ? sourceState?.receipts[attributionTaskId] : undefined;
     const owner = (attributionTask?.data as TaskData | undefined)?.candidates.A;
-    const scopeCase = scope.cases[occurrence.input_id];
+    const scopeCase = independent ? (state.manifest.config as ClusteringJobConfig).clusteringJob.sources.find(source =>
+      source.input_id === occurrence.input_id && source.task_id === attributionTaskId &&
+      canonical({ run: source.run, run_id: source.run_id, task_id: source.task_id,
+        submission_id: source.submission_id, evaluator_version: source.evaluator_version }) === canonical(occurrence.attribution))
+      : scope!.cases[occurrence.input_id];
     if (!attributionTask || attributionTask.stage !== "attribution" || !attribution ||
       attributionTask.inputIds.answer !== occurrence.input_id || owner?.input_id !== occurrence.input_id ||
       owner.version !== decision.model || owner.case_id !== occurrence.case_id || owner.batch_id !== occurrence.batch_id ||
@@ -143,7 +171,7 @@ export async function reviewProblemOccurrences(
 
     const row = receipt.exported?.row as { task_id?: string; model?: string; items?: unknown[] } | undefined;
     const result = receipt.evaluation as ClusteringResult;
-    const observations = taskObservations(task, id => state.receipts[id]);
+    const observations = job ? job.observations : taskObservations(task, id => state.receipts[id]);
     if (!row || row.task_id !== task.id || row.model !== decision.model || !Array.isArray(row.items) ||
       !observations.some(observation =>
         [component.label, ...component.aliases].some(name => normalizeLabel(name) === normalizeLabel(observation.component)) &&
@@ -151,7 +179,8 @@ export async function reviewProblemOccurrences(
           input_id: occurrence.input_id, finding_id: occurrence.finding_id, case_id: occurrence.case_id,
           source: occurrence.source, message_index: occurrence.message_index, quote: occurrence.quote,
           evidence_status: occurrence.evidence_status,
-        })) && row.items!.some(item => canonical(item) === canonical({
+          ...(independent ? { batch_id: occurrence.batch_id, attribution: occurrence.attribution } : {}),
+        })) && row.items!.some(item => canonical(item) === canonical(independent ? clusteringJobItems([observation])[0] : {
           id: observation.id, component: observation.component, label: observation.label,
           count: observation.count, established_count: observation.established_count, uncertain_count: observation.uncertain_count,
         })) && result.assignments.some(assignment => assignment.item_id === observation.id &&
@@ -160,7 +189,7 @@ export async function reviewProblemOccurrences(
 
     const allowed = new Set(Object.values(attributionTask.inputIds));
     if (!allowed.has(occurrence.input_id)) fail("问题样本原来源范围缺少 owner");
-    const catalog = state.manifest.inputCatalog as Candidate[];
+    const catalog = sourceState!.manifest.inputCatalog as Candidate[];
     const candidates = new Map(catalog.filter(candidate => allowed.has(candidate.input_id)).map(candidate => [candidate.input_id, candidate]));
     if (candidates.size !== allowed.size) fail("原归因来源范围含未登记输入");
     for (const candidate of candidates.values()) {
@@ -168,7 +197,7 @@ export async function reviewProblemOccurrences(
       if (candidate.batch_id !== owner.batch_id || candidate.case_id !== owner.case_id || candidate.question !== owner.question)
         fail("原归因 source scope 不是同一案例或原问题");
     }
-    const inputs = await loadRunInputs(state.manifest, undefined, new Set([attributionTaskId]));
+    const inputs = await loadRunInputs(sourceState!.manifest, undefined, new Set([attributionTaskId!]));
     let hasOwnerProof = false;
     for (const [proofIndex, reference] of item.evidence.entries()) {
       const coordinates = parseEvidenceCoordinates(reference.evidence_id);
@@ -186,17 +215,20 @@ export async function reviewProblemOccurrences(
     targets.push({
       occurrence_id: occurrence.id, association, class_id_at_review: occurrence.class_id,
       origin: { run_id: occurrence.run_id, task_id: occurrence.task_id, submission_id: occurrence.submission_id },
-      attribution: { task_id: attributionTaskId, submission_id: attribution.submissionId },
+      attribution: { task_id: attributionTaskId!, submission_id: attribution.submissionId },
     });
     origins.push({ directory, clusteringTaskId: task.id,
-      attributionTaskIds: Object.keys(scope.cases).map(inputId => task.dependencies[inputId]!), binding: originBinding(state, task.id) });
+      independent, attributionTaskIds: independent ? [] : Object.keys(scope!.cases).map(inputId => task.dependencies[inputId]!),
+      binding: job ? job.binding : originBinding(state, task.id) });
   }
   const checkSources = async () => {
     for (const [source, revision] of revisions)
       if (await fileSourceReader.revision(source) !== revision) fail("复核证明读取期间原输入发生变化：" + source);
     for (const origin of origins) {
-      const current = await readRunTasks(origin.directory, [origin.clusteringTaskId, ...origin.attributionTaskIds]);
-      if (canonical(origin.binding) !== canonical(originBinding(current, origin.clusteringTaskId)))
+      const current = origin.independent ? await clusteringJobStorage.readRun(origin.directory) :
+        await readRunTasks(origin.directory, [origin.clusteringTaskId, ...origin.attributionTaskIds]);
+      const binding = origin.independent ? (await jobOrigin(current, origin.clusteringTaskId)).binding : originBinding(current, origin.clusteringTaskId);
+      if (canonical(origin.binding) !== canonical(binding))
         fail("复核期间原 accepted 来源发生变化");
     }
   };

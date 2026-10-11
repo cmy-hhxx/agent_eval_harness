@@ -242,6 +242,9 @@ export interface ProblemOccurrence {
   case_id: string;
   input_id: string;
   run_id: string;
+  /** Independent clustering jobs keep their directory and accepted attribution source. */
+  clustering_run?: string;
+  attribution?: AttributionSource;
   task_id: string;
   submission_id: string;
   finding_id: string;
@@ -253,6 +256,13 @@ export interface ProblemOccurrence {
   classification: "assigned" | "created";
   previous_class_id: string | null;
   at: string;
+}
+export interface AttributionSource {
+  run: string;
+  run_id: string;
+  task_id: string;
+  submission_id: string;
+  evaluator_version: string;
 }
 export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected";
 export interface ProblemEvent {

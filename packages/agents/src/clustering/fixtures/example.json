@@ -2,7 +2,6 @@
   "request": {
     "input": {
       "model": "a_fast",
-      "batch_id": "0923",
       "budget": {
         "active_classes": 1,
         "max_classes": 80,
@@ -25,7 +24,9 @@
                 "id": "class-arithmetic",
                 "label": "算术错误",
                 "definition": "数值计算与事实不符。",
-                "aliases": ["计算错误"],
+                "aliases": [
+                  "计算错误"
+                ],
                 "occurrences": 17
               }
             ]
@@ -79,14 +80,23 @@
             }
           ]
         }
+      ],
+      "batch_ids": [
+        "0923"
       ]
     },
     "sources": {}
   },
   "result": {
     "assignments": [
-      { "item_id": "o1", "class_id": "class-arithmetic" },
-      { "item_id": "o2", "new_class_key": "n1" }
+      {
+        "item_id": "o1",
+        "class_id": "class-arithmetic"
+      },
+      {
+        "item_id": "o2",
+        "new_class_key": "n1"
+      }
     ],
     "new_classes": [
       {

@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import type { PlannedTask, RunState } from "@eval/contracts";
 import { problemLibraryFile, readProblemLibrary, runLock } from "@eval/data";
 import { emptyLibrary, projectLibrary, type ClusteringResult } from "@eval/agents/clustering";
 import { comparisonSlots } from "./commentary.js";
-import { buildPlan, taskCase } from "./input.js";
+import { taskCase } from "./input.js";
 import { pendingTaskProgress, readRunState, writeRunState } from "./run-data.js";
 import { stageResult } from "./results.js";
 import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
@@ -24,76 +23,6 @@ export interface DeferredClusteringSelection {
   taskIds?: string[];
   all?: boolean;
   apply?: boolean;
-}
-
-/** Prepare library maintenance from accepted answers after the base attribution queue settles. */
-export async function prepareClustering(run: string, selection: { apply?: boolean } = {}) {
-  const release = await runLock(run);
-  try {
-    const state = await readRunState(run), tasks = state.manifest.tasks;
-    const base = tasks.filter(task => task.stage === "attribution" && !(task.data as TaskData).reviewOf);
-    const unfinished = tasks.filter(task => task.stage === "attribution" && (!(task.data as TaskData).reviewOf ||
-      (task.data as TaskData).coverageReview || (task.data as TaskData).standardConflictReview) &&
-      ["pending", "running"].includes(state.manifest.states[task.id].status));
-    if (unfinished.length) throw new Error("归因尚未全部结束，不能开始聚类：" + unfinished.map(task => task.id).join(", "));
-    // A later accepted source review owns the same answer; unfinished optional reviews do not gate maintenance.
-    const proposals = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
-      .map(task => (task.data as TaskData).reviewOf!.taskId));
-    const accepted = tasks.filter(task => task.stage === "attribution" &&
-      !proposals.has(task.id) && state.manifest.states[task.id].status === "succeeded" && state.receipts[task.id]);
-    const latest = new Map<string, PlannedTask>();
-    for (const task of accepted) {
-      const inputId = task.inputIds.answer, prior = latest.get(inputId);
-      if (!prior || state.receipts[task.id].acceptedAt >= state.receipts[prior.id].acceptedAt) latest.set(inputId, task);
-    }
-    const config = state.manifest.config as EvalConfig;
-    const maintenance = (task: PlannedTask) => task.stage === "clustering" ||
-      (task.data as TaskData).rewriteOf?.stage === "clustering";
-    const existing = tasks.filter(maintenance);
-    // Planning uses only persisted coordinates and receipts. It never scans or reloads the answer sources.
-    const plan = await buildPlan({ ...config, comparisons: [], clustering: { ...config.clustering, enabled: true },
-      inputs: { ...config.inputs, versions: config.inputs.versions.map(version => ({ ...version, sources: [] })) } }, {
-      tasks: [...latest.values(), ...existing.filter(task => !(task.data as TaskData).reclassifyOf)],
-      inputs: {}, catalog: state.manifest.inputCatalog, summary: state.manifest.preflight,
-    }, { acceptedTaskIds: new Set(Object.keys(state.receipts)), materializeInputs: false });
-    const planned = new Map(plan.tasks.filter(maintenance).map(task => [task.id, task]));
-    // Accepted history and explicit deferred reclassification remain independently addressable.
-    for (const task of existing)
-      if (state.receipts[task.id] || (task.data as TaskData).reclassifyOf ||
-        (task.stage === "rewrite" && state.receipts[(task.data as TaskData).rewriteOf!.taskId])) planned.set(task.id, task);
-    for (const task of existing) {
-      const source = (task.data as TaskData).rewriteOf?.taskId;
-      if (source && planned.has(source) && !planned.has(task.id)) planned.set(task.id, task);
-    }
-    for (const task of planned.values()) {
-      if (task.stage !== "clustering" || state.receipts[task.id]) continue;
-      const dependencies = Object.fromEntries(Object.keys((task.data as TaskData).scope!.cases)
-        .map(inputId => [inputId, task.dependencies[inputId]]));
-      for (const id of Object.values(dependencies))
-        if (!state.receipts[id]) throw new Error("聚类缺少已接受归因：" + id);
-      planned.set(task.id, { ...task, dependencies });
-    }
-    const selectedTasks = [...planned.values()].filter(task => !state.receipts[task.id]);
-    const selected = selectedTasks.filter(task => task.stage === "clustering").map(task => ({
-      task_id: existing.some(item => item.id === task.id) || selection.apply ? task.id : null,
-      model: (task.data as TaskData).scope!.version,
-      batch_id: (task.data as TaskData).scope!.batch_id,
-      answers: Object.keys((task.data as TaskData).scope!.cases).length,
-    }));
-    if (selection.apply && selectedTasks.length) {
-      const original = new Map(tasks.map(task => [task.id, task]));
-      state.manifest.tasks = [...tasks.filter(task => !maintenance(task)), ...planned.values()];
-      for (const task of selectedTasks) state.manifest.states[task.id] = pendingTaskProgress(state.manifest.states[task.id],
-        !!original.get(task.id) && !isDeepStrictEqual(original.get(task.id), task));
-      state.manifest.preflight.clustering_tasks = [...planned.values()].filter(task => task.stage === "clustering").length;
-      state.manifest.preflight.rewrite_tasks = state.manifest.tasks.filter(task => task.stage === "rewrite").length;
-      await freeze(run, state, selectedTasks.map(task => task.id));
-    }
-    return { applied: !!selection.apply, count: selected.length,
-      attribution_answers: latest.size, excluded_attributions: base.filter(task => !latest.has(task.inputIds.answer)).length,
-      rewrite_tasks: selectedTasks.filter(task => task.stage === "rewrite").length,
-      protected_accepted: Object.keys(state.receipts).length, selected };
-  } finally { await release(); }
 }
 
 /** Reclassify accepted deferred observations using today's directory, preserving every receipt. */

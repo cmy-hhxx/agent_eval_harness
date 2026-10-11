@@ -61,14 +61,14 @@ JSON 配置用 `models.<profile>.channel` 引用渠道，例如 `"judge": { "cha
 | `inputs.timing_unit` | 原始耗时单位，`ms` 或 `s` |
 | `comparisons` | 每组选择二至三个已登记模型，展开为独立两两比较；档位声明、缺失模型与重复模型对的规则见[对比组契约](contract.md#对比组) |
 | `reviewQuestions` | 显式语义复核问题：`[{ batch_id, case_id, questions: ["待核问题"] }]`；精确匹配批次与 case，对该 case 当前所选各候选一视同仁。问题作为归因的待核材料，不是已确认事实或指定判词；无对应输入会在预检报告 `review_case_unavailable`。重评已接受但语义有误的结果时，使用限定 case 与模型对的新 run ID |
-| `rewrite` | 文案改写：`{ comparison, attribution, clustering }`，三项默认开启，可显式设为 `false`；归因、对比及后置聚类接受后自动润色。对比默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；文本写回源结果的 `rewritten` 字段；启用时必须有 `bindings.rewrite` |
+| `rewrite` | 文案改写：`{ comparison, attribution, clustering }`，三项默认开启，可显式设为 `false`；归因、对比及后置聚类接受后自动润色。对比默认润色偏好理由，`comparisonItems: true` 将逐项点评加入同一任务（自动化强制开启）；评测内改写写回源结果的 `rewritten` 字段，独立聚类作业保存单独的槽位结果；启用时必须有 `bindings.rewrite` |
 | `models` | 命名模型档案：`channel`（引用 INI 渠道）、可选 `model` 和 `api`、`thinking`（模型档案缺省 `medium`，仓库 Attribution 绑定显式覆盖为 `high`；支持显式 `max`，Pi / Prime 原样传入，不降档）、`contextWindow`、`maxOutputTokens`（共享判官默认 32768，每次请求的思考与输出共用此预算）；可选 `supportsDeveloperRole` 声明网关能力，缺省保留现行行为，显式 `false` 时两种 API 将开发者角色作为系统角色发送，确保系统指令不被端点当作用户内容 |
 | `bindings` | 评测阶段到模型档案的绑定，可按阶段覆盖 `channel`、`model`、`thinking`、`contextWindow`、`maxOutputTokens` |
 | `execution` | 并发、超时、工具预算、修正和重试；仓库配置默认8并发，连续120秒没有模型/工具进展触发空闲超时，单任务总期限900秒 |
 | `execution.failureGuard` | 同类失败熔断：`{ windowSize: 50, threshold: 5 }`；同阶段最近50个不同任务中，同类别、错误码与归一化字段路径达到5次时暂停该阶段；两者为整数，`windowSize >= threshold >= 2` |
 | `output` | 运行产物目标：`{ kind: "directory", path }`；Host 在其下创建 `<run-id>` 子目录 |
 | `problemLibrary` | 问题库目标：`{ kind: "directory", path }`；每个模型一份 `<version>.json`，跨 run 累积，只由聚类阶段写入 |
-| `clustering` | 后置问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；普通主线默认关闭，全部归因结束后用 `cluster --run` 单独准备；执行时必须有 `bindings.clustering` |
+| `clustering` | 后置问题库上限与预算：`enabled`、`maxClassesPerModel`、`maxNewClassesPerTask`、`maxComponentsPerModel`、`consolidateAt`、`minSupport`、`maxCasesPerTask`；普通主线默认关闭，用 `cluster --run PATH ... --run-id ID --apply` 执行独立聚类作业；执行时必须有 `bindings.clustering` |
 
 入库的 [configs/host.json](../configs/host.json) 只定义共享的输入、执行预算和模型档案骨架，不含具体模型 ID。具体模型放在不入库的本地配置：
 
@@ -254,7 +254,7 @@ npm run eval -- run --run-id daily-a --config configs/host.json --config configs
 
 不指定 ID 时选择失败、超时、取消和阻塞任务；`--task`、`--result` 可重复，后者使用正式 `comparison_id`。必要的未完成依赖与下游一起进入固定清单；共享聚类分片的其他依赖未完成时，不自动把它及其他题目拉入局部补跑。已成功任务不加入补跑；选择已成功的对比时，可以补它尚未完成的改写。预览列出任务、原状态和累计 attempts；`--apply` 只准备状态并保留原内容提交及文件错误计数，随后同 run 续跑，不要求手改 `state.json`。其他未完成任务与后来追加数据不混入。零项选择不改状态。
 
-延期归类保留在 `results/clustering.jsonl`，不计作已归类或错误。`eval recluster --run PATH --task ID` 或显式 `--all` 预览可重归类观察；`--apply` 新建任务并固定范围，随后同 run-id 续跑。新任务只包含延期观察，使用当前问题库与剩余预算，保留原接受结果；重复准备复用未完成的重归类任务，保留该 UUID 的累计内容和文件错误计数，不补发额度。
+评测 run 内的延期归类保留在 `results/clustering.jsonl`，不计作已归类或错误。`eval recluster --run PATH --task ID` 或显式 `--all` 预览可重归类观察；`--apply` 新建任务并固定范围，随后同 run-id 续跑。新任务只包含延期观察，使用当前问题库与剩余预算，保留原接受结果；重复准备复用未完成的重归类任务，保留该 UUID 的累计内容和文件错误计数，不补发额度。独立聚类作业保留所有已接受决定，包括延期；重新归类需创建新的作业 ID。
 
 Host 按每阶段、不同任务维护最近结果窗口；同一题的反复尝试不重复计数。错误路径中的数组下标归一化为 `*`，类别、错误码或其他路径不同则分别统计。触发后保存 `pausedStages`（阶段、错误签名、样例 task ID 和时间），停止该阶段新派发和后续 attempt 重试；已派发的 attempt 完成清理，其他健康阶段继续。暂停状态跨重启保留，未到阈值的统计窗口属于本次 Host 会话。容量不足在创建 attempt 前处理，不计为题目内容失败。
 
@@ -335,16 +335,31 @@ npm run eval -- run --engine pi --run-id pi-001 \
 
 `--result <comparison_id>` 可选择特定正式对比。不带 `--apply` 只读预览；准备后保存仅包含核验任务的执行范围，后续同 run 运行调用模型。核验复用已接受主线收据，结果写 `results/comparison-verification.jsonl`，不替换归因或正式对比，不自动扩展复核链。核验失败、疑点或未完成都不影响原正式结果的统计、改写与交付。
 
-全部归因已结束后，单独准备问题聚类：
+所选 run 的归因结束后，一次选择一个或多个 run，按模型汇总多个日期的问题：
 
 ```bash
-npm run eval -- cluster --run data/runs/comparison/pi-001
-npm run eval -- cluster --run data/runs/comparison/pi-001 --apply
-npm run eval -- run --engine pi --run-id pi-001 \
-  --config configs/host.json --config configs/local/models.json
+# 默认只读预览，不调用模型、不保存作业
+npm run eval -- cluster \
+  --run data/runs/comparison/daily-2026-10-08 \
+  --run data/runs/comparison/daily-2026-10-09 --run-id october-problems
+
+# 加 --apply 直接创建并执行独立作业
+npm run eval -- cluster \
+  --run data/runs/comparison/daily-2026-10-08 \
+  --run data/runs/comparison/daily-2026-10-09 --run-id october-problems \
+  --config configs/host.json --config configs/local/models.json --apply
+
+# 中断后沿用固定来源和已接受结果；无需再次指定 --run
+npm run eval -- cluster --run-id october-problems \
+  --config configs/host.json --config configs/local/models.json --apply
+
+# 查看已保存进度，不执行
+npm run eval -- cluster --run-id october-problems
 ```
 
-有归因仍待执行或运行时，拒绝准备；仅成功且有正式收据的归因参与，未成功归因列出并跳过。聚类不等待对比或可选核验，按模型和批次维护问题库；聚类结果默认自动改写，可显式设 `rewrite.clustering=false` 关闭。`--apply` 保存聚类执行范围，预览不调用模型、不改状态。继续发现主线新增输入时显式使用 `run --discover-inputs`；它保留已接受判词。
+默认产物在评测输出根目录旁的 `data/runs/clustering/<run-id>/`，可用 `--output DIR` 指定聚类作业根目录；续跑须使用同一目录。`state.json` 保存来源引用、任务与进度，`results/clustering.jsonl` 保存归类决定及来源坐标，`results/rewrite.jsonl` 保存聚类文案的槽位改写，`stats.json` 和 `report.md` 保存进度与问题库统计。聚类改写默认开启，可在首次创建时设 `rewrite.clustering=false`。原评测 run 的状态、正式结果和上传回执保持原样。
+
+有主线归因或必要补查仍 pending/running 时拒绝启动；失败归因跳过并计数，选定范围内成功且有正式收据的归因参与。聚类不等待对比、改写或可选核验。来源重复题选择、跨日期汇总、分片与末尾目录整理规则见[问题库契约](contract.md#问题库与聚类)。续跑固定来源和任务范围，已接受任务不重做；新增日期用新的作业 ID。更换模型、参数或评测器不拒绝续跑，旧收据保留原评测器标识。保护性阶段暂停修复后可用 `--resume-stage clustering` 或 `--resume-stage rewrite` 解除。原始回答文件离线不阻止聚类，但原 run 的状态和正式归因结果必须可读且引用一致；显式样本来源复核仍需原始材料。
 
 ### 重新改写对比文案
 

@@ -8,6 +8,7 @@ import type {
   ProblemLibrary,
   ProblemOrigin,
   ProblemProjection,
+  AttributionSource,
 } from "@eval/contracts";
 import type { ClusteringResult } from "./types.js";
 import { categoryPathIssues, unionCategoryPaths } from "./organization.js";
@@ -88,6 +89,9 @@ export interface ClusteringObservationRef {
   message_index: number;
   quote: string;
   evidence_status: "established" | "uncertain";
+  /** Cross-run observations retain the individual source date and accepted receipt. */
+  batch_id?: string;
+  attribution?: AttributionSource;
 }
 /** One deduplicated proposal plus the finding coordinates needed to record occurrences. */
 export interface ClusteringObservation {
@@ -115,6 +119,7 @@ export interface ApplyClusteringInput {
   submission_id: string;
   version: string;
   batch_id: string;
+  run_path?: string;
   observations: ClusteringObservation[];
   result: ClusteringResult;
   at?: string;
@@ -124,7 +129,7 @@ function originFor(input: ApplyClusteringInput, ref: ClusteringObservationRef | 
   return {
     run_id: input.run_id,
     evaluator_version: input.evaluator_version,
-    batch_id: input.batch_id,
+    batch_id: ref?.batch_id ?? input.batch_id,
     case_id: ref?.case_id ?? "",
     input_id: ref?.input_id ?? "",
     at,
@@ -293,10 +298,12 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         class_id: problem.id,
         version: input.version,
         evaluator_version: input.evaluator_version,
-        batch_id: input.batch_id,
+        batch_id: ref.batch_id ?? input.batch_id,
         case_id: ref.case_id,
         input_id: ref.input_id,
         run_id: input.run_id,
+        ...(input.run_path ? { clustering_run: input.run_path } : {}),
+        ...(ref.attribution ? { attribution: ref.attribution } : {}),
         task_id: input.task_id,
         submission_id: input.submission_id,
         finding_id: ref.finding_id,

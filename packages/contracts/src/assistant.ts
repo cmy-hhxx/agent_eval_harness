@@ -9,9 +9,12 @@ export interface AssistantOwnership {
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
 export interface AnalysisQuery { runId?: string; view?: "inputs" | "comparisons"; query?: string; offset?: number; limit?: number }
 export interface AnalysisResultReadOptions { view?: "summary" | "details"; offset?: number; limit?: number }
+export type AnalysisReadOptions = AnalysisResultReadOptions
+  | { view: "case"; audience?: "user" }
+  | { view: "evidence"; messages: { messageIndex: number; offset?: number; limit?: number }[] };
 export interface AnalysisDataSource {
   list(query: AnalysisQuery): Promise<JsonObject>;
-  read(reference: AnalysisReference, options?: { offset?: number; limit?: number }): Promise<JsonObject>;
+  read(reference: AnalysisReference, options?: AnalysisReadOptions): Promise<JsonObject>;
   search(reference: AnalysisReference, query: string, options?: { offset?: number; limit?: number }): Promise<JsonObject>;
   image(reference: AnalysisReference): Promise<ToolResult>;
 }
@@ -136,7 +139,7 @@ export interface AssistantTool {
   name: string;
   description: string;
   inputSchema: JsonObject;
-  execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; progress(value: unknown): void }): Promise<ToolResult>;
+  execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; audience?: "model" | "user"; progress(value: unknown): void }): Promise<ToolResult>;
 }
 export interface AssistantPrompt {
   requestId: string;

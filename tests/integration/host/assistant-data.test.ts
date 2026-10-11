@@ -25,6 +25,36 @@ async function register(config: EvalConfig, accepted?: (state: RunState, plan: T
   return source;
 }
 
+test("batch evidence parses one input and preserves exact per-node slices, citations and missing-node errors", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  let loads = 0;
+  source.raw = async () => { loads++; return { messages: [
+    { role: "assistant", content: "查询口径：前50名" },
+    { type: "function_call_output", output: "返回数据：前100名；区间涨跌幅-2.268431%" },
+    { content: { first: "第一段", second: "第二段" } },
+  ] }; };
+  const result = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 1, offset: 5, limit: 8 }, { messageIndex: 99 }, { messageIndex: 0 }, { messageIndex: 2, offset: 2, limit: 4 }] });
+  assert.equal(loads, 1, "batching must share raw input parsing, not loop over the single-node reader");
+  assert.equal(result.readCount, 3);
+  assert.equal(result.requestedCount, 4);
+  const items = result.items as { reference: { messageIndex: number }; text?: string; evidence?: { evidence_id: string; quote: string }[]; error?: string; hasMore?: boolean; nextOffset?: number }[];
+  assert.deepEqual(items.map(item => item.reference.messageIndex), [1, 99, 0, 2]);
+  assert.match(items[1].error!, /out of range/);
+  assert.equal(items[0].hasMore, true);
+  assert.equal(items[0].nextOffset, 13);
+  assert.equal(items[2].hasMore, false);
+  for (const [index, messageIndex, offset, limit] of [[0, 1, 5, 8], [2, 0, 0, 8000], [3, 2, 2, 4]]) {
+    assert.deepEqual(items[index], await source.read({ ...reference, messageIndex }, { offset, limit }), "batch and single reads must agree on exact source coordinates");
+  }
+  assert.equal(items[3].text, "段\n第二");
+  assert.equal(items[3].evidence!.length, 2, "a slice crossing text parts cites both original fields");
+  const next = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 1, offset: items[0].nextOffset }] });
+  const whole = await source.read({ ...reference, messageIndex: 1 });
+  assert.equal(items[0].text + (next.items as { text: string }[])[0].text, (whole.text as string).slice(5));
+  source.raw = async () => { throw new Error("Source unavailable"); };
+  await assert.rejects(source.read(reference, { view: "evidence", messages: [{ messageIndex: 0 }] }), /Source unavailable/);
+});
+
 test("Eris's paginated directory exposes persisted display names, tiers and configured comparison groups", async () => {
   const fixture = await fixtureConfig();
   try {
@@ -133,6 +163,20 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       const result = await source.read(record.reference);
       assert.deepEqual(result.comparisonScope, record.scope);
       assert.deepEqual(result.result, accepted[record.reference.taskId]!.exported!.row, "read_data keeps the complete formal row alongside its scope");
+      const material = await source.read(record.reference, { view: "case" });
+      assert.equal(material.kind, "case");
+      assert.equal(material.question, record.question);
+      assert.deepEqual(material.formal, result);
+      const answers = material.answers as { reference: { runId: string; inputId: string }; answer: { text: string; complete: boolean; reference: { messageIndex: number } }; trace: { finalMessageIndex: number } }[];
+      assert.equal(answers.length, 2);
+      for (const answer of answers) {
+        assert.equal(answer.answer.complete, true);
+        assert(answer.answer.text.includes("4"));
+        assert.equal(answer.answer.reference.messageIndex, answer.trace.finalMessageIndex);
+        const single = await source.read(answer.reference, { view: "case" });
+        assert.deepEqual(single.answers, [answer]);
+        assert.equal(single.formal, undefined);
+      }
     }
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });

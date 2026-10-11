@@ -15,6 +15,24 @@ const searchFields=value=>Object.entries(value).filter(([,entry])=>['string','nu
 const dateAssessment=value=>({not_requested:'未限定日期',unknown:'发布日期未确认',within_range:'在日期范围内',outside_range:'超出日期范围'}[value?.status]);
 const dateBasis=value=>({search_metadata:'搜索日期',page_metadata:'页面声明',none:'无日期依据'}[value?.basis]);
 const caption=value=>searchFields(value).map(({label,value})=>`${label}：${value}`).join(' · ');
+function caseDetails(output){
+ const scope=output.formal?.comparisonScope;
+ const items=[{title:'用户原问',description:string(output.question),fields:[]}];
+ if(scope)items.push({title:'正式判定',description:rows(scope.comparisons).map(row=>row.resultLabel).join(' · '),fields:[],lines:rows(scope.comparisons).map(row=>row.reason),groups:[{label:'正式点评',items:[{fields:[],code:{text:JSON.stringify(output.formal.result,null,2),language:'json'}}]}]});
+ for(const answer of rows(output.answers)){
+  const trace=answer.trace??{},nodes=rows(trace.nodes);
+  const stages={user_question:'User input',llm_turn:'Model call',reasoning:'Reasoning',function_call:'Tool call',tool_call:'Tool call',function_call_output:'Tool result',tool_result:'Tool result',final_answer:'Final answer'};
+  items.push({title:string(answer.modelName),fields:searchFields({'消息数':trace.messageCount,'工具调用':trace.toolCalls}),groups:[
+   {label:answer.answer?.complete?'Final answer':'Final answer（未完整加载）',items:[{fields:fields(answer.answer?.reference),code:{text:answer.answer?.text??answer.answer?.preview??'',language:'text'}}]},
+   {label:`链路地图（${nodes.length} 个节点）`,items:nodes.map(node=>({
+    title:`${node.messageIndex} · ${node.messageIndex===trace.finalMessageIndex?'Final answer':stages[node.type]??({system:'System prompt',user:'User input',assistant:'Assistant message'}[node.role]??node.type)}${node.name?` · ${node.name}`:''}`,
+    description:string(node.preview),fields:searchFields({'字符数':node.chars,'调用消息':node.callMessageIndex,'预览截断':node.previewTruncated}),
+    groups:[{label:'证据位置',items:[{fields:fields(node.reference)}]}],
+   }))},
+  ]});
+ }
+ return {items};
+}
 function searchItem(row){
  const url=webUrl(row.url);
  const matches=rows(row.matches).filter(match=>Number.isInteger(match.queryIndex)&&Number.isInteger(match.position)&&Number.isInteger(match.page)).map(match=>`查询 ${match.queryIndex+1} · 第 ${match.page} 页 · 第 ${match.position} 条`).join('；');
@@ -63,6 +81,16 @@ export function analysisToolModel(name,model){
  const status=statusText(model,output);
  if(name==='search_web')return webSearchModel(model,args,output,status);
  if(name==='read_web')return webReadModel(model,args,output,status);
+ if(name==='read_evidence'){
+  const items=rows(output?.items),failed=items.filter(item=>item.error).length;
+  const receipt=items.length?(failed?`读取 ${items.length-failed}/${items.length} 个节点 · ${failed===items.length?'未完成':'部分完成'}`:`${items.length} 个节点 · 已完成`):status;
+  return {summary:`批量读取证据 · ${receipt}`,...(items.length?{details:{items:items.map(item=>({
+   title:`消息 ${item.reference?.messageIndex}`,description:string(item.error),fields:fields({...item.reference,...item}),
+   badge:{label:item.error?'读取失败':item.hasMore?'尚有后文':item.offset>0?'已读至结尾':'已完整读取',tone:item.error?'error':item.hasMore||item.offset>0?'neutral':'success'},
+   ...(typeof item.text==='string'?{code:{text:item.text,language:'text'}}:{}),
+   ...(rows(item.evidence).length?{groups:[{label:'证据位置',items:rows(item.evidence).map(entry=>({title:entry.evidence_id,fields:[]}))}]}:{}),
+  }))}}:{})};
+ }
  if(name==='show_comparison')return {summary:`显示比较图 · ${status}`};
  if(name==='show_chart')return {summary:`显示${({line:'趋势图',pie:'环形组成图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'多环进度图',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
@@ -71,6 +99,7 @@ export function analysisToolModel(name,model){
   summary=output?.kind==='comparisons'?`查询正式对战 · ${output.total} 场匹配 · 本页 ${output.items?.length??0} 场`:progress?`${output.kind==='runs'?'最近一轮':'本轮'} · ${progress.inputCount} 条回答 · ${progress.caseCount} 道题`:output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'次运行':output.kind==='inputs'?'条回答':'项结果'}`;
  }
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
+ if(name==='read_case')summary=['读取案例',output?.answers?`${output.answers.length} 条回答`:null,status].filter(Boolean).join(' · ');
  if(name==='search_data')summary=[args.query===undefined?'搜索对话':`搜索“${args.query}”`,output?.total===undefined?status:`${output.total} 条匹配消息`].join(' · ');
  if(name==='execute_code')summary=`${args.language==='shell'?'Shell':'Python'} 代码核验 · ${status}`;
  if(name==='read_code_output')summary=`读取代码输出 · ${status}`;
@@ -85,6 +114,7 @@ export function analysisToolModel(name,model){
  if(name==='specialist_output')summary='实时专业分析';
  if(model.state==='error'||!model.output)return {summary};
  if(output?.sourceRead){const ref=output.sourceRead.args?.reference;return {summary,details:{items:[{title:referenceText(ref),fields:fields(ref)}]}};}
+ if(name==='read_case'&&output?.kind==='case')return {summary,details:caseDetails(output)};
  if(name==='execute_code'&&output)return {summary,details:{items:[{fields:searchFields({'退出码':output.exit_code,'超时':output.timed_out,'已取消':output.cancelled,'耗时（秒）':output.duration_seconds})},...['stdout','stderr'].filter(key=>output[key]).map(key=>({title:key,fields:[],code:{text:output[key],language:'text'}})),...rows(output.artifacts).map(item=>({title:item.name,fields:fields(item)}))]}};
  if(name==='specialist_output')return {summary,details:{items:[{title:'专业任务输出',fields:[],markdown:model.output}]}};
  if(name==='list_data'&&output?.kind==='comparisons')return {summary,details:{items:rows(output.items).map(row=>({

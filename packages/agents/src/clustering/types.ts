@@ -32,7 +32,7 @@ export interface ClusteringItem {
 }
 export interface ClusteringRequest {
   model: string;
-  batch_id: string;
+  batch_ids: string[];
   budget: ClusteringBudget;
   library: ProblemProjection;
   items: ClusteringItem[];

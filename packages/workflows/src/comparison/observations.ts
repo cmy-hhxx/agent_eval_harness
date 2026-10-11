@@ -15,6 +15,8 @@ export interface ProblemSource {
   case_id: string;
   source: { file: string; line: number };
   findings: AttributionResult["findings"];
+  batch_id?: string;
+  attribution?: ClusteringObservationRef["attribution"];
 }
 
 /**
@@ -51,6 +53,8 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
         if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.finding_id}`);
         group.entries.push({
           ref: {
+            ...(source.batch_id ? { batch_id: source.batch_id } : {}),
+            ...(source.attribution ? { attribution: source.attribution } : {}),
             input_id: source.input_id,
             case_id: source.case_id,
             source: source.source,

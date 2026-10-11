@@ -487,7 +487,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const sourceRead = object(event.data.meta ?? {}).sourceRead;
     if (!sourceRead) throw new Error("该工具结果没有原始材料引用");
     // Arguments come exclusively from the durable record, never from the UI.
-    return readAssistantSource(this.options.tools, scope, callId, sourceRead);
+    return readAssistantSource(this.options.tools, scope, callId, sourceRead, "user");
   }
   async page(scope: AssistantScope, beforeSeq = Infinity, maxMessages = 100) {
     const value = await this.target(scope);

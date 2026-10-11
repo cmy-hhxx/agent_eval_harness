@@ -1,7 +1,7 @@
-读取目录返回的 reference：
+读取单条材料或正式结果；案例先用 read_case，多个节点用 read_evidence。已返回的完整答案与判词无需重读。
 
-- {runId,taskId}：正式结果。默认 view:"summary" 返回完整点评、判决、归因与证据确定性，过滤 evidence 等证据字段；优先读 rewritten 润色点评，comparisonScope 给模型、档位和对局结果。summary 不分页。
-- {runId,taskId} 加 view:"details"：按需读取含证据的完整结果文本。
-- {runId,inputId}：原始消息目录；再加 messageIndex 读取对应正文，索引从0开始。原始消息不传 view。
+- {runId,taskId}：默认 view:"summary" 返回点评、判决、归因与确定性，不含证据正文；优先读 rewritten，comparisonScope 给档位和胜负。summary 不分页。
+- 同上加 view:"details"：分页读取含证据的完整结果。
+- {runId,inputId}：消息目录，加 messageIndex 读正文，索引从0开始，不传 view。
 
-reference 保持原样，不混用 taskId 与 inputId。offset / limit 放顶层，仅用于 details 或原始消息；消息目录按条，正文按 UTF-16 字符。按 hasMore / nextOffset 续读，文本窗口可能不是完整 JSON。本会话独立任务用 read_specialist。
+引用原样使用，不混用 taskId 与 inputId。offset / limit 放顶层，目录按条、正文按 UTF-16 字符；按 hasMore / nextOffset 续读。本会话专业任务用 read_specialist。

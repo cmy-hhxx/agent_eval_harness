@@ -1,16 +1,17 @@
 import type { JsonObject } from "@eval/contracts";
-import type { EvalConfig, TaskData } from "./types.js";
+import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
 import { readRunTasks } from "./run-data.js";
 
 type Outcome = "win" | "both_good" | "both_bad";
 type ModelResult = Outcome | "loss";
+type ProblemDimension = { dimension: string; established: boolean; uncertain: boolean };
 export interface AnalysisComparisonModel { model: string; modelName: string; comparisonTier: string | null }
 export interface AnalysisComparisonScope {
   comparisonTier: string | null;
   case: { batchId: string; caseId: string };
   models: AnalysisComparisonModel[];
   comparisons: { result: Outcome; resultLabel: string; reason: string; winnerModel: string | null; models: (AnalysisComparisonModel & { result: ModelResult })[] }[];
-  assessments: { model: string; modelName: string; meetsCore: boolean; summary: string }[];
+  assessments: { model: string; modelName: string; meetsCore: boolean; summary: string; problemDimensions: ProblemDimension[] }[];
   tradeoff: string;
 }
 export interface AnalysisComparisonRecord { reference: { runId: string; taskId: string }; question: string; scope: AnalysisComparisonScope }
@@ -47,14 +48,28 @@ export function analysisComparisonScope(row: JsonObject, config: EvalConfig): An
   const identity = row.case as { batch_id: string; case_id: string };
   if (typeof identity?.batch_id !== "string" || typeof identity?.case_id !== "string") throw new Error("正式比较缺少题目身份");
   const assessments = row.assessments as Record<string, { meets_core: boolean; summary: string }>;
+  const evaluations = row.evaluations as Record<string, AttributionResult>;
   return { comparisonTier, case: { batchId: identity.batch_id, caseId: identity.case_id }, models, comparisons,
-    assessments: models.map((model) => ({ model: model.model, modelName: model.modelName, meetsCore: assessments[model.model]!.meets_core, summary: assessments[model.model]!.summary })),
+    assessments: models.map((model) => {
+      const findings = evaluations?.[model.model]?.findings;
+      if (!Array.isArray(findings)) throw new Error("正式比较缺少模型归因：" + model.model);
+      const dimensions = new Map<string, ProblemDimension>();
+      for (const finding of findings) {
+        if (finding.type !== "problem") continue;
+        const value = dimensions.get(finding.dimension) ?? { dimension: finding.dimension, established: false, uncertain: false };
+        value[finding.assessment.evidence_status] = true;
+        dimensions.set(finding.dimension, value);
+      }
+      return { model: model.model, modelName: model.modelName, meetsCore: assessments[model.model]!.meets_core,
+        summary: assessments[model.model]!.summary, problemDimensions: [...dimensions.values()] };
+    }),
     tradeoff: (row.decision_basis as { tradeoff: string }).tradeoff };
 }
 
 /** Count independently accepted pair results separately by declared tier. */
 export function analysisComparisonStats(records: readonly AnalysisComparisonRecord[]) {
-  type ModelCounts = AnalysisComparisonModel & { comparisonCount: number; wins: number; losses: number; both_good: number; both_bad: number };
+  type ModelCounts = AnalysisComparisonModel & { comparisonCount: number; wins: number; losses: number; both_good: number; both_bad: number;
+    meetsCoreCount: number; problemDimensions: { dimension: string; established: number; uncertain: number }[] };
   const tiers = new Map<string | null, { formalResultCount: number; comparisonCount: number; cases: Set<string>; outcomes: Record<Outcome, number>;
     models: Map<string, ModelCounts>; references: AnalysisComparisonRecord["reference"][] }>();
   const references = new Set<string>();
@@ -76,8 +91,16 @@ export function analysisComparisonStats(records: readonly AnalysisComparisonReco
       for (const model of comparison.models) {
         let count = tier.models.get(model.model);
         if (!count) tier.models.set(model.model, count = { model: model.model, modelName: model.modelName, comparisonTier: model.comparisonTier,
-          comparisonCount: 0, wins: 0, losses: 0, both_good: 0, both_bad: 0 });
+          comparisonCount: 0, wins: 0, losses: 0, both_good: 0, both_bad: 0, meetsCoreCount: 0, problemDimensions: [] });
         count.comparisonCount++;
+        const assessment = scope.assessments.find(item => item.model === model.model)!;
+        if (assessment.meetsCore) count.meetsCoreCount++;
+        for (const problem of assessment.problemDimensions) {
+          let dimension = count.problemDimensions.find(item => item.dimension === problem.dimension);
+          if (!dimension) count.problemDimensions.push(dimension = { dimension: problem.dimension, established: 0, uncertain: 0 });
+          if (problem.established) dimension.established++;
+          if (problem.uncertain) dimension.uncertain++;
+        }
         if (model.result === "win") count.wins++;
         else if (model.result === "loss") count.losses++;
         else count[model.result]++;

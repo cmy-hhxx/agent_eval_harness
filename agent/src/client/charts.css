@@ -66,6 +66,28 @@
 .eris-comparison-value { display: inline-block; width: max-content; max-width: 100%; vertical-align: bottom; overflow-wrap: anywhere; }
 .eris-comparison-transitions { padding: 0 0 12px 122px; }
 .eris-comparison-arrow { display: block; width: 14px; height: 14px; margin: 0 auto; color: #343434; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.eris-trace-node { outline: none; }
+.eris-trace-node:focus-visible { outline: 2px solid #444; outline-offset: 3px; }
+.eris-evidence-content { margin: 6px 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.eris-evidence-content [data-markdown-variant] { color: inherit; font: inherit; }
+.eris-evidence-content [data-markdown-variant] p { white-space: pre-wrap; }
+.eris-evidence-content [data-markdown-variant] :has(> table) { overflow-x: auto; padding-bottom: 4px; }
+.eris-evidence-content [data-markdown-variant] table { width: max-content; min-width: 100%; max-width: none; }
+.eris-evidence-content [data-markdown-variant] :is(th, td) { min-width: 0; max-width: 280px; padding: 4px 8px; white-space: normal; word-break: normal; overflow-wrap: normal; font-variant-numeric: tabular-nums; }
+.eris-evidence-content [data-markdown-variant] th { max-width: none; white-space: nowrap; }
+.eris-evidence-content [data-markdown-variant] table code { font-size: inherit; white-space: nowrap; }
+.eris-evidence-content [data-markdown-variant] table[data-evidence-identifiers] { border-collapse: separate; border-spacing: 0; }
+.eris-evidence-content [data-evidence-scroll] { scroll-snap-type: x mandatory; scroll-padding-left: var(--eris-frozen-columns-width); }
+.eris-evidence-content [data-evidence-snap] { scroll-snap-align: start; }
+.eris-evidence-content [data-evidence-identifiers] :is(th, td):nth-child(-n+2) { position: sticky; left: 0; z-index: 1; background: #fff; }
+.eris-evidence-content [data-evidence-identifiers] :is(th, td):nth-child(2) { left: var(--eris-code-column-width); }
+.eris-evidence-content [data-evidence-identifiers] td:nth-child(2) { max-width: min(180px, var(--eris-name-column-width)); overflow-wrap: anywhere; }
+.eris-evidence-content [data-evidence-identifiers] :is(th, td):nth-child(2)::after { content: ''; position: absolute; inset: 0 -8px 0 auto; width: 8px; background: #fff; border-left: 1px solid #e5e8ed; }
+.eris-evidence-content [data-evidence-identifiers] :is(th, td):nth-child(n+3) { padding-left: 16px; }
+.eris-evidence-content [data-evidence-identifiers] td:nth-child(n+3) { max-width: min(280px, var(--eris-scroll-column-width)); }
+.eris-evidence-content pre { margin: 6px 0; padding: 0; background: none; box-shadow: none; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.eris-evidence-content > details { margin-top: 8px; }
+.eris-evidence-content > details > summary { cursor: pointer; color: #606C77; font-size: 12px; }
 .eris-comparison-conclusion { margin-bottom: 20px; overflow-wrap: anywhere; }
 .eris-comparison-conclusion > strong { display: block; margin-bottom: 8px; color: #202e43; font-size: 20px; line-height: 1.4; text-align: center; }
 .eris-comparison-conclusion > [data-comparison-reason] { display: block; }
