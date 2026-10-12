@@ -48,6 +48,28 @@ test('deep follow-ups resolve the exact answer, skip unrelated cases and dedupli
   await assert.rejects(loadCaseScene(scenes[0], async () => ({ ok: false, error: { message: '源文件无法读取' } })), /源文件无法读取/);
 });
 
+test('a single-node evidence follow-up retains its case scene while formal-result reads remain global', async () => {
+  const single = entry('single', 'read_data', { runId: 'run', inputId: 'answer-A', messageIndex: 13 });
+  const scenes = caseScenesFromTools([single, evidence], [caseRead]);
+  assert.equal(scenes.length, 1);
+  const loaded = await loadCaseScene(scenes[0], async () => response(material('answer-A')));
+  assert.equal(loaded.answers[0].reference.inputId, 'answer-A');
+  assert.equal(caseScenesFromTools([single], [caseRead]).length, 1);
+  assert.equal(caseScenesFromTools([entry('formal', 'read_data', { runId: 'run', taskId: 'pair' })], [caseRead]).length, 0);
+  assert.equal(caseScenesFromTools([entry('directory', 'read_data', { runId: 'run', inputId: 'answer-A' })], [caseRead]).length, 0);
+});
+
+test('copied evidence includes only recorded upstream and downstream coordinates', () => {
+  const reference = { runId: 'run', inputId: 'answer-A', messageIndex: 13 };
+  const nodes = [{ messageIndex: 7, type: 'tool_call' }, { messageIndex: 12, type: 'tool_result' },
+    { messageIndex: 13, type: 'tool_result', callMessageIndex: 7, reference }, { messageIndex: 15, type: 'tool_result', callMessageIndex: 7 }];
+  const answer = { modelName: 'A组Expert', trace: { finalMessageIndex: 22, nodes } };
+  const resultText = evidenceFollowupText(answer, nodes[2]);
+  assert.deepEqual(JSON.parse(resultText.slice(resultText.indexOf('{'))), { reference, relatedMessageIndices: [7, 15] });
+  const callText = evidenceFollowupText(answer, { ...nodes[0], reference: { ...reference, messageIndex: 7 } });
+  assert.deepEqual(JSON.parse(callText.slice(callText.indexOf('{'))).relatedMessageIndices, [13, 15]);
+});
+
 test('trace flow has one ordered rail and only source-confirmed call associations', () => {
   const nodes = [
     { messageIndex: 0, type: 'user_question', chars: 4 },

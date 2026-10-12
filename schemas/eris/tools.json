@@ -74,50 +74,87 @@
     "additionalProperties": false,
     "properties": {
       "reference": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "runId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 181,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
-          },
-          "inputId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "taskId": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "runId"
-        ],
         "oneOf": [
           {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 181,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+                "description": "用户已给出 runId 时直接使用；未知时才调用 list_data，不是文件路径。"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "原问中的连续关键词，优先用它定位，避免抄写 taskId。"
+              },
+              "comparisonTier": {
+                "type": "string",
+                "minLength": 1,
+                "description": "目录中的档位，如 Fast 或 Expert。"
+              }
+            },
             "required": [
-              "inputId"
-            ],
-            "not": {
-              "required": [
-                "taskId"
-              ]
-            }
+              "runId",
+              "query",
+              "comparisonTier"
+            ]
           },
           {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 181,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+                "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
             "required": [
-              "taskId"
+              "runId"
             ],
-            "not": {
-              "required": [
-                "inputId"
-              ]
-            }
+            "oneOf": [
+              {
+                "required": [
+                  "inputId"
+                ],
+                "not": {
+                  "required": [
+                    "taskId"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "taskId"
+                ],
+                "not": {
+                  "required": [
+                    "inputId"
+                  ]
+                }
+              }
+            ]
           }
         ]
+      },
+      "review": {
+        "type": "boolean",
+        "description": "事实复核设true：提供完整原问、答案和originalVerdicts原胜负；按争议实体搜索原文，不预载节点清单或旧评语。界面仍可展开完整链路。"
       }
     },
     "required": [
@@ -162,6 +199,14 @@
               "type": "integer",
               "minimum": 0
             },
+            "format": {
+              "type": "string",
+              "enum": [
+                "text",
+                "json"
+              ],
+              "description": "默认 text 提取字符串；json 保留原生数字、布尔值及完整结构。分页偏移属于所选格式。"
+            },
             "offset": {
               "type": "integer",
               "minimum": 0
@@ -176,7 +221,7 @@
             "messageIndex"
           ]
         },
-        "description": "同一回答中需核验的1–12个节点；各节点独立分页，默认8000、最多16000个UTF-16字符。"
+        "description": "同一回答中需核验的1–12个节点；各节点独立分页，默认及最多16000个UTF-16字符；只核对短片段时可显式缩小limit。"
       }
     },
     "required": [
@@ -194,7 +239,7 @@
           "summary",
           "details"
         ],
-        "description": "仅正式结果使用：默认 summary 完整返回点评、判决与归因，过滤 evidence 字段；details 按字符分页读取含证据的完整结果。"
+        "description": "仅正式结果使用：summary 返回 comparisonScope 及状态、标准答案与证据坐标，不重复底层评语；details 按字符分页读取完整结果。事实复核不回读旧评语。"
       },
       "reference": {
         "type": "object",
@@ -366,8 +411,25 @@
         ]
       },
       "query": {
-        "type": "string",
-        "minLength": 1
+        "description": "单个查询或1–8个独立查询；复核先搜争议实体名称。空格分词要求同一来源全部包含，不是语义搜索。",
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          }
+        ]
       },
       "offset": {
         "type": "integer",
@@ -379,6 +441,13 @@
         "minimum": 1,
         "maximum": 100,
         "description": "顶层字段，与 reference 同级。"
+      },
+      "scope": {
+        "enum": [
+          "evidence",
+          "all"
+        ],
+        "description": "默认evidence只查原始工具返回。查回答、推理、指令或完整请求快照时显式用all；命中数和分页只针对所选范围，零命中不证明整个链路没有该事实。"
       }
     },
     "required": [
@@ -810,25 +879,62 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "complete": {
+        "type": "boolean",
+        "description": "必须明确是否完成：证据已核对且图完整回答请求填true，成功即结束；仍有其他任务或图外关键事实要补充填false。不要省略，也不要为一句空收尾填false。"
+      },
       "reference": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "runId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 181,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 181,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+                "description": "用户已给出 runId 时直接使用；未知时才调用 list_data，不是文件路径。"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "原问中的连续关键词，优先用它定位，避免抄写 taskId。"
+              },
+              "comparisonTier": {
+                "type": "string",
+                "minLength": 1,
+                "description": "目录中的档位，如 Fast 或 Expert。"
+              }
+            },
+            "required": [
+              "runId",
+              "query",
+              "comparisonTier"
+            ]
           },
-          "taskId": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 181,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "runId",
+              "taskId"
+            ]
           }
-        },
-        "required": [
-          "runId",
-          "taskId"
         ]
       },
       "title": {
@@ -849,7 +955,7 @@
               "type": "string",
               "minLength": 1,
               "pattern": "\\S",
-              "description": "comparisonScope 中的 model 标识，不是 modelName。"
+              "description": "answers[].model 中的标识，不是 modelName；解读原评测时也可用 comparisonScope 的 model。"
             },
             "summary": {
               "type": "string",
@@ -866,25 +972,22 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "title": {
-                    "type": "string",
+                  "counterEvidence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "minLength": 1,
-                    "maxLength": 16,
-                    "pattern": "\\S"
+                    "maxLength": 80,
+                    "pattern": "\\S",
+                    "description": "能推翻或限制本项判断的原文事实，优点、问题、待核验都必须检查。主张“配套定位准确”同样需要查反证：有配套能力不等于只有配套能力。不能把支持本项结论的材料当反证。保留已确认的其他相关能力和用途待核边界；没有相关反证才填null。"
                   },
                   "evidence": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 60,
                     "pattern": "\\S",
-                    "description": "一句依据，合并必要的事实与回答做法，保留关键差异；不把回答断言当作已核验事实。"
-                  },
-                  "impact": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 36,
-                    "pattern": "\\S",
-                    "description": "一个明确影响，直接说明用户能做什么或哪个判断失去依据，不重复前句。"
+                    "description": "把回答自己的断言与已读原文对照；自称配套、非本体或直接命中都只是待检验断言，不能作为能力事实。只写原文足以支持的结论，不从未提及推断不存在。"
                   },
                   "assessment": {
                     "enum": [
@@ -892,7 +995,20 @@
                       "problem",
                       "uncertain"
                     ],
-                    "description": "按本项证据标记优点、已确认问题或事实待核验。已确认遗漏必要核验用 problem，即使候选是否达标仍未知；不按总胜负改变性质。"
+                    "description": "按本项证据标记优点、已确认问题或事实待核验。已确认遗漏必要核验用 problem，即使候选是否达标仍未知；不按总胜负改变性质。 已明确另列为配套/扩展、未当作直接命中的，不判为误入选。"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16,
+                    "pattern": "\\S"
+                  },
+                  "impact": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 36,
+                    "pattern": "\\S",
+                    "description": "仅说明原回答对用户判断的支撑是否充分，不替用户重做企业筛选。材料不足写该结论缺核验、数量未获证实；不能写成候选不符合、应剔除、仅配套。确认具体设备属于配套，不代表已排除该公司的其他能力。"
                   },
                   "highlights": {
                     "type": "object",
@@ -919,10 +1035,12 @@
                 "required": [
                   "title",
                   "evidence",
+                  "counterEvidence",
                   "impact",
                   "assessment"
                 ]
-              }
+              },
+              "description": "不同证据状态的对象分别列项：已确认不符合与目标用途待核验不能合成同一条、使用同一否定结论。只解释本次疑点及反证。"
             }
           },
           "required": [
@@ -937,7 +1055,7 @@
         "minLength": 1,
         "maxLength": 160,
         "pattern": "\\S",
-        "description": "顶部结论的决定性理由，一次讲清为何这样比较；具体缺陷留在卡片，不在末尾再次转折，正式判词由程序绑定。"
+        "description": "本次结论与证据边界，尽量80字内。汇总只评价原回复断言的支撑程度：未证实六家全符合，不等于六家中某家确定不符合。用途待核与明确配套分别说，不合并排除。不为原胜负辩护，不重做筛选名单。"
       },
       "reasonHighlight": {
         "type": "string",
@@ -951,10 +1069,11 @@
         "minLength": 1,
         "maxLength": 100,
         "pattern": "\\S",
-        "description": "底部只放日期、档位、比较范围或标准答案等口径；不追加优劣判词，图文合计最多提一次无标准答案。"
+        "description": "仅复述原问题明确规定的日期、档位、标准答案或范围；不能自行添加技术路线限制。原问有歧义时，在对应卡片说明不同定义下的判断，不在此替用户选择更窄定义。无必要则省略。"
       }
     },
     "required": [
+      "complete",
       "reference",
       "title",
       "candidates",
@@ -1003,7 +1122,8 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 500,
-        "pattern": "\\S"
+        "pattern": "\\S",
+        "description": "统计图由程序生成时间口径，可省略；其他图必填。"
       },
       "unit": {
         "type": "string",
@@ -1384,7 +1504,6 @@
     "required": [
       "type",
       "title",
-      "scope",
       "unit",
       "source",
       "categories",
@@ -2137,6 +2256,27 @@
             },
             "annotations": {
               "maxItems": 0
+            }
+          }
+        }
+      }
+    ],
+    "anyOf": [
+      {
+        "required": [
+          "scope"
+        ]
+      },
+      {
+        "required": [
+          "references"
+        ],
+        "properties": {
+          "references": {
+            "items": {
+              "required": [
+                "statistics"
+              ]
             }
           }
         }

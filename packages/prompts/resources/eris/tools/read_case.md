@@ -1,7 +1,10 @@
-一次读取用户原问、各模型最终回答、轻量链路地图，以及正式点评、判决和归因（不含证据正文）。
+读原问、答案和地图，区分解读评测与复核事实。
+复核设 review:true：模型先看完整答案和 originalVerdicts 原胜负；不预载节点地图或旧评语。先按争议实体 search_data，再从 source.read 批量补读；界面仍保留完整地图。复核不要先读旧判词；作图工具自行读取原判定，界面仍可展开。
 
-reference：{runId,taskId} 读取已裁决比较，{runId,inputId} 读取单条回答。先看原问与答案，再解释判词。
+用 reference:{runId,query:原问连续关键词,comparisonTier} 定位，不必先列目录或抄 ID；多场匹配则补长关键词。
 
-answers[].trace 提供步骤、工具名、短预览和节点引用；只有 callMessageIndex 确认调用关联，顺序不代表因果，预览不能代替完整证据。formal 的 evidence_references（或 *_evidence_references）是直接 reference，不含引文。
+节点用回答 reference + messageIndex 定位；callMessageIndex 是已确认关联。解读评测时，formal.result 的 evidence_references 是旧判词引用，不是全部相关证据；复核从地图或 search_data 定位原文。
 
-有缺口时，同一回答的必要节点合成 read_evidence，跨回答同轮并行，图像用 view_image。完整答案与判词不用重读。answer.complete=false 时按 answer.reference 补读；空回答保持为空。
+按疑点批量 read_evidence，不从头通读地图。answer.complete=true 已含完整答案，不重复取；false 才补读 answer.reference。
+
+核对疑点及会改变结论的反证，不重做整题评分。只有会改变判断的缺口才继续取证。

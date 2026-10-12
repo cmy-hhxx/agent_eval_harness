@@ -1578,6 +1578,22 @@
   font: 600 12px/18px var(--ds-font-family-code);
 }
 
+.schemaHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.schemaCode {
+  margin: 0 14px 14px;
+}
+
+.schemaCode pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
 .schemaDescription {
   margin: 2px 0 0;
   color: var(--dsw-alias-label-secondary);

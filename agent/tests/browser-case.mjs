@@ -36,7 +36,7 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
  driver: async ({ event }) => ({ async prompt(text) {
   prompts++;
   const global = text === '全局分析', deep = text.startsWith('请继续调查这条证据');
-  const toolName = deep ? 'read_evidence' : 'read_case', callId = deep ? 'evidence-call' : 'case-call';
+  const toolName = deep ? 'read_evidence' : 'read_case', callId = `${deep ? 'evidence-call' : 'case-call'}-${prompts}`;
   const toolArgs = deep ? { reference: { runId: 'run', inputId: 'input-0' }, messages: [{ messageIndex: 2 }] } : args;
   await event({ type: 'agent_start' }); await event({ type: 'turn_start' });
   await event({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -108,7 +108,7 @@ try {
   await models.first().getByRole('button', { name: '已复制', exact: true }).waitFor();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(copied, /A组Expert/);
-  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 2 } });
+  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 2 }, relatedMessageIndices: [1] });
   await models.first().getByRole('button', { name: '来自调用 #1', exact: true }).click();
   assert.deepEqual(JSON.parse(await models.first().locator('[data-evidence-preview]').textContent()), { query: '用户偏好' });
   assert.equal(await models.first().getByText('A组Expert的实际最终回答', { exact: true }).count(), 0);
@@ -197,7 +197,7 @@ try {
   await raw.locator('summary').click();
   await models.first().getByRole('button', { name: '复制给 Eris', exact: true }).click();
   const tableReference = await page.evaluate(() => navigator.clipboard.readText());
-  assert.deepEqual(JSON.parse(tableReference.slice(tableReference.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 9 } });
+  assert.deepEqual(JSON.parse(tableReference.slice(tableReference.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 9 }, relatedMessageIndices: [8] });
   assert(!tableReference.includes('886068.TI'), 'copying follows original coordinates, not rendered text');
   await page.screenshot({ path: shots + '/evidence-desktop.png', fullPage: true });
   await models.nth(1).locator('summary').first().click();
@@ -205,6 +205,7 @@ try {
   await models.nth(1).locator('[data-evidence-preview] table').waitFor();
   assert.equal(await models.nth(1).locator('[data-evidence-identifiers]').count(), 0, 'unrelated tables do not freeze arbitrary columns');
   await models.nth(1).locator('summary').first().click();
+  await models.first().locator('summary').first().click();
   assert.deepEqual(await models.first().locator('[data-trace-flow] foreignObject div').evaluateAll(nodes => nodes.filter(n => n.scrollWidth > n.clientWidth).map(n => n.textContent)), [], 'compact nodes keep tool labels readable');
   await models.first().getByRole('button', { name: '#10 Final answer', exact: true }).click();
   await models.first().locator('[data-evidence-preview]').getByText('A组Expert的实际最终回答', { exact: true }).waitFor();
@@ -265,6 +266,47 @@ try {
  await input.fill('全局分析'); await input.press('Enter');
  await page.getByText('全局分析完成。', { exact: true }).waitFor();
  assert.equal(await page.locator('[data-case-scene]').count(), 2, 'global reply adds no scene');
+ const longAnswer = material.answers[0];
+ const completeAnswer = 'A组Expert的完整最终回答。'.repeat(200);
+ longAnswer.answer.text = completeAnswer;
+ longAnswer.answer.reference.messageIndex = 100;
+ longAnswer.trace = { finalMessageIndex: 100, messageCount: 101, toolCalls: 1, nodes: Array.from({ length: 101 }, (_, messageIndex) => ({
+  messageIndex, type: messageIndex === 0 ? 'user_question' : messageIndex === 1 ? 'tool_call' : messageIndex === 99 ? 'tool_result' : messageIndex === 100 ? 'final_answer' : 'reasoning',
+  ...(messageIndex === 100 ? { previewTruncated: true } : {}),
+  ...(messageIndex === 1 || messageIndex === 99 ? { name: 'Search' } : {}), ...(messageIndex === 99 ? { callMessageIndex: 1 } : {}),
+  preview: messageIndex === 1 ? '原始查询' : '完整证据。'.repeat(300), reference: { runId: 'run', inputId: 'input-0', messageIndex },
+ })) };
+ await input.fill('分析长链路'); await input.press('Enter');
+ const longScene = page.locator('[data-case-scene]').nth(2);
+ await longScene.waitFor();
+ await longScene.locator('summary').first().click();
+ const longModel = longScene.locator('[data-case-model]').first();
+ await longModel.locator('summary').first().click();
+ const pane = longModel.locator('[data-trace-viewport]');
+ await longModel.getByRole('button', { name: '#100 Final answer', exact: true }).click();
+ await longModel.locator('[data-evidence-preview]').getByText(completeAnswer, { exact: true }).waitFor();
+ assert.equal(await longModel.locator('[data-case-evidence]').getByText(/预览已截断/).count(), 0, 'a fully loaded final answer must not inherit truncation from its shorter map preview');
+ const capped = await pane.evaluate(el => ({ height: el.clientHeight, scrollHeight: el.scrollHeight, scrollTop: el.scrollTop,
+  count: el.querySelectorAll('[role=button]').length, font: getComputedStyle(el.querySelector('foreignObject div')).fontSize }));
+ assert(capped.height <= 560 && capped.scrollHeight > 4000 && capped.scrollTop > 3000, JSON.stringify(capped));
+ assert.equal(capped.count, 101, 'height cap never removes trace nodes');
+ assert.equal(capped.font, '13px');
+ await longModel.getByRole('button', { name: '#99 Tool result · Search', exact: true }).click();
+ await longModel.getByRole('button', { name: '复制给 Eris', exact: true }).click();
+ assert.deepEqual(JSON.parse((await page.evaluate(() => navigator.clipboard.readText())).split('\n').slice(3).join('\n')),
+  { reference: { runId: 'run', inputId: 'input-0', messageIndex: 99 }, relatedMessageIndices: [1] });
+ await longModel.locator('[data-case-evidence]').evaluate(el => { el.scrollTop = 500; });
+ await longModel.getByRole('button', { name: '来自调用 #1', exact: true }).click();
+ await longModel.locator('[data-evidence-preview]').getByText('原始查询', { exact: true }).waitFor();
+ assert(await pane.evaluate(el => {
+  const selected = el.querySelector('[aria-pressed=true]').getBoundingClientRect(), box = el.getBoundingClientRect();
+  return selected.top >= box.top + 20 && selected.bottom <= box.bottom && el.scrollTop < 100;
+ }), 'source navigation brings the selected node below the sticky legend');
+ assert.equal(await longModel.locator('[data-case-evidence]').evaluate(el => el.scrollTop), 0, 'a different node starts at the top of its evidence');
+ await page.setViewportSize({ width: 1024, height: 720 });
+ assert(await pane.evaluate(el => el.clientHeight <= innerHeight * .65 + 1));
+ await longScene.locator('[data-case-model]').nth(1).locator('summary').first().click();
+ assert.equal(await longModel.evaluate(el => el.open), false, 'one model unfolds at a time so the scene stays bounded');
  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
  assert.deepEqual(errors, []);
  console.log('Desktop case answer, trace disclosure, source-only persistence and refresh checks passed.');

@@ -140,7 +140,33 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
       try {
         await options.checkpoint();
         signal?.throwIfAborted();
-        const result = await tool.execute(args, { scope: options.scope, callId, signal: signal ?? new AbortController().signal, progress: (value) => options.progress(callId, value) });
+        const result = await tool.execute(args, { scope: options.scope, callId, signal: signal ?? new AbortController().signal, progress: (value) => options.progress(callId, value),
+          async complete(request) {
+            await options.checkpoint();
+            signal?.throwIfAborted();
+            const started = Date.now();
+            const messages = session.agent.state.messages;
+            const sources = messages.slice(messages.findLastIndex(message => message.role === "user") + 1)
+              .flatMap(message => message.role === "toolResult" && !message.isError && request.sourceTools?.includes(message.toolName)
+                ? [{ tool: message.toolName, content: message.content }] : []);
+            const response = await runtime.completeSimple(model, { systemPrompt: request.systemPrompt,
+              messages: [{ role: "user", content: sources.length ? JSON.stringify({ draft: request.text, sources }) : request.text, timestamp: started }] }, {
+              signal, reasoning: config.thinking === "off" ? undefined : config.thinking,
+              onPayload: value => {
+                const payload = object(transformPayload(value, config));
+                const format = { name: "tool_check", strict: true, schema: request.outputSchema };
+                if (config.api === "openai-responses") payload.text = { ...object(payload.text ?? {}), format: { type: "json_schema", ...format } };
+                else payload.response_format = { type: "json_schema", json_schema: format };
+                if (config.provider === "deepseek" && config.api === "openai-responses" && config.thinking === "off") payload.reasoning = { effort: "none" };
+                return payload;
+              },
+            });
+            signal?.throwIfAborted();
+            if (response.stopReason !== "stop") throw new Error(response.errorMessage ?? `Isolated model request ended: ${response.stopReason}`);
+            return { text: response.content.filter(block => block.type === "text").map(block => block.text).join(""),
+              elapsedMs: Date.now() - started, usage: { ...response.usage } };
+          },
+        });
         return { ...result, content: sdkContent(result.content), details: result.details ?? {} };
       } finally { activeReads.delete(slot); release(); }
     },

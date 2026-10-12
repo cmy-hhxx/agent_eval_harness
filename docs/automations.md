@@ -142,6 +142,8 @@ MongoDB 在输入下载校验完成后开始同步，不等待整日评测或日
 
 Mongo 输入用 `kind=input`，评测结果用 `kind=comparison`；所有新写入使用 `a_fast / b_fast / a_expert / b_expert`。输入保留 `versions`、`task`、`meta` 和原始消息。comparison 保留归因评测及内嵌改写，含 `result.comparison`、`versionA/B`、`evaluatedAt`，专题 `task` 与对应输入一致，不另写 attribution 文档。沿用已有原始 case 对应的数据库 ID；新 case 用持久化 UUID。业务键 upsert，已存在且内容相同的记录不重写，部分批次失败可安全续传；不删除、不迁移其他日期或旧模型记录。当前目标集合的旧 comparison 校验器不接受已在使用的顶层 `task`，沿用既有上传方式，仅对 comparison 写入使用 `bypassDocumentValidation`；输入仍受校验器约束，集合配置不修改。
 
+Mongo 与统计日志共用输入隔离规则：先完整扫描当前日期的输入，按日期、原始 `case_id` 和模型识别重复；同一标识的全部记录均排除，即使内容相同也不任选一条。仅引用冲突模型输入的对局暂缓交付，同题其他有效模型对和其他题目继续上传、统计。隔离只影响本轮交付视图，不删除或改写源文件、已接受任务、收据及正式结果，也不触发重新评测；旧输入回补不能绕过隔离。冲突标识写入现有 `log/runtime.log` 的 `publication_inputs_quarantined` 事件，统计 JSON 结构不变。上游修正输入并完成刷新后，下一轮重新扫描，原有已接受结果可直接恢复交付。扫描与后续读取校验同一文件修订，文件被替换或修改时明确重试，避免用旧隔离清单处理新内容。
+
 Comparison、本题归因及它们全部已计划改写都有正式接受收据，即将 `results/comparison.jsonl` 的对应完整行增量上传到 Mongo，并纳入统计；不等待整日结束或聚类。聚类及聚类改写后置，不计入自动化完成条件和交付等待。不会上传未改写的归因或对比结果。评测仍在进行时可以上传其他已经满足条件的题目。输入缺配对计入输入总量，不算已完成对战；胜率、准确率及耗时/Token 分位数只基于已交付对战，沿用示例日志的字段结构。`logtime` 为实际落盘的北京时间。
 
 `publication.status` 为 `pending / running / completed / retry / uncertain`，保存日志下次执行时间、次数、统计数量和错误。本地落盘失败指数退避重试，Mongo 故障不会阻止日志统计、落盘和上传；线上日志需要核实回执时，Mongo 仍继续增量交付。

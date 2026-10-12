@@ -20,6 +20,7 @@ export default defineConfig({
     "packages/client/ui-chat/tests/{chat-view.client,chat-stats.client,running-status.client,reasoning-row.client,process-groups.client,tool-preparation.client,turn-process-tail.client,turn-usage-panel.client,transcript-view-policy.client}.spec.{ts,tsx}",
     "packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx",
     "packages/client/ui-tool/tests/{preparing-rows.client,tool-row.client}.spec.tsx",
+    "packages/client/ui-trajectory/tests/schema-inspector.client.spec.tsx",
     "packages/util/values/tests/partial-json.spec.ts",
     "packages/core/session/tests/repair.spec.ts",
     "packages/llm/llm/tests/{assistant-stream,assembler,message}.spec.ts",

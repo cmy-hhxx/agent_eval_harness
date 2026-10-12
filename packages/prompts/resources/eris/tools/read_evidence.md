@@ -1,7 +1,7 @@
-同一回答批量取证，同一份输入只加载一次。按地图列齐当前疑点的必要节点；跨回答同轮并行。
+按疑点选 evidence_references 对应的返回与必要调用参数，同一回答批量取、跨回答并行。不要整张地图全选；完整答案已在 read_case，不重复读。长节点按缺口搜索，需全量核对才续读。
 
-reference 原样使用 {runId,inputId}；messages 为1–12个 {messageIndex,offset?,limit?}，每节点默认8000、最多16000个 UTF-16 字符。
+reference={runId,inputId}；messages 传节点与分页。format 默认 text 只含字符串；原生数值、布尔值和行列关系用 json 核对，偏移不跨格式。每页最多16000个UTF-16字符，默认取满。
 
-每项保留原文、引文坐标、分页与 error；单项失败不丢弃其余证据。截断不是完整证据：作全量否定前，相关节点必须读完整；按 nextOffset 续读，否则限定已读范围。失败不是空结果。
+text 是原文，reference、format、offset 定位。截断不是完整证据：作全量否定前，相关节点必须读完整；按 nextOffset 续读，否则限定已读范围。error 不是空结果。
 
-核对查询、对应返回和最终口径，以 callMessageIndex 确认关联。完整答案不重读，图像用 view_image。不为少调用省略决定性证据。
+callMessageIndex 定位调用；查询说明只是导航，须核对实际参数和结果。确认实体、时段、字段与基数，不能把日值当区间值、放宽条件当原要求。有冲突或缺口再补读。

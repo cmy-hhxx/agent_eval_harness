@@ -1,7 +1,8 @@
-import type { JsonObject } from "@eval/contracts";
+import type { AnalysisCaseLookup, JsonObject } from "@eval/contracts";
 
 export interface ComparisonDiagramInput {
-  reference: { runId: string; taskId: string };
+  complete: boolean;
+  reference: { runId: string; taskId: string } | AnalysisCaseLookup;
   title: string;
   candidates: {
     model: string;
@@ -9,6 +10,7 @@ export interface ComparisonDiagramInput {
     paths: {
       title: string;
       evidence: string;
+      counterEvidence: string | null;
       impact: string;
       assessment: "strength" | "problem" | "uncertain";
       highlights?: { evidence?: string; impact?: string };
@@ -37,7 +39,10 @@ export function comparisonDiagram(input: ComparisonDiagramInput, receipt: JsonOb
   const highlightCount = input.candidates.flatMap(candidate => candidate.paths)
     .reduce((count, path) => count + Object.keys(path.highlights ?? {}).length, Number(input.reasonHighlight !== undefined));
   if (highlightCount > 2) throw new Error("比较图最多2处高亮（含顶部理由），只保留决定性差异");
-  input.candidates.forEach((candidate, candidateIndex) => candidate.paths.forEach((path, pathIndex) => {
+  const candidates = input.candidates.map(candidate => ({ ...candidate, paths: candidate.paths.map(({ counterEvidence, ...path }) => ({
+    ...path, evidence: counterEvidence === null ? path.evidence : `${path.evidence}；${counterEvidence}`,
+  })) }));
+  candidates.forEach((candidate, candidateIndex) => candidate.paths.forEach((path, pathIndex) => {
     for (const field of ["evidence", "impact"] as const)
       validateHighlight(path[field], path.highlights?.[field], `candidates[${candidateIndex}].paths[${pathIndex}].highlights.${field}`);
   }));
@@ -54,7 +59,7 @@ export function comparisonDiagram(input: ComparisonDiagramInput, receipt: JsonOb
     throw new Error("比较图必须引用候选模型对应的唯一已决正式对局");
   return {
     title: input.title,
-    candidates: pair.models.map(model => ({ ...input.candidates.find(candidate => candidate.model === model.model)!, name: model.modelName, outcome: model.result })),
+    candidates: pair.models.map(model => ({ ...candidates.find(candidate => candidate.model === model.model)!, name: model.modelName, outcome: model.result })),
     verdict: pair.resultLabel,
     reason: input.reason,
     ...(input.reasonHighlight === undefined ? {} : { reasonHighlight: input.reasonHighlight }),

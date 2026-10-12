@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { analysisTraceMap } from "./analysis-case.js";
 
+test("case maps link id-less source spans only by a unique tool name and recorded completion time", () => {
+  const call = (name: string, end: string, extra = {}) => ({ type: "tool_call", name, end, ...extra });
+  const result = (name: string, end: string, extra = {}) => ({ type: "tool_result", name, end, ...extra });
+  const nodes = analysisTraceMap({ messages: [
+    call("shell", "t1"), call("search", "t2"), result("search", "t2"), result("shell", "t1"),
+    call("shell", "ambiguous"), call("shell", "ambiguous"), result("shell", "ambiguous"),
+    call("shell", "duplicate"), result("shell", "duplicate"), result("shell", "duplicate"),
+    result("shell", "before"), call("shell", "before"),
+    call("shell", "explicit", { call_id: "a" }), result("shell", "explicit", { call_id: "missing" }),
+    call("shell", ""), result("shell", ""),
+    call("shell", "mixed"), call("shell", "mixed", { call_id: "known" }), result("shell", "mixed"),
+  ] }, { runId: "run", inputId: "input" }, 16).nodes;
+  assert.equal(nodes[2].callMessageIndex, 1);
+  assert.equal(nodes[3].callMessageIndex, 0, "parallel execution is not linked by adjacency");
+  for (const i of [6, 8, 9, 10, 13, 15, 18]) assert.equal(nodes[i].callMessageIndex, undefined);
+});
+
 test("case maps expose direct answer and tool coordinates without copied model input history", () => {
   const reference = { runId: "run", inputId: "input" };
   const map = analysisTraceMap({ messages: [
@@ -33,6 +50,17 @@ test("display previews expand to 2000 characters while model maps stay compact",
   assert.equal(display.previewTruncated, true);
   assert.equal(analysisTraceMap(raw, ref, 1).nodes[0].preview?.length, 160);
   assert.equal(analysisTraceMap({ messages: [{ type: "tool_result", output: "完整" }] }, ref, 1, "user").nodes[0].previewTruncated, false);
+});
+
+test("model call previews expose the recorded intent ahead of long command wrappers without changing source previews", () => {
+  const input = { command: "python /long/path/".repeat(20), description: "核对目标公司9:30至10:00区间涨跌幅", timeout: 10 };
+  const raw = { messages: [{ type: "tool_call", name: "shell", input }] };
+  const ref = { runId: "run", inputId: "input" };
+  const node = analysisTraceMap(raw, ref, 1).nodes[0];
+  assert(node.preview?.startsWith(input.description + "\n"));
+  assert.equal(node.preview?.length, 160);
+  assert.equal(node.previewTruncated, true);
+  assert.equal(analysisTraceMap(raw, ref, 1, "user").nodes[0].preview, JSON.stringify(input));
 });
 
 test("display maps expose recorded reasoning summaries and request output without input history", () => {

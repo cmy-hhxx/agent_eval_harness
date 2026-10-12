@@ -1,19 +1,21 @@
 import path from "node:path";
 import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { appendStatisticsLog, readJsonl, readStatisticsLog } from "@eval/data";
+import { appendStatisticsLog, fileSourceReader, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
 import { PublicationStatistics, publishableComparisons, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import { automationDateSelected, type AutomationJob, type AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
 import { loadConfig } from "./config.js";
+import { logger } from "./composition.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
 export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
   const host = await loadConfig(config.hostConfigs);
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
-  async function* inputs(): AsyncGenerator<PublicationInput> {
-    const seen = new Set<string>();
+  const revisions = new Map<string, string>();
+  const inputKey = (caseId: unknown, versionId: string) => JSON.stringify([caseId, versionId]);
+  async function* sourceInputs(): AsyncGenerator<PublicationInput> {
     for (const version of host.evaluation.inputs.versions) {
       const id = version.id;
       const registered = [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
@@ -21,27 +23,54 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       const files = job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
         .filter((input) => input.version === id).map((input) => input.source)))] : (REMOTE_MODELS as readonly string[]).includes(id)
           ? [path.join(config.sourceDirectory, job.date, id + ".jsonl")] : registered;
-      for (const file of files) for await (const item of readJsonl(file)) {
-        signal.throwIfAborted();
-        const raw = object(item), meta = object(raw.meta ?? {});
-        if (!Array.isArray(raw.messages)) throw new Error("Publication input messages must be an array");
-        if (!raw.messages.length) continue;
-        const batch = raw.batch_id ?? meta.batch_id ?? job.date, caseId = raw.case_id ?? meta.case_id;
-        if (batch !== job.date) continue;
-        if (typeof caseId !== "string" || !caseId ||
-            (raw.version !== undefined && raw.version !== version.name)) throw new Error("Publication input identity differs from source");
-        if (seen.has(JSON.stringify([caseId, id]))) throw new Error("Duplicate publication input identity");
-        seen.add(JSON.stringify([caseId, id]));
-        yield { versionId: id, trace: { ...raw, batch_id: batch, case_id: caseId, version: version.name } };
+      for (const file of files) {
+        const revision = revisions.get(file) ?? await fileSourceReader.revision(file);
+        revisions.set(file, revision);
+        for await (const { line } of fileSourceReader.lines(file, revision)) {
+          signal.throwIfAborted();
+          if (!line.trim()) continue;
+          const raw = object(JSON.parse(line)), meta = object(raw.meta ?? {});
+          if (!Array.isArray(raw.messages)) throw new Error("Publication input messages must be an array");
+          if (!raw.messages.length) continue;
+          const batch = raw.batch_id ?? meta.batch_id ?? job.date, caseId = raw.case_id ?? meta.case_id;
+          if (batch !== job.date) continue;
+          if (typeof caseId !== "string" || !caseId ||
+              (raw.version !== undefined && raw.version !== version.name)) throw new Error("Publication input identity differs from source");
+          yield { versionId: id, trace: { ...raw, batch_id: batch, case_id: caseId, version: version.name } };
+        }
       }
+    }
+  }
+  // Finish identity discovery before yielding anything: every member of a duplicate group is excluded.
+  // Retain coordinates only, never whole input bodies, and pin every reread to the same source revision.
+  const identities = new Set<string>(), quarantined = new Set<string>();
+  for await (const input of sourceInputs()) {
+    const key = inputKey(input.trace.case_id, input.versionId);
+    if (identities.has(key)) quarantined.add(key);
+    identities.add(key);
+  }
+  if (quarantined.size) await logger.event("publication_inputs_quarantined", {
+    component: "automations", automation_id: config.id, date: job.date, run_id: job.runIds.join(","),
+    inputs: [...quarantined].map(key => {
+      const [case_id, version] = JSON.parse(key) as [string, string];
+      return { case_id, version };
+    }),
+  });
+  async function* inputs(): AsyncGenerator<PublicationInput> {
+    const seen = new Set<string>();
+    for await (const input of sourceInputs()) {
+      const key = inputKey(input.trace.case_id, input.versionId);
+      if (quarantined.has(key)) continue;
+      seen.add(key);
+      yield input;
     }
     // Accepted results may reference records no longer present in the current remote snapshot.
     for (const { state } of runs) if (state) {
       const acceptedInputs = new Set(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt)
         .flatMap((task) => Object.values(task.inputIds)));
       for (const inputId of acceptedInputs) {
-        const candidate = state.inputs[inputId], key = JSON.stringify([candidate.case_id, candidate.version]);
-        if (seen.has(key)) continue;
+        const candidate = state.inputs[inputId], key = inputKey(candidate.case_id, candidate.version);
+        if (seen.has(key) || quarantined.has(key)) continue;
         const version = (state.config as EvalConfig).inputs.versions.find((item) => item.id === candidate.version);
         if (!version) throw new Error("Accepted publication input version is not registered: " + candidate.version);
         const { raw } = await locateRecordStream(candidate.source, { ...candidate, input_id: inputId }, version, job.date);
@@ -64,8 +93,9 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         const row = object(item), key = String(row.comparison_id), evaluatedAt = ready.get(key);
         if (evaluatedAt === undefined) continue;
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
-        if (requireItems) assertCompleteComparisonRewrite(row, labels.get(key)!);
         ready.delete(key);
+        if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
+        if (requireItems) assertCompleteComparisonRewrite(row, labels.get(key)!);
         yield { row, evaluatedAt };
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);

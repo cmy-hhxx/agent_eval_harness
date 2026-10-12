@@ -51,11 +51,19 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
   const formalComparisonReferences: { runId: string; taskId: string }[] = [];
   const comparisonReviewReferences: { runId: string; taskId: string }[] = [];
   const evaluatedInputs = new Set<string>();
+  let acceptedFrom: number | undefined, acceptedThrough: number | undefined;
   for (const [taskId, task] of Object.entries(saved.tasks)) {
     const purpose = byPurpose[analysisTaskPurpose(task)];
     for (const group of [total, purpose]) { group.total++; group.states[task.status]++; }
     const result = analysisComparisonResult(task);
-    if (result === "accepted") formalComparisonReferences.push({ runId: saved.runId, taskId });
+    if (result === "accepted") {
+      formalComparisonReferences.push({ runId: saved.runId, taskId });
+      const at = task.receipt?.acceptedAt;
+      if (typeof at === "number" && Number.isFinite(at)) {
+        acceptedFrom = Math.min(acceptedFrom ?? at, at);
+        acceptedThrough = Math.max(acceptedThrough ?? at, at);
+      }
+    }
     if (result === "pending_review") comparisonReviewReferences.push({ runId: saved.runId, taskId });
     if (task.stage === "attribution" && task.status === "succeeded" && task.receipt) {
       const inputId = task.inputIds.answer;
@@ -63,8 +71,12 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
       evaluatedInputs.add(inputId);
     }
   }
+  const date = (value: number | undefined) => value === undefined ? null
+    : new Date(value + 8 * 60 * 60 * 1000).toISOString().replace("Z", "+08:00");
   return {
     status: saved.status, startedAt: saved.startedAt, ...(saved.finishedAt !== undefined ? { finishedAt: saved.finishedAt } : {}),
+    timeScope: { timeZone: "Asia/Shanghai", evaluation: { from: date(saved.startedAt), to: date(saved.finishedAt) },
+      acceptedResults: { from: date(acceptedFrom), through: date(acceptedThrough) }, sampleTimeRange: null },
     inputCount: Object.keys(saved.inputs).length, evaluatedInputCount: evaluatedInputs.size, caseCount: cases.size, batchCount: batches.size, batches: [...batches].sort(),
     models: [...modelCoverage].map(([model, coverage]) => {
       const version = versions.get(model)!;

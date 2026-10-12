@@ -1,4 +1,4 @@
-import { createElement as h, useId } from 'react';
+import { createElement as h, useId, useLayoutEffect, useRef } from 'react';
 
 const stages = { user_question: 'User input', llm_turn: 'Model call', reasoning: 'Reasoning', function_call: 'Tool call', tool_call: 'Tool call', function_call_output: 'Tool result', tool_result: 'Tool result', final_answer: 'Final answer' };
 export const traceStage = (node, finalIndex) => node.messageIndex === finalIndex ? 'Final answer'
@@ -22,11 +22,19 @@ export function traceFlowLayout(nodes) {
 export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) {
   const layout = traceFlowLayout(nodes), arrow = useId();
   const selectedNode = nodes[selected];
-  return h('div', { style: { minWidth: 0 } },
-    h('div', { style: { display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, lineHeight: '16px', color: '#53616E', marginBottom: 4 } },
+  const viewport = useRef(null);
+  useLayoutEffect(() => {
+    const pane = viewport.current, box = layout.boxes[selected];
+    if (!pane || !box) return;
+    const top = box.y + 20, bottom = top + box.height + 4;
+    if (top < pane.scrollTop + 20) pane.scrollTop = Math.max(0, top - 20);
+    else if (bottom > pane.scrollTop + pane.clientHeight) pane.scrollTop = bottom - pane.clientHeight;
+  }, [selected, nodes]);
+  return h('div', { ref: viewport, 'data-trace-viewport': true, tabIndex: 0, role: 'region', 'aria-label': `${modelName}链路滚动区`, style: { minWidth: 0, maxHeight: 'min(560px, 65vh)', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'thin', scrollbarGutter: 'stable' } },
+    h('div', { style: { position: 'sticky', top: 0, zIndex: 1, background: '#fff', display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, lineHeight: '16px', color: '#53616E', paddingBottom: 4 } },
       h('span', null, h('span', { style: { display: 'inline-block', width: 14, borderTop: '2px solid #536574', marginRight: 4, verticalAlign: 'middle' } }), '执行顺序'),
       h('span', null, h('span', { style: { display: 'inline-block', width: 14, borderTop: '2px dashed #356A63', marginRight: 4, verticalAlign: 'middle' } }), '调用关联')),
-      h('svg', { 'data-trace-flow': true, role: 'group', 'aria-label': `${modelName}链路流程图`, viewBox: `0 0 ${layout.width} ${layout.height}`, width: '100%', style: { display: 'block' } },
+      h('svg', { 'data-trace-flow': true, role: 'group', 'aria-label': `${modelName}链路流程图`, viewBox: `0 0 ${layout.width} ${layout.height}`, width: layout.width, height: layout.height, style: { display: 'block' } },
         h('defs', null,
           h('marker', { id: `${arrow}-order`, viewBox: '0 0 8 8', refX: 8, refY: 4, markerWidth: 8, markerHeight: 8, markerUnits: 'userSpaceOnUse', orient: 'auto' }, h('path', { d: 'M 0 0 L 8 4 L 0 8 Z', fill: '#536574' })),
           h('marker', { id: `${arrow}-call`, viewBox: '0 0 8 8', refX: 8, refY: 4, markerWidth: 8, markerHeight: 8, markerUnits: 'userSpaceOnUse', orient: 180 }, h('path', { d: 'M 0 0 L 8 4 L 0 8 Z', fill: '#356A63' }))),
@@ -53,5 +61,8 @@ export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) 
 }
 
 export function evidenceFollowupText(answer, node) {
-  return `请继续调查这条证据及相关上下游节点；只补充新发现、依据和影响，简洁回复，不复述图中已有信息。\n模型：${answer.modelName}\n节点：#${node.messageIndex} ${traceLabel(node, answer.trace.finalMessageIndex)}\n${JSON.stringify({ reference: node.reference }, null, 2)}`;
+  const callIndex = node.callMessageIndex ?? node.messageIndex;
+  const relatedMessageIndices = (answer.trace.nodes ?? []).filter(value => value.messageIndex !== node.messageIndex
+    && (value.messageIndex === callIndex || value.callMessageIndex === callIndex)).map(value => value.messageIndex);
+  return `请继续调查这条证据及相关上下游节点；只补充新发现、依据和影响，简洁回复，不复述图中已有信息。\n模型：${answer.modelName}\n节点：#${node.messageIndex} ${traceLabel(node, answer.trace.finalMessageIndex)}\n${JSON.stringify({ reference: node.reference, ...(relatedMessageIndices.length ? { relatedMessageIndices } : {}) }, null, 2)}`;
 }

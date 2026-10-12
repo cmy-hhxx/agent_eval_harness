@@ -1,7 +1,9 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
+import { erisComparisonCheck } from "@eval/prompts";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
+import checkSchema from "../../../schemas/eris/comparison-check.json" with { type: "json" };
 import { validateChart, type ChartSpec } from "./chart.js";
 import { comparisonDiagram, type ComparisonDiagramInput } from "./comparison-diagram.js";
 
@@ -47,6 +49,25 @@ function resultSummary(value: unknown, runId?: string): unknown {
       })) };
 }
 
+/** A review keeps source navigation without treating earlier judgments as facts. */
+function reviewReferences(value: unknown, runId: string): AnalysisReference[] {
+  const references = new Map<string, AnalysisReference>();
+  function visit(item: unknown) {
+    if (Array.isArray(item)) { item.forEach(visit); return; }
+    if (item === null || typeof item !== "object") return;
+    for (const [key, child] of Object.entries(item)) {
+      if (key === "evidence_id" && typeof child === "string") {
+        const coordinate = parseEvidenceCoordinates(child);
+        if (coordinate) references.set(`${coordinate.input_id}:${coordinate.message_index}`, {
+          runId, inputId: coordinate.input_id, messageIndex: coordinate.message_index,
+        });
+      } else visit(child);
+    }
+  }
+  visit(value);
+  return [...references.values()];
+}
+
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
 function directorySummary(summary: JsonObject): JsonObject {
   const { formalComparisonReferences: _formal, comparisonReviewReferences: _review, ...progress } = summary;
@@ -57,7 +78,26 @@ function directorySummary(summary: JsonObject): JsonObject {
   return { ...progress, formalComparisonStats: { ...counts, tiers } };
 }
 
+/** Keep the exact page once; its node reference, format and offset locate every character. */
+function evidenceMaterial(message: JsonObject, audience?: "model" | "user"): JsonObject {
+  if (audience === "user" || message.kind !== "message") return message;
+  const { evidence: _evidence, ...material } = message;
+  return material;
+}
+
+function statisticalScope(summary: JsonObject, names: string[]): string {
+  const batches = summary.batches as string[] | undefined;
+  if (!batches?.length) throw new Error("正式统计缺少登记批次。");
+  const { tiers } = summary.formalComparisonStats as { tiers: { comparisonTier: string; comparisonCount: number }[] };
+  return `${batches.join("、")} · ${[...new Set(names)].map(name => {
+    const tier = tiers.find(tier => tier.comparisonTier === name);
+    if (!tier) throw new Error("该档没有正式统计。");
+    return `${name} ${tier.comparisonCount}场`;
+  }).join("、")}`;
+}
+
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
+  const validateCheck = new Ajv2020({ strict: false }).compile<{ issues: { path: string; reason: string }[] }>(checkSchema);
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
     list_data: async (value) => {
       const result = await options.data.list(value as JsonObject);
@@ -69,26 +109,43 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       });
     },
     read_case: async (value, context) => {
-      const args = value as { reference: AnalysisReference };
+      const args = value as { reference: AnalysisReference | AnalysisCaseLookup; review?: boolean };
       const data = await options.data.read(args.reference, { view: "case", ...(context.audience === "user" ? { audience: "user" as const } : {}) });
       const formal = data.formal as JsonObject | undefined;
-      return { ...textResult({ ...data, ...(formal ? { formal: { ...formal, result: resultSummary(formal.result, args.reference.runId) } } : {}) }),
-        details: { sourceRead: { tool: "read_case", args } } };
+      const review = args.review === true && context.audience !== "user";
+      const answers = (data.answers as JsonObject[]).map(answer => {
+        if (context.audience === "user") return answer;
+        if (review) { const { trace: _trace, ...response } = answer; return response; }
+        const trace = answer.trace as JsonObject;
+        // All nodes belong to answer.reference; messageIndex supplies the remaining coordinate.
+        return { ...answer, trace: { ...trace, nodes: (trace.nodes as JsonObject[]).map(({ reference: _reference, ...node }) => node) } };
+      });
+      const { formal: _formal, ...caseData } = data;
+      const originalVerdicts = ((formal?.comparisonScope as JsonObject | undefined)?.comparisons as JsonObject[] | undefined)?.map(pair => ({
+        result: pair.result, winnerModel: pair.winnerModel, models: (pair.models as JsonObject[] | undefined)?.map(model => model.model),
+      }));
+      return { ...textResult({ ...caseData, answers, ...(formal ? review ? { originalVerdicts }
+        : { formal: { ...formal, result: resultSummary(formal.result, args.reference.runId) } } : {}) }),
+        details: { sourceRead: { tool: "read_case", args: { reference: data.reference, ...(args.review === undefined ? {} : { review: args.review }) } } } };
     },
-    read_evidence: async (value) => {
+    read_evidence: async (value, context) => {
       const args = value as { reference: AnalysisReference } & Omit<Extract<AnalysisReadOptions, { view: "evidence" }>, "view">;
       const data = await options.data.read(args.reference, { view: "evidence", messages: args.messages });
-      return { ...textResult(data), isError: data.readCount === 0, details: { sourceRead: { tool: "read_evidence", args } } };
+      return { ...textResult({ ...data, items: (data.items as JsonObject[]).map(item => evidenceMaterial(item, context.audience)) }),
+        isError: data.readCount === 0, details: { sourceRead: { tool: "read_evidence", args } } };
     },
-    read_data: async (value) => {
+    read_data: async (value, context) => {
       const args = value as { reference: AnalysisReference } & AnalysisResultReadOptions;
       const data = await options.data.read(args.reference, args);
       return args.reference.taskId ? textResult(args.view === "details"
         ? { kind: "accepted-result", reference: args.reference, view: "details", ...resultPage(data, args) }
-        : { ...data, view: "summary", result: resultSummary(data.result) })
-        : { ...textResult(data), details: { sourceRead: { tool: "read_data", args } } };
+        : { ...data, view: "summary", result: data.comparisonScope
+          ? { status: (data.result as JsonObject).status, ground_truth: (data.result as JsonObject).ground_truth,
+            evidence_references: reviewReferences(data.result, args.reference.runId) }
+          : resultSummary(data.result) })
+        : { ...textResult(evidenceMaterial(data, context.audience)), details: { sourceRead: { tool: "read_data", args } } };
     },
-    search_data: async (value) => { const args = value as { reference: AnalysisReference; query: string; offset?: number; limit?: number }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
+    search_data: async (value) => { const args = { scope: "evidence" as const, ...value as { reference: AnalysisReference; query: string | string[]; offset?: number; limit?: number; scope?: "evidence" | "all" } }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
     search_web: async (value, context) => {
       const result = await options.search.search(value as WebSearchRequest, context.signal);
       return { ...textResult(result), isError: result.attempts.length > 0 && result.attempts.every(attempt => attempt.state === "failed") };
@@ -108,31 +165,52 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const { result, ...receipt } = await options.specialists.read(context.scope, args.operationId);
       return textResult({ ...receipt, view: args.view ?? "summary", ...(result === undefined ? {} : { result: args.view === "details" ? resultPage(result, args) : resultSummary(result) }) });
     },
-    show_comparison: async (value) => {
+    show_comparison: async (value, context) => {
       const args = value as ComparisonDiagramInput;
       const result = await options.data.read(args.reference);
-      return { ...textResult({ kind: "comparison-diagram", diagram: comparisonDiagram(args, result) }),
-        details: { reference: args.reference, evaluatorVersion: result.evaluatorVersion } };
+      const diagram = comparisonDiagram(args, result);
+      if (!context.complete) throw new Error("比较图结论核对不可用，尚未展示");
+      const check = await context.complete({ systemPrompt: erisComparisonCheck, text: JSON.stringify(args), outputSchema: checkSchema,
+        sourceTools: ["read_case", "search_data", "read_evidence", "read_data"] });
+      let review: unknown;
+      try { review = JSON.parse(check.text); } catch { /* Preserve invalid output and usage for diagnosis. */ }
+      if (!validateCheck(review)) return { ...textResult({ kind: "comparison-check", error: "比较图结论核对格式无效，尚未展示", issues: schemaIssues(validateCheck.errors) }),
+        isError: true, details: { consistencyCheck: check } };
+      const consistencyCheck = { ...check, issues: review.issues };
+      if (review.issues.length) return { ...textResult({ kind: "comparison-check", issues: review.issues }), isError: true, details: { consistencyCheck } };
+      return { ...textResult({ kind: "comparison-diagram", diagram }),
+        ...(args.complete ? { terminate: true } : {}),
+        details: { reference: result.reference, evaluatorVersion: result.evaluatorVersion, consistencyCheck } };
     },
     show_chart: async (value, context) => {
       const { references = [], ...chart } = value as ChartSpec & { references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
       validateChart(chart);
       const citations: unknown[] = [];
+      const timeScopes = new Map<string, string>();
+      // Only share within this chart. A later tool call must observe new accepted results.
+      const runs = new Map<string, Awaited<ReturnType<AnalysisDataSource["list"]>>>();
+      const readRun = async (runId: string) => {
+        if (!runs.has(runId)) runs.set(runId, await options.data.list({ runId, limit: 1 }));
+        return runs.get(runId)!;
+      };
       for (const item of references) {
         context.signal.throwIfAborted();
         if (item.statistics) {
-          const result = await options.data.list({ runId: item.statistics.runId, limit: 1 });
+          const result = await readRun(item.statistics.runId);
           const summary = result.summary as { formalComparisonStats?: { tiers: { comparisonTier: string; comparisonCount: number; references: AnalysisReference[] }[] } } | undefined;
           const tier = summary?.formalComparisonStats?.tiers?.find(tier => tier.comparisonTier === item.statistics!.comparisonTier);
           if (result.kind !== "inputs" || !tier || tier.comparisonCount <= 0 || !tier.references?.length)
             throw new Error("该运行与档位没有可引用的正式统计");
-          citations.push({ statistics: item.statistics, evaluatorVersion: result.evaluatorVersion, references: tier.references });
+          if (references.every(item => item.statistics)) timeScopes.set(item.statistics.runId, statisticalScope(result.summary as JsonObject,
+            references.filter(ref => ref.statistics?.runId === item.statistics!.runId).map(ref => ref.statistics!.comparisonTier)));
+          citations.push({ statistics: item.statistics, evaluatorVersion: result.evaluatorVersion, references: tier.references,
+            timeScope: (result.summary as JsonObject).timeScope, batches: (result.summary as JsonObject).batches });
         } else if (item.operationId) {
           const result = await options.specialists.read(context.scope, item.operationId);
           if (result.state !== "succeeded") throw new Error("图表只能引用已接受的专业结果");
           citations.push({ operationId: item.operationId, evaluatorVersion: result.evaluatorVersion, reference: result.reference });
         } else if (item.runId) {
-          const result = await options.data.list({ runId: item.runId, limit: 1 });
+          const result = await readRun(item.runId);
           if (result.kind !== "inputs") throw new Error("图表目录引用不存在");
           citations.push({ runId: item.runId, evaluatorVersion: result.evaluatorVersion });
         } else if (item.reference) {
@@ -142,6 +220,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
           citations.push({ reference: item.reference, ...(result.evaluatorVersion ? { evaluatorVersion: result.evaluatorVersion } : {}) });
         }
       }
+      if (timeScopes.size) chart.scope = [...timeScopes.values()].join("；");
       const result = textResult({ kind: "chart", chart });
       return citations.length ? { ...result, details: { references: citations } } : result;
     },
@@ -152,7 +231,15 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     const validate = ajv.compile(inputSchema);
     const validateArgs = (value: unknown) => {
       if (validate(value)) return;
-      const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => ({ path, code, expected }));
+      const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => {
+        const issue = { path, code, expected };
+        if (code !== "schema_maxLength") return issue;
+        const field = path.split("/").slice(1).reduce<unknown>((parent, key) => parent !== null && typeof parent === "object"
+          ? (parent as Record<string, unknown>)[key.replace(/~1/g, "/").replace(/~0/g, "~")] : undefined, value);
+        if (typeof field !== "string") return issue;
+        const actualLength = [...field].length;
+        return { ...issue, actualLength, excess: actualLength - (expected as { limit: number }).limit };
+      });
       throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(validate.errors)}`);
     };
     return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_case", "read_evidence", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart", "show_comparison"].includes(name),

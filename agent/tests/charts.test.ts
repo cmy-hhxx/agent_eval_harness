@@ -124,11 +124,12 @@ test("chart metadata and accessible observations remain text without executing s
   assert.equal(accessibleContainer.querySelectorAll('dd').length, 2);
   assert.equal(document.querySelector('[data-chart-legend]'), null, 'a single series does not repeat a redundant legend');
   assert.equal(document.querySelector('footer'), null, 'source descriptions do not add visible small print');
-  assert.equal(document.querySelector('[data-chart-metadata]')!.textContent, `${attack} · 来源：${attack}`);
+  assert.equal(document.querySelector('[data-chart-scope]')!.textContent, attack);
+  assert.equal(document.querySelector('[data-chart-metadata]')!.textContent, `来源：${attack}`);
   assert.equal(document.querySelectorAll('svg title').length, 0, 'charts expose accessible names without browser hover text');
 });
 
-test('chart faces keep only the title and unit while scope and source remain accessible metadata', () => {
+test('chart faces show the scope once while source remains accessible metadata', () => {
   const composition = render({ ...base, type: 'pie', title: '17 次运行中 6 次完成', scope: '17 次运行的当前状态',
     categories: ['已完成', '中断'], series: [{ name: '运行', values: [6, 11] }] });
   const ring = composition.querySelector('svg')!;
@@ -138,7 +139,8 @@ test('chart faces keep only the title and unit while scope and source remain acc
   assert.deepEqual([...composition.querySelectorAll('[data-chart-share]')].map(node => node.textContent), ['35.29%', '64.71%']);
   assert.equal(composition.querySelector('figcaption')!.textContent, '17 次运行中 6 次完成单位：场');
   const metadata = composition.querySelector<HTMLElement>('[data-chart-metadata]')!;
-  assert.equal(metadata.textContent, `17 次运行的当前状态 · 来源：${base.source}`);
+  assert.equal(composition.querySelector('[data-chart-scope]')!.textContent, '17 次运行的当前状态');
+  assert.equal(metadata.textContent, `来源：${base.source}`);
   assert.equal(metadata.style.clipPath, 'inset(50%)');
   assert.equal(metadata.hasAttribute('aria-hidden'), false, 'scope and source remain available to assistive readers');
   assert.equal(composition.querySelector('footer'), null);
@@ -147,6 +149,22 @@ test('chart faces keep only the title and unit while scope and source remain acc
   assert.equal(total.textContent, '120,000');
   assert.equal(total.closest('[data-chart-denominator]'), null, 'even a six-digit total moves below the smaller ring when it would collide with its centre');
   assert.match(wideTotal.querySelector('[data-chart-accessible-data]')!.textContent!, /50% \(60,000\/120,000\)/);
+});
+
+test('saved chart captions show data dates and sample counts without evaluator timestamps', () => {
+  const scope = '批次 2026-10-11 · 阶段结果 · 评测自 2026-10-12 01:03（结束未登记，北京时间）· 结果截至 2026-10-12 09:18（北京时间）· 正式样本：Fast 278场、Expert 270场';
+  const document = render({ ...base, type: 'heatmap', scope });
+  assert.equal(document.querySelector('[data-chart-scope]')!.textContent, '2026-10-11 · Fast 278场、Expert 270场');
+  assert.equal(document.querySelector('[data-chart-full-scope]'), null);
+  assert.doesNotMatch(document.body.textContent!, /评测自|阶段结果|结果截至|北京时间|01:03/);
+  assert.doesNotMatch(document.body.innerHTML, /评测自|结果截至|01:03|09:18/, "accessible chart labels use the same compact data dates");
+  const matrix = render({ ...base, type: 'heatmap', scope, categories: ['Fast', 'Expert'], series: [
+    { name: 'A组胜', values: [71, 110] }, { name: 'B组胜', values: [96, 69] },
+    { name: '双方都好', values: [101, 86] }, { name: '双方都差', values: [10, 5] },
+  ] });
+  assert.equal(matrix.querySelector('[data-chart-scope]')!.textContent, '2026-10-11 · Fast 278场、Expert 270场');
+  const custom = '2026-10-11 · 仅核对三道题';
+  assert.equal(render({ ...base, type: 'heatmap', scope: custom }).querySelector('[data-chart-scope]')!.textContent, custom);
 });
 
 test('trend labels show the last known value, avoid coincident tails and retain every observation', () => {
@@ -473,7 +491,7 @@ test('comparison parsing hides failures and malformed receipts while supplied ma
     ...[[], Array(4).fill(comparison.candidates[0]!.paths[0]), [null], [{ ...comparison.candidates[0]!.paths[0], evidence: null }],
       [{ ...comparison.candidates[0]!.paths[0], extra: true }],
       [{ ...comparison.candidates[0]!.paths[0], assessment: 'win' }], [{ ...comparison.candidates[0]!.paths[0], assessment: ['strength'] }],
-      [{ ...comparison.candidates[0]!.paths[0], title: '超'.repeat(17) }], [{ ...comparison.candidates[0]!.paths[0], evidence: '超'.repeat(61) }],
+      [{ ...comparison.candidates[0]!.paths[0], title: '超'.repeat(17) }], [{ ...comparison.candidates[0]!.paths[0], evidence: '超'.repeat(142) }],
       [{ ...comparison.candidates[0]!.paths[0], impact: '超'.repeat(37) }]]
       .map(paths => ({ ...comparison, candidates: [{ ...comparison.candidates[0], paths }, comparison.candidates[1]] })),
     { ...comparison, title: '' }, { ...comparison, verdict: 1 }, { ...comparison, reason: [] }, { ...comparison, caveat: {} },

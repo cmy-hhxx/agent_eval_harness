@@ -12,6 +12,9 @@ function chartTool(data: ErisDependencies["data"], specialists: ErisDependencies
   return createEris({ code: { execute: unexpected, read: unexpected }, data, specialists, search: { search: unexpected }, web: { read: unexpected } }).tools.find((tool) => tool.name === "show_chart")!;
 }
 const noData = { list: unexpected, read: unexpected, search: unexpected, image: unexpected };
+const timing = { status: "finished", batches: ["2026-10-10"], timeScope: { timeZone: "Asia/Shanghai",
+  evaluation: { from: "2026-10-10T08:16:00.000+08:00", to: "2026-10-12T06:54:00.000+08:00" as string | null },
+  acceptedResults: { from: "2026-10-10T08:18:00.000+08:00", through: "2026-10-10T22:02:00.000+08:00" }, sampleTimeRange: null } };
 
 test("charts reject unsafe configuration and invalid geometry before reading sources", async () => {
   const tool = chartTool(noData);
@@ -72,8 +75,8 @@ test("charts require existing materials and accepted specialist results", async 
   const tool = chartTool({ ...noData,
     async list() { return { kind: "runs" }; },
     async read(reference) {
-      if (reference.inputId === "answer") return { kind: "message", text: "来源材料" };
-      if (reference.taskId === "accepted") return { result: { conclusion: "已有结论" }, evaluatorVersion: "fixture" };
+      if ("inputId" in reference && reference.inputId === "answer") return { kind: "message", text: "来源材料" };
+      if ("taskId" in reference && reference.taskId === "accepted") return { result: { conclusion: "已有结论" }, evaluatorVersion: "fixture" };
       return {};
     },
   }, { invoke: unexpected, async read(_, id) { return { operationId: id, kind: "comparison", state: id === operationId ? "succeeded" : "running", evaluatorVersion: "fixture" }; } });
@@ -92,13 +95,13 @@ test("comparison charts resolve every formal source in one aggregate read, inclu
   const statistics = { runId: "run", comparisonTier: "Fast" };
   const tool = chartTool({ ...noData, async list(query) {
     calls.push(query);
-    return { kind: "inputs", evaluatorVersion: "fixture", summary: { formalComparisonStats: {
+    return { kind: "inputs", evaluatorVersion: "fixture", summary: { ...timing, formalComparisonStats: {
       tiers: [{ comparisonTier: "Fast", comparisonCount: 80, references }],
     } } };
   } });
   const result = await tool.execute({ ...chart, scope: "Fast · 80场已裁决", series: [{ name: "胜场", values: [45, 35] }], references: [{ statistics }] }, context);
   assert.deepEqual(calls, [{ runId: "run", limit: 1 }]);
-  assert.deepEqual(result.details, { references: [{ statistics, evaluatorVersion: "fixture", references }] });
+  assert.deepEqual(result.details, { references: [{ statistics, evaluatorVersion: "fixture", references, timeScope: timing.timeScope, batches: timing.batches }] });
   assert(!result.content[0].text?.includes("result-79"), "source coordinates belong in metadata, not model-visible chart output");
   await assert.rejects(tool.execute({ ...chart, references: [{ statistics: { ...statistics, comparisonTier: "Expert" } }] }, context), /正式统计/);
   for (const invalid of [{ statistics, runId: "run" }, { statistics, reference: references[0] }, { statistics: { runId: "run" } }])
@@ -107,4 +110,40 @@ test("comparison charts resolve every formal source in one aggregate read, inclu
     const empty = chartTool({ ...noData, list: async () => ({ kind: "inputs", summary }) });
     await assert.rejects(empty.execute({ ...chart, references: [{ statistics }] }, context), /正式统计/);
   }
+});
+
+test("a two-tier chart reads each run once per execution and refreshes on the next execution", async () => {
+  let reads = 0;
+  const tool = chartTool({ ...noData, async list() {
+    reads++;
+    return { kind: "inputs", summary: { ...timing, formalComparisonStats: { tiers: ["Fast", "Expert"].map(comparisonTier => ({
+      comparisonTier, comparisonCount: 1, references: [{ runId: "run", taskId: `${comparisonTier}-${reads}` }],
+    })) } } };
+  } });
+  const input = { ...chart, references: ["Fast", "Expert"].map(comparisonTier => ({ statistics: { runId: "run", comparisonTier } })) };
+  const first = await tool.execute(input, context);
+  assert.equal(reads, 1, "Fast and Expert must share the same freshly read run");
+  assert.equal(JSON.parse(first.content[0].text!).chart.scope, "2026-10-10 · Fast 1场、Expert 1场");
+  assert.match(JSON.stringify(first.details), /Expert-1/);
+  const second = await tool.execute(input, context);
+  assert.equal(reads, 2, "do not cache across chart executions while evaluations may advance");
+  assert.match(JSON.stringify(second.details), /Expert-2/);
+});
+
+test("formal chart scope shows source batch dates and tier counts, never evaluator timing", async () => {
+  let scope = structuredClone(timing);
+  const tool = chartTool({ ...noData, list: async () => ({ kind: "inputs", summary: { ...scope,
+    formalComparisonStats: { tiers: [{ comparisonTier: "Fast", comparisonCount: 1, references: [{ runId: "run", taskId: "one" }] }] } } }) });
+  const { scope: _scope, ...input } = { ...chart, references: [{ statistics: { runId: "run", comparisonTier: "Fast" } }] };
+  const read = async (args = input) => JSON.parse((await tool.execute(args, context)).content[0].text!).chart.scope as string;
+  assert.equal(await read(), "2026-10-10 · Fast 1场");
+  assert.equal(await read({ ...input, ...{ scope: "重复样本数和未登记说明" } }), await read());
+  scope = { ...timing, status: "running", timeScope: { ...timing.timeScope, evaluation: { ...timing.timeScope.evaluation, to: null } } };
+  assert.equal(await read(), "2026-10-10 · Fast 1场");
+  scope = { ...timing, timeScope: { ...timing.timeScope, evaluation: { from: "2025-12-31T23:00:00+08:00", to: "2026-01-01T01:00:00+08:00" } } };
+  assert.equal(await read(), "2026-10-10 · Fast 1场", "evaluation dates cannot replace source dates");
+  scope = { ...scope, batches: ["2025-12-31", "2026-01-01"] };
+  assert.equal(await read(), "2025-12-31、2026-01-01 · Fast 1场");
+  const { references: _references, ...external } = input;
+  await assert.rejects(tool.execute(external, context), /参数无效/, "non-statistical charts still require their own scope");
 });

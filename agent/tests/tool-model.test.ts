@@ -7,6 +7,12 @@ import { ROOT } from "../../tests/fixtures/services.js";
 
 const { analysisToolModel } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/tool-model.js")).href);
 
+test("batched search displays a compact query count while retaining the complete result", () => {
+  const output = { queries: [{ query: "PCB", total: 2 }, { query: "铜缆", total: 1 }], total: 3, matches: [] };
+  const model = analysisToolModel("search_data", { state: "ok", bodyRaw: JSON.stringify({ query: ["PCB", "铜缆"] }), output: JSON.stringify(output) });
+  assert.equal(model.summary, "搜索 2 个关键词 · 3 处匹配");
+});
+
 test("batch evidence details distinguish missing, partial and complete nodes without repeating quotes", () => {
   const reference = { runId: "run", inputId: "input" };
   const items = [

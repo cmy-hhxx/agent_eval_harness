@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import { emptyUsage, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, object, type JsonObject, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
 import { readJson, writeJson } from "@eval/data";
 import { buildPlan, comparisonCodec, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
+import { createEris } from "@eval/assistant";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig } from "../../fixtures/comparison.js";
 
 async function register(config: EvalConfig, accepted?: (state: RunState, plan: TaskPlan) => Promise<void>) {
@@ -43,7 +44,7 @@ test("batch evidence parses one input and preserves exact per-node slices, citat
   assert.equal(items[0].hasMore, true);
   assert.equal(items[0].nextOffset, 13);
   assert.equal(items[2].hasMore, false);
-  for (const [index, messageIndex, offset, limit] of [[0, 1, 5, 8], [2, 0, 0, 8000], [3, 2, 2, 4]]) {
+  for (const [index, messageIndex, offset, limit] of [[0, 1, 5, 8], [2, 0, 0, 16000], [3, 2, 2, 4]]) {
     assert.deepEqual(items[index], await source.read({ ...reference, messageIndex }, { offset, limit }), "batch and single reads must agree on exact source coordinates");
   }
   assert.equal(items[3].text, "段\n第二");
@@ -51,8 +52,216 @@ test("batch evidence parses one input and preserves exact per-node slices, citat
   const next = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 1, offset: items[0].nextOffset }] });
   const whole = await source.read({ ...reference, messageIndex: 1 });
   assert.equal(items[0].text + (next.items as { text: string }[])[0].text, (whole.text as string).slice(5));
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const tools = createEris({ data: source, code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected },
+    search: { search: unexpected }, web: { read: unexpected } }).tools;
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "read", signal: new AbortController().signal, progress() {} };
+  const batchArgs = { reference, messages: [{ messageIndex: 1, offset: 5, limit: 8 }, { messageIndex: 99 }, { messageIndex: 0 }, { messageIndex: 2, offset: 2, limit: 4 }] };
+  for (const [name, args, original] of [["read_evidence", batchArgs, result], ["read_data", { reference: { ...reference, messageIndex: 1 } }, whole]] as const) {
+    const tool = tools.find(tool => tool.name === name)!;
+    const model = JSON.parse((await tool.execute(args, context)).content[0].text!);
+    const expected = name === "read_evidence" ? (original.items as Record<string, unknown>[]) : [original];
+    const actual = name === "read_evidence" ? model.items : [model];
+    assert.deepEqual(actual, expected.map(({ evidence: _evidence, ...item }) => item), "exact source text, node coordinates, errors and page boundaries survive the model projection");
+    const user = JSON.parse((await tool.execute(args, { ...context, audience: "user" })).content[0].text!);
+    assert.deepEqual(user, original, "the inspector and copy workflow retain full material");
+  }
   source.raw = async () => { throw new Error("Source unavailable"); };
   await assert.rejects(source.read(reference, { view: "evidence", messages: [{ messageIndex: 0 }] }), /Source unavailable/);
+});
+
+test("batch evidence preserves decisive text beyond 8000 characters and exact continuation boundaries", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const medium = "甲".repeat(9000) + "决定性反例：已给期现分类说明", long = "乙".repeat(18000);
+  source.raw = async () => ({ messages: [{ content: medium }, { content: long }] });
+  const batch = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0 }, { messageIndex: 1 }] });
+  const [first, second] = batch.items as JsonObject[];
+  assert.equal(first.text, medium);
+  assert.equal(first.hasMore, false);
+  assert.equal(second.text, long.slice(0, 16000));
+  assert.equal(second.nextOffset, 16000);
+  const tail = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 1, offset: second.nextOffset as number }] });
+  assert.equal(String(second.text) + (tail.items as JsonObject[])[0].text, long);
+  const explicit = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0, limit: 1000 }] });
+  assert.equal((explicit.items as JsonObject[])[0].text, medium.slice(0, 1000));
+  assert.equal((await source.read({ ...reference, messageIndex: 0 })).limit, 8000, "single-message reads retain their own budget");
+});
+
+test("search hits supply a directly readable window around long queries and the source node type", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  source.raw = async () => ({ messages: [
+    { type: "tool_result", name: "Search", output: "前".repeat(10000) + "目标条件" + "后".repeat(9000) },
+    { type: "reasoning", content: "目标条件的另一次提及" },
+  ] });
+  const result = await source.search(reference, "目标条件", { limit: 1, scope: "all" });
+  const hit = (result.matches as { reference: typeof reference & { messageIndex: number }; type: string; name: string; offset: number; text: string; readOffset: number }[])[0];
+  assert.equal(hit.type, "tool_result");
+  assert.equal(hit.name, "Search");
+  assert(hit.readOffset > 8000, "a match deep in a long node must not send the reader back to its first page");
+  const page = await source.read(hit.reference, { offset: hit.readOffset });
+  assert((page.text as string).startsWith(hit.text));
+  assert((page.text as string).includes("目标条件"));
+  assert.equal(result.hasMore, true);
+  assert.equal((await source.search(reference, "不存在")).total, 0);
+});
+
+test("local search keeps instructions identifiable and behind evidence without losing paginated hits", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  source.raw = async () => ({ messages: [
+    { role: "system", content: "扣非是检索指令" },
+    { role: "developer", content: "扣非是指令示例" },
+    { role: "tool", type: "tool_result", output: "实际扣非数值" },
+    { role: "assistant", content: "答案中的扣非判断" },
+  ] });
+  const first = await source.search(reference, "扣非", { limit: 2, scope: "all" });
+  const second = await source.search(reference, "扣非", { offset: first.nextOffset as number, limit: 2, scope: "all" });
+  const hits = [...first.matches as JsonObject[], ...second.matches as JsonObject[]];
+  assert.equal(first.total, 4);
+  assert.deepEqual(hits.map(hit => object(hit.reference).messageIndex), [2, 3, 0, 1]);
+  assert.deepEqual(hits.map(hit => hit.role), ["tool", "assistant", "system", "developer"]);
+  assert.equal(second.hasMore, false);
+  for (const hit of hits) {
+    const page = await source.read(hit.reference as typeof reference, { offset: hit.readOffset as number });
+    assert((page.text as string).startsWith(hit.text as string));
+  }
+});
+
+test("search ranks original tool evidence before replayed history without dropping either", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  source.raw = async () => ({ messages: [
+    { type: "llm_turn", input_messages: [{ content: "关键词：复制的历史" }], output: "另一次关键词判断" },
+    { role: "assistant", content: "关键词结论" },
+    { type: "tool_result", name: "Search", output: "关键词的原始披露与限定" },
+    { role: "system", content: "关键词指令" },
+  ] });
+  const evidence = await source.search(reference, "关键词");
+  assert.equal(evidence.scope, "evidence");
+  assert.equal(evidence.total, 1, "original source facts must not compete with repeated answer claims");
+  assert.equal(object((evidence.matches as JsonObject[])[0].reference).messageIndex, 2);
+  const pages = await Promise.all([0, 1, 2, 3].map(offset => source.search(reference, "关键词", { offset, limit: 1, scope: "all" })));
+  const hits = pages.flatMap(page => page.matches as JsonObject[]);
+  assert.deepEqual(hits.map(hit => object(hit.reference).messageIndex), [2, 1, 0, 3]);
+  assert(pages.every(page => page.total === 4));
+  for (const hit of hits) {
+    const page = await source.read(hit.reference as typeof reference, { offset: hit.readOffset as number });
+    assert((page.text as string).startsWith(hit.text as string));
+  }
+});
+
+test("space-separated search terms match together in one node and retain exact term locations", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  source.raw = async () => ({ messages: [
+    { type: "tool_result", output: "甲公司提供清洗设备，也有湿法刻蚀设备，目标用途待核验。" },
+    { type: "tool_result", output: "甲公司仅列清洗" },
+    { type: "tool_result", output: "乙公司列湿法刻蚀" },
+  ] });
+  const result = await source.search(reference, "甲公司 湿法刻蚀");
+  assert.equal(result.total, 1, "terms must all occur in the same source node, not across unrelated results");
+  const hit = (result.matches as JsonObject[])[0];
+  assert.deepEqual(hit.terms, ["甲公司", "湿法刻蚀"]);
+  const original = await source.read(hit.reference as typeof reference);
+  for (const location of hit.termLocations as { term: string; offset: number; readOffset: number }[])
+    assert.equal((original.text as string).slice(location.offset, location.offset + location.term.length), location.term);
+  assert.equal((await source.search(reference, "甲公司 未记载能力")).total, 0);
+  await assert.rejects(source.search(reference, "  "), /Search query required/);
+});
+
+test("compound search exposes every term's original context without repeating overlapping windows", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const text = "甲公司清洗设备\n" + "填充".repeat(800) + "TSV深孔清洗，也有多种介质层湿法刻蚀工艺。" + "余文".repeat(400);
+  source.raw = async () => ({ messages: [{ type: "tool_result", output: text }] });
+  const result = await source.search(reference, "甲公司 TSV 深孔清洗");
+  const hit = (result.matches as JsonObject[])[0];
+  const contexts = [{ readOffset: hit.readOffset, text: hit.text }, ...(hit.contexts as { readOffset: number; text: string }[] ?? [])];
+  assert.equal(contexts.length, 2, "distant terms are visible, neighboring terms share one exact source window");
+  assert.match(contexts.map(context => context.text).join("\n"), /TSV深孔清洗，也有多种介质层湿法刻蚀/);
+  for (const context of contexts) {
+    const page = await source.read(hit.reference as typeof reference, { offset: context.readOffset as number, limit: (context.text as string).length });
+    assert.equal(page.text, context.text, "every displayed window is directly readable without changing source coordinates");
+  }
+});
+
+test("search separates retrieved documents from query metadata and prefers the entity's own source", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  source.raw = async () => ({ messages: [{ type: "tool_result", output: "甲公司 TSV 行业表格" }, { type: "tool_result", output: { items: [
+    { summary: "乙公司收购甲公司，并推出自己的TSV全流程设备", title: "乙公司新闻", query: "甲公司 TSV 目标能力" },
+    { summary: "介绍".repeat(500) + "TSV深孔清洗，以及多种介质层湿法刻蚀工艺。", title: "甲公司年度报告", query: "甲公司 TSV 目标能力" },
+    { summary: "只有通用清洗设备", title: "丙公司", query: "甲公司 TSV 目标能力" },
+  ] } }] });
+  const hits = (await source.search(reference, "甲公司 TSV")).matches as JsonObject[];
+  assert.equal(hits.length, 3, "query metadata cannot manufacture an evidence match in unrelated documents");
+  assert.equal(object(hits[0].source).path, "/output/items/1");
+  assert.equal(object(hits[0].source).title, "甲公司年度报告");
+  assert.match(hits[0].text as string, /湿法刻蚀/);
+  const page = await source.read(hits[0].reference as typeof reference, { offset: hits[0].readOffset as number, limit: (hits[0].text as string).length });
+  assert.equal(page.text, hits[0].text);
+  assert.equal((await source.search(reference, "甲公司 目标能力")).total, 0, "a repeated search request is navigation, not a source statement");
+  assert.equal((await source.search(reference, "甲公司 目标能力", { scope: "all" })).total, 1, "raw fields remain explicitly searchable");
+});
+
+test("multiple evidence pages share source extraction inside a batch and observe fresh content on the next call", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  let accesses = 0, text = "完整证据".repeat(10000);
+  source.raw = async () => ({ messages: [{ get content() { accesses++; return text; } }] });
+  await source.read({ ...reference, messageIndex: 0 });
+  const singleAccesses = accesses;
+  accesses = 0;
+  const result = await source.read(reference, { view: "evidence", messages: [
+    { messageIndex: 0, offset: 0, limit: 16000 }, { messageIndex: 0, offset: 16000, limit: 16000 }, { messageIndex: 0, offset: 32000, limit: 16000 },
+  ] });
+  assert.equal(accesses, singleAccesses, "paging one source node must not repeatedly traverse and serialize it");
+  const items = result.items as { text: string }[];
+  assert.equal(items.map(item => item.text).join(""), text);
+  text = "更新后的原始证据";
+  const next = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0 }] });
+  assert.equal((next.items as { text: string }[])[0].text, text, "no cross-call result cache");
+});
+
+test("batched search loads an answer once and preserves every single-query hit, empty query result and readable offset", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  let loads = 0;
+  source.raw = async () => { loads++; return { messages: [
+    { type: "tool_result", output: "前".repeat(10000) + "PCB送样，高速铜缆已投产" },
+    { type: "tool_result", output: { margin: -2.268431, valid: false } },
+  ] }; };
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const eris = createEris({ data: source, code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+  const tool = eris.tools.find(tool => tool.name === "search_data")!;
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "search", signal: new AbortController().signal, progress() {} };
+  const terms = ["PCB", "高速铜缆", "-2.268431", "不存在"];
+  const result = JSON.parse((await tool.execute({ reference, query: terms, limit: 100 }, context)).content[0].text!);
+  assert.equal(loads, 1, "multiple terms must share source loading and extraction");
+  assert.deepEqual(result.queries, terms.map(query => ({ query, total: query === "不存在" ? 0 : 1 })));
+  for (const query of terms) {
+    const single = await source.search(reference, query, { limit: 100 });
+    assert.deepEqual(result.matches.filter((hit: { matchedQueries: string[] }) => hit.matchedQueries.includes(query)), single.matches);
+  }
+  const hit = result.matches[0];
+  const page = await source.read(reference, { view: "evidence", messages: [{ messageIndex: hit.reference.messageIndex, format: hit.format, offset: hit.readOffset }] });
+  assert((page.items as { text: string }[])[0].text.startsWith(hit.text));
+  const next = JSON.parse((await tool.execute({ reference, query: terms, offset: 1, limit: 1 }, context)).content[0].text!);
+  assert.deepEqual(next.matches, result.matches.slice(1, 2));
+  assert.deepEqual(next.queries, result.queries);
+  assert.equal(next.nextOffset, 2);
+  for (const query of [[], [""], ["PCB", "PCB"], Array.from({ length: 9 }, (_, i) => String(i))]) assert.throws(() => tool.validate!({ reference, query }));
+});
+
+test("structured evidence preserves native numbers, booleans and row relationships with exact JSON coordinates", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const message = { type: "tool_result", output: { rows: [{ name: "甲", price: -2.268431, valid: false }, { name: "乙", price: 0, valid: true }] } };
+  source.raw = async () => ({ messages: [message] });
+  const result = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0, ...{ format: "json" as const } }] });
+  const item = (result.items as { text: string; evidence: { evidence_id: string; quote: string }[] }[])[0];
+  assert.deepEqual(JSON.parse(item.text), message);
+  assert.equal(item.evidence[0].quote, item.text);
+  assert.match(item.evidence[0].evidence_id, /_json_0_\d+_$/);
+  const hit = (await source.search(reference, "-2.268431")).matches as { format: string; readOffset: number }[];
+  assert.equal(hit.length, 1, "native numeric values must be searchable");
+  assert.equal(hit[0].format, "json");
+  const pages = await source.read(reference, { view: "evidence", messages: [
+    { messageIndex: 0, limit: 35, ...{ format: "json" as const } }, { messageIndex: 0, offset: 35, ...{ format: "json" as const } },
+  ] });
+  assert.equal((pages.items as { text: string }[]).map(page => page.text).join(""), item.text);
 });
 
 test("Eris's paginated directory exposes persisted display names, tiers and configured comparison groups", async () => {
@@ -101,6 +310,26 @@ test("Eris's paginated directory exposes persisted display names, tiers and conf
     assert.equal(unfiltered.total, 4, "a filtered empty page does not mean the run has no input data");
     assert.equal(new Set(unfiltered.items.map((item) => JSON.stringify([item.batchId, item.caseId]))).size, 1,
       "the four model answers cover one business question across both tiers");
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("unknown task IDs direct Eris to question lookup without pretending the result is pending", async () => {
+  const fixture = await fixtureConfig();
+  try {
+    const source = await register(fixture.config);
+    const saved = await readJson<Checkpoint>(path.join(fixture.config.output.path, "source/state.json"));
+    const taskId = Object.keys(saved.tasks)[0]!;
+    const mistyped = taskId.slice(0, 9) + (taskId[9] === "a" ? "b" : "a") + taskId.slice(10);
+    for (const options of [undefined, { view: "case" as const }]) {
+      await assert.rejects(source.read({ runId: "source", taskId: mistyped }, options), (error: Error) => {
+        assert.match(error.message, /taskId 未登记/);
+        assert.match(error.message, /原问关键词/);
+        assert.doesNotMatch(error.message, /没有已接受|read_data|read_specialist/);
+        return true;
+      });
+      await assert.rejects(source.read({ runId: "source", taskId: "unknown" }, options), /taskId 未登记.*list_data/);
+      await assert.rejects(source.read({ runId: "source", taskId }, options), /没有已接受的正式结果/);
+    }
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
@@ -164,6 +393,9 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       assert.deepEqual(result.comparisonScope, record.scope);
       assert.deepEqual(result.result, accepted[record.reference.taskId]!.exported!.row, "read_data keeps the complete formal row alongside its scope");
       const material = await source.read(record.reference, { view: "case" });
+      const lookup = { runId: "source", query: "计算2+2", comparisonTier: record.scope.comparisonTier! };
+      assert.deepEqual(await source.read(lookup), result, "question and tier resolve the exact accepted receipt without copying an ID");
+      assert.deepEqual(await source.read(lookup, { view: "case" }), material);
       assert.equal(material.kind, "case");
       assert.equal(material.question, record.question);
       assert.deepEqual(material.formal, result);
@@ -178,6 +410,13 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
         assert.equal(single.formal, undefined);
       }
     }
+    await assert.rejects(source.read({ runId: "source", query: "不存在的题目", comparisonTier: "Fast" }), /没有匹配/);
+    await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: "Other" }), /没有匹配/);
+    await assert.rejects(source.read({ runId: "source", query: " ", comparisonTier: "Fast" }), /不能为空/);
+    const duplicate = structuredClone(saved.tasks[stats.records[0]!.reference.taskId]!);
+    saved.tasks[randomUUID()] = duplicate;
+    await writeJson(checkpointPath, saved);
+    await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
@@ -225,4 +464,39 @@ test("Eris's directory keeps undeclared tiers unknown even when model names cont
       { comparisonTier: null, models: [{ model: "a_fast", modelName: "A Fast" }, { model: "b_fast", modelName: "B组Fast" }] },
     ]);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+
+test("entity searches expose the source body rather than just its trailing title in either scope", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const body = "公司拥有通用清洗及湿法刻蚀设备；本记录未确认目标用途。";
+  source.raw = async () => ({ messages: [{ type: "tool_result", output: { items: [
+    { summary: "乙公司只有清洗设备", title: "乙公司新闻", query: "甲公司 TSV" },
+    { summary: body + "余文".repeat(400), title: "甲公司年度报告", query: "甲公司 TSV" },
+  ] } }, { role: "assistant", content: "甲公司只是配套，应排除" }] });
+  for (const scope of ["evidence", "all"] as const) {
+    const hits = (await source.search(reference, "甲公司", { scope })).matches as JsonObject[];
+    assert.equal(object(hits[0].source).title, "甲公司年度报告", "a trailing title identifies its own body, even when all message kinds are requested");
+    assert.match(hits[0].text as string, /湿法刻蚀/);
+    assert.doesNotMatch(hits[0].text as string, /乙公司/);
+    const read = object(object(hits[0].source).read);
+    const result = await source.read(reference, { view: "evidence", messages: [read as {messageIndex: number; offset: number; limit: number}] });
+    assert((result.items as JsonObject[])[0].text!.toString().startsWith(body));
+    assert.doesNotMatch((result.items as JsonObject[])[0].text as string, /乙公司/);
+  }
+});
+
+
+test("batched entities share one complete document without dropping matched queries or read coordinates", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const summary = "甲公司具有清洗、湿法刻蚀能力，乙公司从事CMP；两者目标用途仍需核验。";
+  source.raw = async () => ({ messages: [{ type: "tool_result", output: {items:[{title:"甲公司与乙公司能力",summary}]}}] });
+  const result = await source.search(reference, ["甲公司", "乙公司", "湿法刻蚀"]);
+  const hits = result.matches as JsonObject[];
+  assert.equal(hits.length, 1, "one article must not be repeated for each entity or capability query");
+  assert.deepEqual(new Set(hits[0].matchedQueries as string[]), new Set(["甲公司", "乙公司", "湿法刻蚀"]));
+  assert.deepEqual(result.queries, ["甲公司", "乙公司", "湿法刻蚀"].map(query => ({query,total:1})));
+  assert((hits[0].text as string).includes(summary), "the complete counterevidence survives deduplication");
+  const page = await source.read(reference, {view:"evidence",messages:[object(object(hits[0].source).read) as {messageIndex:number}]});
+  assert.equal((page.items as JsonObject[])[0].text, hits[0].text);
 });

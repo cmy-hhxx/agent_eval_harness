@@ -66,6 +66,12 @@ test("Eris Responses requests preserve optional tool arguments through Pi", { ti
     assert.deepEqual(queries, [{}], "list_data reaches the data source without invented runId or query values");
     const result = (requests[1].input as JsonObject[]).find(item => item.type === "function_call_output")!;
     assert.equal(JSON.parse(String(result.output)).items[0].runId, "fixture-run");
+    const journal = (await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    const headers = journal.filter(row => row.event?.type === "request/header");
+    assert.equal(headers.length, 1, "the trajectory receives one tool catalog, not another copy per model step");
+    assert.deepEqual(headers[0].event.data.header.tools, (requests[0].tools as JsonObject[]).map(({ name, description, parameters }) => ({ name, description, parameters })));
+    assert(headers[0].event.seq < journal.find(row => row.event?.type === "tool/call").event.seq, "schemas must be visible before their calls");
+    assert(!JSON.stringify(headers).includes("fixture-secret"), "the inspection snapshot never includes gateway credentials");
     assert.deepEqual(errors, []);
   } finally {
     await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });

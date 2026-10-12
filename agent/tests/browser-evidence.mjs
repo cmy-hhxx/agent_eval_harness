@@ -117,7 +117,7 @@ try {
   assert.equal(await raw.locator('pre').textContent(), fixture.raw); await raw.locator('summary').click();
   await model.getByRole('button', { name: '复制给 Eris', exact: true }).click();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
-  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: reference.runId, inputId: 'table-input', messageIndex: fixture.index } });
+  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: reference.runId, inputId: 'table-input', messageIndex: fixture.index }, relatedMessageIndices: [fixture.index - 3] });
   await input.focus(); await input.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A'); await input.press('Backspace');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V');
   assert.equal(await input.innerText(), copied);

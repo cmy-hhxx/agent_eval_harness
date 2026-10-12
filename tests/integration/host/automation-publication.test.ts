@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
-import { publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
+import { publicationSnapshot, publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
-import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion } from "../../fixtures/comparison.js";
+import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
 test("comparison delivery waits for shared criteria and evaluation rewrites, never clustering", async () => {
@@ -89,6 +90,122 @@ const result: PublicationResult = { evaluatedAt: 10, row: { case: { batch_id: da
   has_standard_answer: true, evaluations: { a_fast: { is_correct: false }, b_fast: { is_correct: true } },
 } };
 async function* rows<T>(data: T[]) { yield* data; }
+async function collect<T>(rows: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const row of rows) result.push(row);
+  return result;
+}
+
+test("publication quarantines every duplicate input and only its affected battles without modifying accepted work", async (t) => {
+  const originals = ["healthy", "conflict"].map(id => ({ ...raw(id), batch_id: date }));
+  const { directory, config } = await fixtureConfig(Array.from({ length: 4 }, () => originals), true);
+  try {
+    config.comparisons = configuredGroups;
+    config.rewrite.comparisonItems = true;
+    const plan = await buildPlan(config), runId = `daily-${date}`;
+    const saved = comparisonCodec.encode({ usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+      format: "evaluation-run", debug: false, runId, status: "finished", evaluatorVersion: fakeEvaluatorVersion,
+      engine: fakeIdentity, config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+      states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+      preflight: plan.summary, startedAt: 1,
+    } });
+    for (const task of Object.values(saved.tasks)) {
+      task.status = "succeeded";
+      task.receipt = { acceptedAt: 10, exported: {} } as NonNullable<typeof task.receipt>;
+    }
+    const output = Object.values(saved.tasks).filter(task => task.stage === "comparison").map(task => {
+      const candidates = Object.values(task.inputIds).map(id => saved.inputs[id]);
+      const versions = candidates.map(input => input.version).sort();
+      return { ...result.row, comparison_id: task.data.comparisonId,
+        case: { batch_id: date, case_id: candidates[0].case_id },
+        models: Object.fromEntries(versions.map(id => [id, {}])),
+        assessments: Object.fromEntries(versions.map(id => [id, { meets_core: true }])),
+        evaluations: Object.fromEntries(versions.map(id => [id, { is_correct: true }])),
+        verdicts: { [versions.join("__vs__")]: { result: "both_good", winner_version: null } },
+        decision_basis: { comparisons: [] },
+        rewritten: { rewrites: [{ id: "verdict.A__vs__B.reason", text: "双方均完成要求。" }] },
+      };
+    });
+    const stateFile = path.join(config.output.path, runId, "state.json");
+    const resultFile = path.join(config.output.path, runId, "results/comparison.jsonl");
+    await writeJson(stateFile, saved);
+    await writeJsonl(resultFile, output);
+    const acceptedState = await readFile(stateFile, "utf8"), acceptedResults = await readFile(resultFile, "utf8");
+    const hostFile = path.join(directory, "host.json");
+    await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...config });
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")),
+      fromDate: date, hostConfigs: [hostFile], sourceDirectory: path.join(directory, "remote") };
+    settings.publication = { ...settings.publication, mongoUriEnv: "PATH" };
+    const job = { date, runIds: [runId], adopted: false, download: "ready" } as AutomationJob;
+    const conflict = { ...raw("conflict", "4", "another attempt"), batch_id: date };
+    const repeated = { ...raw("repeated"), batch_id: date };
+    const source = path.join(settings.sourceDirectory, date, "a_fast.jsonl");
+    for (const version of config.inputs.versions) {
+      const entries = version.id === "a_fast"
+        ? [originals[1], repeated, originals[0], repeated, conflict, { ...originals[0], batch_id: "2026-09-29" }]
+        : originals;
+      await writeJsonl(path.join(settings.sourceDirectory, date, version.id + ".jsonl"), entries);
+    }
+    const sourceText = await readFile(source, "utf8");
+    const expected = output.filter(row => row.case.case_id !== "conflict" || !Object.hasOwn(row.models, "a_fast"));
+    const delivered = await syncMongoDay(settings, job, t.signal, {
+      snapshot: publicationSnapshot,
+      mongo: async (_settings, _date, inputRows, resultRows) => {
+        const input = await collect(inputRows), results = await collect(resultRows);
+        assert.equal(input.length, 7, "exclude both differing and identical duplicate groups, including their first row");
+        assert(!input.some(row => row.versionId === "a_fast" && row.trace.case_id !== "healthy"),
+          "accepted-input fallback must not restore a quarantined identity from its older source");
+        assert.deepEqual(results.map(row => row.row), expected);
+        return { inputs: input.length, comparisons: results.length, inserted: 0, updated: 0 };
+      },
+    });
+    assert.equal(delivered.comparisons, 3);
+    const snapshot = await publicationSnapshot(settings, job, t.signal);
+    assert.deepEqual(await collect(snapshot.results()), expected.map(row => ({ row, evaluatedAt: 10 })),
+      "result-first reads isolate only the conflicting model pair, retaining the healthy Expert pair");
+    const statistics = await statisticsSnapshot(settings, { id: settings.id, sourceUrl: settings.sourceUrl,
+      status: "stopped", startedAt: 1, updatedAt: 1, jobs: { [date]: job } }, t.signal, {
+      snapshot: publicationSnapshot, labels: async () => [],
+    });
+    const record = statistics.record("quarantined", 100);
+    assertStatisticsLog(record);
+    assert.equal((record.data as Record<string, any>).progress.completedBattleCount, 3);
+    assert.equal(await readFile(source, "utf8"), sourceText, "quarantine never edits raw inputs");
+    assert.equal(await readFile(stateFile, "utf8"), acceptedState, "accepted tasks and receipts are untouched");
+    assert.equal(await readFile(resultFile, "utf8"), acceptedResults, "formal results are untouched");
+
+    await writeJsonl(source, originals);
+    await assert.rejects(collect(snapshot.inputs()), /输入文件发生变化/, "a changed file invalidates the pinned snapshot");
+    const repaired = await publicationSnapshot(settings, job, t.signal);
+    assert.equal((await collect(repaired.inputs())).length, 8);
+    assert.deepEqual((await collect(repaired.results())).map(row => row.row), output,
+      "fixing the source releases the original accepted results without evaluating them again");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("publication detects duplicate identities across adopted source files and retains structural validation", async (t) => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const first = path.join(directory, "first.jsonl"), second = path.join(directory, "second.jsonl");
+    const duplicate = { ...raw("duplicate"), batch_id: date }, healthy = { ...raw("healthy"), batch_id: date };
+    await writeJsonl(first, [duplicate, healthy]);
+    await writeJsonl(second, [{ messages: duplicate.messages, meta: { batch_id: date, case_id: "duplicate" } }]);
+    const runId = `daily-${date}`, hostFile = path.join(directory, "host.json");
+    await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...config });
+    await writeJson(path.join(config.output.path, runId, "state.json"), { config, tasks: {}, inputs: {
+      first: { version: "a_fast", source: first }, second: { version: "a_fast", source: second },
+    } });
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile] };
+    const job = { date, runIds: [runId], adopted: true } as AutomationJob;
+    const snapshot = await publicationSnapshot(settings, job, t.signal);
+    assert.deepEqual((await collect(snapshot.inputs())).map(input => input.trace.case_id), ["healthy"]);
+    await writeJsonl(second, [{ ...duplicate, messages: "invalid" }]);
+    await assert.rejects(publicationSnapshot(settings, job, t.signal), /messages must be an array/);
+    await writeJsonl(second, [{ ...duplicate, version: "wrong-model" }]);
+    await assert.rejects(publicationSnapshot(settings, job, t.signal), /identity differs from source/);
+    await assert.rejects(publicationSnapshot(settings, job, AbortSignal.abort()), { name: "AbortError" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("three-model statistics use configured battles and count each answer's correctness once", () => {
   const ids = ["a_fast", "b_fast", "baseline"];

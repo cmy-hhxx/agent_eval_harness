@@ -419,12 +419,24 @@ function AccessibleValues({ chart, english }) {
 export const AnalysisChart = memo(function AnalysisChart(props) {
   return h(ChartBoundary, { title: props.chart.title }, h(ChartContent, props));
 });
+function compactTimeScope(chart, battles) {
+  const { scope } = chart;
+  const parts = scope.split('·').map(part => part.trim());
+  const batches = /^批次\s*(\d{4}-\d{2}-\d{2}(?:、\d{4}-\d{2}-\d{2})*)$/.exec(parts[0]);
+  if (!batches) return scope;
+  const counts = battles ? (battles.axis === 'columns' ? chart.categories : chart.series.map(series => series.name))
+    .map((name, index) => `${name} ${battles.totals[index]}场`).join('、') : parts.find(part => /^正式样本[：:]/.test(part))?.replace(/^正式样本[：:]\s*/, '');
+  return batches[1] + (counts ? ` · ${counts}` : '');
+}
 function ChartContent({ chart, language = 'zh' }) {
   const [ref, width] = useWidth();
   useEffect(() => installChartHover(ref.current), [chart, width]);
   const identities = seriesIndexes(chart), advanced = researchTypes.includes(chart.type);
   const english = !language.startsWith('zh');
   const battles = battleTotals(chart);
+  const scope = compactTimeScope(chart, battles);
+  const displayChart = { ...chart, scope };
+  const scopeStyle = { margin: '6px 0 0', fontSize: 13, lineHeight: 1.5, color: '#53616E' };
   const legend = chart.series.length > 1 && ['scatter', 'bubble', 'slope', 'ecdf'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
     position: 'relative', margin: '16px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '16px', boxSizing: 'border-box', background: paperColor,
@@ -433,11 +445,12 @@ function ChartContent({ chart, language = 'zh' }) {
     h('h3', { style: { margin: 0, color: primaryColor, fontSize: 16, lineHeight: 1.4, fontWeight: 600 } }, chart.title),
     h('span', { 'data-chart-unit': true, style: { fontSize: 14, lineHeight: 1.45, whiteSpace: battles ? 'nowrap' : undefined, maxWidth: '100%', fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' } },
       battles ? `${english ? 'Total' : '合计'} ${formatNumber(battles.total)} ${chart.unit}` : `${english ? 'Unit: ' : '单位：'}${chart.unit}`)),
-  h('p', { 'data-chart-metadata': true, style: visuallyHidden }, `${chart.scope} · ${english ? 'Source' : '来源'}：${chart.source}`),
+  h('p', { 'data-chart-scope': true, style: scopeStyle }, scope),
+  h('p', { 'data-chart-metadata': true, style: visuallyHidden }, `${english ? 'Source' : '来源'}：${chart.source}`),
   legend ? h('div', { 'data-chart-legend': true, style: { display: 'flex', overflowX: 'auto', gap: 14, marginTop: 6, fontSize: 14 } }, chart.series.map((series, index) => h('span', { key: index, style: { color: primaryColor, whiteSpace: 'nowrap', flexShrink: 0 } },
     h('span', { 'aria-hidden': true, style: { display: 'inline-block', width: 8, height: 8, marginRight: 6, verticalAlign: 'middle', background: seriesColor(series.name, identities[index]) } }), series.name))) : null,
-  h('div', { 'data-chart-plot': true, style: { marginTop: 12 } }, advanced ? h(ResearchChart, { chart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart, width, english })
-    : h(TrendChart, { chart, width, english })),
+  h('div', { 'data-chart-plot': true, style: { marginTop: 12 } }, advanced ? h(ResearchChart, { chart: displayChart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart: displayChart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart: displayChart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart: displayChart, width, english })
+    : h(TrendChart, { chart: displayChart, width, english })),
   h(AccessibleValues, { chart, english }),
   chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 14, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null);
 }

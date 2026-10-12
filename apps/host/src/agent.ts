@@ -20,6 +20,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invali
 const userId = assistantUser(values.user!);
 const sources = [path.join(ROOT, "configs/host.json")];
 if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(path.join(ROOT, "configs/local/models.json"));
+// Eris may read local search credentials without changing evaluation startup.
+if (await exists(path.join(ROOT, ".env"))) process.loadEnvFile(path.join(ROOT, ".env"));
 const configuration = await readSettings();
 const config = await loadConfig(sources, configuration);
 logger.addSecrets(...configurationSecrets());

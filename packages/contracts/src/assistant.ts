@@ -7,15 +7,16 @@ export interface AssistantOwnership {
   claim(scope: AssistantScope, executor: AssistantExecutor): Promise<() => Promise<void>>;
 }
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
+export interface AnalysisCaseLookup { runId: string; query: string; comparisonTier: string }
 export interface AnalysisQuery { runId?: string; view?: "inputs" | "comparisons"; query?: string; offset?: number; limit?: number }
 export interface AnalysisResultReadOptions { view?: "summary" | "details"; offset?: number; limit?: number }
 export type AnalysisReadOptions = AnalysisResultReadOptions
   | { view: "case"; audience?: "user" }
-  | { view: "evidence"; messages: { messageIndex: number; offset?: number; limit?: number }[] };
+  | { view: "evidence"; messages: { messageIndex: number; offset?: number; limit?: number; format?: "text" | "json" }[] };
 export interface AnalysisDataSource {
   list(query: AnalysisQuery): Promise<JsonObject>;
-  read(reference: AnalysisReference, options?: AnalysisReadOptions): Promise<JsonObject>;
-  search(reference: AnalysisReference, query: string, options?: { offset?: number; limit?: number }): Promise<JsonObject>;
+  read(reference: AnalysisReference | AnalysisCaseLookup, options?: AnalysisReadOptions): Promise<JsonObject>;
+  search(reference: AnalysisReference, query: string | string[], options?: { offset?: number; limit?: number; scope?: "evidence" | "all" }): Promise<JsonObject>;
   image(reference: AnalysisReference): Promise<ToolResult>;
 }
 export interface WebSearchQuery {
@@ -139,7 +140,10 @@ export interface AssistantTool {
   name: string;
   description: string;
   inputSchema: JsonObject;
-  execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; audience?: "model" | "user"; progress(value: unknown): void }): Promise<ToolResult>;
+  execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; audience?: "model" | "user"; progress(value: unknown): void;
+    /** One request to the current model with selected observed sources, without earlier reasoning or tools. */
+    complete?(request: { systemPrompt: string; text: string; outputSchema: JsonObject; sourceTools?: string[] }): Promise<{ text: string; elapsedMs: number; usage: JsonObject }>;
+  }): Promise<ToolResult>;
 }
 export interface AssistantPrompt {
   requestId: string;

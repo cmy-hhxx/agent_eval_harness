@@ -1805,19 +1805,29 @@ function RecordSchema({
     return (
       <div className={preview ? `${css.schema} ${css.schemaPreview}` : css.schema}>
         <header className={css.schemaIntro}>
-          <h3 className={css.schemaName}>{schema.name}</h3>
+          <div className={css.schemaHeading}>
+            <h3 className={css.schemaName}>{schema.name}</h3>
+            {!preview && <InspectorCopyButton text={record.cell.schemaDetail} label={t('copy.json')} t={t} />}
+          </div>
           <p className={css.schemaDescription}>{schema.description}</p>
         </header>
         <section className={css.schemaParameters}>
           <h4 className={css.schemaParametersTitle}>{t('record.parameters')}</h4>
-          <JsonTree
+          {preview ? <JsonTree
             data={schema.parameters}
             stringWrapping={stringWrapping}
-            collapsedStringLines={preview ? 3 : 12}
+            collapsedStringLines={3}
             label={t('record.namedParametersJson', { name: schema.name })}
             labels={jsonTreeLabels(t)}
             className={css.schemaTree}
-          />
+          /> : <CodeBlock
+            code={JSON.stringify(schema.parameters, null, 2)}
+            lang="json"
+            showHeader={false}
+            className={css.schemaCode}
+            copyLabel={t('copy.json')}
+            copiedLabel={t('copied')}
+          />}
         </section>
       </div>
     )

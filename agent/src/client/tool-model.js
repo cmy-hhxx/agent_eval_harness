@@ -100,7 +100,7 @@ export function analysisToolModel(name,model){
  }
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
  if(name==='read_case')summary=['读取案例',output?.answers?`${output.answers.length} 条回答`:null,status].filter(Boolean).join(' · ');
- if(name==='search_data')summary=[args.query===undefined?'搜索对话':`搜索“${args.query}”`,output?.total===undefined?status:`${output.total} 条匹配消息`].join(' · ');
+ if(name==='search_data')summary=[args.query===undefined?'搜索对话':Array.isArray(args.query)?`搜索 ${args.query.length} 个关键词`:`搜索“${args.query}”`,output?.total===undefined?status:`${output.total} 处匹配`].join(' · ');
  if(name==='execute_code')summary=`${args.language==='shell'?'Shell':'Python'} 代码核验 · ${status}`;
  if(name==='read_code_output')summary=`读取代码输出 · ${status}`;
  if(name==='view_image')summary=`查看对话图片 · ${status}`;

@@ -11,7 +11,7 @@ test("batch evidence uses one source read and preserves partial errors, pages an
   const messages = [{ messageIndex: 3, limit: 2000 }, { messageIndex: 7, offset: 20 }, { messageIndex: 99 }];
   const material = { kind: "evidence", reference, requestedCount: 3, readCount: 2, items: [
     { kind: "message", reference: { ...reference, messageIndex: 3 }, text: "真实证据", evidence: [{ evidence_id: "coordinate", quote: "真实证据" }], hasMore: true, nextOffset: 2000 },
-    { kind: "message", reference: { ...reference, messageIndex: 7 }, text: "另一段证据", hasMore: false, nextOffset: null },
+    { kind: "message", reference: { ...reference, messageIndex: 7 }, text: "另一段证据", evidence: [{ evidence_id: "coordinate-7", quote: "另一段证据" }], hasMore: false, nextOffset: null },
     { reference: { ...reference, messageIndex: 99 }, error: "Message index out of range" },
   ] };
   const eris = createEris({ code: { execute: unexpected, read: unexpected },
@@ -22,11 +22,17 @@ test("batch evidence uses one source read and preserves partial errors, pages an
   const args = { reference, messages }, context = { scope: { userId: "test", sessionId: "test" }, callId: "batch", signal: new AbortController().signal, progress() {} };
   const result = await tool.execute(args, context);
   assert.deepEqual(calls, [{ ref: reference, options: { view: "evidence", messages } }]);
-  assert.deepEqual(JSON.parse(result.content[0].text!), material);
+  const projected = JSON.parse(result.content[0].text!);
+  assert.deepEqual(projected, { ...material, items: material.items.map(({ evidence: _evidence, ...item }) => item) });
+  assert.equal(result.content[0].text!.split("真实证据").length - 1, 1, "model context must contain each quoted source once");
+  assert.deepEqual(JSON.parse((await tool.execute(args, { ...context, audience: "user" })).content[0].text!), material,
+    "the inspector still receives exact source text, quotes and pagination");
   assert.equal(Boolean(result.isError), false, "partial failure keeps successful evidence available");
   assert.deepEqual(result.details, { sourceRead: { tool: "read_evidence", args } });
   assert.equal(tool.readOnly, true);
-  for (const invalid of [[], Array.from({ length: 13 }, (_, messageIndex) => ({ messageIndex })), [{ messageIndex: -1 }], [{ messageIndex: 0, limit: 16001 }]])
+  await tool.execute({ reference, messages: [{ messageIndex: 3, format: "json", offset: 20 }] }, context);
+  assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "evidence", messages: [{ messageIndex: 3, format: "json", offset: 20 }] } });
+  for (const invalid of [[], Array.from({ length: 13 }, (_, messageIndex) => ({ messageIndex })), [{ messageIndex: -1 }], [{ messageIndex: 0, limit: 16001 }], [{ messageIndex: 0, format: "raw" }]])
     assert.throws(() => tool.validate!({ reference, messages: invalid }));
   assert.throws(() => tool.validate!({ reference: { ...reference, taskId: "pair" }, messages }));
   material.requestedCount = 1;
@@ -40,8 +46,8 @@ test("one case read delivers question, answers and trace maps without loading ev
   const calls: unknown[] = [];
   const reference = { runId: "run", taskId: "pair" };
   const material = { kind: "case", reference, question: "比较两份回答", answers: [
-    { model: "a", answer: { text: "完整回答", complete: true }, trace: { nodes: [{ messageIndex: 3, type: "tool_result", name: "search" }] } },
-  ], formal: { result: { verdicts: { result: "both_good" }, evidence: [
+    { model: "a", reference: { runId: "run", inputId: "answer-a" }, answer: { text: "完整回答", complete: true }, trace: { nodes: [{ messageIndex: 3, type: "tool_result", name: "search", callMessageIndex: 2, reference: { runId: "run", inputId: "answer-a", messageIndex: 3 } }] } },
+  ], formal: { comparisonScope: { comparisons: [{ result: "win", winnerModel: "a", reason: "不可当作事实的原评测理由" }] }, result: { verdicts: { result: "both_good" }, evidence: [
     { evidence_id: "ev_11111111-1111-4111-8111-111111111111_3_text_0_10_/output", quote: "按需读取的证据正文" },
     { evidence_id: "ev_11111111-1111-4111-8111-111111111111_3_text_20_30_/output", quote: "同一节点的另一段" },
     { evidence_id: "ev_22222222-2222-4222-8222-222222222222_3_image", quote: "另一回答的图像观察" },
@@ -56,7 +62,10 @@ test("one case read delivers question, answers and trace maps without loading ev
   const body = JSON.parse(result.content[0].text!);
   assert.deepEqual(calls, [{ ref: reference, options: { view: "case" } }]);
   assert.equal(body.question, material.question);
-  assert.deepEqual(body.answers, material.answers);
+  assert.deepEqual(body.answers, material.answers.map(answer => ({ ...answer, trace: { ...answer.trace,
+    nodes: answer.trace.nodes.map(({ reference: _reference, ...node }) => node) } })));
+  assert.deepEqual({ ...body.answers[0].reference, messageIndex: body.answers[0].trace.nodes[0].messageIndex }, material.answers[0].trace.nodes[0].reference,
+    "a compact map still resolves the exact source coordinate and call association");
   assert.equal(body.formal.result.evidence, undefined);
   assert.deepEqual(body.formal.result.evidence_references, [
     { runId: "run", inputId: "11111111-1111-4111-8111-111111111111", messageIndex: 3 },
@@ -68,9 +77,32 @@ test("one case read delivers question, answers and trace maps without loading ev
   assert.throws(() => tool.validate!({ reference: { ...reference, messageIndex: 3 } }));
   assert.throws(() => tool.validate!({ reference: { ...reference, inputId: "a" } }));
   assert(material.formal.result.evidence, "projection preserves the accepted row");
-  await tool.execute({ reference }, { ...context, audience: "user" });
+  const reviewed = await tool.execute({ reference, review: true }, context);
+  const reviewedBody = JSON.parse(reviewed.content[0].text!);
+  assert.equal(reviewedBody.formal, undefined, "a source review is not an incomplete formal receipt requiring the model to fetch the old judgment");
+  assert.deepEqual(reviewedBody.originalVerdicts, [{ result: "win", winnerModel: "a" }],
+    "a request to audit the previous winner needs its identity, without rereading the old opinions");
+  assert.doesNotMatch(JSON.stringify(reviewedBody), /不可当作事实的原评测理由/);
+  assert.equal(reviewedBody.evidence_references, undefined,
+    "a source review must not present the old evaluator's selected nodes as an exhaustive evidence shortlist");
+  assert.deepEqual(reviewedBody.answers, body.answers.map(({ trace: _trace, ...answer }: Record<string, unknown>) => answer),
+    "fact reviews start from full answers and search by entity, rather than bulk reading all raw nodes");
+  assert.deepEqual(reviewed.details, { sourceRead: { tool: "read_case", args: { reference, review: true } } });
+  assert(material.formal.result.evidence, "review never modifies stored evaluation data");
+  const reviewedUI = await tool.execute({ reference, review: true }, { ...context, audience: "user" });
+  assert.deepEqual(JSON.parse(reviewedUI.content[0].text!).answers, material.answers, "the expandable scene keeps every node and copyable coordinate");
+  assert.deepEqual(JSON.parse(reviewedUI.content[0].text!).formal.result, body.formal.result,
+    "the original evaluation remains available to the inspector");
+  const userResult = await tool.execute({ reference }, { ...context, audience: "user" });
+  assert.deepEqual(JSON.parse(userResult.content[0].text!).answers, material.answers);
   assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "case", audience: "user" } }, "expanded UI gets recorded reasoning and longer previews without increasing model input");
   assert.throws(() => tool.validate!({ reference, audience: "user" }), "display audience is not a model tool argument");
+  const lookup = { runId: "run", query: "比较两份回答", comparisonTier: "Fast" };
+  const located = await tool.execute({ reference: lookup }, context);
+  assert.deepEqual(calls.at(-1), { ref: lookup, options: { view: "case" } });
+  assert.deepEqual(located.details, { sourceRead: { tool: "read_case", args: { reference } } }, "replay pins the resolved source instead of re-running a potentially ambiguous query");
+  for (const invalid of [{ ...lookup, taskId: "pair" }, { runId: "run", query: "问题" }, { ...lookup, query: " " }])
+    assert.throws(() => tool.validate!({ reference: invalid }));
 });
 
 test('every directory page keeps exact counts without repeating whole-run narratives or source lists', async () => {
@@ -203,6 +235,29 @@ test("formal and specialist summaries omit evidence while preserving complete co
   assert.deepEqual(data, original, "projection must never mutate the accepted result or its evidence");
 });
 
+test("comparison summaries expose the accepted scope once while details retain every finding", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const reference = { runId: "run", taskId: "pair" };
+  const evidence = { evidence_id: "ev_11111111-1111-4111-8111-111111111111_3_text_0_10_/output", quote: "完整证据" };
+  const data = { kind: "accepted-result", reference, evaluatorVersion: "fixture", comparisonScope: {
+    comparisons: [{ result: "win", winnerModel: "a" }], assessments: [{ model: "a", summary: "已接受的结论", problemDimensions: [] }], tradeoff: "原评测理由",
+  }, result: { status: "decided", ground_truth: { available: false, value: null },
+    evaluations: { a: { summary: "重复的底层评语", evidence: [evidence] } }, rewritten: { rewrites: [{ text: "重复的润色评语" }] } } };
+  const original = structuredClone(data);
+  const tool = createEris({ code: { execute: unexpected, read: unexpected },
+    data: { list: unexpected, read: async () => data, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(t => t.name === "read_data")!;
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "summary", signal: new AbortController().signal, progress() {} };
+  const summary = JSON.parse((await tool.execute({ reference }, context)).content[0].text!);
+  assert.deepEqual(summary.comparisonScope, data.comparisonScope);
+  assert.deepEqual(summary.result, { status: "decided", ground_truth: data.result.ground_truth,
+    evidence_references: [{ runId: "run", inputId: "11111111-1111-4111-8111-111111111111", messageIndex: 3 }] });
+  assert.doesNotMatch(JSON.stringify(summary), /重复的|完整证据/);
+  const details = JSON.parse((await tool.execute({ reference, view: "details", limit: 16000 }, context)).content[0].text!);
+  assert.deepEqual(JSON.parse(details.text), original);
+  assert.deepEqual(data, original);
+});
+
 test("explicit formal and specialist details are bounded pages with exact continuation", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
   const data = { result: { explanation: "证据🙂".repeat(30000) }, evaluatorVersion: "fixture" };
@@ -267,6 +322,12 @@ test("raw arguments fail with field paths and allowed values before SDK coercion
   assert.throws(() => search.validate!({ queries: [{ query: "report" }], category: "finance" }), /\/category.*allowedValues.*web.*news/);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
   assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input", offset: 0 } }), /\/reference\/offset.*schema_additionalProperties/);
+  const chart = eris.tools.find(tool => tool.name === "show_comparison")!;
+  const oversized = { reference: { runId: "run", taskId: "pair" }, title: "对战", reason: "差异", candidates: ["a", "b"].map(model => ({
+    model, summary: "回答", paths: [{ title: "依据", evidence: "字".repeat(59) + "😀😀", impact: "影响", assessment: "problem" }],
+  })) };
+  assert.throws(() => chart.validate!(oversized), /schema_maxLength.*"actualLength":61.*"excess":1/,
+    "length errors must count Unicode characters and say how far over the limit, without silently truncating evidence");
 });
 
 test("cancellation blocks all new tool work", async () => {

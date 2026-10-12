@@ -9,6 +9,22 @@ const task = (stage: Task["stage"], status: Task["status"], data: Task["data"] =
   ...(file !== undefined ? { receipt: { exported: { ...(file ? { file } : {}), comparisonId: "comparison" } } as Task["receipt"] } : {}),
 });
 
+test("time scope distinguishes evaluation, accepted-result dates and unknown source dates", () => {
+  const start = Date.parse("2026-10-09T23:00:00Z"), end = Date.parse("2026-10-10T12:00:00Z");
+  const accepted = task("comparison", "succeeded", { reference: null }, {}, "");
+  accepted.receipt!.acceptedAt = start + 3600000;
+  const ignored = task("comparison", "succeeded", { reference: null }, {}, "comparison-review.jsonl");
+  ignored.receipt!.acceptedAt = end;
+  const saved = { runId: "run", status: "finished", startedAt: start, finishedAt: end,
+    config: { inputs: { versions: [] } }, inputs: {}, tasks: { accepted, ignored } } as unknown as Parameters<typeof analysisProgress>[0];
+  assert.deepEqual(analysisProgress(saved).timeScope, { timeZone: "Asia/Shanghai",
+    evaluation: { from: "2026-10-10T07:00:00.000+08:00", to: "2026-10-10T20:00:00.000+08:00" },
+    acceptedResults: { from: "2026-10-10T08:00:00.000+08:00", through: "2026-10-10T08:00:00.000+08:00" }, sampleTimeRange: null });
+  assert.deepEqual(analysisProgress({ ...saved, status: "running", finishedAt: undefined, tasks: {} }).timeScope,
+    { timeZone: "Asia/Shanghai", evaluation: { from: "2026-10-10T07:00:00.000+08:00", to: null },
+      acceptedResults: { from: null, through: null }, sampleTimeRange: null });
+});
+
 test("whole-run progress counts business identities and accepted outputs without counting peers or optional audits as formal results", () => {
   const saved = {
     runId: "run", status: "finished", startedAt: 10, finishedAt: 20,
