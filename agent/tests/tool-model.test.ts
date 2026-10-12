@@ -69,6 +69,24 @@ test("chart summaries distinguish the chart type and execution state without exp
   assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });
 });
 
+test("comparison checks show actionable revision feedback instead of a raw drawing error", () => {
+  const reason = "本轮已生成K线资源，但最终引用异常，尚未取得可核验图表；应补充这一反证。";
+  const result = analysisToolModel("show_comparison", { state: "error", output: JSON.stringify({
+    kind: "comparison-check", issues: [{ path: "/draft", reason }],
+  }) });
+  assert.equal(result.summary, "比较图草稿 · 待修订（1项）");
+  assert.equal(result.details.items[0].description, reason);
+  assert.equal(result.details.items[0].fields[0].value, "/draft");
+  assert.equal(result.details.items[0].code, undefined);
+  assert.deepEqual(analysisToolModel("show_comparison", { state: "error", output: "Gateway failed" }),
+    { summary: "显示比较图 · 未完成" });
+  assert.deepEqual(analysisToolModel("show_comparison", { state: "error", output: JSON.stringify({
+    kind: "comparison-check", error: "核对格式无效", issues: [{ path: "/", reason: "Invalid output" }],
+  }) }), { summary: "显示比较图 · 未完成" });
+  assert.deepEqual(analysisToolModel("show_comparison", { state: "ok", output: JSON.stringify({ kind: "comparison-diagram", diagram: {} }) }),
+    { summary: "显示比较图 · 已完成" });
+});
+
 test("comparison pages show the question, outcome and both answer references in tool details", () => {
   const result = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "comparisons", total: 200,
     items: [{ questionPreview: "均线如何设置？", reference: { runId: "run", taskId: "battle" },

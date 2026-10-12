@@ -32,6 +32,8 @@ test("opening messages stay visible through slow preparation, compaction and rec
   await sessions.prompt("local",{sessionId:scope.sessionId,requestId,mode:"queue",content:[{type:"text",text:"这条消息要一直可见"}]});
   const check=async()=>{
    const page=object(await sessions.page(scope)),events=(page.records as {event:AssistantEvent}[]).map(row=>row.event);
+   const header=object(events.find(event=>event.type==="request/header")?.data.header);
+   assert(!Object.hasOwn(header,"tools"),"tool-less sessions omit the catalog so history and live events satisfy the wire contract");
    const messages=events.filter(event=>event.type==="user/message");
    assert.equal(messages.length,1);assert.equal(messages[0].data.id,requestId);
    assert.equal(events.filter(event=>event.type==="turn/start").length,1);

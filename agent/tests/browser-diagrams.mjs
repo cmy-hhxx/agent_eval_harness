@@ -37,10 +37,13 @@ const examples = [
 ];
 const report = `**A组Expert胜。** A给出了分情景的持续时间；B的时点和支撑位推断存在直接的数据错误。\n\n- **胜负差异：** B的交易日计数和低点错误，分别影响企稳时点与支撑位推断。\n- **具体范围：** A的预测既缺周线核验，也用了与公告冲突的行情描述；这些材料不足以支持用户把1–3周作为可靠时长。\n\n| 对比项 | A组Expert | B组Expert | 判断 |\n| --- | --- | --- | --- |\n| 时间范围 | **✅已回应**：给出1–3周及条件 | **❌计数错误**：按8个交易日推算，实际5个 | B的时间依据失真 |\n| 周线依据 | **⚠️待核实**：未完成核验 | **⚠️材料未说明** | 暂不能比较 |\n| 资金数据 | ⚠️材料未说明 | **❌数量级错误**：两融余额高估10倍 | B的资金规模判断失真 |`;
 const failedPrompt = '失败回执';
+const revisionPrompt = '三日形态反证修订';
+const revisionReason = 'B组的“三日形态待核”卡片遗漏了相关反证：本轮已生成K线资源，但最终引用异常，图表内容尚未核验。应补充这一点。';
 const directory = await mkdtemp(tmpdir() + '/eris-diagrams-');
 const shots = process.cwd() + '/.artifacts/agent-diagrams';
 await mkdir(shots, { recursive: true });
 const streamGate = Promise.withResolvers();
+const revisionGate = Promise.withResolvers();
 let executions = 0, receipts = 0;
 const comparisonTool = { name: 'show_comparison', description: '显示正式对照', readOnly: true, inputSchema: { type: 'object' },
   execute: async diagram => { receipts++; return { content: [{ type: 'text', text: JSON.stringify({ kind: 'comparison-diagram', diagram }) }] }; } };
@@ -48,7 +51,8 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
   endpoints: url => assistantEndpoints(new AssistantSessions({ directory, url, model: { provider: 'test', model: 'test' },
     systemPrompt: 'test', tools: [comparisonTool], driver: async ({ event }) => ({
       async prompt(name) {
-        const failed = name === failedPrompt, example = examples.find(example => example.title === name) ?? (failed ? examples[0] : null);
+        const failed = name === failedPrompt, revision = name === revisionPrompt;
+        const example = examples.find(example => example.title === name) ?? (failed || revision ? examples[0] : null);
         assert(example, 'the fake driver receives a known comparison request');
         const callId = `comparison-${++executions}`;
         const args = { reference: { runId: 'fixture', taskId: callId }, title: name,
@@ -56,6 +60,17 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
           ...(example.reasonHighlight ? { reasonHighlight: example.reasonHighlight } : {}) };
         await event({ type: 'agent_start' }); await event({ type: 'turn_start' });
         await event({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: name }] } });
+        if (revision) {
+          const rejectedCall = `${callId}-draft`;
+          await event({ type: 'message_start', message: { role: 'assistant' } });
+          await event({ type: 'message_end', message: { role: 'assistant', provider: 'test', model: 'test',
+            content: [{ type: 'toolCall', id: rejectedCall, name: 'show_comparison', arguments: args }], stopReason: 'toolUse' } });
+          await event({ type: 'tool_execution_start', toolCallId: rejectedCall, toolName: 'show_comparison', args });
+          await event({ type: 'message_end', message: { role: 'toolResult', toolCallId: rejectedCall, isError: true,
+            content: [{ type: 'text', text: JSON.stringify({ kind: 'comparison-check', issues: [{ path: '/draft', reason: revisionReason }] }) }] } });
+          await event({ type: 'turn_end' }); await event({ type: 'turn_start' });
+          await revisionGate.promise;
+        }
         await event({ type: 'message_start', message: { role: 'assistant' } });
         await event({ type: 'message_end', message: { role: 'assistant', provider: 'test', model: 'test',
           content: [{ type: 'toolCall', id: callId, name: 'show_comparison', arguments: args }], stopReason: 'toolUse' } });
@@ -70,7 +85,7 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
         await event({ type: 'message_end', message: { role: 'assistant', provider: 'test', model: 'test',
           content: [{ type: 'text', text: answer }], stopReason: 'stop' } });
         await event({ type: 'turn_end' }); await event({ type: 'agent_end' });
-      }, async steer() {}, async abort() { streamGate.resolve(); }, async dispose() {},
+      }, async steer() {}, async abort() { streamGate.resolve(); revisionGate.resolve(); }, async dispose() {},
     }),
   })),
 });
@@ -249,9 +264,19 @@ try {
   }
   await send(failedPrompt); await settled(failedPrompt);
   assert.equal(await page.locator('[data-analysis-comparison]').count(), examples.length, 'even a well-formed diagram in a failed tool receipt stays hidden');
+  await send(revisionPrompt);
+  const revisionRow = page.locator('[data-tool="show_comparison"]').filter({ hasText: '比较图草稿 · 待修订（1项）' });
+  await revisionRow.waitFor();
+  await revisionRow.getByRole('button').first().click();
+  await revisionRow.getByText(revisionReason, { exact: true }).waitFor();
+  assert(!(await revisionRow.innerText()).includes('"kind":"comparison-check"'), 'review feedback renders readable issues, not raw JSON');
+  assert.equal(await page.locator('[data-analysis-comparison]').count(), examples.length, 'a draft awaiting revision never appears as a finished diagram');
+  await revisionRow.screenshot({ path: `${shots}/comparison-revision.png` });
+  revisionGate.resolve(); await settled(revisionPrompt);
+  assert.equal(await page.locator('[data-analysis-comparison]').count(), examples.length + 1, 'the accepted revision adds exactly one diagram');
   const before = { executions, receipts };
-  await page.reload(); await page.locator('[data-analysis-comparison]').nth(examples.length - 1).waitFor();
-  assert.equal(await page.locator('[data-analysis-comparison]').count(), examples.length, 'refresh restores one diagram per accepted receipt');
+  await page.reload(); await page.locator('[data-analysis-comparison]').nth(examples.length).waitFor();
+  assert.equal(await page.locator('[data-analysis-comparison]').count(), examples.length + 1, 'refresh restores one diagram per accepted receipt');
   assert.deepEqual({ executions, receipts }, before, 'refresh performs no model or tool work');
   assert.equal(await page.locator('[data-turn-chart-fallback] [data-analysis-comparison]').count(), 0, 'final responses do not duplicate diagrams at the tail');
   for (const [index, example] of examples.entries()) await inspectDiagram(page.locator('[data-comparison-visual]').nth(index), example);
@@ -265,4 +290,4 @@ try {
     await page.screenshot({ path: shots + '/failure.png', fullPage: true });
   }
   throw error;
-} finally { streamGate.resolve(); await browser?.close(); await server.close(); await rm(directory, { recursive: true, force: true }); }
+} finally { streamGate.resolve(); revisionGate.resolve(); await browser?.close(); await server.close(); await rm(directory, { recursive: true, force: true }); }

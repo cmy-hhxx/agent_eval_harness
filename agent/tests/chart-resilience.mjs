@@ -100,6 +100,7 @@ try {
   await page.getByRole('button', { name: '重试图表' }).click();
   await page.locator('#target svg').waitFor();
   await page.evaluate(() => window.draw('', 0, true));
+  await page.locator('#target').waitFor({ state: 'hidden' });
   await page.locator('#target svg').waitFor({ state: 'attached' });
   await page.evaluate(() => { document.getElementById('target').style.display = 'block'; });
   await page.locator('#target svg').waitFor();

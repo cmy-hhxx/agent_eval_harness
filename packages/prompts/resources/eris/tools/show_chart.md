@@ -1,4 +1,4 @@
-展示真实数据的统计图，成功后由界面自动放在本轮回答开头，正文不写图表引用。
+展示真实数据的统计图，成功后由界面自动放在本轮回答开头，正文不写图表引用。同轮相同统计来源、图形与指标的修订只显示最新成功图。
 
 两组对战用一张 heatmap，unit="场"；categories 为 Fast、Expert，四个 series 是 A组胜、B组胜、双方都好、双方都差；保留分档场数，不混成总排名。单题用 show_comparison。
 
@@ -7,7 +7,7 @@
 - 时间与阶段：line 的 categories 用递增日期，slope 比两个阶段。
 - 关系：scatter 的 xValues 是横轴观测，xLabel / xUnit 说明含义；bubble 再用 sizeValues / sizeLabel / sizeUnit 表示第三个量的面积。
 - 原始观测分布：histogram、boxplot、violin、ecdf、ridgeline；程序计算分箱、分位数与密度。
-- 组成与层级：pie、waffle、concentric、sunburst、treemap；分类须互斥可加总，waffle 一格代表一个样本。两层图的 series 是父类、categories 是叶类，values 是对应数量。
+- 组成与层级：pie 是单组环形图，concentric 是2–4组环形对照；waffle 一格一个样本；分类须互斥可加总。sunburst、treemap 的 series 是父类、categories 是叶类，values 是数量。
 - 多维与周期：radar、radial_heatmap、rose；指标保持同单位与可比范围。两个及以上独立指标的进度用 radial_progress；它与 radar 的 maxValue 是实际共同上限。
 - 贡献与关系流：waterfall 首项为起点，后续为真实增减，程序追加合计。sankey 的 categories 列节点、series.name 为起点、values 是到各节点的守恒无环流量；chord 为同样排列的对称共现矩阵，主对角线为0。
 - 已有上下界：interval 的 lowerValues / upperValues 包围实际中心值；不生成置信带。

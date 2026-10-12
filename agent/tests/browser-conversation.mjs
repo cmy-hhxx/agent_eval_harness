@@ -64,11 +64,16 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
   const example=templateExamples[text.replace('图表模板测试示例：','')];
   if(example){
-   const exampleCall='template-'+selected.length;
-   await event({type:'message_start',message:{role:'assistant'}});
-   await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,content:[{type:'toolCall',id:exampleCall,name:'show_chart',arguments:{...example,references:[{reference:formalReference}]}}],stopReason:'toolUse'}});
-   await event({type:'tool_execution_start',toolCallId:exampleCall,toolName:'show_chart',args:{...example,references:[{reference:formalReference}]}});
-   await event({type:'message_end',message:{role:'toolResult',toolCallId:exampleCall,...await chartTool.execute(example),isError:false}});
+   const statistics=example===templateExamples['双档战绩']?['Fast','Expert'].map(comparisonTier=>({statistics:{runId:'run-alpha',comparisonTier}})):null;
+   const versions=statistics?[{...example,scope:'更新前的统计快照',series:example.series.map((series,index)=>index===0?{...series,values:[series.values[0]-1,series.values[1]]}:series)},example]:[example];
+   for(const [index,version] of versions.entries()){
+    const exampleCall=`template-${selected.length}-${index}`,references=statistics??[{reference:formalReference}];
+    if(index){await event({type:'turn_end'});await event({type:'turn_start'});}
+    await event({type:'message_start',message:{role:'assistant'}});
+    await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,content:[{type:'toolCall',id:exampleCall,name:'show_chart',arguments:{...version,references}}],stopReason:'toolUse'}});
+    await event({type:'tool_execution_start',toolCallId:exampleCall,toolName:'show_chart',args:{...version,references}});
+    await event({type:'message_end',message:{role:'toolResult',toolCallId:exampleCall,...await chartTool.execute(version),details:{references},isError:false}});
+   }
    await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
    const exampleText='图表模板测试示例，仅用于验证渲染，不代表评测结论。'+(example.type==='line'?'\n\n```chart\nnot-accepted-chart\n```':'');
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:exampleText}});
@@ -80,8 +85,12 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   for(const delta of ['<thi','nk>先核对引用，','再查询正式结果。</thi','nk>']){
    await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});await delay(40);
   }
+  for(const [contentIndex,content] of [[1,''],[2,' \n\t ']]){
+   await event({type:'message_update',assistantMessageEvent:{type:'thinking_start',contentIndex}});
+   await event({type:'message_update',assistantMessageEvent:{type:'thinking_end',contentIndex,content}});
+  }
   if (selected.length === 1) await thinkingGate.promise;
-  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
+  await event({type:'message_end',message:{role:'assistant',provider:model.provider,model:model.model,usage:{input:90,output:20,cacheRead:10,cacheWrite:0,totalTokens:120},content:[{type:'text',text:tagged},{type:'thinking',thinking:''},{type:'thinking',thinking:' \n\t '},{type:'toolCall',id:callId,name:'list_data',arguments:{limit:5,query:directoryQuery}}],stopReason:'toolUse'}});
   await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args:{limit:5,query:directoryQuery}});await delay(150);
   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:'{"items":[{"runId":"run-alpha","accepted":12}],"total":1}'}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'web-search-'+selected.length,toolName:'search_web',args:searchArgs});
@@ -128,6 +137,7 @@ try{
  assert.match(firstRunningText,/正在分析，用时/);
  await page.waitForFunction(previous=>document.querySelector('[data-chat-running]')?.innerText!==previous,firstRunningText);
  assert.match(await running.innerText(),/正在分析，用时/,'the running clock advances while reasoning remains open');
+ assert.equal(await page.locator('[data-variant=think]').count(),1,'empty reasoning blocks stay hidden while streaming');
  assert.equal(await page.locator('[data-turn-process]').count(),0,'the process disclosure appears after the turn settles');
  assert(!(await page.locator('body').innerText()).includes('深度求索'));
  await input.fill('补充查询：标签分布');await input.press('Enter');
@@ -277,6 +287,7 @@ try{
  }
  await page.reload();
  await page.locator('[data-turn-charts] figure[data-analysis-chart=pie]').first().waitFor({state:'visible'});
+ assert.equal(await page.locator('[data-variant=think]').count(),1,'refresh restores populated reasoning without the saved empty blocks');
  assert.equal(await page.locator('[data-turn-charts] figure[data-analysis-chart=pie]').count(),1,'refresh restores the accepted receipt without a Markdown reference');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'refresh in compact mode retains exactly one recorded chart');
  assert.equal(chartDisplays,1,'refresh does not repeat the chart tool');
@@ -381,7 +392,8 @@ try{
   await exampleChart.getByRole('heading',{name:example.title,exact:true}).waitFor();
   await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
   assert.equal(await exampleChart.locator('footer').count(),0,'source descriptions do not occupy the chart face');
-  assert.equal(await exampleChart.locator('[data-chart-metadata]').textContent(),example.scope+' · 来源：'+example.source);
+  assert.equal(await exampleChart.locator('[data-chart-scope]').textContent(),example.scope);
+  assert.equal(await exampleChart.locator('[data-chart-metadata]').textContent(),'来源：'+example.source);
   assert.equal(await exampleChart.locator('[data-chart-metadata]').evaluate(node=>getComputedStyle(node).clipPath),'inset(50%)');
   assert.equal(await exampleChart.locator('[data-chart-unit]').textContent(),label==='双档战绩'?'合计 471 场':`单位：${example.unit}`);
   assert.equal(await exampleChart.locator('details,summary').count(),0,'chart values do not require opening a disclosure');
@@ -441,6 +453,8 @@ try{
    assert.equal(await exampleChart.locator('[data-chart-annotations] li').textContent(),'格式问题较多','notes add no repeated coordinates or values');
   }
   if(label==='双档战绩'){
+   assert.equal(await exampleChart.count(),1,'a refreshed statistical view replaces its first successful chart');
+   assert.equal(await exampleChart.locator('[data-chart-scope]').textContent(),example.scope);
    for(const width of [375,320]){
     await page.setViewportSize({width,height:1200});
     await exampleChart.locator('svg text').filter({hasText:'104'}).waitFor();
@@ -508,7 +522,7 @@ try{
  if(await older.count())await older.click();
  for(const example of Object.values(templateExamples))await page.locator(`figure[data-analysis-chart=${example.type}]`).getByRole('heading',{name:example.title,exact:true}).waitFor();
  await page.locator('figure[data-analysis-chart=pie]').getByRole('heading',{name:chartData.title,exact:true}).nth(1).waitFor();
- assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains one accepted chart per call across the recorded chart types');
+ assert.equal(await page.locator('figure[data-analysis-chart]').count(),2+Object.keys(templateExamples).length,'refresh retains the latest statistical revision and every independent chart');
  assert.equal(chartDisplays,recordedCharts,'template preview refresh never reruns a chart tool');
  await page.goto(server.url+'/u/local/chart-gallery.html');
  await page.getByRole('heading',{name:'科研图形模板',exact:true}).waitFor();

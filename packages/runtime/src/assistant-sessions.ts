@@ -355,8 +355,8 @@ export class AssistantSessions implements AssistantSessionRuntime {
           value.driverSelection = key;
           await this.append(value, "assistant/model-used", { selection });
           await this.append(value, "request/context", { contextWindow: model.contextWindow });
-          const header = { config: { provider: model.provider, model: model.model, reasoningEffort: model.thinking },
-            tools: this.options.tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema })) };
+          const tools = this.options.tools.map(tool => ({ name: tool.name, description: tool.description, parameters: tool.inputSchema }));
+          const header = { config: { provider: model.provider, model: model.model, reasoningEffort: model.thinking }, ...(tools.length ? { tools } : {}) };
           const previousHeader = value.journal.events.findLast(event => event.type === "request/header");
           if (JSON.stringify(previousHeader?.data.header) !== JSON.stringify(header))
             await this.append(value, "request/header", { header, reason: previousHeader ? "change" : "initial" });

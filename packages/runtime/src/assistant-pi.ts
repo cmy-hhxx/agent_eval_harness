@@ -149,7 +149,7 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
             signal?.throwIfAborted();
             const started = Date.now();
             const messages = session.agent.state.messages;
-            const sources = messages.slice(messages.findLastIndex(message => message.role === "user") + 1)
+            const sources = messages
               .flatMap(message => message.role === "toolResult" && !message.isError && request.sourceTools?.includes(message.toolName)
                 ? [{ tool: message.toolName, content: message.content }] : []);
             const response = await runtime.completeSimple(model, { systemPrompt: request.systemPrompt,

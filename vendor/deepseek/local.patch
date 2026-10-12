@@ -1090,7 +1090,6 @@ index a76b58d..7ab25f3 100644
  export { MarkdownText } from './markdown/MarkdownText.tsx'
  export type { MarkdownCodeLabels, MarkdownFileMentions, MarkdownLabels, MarkdownPathImages } from './markdown/MarkdownText.tsx'
 diff --git a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
-index 5d97a69..981359a 100644
 --- a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
 +++ b/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx
 @@ -1,7 +1,7 @@
@@ -1102,7 +1101,7 @@ index 5d97a69..981359a 100644
  import type { MarkdownFileMentions, MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
  import type { ChatNodeOwnerProps, ChatViewSlotProps, UseDisclosure, UsePresentation } from '../contract/slots.ts'
  import type { AssistantBlock } from '../contract/snapshot.ts'
-@@ -55,6 +55,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+@@ -55,6 +55,7 @@
    blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
    reasoningHidden = false, usePresentation, revealProcess, mentions, t,
  }: AssistantMarkdownProps) {
@@ -1110,7 +1109,16 @@ index 5d97a69..981359a 100644
    // Stable per locale revision (t identity changes on switch): a fresh object
    // per render would rebuild MarkdownText's component table every chunk.
    const labels = useMemo(() => markdownLabels(t), [t])
-@@ -77,11 +78,22 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+@@ -68,7 +69,7 @@
+   // between tool groups — skip the shell unless something visible remains.
+   const hasVisible = streaming
+     || interrupted === true
+-    || blocks.some(block => block.kind !== 'tool-call')
++    || blocks.some(block => block.kind !== 'tool-call' && (block.kind !== 'reasoning' || block.text.trim() !== ''))
+   if (!hasVisible) return null
+   const rendered: ReactNode[] = []
+   for (let i = 0; i < blocks.length; i++) {
+@@ -77,11 +78,22 @@
      if (groupPart === 'reasoning' && block.kind !== 'reasoning') continue
      if (groupPart === 'response' && block.kind === 'reasoning') continue
      switch (block.kind) {
@@ -1136,15 +1144,17 @@ index 5d97a69..981359a 100644
              streaming={streaming}
              labels={labels}
              fileMentions={mentions}
-@@ -89,6 +101,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+@@ -89,7 +101,9 @@
            />,
          )
          break
 +      }
        case 'reasoning':
++        if (block.text.trim() === '') break
          rendered.push(
            <ProcessReasoning
-@@ -140,6 +153,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+             key={i}
+@@ -140,6 +154,7 @@
      }
    }
    return (
@@ -1152,7 +1162,7 @@ index 5d97a69..981359a 100644
      <div className={css.root} data-streaming={streaming || undefined}>
        <div className={css.body}>
          {rendered}
-@@ -148,6 +162,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
+@@ -148,6 +163,7 @@
            && <span className={css.stopped}>{t('message.stopped')}</span>}
        </div>
      </div>
@@ -1282,3 +1292,42 @@ index 0000000..0a8edfa
 +    expect(container.querySelectorAll('p')).toHaveLength(2)
 +  })
 +})
+
+diff --git a/packages/client/ui-chat/tests/reasoning-row.client.spec.tsx b/packages/client/ui-chat/tests/reasoning-row.client.spec.tsx
+--- a/packages/client/ui-chat/tests/reasoning-row.client.spec.tsx
++++ b/packages/client/ui-chat/tests/reasoning-row.client.spec.tsx
+@@ -20,6 +20,34 @@
+ const renderMessageImages: AssistantMarkdownProps['renderMessageImages'] = () => null
+
+ describe('ReasoningRow', () => {
++  it.each([false, true])('does not offer empty reasoning disclosures while streaming=%j', (streaming) => {
++    const view = render(
++      <AssistantMarkdown useDisclosure={useDisclosure}
++        usePresentation={useDetailedPresentation} t={t}
++        blocks={[{ kind: 'reasoning', text: '' }, { kind: 'reasoning', text: ' \n\t ' }, { kind: 'text', text: 'Answer' }]}
++        streaming={streaming} renderMessageImages={renderMessageImages} />,
++    )
++    expect(view.getByText('Answer')).toBeTruthy()
++    expect(view.container.querySelectorAll('[data-variant="think"]')).toHaveLength(0)
++  })
++
++  it('reveals late reasoning text without remounting another expanded block', () => {
++    const props = { useDisclosure, usePresentation: useDetailedPresentation, t, renderMessageImages }
++    const first = { kind: 'reasoning' as const, text: 'Recorded reasoning' }
++    const view = render(<AssistantMarkdown {...props} blocks={[first, { kind: 'reasoning', text: '' }]} streaming />)
++    expect(view.getAllByRole('button')).toHaveLength(1)
++    fireEvent.click(view.getByRole('button'))
++    const body = view.getByText('Recorded reasoning')
++    view.rerender(<AssistantMarkdown {...props} blocks={[first, { kind: 'reasoning', text: 'Late reasoning' }]} streaming />)
++    expect(view.getAllByRole('button')).toHaveLength(2)
++    expect(view.getAllByRole('button')[0]?.getAttribute('aria-expanded')).toBe('true')
++    expect(view.getByText('Recorded reasoning')).toBe(body)
++    fireEvent.click(view.getAllByRole('button')[1]!)
++    expect(view.getByText('Late reasoning')).toBeTruthy()
++    view.rerender(<AssistantMarkdown {...props} blocks={[{ kind: 'reasoning', text: '' }]} streaming={false} />)
++    expect(view.container.childElementCount).toBe(0)
++  })
++
+   it.each([
+     ['', ''],
+     ['An unfinished line', ''],

@@ -20,6 +20,34 @@ const t = makeTranslate(zh, commonZh)
 const renderMessageImages: AssistantMarkdownProps['renderMessageImages'] = () => null
 
 describe('ReasoningRow', () => {
+  it.each([false, true])('does not offer empty reasoning disclosures while streaming=%j', (streaming) => {
+    const view = render(
+      <AssistantMarkdown useDisclosure={useDisclosure}
+        usePresentation={useDetailedPresentation} t={t}
+        blocks={[{ kind: 'reasoning', text: '' }, { kind: 'reasoning', text: ' \n\t ' }, { kind: 'text', text: 'Answer' }]}
+        streaming={streaming} renderMessageImages={renderMessageImages} />,
+    )
+    expect(view.getByText('Answer')).toBeTruthy()
+    expect(view.container.querySelectorAll('[data-variant="think"]')).toHaveLength(0)
+  })
+
+  it('reveals late reasoning text without remounting another expanded block', () => {
+    const props = { useDisclosure, usePresentation: useDetailedPresentation, t, renderMessageImages }
+    const first = { kind: 'reasoning' as const, text: 'Recorded reasoning' }
+    const view = render(<AssistantMarkdown {...props} blocks={[first, { kind: 'reasoning', text: '' }]} streaming />)
+    expect(view.getAllByRole('button')).toHaveLength(1)
+    fireEvent.click(view.getByRole('button'))
+    const body = view.getByText('Recorded reasoning')
+    view.rerender(<AssistantMarkdown {...props} blocks={[first, { kind: 'reasoning', text: 'Late reasoning' }]} streaming />)
+    expect(view.getAllByRole('button')).toHaveLength(2)
+    expect(view.getAllByRole('button')[0]?.getAttribute('aria-expanded')).toBe('true')
+    expect(view.getByText('Recorded reasoning')).toBe(body)
+    fireEvent.click(view.getAllByRole('button')[1]!)
+    expect(view.getByText('Late reasoning')).toBeTruthy()
+    view.rerender(<AssistantMarkdown {...props} blocks={[{ kind: 'reasoning', text: '' }]} streaming={false} />)
+    expect(view.container.childElementCount).toBe(0)
+  })
+
   it.each([
     ['', ''],
     ['An unfinished line', ''],

@@ -175,7 +175,9 @@ test("Eris keeps a compact policy and explicit tool interfaces", () => {
   assert.match(toolDescriptions.show_comparison, /保留正文完成分析.*不固定正文句数/);
   assert.match(toolDescriptions.show_comparison, /图完整回答本次请求时设 complete:true，成功即结束/);
   assert.match(toolDescriptions.show_comparison, /仍有其他任务或图外关键事实时设 complete:false/);
-  assert.match(toolDescriptions.show_comparison, /不重画或重复收尾/);
+  assert.match(toolDescriptions.show_comparison, /核对通过的图不重复绘制或收尾/);
+  assert.match(toolDescriptions.show_comparison, /comparison-check.*草稿尚未通过内容核对.*再提交 show_comparison/);
+  assert.match(toolDescriptions.show_comparison, /资源已生成.*内容尚未核验/);
   assert.match(toolDescriptions.read_case, /题|原问连续关键词/);
   assert.match(toolDescriptions.read_case, /不必先列目录或抄 ID/);
   assert.match(toolDescriptions.read_evidence, /原生数值、布尔值和行列关系用 json 核对/);

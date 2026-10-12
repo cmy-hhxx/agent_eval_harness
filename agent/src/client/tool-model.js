@@ -91,7 +91,14 @@ export function analysisToolModel(name,model){
    ...(rows(item.evidence).length?{groups:[{label:'证据位置',items:rows(item.evidence).map(entry=>({title:entry.evidence_id,fields:[]}))}]}:{}),
   }))}}:{})};
  }
- if(name==='show_comparison')return {summary:`显示比较图 · ${status}`};
+ if(name==='show_comparison'){
+  const issues=rows(output?.issues).filter(issue=>string(issue.path)&&string(issue.reason));
+  if(output?.kind==='comparison-check'&&!output.error&&issues.length)return {
+   summary:`比较图草稿 · 待修订（${issues.length}项）`,
+   details:{items:issues.map((issue,index)=>({title:`核对意见 ${index+1}`,description:issue.reason,fields:[{label:'位置',value:issue.path}]}))},
+  };
+  return {summary:`显示比较图 · ${status}`};
+ }
  if(name==='show_chart')return {summary:`显示${({line:'趋势图',pie:'环形组成图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'多环进度图',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
  if(name==='list_data'){

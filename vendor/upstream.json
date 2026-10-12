@@ -41,7 +41,8 @@
       "Settings reuse ui-settings-general with optional technical rows omitted and ui-theme with its appearance selector omitted. Web defaults show detailed work steps and support the upstream 10–22 px conversation font range. Running status copy is localized as analysis; matching upstream tests are updated. All settings CSS and interaction components remain upstream.",
       "Gateway model selection reuses upstream fuzzy search, provider ordering, grouped menus, sticky headings, keyboard focus and ModelListEditor (selectionOnly skips manual model editing). Original token/session metric projections and ToolCallRecovery are reused. Original transport, conversation, Markdown, model selection, menu, queue, running-status, tool-row and metric projection tests with their test-support dependencies and benchmark fixtures/budgets are retained. Agent adapters supply local Pi/session persistence and the installed Chrome binary.",
       "Assistant reply HTTP(S) links render as plain source labels in streaming and restored Markdown, while tool evidence links, local file navigation, images and original stored content remain intact.",
-      "Trajectory Schema details show the complete recorded tool description and uncollapsed parameter JSON with an exact full-definition copy action; the overview keeps its compact tree. Eris records request/header tool catalogs for new calls. No historical schema is fabricated."
+      "Trajectory Schema details show the complete recorded tool description and uncollapsed parameter JSON with an exact full-definition copy action; the overview keeps its compact tree. Eris records request/header tool catalogs for new calls. No historical schema is fabricated.",
+      "AssistantMarkdown omits empty and whitespace-only reasoning disclosures during streaming, settlement and history replay, preserving stable block keys and raw replay metadata. Tests cover late text and mixed visible/empty reasoning."
     ]
   }
 }

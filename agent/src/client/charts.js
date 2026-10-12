@@ -121,9 +121,17 @@ export function chartFromToolOutput(output, state) {
   return chart;
 }
 
-/** A Turn's accepted receipts are the only chart source; deduplicate by the recorded call identity. */
+function sameStatisticalView(left, right, leftSources, rightSources) {
+  if (!leftSources?.length || !rightSources?.length || leftSources.length !== rightSources.length) return false;
+  if (!leftSources.every(source => rightSources.some(other => source.runId === other.runId && source.comparisonTier === other.comparisonTier))) return false;
+  return ['type', 'unit', 'xLabel', 'xUnit', 'sizeLabel', 'sizeUnit'].every(key => left[key] === right[key])
+    && left.categories.length === right.categories.length && left.categories.every((name, index) => name === right.categories[index])
+    && left.series.length === right.series.length && left.series.every((series, index) => series.name === right.series[index].name);
+}
+
+/** Keep the latest accepted revision of each statistical view within this Turn. */
 export function chartsFromToolData(data) {
-  const charts = [], seen = new Set(), pending = data.map(value => value.root);
+  const charts = [], seen = new Set(), sources = new Map(), pending = data.map(value => value.root);
   for (const block of pending) {
     if (!block) continue;
     if (Array.isArray(block.subCalls)) pending.push(...block.subCalls);
@@ -132,7 +140,15 @@ export function chartsFromToolData(data) {
     const chart = block.call.name === 'show_chart' ? chartFromToolOutput(output, 'ok') : null;
     const diagram = block.call.name === 'show_comparison' ? comparisonFromToolOutput(output, 'ok') : null;
     if (chart || diagram) {
-      seen.add(block.callId); charts.push({ callId: block.callId, ...(chart ? { chart } : { diagram }) });
+      const references = block.meta?.references;
+      const statistics = Array.isArray(references) && references.length && references.every(item =>
+        typeof item?.statistics?.runId === 'string' && typeof item.statistics.comparisonTier === 'string')
+        ? references.map(item => item.statistics) : null;
+      const index = chart ? charts.findIndex(entry => entry.chart && sameStatisticalView(entry.chart, chart, sources.get(entry.callId), statistics)) : -1;
+      const entry = { callId: block.callId, ...(chart ? { chart } : { diagram }) };
+      seen.add(block.callId); sources.set(block.callId, statistics);
+      if (index < 0) charts.push(entry);
+      else charts[index] = entry;
     } else { seen.add(block.callId); charts.push({ callId: block.callId, error: '图表数据无效，无法显示' }); }
   }
   return charts;

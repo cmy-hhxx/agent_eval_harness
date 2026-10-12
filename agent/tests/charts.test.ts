@@ -399,6 +399,49 @@ test("response charts read only their Turn's accepted receipts without a Markdow
   assert.equal(renderToStaticMarkup(createElement(TurnCharts, { turn: 8, useChat })), '', 'another turn cannot display these receipts');
 });
 
+test('a corrected statistical chart replaces the earlier snapshot in the same response and restored tail', () => {
+  const chart = { type: 'heatmap', title: '当前批次：Fast胜场持平，Expert由A组领先', unit: '场', source: '当前运行正式对比统计',
+    scope: '2026-10-12 · Fast 109场、Expert 112场', categories: ['Fast', 'Expert'], series: [
+      { name: 'A组胜', values: [29, 39] }, { name: 'B组胜', values: [29, 30] },
+      { name: '双方都好', values: [45, 34] }, { name: '双方都差', values: [6, 8] },
+    ] };
+  const references = ['Fast', 'Expert'].map(comparisonTier => ({ statistics: { runId: 'daily-2026-10-12', comparisonTier },
+    references: [{ runId: 'daily-2026-10-12', taskId: `${comparisonTier}-first` }] }));
+  const first = { kind: 'tool-result', callId: 'first-chart', call: { name: 'show_chart' }, isError: false,
+    content: [{ type: 'text', text: receipt(chart) }], meta: { references }, subCalls: [] };
+  const updated = { ...chart, title: '当前批次：Fast持平，Expert A组领先8场', scope: '2026-10-12 · Fast 110场、Expert 112场', series: [
+    chart.series[0], { name: 'B组胜', values: [29, 31] }, { name: '双方都好', values: [46, 34] }, chart.series[3],
+  ] };
+  const second = { ...first, callId: 'updated-chart', content: [{ type: 'text', text: receipt(updated) }],
+    meta: { references: references.toReversed().map(ref => ({ ...ref, references: [...ref.references, { runId: 'daily-2026-10-12', taskId: 'new-result' }] })) } };
+  const data = [first, second, { ...second, callId: 'failed-revision', isError: true }].map(root => ({ root }));
+  const restoredData = structuredClone(data);
+  const nodes = { turnDataSource: (_turn: number, kind: string) => ({
+    getSnapshot: () => kind === 'tool-call' ? restoredData : [{ answerStep: null }], subscribe: () => () => {},
+  }) };
+  const useChat = (select: (snapshot: unknown) => unknown) => select({ nodes });
+  for (const [component, props] of [[TurnCharts, { turn: 1 }], [TurnChartFallback, { turn: { turn: 1 } }]] as const) {
+    const document = new JSDOM(renderToStaticMarkup(createElement(component, { ...props, useChat }))).window.document;
+    assert.equal(document.querySelectorAll('figure').length, 1, 'a correction must replace, not append to, the earlier chart');
+    assert.equal(document.querySelector('[data-chart-unit]')!.textContent, '合计 222 场');
+    assert.equal(document.querySelector('[data-chart-scope]')!.textContent, updated.scope);
+    assert.equal(document.querySelector('h3')!.textContent, updated.title);
+  }
+  assert.equal(chartsFromToolData([{ root: first }, { root: { ...second, isError: true } }])[0].callId, first.callId);
+  for (const independent of [
+    { ...second, meta: { references: references.map(ref => ({ statistics: { ...ref.statistics, runId: 'another-run' } })) } },
+    { ...second, meta: { references: references.slice(0, 1) } },
+    { ...second, content: [{ type: 'text', text: receipt({ ...updated, series: [{ name: '问题数', values: [10, 20] }] }) }] },
+    { ...second, content: [{ type: 'text', text: receipt({ ...updated, unit: '%' }) }] },
+    { ...second, content: [{ type: 'text', text: receipt({ ...updated, type: 'bubble_matrix' }) }] },
+    { ...second, meta: { references: [{ runId: 'daily-2026-10-12' }] } },
+    { ...second, meta: {} },
+  ]) assert.equal(chartsFromToolData([{ root: first }, { root: independent }]).length, 2, 'different statistical views remain separate');
+  const corrupt = chartsFromToolData([{ root: first }, { root: { ...second, content: [{ type: 'text', text: 'broken' }] } }]);
+  assert.equal(corrupt.length, 2, 'an unreadable receipt cannot replace the usable chart');
+  assert.equal(corrupt[1].error, '图表数据无效，无法显示');
+});
+
 test('accepted charts stay at the tail only when cancellation or failure leaves no final answer', () => {
   const data = [{ root: { kind: 'tool-result', callId: 'chart-one', call: { name: 'show_chart' }, isError: false,
     content: [{ type: 'text', text: receipt({ ...base, type: 'heatmap' }) }], subCalls: [] } }];

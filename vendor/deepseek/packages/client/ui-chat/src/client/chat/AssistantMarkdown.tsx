@@ -69,7 +69,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   // between tool groups — skip the shell unless something visible remains.
   const hasVisible = streaming
     || interrupted === true
-    || blocks.some(block => block.kind !== 'tool-call')
+    || blocks.some(block => block.kind !== 'tool-call' && (block.kind !== 'reasoning' || block.text.trim() !== ''))
   if (!hasVisible) return null
   const rendered: ReactNode[] = []
   for (let i = 0; i < blocks.length; i++) {
@@ -103,6 +103,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         break
       }
       case 'reasoning':
+        if (block.text.trim() === '') break
         rendered.push(
           <ProcessReasoning
             key={i}
