@@ -13,6 +13,7 @@ import { assistantModelConfiguration, GatewayAssistantModels } from "./assistant
 import { LocalAnalysisCode } from "./assistant-code.js";
 import { LocalAnalysisData } from "./assistant-data.js";
 import { LocalSpecialists } from "./assistant-specialists.js";
+import { loadAutomationConfig } from "./automation-config.js";
 
 const { values } = parseArgs({ options: { port: { type: "string", default: "4180" }, user: { type: "string", default: "local" }, "no-open": { type: "boolean", default: false }, debug: { type: "boolean", default: false } } });
 const port = Number(values.port);
@@ -24,13 +25,17 @@ if (await exists(path.join(ROOT, "configs/local/models.json"))) sources.push(pat
 if (await exists(path.join(ROOT, ".env"))) process.loadEnvFile(path.join(ROOT, ".env"));
 const configuration = await readSettings();
 const config = await loadConfig(sources, configuration);
+const automation = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+const data = new LocalAnalysisData(config.evaluation.output.path, {
+  stateFile: path.join(automation.stateDirectory, "state.json"), logFile: automation.publication.logFile,
+});
 logger.addSecrets(...configurationSecrets());
 const { model, gateways } = assistantModelConfiguration(createModelResolver(config.models)("attribution"), configuration);
 for (const gateway of gateways)
   if (!process.env[gateway.model.apiKeyEnv]) throw new Error(`请在 config.ini 的 channel.${gateway.model.provider} 中配置 api_key`);
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
   directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model, gateways),
-  ...createEris({ code: new LocalAnalysisCode(path.join(ROOT, "data/assistant"), path.join(ROOT, ".venv/bin/python")), data: new LocalAnalysisData(config.evaluation.output.path), specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), new LocalAnalysisData(config.evaluation.output.path), config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
+  ...createEris({ code: new LocalAnalysisCode(path.join(ROOT, "data/assistant"), path.join(ROOT, ".venv/bin/python")), data, specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), data, config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
   onError: (error) => { void logger.error(error, { component: "assistant", event: "error" }); },
 })), onError: (error) => { void logger.error(error, { component: "assistant-http", event: "error" }); } });
 const url = `${server.url}/u/${userId}/`;

@@ -53,7 +53,8 @@ test("early user messages retain stable compaction boundaries and replay exactly
   } finally {await sessions.dispose();await gateway.close();await rm(directory,{recursive:true,force:true});if(previous===undefined)delete process.env[env];else process.env[env]=previous;}
 });
 
-for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as const) test(`Eris harness: ${scenario}`, { timeout: 15000 }, async () => {
+for (const api of ["openai-completions", "openai-responses"] as const)
+for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as const) test(`Eris harness: ${api} ${scenario}`, { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-harness-"));
   const scope = { userId: "test", sessionId: crypto.randomUUID() };
   const env = "ERIS_HARNESS_TEST_KEY", previous = process.env[env];
@@ -71,15 +72,21 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
   }] : eris.tools;
   const gateway = await listen(async (req, res) => {
     const request = object(await body(req)); modelCalls++;
-    const messages = request.messages as JsonObject[];
-    const outputs = messages.filter(message => message.role === "tool");
+    const messages = (request.messages ?? request.input) as JsonObject[];
+    const outputs = messages.filter(message => message.role === "tool" || message.type === "function_call_output");
     if (scenario === "repair" && modelCalls === 2) {
       const text = JSON.stringify(outputs);
       assert.match(text, /\/limit.*schema_type/);
       assert.equal(executions, 1, "invalid calls never execute; independent valid calls still finish");
       assert.equal(outputs.length, 2, "both success and rejection reach the model before repair");
     }
-    const done = scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7 || scenario === "extended" && modelCalls === 35;
+    const summary = ["repeat", "unknown"].includes(scenario) && modelCalls % 4 === 0;
+    if (summary) {
+      assert.equal(request.tool_choice, "none", "repeated failures still allow a final answer without more tools");
+      assert.equal(request.parallel_tool_calls, false);
+      assert.match(JSON.stringify(messages), /利用已经成功读取的结果回答用户/);
+    }
+    const done = summary || scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7 || scenario === "extended" && modelCalls === 35;
     let args: JsonObject = {};
     if (scenario === "repair" && modelCalls === 1) args = { limit: "5" };
     if (scenario === "repeat") args = modelCalls % 2 ? { runId: ".", query: "." } : { query: ".", runId: "." };
@@ -89,14 +96,26 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
         ...(scenario === "repair" && modelCalls === 1 ? [{ index: 1, id: "independent", type: "function", function: { name: "list_data", arguments: "{}" } }] : [])],
     };
     res.writeHead(200, { "content-type": "text/event-stream" });
+    if (api === "openai-responses") {
+      const output = done
+        ? [{ type: "message", id: `msg-${modelCalls}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: delta.content, annotations: [] }] }]
+        : delta.tool_calls!.map(call => ({ type: "function_call", id: `fc-${call.id}`, call_id: call.id, name: call.function.name, arguments: call.function.arguments }));
+      const events: JsonObject[] = output.flatMap((item, output_index) => [
+        { type: "response.output_item.added", output_index, item: done ? { ...item, content: [] } : { ...item, arguments: "" } },
+        { type: "response.output_item.done", output_index, item },
+      ]);
+      events.push({ type: "response.completed", response: { id: `resp-${modelCalls}`, status: "completed", output, usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 } } });
+      res.end(events.map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
+      return;
+    }
     const chunk = { id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture" };
     res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
     res.write(`data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: done ? "stop" : "tool_calls" }] })}\n\n`);
     res.end("data: [DONE]\n\n");
   });
-  const model: ModelConfig = { provider: "fixture", model: "fixture", baseUrl: gateway.url + "/v1", api: "openai-completions",
+  const model: ModelConfig = { provider: "fixture", model: "fixture", baseUrl: gateway.url + "/v1", api,
     apiKeyEnv: env, thinking: "off", contextWindow: 131072, maxOutputTokens: 4096 };
-  const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model, systemPrompt: eris.systemPrompt, tools, onError: error => errors.push(error) });
+  const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model, ...eris, tools, onError: error => errors.push(error) });
   const run = async () => {
     const requestId = crypto.randomUUID();
     await sessions.prompt(scope.userId, { ...scope, requestId, mode: "queue", content: [{ type: "text", text: "核对数据" }] });
@@ -109,20 +128,20 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
   };
   try {
     await sessions.create(scope.userId, scope.sessionId);
-    assert.equal(await run(), ["repair", "reset", "extended"].includes(scenario) ? "completed" : "interrupted");
-    assert.equal(modelCalls, scenario === "extended" ? 35 : scenario === "reset" ? 7 : 3);
+    assert.equal(await run(), "completed");
+    assert.equal(modelCalls, scenario === "extended" ? 35 : scenario === "reset" ? 7 : scenario === "repair" ? 3 : 4);
     assert.equal(executions, scenario === "extended" ? 34 : scenario === "repair" ? 2 : scenario === "reset" ? 6 : 0);
     const rows = (await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
     const results = rows.filter(row => row.event?.type === "tool/result");
-    assert.equal(results.length, scenario === "extended" ? 34 : scenario === "repair" ? 3 : scenario === "reset" ? 6 : modelCalls, "every result is durable even when the loop stops");
+    assert.equal(results.length, scenario === "extended" ? 34 : scenario === "repair" ? 3 : scenario === "reset" ? 6 : 3, "every result is durable even when the loop stops");
     if (scenario === "repeat" || scenario === "unknown") {
-      assert.match(JSON.stringify(rows), /相同参数失败3次/);
-      assert.equal(await run(), "interrupted");
-      assert.equal(modelCalls, 6, "loop accounting resets for the next user request");
+      assert(rows.some(row => row.event?.type === "assistant/message" && row.event.data.message.content.some((block: JsonObject) => block.type === "text" && block.text === "已完成核对。")));
+      assert.equal(await run(), "completed");
+      assert.equal(modelCalls, 8, "loop accounting resets for the next user request");
     }
     if (scenario === "extended") assert.deepEqual(errors, [], "productive investigation continues beyond 32 requests");
     // Pi may surface provider wrapper failures as model error messages rather than throws.
-    for (const error of errors) assert.match(String(error), /相同参数失败3次/);
+    assert.deepEqual(errors, []);
   } finally {
     await sessions.dispose(); await gateway.close(); await rm(directory, { recursive: true, force: true });
     if (previous === undefined) delete process.env[env]; else process.env[env] = previous;

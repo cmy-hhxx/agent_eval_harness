@@ -4,11 +4,11 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { emptyUsage, object, type JsonObject, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
-import { readJson, writeJson } from "@eval/data";
+import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { buildPlan, comparisonCodec, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
 import { createEris } from "@eval/assistant";
-import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig } from "../../fixtures/comparison.js";
+import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 async function register(config: EvalConfig, accepted?: (state: RunState, plan: TaskPlan) => Promise<void>) {
   const plan = await buildPlan(config);
@@ -25,6 +25,43 @@ async function register(config: EvalConfig, accepted?: (state: RunState, plan: T
   source.raw = async () => { throw new Error("Directory queries must not read source messages"); };
   return source;
 }
+
+async function registerAccepted(config: EvalConfig) {
+  let accepted: Record<string, SubmissionReceipt> = {};
+  const source = await register(config, async (state, plan) => {
+    for (const task of plan.tasks) {
+      const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult()
+        : comparisonResult(Object.keys((task.data as TaskData).candidates));
+      state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,
+        evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };
+      state.manifest.states[task.id] = { status: "succeeded", attempts: 1 };
+    }
+    await createResultWriter(path.join(config.output.path, "source"), plan.inputs)(state);
+    accepted = state.receipts;
+  });
+  return { source, accepted };
+}
+
+test("random case selection samples distinct questions and exhausts them across tiers", async () => {
+  const fixture = await fixtureConfig(Array.from({ length: 4 }, () => [raw("one"), raw("two"), raw("three")]));
+  try {
+    fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
+    const { source } = await registerAccepted(fixture.config);
+    const sample = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 2 });
+    assert(sample.kind === "comparisons");
+    assert.equal(new Set(sample.items.map(item => item.case.caseId)).size, 2);
+    assert.deepEqual(sample.selection, { mode: "random", availableCaseCount: 3, remainingCaseCount: 1 });
+    assert.equal(sample.nextOffset, null, "a random sample cannot be resumed with a page offset");
+    const excludeCases = sample.items.map(item => item.case);
+    const next = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 1, excludeCases });
+    assert(next.kind === "comparisons");
+    assert.equal(next.items.length, 1);
+    assert(!excludeCases.some(item => item.caseId === next.items[0]!.case.caseId));
+    const empty = await source.list({ runId: "source", view: "comparisons", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
+    assert(empty.kind === "comparisons");
+    assert.equal(empty.items.length, 0);
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
 
 test("batch evidence parses one input and preserves exact per-node slices, citations and missing-node errors", async () => {
   const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
@@ -271,6 +308,7 @@ test("Eris's paginated directory exposes persisted display names, tiers and conf
     fixture.config.inputs.versions.find((version) => version.id === "a_fast")!.display_name = "A组极速";
     const source = await register(fixture.config);
     const first = await source.list({ runId: "source", limit: 1 });
+    assert(first.kind === "inputs");
     const rest = await source.list({ runId: "source", offset: first.nextOffset!, limit: 100 });
     assert(first.kind === "inputs" && rest.kind === "inputs");
     assert.equal(first.total, 4);
@@ -337,18 +375,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
   const fixture = await fixtureConfig();
   try {
     fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
-    let accepted: Record<string, SubmissionReceipt> = {};
-    const source = await register(fixture.config, async (state, plan) => {
-      for (const task of plan.tasks) {
-        const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult()
-          : comparisonResult(Object.keys((task.data as TaskData).candidates));
-        state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,
-          evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };
-        state.manifest.states[task.id] = { status: "succeeded", attempts: 1 };
-      }
-      await createResultWriter(path.join(fixture.config.output.path, "source"), plan.inputs)(state);
-      accepted = state.receipts;
-    });
+    const { source, accepted } = await registerAccepted(fixture.config);
     const checkpointPath = path.join(fixture.config.output.path, "source/state.json");
     const saved = await readJson<Checkpoint>(checkpointPath);
     const formal = Object.values(saved.tasks).find((task) => task.receipt?.exported?.comparisonId)!;
@@ -357,6 +384,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     const directory = await source.list({ runId: "source", limit: 1, query: "a_fast" });
     assert(directory.kind === "inputs");
     const stats = directory.summary.formalComparisonStats;
+    assert(stats);
     assert.equal(stats.formalResultCount, 2);
     assert.equal(stats.comparisonCount, 2);
     assert.deepEqual(stats.tiers.map(({ comparisonTier, comparisonCount, outcomes }) => ({ comparisonTier, comparisonCount, outcomes })), [
@@ -380,6 +408,10 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     assert(next.kind === "comparisons");
     assert.equal(next.hasMore, false);
     assert.notDeepEqual(next.items[0].reference, first.items[0].reference);
+    const different = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 1,
+      excludeCases: [first.items[0].case] });
+    assert(different.kind === "comparisons");
+    assert.equal(different.items.length, 0, "another example excludes every tier of the already viewed case");
     const empty = await source.list({ runId: "source", view: "comparisons", query: "不存在的原问" });
     assert(empty.kind === "comparisons");
     assert.equal(empty.total, 0);
@@ -417,6 +449,19 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     saved.tasks[randomUUID()] = duplicate;
     await writeJson(checkpointPath, saved);
     await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
+    const broken = structuredClone(accepted[stats.records[0]!.reference.taskId]!.exported!.row);
+    broken.verdicts = {};
+    await writeJsonl(path.join(fixture.config.output.path, "source/results/comparison.jsonl"), [broken]);
+    const usable = await source.list({ runId: "source", limit: 1 });
+    assert(usable.kind === "inputs");
+    assert.equal(usable.items.length, 1, "comparison corruption cannot make the input directory unreadable");
+    assert.equal(usable.summary.formalComparisonStats, null);
+    assert.equal(usable.summary.statisticsError?.retryable, false);
+    await assert.rejects(source.list({ runId: "source", view: "comparisons" }), /comparison_statistics_unavailable/);
+    const partial = await source.list({ view: "statistics" });
+    assert(partial.kind === "statistics");
+    assert.equal(partial.currentRuns.length, 1);
+    assert.equal(partial.currentRuns[0]!.summary.formalComparisonStats, null);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 

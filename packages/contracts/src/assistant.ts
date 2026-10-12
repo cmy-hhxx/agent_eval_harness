@@ -8,7 +8,10 @@ export interface AssistantOwnership {
 }
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
 export interface AnalysisCaseLookup { runId: string; query: string; comparisonTier: string }
-export interface AnalysisQuery { runId?: string; view?: "inputs" | "comparisons"; query?: string; offset?: number; limit?: number }
+export interface AnalysisQuery {
+  runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
+  sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
+}
 export interface AnalysisResultReadOptions { view?: "summary" | "details"; offset?: number; limit?: number }
 export type AnalysisReadOptions = AnalysisResultReadOptions
   | { view: "case"; audience?: "user" }
@@ -180,6 +183,7 @@ export interface AssistantModelOptions {
   model: ModelConfig;
   systemPrompt: string;
   recoveryMessage?: string;
+  failureSummaryMessage?: string;
   tools: AssistantTool[];
 }
 export interface AssistantSessionRuntime {

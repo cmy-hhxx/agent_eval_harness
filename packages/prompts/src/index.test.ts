@@ -120,15 +120,17 @@ test("only blind comparison prompts prescribe candidate markers", () => {
 test("Eris keeps a compact policy and explicit tool interfaces", () => {
   const names = ["list_data", "read_case", "read_evidence", "read_data", "call_specialist", "read_specialist", "show_chart", "show_comparison", "search_web", "read_web", "execute_code", "read_code_output", "calculate", "search_data", "view_image"];
   const { systemPrompt, toolDescriptions, recoveryMessage } = erisPrompt(names);
-  assert(systemPrompt.length < 1800, "system policy states the goal and shared principles; tool mechanics belong to tools");
-  assert(systemPrompt.length + Object.values(toolDescriptions).join("").length < 8750, "the full Eris instruction set, including scope and case navigation, stays concise");
-  for (const rule of [/自主调查/, /read_case 一次看清原问、双方最终回答/, /有具体缺口才读节点原文/, /不改写正式结果/, /Fast、Expert 分别比较/, /未知值保持未知/, /show_comparison/, /自动.*回答开头/, /正式判词由程序确定/]) assert.match(systemPrompt, rule);
+  assert(systemPrompt.length < 2200, "system policy states the goal and shared principles; tool mechanics belong to tools");
+  assert(systemPrompt.length + Object.values(toolDescriptions).join("").length < 10000, "the full Eris instruction set, including publication metrics and case sampling, stays concise");
+  for (const rule of [/自主调查/, /read_case 一次看清原问、双方最终回答/, /有缺口才读原文/, /不改写正式结果/, /Fast、Expert 分别比较/, /未知值保持未知/, /show_comparison/, /自动.*回答开头/, /正式判词由程序确定/]) assert.match(systemPrompt, rule);
   assert.doesNotMatch(systemPrompt, /默认用文字回答|单题点评.*不用图表|最多600字|默认两轮|100–250字|只选决定胜负的一处差异/);
   assert.match(systemPrompt, /结论先行/);
-  assert.match(systemPrompt, /案例图后默认无正文.*最多80字/);
+  assert.match(systemPrompt, /不固定句数/);
+  assert.match(systemPrompt, /再找一个表示换题.*excludeCases/);
+  assert.match(systemPrompt, /随机抽未展示题目/);
   assert.match(systemPrompt, /直接 read_case 按题目定位，不先列目录抄 ID/);
-  assert.match(systemPrompt, /追问只解决新增疑点，沿用已读原文/);
-  assert.match(systemPrompt, /时间口径.*已回答时间要求，正文不再解释/);
+  assert.match(systemPrompt, /追问继承前面的任务/);
+  assert.match(systemPrompt, /全部时间用 view:statistics/);
   assert.match(toolDescriptions.show_chart, /unit="场"/);
   assert.match(toolDescriptions.show_chart, /statistics 时省略 scope，程序生成数据日期与分档场数/);
   assert.match(toolDescriptions.list_data, /sampleTimeRange=null.*样本发生日期未登记/);
@@ -170,7 +172,7 @@ test("Eris keeps a compact policy and explicit tool interfaces", () => {
   assert.match(toolDescriptions.read_case, /只有会改变判断的缺口才继续取证/);
   assert.match(toolDescriptions.show_comparison, /用已核验的事实直接作图/);
   assert.match(systemPrompt, /核对反证.*保留已确认能力及其适用边界/);
-  assert.match(toolDescriptions.show_comparison, /正文默认留空.*图外关键新事实.*最多80字/);
+  assert.match(toolDescriptions.show_comparison, /保留正文完成分析.*不固定正文句数/);
   assert.match(toolDescriptions.show_comparison, /图完整回答本次请求时设 complete:true，成功即结束/);
   assert.match(toolDescriptions.show_comparison, /仍有其他任务或图外关键事实时设 complete:false/);
   assert.match(toolDescriptions.show_comparison, /不重画或重复收尾/);

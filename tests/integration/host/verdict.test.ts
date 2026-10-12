@@ -200,6 +200,7 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     eris.raw = async () => { throw new Error("Formal standings must not read original answer sources"); };
     const erisDirectory = await eris.list({ runId: "run", limit: 1 });
     assert(erisDirectory.kind === "inputs");
+    assert(erisDirectory.summary.formalComparisonStats);
     assert.equal(erisDirectory.summary.formalComparisonStats.formalResultCount, 1);
     assert.equal(erisDirectory.summary.formalComparisonStats.comparisonCount, 1);
     assert.deepEqual(erisDirectory.summary.formalComparisonStats.tiers[0]!.outcomes, { win: 0, both_good: 1, both_bad: 0 });

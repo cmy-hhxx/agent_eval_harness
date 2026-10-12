@@ -65,6 +65,7 @@ for (const scenario of ["threshold", "overflow", "failure"] as const) test(`Eris
     assert.equal(reads, 2); assert.equal(summaries, 1, "two tool outputs cross 80% without another user turn");
     if (scenario === "failure") {
       assert.equal(turns, 2, "failed compaction must stop before sending the oversized context again");
+      await waitForTestState(async () => errors, value => value.length > 0, "compaction failure callback should settle");
       assert.match(String(errors[0]), /上下文压缩失败/);
       return;
     }

@@ -92,12 +92,14 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
   // Compaction must refer to the user ID already persisted by AssistantSessions.
   const userEntryIds = new Map<string, string>();
   let compactionFailure: Error | undefined;
+  let summarizingFailure = false;
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: Math.ceil(config.contextWindow * 0.2) }, retry: { enabled: false }, cacheWarming: "off", packages: [] });
   const loader = new sdk.DefaultResourceLoader({ cwd: workdir, agentDir, settingsManager: settings, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: options.systemPrompt,
     extensionFactories: [(api) => { api.on("before_provider_request", (event) => {
       const payload = object(transformPayload(event.payload, config));
       // Eris schedules read-only tools itself; evaluation workers retain their serial policy.
       payload.parallel_tool_calls = true;
+      if (summarizingFailure) { payload.tool_choice = "none"; payload.parallel_tool_calls = false; }
       // Responses may promote omitted strict mode to all-required arguments. Keep the tool's optional fields intact.
       if (config.api === "openai-responses" && Array.isArray(payload.tools))
         for (const tool of payload.tools) if (tool.type === "function") tool.strict = false;
@@ -129,6 +131,7 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
     name: tool.name, label: tool.name, description: tool.description, parameters: tool.inputSchema as sdk.ToolDefinition["parameters"], executionMode: tool.readOnly ? "parallel" : "sequential",
     prepareArguments(args) { tool.validate?.(args); return args as Record<string, unknown>; },
     async execute(callId, args, signal) {
+      if (summarizingFailure) throw new Error("本轮重复工具失败，已停止执行工具。");
       while (tool.readOnly && activeReads.size >= 4) {
         await Promise.race(activeReads);
         signal?.throwIfAborted();
@@ -206,12 +209,19 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
     await options.checkpoint();
     if (compactionFailure) throw compactionFailure;
     const repeatedFailure = [...failures.values()].find(failure => failure.count >= 3);
-    if (repeatedFailure) throw new Error(`工具 ${repeatedFailure.name} 以相同参数失败3次，已停止重复调用；已保存结果，可更正请求后继续。`);
+    if (repeatedFailure) {
+      if (summarizingFailure) throw new Error("重复失败后的总结未完成，已停止继续请求。");
+      summarizingFailure = true;
+      const [target, context, streamOptions] = args;
+      return stream(target, { ...context, messages: [...context.messages, { role: "system", timestamp: Date.now(),
+        content: options.failureSummaryMessage ?? options.recoveryMessage ?? "", toolsRemoved: options.tools.map(tool => ({ name: tool.name })) }] },
+      { ...streamOptions, toolChoice: "none" });
+    }
     return stream(...args);
   };
   return { prompt: async (text, messageId) => {
       openingMessageId = messageId;
-      pending.clear(); failures.clear(); compactionFailure = undefined;
+      pending.clear(); failures.clear(); compactionFailure = undefined; summarizingFailure = false;
       await session.prompt(text);
       if (compactionFailure) throw compactionFailure;
       await options.event({ type: "agent_end" });

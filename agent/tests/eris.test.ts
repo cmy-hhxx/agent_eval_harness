@@ -151,12 +151,18 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(list.execute({ runId: "run", query: "" }, context));
   await assert.rejects(list.execute({ view: "comparisons" }, context), /runId/);
   await assert.rejects(list.execute({ runId: "run", view: "comparisons", limit: 21 }, context), /20/);
+  await assert.rejects(list.execute({ runId: "run", view: "statistics" }, context));
+  await assert.rejects(list.execute({ runId: "run", view: "comparisons", sample: true, offset: 1 }, context));
+  await assert.rejects(list.execute({ runId: "run", excludeCases: [{ batchId: "b", caseId: "q" }] }, context));
   assert.deepEqual(received, []);
   const listed = await list.execute({ limit: 5 }, context);
   assert.equal(listed.details, undefined, "business JSON is stored only once");
   await list.execute({ runId: "run" }, context);
   await list.execute({ runId: "run", query: "A组Fast" }, context);
   await list.execute({ runId: "run", view: "comparisons", limit: 1 }, context);
+  const sample = { runId: "run", view: "comparisons", sample: true, limit: 1, excludeCases: [{ batchId: "b", caseId: "q" }] };
+  await list.execute(sample, context);
+  await list.execute({ view: "statistics" }, context);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
   assert.match(JSON.stringify(read.inputSchema), /顶层字段，与 reference 同级/);
   const searchTool = eris.tools.find(tool => tool.name === "search_web")!;
@@ -177,7 +183,7 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run" }] }, context), /inputId/);
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run", inputId: "input", taskId: "task" }] }, context), /additional properties/);
   await assert.rejects(specialist.execute({ ...request, attributions: [{ inputId: "input", operationId: request.operationId, runId: "run", taskId: "task" }] }, context), /oneOf/);
-  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }], "full directories omit the optional text filter; business filters are forwarded unchanged");
+  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }, sample, { view: "statistics" }], "full directories omit the optional text filter; business filters are forwarded unchanged");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });

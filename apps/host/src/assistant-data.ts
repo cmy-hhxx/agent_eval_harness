@@ -1,8 +1,10 @@
 import path from "node:path";
-import { safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
+import { randomInt } from "node:crypto";
+import { errorText, safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
 import { exists, localFiles, readJson } from "@eval/data";
 import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
+import { readPublishedStatistics } from "./assistant-statistics.js";
 
 function page(total: number, offset: number, limit: number, unit: "items" | "messages" | "characters") {
   const end = Math.min(total, offset + limit);
@@ -27,15 +29,24 @@ function messagePage({ sources, full, format }: ReturnType<typeof messageMateria
 }
 
 export class LocalAnalysisData implements AnalysisDataSource {
-  constructor(readonly directory: string) {}
+  constructor(readonly directory: string, readonly publication?: { stateFile: string; logFile: string }) {}
   run(id: string) { return path.join(this.directory, safeId(id)); }
+  private async statistics(runId: string, summary: ReturnType<typeof analysisProgress>) {
+    try {
+      return { ...summary, formalComparisonStats: await readAnalysisComparisonStats(this.run(runId), summary.formalComparisonReferences.map(item => item.taskId)), statisticsError: null };
+    } catch (error) {
+      return { ...summary, formalComparisonStats: null, statisticsError: { code: "comparison_statistics_unavailable", retryable: false,
+        message: errorText(error), action: "该运行统计读取失败；修改目录分页或筛选不能修复。全量历史使用 view:statistics，已读取的其他结果仍可回答。" } };
+    }
+  }
   async list(query: AnalysisQuery) {
     const comparisonView = query.view === "comparisons";
-    if (query.view && !query.runId) throw new Error("view 需要 runId；先用 list_data({}) 获取 currentRun.runId。");
+    if (query.view && query.view !== "statistics" && !query.runId) throw new Error("目录 view 需要 runId；先用 list_data({}) 获取 currentRun.runId。");
     const offset = query.offset ?? 0, limit = Math.min(query.limit ?? (comparisonView ? 5 : 30), comparisonView ? 20 : 100);
     if (!query.runId) {
       const names = await exists(this.directory) ? await localFiles.list(this.directory) : [];
       const items = [];
+      const running: { runId: string; evaluatorVersion: string; summary: ReturnType<typeof analysisProgress> }[] = [];
       const runCounts = { scope: "all_registered_runs" as const, total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
       let selected: { runId: string; evaluatorVersion: string; status: Checkpoint["status"]; summary: ReturnType<typeof analysisProgress> } | undefined;
       for (const runId of names) {
@@ -49,14 +60,24 @@ export class LocalAnalysisData implements AnalysisDataSource {
         const item = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, startedAt: summary.startedAt,
           ...(summary.finishedAt !== undefined ? { finishedAt: summary.finishedAt } : {}), inputCount: summary.inputCount, caseCount: summary.caseCount };
         items.push(item);
+        if (state.status === "running" && summary.inputCount > 0) running.push({ runId, evaluatorVersion: state.evaluatorVersion, summary });
         const preferred = summary.inputCount > 0 && (!selected ||
           (state.status === "running" && selected.status !== "running") ||
           ((state.status === "running") === (selected.status === "running") && summary.startedAt > selected.summary.startedAt));
         if (preferred) selected = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, summary };
       }
       items.sort((a, b) => b.startedAt - a.startedAt || a.runId.localeCompare(b.runId));
-      const currentRun = selected ? { ...selected, summary: { ...selected.summary,
-        formalComparisonStats: await readAnalysisComparisonStats(this.run(selected.runId), selected.summary.formalComparisonReferences.map((reference) => reference.taskId)) },
+      if (query.view === "statistics") {
+        let history;
+        try {
+          if (!this.publication) throw new Error("累计统计发布来源未配置。");
+          history = await readPublishedStatistics(this.publication);
+        } catch (error) { history = { status: "unavailable" as const, error: errorText(error), retryable: false }; }
+        const currentRuns = await Promise.all(running.map(async run => ({ ...run, summary: await this.statistics(run.runId, run.summary) })));
+        return { kind: "statistics" as const, history, currentRuns, additive: false,
+          scope: "历史为最近一次完整发布的累计快照；运行中批次单列，两者可能重叠，不能直接相加。" };
+      }
+      const currentRun = selected ? { ...selected, summary: await this.statistics(selected.runId, selected.summary),
         selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const } : null;
       const filtered = query.query ? items.filter((item) => item.runId.includes(query.query!)) : items;
       return { kind: "runs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), currentRun, runCounts };
@@ -74,10 +95,28 @@ export class LocalAnalysisData implements AnalysisDataSource {
       const models = group.map(model);
       return { comparisonTier: models[0]!.comparisonTier, models: models.map(({ model, modelName }) => ({ model, modelName })) };
     });
-    const summary = analysisProgress(saved);
-    const formalComparisonStats = await readAnalysisComparisonStats(this.run(query.runId), summary.formalComparisonReferences.map((reference) => reference.taskId));
+    const summary = await this.statistics(query.runId, analysisProgress(saved));
+    const formalComparisonStats = summary.formalComparisonStats;
     if (comparisonView) {
-      const filtered = query.query ? formalComparisonStats.records.filter(record => JSON.stringify(record).includes(query.query!)) : formalComparisonStats.records;
+      if (!formalComparisonStats) throw new Error(JSON.stringify(summary.statisticsError));
+      let filtered = formalComparisonStats.records.filter(record =>
+        (!query.query || JSON.stringify(record).includes(query.query)) &&
+        !query.excludeCases?.some(item => item.batchId === record.scope.case.batchId && item.caseId === record.scope.case.caseId));
+      let selection;
+      if (query.sample) {
+        const cases = new Map<string, typeof filtered>();
+        for (const record of filtered) {
+          const key = JSON.stringify([record.scope.case.batchId, record.scope.case.caseId]);
+          const group = cases.get(key) ?? []; group.push(record); cases.set(key, group);
+        }
+        const groups = [...cases.values()], availableCaseCount = groups.length;
+        filtered = [];
+        while (groups.length && filtered.length < limit) {
+          const group = groups.splice(randomInt(groups.length), 1)[0]!;
+          filtered.push(group[randomInt(group.length)]!);
+        }
+        selection = { mode: "random" as const, availableCaseCount, remainingCaseCount: groups.length };
+      }
       const items = filtered.slice(offset, offset + limit).map(({ reference, question, scope }) => ({
         reference, questionPreview: question.slice(0, 300), questionChars: question.length,
         comparisonTier: scope.comparisonTier, case: scope.case,
@@ -87,6 +126,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
         outcomes: scope.comparisons.map(({ result, resultLabel, winnerModel }) => ({ result, resultLabel, winnerModel })),
       }));
       return { kind: "comparisons" as const, ...page(filtered.length, offset, limit, "items"), items,
+        ...(selection ? { selection } : {}),
         evaluatorVersion: saved.evaluatorVersion, summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
     }
     const tasksByInput = new Map<string, { reference: AnalysisReference; taskId: string; stage: string; purpose: string; status: string }[]>();
@@ -168,7 +208,9 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const answers = await Promise.all(ids.map(inputId => readAnalysisAnswer(run, inputId, reference.runId, audience)));
     const question = answers[0]?.question;
     if (question === undefined || answers.some(answer => answer.question !== question)) throw new Error("案例的原始问题缺失或不一致。");
-    return { kind: "case", reference, question, answers: answers.map(({ question: _question, ...answer }) => answer), ...(formal ? { formal } : {}) };
+    const input = saved.inputs[ids[0]!]!;
+    return { kind: "case", reference, case: { batchId: input.batch_id, caseId: input.case_id }, question,
+      answers: answers.map(({ question: _question, ...answer }) => answer), ...(formal ? { formal } : {}) };
   }
   async search(reference: AnalysisReference, query: string | string[], options?: { offset?: number; limit?: number; scope?: "evidence" | "all" }): Promise<JsonObject> {
     const queries = typeof query === "string" ? [query] : query;

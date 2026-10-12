@@ -23,15 +23,44 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 100,
-        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。找一场用 view: comparisons, limit: 1。"
+        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。随机找一题用 view:comparisons, sample:true, limit:1。"
       },
       "view": {
         "type": "string",
         "enum": [
           "inputs",
-          "comparisons"
+          "comparisons",
+          "statistics"
         ],
-        "description": "指定 runId 后选择目录：inputs（默认）列回答标识；comparisons 分页列已接受的正式对战、原问预览和双方原文 reference。找一场案例用 comparisons。"
+        "description": "statistics 不传 runId：一次读取最近完整发布的历史累计和运行中批次，各自单列。inputs 列输入；comparisons 列正式对战，二者必须指定 runId。"
+      },
+      "sample": {
+        "type": "boolean",
+        "description": "comparisons 随机抽取不同题目；再找一个时配合 excludeCases 排除已展示题目，不能用 offset+1 代替换题。"
+      },
+      "excludeCases": {
+        "type": "array",
+        "maxItems": 100,
+        "uniqueItems": true,
+        "description": "comparisons 排除已展示案例的 case 坐标，所有档位一起排除。原样使用目录 items[].case 或 read_case.case。",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "batchId",
+            "caseId"
+          ],
+          "properties": {
+            "batchId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "caseId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
       }
     },
     "required": [],
@@ -40,7 +69,15 @@
         "if": {
           "required": [
             "view"
-          ]
+          ],
+          "properties": {
+            "view": {
+              "enum": [
+                "inputs",
+                "comparisons"
+              ]
+            }
+          }
         },
         "then": {
           "required": [
@@ -64,6 +101,99 @@
             "limit": {
               "maximum": 20
             }
+          }
+        }
+      },
+      {
+        "if": {
+          "required": [
+            "view"
+          ],
+          "properties": {
+            "view": {
+              "const": "statistics"
+            }
+          }
+        },
+        "then": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "runId"
+                ]
+              },
+              {
+                "required": [
+                  "query"
+                ]
+              },
+              {
+                "required": [
+                  "offset"
+                ]
+              },
+              {
+                "required": [
+                  "limit"
+                ]
+              },
+              {
+                "required": [
+                  "sample"
+                ]
+              },
+              {
+                "required": [
+                  "excludeCases"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "anyOf": [
+            {
+              "required": [
+                "sample"
+              ]
+            },
+            {
+              "required": [
+                "excludeCases"
+              ]
+            }
+          ]
+        },
+        "then": {
+          "required": [
+            "view"
+          ],
+          "properties": {
+            "view": {
+              "const": "comparisons"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "required": [
+            "sample"
+          ],
+          "properties": {
+            "sample": {
+              "const": true
+            }
+          }
+        },
+        "then": {
+          "not": {
+            "required": [
+              "offset"
+            ]
           }
         }
       }
