@@ -11,7 +11,7 @@ const exported = await readFile(resolve(args[1]), 'utf8');
 const date = markdown.match(/数据获取时间：(\d{4}-\d{2}-\d{2})/)?.[1];
 const main = exported.match(/<main>([\s\S]*?)<\/main>/)?.[1];
 if (!date || !main) throw new Error('研究日期或 four-knowns 导出正文缺失。');
-const sourceIds = ['meituan', 'bytedance', 'bytedanceMirror', 'aws', 'qianwen', 'qianwenOwner', 'anthropicEval', 'anthropicInfra', 'anthropicContamination', 'promptfoo', 'promptfooLicense', 'promptfooCache', 'inspect', 'inspectRuntime', 'deepeval', 'deepevalTS', 'langsmith', 'langsmithReview', 'tau', 'agentreward', 'agentrx', 'whowhen', 'pipl', 'genai', 'nist', 'promptfooInstall', 'inspectMetrics', 'agentrxRuntime'];
+const sourceIds = ['meituan', 'aws', 'bytedance', 'bytedanceMirror', 'harbor', 'harborVerifier', 'harborJobs', 'anthropic', 'openai', 'google', 'inspect', 'promptfoo', 'deepeval', 'langsmith', 'ragas', 'pi'];
 const sources = [...markdown.matchAll(/^(\d+)\. \[([^\]]+)\]\((https:\/\/[^)]+)\)，([^\n]+)$/gm)].map(([, number, title, url, description]) => {
   const [date, ...notes] = description.split('。');
   return { id: sourceIds[Number(number) - 1], number: Number(number), title, url, date, note: notes.join('。').replace(/。$/, '') };

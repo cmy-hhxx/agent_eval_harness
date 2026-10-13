@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { writeJson, writeJsonl } from "@eval/data";
 import { PublicationStatistics } from "@eval/workflows/comparison";
 import { readPublishedStatistics } from "../../../apps/host/src/assistant-statistics.js";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
+import { object } from "@eval/contracts";
 
 test("Eris historical statistics select the latest completed upload, validate it and keep live runs separate", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-statistics-"));
@@ -22,6 +23,8 @@ test("Eris historical statistics select the latest completed upload, validate it
     assert.equal(result.traceId, "published", "neither file order nor an unfinished newer upload chooses the snapshot");
     assert.equal(result.snapshotAt, latest.logtime);
     assert.deepEqual(result.stats, (latest.data as { stats: unknown }).stats);
+    assert.equal(result.progress.battleCompletionRate, null);
+    assert.equal(result.progress.caseCompletionRate, null);
     const source = new LocalAnalysisData(path.join(directory, "runs"), files);
     const overview = await source.list({ view: "statistics" });
     assert(overview.kind === "statistics");
@@ -37,5 +40,31 @@ test("Eris historical statistics select the latest completed upload, validate it
     await assert.rejects(readPublishedStatistics(files), /frozen contract/);
     await writeJson(files.stateFile, { publicationHistory: [], publication: { traceId: "pending", status: "uncertain", log: { status: "uploaded" } } });
     await assert.rejects(readPublishedStatistics(files), /没有完整发布成功/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("Eris supplies completion percentages and losses without changing the frozen published record", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eris-rates-"));
+  const files = { stateFile: path.join(directory, "state.json"), logFile: path.join(directory, "statistics.jsonl") };
+  const record = new PublicationStatistics([]).record("published", 2000);
+  const metric = { p50: null, p90: null, count: 0 };
+  Object.assign(object(record.data), { totalCaseCount: 20554, caseCount: 12114,
+    progress: { expectedBattleCount: 35838, completedBattleCount: 22293, completedCaseCount: 11753 },
+    models: [{ id: "a_fast", name: "A Fast" }],
+    stats: [{ id: "a_fast", name: "A Fast", evaluated: 10, wins: 3, both_good: 4, both_bad: 1, winRate: 30,
+      accuracy: { correct: 0, count: 0, rate: null }, first: metric, total: metric, input: metric, output: metric }],
+  });
+  try {
+    await writeJsonl(files.logFile, [record]);
+    await writeJson(files.stateFile, { publication: { traceId: "published", completedAt: 2100, status: "completed", log: { status: "uploaded" } } });
+    const before = await readFile(files.logFile);
+    const source = new LocalAnalysisData(path.join(directory, "runs"), files);
+    const result = await source.list({ view: "statistics" });
+    assert(result.kind === "statistics" && result.history.status === "published");
+    assert.equal(result.history.progress.battleCompletionRate, 62.2);
+    assert.equal(result.history.progress.caseCompletionRate, 57.18, "fully completed cases use total included cases, not partially evaluated cases");
+    assert.equal(result.history.stats[0].losses, 2, "both-good and both-bad outcomes are not losses");
+    assert.equal(result.history.stats[0].winRate, 30);
+    assert.deepEqual(await readFile(files.logFile), before, "derived fields belong only to Eris's read projection");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

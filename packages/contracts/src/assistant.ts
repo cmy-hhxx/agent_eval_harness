@@ -7,7 +7,7 @@ export interface AssistantOwnership {
   claim(scope: AssistantScope, executor: AssistantExecutor): Promise<() => Promise<void>>;
 }
 export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
-export interface AnalysisCaseLookup { runId: string; query: string; comparisonTier: string }
+export interface AnalysisCaseLookup { runId: string; query: string; comparisonTier?: string }
 export interface AnalysisQuery {
   runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
   sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
@@ -32,6 +32,9 @@ export interface WebSearchQuery {
 }
 export interface WebSearchRequest {
   queries: WebSearchQuery[];
+  domains?: string[];
+  country?: string;
+  language?: string;
   category?: "web" | "news";
   timeRange?: "day" | "week" | "month" | "year";
   dateFrom?: string;
@@ -147,7 +150,9 @@ export interface AssistantTool {
   inputSchema: JsonObject;
   execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; audience?: "model" | "user"; progress(value: unknown): void;
     /** One request to the current model with selected observed sources, without earlier reasoning or tools. */
-    complete?(request: { systemPrompt: string; text: string; outputSchema: JsonObject; sourceTools?: string[];
+    complete?(request: { systemPrompt: string; draft: JsonObject; outputSchema: JsonObject; sourceTools?: string[];
+      /** Cap this request's reasoning without increasing or changing the session's level. */
+      maxThinking?: ModelConfig["thinking"];
       selectSources?(sources: AssistantSource[]): AssistantSource[];
     }): Promise<{ text: string; elapsedMs: number; usage: JsonObject }>;
   }): Promise<ToolResult>;

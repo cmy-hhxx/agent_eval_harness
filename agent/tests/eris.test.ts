@@ -5,6 +5,30 @@ import { createEris, type ErisDependencies } from "@eval/assistant";
 import { erisPrompt } from "@eval/prompts";
 import type { WebSearchRequest, WebSearchAttempt, WebReadResult, SpecialistResult } from "@eval/contracts";
 
+test("statistics preserve the full data and leave conclusions to the continuing model", async () => {
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const metric = { p50: null };
+  const row = { id: "a_expert", name: "A Expert", evaluated: 10, wins: 6, losses: 3, both_good: 1, both_bad: 0, winRate: 60,
+    accuracy: { correct: 1, count: 2, rate: 50 }, first: { p50: 710 }, total: metric };
+  const history = { status: "published", snapshotAt: "2026-10-12 12:16:54.950", requestDates: ["2026-10-11"],
+    caseCount: 10, totalCaseCount: 20, stats: [row, { ...row, id: "b_expert", name: "B Expert", wins: 3, losses: 6, winRate: 30 }],
+    progress: { completedCaseCount: 8, completedBattleCount: 10, expectedBattleCount: 20, battleCompletionRate: 50, caseCompletionRate: 40 } };
+  let published = true;
+  const queries: unknown[] = [];
+  const tool = createEris({ code: { execute: unexpected, read: unexpected },
+    data: { list: async query => { queries.push(query); return { kind: "statistics", history: published ? history : { status: "unavailable", error: "未发布" }, currentRuns: [], additive: false }; }, read: unexpected, search: unexpected, image: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "list_data")!;
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "statistics", signal: new AbortController().signal, progress() {}, complete: unexpected };
+  const result = await tool.execute({ view: "statistics" }, context);
+  assert.equal(result.terminate, undefined);
+  const receipt = JSON.parse(result.content[0].text!);
+  assert.deepEqual(receipt, { kind: "statistics", history, currentRuns: [], additive: false },
+    "the model receives full statistics without a predetermined conclusion or table");
+  assert.deepEqual(queries, [{ view: "statistics" }]);
+  published = false;
+  assert.equal((await tool.execute({ view: "statistics" }, context)).terminate, undefined, "missing history must leave room to explain the gap");
+});
+
 test("batch evidence uses one source read and preserves partial errors, pages and replay coordinates", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
   const calls: unknown[] = [], reference = { runId: "run", inputId: "input" };
@@ -23,15 +47,29 @@ test("batch evidence uses one source read and preserves partial errors, pages an
   const result = await tool.execute(args, context);
   assert.deepEqual(calls, [{ ref: reference, options: { view: "evidence", messages } }]);
   const projected = JSON.parse(result.content[0].text!);
-  assert.deepEqual(projected, { ...material, items: material.items.map(({ evidence: _evidence, ...item }) => item) });
+  const nextRead = { tool: "read_evidence", args: { reference: material.items[0].reference, offset: 2000 } };
+  assert.deepEqual(projected, { ...material, items: material.items.map(({ evidence: _evidence, ...item }, index) => ({ ...item, ...(index === 0 ? { nextRead } : {}) })) });
   assert.equal(result.content[0].text!.split("真实证据").length - 1, 1, "model context must contain each quoted source once");
-  assert.deepEqual(JSON.parse((await tool.execute(args, { ...context, audience: "user" })).content[0].text!), material,
+  assert.deepEqual(JSON.parse((await tool.execute(args, { ...context, audience: "user" })).content[0].text!),
+    { ...material, items: material.items.map((item, index) => ({ ...item, ...(index === 0 ? { nextRead } : {}) })) },
     "the inspector still receives exact source text, quotes and pagination");
   assert.equal(Boolean(result.isError), false, "partial failure keeps successful evidence available");
   assert.deepEqual(result.details, { sourceRead: { tool: "read_evidence", args } });
   assert.equal(tool.readOnly, true);
   await tool.execute({ reference, messages: [{ messageIndex: 3, format: "json", offset: 20 }] }, context);
   assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "evidence", messages: [{ messageIndex: 3, format: "json", offset: 20 }] } });
+  const single = { reference: { ...reference, messageIndex: 0 }, format: "json", limit: 100 };
+  const original = structuredClone(single);
+  const node = await tool.execute(single, context);
+  assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "evidence", messages: [{ messageIndex: 0, format: "json", limit: 100 }] } });
+  assert.deepEqual(single, original, "defaults do not rewrite the recorded model arguments");
+  assert.deepEqual(node.details, { sourceRead: { tool: "read_evidence", args: { reference, messages: [{ messageIndex: 0, format: "json", limit: 100 }] } } });
+  await tool.execute({ reference, format: "json", offset: 10, limit: 100, messages: [{ messageIndex: 0 }, { messageIndex: 1, format: "text", offset: 0, limit: 50 }] }, context);
+  assert.deepEqual(calls.at(-1), { ref: reference, options: { view: "evidence", messages: [
+    { messageIndex: 0, format: "json", offset: 10, limit: 100 }, { messageIndex: 1, format: "text", offset: 0, limit: 50 },
+  ] } });
+  assert.throws(() => tool.validate!({ reference }), /messages/);
+  assert.throws(() => tool.validate!({ ...single, messages: [{ messageIndex: 1 }] }));
   for (const invalid of [[], Array.from({ length: 13 }, (_, messageIndex) => ({ messageIndex })), [{ messageIndex: -1 }], [{ messageIndex: 0, limit: 16001 }], [{ messageIndex: 0, format: "raw" }]])
     assert.throws(() => tool.validate!({ reference, messages: invalid }));
   assert.throws(() => tool.validate!({ reference: { ...reference, taskId: "pair" }, messages }));
@@ -101,7 +139,9 @@ test("one case read delivers question, answers and trace maps without loading ev
   const located = await tool.execute({ reference: lookup }, context);
   assert.deepEqual(calls.at(-1), { ref: lookup, options: { view: "case" } });
   assert.deepEqual(located.details, { sourceRead: { tool: "read_case", args: { reference } } }, "replay pins the resolved source instead of re-running a potentially ambiguous query");
-  for (const invalid of [{ ...lookup, taskId: "pair" }, { runId: "run", query: "问题" }, { ...lookup, query: " " }])
+  await tool.execute({ reference: { runId: "run", query: "比较两份回答" } }, context);
+  assert.deepEqual(calls.at(-1), { ref: { runId: "run", query: "比较两份回答" }, options: { view: "case" } });
+  for (const invalid of [{ ...lookup, taskId: "pair" }, { query: "问题" }, { ...lookup, query: " " }])
     assert.throws(() => tool.validate!({ reference: invalid }));
 });
 
@@ -147,12 +187,16 @@ test("Eris's public definition includes every tool resource and validates before
   for (const tool of eris.tools) {
     assert.equal(tool.description, readFileSync(new URL(`tools/${tool.name}.md`, resources), "utf8").trim());
     assert.deepEqual(tool.inputSchema, schemas[tool.name]);
+    if (["list_data", "read_case", "read_data", "read_evidence", "search_data", "search_web", "read_specialist"].includes(tool.name)) {
+      const examples = [...tool.description.matchAll(/`(\{[^`\n]*\})`/g)];
+      assert(examples.length > 0, `${tool.name} must include a complete argument example`);
+      for (const [, example] of examples) tool.validate!(JSON.parse(example!));
+    }
   }
   const list = eris.tools.find((tool) => tool.name === "list_data")!;
   const context = { scope: { userId: "alice", sessionId: "session" }, callId: "list", signal: new AbortController().signal, progress() {} };
   await assert.rejects(list.execute({ limit: 0 }, context));
   await assert.rejects(list.execute({ runId: "run", query: "" }, context));
-  await assert.rejects(list.execute({ view: "comparisons" }, context), /runId/);
   await assert.rejects(list.execute({ runId: "run", view: "comparisons", limit: 21 }, context), /20/);
   await assert.rejects(list.execute({ runId: "run", view: "statistics" }, context));
   await assert.rejects(list.execute({ runId: "run", view: "comparisons", sample: true, offset: 1 }, context));
@@ -171,6 +215,9 @@ test("Eris's public definition includes every tool resource and validates before
   const sample = { runId: "run", view: "comparisons", sample: true, limit: 1, excludeCases: [{ batchId: "b", caseId: "q" }] };
   await list.execute(sample, context);
   await list.execute({ view: "statistics" }, context);
+  const defaultSample = { view: "comparisons", sample: true, limit: 1, includeAnalysis: true };
+  await list.execute(defaultSample, context);
+  await list.execute({ view: "inputs" }, context);
   const batch = { runId: "run", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 };
   await list.execute(batch, context);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
@@ -182,7 +229,7 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(read.execute({ reference: { runId: "run" } }, context), /required/);
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input" }, limit: 101 }, context), /100/);
   read.validate!({ reference: { runId: "run", taskId: "task" }, view: "details", offset: 0, limit: 8000 });
-  assert.throws(() => read.validate!({ reference: { runId: "run", taskId: "task" }, limit: 8000 }), /view/);
+  read.validate!({ reference: { runId: "run", taskId: "task" }, limit: 8000 });
   assert.throws(() => read.validate!({ reference: { runId: "run", taskId: "task" }, view: "summary", offset: 0 }), /details/);
   assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input" }, view: "summary" }));
   const image = eris.tools.find(tool => tool.name === "view_image")!;
@@ -192,7 +239,7 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run" }] }, context), /inputId/);
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run", inputId: "input", taskId: "task" }] }, context), /additional properties/);
   await assert.rejects(specialist.execute({ ...request, attributions: [{ inputId: "input", operationId: request.operationId, runId: "run", taskId: "task" }] }, context), /oneOf/);
-  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }, sample, { view: "statistics" }, batch], "full directories omit the optional text filter; business filters are forwarded unchanged");
+  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }, sample, { view: "statistics" }, defaultSample, { view: "inputs" }, batch], "full directories omit the optional text filter; business filters are forwarded unchanged");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });
@@ -273,7 +320,7 @@ test("comparison summaries expose the accepted scope once while details retain e
   assert.deepEqual(data, original);
 });
 
-test("explicit formal and specialist details are bounded pages with exact continuation", async () => {
+test("formal and specialist pagination selects details and supplies directly executable continuation", async () => {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
   const data = { result: { explanation: "证据🙂".repeat(30000) }, evaluatorVersion: "fixture" };
   const operationId = "6a1b4a17-1039-4ead-ac32-9a37b0bf4ada";
@@ -287,13 +334,23 @@ test("explicit formal and specialist details are bounded pages with exact contin
   const first = JSON.parse((await read.execute({ reference, view: "details" }, context)).content[0].text!);
   assert.equal(first.text.length, 8000);
   assert(first.hasMore);
-  const next = JSON.parse((await read.execute({ reference, view: "details", offset: first.nextOffset, limit: 16000 }, context)).content[0].text!);
-  assert.equal(first.text + next.text, JSON.stringify(data).slice(0, 24000));
+  assert.equal(first.nextRead.tool, "read_data");
+  const next = JSON.parse((await read.execute(first.nextRead.args, context)).content[0].text!);
+  assert.equal(first.text + next.text, JSON.stringify(data).slice(0, 16000));
+  const inferred = JSON.parse((await read.execute({ reference, offset: 8000, limit: 200 }, context)).content[0].text!);
+  assert.equal(inferred.view, "details");
+  assert.equal(inferred.text, JSON.stringify(data).slice(8000, 8200));
+  const tail = JSON.parse((await read.execute({ reference, offset: JSON.stringify(data).length - 1 }, context)).content[0].text!);
+  assert.equal(tail.hasMore, false);
+  assert.equal(tail.nextRead, undefined);
   const specialist = eris.tools.find(tool => tool.name === "read_specialist")!;
-  assert.throws(() => specialist.validate!({ operationId, offset: 12000 }), /view/);
   assert.throws(() => specialist.validate!({ operationId, view: "summary", limit: 100 }), /details/);
-  const page = JSON.parse((await specialist.execute({ operationId, view: "details", offset: 12000, limit: 100 }, context)).content[0].text!);
+  const page = JSON.parse((await specialist.execute({ operationId, offset: 12000, limit: 100 }, context)).content[0].text!);
+  assert.equal(page.view, "details");
   assert.equal(page.result.text, JSON.stringify(data.result).slice(12000, 12100));
+  assert.equal(page.result.nextRead.tool, "read_specialist");
+  const nextResult = JSON.parse((await specialist.execute(page.result.nextRead.args, context)).content[0].text!);
+  assert.equal(nextResult.result.text, JSON.stringify(data.result).slice(12100, 12200));
   assert.equal(page.state, "succeeded");
   const code = eris.tools.find(tool => tool.name === "execute_code")!;
   assert.equal(code.readOnly, false);
@@ -333,15 +390,20 @@ test("raw arguments fail with field paths and allowed values before SDK coercion
     assert.throws(() => list.validate!(args), /参数无效.*未执行/);
     assert.deepEqual(args, original, "validation never coerces types, drops nulls or strips extra fields");
   }
+  assert.throws(() => list.validate!({ view: "comparisons", limit: 21 }), (error: Error) => {
+    assert.match(error.message, /\/limit.*schema_maximum.*20/);
+    assert.doesNotMatch(error.message, /schema_if|failingKeyword|then.*schema/);
+    return true;
+  });
   const search = eris.tools.find(tool => tool.name === "search_web")!;
   assert.throws(() => search.validate!({ queries: [{ query: "report" }], category: "finance" }), /\/category.*allowedValues.*web.*news/);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
   assert.throws(() => read.validate!({ reference: { runId: "run", inputId: "input", offset: 0 } }), /\/reference\/offset.*schema_additionalProperties/);
   const chart = eris.tools.find(tool => tool.name === "show_comparison")!;
   const oversized = { reference: { runId: "run", taskId: "pair" }, title: "对战", reason: "差异", candidates: ["a", "b"].map(model => ({
-    model, summary: "回答", paths: [{ title: "依据", evidence: "字".repeat(59) + "😀😀", impact: "影响", assessment: "problem" }],
+    model, summary: "回答", paths: [{ title: "依据", evidence: "字".repeat(399) + "😀😀", impact: "影响", assessment: "problem" }],
   })) };
-  assert.throws(() => chart.validate!(oversized), /schema_maxLength.*"actualLength":61.*"excess":1/,
+  assert.throws(() => chart.validate!(oversized), /schema_maxLength.*"actualLength":401.*"excess":1/,
     "length errors must count Unicode characters and say how far over the limit, without silently truncating evidence");
 });
 
@@ -409,6 +471,7 @@ test("external search validates financial filters and forwards cancellation with
     { queries: [{ query: "利率", country: "China" }] }, { queries: [{ query: "利率", language: "Chinese" }] },
     { queries: [query], dateTo: "2024-07-31", timeRange: "month" }, { queries: [query], dateTo: "yesterday" },
     { queries: [{ ...query, page: 4 }] }, { queries: [query], apiKey: "must-not-come-from-the-model" },
+    { queries: [query], country: "China" }, { queries: [query], domains: ["https://pbc.gov.cn"] }, { queries: [query], language: null },
   ]) await assert.rejects(tool.execute(value, context));
   assert.deepEqual(calls, []);
   const request = { queries: [query], category: "web" as const, dateTo: "2024-07-31", limit: 3 };
@@ -417,6 +480,9 @@ test("external search validates financial filters and forwards cancellation with
   assert.deepEqual(calls, [{ request, signal: context.signal }]);
   assert.deepEqual(response.content, [{ type: "text", text: JSON.stringify(result) }]);
   assert.equal(response.details, undefined, "search results are durable once; inspection and recovery must not issue a fresh paid search");
+  const shared = { queries: [{ query: "利率" }, { query: "interest rate", country: "us", language: "en" }], domains: ["pbc.gov.cn"], country: "cn", language: "zh-cn" };
+  await tool.execute(shared, context);
+  assert.deepEqual(calls.at(-1), { request: shared, signal: context.signal });
 });
 
  test("web reading validates coordinates and stores extracted evidence without a live source reader", async () => {

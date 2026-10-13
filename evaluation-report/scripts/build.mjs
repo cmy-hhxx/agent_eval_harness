@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const directory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDirectory = resolve(directory, 'src');
-const assetTags = /<link\b[^>]*>|<script\b[^>]*>\s*<\/script\s*>/gi;
+const assetTags = /<link\b[^>]*>|<img\b[^>]*>|<script\b[^>]*>\s*<\/script\s*>/gi;
 
 function attributeValue(tag, attribute) {
   return tag.match(new RegExp(`\\s${attribute}\\s*=\\s*(["'])(.*?)\\1`, 'i'))?.[2];
@@ -13,7 +13,7 @@ function attributeValue(tag, attribute) {
 function collectAssets(template) {
   const paths = new Set();
   return [...template.matchAll(assetTags)].flatMap(([tag]) => {
-    const kind = /^<link\b/i.test(tag) ? 'style' : 'script';
+    const kind = /^<link\b/i.test(tag) ? 'style' : /^<img\b/i.test(tag) ? 'image' : 'script';
     if (kind === 'style' && attributeValue(tag, 'rel') !== 'stylesheet') return [];
     const path = attributeValue(tag, kind === 'style' ? 'href' : 'src');
     if (!path) return [];
@@ -40,6 +40,10 @@ function compactSnapshot(content, path) {
 }
 
 function inlineAsset(asset, content) {
+  if (asset.kind === 'image') {
+    if (!asset.path.endsWith('.png')) throw new Error(`不支持的图片格式：${asset.path}`);
+    return asset.tag.replace(/\bsrc\s*=\s*(["']).*?\1/i, `src="data:image/png;base64,${content.toString('base64')}"`);
+  }
   const id = attributeValue(asset.tag, 'id');
   const attributes = `${id ? ` id="${id}"` : ''} data-source="${asset.path}"`;
   if (asset.kind === 'style') {
@@ -63,7 +67,7 @@ export async function buildReport({ output = resolve(directory, 'report.html') }
     throw new Error('src/template.html 必须声明 data-standalone="false"。');
   }
   const assets = collectAssets(template);
-  const inlined = new Map(await Promise.all(assets.map(async asset => [asset.tag, inlineAsset(asset, await readFile(asset.absolute, 'utf8'))])));
+  const inlined = new Map(await Promise.all(assets.map(async asset => [asset.tag, inlineAsset(asset, await readFile(asset.absolute, asset.kind === 'image' ? undefined : 'utf8'))])));
   let html = template.replace(assetTags, tag => inlined.get(tag) ?? tag);
   html = html.replace(/(<html\b[^>]*\bdata-standalone=)["']false["']/i, '$1"true"');
   html = html.replace('<!DOCTYPE html>', '<!DOCTYPE html>\n<!-- 构建产物：修改 src/ 后运行 node evaluation-report/scripts/build.mjs；资源与顺序由 src/template.html 统一声明。 -->');

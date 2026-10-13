@@ -80,6 +80,7 @@ export function chartFromToolOutput(output, state) {
   const chart = receipt?.kind === 'chart' ? receipt.chart : null;
   if (!chart || !['line', 'pie', 'radial_heatmap', ...circularTypes, ...researchTypes].includes(chart.type)
     || !['title', 'scope', 'source'].every(key => text(chart[key], 500)) || !text(chart.unit, 40)
+    || (chart.caveat !== undefined && !text(chart.caveat, 500))
     || !strings(chart.categories, ['scatter', 'histogram', 'bubble', 'boxplot', 'violin', 'ecdf', 'ridgeline'].includes(chart.type) ? 200 : 30) || !Array.isArray(chart.series) || chart.series.length === 0 || chart.series.length > (['sankey','chord'].includes(chart.type) ? 8 : 4)
     || !chart.series.every(series => series && text(series.name, 120)
       && Array.isArray(series.values) && series.values.length === chart.categories.length
@@ -468,5 +469,6 @@ function ChartContent({ chart, language = 'zh' }) {
   h('div', { 'data-chart-plot': true, style: { marginTop: 12 } }, advanced ? h(ResearchChart, { chart: displayChart, width, english }) : circularTypes.includes(chart.type) ? h(CircularChart, { chart: displayChart, width, english }) : chart.type === 'radial_heatmap' ? h(RadialHeatmap, { chart: displayChart, width, english }) : chart.type === 'pie' ? h(CompositionChart, { chart: displayChart, width, english })
     : h(TrendChart, { chart: displayChart, width, english })),
   h(AccessibleValues, { chart, english }),
-  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 14, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null);
+  chart.annotations?.length ? h('ol', { 'data-chart-annotations': true, style: { margin: '4px 0 0', padding: '0 0 0 18px', fontSize: 14, lineHeight: 1.45, color: primaryColor } }, chart.annotations.map((a, i) => h('li', { key: i }, a.note))) : null,
+  chart.caveat ? h('p', { 'data-chart-caveat': true, style: { margin: '8px 0 0', fontSize: 14, lineHeight: 1.5, color: primaryColor } }, chart.caveat) : null);
 }

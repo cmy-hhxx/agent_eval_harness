@@ -11,10 +11,12 @@ import {
 } from "@eval/contracts";
 import { appendJsonl, exists, readJson, readJsonlText, writeJson, writeJsonl } from "./files.js";
 import { locateRun } from "./run-layout.js";
+import { writeRunOverview } from "./run-overview.js";
 
 /** Codecs are pure business conversions. Only this module accesses run files. */
 export interface RunCodec<Checkpoint> {
   encode(state: RunState): Checkpoint;
+  overview?(checkpoint: Checkpoint): unknown;
   references(checkpoint: Checkpoint, taskIds?: ReadonlySet<string>): ResultReference[];
   resultId(row: JsonObject): string;
   decode(
@@ -65,7 +67,9 @@ export function createRunRepository<Checkpoint>(
   }
   return {
     async writeRun(run, state) {
-      await writeJson(locateRun(run).stateFile, codec.encode(state));
+      const checkpoint = codec.encode(state), overview = codec.overview?.(checkpoint);
+      await writeJson(locateRun(run).stateFile, checkpoint);
+      if (codec.overview) await writeRunOverview(run, overview);
     },
     readRun: (run) => readState(run),
     readTasks: (run, taskIds) => readState(run, new Set(taskIds)),

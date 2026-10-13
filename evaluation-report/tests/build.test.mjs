@@ -14,12 +14,13 @@ const templateDOM = new JSDOM(template);
 const stylePaths = [...templateDOM.window.document.querySelectorAll('link[rel="stylesheet"]')].map(link => `src/${link.getAttribute('href')}`);
 const scriptPaths = [...templateDOM.window.document.querySelectorAll('script[src]')].map(script => `src/${script.getAttribute('src')}`);
 const snapshotPaths = [...templateDOM.window.document.querySelectorAll('script[data-snapshot]')].map(script => `src/${script.getAttribute('src')}`);
+const imagePaths = [...templateDOM.window.document.querySelectorAll('img[src]')].map(image => `src/${image.getAttribute('src')}`);
 templateDOM.window.close();
 
 async function createFixture(t) {
   const temporary = await mkdtemp(join(tmpdir(), 'evaluation-report-build-'));
   t.after(() => rm(temporary, { recursive: true, force: true }));
-  for (const path of ['scripts/build.mjs', 'src/template.html', ...stylePaths, ...scriptPaths]) {
+  for (const path of ['scripts/build.mjs', 'src/template.html', ...stylePaths, ...scriptPaths, ...imagePaths]) {
     await mkdir(dirname(join(temporary, path)), { recursive: true });
     await copyFile(join(directory, path), join(temporary, path));
   }
@@ -39,6 +40,11 @@ test('离线导出内联全部展示资源，并完整保留内容快照', async
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
     assert.deepEqual(scripts.map(([, attributes]) => attributes.match(/data-source="([^"]+)"/)?.[1]), scriptPaths);
     for (const [, , script] of scripts) new vm.Script(script);
+    const images = [...html.matchAll(/<img\b[^>]*src="data:image\/png;base64,([^"]+)"/g)];
+    assert.equal(images.length, imagePaths.length, '用户截图必须内嵌在离线文件中');
+    for (const [index, image] of images.entries()) {
+      assert.ok(Buffer.from(image[1], 'base64').equals(await readFile(join(directory, imagePaths[index]))), '图片内嵌不可改写截图像素');
+    }
     for (const path of scriptPaths.filter(path => path.startsWith('src/data/'))) {
       const embedded = scripts.find(([, attributes]) => attributes.includes(`data-source="${path}"`))?.[2];
       assert.ok(embedded, `构建产物必须保留完整的 ${path}`);

@@ -1,4 +1,5 @@
 import { calculate } from "@eval/tools";
+import type { JsonObject } from "@eval/contracts";
 
 export interface ChartSpec {
   type: "line" | "pie" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
@@ -6,6 +7,7 @@ export interface ChartSpec {
   scope: string;
   unit: string;
   source: string;
+  caveat?: string;
   categories: string[];
   series: { name: string; values: (number | null)[]; lowerValues?: (number | null)[]; upperValues?: (number | null)[] }[];
   maxValue?: number;
@@ -16,6 +18,20 @@ export interface ChartSpec {
   xLabel?: string;
   xUnit?: string;
   annotations?: { categoryIndex: number; seriesIndex: number; note: string }[];
+}
+
+/** Plot recorded per-model outcomes; never ask the model to transcribe counts or invent missing values. */
+export function comparisonChartData(tier: JsonObject): Pick<ChartSpec, "categories" | "series" | "unit" | "source"> {
+  const models = tier.models as JsonObject[] | undefined;
+  const outcomes = [["wins", "胜场"], ["losses", "负场"], ["both_good", "双方均好"], ["both_bad", "双方均差"]] as const;
+  if (!Array.isArray(models) || !models.length || models.some(model => !model || typeof model.modelName !== "string" || !model.modelName.trim()
+    || outcomes.some(([key]) => !Number.isSafeInteger(model[key]) || (model[key] as number) < 0)
+    || !Number.isSafeInteger(model.comparisonCount) || (model.comparisonCount as number) <= 0
+    || outcomes.reduce((sum, [key]) => sum + (model[key] as number), 0) !== model.comparisonCount))
+    throw new Error("正式统计缺少完整的模型战绩计数，不能补零或猜测。");
+  return { categories: models.map(model => model.modelName as string),
+    series: outcomes.map(([key, name]) => ({ name, values: models.map(model => model[key] as number) })),
+    unit: "场", source: "本地正式对战统计" };
 }
 
 /** Line charts use calendar coordinates, never equal spacing for unrelated cases. */

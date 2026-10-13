@@ -8,7 +8,7 @@ export interface SerperSearchOptions {
 }
 
 const timeFilters = { day: "qdr:d", week: "qdr:w", month: "qdr:m", year: "qdr:y" };
-const requestFields = new Set(["queries", "category", "timeRange", "dateFrom", "dateTo", "limit"]);
+const requestFields = new Set(["queries", "category", "timeRange", "dateFrom", "dateTo", "limit", "domains", "country", "language"]);
 const queryFields = new Set(["query", "domains", "country", "language", "page"]);
 const domainPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
 const trackingParameters = new Set(["gclid", "dclid", "fbclid", "msclkid", "mc_cid", "mc_eid", "igshid"]);
@@ -17,6 +17,20 @@ interface ResponseItem { title: string; url: string; domain: string; snippet?: s
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function searchFilters(value: { country?: unknown; language?: unknown; domains?: unknown }) {
+  if (value.country !== undefined && (typeof value.country !== "string" || !/^[a-z]{2}$/.test(value.country))) throw new Error("搜索 country 必须为两位国家代码");
+  if (value.language !== undefined && (typeof value.language !== "string" || !/^[a-z]{2}(-[a-z]{2})?$/.test(value.language))) throw new Error("搜索 language 必须为语言代码，例如 zh-cn 或 en");
+  let domains: string[] | undefined;
+  if (value.domains !== undefined) {
+    if (!Array.isArray(value.domains) || value.domains.length < 1 || value.domains.length > 5 || value.domains.some((domain) => typeof domain !== "string" || domain.length > 253 || !domainPattern.test(domain)))
+      throw new Error("搜索 domains 必须为 1—5 个主机名，不能含协议、端口或路径");
+    domains = value.domains.map((domain) => domain.toLowerCase());
+    if (new Set(domains).size !== domains.length) throw new Error("搜索 domains 不能重复");
+  }
+  return { ...(domains ? { domains } : {}), ...(value.country === undefined ? {} : { country: value.country }),
+    ...(value.language === undefined ? {} : { language: value.language }) };
 }
 
 function requestParameters(request: WebSearchRequest) {
@@ -33,24 +47,17 @@ function requestParameters(request: WebSearchRequest) {
   validateDateRange(request.dateFrom, request.dateTo);
   if (request.timeRange !== undefined && (request.dateFrom !== undefined || request.dateTo !== undefined))
     throw new Error("搜索 timeRange 与 dateFrom/dateTo 不能同时使用");
-  const unique = new Set<string>();
+  const defaults = searchFilters(request), unique = new Set<string>();
   const queries = request.queries.map((value, index): QueryParameters => {
     if (!record(value) || Object.keys(value).some((key) => !queryFields.has(key))) throw new Error(`搜索 queries[${index}] 字段无效`);
     if (typeof value.query !== "string" || !value.query.trim() || value.query.length > 500) throw new Error("搜索 query 必须为 1—500 个字符");
-    if (value.country !== undefined && (typeof value.country !== "string" || !/^[a-z]{2}$/.test(value.country))) throw new Error("搜索 country 必须为两位国家代码");
-    if (value.language !== undefined && (typeof value.language !== "string" || !/^[a-z]{2}(-[a-z]{2})?$/.test(value.language))) throw new Error("搜索 language 必须为语言代码，例如 zh-cn 或 en");
+    const filters = { ...defaults, ...searchFilters(value) };
     const page = value.page === undefined ? 1 : value.page;
     if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > 3) throw new Error("搜索 page 必须为 1—3 的整数");
-    let domains: string[] | undefined;
-    if (value.domains !== undefined) {
-      if (!Array.isArray(value.domains) || value.domains.length < 1 || value.domains.length > 5 || value.domains.some((domain) => typeof domain !== "string" || domain.length > 253 || !domainPattern.test(domain)))
-        throw new Error("搜索 domains 必须为 1—5 个主机名，不能含协议、端口或路径");
-      domains = value.domains.map((domain) => domain.toLowerCase());
-      if (new Set(domains).size !== domains.length) throw new Error("搜索 domains 不能重复");
-    }
+    const { domains } = filters;
     const query = value.query.trim();
-    const country = value.country as string | undefined ?? "cn";
-    const language = value.language as string | undefined ?? "zh-cn";
+    const country = filters.country ?? "cn";
+    const language = filters.language ?? "zh-cn";
     const identity = JSON.stringify([query, [...(domains ?? [])].sort(), country, language, page]);
     if (unique.has(identity)) throw new Error("搜索 queries 不能包含规范化后重复的请求");
     unique.add(identity);

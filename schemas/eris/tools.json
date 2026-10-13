@@ -6,7 +6,7 @@
       "runId": {
         "type": "string",
         "minLength": 1,
-        "description": "省略时列运行与 currentRun 的统计计数；提供真实运行标识时按 view 读取该运行。summary 只含整轮计数，不含整批判词。",
+        "description": "inputs/comparisons 可省略：优先有输入的运行中批次，其次最近有输入的运行，返回实际 runId。继续同一运行的筛选、翻页或换题时传返回的 runId；指定后不会切换范围。不传 view 和 runId 时列运行目录。",
         "maxLength": 181,
         "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
       },
@@ -51,7 +51,7 @@
           "comparisons",
           "statistics"
         ],
-        "description": "statistics 不传 runId：一次读取最近完整发布的历史累计和运行中批次，各自单列。inputs 列输入；comparisons 列正式对战，二者必须指定 runId。"
+        "description": "statistics 不传 runId：一次读取最近完整发布的历史累计和运行中批次，各自单列。inputs 列输入；comparisons 列正式对战，二者省略 runId 时使用默认运行。"
       },
       "sample": {
         "type": "boolean",
@@ -84,26 +84,6 @@
     },
     "required": [],
     "allOf": [
-      {
-        "if": {
-          "required": [
-            "view"
-          ],
-          "properties": {
-            "view": {
-              "enum": [
-                "inputs",
-                "comparisons"
-              ]
-            }
-          }
-        },
-        "then": {
-          "required": [
-            "runId"
-          ]
-        }
-      },
       {
         "if": {
           "properties": {
@@ -259,13 +239,12 @@
               "comparisonTier": {
                 "type": "string",
                 "minLength": 1,
-                "description": "目录中的档位，如 Fast 或 Expert。"
+                "description": "可选档位，如 Fast 或 Expert。省略时须由原问唯一定位，多场匹配会返回候选引用，不猜选。"
               }
             },
             "required": [
               "runId",
-              "query",
-              "comparisonTier"
+              "query"
             ]
           },
           {
@@ -343,6 +322,11 @@
           "inputId": {
             "type": "string",
             "minLength": 1
+          },
+          "messageIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "读取单节点时直接沿用节点引用，省略 messages。"
           }
         },
         "required": [
@@ -386,12 +370,54 @@
           ]
         },
         "description": "同一回答中需核验的1–12个节点；各节点独立分页，默认及最多16000个UTF-16字符；只核对短片段时可显式缩小limit。"
+      },
+      "format": {
+        "type": "string",
+        "enum": [
+          "text",
+          "json"
+        ],
+        "description": "单节点格式，或批量节点的默认格式；节点自己的设置优先。默认 text，json 保留结构与数值。"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "单节点偏移，或批量节点的默认偏移；节点自己的设置优先。默认0。"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16000,
+        "description": "单节点页长，或批量节点的默认页长；节点自己的设置优先。默认及最多16000个 UTF-16 字符。"
       }
     },
     "required": [
-      "reference",
-      "messages"
-    ]
+      "reference"
+    ],
+    "if": {
+      "properties": {
+        "reference": {
+          "required": [
+            "messageIndex"
+          ]
+        }
+      },
+      "required": [
+        "reference"
+      ]
+    },
+    "then": {
+      "not": {
+        "required": [
+          "messages"
+        ]
+      }
+    },
+    "else": {
+      "required": [
+        "messages"
+      ]
+    }
   },
   "read_data": {
     "type": "object",
@@ -403,7 +429,7 @@
           "summary",
           "details"
         ],
-        "description": "正式结果的 summary 返回 comparisonScope 及状态、标准答案与证据坐标；details 按字符分页读取完整结果。"
+        "description": "正式结果不分页时默认 summary；传 offset 或 limit 时默认 details。显式 summary 不能带分页。"
       },
       "reference": {
         "type": "object",
@@ -473,7 +499,7 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 16000,
-        "description": "顶层字段，与 reference 同级；消息目录按条，默认30、最多100；消息正文和正式结果 details 按 UTF-16 字符，默认8000、最多16000。summary 不分页，省略 offset / limit。"
+        "description": "与 reference 同级；消息目录默认30、最多100条，正文默认8000、最多16000个 UTF-16 字符；正式结果传分页即读取 details。"
       }
     },
     "required": [
@@ -506,9 +532,6 @@
             ]
           },
           "then": {
-            "required": [
-              "view"
-            ],
             "properties": {
               "view": {
                 "const": "details"
@@ -567,6 +590,11 @@
           "inputId": {
             "type": "string",
             "minLength": 1
+          },
+          "messageIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "可选，直接沿用节点引用，只搜索该节点。省略时搜索整条回答。"
           }
         },
         "required": [
@@ -611,7 +639,7 @@
           "evidence",
           "all"
         ],
-        "description": "默认evidence只查原始工具返回。查回答、推理、指令或完整请求快照时显式用all；命中数和分页只针对所选范围，零命中不证明整个链路没有该事实。"
+        "description": "默认整条回答只查 evidence；指定 messageIndex 时默认 all，仅搜索该节点。显式 evidence 仍只查工具返回；零命中不证明链路没有该事实。"
       }
     },
     "required": [
@@ -645,7 +673,7 @@
             },
             "domains": {
               "type": "array",
-              "description": "可选；最多5个完整主机名，不带协议、端口或路径，不确定就省略。",
+              "description": "省略时继承顶层同名字段。可选；最多5个完整主机名，不带协议、端口或路径，不确定就省略。",
               "items": {
                 "type": "string",
                 "maxLength": 253,
@@ -658,12 +686,12 @@
             "country": {
               "type": "string",
               "pattern": "^[a-z]{2}$",
-              "description": "可选；两位小写国家代码，默认 cn。"
+              "description": "省略时继承顶层同名字段。可选；两位小写国家代码，默认 cn。"
             },
             "language": {
               "type": "string",
               "pattern": "^[a-z]{2}(-[a-z]{2})?$",
-              "description": "可选；语言代码，例如 zh-cn 或 en，默认 zh-cn。"
+              "description": "省略时继承顶层同名字段。可选；语言代码，例如 zh-cn 或 en，默认 zh-cn。"
             },
             "page": {
               "type": "integer",
@@ -710,6 +738,28 @@
         "minimum": 1,
         "maximum": 20,
         "description": "可选；合并输出条数，默认10、最多20。"
+      },
+      "domains": {
+        "type": "array",
+        "description": "全部查询的默认条件；查询项可单独覆盖。可选；最多5个完整主机名，不带协议、端口或路径，不确定就省略。",
+        "items": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+        },
+        "uniqueItems": true,
+        "minItems": 1,
+        "maxItems": 5
+      },
+      "country": {
+        "type": "string",
+        "pattern": "^[a-z]{2}$",
+        "description": "全部查询的默认条件；查询项可单独覆盖。可选；两位小写国家代码，默认 cn。"
+      },
+      "language": {
+        "type": "string",
+        "pattern": "^[a-z]{2}(-[a-z]{2})?$",
+        "description": "全部查询的默认条件；查询项可单独覆盖。可选；语言代码，例如 zh-cn 或 en，默认 zh-cn。"
       }
     },
     "allOf": [
@@ -948,7 +998,7 @@
           "summary",
           "details"
         ],
-        "description": "默认 summary 完整返回点评、判决与归因，过滤 evidence 字段；details 按字符分页读取含证据的完整结果。"
+        "description": "不分页时默认 summary，保留点评、判决与归因；传 offset 或 limit 时默认 details，按字符读取完整结果。"
       },
       "operationId": {
         "type": "string",
@@ -985,9 +1035,6 @@
       ]
     },
     "then": {
-      "required": [
-        "view"
-      ],
       "properties": {
         "view": {
           "const": "details"
@@ -1045,7 +1092,7 @@
     "properties": {
       "complete": {
         "type": "boolean",
-        "description": "图完整回答请求时填 true，成功即结束；还有内容要补充时填 false。"
+        "description": "图完整回答请求时填 true，成功即结束；省略或 false 时继续回答。"
       },
       "reference": {
         "oneOf": [
@@ -1069,13 +1116,12 @@
               "comparisonTier": {
                 "type": "string",
                 "minLength": 1,
-                "description": "目录中的档位，如 Fast 或 Expert。"
+                "description": "可选档位，如 Fast 或 Expert。省略时须由原问唯一定位，多场匹配会返回候选引用，不猜选。"
               }
             },
             "required": [
               "runId",
-              "query",
-              "comparisonTier"
+              "query"
             ]
           },
           {
@@ -1104,7 +1150,7 @@
       "title": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 40,
+        "maxLength": 120,
         "pattern": "\\S"
       },
       "candidates": {
@@ -1124,7 +1170,7 @@
             "summary": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 80,
+              "maxLength": 240,
               "pattern": "\\S",
               "description": "概括这份回答实际给出的答案。"
             },
@@ -1142,14 +1188,14 @@
                       "null"
                     ],
                     "minLength": 1,
-                    "maxLength": 80,
+                    "maxLength": 400,
                     "pattern": "\\S",
-                    "description": "已读材料中能反驳或限制本项判断的相关事实；没有已知相关反证时填 null。"
+                    "description": "已读材料中能反驳或限制本项判断的相关事实；没有已知相关反证时省略或填 null，已知重要反证不可省略。"
                   },
                   "evidence": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 60,
+                    "maxLength": 400,
                     "pattern": "\\S",
                     "description": "支持本项判断的具体依据，区分回答的说法与材料支持的事实。"
                   },
@@ -1164,34 +1210,30 @@
                   "title": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 16,
+                    "maxLength": 48,
                     "pattern": "\\S"
                   },
                   "impact": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 36,
+                    "maxLength": 240,
                     "pattern": "\\S",
                     "description": "本项对用户任务或判断的具体影响，结论与已知证据范围相称。"
                   },
                   "highlights": {
                     "type": "object",
-                    "minProperties": 1,
-                    "maxProperties": 1,
+                    "minProperties": 0,
+                    "maxProperties": 2,
                     "additionalProperties": false,
                     "description": "可省略；最多选择一个字段中的唯一连续短语，整图含顶部理由最多2处，不填写HTML或样式。",
                     "properties": {
                       "evidence": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16,
-                        "pattern": "\\S"
+                        "maxLength": 600
                       },
                       "impact": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16,
-                        "pattern": "\\S"
+                        "maxLength": 600
                       }
                     }
                   }
@@ -1199,7 +1241,6 @@
                 "required": [
                   "title",
                   "evidence",
-                  "counterEvidence",
                   "impact",
                   "assessment"
                 ]
@@ -1217,27 +1258,24 @@
       "reason": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 160,
+        "maxLength": 600,
         "pattern": "\\S",
         "description": "本次分析的结论、主要依据与必要边界。"
       },
       "reasonHighlight": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 16,
-        "pattern": "\\S",
+        "maxLength": 600,
         "description": "可省略；仅突出reason中唯一出现的决定性短语，整图含分支高亮最多2处，不填写HTML或样式。"
       },
       "caveat": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 100,
+        "maxLength": 400,
         "pattern": "\\S",
         "description": "影响理解的口径或局限，无需补充时省略。"
       }
     },
     "required": [
-      "complete",
       "reference",
       "title",
       "candidates",
@@ -1274,7 +1312,8 @@
           "chord",
           "ecdf",
           "ridgeline"
-        ]
+        ],
+        "description": "省略时用 heatmap，不推断时间轴、组成关系或统计显著性。"
       },
       "title": {
         "type": "string",
@@ -1299,7 +1338,8 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 500,
-        "pattern": "\\S"
+        "pattern": "\\S",
+        "description": "外部数据必填来源名称与日期；本地 references 已核验时可省略。"
       },
       "categories": {
         "type": "array",
@@ -1663,24 +1703,147 @@
         "type": "number",
         "exclusiveMinimum": 0,
         "maximum": 1000000000000000
+      },
+      "caveat": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+        "pattern": "\\S",
+        "description": "影响数据解读的局限，完整显示在图下。"
+      },
+      "statistics": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 181,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
+          },
+          "comparisonTier": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "required": [
+          "runId",
+          "comparisonTier"
+        ],
+        "description": "直接绘制该运行与档位的正式战绩；程序填入模型名称、胜负及双方均好/均差计数、单位和来源，不再填写 categories、series、unit、scope、source 或 references。"
       }
     },
     "required": [
-      "type",
-      "title",
-      "unit",
-      "source",
-      "categories",
-      "series"
+      "title"
     ],
     "allOf": [
+      {
+        "if": {
+          "required": [
+            "statistics"
+          ]
+        },
+        "then": {
+          "properties": {
+            "type": {
+              "enum": [
+                "heatmap",
+                "bubble_matrix"
+              ]
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "categories"
+                ]
+              },
+              {
+                "required": [
+                  "series"
+                ]
+              },
+              {
+                "required": [
+                  "unit"
+                ]
+              },
+              {
+                "required": [
+                  "source"
+                ]
+              },
+              {
+                "required": [
+                  "scope"
+                ]
+              },
+              {
+                "required": [
+                  "references"
+                ]
+              }
+            ]
+          }
+        },
+        "else": {
+          "required": [
+            "unit",
+            "categories",
+            "series"
+          ],
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "required": [
+                    "scope"
+                  ]
+                },
+                {
+                  "required": [
+                    "references"
+                  ],
+                  "properties": {
+                    "references": {
+                      "items": {
+                        "required": [
+                          "statistics"
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "if": {
+                "required": [
+                  "references"
+                ]
+              },
+              "else": {
+                "required": [
+                  "source"
+                ]
+              }
+            }
+          ]
+        }
+      },
       {
         "if": {
           "properties": {
             "type": {
               "const": "pie"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1709,7 +1872,10 @@
             "type": {
               "const": "line"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1728,7 +1894,10 @@
                 "bubble"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "required": [
@@ -1778,7 +1947,10 @@
                 "ridgeline"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "else": {
           "properties": {
@@ -1797,7 +1969,10 @@
                 "histogram"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1816,7 +1991,10 @@
             "type": {
               "const": "radial_heatmap"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1839,7 +2017,10 @@
             "type": {
               "const": "bubble"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "required": [
@@ -1876,7 +2057,10 @@
             "type": {
               "const": "interval"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1919,7 +2103,10 @@
             "type": {
               "const": "slope"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1936,7 +2123,10 @@
             "type": {
               "const": "bubble_matrix"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1963,7 +2153,10 @@
                 "violin"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -1982,7 +2175,10 @@
                 "chord"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "else": {
           "properties": {
@@ -2001,7 +2197,10 @@
                 "radial_progress"
               ]
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "required": [
@@ -2022,7 +2221,10 @@
             "type": {
               "const": "rose"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2062,7 +2264,10 @@
             "type": {
               "const": "concentric"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2102,7 +2307,10 @@
             "type": {
               "const": "radial_progress"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2142,7 +2350,10 @@
             "type": {
               "const": "radar"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2182,7 +2393,10 @@
             "type": {
               "const": "waffle"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2222,7 +2436,10 @@
             "type": {
               "const": "sunburst"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2262,7 +2479,10 @@
             "type": {
               "const": "treemap"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2302,7 +2522,10 @@
             "type": {
               "const": "sankey"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2342,7 +2565,10 @@
             "type": {
               "const": "chord"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2382,7 +2608,10 @@
             "type": {
               "const": "ecdf"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2406,7 +2635,10 @@
             "type": {
               "const": "ridgeline"
             }
-          }
+          },
+          "required": [
+            "type"
+          ]
         },
         "then": {
           "properties": {
@@ -2420,27 +2652,6 @@
             },
             "annotations": {
               "maxItems": 0
-            }
-          }
-        }
-      }
-    ],
-    "anyOf": [
-      {
-        "required": [
-          "scope"
-        ]
-      },
-      {
-        "required": [
-          "references"
-        ],
-        "properties": {
-          "references": {
-            "items": {
-              "required": [
-                "statistics"
-              ]
             }
           }
         }

@@ -88,3 +88,11 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
     comparisonsPendingReview: comparisonReviewReferences.length, comparisonReviewReferences,
   };
 }
+
+/** Persist counts only; source identities, task references and verdicts stay in their authoritative files. */
+export function analysisRunOverview(saved: Checkpoint) {
+  if (saved.format !== "evaluation-run") throw new Error("运行统计索引只支持 evaluation-run。");
+  const { formalComparisonReferences: _formal, comparisonReviewReferences: _review, ...summary } = analysisProgress(saved);
+  return { runId: saved.runId, evaluatorVersion: saved.evaluatorVersion, summary };
+}
+export type AnalysisRunOverview = ReturnType<typeof analysisRunOverview>;

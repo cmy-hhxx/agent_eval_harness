@@ -4,8 +4,8 @@
 .case-position { font-size:var(--type-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .case-position span { color: var(--gray); font-size:var(--type-meta); }
 .case-navigation select { appearance: auto; min-width: 0; max-width: 360px; flex: 1; border: 0; border-bottom: 1px solid var(--border); padding: 5px 22px 5px 0; color: var(--black); background: var(--white); border-radius: 0; font-size:var(--type-meta); cursor: pointer; }
-.case-kind { font-size:var(--type-meta); color: var(--gray); white-space: nowrap; }
-.case-navigation .pair-select { flex:0 1 105px; padding-right:12px; }
+.case-navigation .case-kind { flex:0 0 100px; padding-right:12px; }
+.case-navigation .tier-filter { flex:0 0 105px; padding-right:12px; }
 .case-pager { display: flex; gap: 8px; margin-left: auto; }
 .case-pager button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 5px; background: var(--white); transition: border-color 150ms; }
 .case-pager svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -179,3 +179,22 @@
   .research-figure { break-inside: avoid; }
   .research-figure > svg { max-height: none; }
 }
+
+.pi-summary { display: grid; grid-template-columns: 1fr 1.5fr; gap: 24px; padding: 16px 0 22px; margin: 0 0 18px; border-bottom: 1px solid var(--border); font-size: 16px; }
+.pi-summary dt { font-weight: 600; margin-bottom: 6px; }
+.pi-summary dd { margin: 0; }
+.pi-evidence { display: grid; grid-template-columns: 2fr 1fr; gap: 28px; align-items: center; max-width: 1020px; margin: 22px auto; }
+.pi-evidence figure { margin: 0; min-width: 0; }
+.pi-crop { overflow: hidden; position: relative; background: #fff; }
+.pi-crop img { position: absolute; max-width: none; height: auto; }
+/* 只裁切显示用户提供的原图，保留文字与数字；裁切坐标对应原始像素。 */
+.pi-crop-website { aspect-ratio: 1300 / 715; }
+.pi-crop-website img { width: 277.384615%; left: -89.230769%; top: -47.552448%; }
+.pi-crop-github { aspect-ratio: 600 / 760; }
+.pi-crop-github img { width: 534.333333%; left: -420%; top: -47.368421%; }
+.pi-evidence figcaption { margin-top: 12px; font-size: 16px; }
+@media (max-width: 760px) {
+  .pi-evidence { grid-template-columns: 1fr; gap: 24px; }
+  .pi-evidence figure:last-child { width: min(100%,340px); justify-self: center; }
+}
+@media (max-width: 760px) { .pi-summary { grid-template-columns: 1fr; gap: 14px; } }

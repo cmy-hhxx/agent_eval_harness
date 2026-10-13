@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const context={window:{}};
 for(const name of ['cases','case-summaries'])vm.runInNewContext(await readFile(new URL(`../src/data/${name}.js`,import.meta.url),'utf8'),context);
 const summaries=context.window.ReportCaseSummaries;
-test('42场主图短稿逐项覆盖全部202比较，保留适用与待核边界',()=>{
+test('60场主图短稿逐项覆盖全部169比较，保留适用与待核边界',()=>{
  const pairs=context.window.EvaluationReportData.cases.flatMap(c=>c.pairs);
  assert.equal(Object.keys(summaries).length,pairs.length);
  let total=0;
@@ -23,5 +23,5 @@ test('42场主图短稿逐项覆盖全部202比较，保留适用与待核边界
    });total++;
   }
  }
- assert.equal(total,202);
+ assert.equal(total,169);
 });

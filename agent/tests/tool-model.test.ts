@@ -61,6 +61,39 @@ test("data query summaries use full-run counts and distinguish historical runs f
     "找到 0 次运行");
 });
 
+test("published statistics render progress instead of an empty directory card", () => {
+  const result = analysisToolModel("list_data", { state: "ok", bodyRaw: '{"view":"statistics"}', output: JSON.stringify({
+    kind: "statistics", history: { status: "published", snapshotAt: "2026-10-12 12:16:54.950",
+      requestDates: ["2026-10-11", "2026-09-22"], caseCount: 12114, totalCaseCount: 20554,
+      progress: { completedBattleCount: 22293, expectedBattleCount: 35838, completedCaseCount: 11753,
+        battleCompletionRate: 62.2, caseCompletionRate: 57.18 } }, currentRuns: [], additive: false,
+  }) });
+  assert.match(result.summary, /累计评测.*22293/);
+  assert.equal(result.details.items[0].title, "历史累计");
+  const values = result.details.items[0].fields.map((field: { value: string }) => field.value).join(" ");
+  for (const value of ["20554", "12114", "11753", "22293", "35838", "62.20%", "57.18%", "2026-10-12", "2026-09-22 至 2026-10-11"])
+    assert(values.includes(value), `statistics details are missing ${value}`);
+  assert.deepEqual(result.details.items[1], { title: "运行中批次", fields: [{ label: "批次数", value: "0" }] });
+});
+
+test("statistics cards keep unavailable history, live runs and unknown rates distinct", () => {
+  const currentRuns = [{ runId: "live-run", summary: { inputCount: 30, caseCount: 10, formalComparisonsAccepted: 4 } }];
+  const unavailable = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
+    history: { status: "unavailable", error: "没有完整发布成功的累计统计。" }, currentRuns, additive: false }) });
+  assert.match(unavailable.summary, /累计统计不可用/);
+  assert.equal(unavailable.details.items[0].description, "没有完整发布成功的累计统计。");
+  assert.equal(unavailable.details.items[1].groups[0].items[0].title, "live-run");
+  assert.equal(unavailable.details.items[1].groups[0].items[0].fields.at(-1).value, "4");
+  const empty = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
+    history: { status: "published", caseCount: 0, totalCaseCount: 0,
+      progress: { completedBattleCount: 0, expectedBattleCount: 0, completedCaseCount: 0,
+        battleCompletionRate: null, caseCompletionRate: null } }, currentRuns: [] }) });
+  const values = empty.details.items[0].fields.map((field: { value: string }) => field.value).join(" ");
+  assert.match(values, /未知/);
+  assert(!/0\.00%|NaN|undefined/.test(values));
+  assert.equal(analysisToolModel("list_data", { state: "running", bodyRaw: '{"view":"statistics"}' }).details, undefined);
+});
+
 test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
   assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "heatmap" } }) }),
     { summary: "显示热力矩阵 · 已完成" });

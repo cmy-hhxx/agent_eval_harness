@@ -15,7 +15,7 @@
     if (animate) window.ReportMotion.reveal($(`page-${page}`), { distance: 3, duration: 140 });
     window.dispatchEvent(new Event('report-page-change'));
   }
-  window.ReportResearch.render($('researchBody'), report, window.EvaluationResearchData);
+  window.ReportResearch.render($('researchBody'), window.EvaluationResearchData);
   window.ReportFlow.render($('flowBody'), report);
   window.ReportArchitecture.render($('architectureBody'), report);
   window.ReportExperiments.render($('experimentsBody'), window.EvaluationExperimentData);

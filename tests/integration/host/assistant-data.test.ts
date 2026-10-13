@@ -2,13 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { rm } from "node:fs/promises";
 import { emptyUsage, object, type JsonObject, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
-import { readJson, writeJson, writeJsonl } from "@eval/data";
-import { buildPlan, comparisonCodec, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
+import { readJson, writeJson, writeJsonl, writeRunOverview } from "@eval/data";
+import { analysisRunOverview, buildPlan, comparisonRepository, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
 import { createEris } from "@eval/assistant";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
+
+async function saveCheckpoint(file: string, saved: Checkpoint) {
+  await writeJson(file, saved);
+  await writeRunOverview(path.dirname(file), analysisRunOverview(saved));
+}
 
 async function register(config: EvalConfig, accepted?: (state: RunState, plan: TaskPlan) => Promise<void>) {
   const plan = await buildPlan(config);
@@ -20,11 +27,29 @@ async function register(config: EvalConfig, accepted?: (state: RunState, plan: T
     preflight: plan.summary, startedAt: 0,
   } };
   await accepted?.(state, plan);
-  await writeJson(path.join(config.output.path, "source/state.json"), comparisonCodec.encode(state));
+  await comparisonRepository.writeRun(path.join(config.output.path, "source"), state);
   const source = new LocalAnalysisData(config.output.path);
   source.raw = async () => { throw new Error("Directory queries must not read source messages"); };
   return source;
 }
+
+test("cumulative overview never opens individual run checkpoints", async (t) => {
+  const fixture = await fixtureConfig();
+  try {
+    const source = await register(fixture.config, async state => { state.manifest.status = "finished"; });
+    const read = fs.readFile;
+    const probe = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+      assert(!String(args[0]).endsWith("/state.json"), "overview must not scan full run checkpoints");
+      return read(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const overview = await source.list({ view: "statistics" });
+      assert.equal(overview.kind, "statistics");
+      assert(overview.kind === "statistics" && overview.currentRuns.length === 0);
+    } finally { probe.mock.restore(); syncBuiltinESMExports(); }
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
 
 async function registerAccepted(config: EvalConfig, compare = (data: TaskData) => comparisonResult(Object.keys(data.candidates))) {
   let accepted: Record<string, SubmissionReceipt> = {};
@@ -60,6 +85,33 @@ test("random case selection samples distinct questions and exhausts them across 
     const empty = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
     assert(empty.kind === "comparisons");
     assert.equal(empty.items.length, 0);
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("Eris samples a comparison without a preliminary run lookup and returns the resolved scope", async () => {
+  const fixture = await fixtureConfig();
+  try {
+    const { source } = await registerAccepted(fixture.config, data => {
+      const labels = Object.keys(data.candidates), result = comparisonResult(labels);
+      result.ranking = labels.map(label => [label]);
+      return result;
+    });
+    const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
+    const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: source,
+      specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+    const result = await eris.tools.find(tool => tool.name === "list_data")!.execute(
+      { view: "comparisons", sample: true, limit: 1, includeAnalysis: true },
+      { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {} });
+    const sample = JSON.parse(result.content[0].text!);
+    assert.equal(sample.kind, "comparisons");
+    assert.equal(sample.runId, "source");
+    assert.equal(sample.selectionReason, "running_with_inputs");
+    assert.equal(sample.items.length, 1);
+    assert.equal(sample.items[0].reference.runId, sample.runId);
+    assert(sample.items[0].question.length > 0);
+    assert(sample.items[0].outcomes[0].reason.length > 0);
+    const material = await source.read({ runId: sample.runId, query: sample.items[0].question }, { view: "case" });
+    assert.deepEqual(material.reference, sample.items[0].reference, "a unique question does not need a redundant tier argument");
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
@@ -143,8 +195,18 @@ test("batch evidence parses one input and preserves exact per-node slices, citat
     const model = JSON.parse((await tool.execute(args, context)).content[0].text!);
     const expected = name === "read_evidence" ? (original.items as Record<string, unknown>[]) : [original];
     const actual = name === "read_evidence" ? model.items : [model];
-    assert.deepEqual(actual, expected.map(({ evidence: _evidence, ...item }) => item), "exact source text, node coordinates, errors and page boundaries survive the model projection");
+    assert.deepEqual(actual.map(({ nextRead: _next, ...item }: JsonObject) => item), expected.map(({ evidence: _evidence, ...item }) => item), "exact source text, node coordinates, errors and page boundaries survive the model projection");
+    for (const item of actual) if (item.nextRead) {
+      assert.equal(item.nextRead.tool, name);
+      const continued = JSON.parse((await tool.execute(item.nextRead.args, context)).content[0].text!);
+      const page = name === "read_evidence" ? continued.items[0] : continued;
+      assert.equal(page.offset, item.nextOffset);
+      assert.deepEqual(page.reference, item.reference);
+      assert.equal(page.format, item.format);
+    }
     const user = JSON.parse((await tool.execute(args, { ...context, audience: "user" })).content[0].text!);
+    if (name === "read_evidence") user.items = user.items.map(({ nextRead: _next, ...item }: JsonObject) => item);
+    else delete user.nextRead;
     assert.deepEqual(user, original, "the inspector and copy workflow retain full material");
   }
   source.raw = async () => { throw new Error("Source unavailable"); };
@@ -324,7 +386,26 @@ test("batched search loads an answer once and preserves every single-query hit, 
   assert.deepEqual(next.matches, result.matches.slice(1, 2));
   assert.deepEqual(next.queries, result.queries);
   assert.equal(next.nextOffset, 2);
+  assert.equal(next.nextRead.tool, "search_data");
+  const remaining = JSON.parse((await tool.execute(next.nextRead.args, context)).content[0].text!);
+  assert.deepEqual(remaining.matches, result.matches.slice(2, 3));
   for (const query of [[], [""], ["PCB", "PCB"], Array.from({ length: 9 }, (_, i) => String(i))]) assert.throws(() => tool.validate!({ reference, query }));
+});
+
+test("local search accepts node references and never expands an explicit node to the entire answer", async () => {
+  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "input", messageIndex: 1 };
+  source.raw = async () => ({ messages: [{ role: "tool", content: "原始数据" }, { role: "assistant", content: "原始数据的解释" }] });
+  const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
+  const tool = createEris({ data: source, code: { execute: unexpected, read: unexpected },
+    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "search_data")!;
+  const context = { scope: { userId: "test", sessionId: "test" }, callId: "node-search", signal: new AbortController().signal, progress() {} };
+  const found = JSON.parse((await tool.execute({ reference, query: "原始数据" }, context)).content[0].text!);
+  assert.equal(found.scope, "all");
+  assert.equal(found.total, 1);
+  assert.deepEqual(found.matches[0].reference, reference);
+  const evidence = JSON.parse((await tool.execute({ reference, query: "原始数据", scope: "evidence" }, context)).content[0].text!);
+  assert.equal(evidence.total, 0, "an explicit evidence filter remains authoritative for the selected node");
+  await assert.rejects(tool.execute({ reference: { ...reference, messageIndex: 99 }, query: "原始数据" }, context), /out of range/);
 });
 
 test("structured evidence preserves native numbers, booleans and row relationships with exact JSON coordinates", async () => {
@@ -424,7 +505,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     const saved = await readJson<Checkpoint>(checkpointPath);
     const formal = Object.values(saved.tasks).find((task) => task.receipt?.exported?.comparisonId)!;
     delete formal.receipt!.exported!.file;
-    await writeJson(checkpointPath, saved);
+    await saveCheckpoint(checkpointPath, saved);
     const directory = await source.list({ runId: "source", limit: 1, query: "a_fast" });
     assert(directory.kind === "inputs");
     const stats = directory.summary.formalComparisonStats;
@@ -467,6 +548,12 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     const runs = await source.list({ query: "no-match" });
     assert(runs.kind === "runs");
     assert.deepEqual(runs.currentRun!.summary.formalComparisonStats, stats, "history filtering cannot change current formal standings");
+    await assert.rejects(source.read({ runId: "source", query: "计算2+2" }), (error: Error) => {
+      assert.match(error.message, /匹配到 2 场/);
+      assert.match(error.message, /"reference".*"taskId"/);
+      assert.match(error.message, /"comparisonTier":"Fast"/);
+      return true;
+    });
     for (const record of stats.records) {
       assert.equal(record.question, "计算2+2");
       const result = await source.read(record.reference);
@@ -495,7 +582,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     await assert.rejects(source.read({ runId: "source", query: " ", comparisonTier: "Fast" }), /不能为空/);
     const duplicate = structuredClone(saved.tasks[stats.records[0]!.reference.taskId]!);
     saved.tasks[randomUUID()] = duplicate;
-    await writeJson(checkpointPath, saved);
+    await saveCheckpoint(checkpointPath, saved);
     await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
     const broken = structuredClone(accepted[stats.records[0]!.reference.taskId]!.exported!.row);
     broken.verdicts = {};
@@ -518,8 +605,8 @@ test("Eris chooses a recorded running data run before recent finished runs, excl
   try {
     const source = await register(fixture.config);
     const saved = await readJson<Checkpoint>(path.join(fixture.config.output.path, "source/state.json"));
-    await writeJson(path.join(fixture.config.output.path, "later/state.json"), { ...saved, runId: "later", status: "finished", startedAt: 20, finishedAt: 21 });
-    await writeJson(path.join(fixture.config.output.path, "maintenance/state.json"), { ...saved, runId: "maintenance", startedAt: 30, inputs: {}, tasks: {} });
+    await saveCheckpoint(path.join(fixture.config.output.path, "later/state.json"), { ...saved, runId: "later", status: "finished", startedAt: 20, finishedAt: 21 });
+    await saveCheckpoint(path.join(fixture.config.output.path, "maintenance/state.json"), { ...saved, runId: "maintenance", startedAt: 30, inputs: {}, tasks: {} });
     const directory = await source.list({ limit: 1 });
     assert(directory.kind === "runs");
     assert.equal(directory.items[0]!.runId, "maintenance", "the directory still sorts by recorded start time");
@@ -533,12 +620,29 @@ test("Eris chooses a recorded running data run before recent finished runs, excl
     assert.equal(filtered.total, 0);
     assert.deepEqual(filtered.currentRun, directory.currentRun, "query and pagination only filter returned history entries");
     assert.deepEqual(filtered.runCounts, directory.runCounts);
-    await writeJson(path.join(fixture.config.output.path, "source/state.json"), { ...saved, status: "interrupted" });
+    const inputs = await source.list({ view: "inputs", query: "no-match" });
+    assert(inputs.kind === "inputs" && "selectionReason" in inputs);
+    assert.equal(inputs.runId, "source");
+    assert.equal(inputs.selectionReason, "running_with_inputs");
+    assert.equal(inputs.total, 0, "no matches must not silently switch to another run");
+    const explicit = await source.list({ runId: "later", view: "inputs" });
+    assert(explicit.kind === "inputs");
+    assert.equal(explicit.runId, "later");
+    await assert.rejects(source.list({ runId: "missing", view: "comparisons" }), /ENOENT/);
+    await saveCheckpoint(path.join(fixture.config.output.path, "source/state.json"), { ...saved, status: "interrupted" });
     const fallback = await source.list({ query: "source" });
     assert(fallback.kind === "runs");
     assert.equal(fallback.currentRun!.runId, "later");
     assert.equal(fallback.currentRun!.selectionReason, "latest_with_inputs");
     assert.equal(fallback.currentRun!.summary.finishedAt, 21);
+    const comparisons = await source.list({ view: "comparisons", sample: true, limit: 1 });
+    assert(comparisons.kind === "comparisons" && "selectionReason" in comparisons);
+    assert.equal(comparisons.runId, "later");
+    assert.equal(comparisons.selectionReason, "latest_with_inputs");
+    assert.equal(comparisons.items.length, 0);
+    await saveCheckpoint(path.join(fixture.config.output.path, "source/state.json"), { ...saved, inputs: {}, tasks: {} });
+    await saveCheckpoint(path.join(fixture.config.output.path, "later/state.json"), { ...saved, runId: "later", inputs: {}, tasks: {} });
+    await assert.rejects(source.list({ view: "inputs" }), /没有含输入的已登记运行/);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 

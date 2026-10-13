@@ -64,9 +64,13 @@
     render(container,report) {
       mounted.get(container)?.destroy();
       const cases=report.cases;
-      let current=0,pairIndex=0,matrixPage=0,swapped=false,revealed=false,destroyed=false,dialogReturn=null;
+      let current=0,matrixPage=0,swapped=false,revealed=false,destroyed=false,dialogReturn=null;
+      let kindFilter='subjective',tierFilter='Fast';
+      const filteredIndices=()=>cases.flatMap((entry,index)=>entry.pairs[0].tier===tierFilter&&entry.pairs[0].hasStandardAnswer===(kindFilter==='objective')?[index]:[]);
+      current=filteredIndices()[0];
+      const adjacentCase=offset=>{const indices=filteredIndices();return indices[(indices.indexOf(current)+offset+indices.length)%indices.length];};
       let compact=window.innerWidth<=1080;
-      const item=()=>cases[current].pairs[pairIndex];
+      const item=()=>cases[current].pairs[0];
       const displayOrder=()=>swapped?[1,0]:[0,1];
       const mapping=()=>swapped?[...item().candidates.map(c=>c.label)].reverse():item().candidates.map(c=>c.label);
       function anonymous(value) {
@@ -158,10 +162,10 @@
         const problemLines=problems.map((list,index)=>list.map(f=>({finding:f,wrapped:wrap(anonymous(`${f.problem?.component?.length?f.problem.component.join(' / '):'责任待定位'}｜${f.problem?.label||f.text}${f.assessment?.evidence_status==='uncertain'?'（待核实）':''}`),W-66,fonts.copy)})));
         const problemHeight=problemLines.reduce((h,groups)=>h+24+Math.max(22,groups.reduce((sum,g)=>sum+g.wrapped.length*18+5,0)),0);
         const fullHeight=postY+problemHeight+34;
-        const pageCount=String(current+1).padStart(2,'0');
+        const indices=filteredIndices(),pageCount=String(indices.indexOf(current)+1).padStart(2,'0');
         const prevIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6M8 12h12"/></svg>';
         const nextIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6M4 12h12"/></svg>';
-        container.innerHTML=`<div class="case-navigation" aria-label="真实案例"><span class="case-position">${pageCount}<span> / ${cases.length}</span></span><select aria-label="选择真实案例" data-case-select>${cases.map((entry,index)=>`<option value="${index}" ${index===current?'selected':''}>${safe(entry.title)}</option>`).join('')}</select><select class="pair-select" aria-label="选择模型组" data-pair-select>${group.pairs.map((entry,index)=>`<option value="${index}" ${index===pairIndex?'selected':''}>${safe(entry.tier)}${entry.status==='needs_review'?' · 待核':''}</option>`).join('')}</select><span class="case-kind">${pair.hasStandardAnswer?'客观题':'主观题'}</span><div class="case-pager"><button type="button" data-case-prev aria-label="上一个案例">${prevIcon}</button><button type="button" data-case-next aria-label="下一个案例">${nextIcon}</button></div></div>
+        container.innerHTML=`<div class="case-navigation" aria-label="评测样本"><span class="case-position" aria-live="polite">${pageCount}<span> / ${indices.length}</span></span><select aria-label="选择评测样本" data-case-select>${indices.map(index=>`<option value="${index}" ${index===current?'selected':''}>${safe(cases[index].title)} · ${safe(cases[index].pairs[0].tier)}</option>`).join('')}</select><select class="tier-filter" aria-label="筛选模型档位" data-tier-filter>${['Fast','Expert'].map(tier=>`<option value="${tier}" ${tier===tierFilter?'selected':''}>${tier}</option>`).join('')}</select><select class="case-kind" aria-label="筛选题型" data-kind-filter>${[['subjective','主观题'],['objective','客观题']].map(([value,label])=>`<option value="${value}" ${value===kindFilter?'selected':''}>${label}</option>`).join('')}</select><div class="case-pager"><button type="button" data-case-prev aria-label="上一个案例">${prevIcon}</button><button type="button" data-case-next aria-label="下一个案例">${nextIcon}</button></div></div>
           <article id="active-case" aria-label="${safe(group.title)}"><figure class="research-figure ${compact?'compact-figure':''}"><svg id="evaluationMechanism" viewBox="0 0 ${W} ${fullHeight}" role="group" aria-label="${safe(group.title)}的multi-agent评测机制" xmlns="http://www.w3.org/2000/svg"><defs>${['criteria','attribution','comparison'].map(role=>`<linearGradient id="agent-${role}-sheen" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0"><stop offset="0" class="agent-sheen-base"/><stop offset=".3" class="agent-sheen-base"/><stop offset=".44" class="agent-sheen-light"/><stop offset=".485" class="agent-sheen-glint"/><stop offset=".515" class="agent-sheen-glint"/><stop offset=".56" class="agent-sheen-light"/><stop offset=".7" class="agent-sheen-base"/><stop offset="1" class="agent-sheen-base"/><animateTransform attributeName="gradientTransform" type="translate" values="-.65 0;.65 0" dur="3.2s" repeatCount="indefinite"/></linearGradient>`).join('')}${window.ReportIcons.symbols()}${['material','reference','review'].map(kind=>`<marker id="${kind}-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse"><path d="M3 2L10 6L3 10" class="arrow-head ${kind}-arrow-head"/></marker>`).join('')}</defs><g id="mechanismScene"></g></svg></figure></article>
           <dialog class="case-detail" aria-labelledby="caseDetailTitle"><header><h2 id="caseDetailTitle" data-detail-title></h2><button type="button" data-detail-close aria-label="关闭详情">×</button></header><div class="case-detail-body" data-detail-body></div></dialog>`;
         const scene=container.querySelector('#mechanismScene');
@@ -238,8 +242,9 @@
         scene.innerHTML=`<g class="stage-headings">${text(xInput,28,'输入与回答','diagram-heading')}${text(xStandard,28,'独立查证','diagram-heading')}${text(xAnonymous,28,revealed?'模型':'匿名','diagram-heading')}</g>${paths}<g id="source-materials">${question}${answers}</g><g id="shared-rubric-and-attribution"><g class="diagram-control" role="button" tabindex="0" data-agent-role="criteria" data-checklist-control aria-label="查看完整验收清单">${checklist}</g>${attributionFrame}${attribution}</g><g id="identity-mapping">${swap}${anon}</g><g data-agent-role="comparison">${agentTitle(mx,my-13,'对比 Agent')}${text(comparisonHeadingX,my-13,'逐项对照','diagram-heading')}<g class="diagram-control" role="button" tabindex="0" data-comparison-control aria-label="查看逐项对照原文">${text(originalLinkX,my-13,'原文 ↗','sheet-caption')}</g>${text(vx,vy-14,'裁决与取舍','verdict-heading')}<g id="comparison-grid">${matrix}</g><g id="formal-outcomes">${verdict}</g></g><path d="M10 ${postY-19}H${W-10}" class="panel-rule"/><g id="problem-attribution">${problemsContent}</g>`;
       }
       function selectCase(index,focus=false){
-        if(destroyed||!Number.isInteger(index)||index<0||index>=cases.length)return;
-        current=index;pairIndex=0;matrixPage=0;swapped=false;revealed=false;drawCase();
+        if(destroyed||!Number.isInteger(index)||!filteredIndices().includes(index))return;
+        closeDetail();
+        current=index;matrixPage=0;swapped=false;revealed=false;drawCase();
         if(focus)container.querySelector('[data-case-select]').focus({preventScroll:true});
         window.ReportMotion.reveal(container.querySelector('#active-case'),{distance:2,duration:150});
       }
@@ -255,20 +260,30 @@
         if(target.hasAttribute('data-answer-card'))return openDetail('answer',Number(target.dataset.answerCard),target);
         if(target.hasAttribute('data-check-card'))return openDetail('check',Number(target.dataset.checkCard),target);
         if(target.hasAttribute('data-checklist-control'))return openDetail('criteria',0,target);
-        if(target.hasAttribute('data-case-prev')||target.hasAttribute('data-case-next'))return selectCase((current+(target.hasAttribute('data-case-prev')?-1:1)+cases.length)%cases.length,true);
+        if(target.hasAttribute('data-case-prev')||target.hasAttribute('data-case-next'))return selectCase(adjacentCase(target.hasAttribute('data-case-prev')?-1:1),true);
         if(target.hasAttribute('data-swap-control'))swapped=!swapped;
         if(target.hasAttribute('data-reveal-control'))revealed=!revealed;
         if(target.hasAttribute('data-matrix-prev')||target.hasAttribute('data-matrix-next')){const pages=Math.max(1,Math.ceil(item().comparisons.length/5));matrixPage=(matrixPage+(target.hasAttribute('data-matrix-prev')?-1:1)+pages)%pages;}
         const selector=target.hasAttribute('data-swap-control')?'[data-swap-control]':target.hasAttribute('data-reveal-control')?'[data-reveal-control]':target.hasAttribute('data-matrix-next')?'[data-matrix-next]':'[data-matrix-prev]';
         drawCase();container.querySelector(selector)?.focus({preventScroll:true});
       }
-      function change(event){if(event.target.matches('[data-case-select]'))selectCase(Number(event.target.value),true);if(event.target.matches('[data-pair-select]')){pairIndex=Number(event.target.value);matrixPage=0;swapped=false;revealed=false;drawCase();container.querySelector('[data-pair-select]').focus();}}
+      function change(event){
+        if(event.target.matches('[data-kind-filter],[data-tier-filter]')){
+          const selector=event.target.matches('[data-kind-filter]')?'[data-kind-filter]':'[data-tier-filter]';
+          if(selector==='[data-kind-filter]')kindFilter=event.target.value;else tierFilter=event.target.value;
+          const indices=filteredIndices();
+          selectCase(indices.includes(current)?current:indices[0]);
+          container.querySelector(selector).focus({preventScroll:true});
+        }
+        if(event.target.matches('[data-case-select]'))selectCase(Number(event.target.value),true);
+      }
       function keydown(event){
         if(event.key==='Escape'){closeDetail();return;}
         if(event.target.matches('[role="button"]')&&['Enter',' '].includes(event.key)){event.preventDefault();click(event);return;}
         if(!event.target.closest('.case-navigation')||event.target.matches('select'))return;
         if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
-        event.preventDefault();selectCase(event.key==='Home'?0:event.key==='End'?cases.length-1:(current+(event.key==='ArrowRight'?1:-1)+cases.length)%cases.length,true);
+        const indices=filteredIndices();
+        event.preventDefault();selectCase(event.key==='Home'?indices[0]:event.key==='End'?indices.at(-1):adjacentCase(event.key==='ArrowRight'?1:-1),true);
       }
       function resize(){if(!destroyed&&(window.innerWidth<=1080)!==compact)drawCase();}
       container.addEventListener('click',click);container.addEventListener('change',change);container.addEventListener('keydown',keydown);window.addEventListener('resize',resize);window.addEventListener('report-page-change',closeDetail);

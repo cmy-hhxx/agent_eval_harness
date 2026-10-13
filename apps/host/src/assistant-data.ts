@@ -1,8 +1,8 @@
 import path from "node:path";
 import { randomInt } from "node:crypto";
 import { errorText, safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
-import { exists, localFiles, readJson } from "@eval/data";
-import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
+import { readJson, readRunOverviews } from "@eval/data";
+import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type AnalysisRunOverview, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
 import { readPublishedStatistics } from "./assistant-statistics.js";
 
@@ -39,32 +39,30 @@ export class LocalAnalysisData implements AnalysisDataSource {
         message: errorText(error), action: "该运行统计读取失败；修改目录分页或筛选不能修复。全量历史使用 view:statistics，已读取的其他结果仍可回答。" } };
     }
   }
+  private async runStatistics(runId: string) {
+    return this.statistics(runId, analysisProgress(await readJson<Checkpoint>(path.join(this.run(runId), "state.json"))));
+  }
   async list(query: AnalysisQuery) {
-    const comparisonView = query.view === "comparisons";
-    if (query.view && query.view !== "statistics" && !query.runId) throw new Error("目录 view 需要 runId；先用 list_data({}) 获取 currentRun.runId。");
-    const offset = query.offset ?? 0, limit = Math.min(query.limit ?? (comparisonView ? 5 : 30), comparisonView ? 20 : 100);
+    const offset = query.offset ?? 0, limit = Math.min(query.limit ?? 30, 100);
     if (!query.runId) {
-      const names = await exists(this.directory) ? await localFiles.list(this.directory) : [];
+      const overviews = await readRunOverviews<AnalysisRunOverview>(this.directory);
       const items = [];
-      const running: { runId: string; evaluatorVersion: string; summary: ReturnType<typeof analysisProgress> }[] = [];
+      const running: AnalysisRunOverview[] = [];
       const runCounts = { scope: "all_registered_runs" as const, total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
-      let selected: { runId: string; evaluatorVersion: string; status: Checkpoint["status"]; summary: ReturnType<typeof analysisProgress> } | undefined;
-      for (const runId of names) {
-        const file = path.join(this.run(runId), "state.json");
-        if (!(await exists(file))) continue;
-        const state = await readJson<Checkpoint>(file);
-        if (state.format !== "evaluation-run") continue;
-        const summary = analysisProgress(state);
+      let selected: AnalysisRunOverview & { status: Checkpoint["status"] } | undefined;
+      for (const { runId, value } of overviews) {
+        if (value.runId !== runId) throw new Error("运行统计索引身份不一致：" + runId);
+        const { summary, evaluatorVersion } = value, state = { status: summary.status };
         runCounts.total++;
         runCounts.states[state.status]++;
-        const item = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, startedAt: summary.startedAt,
+        const item = { runId, evaluatorVersion, status: state.status, startedAt: summary.startedAt,
           ...(summary.finishedAt !== undefined ? { finishedAt: summary.finishedAt } : {}), inputCount: summary.inputCount, caseCount: summary.caseCount };
         items.push(item);
-        if (state.status === "running" && summary.inputCount > 0) running.push({ runId, evaluatorVersion: state.evaluatorVersion, summary });
+        if (state.status === "running" && summary.inputCount > 0) running.push(value);
         const preferred = summary.inputCount > 0 && (!selected ||
           (state.status === "running" && selected.status !== "running") ||
           ((state.status === "running") === (selected.status === "running") && summary.startedAt > selected.summary.startedAt));
-        if (preferred) selected = { runId, evaluatorVersion: state.evaluatorVersion, status: state.status, summary };
+        if (preferred) selected = { ...value, status: state.status };
       }
       items.sort((a, b) => b.startedAt - a.startedAt || a.runId.localeCompare(b.runId));
       if (query.view === "statistics") {
@@ -73,15 +71,25 @@ export class LocalAnalysisData implements AnalysisDataSource {
           if (!this.publication) throw new Error("累计统计发布来源未配置。");
           history = await readPublishedStatistics(this.publication);
         } catch (error) { history = { status: "unavailable" as const, error: errorText(error), retryable: false }; }
-        const currentRuns = await Promise.all(running.map(async run => ({ ...run, summary: await this.statistics(run.runId, run.summary) })));
+        const currentRuns = await Promise.all(running.map(async run => ({ ...run, summary: await this.runStatistics(run.runId) })));
         return { kind: "statistics" as const, history, currentRuns, additive: false,
           scope: "历史为最近一次完整发布的累计快照；运行中批次单列，两者可能重叠，不能直接相加。" };
       }
-      const currentRun = selected ? { ...selected, summary: await this.statistics(selected.runId, selected.summary),
+      if (query.view === "inputs" || query.view === "comparisons") {
+        if (!selected) throw new Error("没有含输入的已登记运行，无法查询输入或对战目录。");
+        return { ...await this.listRun({ ...query, runId: selected.runId }),
+          selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const };
+      }
+      const currentRun = selected ? { ...selected, summary: await this.runStatistics(selected.runId),
         selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const } : null;
       const filtered = query.query ? items.filter((item) => item.runId.includes(query.query!)) : items;
       return { kind: "runs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), currentRun, runCounts };
     }
+    return this.listRun({ ...query, runId: query.runId });
+  }
+  private async listRun(query: AnalysisQuery & { runId: string }) {
+    const comparisonView = query.view === "comparisons";
+    const offset = query.offset ?? 0, limit = Math.min(query.limit ?? (comparisonView ? 5 : 30), comparisonView ? 20 : 100);
     const saved = await readJson<Checkpoint>(path.join(this.run(query.runId), "state.json"));
     const config = saved.config as EvalConfig;
     assertComparableGroups(config);
@@ -129,7 +137,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
           ...(query.includeAnalysis ? { reason } : {}) })),
         ...(query.includeAnalysis ? { assessments: scope.assessments, tradeoff: scope.tradeoff } : {}),
       }));
-      return { kind: "comparisons" as const, ...page(filtered.length, offset, limit, "items"), items,
+      return { kind: "comparisons" as const, runId: query.runId, ...page(filtered.length, offset, limit, "items"), items,
         ...(selection ? { selection } : {}),
         evaluatorVersion: saved.evaluatorVersion, summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
     }
@@ -144,7 +152,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const items = Object.entries(saved.inputs).map(([inputId, input]) => ({ reference: { runId: query.runId!, inputId }, runId: query.runId!, inputId, batchId: input.batch_id, caseId: input.case_id, ...model(input.version),
       tasks: tasksByInput.get(inputId) ?? [] }));
     const filtered = query.query ? items.filter((item) => JSON.stringify(item).includes(query.query!)) : items;
-    return { kind: "inputs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion,
+    return { kind: "inputs" as const, runId: query.runId, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion,
       summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
   }
   async raw(reference: AnalysisReference) {
@@ -159,9 +167,10 @@ export class LocalAnalysisData implements AnalysisDataSource {
       const stats = await readAnalysisComparisonStats(this.run(reference.runId), summary.formalComparisonReferences.map(item => item.taskId));
       const query = reference.query.trim();
       if (!query) throw new Error("案例关键词不能为空。");
-      const matches = stats.records.filter(record => record.question.includes(query) && record.scope.comparisonTier === reference.comparisonTier);
+      const matches = stats.records.filter(record => record.question.includes(query) &&
+        (reference.comparisonTier === undefined || record.scope.comparisonTier === reference.comparisonTier));
       if (matches.length !== 1) throw new Error(matches.length
-        ? `匹配到 ${matches.length} 场，请增加题目关键词或用 list_data 定位具体批次：${JSON.stringify(matches.slice(0, 5).map(item => ({ question: item.question, case: item.scope.case })))}`
+        ? `匹配到 ${matches.length} 场，请补充档位、增加题目关键词或使用候选 reference：${JSON.stringify(matches.slice(0, 5).map(item => ({ reference: item.reference, question: item.question, comparisonTier: item.scope.comparisonTier, case: item.scope.case })))}`
         : "没有匹配的已裁决对战；缩短原问关键词或检查档位，不猜 ID。用 list_data 核对登记范围。");
       return this.read(matches[0]!.reference, options);
     }
@@ -220,8 +229,11 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const queries = typeof query === "string" ? [query] : query;
     if (!queries.length || queries.some(query => !query.trim())) throw new Error("Search query required");
     const totals = new Map(queries.map(query => [query, 0]));
-    const scope = options?.scope ?? "evidence";
-    const raw = await this.raw(reference), matches = raw.messages.flatMap((message, messageIndex) => {
+    const scope = options?.scope ?? (reference.messageIndex === undefined ? "evidence" : "all");
+    const raw = await this.raw(reference);
+    if (reference.messageIndex !== undefined && !raw.messages[reference.messageIndex]) throw new Error("Message index out of range");
+    const matches = raw.messages.flatMap((message, messageIndex) => {
+      if (reference.messageIndex !== undefined && reference.messageIndex !== messageIndex) return [];
       if (scope === "evidence" && message.role !== "tool" && !["tool_result", "function_call_output"].includes(String(message.type))) return [];
       const sources = evidenceSources(message);
       const plain = sources.filter((s) => s.kind === "text").map((s) => s.text).join("\n");

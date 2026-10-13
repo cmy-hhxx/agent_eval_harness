@@ -263,7 +263,7 @@ test("duplicate submissions commit once and return the same receipt", async () =
     assert.deepEqual(results[0], results[1]);
     assert.deepEqual(results[0], results[2]);
     assert.deepEqual(await store.findSubmission(value.submissionId), results[0]);
-    assert.deepEqual(await readdir(store.run), ["results", "state.json"]);
+    assert.deepEqual(await readdir(store.run), ["overview.json", "results", "state.json"]);
     const file = path.join(store.run, "results/attribution.jsonl");
     const text = await readFile(file, "utf8");
     assert.equal(text.trim().split("\n").length, 1);

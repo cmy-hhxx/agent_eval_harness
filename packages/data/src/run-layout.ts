@@ -5,6 +5,7 @@ import { safeId, type OutputTarget } from "@eval/contracts";
 export interface RunLayout {
   readonly directory: string;
   readonly stateFile: string;
+  readonly overviewFile: string;
   readonly lockFile: string;
   readonly results: string;
   readonly report: string;
@@ -17,6 +18,7 @@ export function runLayout(target: OutputTarget, runId: string): RunLayout {
   return {
     directory,
     stateFile: path.join(directory, "state.json"),
+    overviewFile: path.join(directory, "overview.json"),
     lockFile: path.join(directory, ".run-lock"),
     results: path.join(directory, "results"),
     report: path.join(directory, "report.md"),

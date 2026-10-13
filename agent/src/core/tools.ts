@@ -1,10 +1,10 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { canonical, parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import { erisComparisonCheck } from "@eval/prompts";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 import checkSchema from "../../../schemas/eris/comparison-check.json" with { type: "json" };
-import { validateChart, type ChartSpec } from "./chart.js";
+import { comparisonChartData, validateChart, type ChartSpec } from "./chart.js";
 import { comparisonDiagram, type ComparisonDiagramInput } from "./comparison-diagram.js";
 
 export interface ErisDependencies {
@@ -26,6 +26,15 @@ function resultPage(value: unknown, options: { offset?: number; limit?: number }
   const end = Math.min(text.length, offset + limit);
   return { text: text.slice(offset, end), total: text.length, offset, limit, unit: "characters",
     hasMore: end < text.length, nextOffset: end < text.length ? end : null };
+}
+
+function resultView(options: AnalysisResultReadOptions) {
+  return options.view ?? (options.offset !== undefined || options.limit !== undefined ? "details" : "summary");
+}
+
+function withContinuation(tool: string, args: object, page: JsonObject): JsonObject {
+  return page.hasMore === true && typeof page.nextOffset === "number"
+    ? { ...page, nextRead: { tool, args: { ...args, offset: page.nextOffset } } } : page;
 }
 
 /** Filter evidence containers only at the model boundary; accepted rows remain untouched. */
@@ -84,10 +93,43 @@ function comparisonSources(sources: AssistantSource[], reference: AnalysisRefere
     for (const answer of (material.answers as { reference: AnalysisReference }[] | undefined) ?? [])
       if (answer.reference.runId === reference.runId) inputIds.add(answer.reference.inputId);
   }
-  return parsed.filter(({ materials }) => materials.some(material => {
+  const selected = parsed.filter(({ materials }) => materials.some(material => {
     const ref = material.reference as AnalysisReference | undefined;
     return isPair(ref) || ref?.runId === reference.runId && !!ref.inputId && inputIds.has(ref.inputId);
-  })).map(({ source }) => source);
+  }));
+  // Deduplicate only identical observed material in this request, never by a locator alone.
+  const seen = new Set<string>();
+  const packed = selected.flatMap(({ source, materials }) => {
+    const content = materials.flatMap(material => {
+      if (source.tool === "read_evidence" && Array.isArray(material.items)) return material.items as JsonObject[];
+      if (source.tool === "read_case" && Array.isArray(material.answers)) return [{ ...material,
+        answers: (material.answers as JsonObject[]).map(answer => {
+          const trace = answer.trace as JsonObject | undefined;
+          // Retain previews and their truncation markers; empty navigation nodes carry no evidence.
+          return trace && Array.isArray(trace.nodes) ? { ...answer, trace: { ...trace,
+            nodes: (trace.nodes as JsonObject[]).filter(node => typeof node.preview === "string" && node.preview.length > 0) } } : answer;
+        }) }];
+      return [material];
+    }).flatMap(material => {
+      let value = material;
+      if (material.kind === "message") {
+        const { nextRead: _nextRead, limit: _limit, ...page } = material;
+        value = page;
+      }
+      const identity = canonical(value);
+      if (seen.has(identity)) return [];
+      seen.add(identity);
+      return [{ tool: source.tool, content: [{ type: "text" as const, text: JSON.stringify(value) }] }];
+    });
+    // Preserve non-JSON text and images belonging to a selected source.
+    const other = source.content.filter(block => {
+      if (block.type !== "text" || !block.text) return true;
+      try { const value = JSON.parse(block.text); return !value || typeof value !== "object"; } catch { return true; }
+    });
+    return [...content, ...(other.length ? [{ tool: source.tool, content: other }] : [])];
+  });
+  if (!packed.length) throw new Error("缺少当前对战的核对材料，请先 read_case 读取本题与双方回答。");
+  return packed;
 }
 
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
@@ -120,6 +162,8 @@ function statisticalScope(summary: JsonObject, names: string[]): string {
 
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
   const validateCheck = new Ajv2020({ strict: false }).compile<{ issues: { path: string; reason: string }[] }>(checkSchema);
+  const validateChartReceipt = new Ajv2020({ strict: false }).compile({ ...schemas.show_chart,
+    required: ["type", "title", "scope", "unit", "source", "categories", "series"] });
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
     list_data: async (value) => {
       const result = await options.data.list(value as JsonObject);
@@ -152,23 +196,33 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         details: { sourceRead: { tool: "read_case", args: { reference: data.reference, ...(args.review === undefined ? {} : { review: args.review }) } } } };
     },
     read_evidence: async (value, context) => {
-      const args = value as { reference: AnalysisReference } & Omit<Extract<AnalysisReadOptions, { view: "evidence" }>, "view">;
+      const { reference: { messageIndex, ...reference }, messages, ...defaults } = value as {
+        reference: AnalysisReference; messages?: Extract<AnalysisReadOptions, { view: "evidence" }>["messages"];
+        format?: "text" | "json"; offset?: number; limit?: number;
+      };
+      const args = { reference, messages: (messages ?? [{ messageIndex: messageIndex! }]).map(node => ({ ...defaults, ...node })) };
       const data = await options.data.read(args.reference, { view: "evidence", messages: args.messages });
-      return { ...textResult({ ...data, items: (data.items as JsonObject[]).map(item => evidenceMaterial(item, context.audience)) }),
+      return { ...textResult({ ...data, items: (data.items as JsonObject[]).map(item => withContinuation("read_evidence",
+        { reference: item.reference, format: item.format, limit: item.limit }, evidenceMaterial(item, context.audience))) }),
         isError: data.readCount === 0, details: { sourceRead: { tool: "read_evidence", args } } };
     },
     read_data: async (value, context) => {
       const args = value as { reference: AnalysisReference } & AnalysisResultReadOptions;
       const data = await options.data.read(args.reference, args);
-      return args.reference.taskId ? textResult(args.view === "details"
-        ? { kind: "accepted-result", reference: args.reference, view: "details", ...resultPage(data, args) }
+      return args.reference.taskId ? textResult(resultView(args) === "details"
+        ? withContinuation("read_data", { ...args, view: "details" }, { kind: "accepted-result", reference: args.reference, view: "details", ...resultPage(data, args) })
         : { ...data, view: "summary", result: data.comparisonScope
           ? { status: (data.result as JsonObject).status, ground_truth: (data.result as JsonObject).ground_truth,
             evidence_references: reviewReferences(data.result, args.reference.runId) }
           : resultSummary(data.result) })
-        : { ...textResult(evidenceMaterial(data, context.audience)), details: { sourceRead: { tool: "read_data", args } } };
+        : { ...textResult(withContinuation("read_data", args, evidenceMaterial(data, context.audience))), details: { sourceRead: { tool: "read_data", args } } };
     },
-    search_data: async (value) => { const args = { scope: "evidence" as const, ...value as { reference: AnalysisReference; query: string | string[]; offset?: number; limit?: number; scope?: "evidence" | "all" } }; return { ...textResult(await options.data.search(args.reference, args.query, args)), details: { sourceRead: { tool: "search_data", args } } }; },
+    search_data: async (value) => {
+      const input = value as { reference: AnalysisReference; query: string | string[]; offset?: number; limit?: number; scope?: "evidence" | "all" };
+      const args = { ...input, scope: input.scope ?? (input.reference.messageIndex === undefined ? "evidence" as const : "all" as const) };
+      return { ...textResult(withContinuation("search_data", args, await options.data.search(args.reference, args.query, args))),
+        details: { sourceRead: { tool: "search_data", args } } };
+    },
     search_web: async (value, context) => {
       const result = await options.search.search(value as WebSearchRequest, context.signal);
       return { ...textResult(result), isError: result.attempts.length > 0 && result.attempts.every(attempt => attempt.state === "failed") };
@@ -186,14 +240,18 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     read_specialist: async (value, context) => {
       const args = value as { operationId: string } & AnalysisResultReadOptions;
       const { result, ...receipt } = await options.specialists.read(context.scope, args.operationId);
-      return textResult({ ...receipt, view: args.view ?? "summary", ...(result === undefined ? {} : { result: args.view === "details" ? resultPage(result, args) : resultSummary(result) }) });
+      const view = resultView(args);
+      return textResult({ ...receipt, view, ...(result === undefined ? {} : { result: view === "details"
+        ? withContinuation("read_specialist", { ...args, view }, resultPage(result, args)) : resultSummary(result) }) });
     },
     show_comparison: async (value, context) => {
       const args = value as ComparisonDiagramInput;
       const result = await options.data.read(args.reference);
-      const diagram = comparisonDiagram(args, result);
+      const { diagram, omittedHighlights } = comparisonDiagram(args, result);
       if (!context.complete) throw new Error("比较图结论核对不可用，尚未展示");
-      const check = await context.complete({ systemPrompt: erisComparisonCheck, text: JSON.stringify(args), outputSchema: checkSchema,
+      const { complete: _complete, reasonHighlight: _reasonHighlight, ...draft } = args;
+      const check = await context.complete({ systemPrompt: erisComparisonCheck, maxThinking: "low", draft: { ...draft,
+        candidates: args.candidates.map(candidate => ({ ...candidate, paths: candidate.paths.map(({ highlights: _highlights, ...path }) => path) })) }, outputSchema: checkSchema,
         sourceTools: ["read_case", "search_data", "read_evidence", "read_data"],
         selectSources: sources => comparisonSources(sources, result.reference as AnalysisReference, result.result) });
       let review: unknown;
@@ -204,11 +262,16 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       if (review.issues.length) return { ...textResult({ kind: "comparison-check", issues: review.issues }), isError: true, details: { consistencyCheck } };
       return { ...textResult({ kind: "comparison-diagram", diagram }),
         ...(args.complete ? { terminate: true } : {}),
-        details: { reference: result.reference, evaluatorVersion: result.evaluatorVersion, consistencyCheck } };
+        details: { reference: result.reference, evaluatorVersion: result.evaluatorVersion, consistencyCheck,
+          ...(omittedHighlights.length ? { omittedHighlights } : {}) } };
     },
     show_chart: async (value, context) => {
-      const { references = [], ...chart } = value as ChartSpec & { references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
-      validateChart(chart);
+      const { statistics, references: suppliedReferences, ...input } = value as Partial<ChartSpec> & { title: string;
+        statistics?: { runId: string; comparisonTier: string };
+        references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
+      const references: NonNullable<typeof suppliedReferences> = statistics ? [{ statistics }] : suppliedReferences ?? [];
+      let chart = { type: "heatmap", source: "本地评测材料", ...input } as ChartSpec;
+      if (!statistics) validateChart(chart);
       const citations: unknown[] = [];
       const timeScopes = new Map<string, string>();
       // Only share within this chart. A later tool call must observe new accepted results.
@@ -221,10 +284,11 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         context.signal.throwIfAborted();
         if (item.statistics) {
           const result = await readRun(item.statistics.runId);
-          const summary = result.summary as { formalComparisonStats?: { tiers: { comparisonTier: string; comparisonCount: number; references: AnalysisReference[] }[] } } | undefined;
+          const summary = result.summary as { formalComparisonStats?: { tiers: (JsonObject & { comparisonTier: string; comparisonCount: number; references: AnalysisReference[] })[] } } | undefined;
           const tier = summary?.formalComparisonStats?.tiers?.find(tier => tier.comparisonTier === item.statistics!.comparisonTier);
           if (result.kind !== "inputs" || !tier || tier.comparisonCount <= 0 || !tier.references?.length)
             throw new Error("该运行与档位没有可引用的正式统计");
+          if (statistics) chart = { ...chart, ...comparisonChartData(tier) };
           if (references.every(item => item.statistics)) timeScopes.set(item.statistics.runId, statisticalScope(result.summary as JsonObject,
             references.filter(ref => ref.statistics?.runId === item.statistics!.runId).map(ref => ref.statistics!.comparisonTier)));
           citations.push({ statistics: item.statistics, evaluatorVersion: result.evaluatorVersion, references: tier.references,
@@ -245,6 +309,8 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         }
       }
       if (timeScopes.size) chart.scope = [...timeScopes.values()].join("；");
+      if (!validateChartReceipt(chart)) throw new Error(`图表数据无法呈现：${JSON.stringify(schemaIssues(validateChartReceipt.errors))}`);
+      if (statistics) validateChart(chart);
       const result = textResult({ kind: "chart", chart });
       return citations.length ? { ...result, details: { references: citations } } : result;
     },
@@ -255,7 +321,8 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     const validate = ajv.compile(inputSchema);
     const validateArgs = (value: unknown) => {
       if (validate(value)) return;
-      const issues = schemaIssues(validate.errors).map(({ path, code, expected }) => {
+      const errors = validate.errors?.filter(error => error.keyword !== "if");
+      const issues = schemaIssues(errors).map(({ path, code, expected }) => {
         const issue = { path, code, expected };
         if (code !== "schema_maxLength") return issue;
         const field = path.split("/").slice(1).reduce<unknown>((parent, key) => parent !== null && typeof parent === "object"
@@ -264,7 +331,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         const actualLength = [...field].length;
         return { ...issue, actualLength, excess: actualLength - (expected as { limit: number }).limit };
       });
-      throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(validate.errors)}`);
+      throw new Error(`${name} 参数无效；未执行。只修正以下字段，不原样重试：${JSON.stringify(issues)}。${ajv.errorsText(errors)}`);
     };
     return { name, description: descriptions[name], inputSchema, readOnly: ["list_data", "read_case", "read_evidence", "read_data", "search_data", "search_web", "read_web", "view_image", "calculate", "read_code_output", "read_specialist", "show_chart", "show_comparison"].includes(name),
       validate: validateArgs,

@@ -14,6 +14,12 @@ const { ComparisonDiagram, comparisonFromToolOutput } = await import(pathToFileU
 const receipt = (chart: Record<string, unknown>) => JSON.stringify({ kind: "chart", chart });
 const base = { title: "FAST 同档对战", scope: "已完成的 2 场 FAST 对战", unit: "场", source: "本次正式对比结果",
   categories: ["A 组胜", "B 组胜"], series: [{ name: "FAST", values: [1, 1] }] };
+
+test("statistics queries do not insert a fixed table into the response", () => {
+  const root = { kind: "tool-result", callId: "statistics", call: { name: "list_data" }, isError: false,
+    content: [{ type: "text", text: JSON.stringify({ kind: "statistics", history: { status: "published", caseCount: 10 }, currentRuns: [] }) }] };
+  assert.deepEqual(chartsFromToolData([{ root }]), []);
+});
 function render(chart: Record<string, unknown>) {
   const parsed = chartFromToolOutput(receipt(chart), "ok");
   assert(parsed, "fixture should satisfy the structured chart contract");
@@ -56,6 +62,20 @@ test('a chart stands alone and its notes add only the supplied explanation', () 
   assert.equal(document.querySelector('[data-chart-annotations] li')!.textContent, note,
     'the numbered note does not repeat the category, series, value or unit');
   assert.equal(document.querySelector<HTMLElement>('[data-chart-annotations]')!.style.fontSize, '14px', 'necessary annotations remain readable without small print');
+});
+
+test('chart caveats remain visible text without adding a canned conclusion or double-counting model appearances', () => {
+  const caveat = '仅覆盖已裁决样本，尚不能判断显著性。<img src=x>';
+  const chart = { ...base, type: 'heatmap', caveat, categories: ['A组Fast', 'B组Fast'], series: [
+    { name: '胜场', values: [6, 5] }, { name: '负场', values: [5, 6] },
+    { name: '双方均好', values: [0, 0] }, { name: '双方均差', values: [0, 0] },
+  ] };
+  const document = render(chart);
+  assert.equal(document.querySelector('[data-chart-caveat]')!.textContent, caveat);
+  assert.equal(document.querySelector('[data-chart-unit]')!.textContent, '单位：场');
+  assert.equal(document.querySelectorAll('img, script, table, [data-chart-summary]').length, 0);
+  for (const invalid of ['', ' ', null, '字'.repeat(501)])
+    assert.equal(chartFromToolOutput(receipt({ ...chart, caveat: invalid }), 'ok'), null);
 });
 
 test("line chart uses elapsed time and breaks paths at missing values", () => {
@@ -534,12 +554,12 @@ test('comparison parsing hides failures and malformed receipts while supplied ma
     ...[[], Array(4).fill(comparison.candidates[0]!.paths[0]), [null], [{ ...comparison.candidates[0]!.paths[0], evidence: null }],
       [{ ...comparison.candidates[0]!.paths[0], extra: true }],
       [{ ...comparison.candidates[0]!.paths[0], assessment: 'win' }], [{ ...comparison.candidates[0]!.paths[0], assessment: ['strength'] }],
-      [{ ...comparison.candidates[0]!.paths[0], title: '超'.repeat(17) }], [{ ...comparison.candidates[0]!.paths[0], evidence: '超'.repeat(142) }],
-      [{ ...comparison.candidates[0]!.paths[0], impact: '超'.repeat(37) }]]
+      [{ ...comparison.candidates[0]!.paths[0], title: '超'.repeat(49) }], [{ ...comparison.candidates[0]!.paths[0], evidence: '超'.repeat(802) }],
+      [{ ...comparison.candidates[0]!.paths[0], impact: '超'.repeat(241) }]]
       .map(paths => ({ ...comparison, candidates: [{ ...comparison.candidates[0], paths }, comparison.candidates[1]] })),
     { ...comparison, title: '' }, { ...comparison, verdict: 1 }, { ...comparison, reason: [] }, { ...comparison, caveat: {} },
-    { ...comparison, candidates: [{ ...comparison.candidates[0], summary: '超'.repeat(81) }, comparison.candidates[1]] },
-    { ...comparison, title: '超'.repeat(41) }, { ...comparison, reason: '超'.repeat(161) }, { ...comparison, caveat: '超'.repeat(101) },
+    { ...comparison, candidates: [{ ...comparison.candidates[0], summary: '超'.repeat(241) }, comparison.candidates[1]] },
+    { ...comparison, title: '超'.repeat(121) }, { ...comparison, reason: '超'.repeat(601) }, { ...comparison, caveat: '超'.repeat(401) },
   ];
   for (const diagram of invalid) assert.equal(comparisonFromToolOutput(comparisonReceipt(diagram), 'ok'), null);
   const attack = '<img src=x>';
@@ -562,6 +582,19 @@ test('comparison prose preserves complete time phrases without changing their te
   const reason = document.querySelector('[data-comparison-reason]')!;
   assert.equal(reason.textContent, diagram.reason);
   assert.deepEqual([...reason.querySelectorAll('.eris-comparison-value')].map(node => node.textContent), ['1–3周', '10月中下旬']);
+});
+
+test('comparison receipts preserve expanded evidence and counterevidence limits through rendering', () => {
+  const evidence = '证'.repeat(400) + '；' + '界'.repeat(400);
+  const diagram = { ...comparison, title: '问'.repeat(120), reason: '理'.repeat(600), caveat: '限'.repeat(400),
+    candidates: comparison.candidates.map(candidate => ({ ...candidate, summary: '答'.repeat(240),
+      paths: [{ title: '项'.repeat(48), evidence, impact: '用'.repeat(240), assessment: 'uncertain' }] })) };
+  const parsed = comparisonFromToolOutput(comparisonReceipt(diagram), 'ok');
+  assert(parsed);
+  const document = new JSDOM(renderToStaticMarkup(createElement(ComparisonDiagram, { diagram: parsed }))).window.document;
+  assert.equal(document.querySelector('[data-comparison-support]')!.textContent, evidence);
+  assert.equal(document.querySelector('[data-comparison-reason]')!.textContent, diagram.reason);
+  assert.equal(document.querySelector('[data-comparison-caveat]')!.textContent, diagram.caveat);
 });
 
 test('comparison emphasis preserves original phrases and renders supplied markup as text', () => {

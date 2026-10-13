@@ -33,18 +33,31 @@ function verifyEvidenceExcerpts(value, original, source, pointer = '') {
   }
 }
 
-test('snapshot covers 30 questions and all 42 accepted pairings without promoting pending reviews', () => {
-  assert.equal(report.cases.length, 30);
-  assert.equal(new Set(report.cases.map(item => JSON.stringify([item.batchId, item.caseId]))).size, 30);
-  assert.equal(allPairs.length, 42);
-  assert.equal(new Set(allPairs.map(pair => pair.id)).size, 42);
-  assert.equal(allPairs.filter(pair => pair.status === 'decided').length, 37);
-  assert.equal(allPairs.filter(pair => pair.status === 'needs_review').length, 5);
-  assert.equal(report.cases.filter(item => item.pairs.every(pair => pair.status === 'needs_review')).length, 1);
-  assert.equal(new Set(allPairs.flatMap(pair => pair.candidates.map(candidate => candidate.inputId))).size, 84);
-  assert.equal(report.meta.configuredEvaluator, 'r152');
-  assert.deepEqual(report.meta.evaluatorVersions, { r151: 35, r152: 2 });
-  assert.equal(report.meta.sourceValidation.delivery.valid, false);
+test('60 different questions include 40 recent subjective and 20 objective cases, balanced by tier', async () => {
+  const selection = JSON.parse(await readFile(resolve(root, report.meta.selection.file), 'utf8'));
+  assert.equal(report.cases.length, 60);
+  assert.equal(new Set(report.cases.map(item => item.id)).size, 60);
+  assert.equal(report.meta.questionCount, 60);
+  assert.equal(new Set(report.cases.map(item => item.caseId)).size, 60, 'No question repeats across tiers or dates');
+  assert.equal(new Set(report.cases.map(item => item.question.normalize('NFKC').replace(/\s+/gu, '').replace(/[?？。]+$/u, ''))).size, 60);
+  assert.equal(allPairs.length, 60);
+  assert.equal(new Set(allPairs.map(pair => pair.id)).size, 60);
+  assert.deepEqual(allPairs.map(pair => pair.id), selection.cases.map(item => item.comparisonId));
+  assert.ok(report.cases.every(item => item.pairs.length === 1));
+  assert.equal(allPairs.filter(pair => pair.status === 'decided').length, 60);
+  assert.equal(new Set(allPairs.flatMap(pair => pair.candidates.map(candidate => candidate.inputId))).size, 120);
+  assert.deepEqual(report.meta.evaluatorVersions, { r195: 32, r194: 2, r192: 6, r186: 10, r185: 10 });
+  for (const tier of ['Fast', 'Expert']) {
+    const subjective = allPairs.filter(pair => pair.tier === tier && !pair.hasStandardAnswer);
+    const objective = allPairs.filter(pair => pair.tier === tier && pair.hasStandardAnswer);
+    assert.equal(subjective.length, 20);
+    assert.equal(objective.length, 10);
+    assert.equal(subjective.filter(pair => pair.runId === 'daily-2026-10-13').length, 11);
+    assert.equal(subjective.filter(pair => pair.runId === 'daily-2026-10-12').length, 9);
+    assert.ok(objective.every(pair => pair.runId === 'daily-2026-10-09'));
+  }
+  assert.equal(new Set(report.cases.filter(item => !item.pairs[0].hasStandardAnswer).map(item => item.question)).size, 40);
+  assert.equal(new Set(report.cases.filter(item => item.pairs[0].hasStandardAnswer).map(item => item.caseId)).size, 20);
   assert.equal('experiments' in report, false, 'Experiments are maintained in their independent data file');
   for (const pair of allPairs) {
     assert.equal(pair.hasStandardAnswer, pair.groundTruth.available);
@@ -89,7 +102,7 @@ test('all shared requirements and comparison items remain available without summ
       assert.ok(candidate.finalAnswerParts.length > 0);
       assert.ok(Array.isArray(candidate.criteriaAssessments));
       assert.ok(candidate.criteriaAssessments.every(assessment => pair.criteria.some(criterion => criterion.id === assessment.criterion_id)), 'Every accepted assessment keeps its original criterion, including red flags');
-      assert.ok(candidate.provenance.source.file.startsWith('data/sources/model-answers/'));
+      assert.ok(candidate.provenance.source.file.startsWith('data/sources/automations/remote-evaluation/'));
       assert.ok(candidate.answerReferences.every(reference => reference.renderAsText === true));
       assert.ok(candidate.answerReferences.every(reference => !reference.value?.startsWith('data:')));
       assert.ok(candidate.findings.every(finding => !finding.evidence?.some(evidence => 'quote' in evidence)));
@@ -155,9 +168,12 @@ test('generated JavaScript preserves answer text and cannot terminate an inline 
 });
 
 test('optional source audit verifies all standards, full answers, task-linked attributions and formal decisions', async t => {
-  const statePath = resolve(root, report.meta.sourceProvenance.state);
-  try { await access(statePath); } catch { t.skip('Original run is not available beside this standalone snapshot'); return; }
-  const state = JSON.parse(await readFile(statePath, 'utf8'));
+  const states = new Map();
+  for (const source of report.meta.sources) {
+    const statePath = resolve(root, source.sourceProvenance.state);
+    try { await access(statePath); } catch { t.skip('Original run is not available beside this standalone snapshot'); return; }
+    states.set(source.runId, JSON.parse(await readFile(statePath, 'utf8')));
+  }
   const requiredFiles = new Set(allPairs.flatMap(pair => [pair.provenance.result.file, pair.provenance.criteria.file, ...pair.candidates.flatMap(candidate => [candidate.provenance.source.file, candidate.provenance.attribution.file]) ]));
   for (const file of requiredFiles) {
     try { await access(resolve(root, file)); }
@@ -176,6 +192,7 @@ test('optional source audit verifies all standards, full answers, task-linked at
   const seenIds = new Set();
   for (const item of report.cases) {
     for (const pair of item.pairs) {
+      const state = states.get(pair.runId);
       const formalRow = rowAt(pair.provenance.result);
       assert.equal(formalRow.comparison_id, pair.id);
       assert.equal(formalRow.evaluator_version, pair.evaluatorVersion);
@@ -200,6 +217,8 @@ test('optional source audit verifies all standards, full answers, task-linked at
         seenIds.add(candidate.inputId);
         const input = state.inputs[candidate.inputId];
         const raw = rowAt(candidate.provenance.source);
+        assert.equal(raw.trace_id, input.trace_id, 'Reordered source lines must retain the exact original trace');
+        assert.equal(candidate.provenance.recordedSource.line, input.line);
         assert.equal(raw.case_id, item.caseId);
         assert.equal(raw.batch_id, item.batchId);
         assert.equal(input.question, item.question);
@@ -230,5 +249,5 @@ test('optional source audit verifies all standards, full answers, task-linked at
       }
     }
   }
-  assert.equal(seenIds.size, Object.keys(state.inputs).length, 'No selected question or input is silently omitted');
+  assert.equal(seenIds.size, report.meta.inputCount, 'Every selected input is verified');
 });

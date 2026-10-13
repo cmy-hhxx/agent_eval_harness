@@ -15,6 +15,24 @@ const searchFields=value=>Object.entries(value).filter(([,entry])=>['string','nu
 const dateAssessment=value=>({not_requested:'未限定日期',unknown:'发布日期未确认',within_range:'在日期范围内',outside_range:'超出日期范围'}[value?.status]);
 const dateBasis=value=>({search_metadata:'搜索日期',page_metadata:'页面声明',none:'无日期依据'}[value?.basis]);
 const caption=value=>searchFields(value).map(({label,value})=>`${label}：${value}`).join(' · ');
+function statisticsModel(model,output,status){
+ const summary=`累计评测 · ${status}`;
+ if(model.state==='error'||output?.kind!=='statistics')return {summary};
+ const history=output.history,progress=history?.progress,runs=rows(output.currentRuns);
+ const published=history?.status==='published';
+ const rate=value=>typeof value==='number'?`${value.toFixed(2)}%`:'未知';
+ const dates=Array.isArray(history?.requestDates)?[...history.requestDates].sort():[];
+ const items=[published?{title:'历史累计',fields:searchFields({
+  '纳入题目':history.totalCaseCount,'已评题目':history.caseCount,
+  '完成全部对战':`${progress.completedCaseCount} 道 · ${rate(progress.caseCompletionRate)}`,
+  '完成对战':`${progress.completedBattleCount} / ${progress.expectedBattleCount} 场 · ${rate(progress.battleCompletionRate)}`,
+  '快照时间':history.snapshotAt,'数据日期':dates.length?`${dates[0]} 至 ${dates.at(-1)}`:undefined,
+ })}:{title:'累计统计不可用',description:string(history?.error),fields:[]}];
+ items.push({title:'运行中批次',fields:searchFields({'批次数':runs.length}),...(runs.length?{groups:[{label:'各批次进度',items:runs.map(run=>({
+  title:run.runId,fields:searchFields({'回答数':run.summary?.inputCount,'题目数':run.summary?.caseCount,'正式对战':run.summary?.formalComparisonsAccepted}),
+ }))}]}:{})});
+ return {summary:published?`累计评测 · ${progress.completedBattleCount} 场对战 · ${status}`:`累计统计不可用 · ${runs.length} 个运行中批次`,details:{items}};
+}
 function caseDetails(output){
  const scope=output.formal?.comparisonScope;
  const items=[{title:'用户原问',description:string(output.question),fields:[]}];
@@ -79,6 +97,7 @@ function webReadModel(model,args,output,status){
 export function analysisToolModel(name,model){
  const args=parse(model.bodyRaw)??{},output=parse(model.output),reference=args.reference??args;
  const status=statusText(model,output);
+ if(name==='list_data'&&(args.view==='statistics'||output?.kind==='statistics'))return statisticsModel(model,output,status);
  if(name==='search_web')return webSearchModel(model,args,output,status);
  if(name==='read_web')return webReadModel(model,args,output,status);
  if(name==='read_evidence'){

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { emptyUsage, type ResultReference, type RunState } from "@eval/contracts";
 import { createRunRepository, type RunCodec } from "./repository.js";
+import { readRunOverviews } from "./run-overview.js";
 
 const state: RunState = {
   manifest: {
@@ -14,6 +15,18 @@ const state: RunState = {
   },
   receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
 };
+
+test("repository checkpoint saves refresh the overview through running, finished and resumed states", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-overview-save-")), run = path.join(directory, "run");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const codec: RunCodec<RunState> = { encode: value => value, overview: value => ({ status: value.manifest.status }),
+    references: () => [], resultId: () => "", decode: value => value };
+  const repository = createRunRepository(codec, () => { throw new Error("No results"); });
+  for (const status of ["running", "finished", "running", "interrupted"] as const) {
+    await repository.writeRun(run, { ...state, manifest: { ...state.manifest, status } });
+    assert.deepEqual(await readRunOverviews(directory), [{ runId: "run", value: { status } }]);
+  }
+});
 
 async function fixture(t: test.TestContext, references: ResultReference[]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-repository-"));

@@ -16,6 +16,76 @@ const timing = { status: "finished", batches: ["2026-10-10"], timeScope: { timeZ
   evaluation: { from: "2026-10-10T08:16:00.000+08:00", to: "2026-10-12T06:54:00.000+08:00" as string | null },
   acceptedResults: { from: "2026-10-10T08:18:00.000+08:00", through: "2026-10-10T22:02:00.000+08:00" }, sampleTimeRange: null } };
 
+test("formal statistics charts read counts once and preserve the model's analysis without copied data fields", async () => {
+  const statistics = { runId: "run", comparisonTier: "Fast" };
+  const references = [{ runId: "run", taskId: "accepted" }];
+  const models = [
+    { model: "a", modelName: "A组Fast", comparisonCount: 11, wins: 6, losses: 5, both_good: 0, both_bad: 0 },
+    { model: "b", modelName: "B组Fast", comparisonCount: 11, wins: 5, losses: 6, both_good: 0, both_bad: 0 },
+  ];
+  const calls: unknown[] = [];
+  const source = { kind: "inputs", evaluatorVersion: "fixture", summary: { ...timing,
+    formalComparisonStats: { tiers: [{ comparisonTier: "Fast", comparisonCount: 11, references, models }] } } };
+  const before = structuredClone(source);
+  const tool = chartTool({ ...noData, async list(query) { calls.push(query); return source; } });
+  const input = { title: "A 略多胜场，尚不能判断显著性", statistics, caveat: "仅覆盖该批次已裁决样本",
+    annotations: [{ categoryIndex: 0, seriesIndex: 0, note: "6场胜出需要结合题型分布解读" }] };
+  const result = await tool.execute(input, context);
+  assert.deepEqual(calls, [{ runId: "run", limit: 1 }]);
+  assert.deepEqual(JSON.parse(result.content[0].text!), { kind: "chart", chart: {
+    type: "heatmap", title: input.title, scope: "2026-10-10 · Fast 11场", unit: "场", source: "本地正式对战统计",
+    categories: ["A组Fast", "B组Fast"], series: [
+      { name: "胜场", values: [6, 5] }, { name: "负场", values: [5, 6] },
+      { name: "双方均好", values: [0, 0] }, { name: "双方均差", values: [0, 0] },
+    ], caveat: input.caveat, annotations: input.annotations,
+  } });
+  assert.deepEqual(result.details, { references: [{ statistics, evaluatorVersion: "fixture", references,
+    timeScope: timing.timeScope, batches: timing.batches }] });
+  assert.deepEqual(source, before);
+  assert.equal(Object.hasOwn(input, "categories"), false, "normalization must not mutate tool arguments");
+  models[0]!.wins = 7; models[0]!.losses = 4;
+  models[1]!.wins = 4; models[1]!.losses = 7;
+  const refreshed = await tool.execute({ ...input, type: "bubble_matrix" }, context);
+  assert.equal(calls.length, 2, "do not reuse stale data across executions");
+  assert.deepEqual(JSON.parse(refreshed.content[0].text!).chart.series[0].values, [7, 4]);
+});
+
+test("statistics chart selectors cannot silently override supplied numbers or unrelated visual semantics", async () => {
+  const tool = chartTool(noData);
+  const input = { title: "战绩", statistics: { runId: "run", comparisonTier: "Fast" } };
+  for (const invalid of [
+    { ...input, statistics: { runId: "run" } }, { ...input, categories: ["A"] }, { ...input, series: chart.series },
+    { ...input, unit: "%" }, { ...input, source: "另一来源" }, { ...input, scope: "全部历史" },
+    { ...input, references: chart.references }, { ...input, type: "pie" },
+    { ...input, type: "line" }, { ...input, maxValue: 100 }, { ...input, metric: "accuracy" },
+  ]) await assert.rejects(tool.execute(invalid, context), /参数无效/);
+});
+
+test("missing or inconsistent formal counts cannot become zero-valued chart observations", async () => {
+  const model = { model: "a", modelName: "A组", comparisonCount: 2, wins: 1, losses: 1, both_good: 0, both_bad: 0 };
+  for (const models of [undefined, [], [{ ...model, wins: null }], [{ ...model, losses: undefined }],
+    [{ ...model, both_bad: -1 }], [{ ...model, wins: 1.5 }], [{ ...model, comparisonCount: 3 }]]) {
+    const tool = chartTool({ ...noData, async list() { return { kind: "inputs", summary: { ...timing,
+      formalComparisonStats: { tiers: [{ comparisonTier: "Fast", comparisonCount: 2, references: [{ runId: "run", taskId: "one" }], models }] } } }; } });
+    await assert.rejects(tool.execute({ title: "战绩", statistics: { runId: "run", comparisonTier: "Fast" } }, context), /完整.*计数/);
+  }
+});
+
+test("manual charts default to a value matrix and derive a local source only after reference verification", async () => {
+  const tool = chartTool({ ...noData, async list() { return { kind: "inputs" }; } });
+  const { type: _type, source: _source, ...input } = chart;
+  const { references: _references, ...external } = input;
+  const caveat = "未完成样本不在此图中";
+  const result = await tool.execute({ ...input, caveat }, context);
+  assert.deepEqual(JSON.parse(result.content[0].text!).chart, { ...external,
+    type: "heatmap", source: "本地评测材料", caveat });
+  await assert.rejects(tool.execute(external, context), /source/);
+  const missing = chartTool({ ...noData, async list() { return { kind: "runs" }; } });
+  await assert.rejects(missing.execute(input, context), /引用不存在/);
+  await assert.rejects(tool.execute({ ...input, type: "concentric" }, context), /参数无效/,
+    "explicit chart choices must not be changed or padded with invented series");
+});
+
 test("charts reject unsafe configuration and invalid geometry before reading sources", async () => {
   const tool = chartTool(noData);
   for (const invalid of [

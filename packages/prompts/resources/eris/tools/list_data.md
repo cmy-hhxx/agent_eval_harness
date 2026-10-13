@@ -1,7 +1,10 @@
-查询本地运行、统计与对战目录。省略 runId 返回运行目录和 currentRun.summary，优先有输入的运行中记录，其次最近有输入的运行；提供 runId 时按 view 读取该运行。
+查询本地运行、统计与对战目录。累计评测数量、完成进度和总体结论使用 `{"view":"statistics"}`，读取后结合用户问题分析已有数据，解释主要差异及其边界。查看运行目录用 `{}`，返回目录和 currentRun.summary。
+
+view:"inputs" 或 "comparisons" 可省略 runId，优先有输入的运行中批次，其次最近有输入的运行，返回实际 runId 和 selectionReason；无需先查目录。已知目标运行或继续筛选、翻页、换题时传该 runId，服务端严格限定在指定运行，空结果不会自动换批次。随机找一场完整评测摘要用 `{"view":"comparisons","sample":true,"limit":1,"includeAnalysis":true}`。
 
 view:"statistics" 不传 runId：history 是最近完整发布的累计快照，currentRuns 是运行中批次，可能重叠，分别展示。snapshotAt 是快照时点，requestDates 是数据日期；history 不含问题维度，缺失快照返回 unavailable。
-历史 totalCaseCount=纳入题数，caseCount=至少完成一场的题数；progress.completedCaseCount=完成全部预期对战的题数，completedBattleCount/expectedBattleCount=已完成/预期场数。stats 分模型、档位，evaluated 是参战分母，wins、both_good、both_bad 之外为负场。accuracy 仅覆盖其 count 个有标准答案的样本；first/total 为首字/总耗时（毫秒），input/output 为 token 数。
+历史 totalCaseCount=纳入题数，caseCount=至少完成一场的题数；progress.completedCaseCount=完成全部预期对战的题数，completedBattleCount/expectedBattleCount=已完成/预期场数。progress.battleCompletionRate=场次完成百分比，caseCompletionRate=全部对战已完成题数占 totalCaseCount 的百分比，均保留两位小数，分母为零时为 null。stats 分模型、档位，evaluated 是参战分母，wins、losses、both_good、both_bad 分别为胜、负、双方都好、双方都差场数。winRate、accuracy.rate 也是0–100的百分比。已有计数和比例直接用于回答，按展示精度舍入；材料足够即可归纳结论。
+accuracy 仅覆盖其 count 个有标准答案的样本；first/total 为首字/总耗时（毫秒），input/output 为 token 数。
 
 view:"comparisons" 查询正式对战。query 字面筛选原问、模型或判词，comparisonTier、outcome 精确筛选档位与胜负；默认排除双方都好，可用 outcome:"both_good" 或 "all" 纳入。includeAnalysis:true 同页返回原问、双方 assessments、问题维度、outcomes.reason 和 tradeoff，适合批量分析；按 nextOffset 读完目标范围。
 随机找一题用 sample:true,limit:1；换题时 excludeCases 传已展示的 items[].case，排除同题全部档位。selection 给出可选与剩余题数；空结果表示没有符合条件的案例。

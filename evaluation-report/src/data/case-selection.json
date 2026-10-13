@@ -1,0 +1,487 @@
+{
+  "snapshotDate": "2026-10-13",
+  "unit": "一个不同问题计一个 case，每题只选一场同档 A/B 正式对比，不重复计入 Fast / Expert 或跨日结果。",
+  "rationale": "主观题先覆盖 10 月 13 日全部 22 个不同问题，每题保留一个代表档位，再从 10 月 12 日补 18 个不同问题；两批各取 Fast / Expert 11+11 和 9+9 场。客观题取最近带标准答案的 10 月 9 日批次，Fast / Expert 各 10 个不同问题。合计 60 个不同问题，主观 40、客观 20，Fast / Expert 各 30。覆盖筛选、归因、估值、财报、宏观、基金、期权、客服及不同判决，不作为总体分布估计。",
+  "cases": [
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_9ba0881b-71d0-461b-90f7-90c43c4f9c5e",
+      "title": "昨日放量筛选",
+      "category": "指标口径",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_ac992869-d549-40c5-9765-6bb04d7b817f",
+      "title": "种植业下跌归因",
+      "category": "前提核验",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_ff852273-ea76-4d02-abee-f604489689ed",
+      "title": "油价与石油股背离",
+      "category": "产业链归因",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_17282ee5-e0a1-47bc-abd9-44a115746788",
+      "title": "逸豪新材涨价弹性",
+      "category": "盈利测算",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_2db36d0b-1341-403a-9b17-d4f0839b4bf5",
+      "title": "百亚股份入场判断",
+      "category": "估值口径",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_60812bac-9dae-4605-996f-dd86dab0da9c",
+      "title": "蓝思科技持有判断",
+      "category": "操作条件",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_2434bd96-5b78-46ad-bc2f-84e11cc172db",
+      "title": "大唐电力补仓时点",
+      "category": "操作条件",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_97f02122-b161-4eaa-aaaa-469d959bd0fc",
+      "title": "科技股筹码筛选",
+      "category": "范围与完整性",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_e4db99e2-2619-405d-bfb9-aae9672c14f9",
+      "title": "周换手率倍数筛选",
+      "category": "时间窗口",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_61e6f2be-03c0-45a3-a10a-5fd35a4ed13f",
+      "title": "历史涨停股名单",
+      "category": "名单交付",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_08b39905-1b5e-4e54-8860-1369461bb0b7",
+      "title": "智微智能结项资金",
+      "category": "事件状态与口径",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_8608c78b-2c78-482c-8f75-e030033f3dcc",
+      "title": "宇树合作预期",
+      "category": "事实与推断",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_8f25b4ec-0228-45c3-a9d3-034a2e32e496",
+      "title": "紫光股份低弹性",
+      "category": "因果解释",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_1cd30bd0-1b13-4d0f-9b68-0b5368a7cc3d",
+      "title": "智慧农业操作机会",
+      "category": "政策与产业链",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_d7ea920d-1967-41af-aea4-760cc38784d5",
+      "title": "博敏电子走势判断",
+      "category": "技术与财务核验",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_b6320b39-4a45-4536-9c90-8e2820ea5b74",
+      "title": "退出社区入口",
+      "category": "客服路径可靠性",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_a65be9e0-da0d-41ba-acd3-a75506182ceb",
+      "title": "查询开户券商",
+      "category": "任务完成与效率",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_6ccb0d07-5b4f-40af-890b-f4e7c027c138",
+      "title": "瀑布线功能入口",
+      "category": "功能边界",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_9956af45-9ea6-4c67-8273-1e8e818bc08f",
+      "title": "亚盛集团主营业务",
+      "category": "基础公司介绍",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_c7a3404b-8bec-4e17-9182-09fdc3f8d643",
+      "title": "电力龙头股名单",
+      "category": "行业覆盖",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_8f661e8c-fc11-40c8-9946-f49eb27476de",
+      "title": "信诺维买方与筹码",
+      "category": "资金身份归因",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-13",
+      "comparisonId": "cmp_624d91ac-9583-46c6-aa27-3c432e7371d7",
+      "title": "莲花与天通上涨归因",
+      "category": "当日行情核验",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_91dd03c3-74e0-49bb-8b88-21ede24be2cf",
+      "title": "美债拍卖与国内宽松",
+      "category": "宏观传导",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_3938eb79-476c-4417-a693-91f7f6234b36",
+      "title": "涨停放量缺口交集",
+      "category": "多条件筛选",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_67b12e5e-49a0-4250-bffa-4842fe3ace26",
+      "title": "领益智造机器人量产",
+      "category": "业务进展",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_3a9552ab-13bf-4a06-aac7-cb6c46832cd5",
+      "title": "光模块出口限制情景",
+      "category": "供应链研究",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_62f34603-4c5a-4d85-a898-4b67441b199c",
+      "title": "限价市价单与费用",
+      "category": "交易规则",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_bb7eea80-2869-4cc2-810a-6986eeccc1cd",
+      "title": "拓普北美产能估值",
+      "category": "估值分析",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_f176770a-38f3-4e74-bc4a-717fc1bd6921",
+      "title": "鑫科材料现金流应对",
+      "category": "财务分析",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_f24ef022-fb9e-4f64-baab-ded546f34e55",
+      "title": "立讯精密三档估值",
+      "category": "情景测算",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_f8971471-9731-4dbe-aecd-bf225923a937",
+      "title": "第一能源季度财报",
+      "category": "财报解读",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_68fa6f4b-f338-4563-916a-ce69ea390a30",
+      "title": "信澳新能源最大回撤",
+      "category": "基金风险",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_19e9360a-a758-4cfb-8005-dd11113ba4ea",
+      "title": "MU备兑期权收益",
+      "category": "期权测算",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_40a0eb34-b098-43b3-8ef8-2e6c9dc61852",
+      "title": "特斯拉规模效应",
+      "category": "深度财务研究",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_9ea0db10-0abb-4c42-a31f-bce9616f7f24",
+      "title": "黑色期货库存信号",
+      "category": "期货分析",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_87010784-0690-4d1b-b51f-72f5f7312a3e",
+      "title": "零售三公司PB与亏损",
+      "category": "横向比较",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_2241da8f-6cad-4ad7-8493-fd9fc78b9159",
+      "title": "小市值高增长筛选",
+      "category": "多条件筛选",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_09a1401d-22c1-41fe-ac89-9f369d2624f2",
+      "title": "红利低波ETF分红",
+      "category": "基金条款",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_3003c4d8-2e9f-4b2e-b660-077166431832",
+      "title": "微电子借壳传闻澄清",
+      "category": "公告核验",
+      "tier": "Expert",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-12",
+      "comparisonId": "cmp_c590b37d-0005-4dc7-8105-492ed2525cbc",
+      "title": "六股历史行情查询",
+      "category": "行情取数",
+      "tier": "Fast",
+      "hasStandardAnswer": false
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_c9ed5d7b-87ab-497b-bfd9-96660b050f1a",
+      "title": "贵金属板块上涨",
+      "category": "板块催化",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_5fd02fe2-5bf7-405b-a563-bada3f5e20ab",
+      "title": "景旺电子涨停",
+      "category": "关键催化缺漏",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_a24bf5d0-49c0-4ccc-b5da-b4bc67b0d81f",
+      "title": "ST亿晶上涨",
+      "category": "事件时点",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_4361a2db-8085-4d02-ad7c-32a8baa6bbbb",
+      "title": "泡泡玛特上涨",
+      "category": "标准匹配",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_f26dae89-557c-4dc7-b619-dae5e3b371af",
+      "title": "中核科技连板",
+      "category": "传闻与业务边界",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_bff419e5-e210-45bb-b850-3da14ae88be9",
+      "title": "德尔玛下跌",
+      "category": "公告核验",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_e4fd33e5-9447-42d0-89e2-edb04dc4964e",
+      "title": "Moncler收购现金流",
+      "category": "金额与正负号",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_6885c927-5f1d-47f9-bcc7-4498eb09632b",
+      "title": "分红再投资收益比较",
+      "category": "分红复算",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_4181004d-b3cf-4bcd-a94c-aaeb094e507c",
+      "title": "日本与欧元区CPI",
+      "category": "完整性与数据口径",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_f3ca3743-01fc-4877-bf2a-34f6cbba23ed",
+      "title": "日本工业生产同比",
+      "category": "数值标准",
+      "tier": "Fast",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_15d6887b-b819-4fbb-92b6-9e1275cb7675",
+      "title": "天华新能上涨",
+      "category": "公司交易催化",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_83b01afe-9f9a-43ef-91e6-477c5bc7914e",
+      "title": "MCHP财报后上涨",
+      "category": "财季口径",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_d5b1a2bd-350a-4e94-b13a-09eb2107a471",
+      "title": "中芯国际上涨",
+      "category": "核心与次要原因",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_da2892e7-5e79-4131-a9d1-b191c5982a50",
+      "title": "广电网络涨停",
+      "category": "空回答与任务完成",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_a9699a36-d328-4429-99e5-f626792a5bb4",
+      "title": "苏黎世机场噪声基金",
+      "category": "专项财报取数",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_75886215-0dd3-4981-a70f-9ef100e51867",
+      "title": "Santos现金余额",
+      "category": "币种口径",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_2b6523bf-6367-4e60-8d99-dab5e93c6741",
+      "title": "Nexstar转播协议",
+      "category": "比例统计范围",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_75ebe6c7-8571-4e39-b0fe-9abf2b4c0039",
+      "title": "泛太平洋控股总资产",
+      "category": "季度时点",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_7dbc4b37-55c6-4d99-9fc0-f6e5af55b27b",
+      "title": "涨停放量次日复盘",
+      "category": "多指标统计",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    },
+    {
+      "run": "daily-2026-10-09",
+      "comparisonId": "cmp_f7e1d490-5ac7-4a64-9ea6-949b4ad8957e",
+      "title": "东京建物非流动资产",
+      "category": "金额与单位",
+      "tier": "Expert",
+      "hasStandardAnswer": true
+    }
+  ]
+}

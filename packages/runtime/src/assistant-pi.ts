@@ -148,20 +148,38 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
             await options.checkpoint();
             signal?.throwIfAborted();
             const started = Date.now();
+            const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+            const thinking = request.maxThinking !== undefined && thinkingLevels.indexOf(request.maxThinking) < thinkingLevels.indexOf(config.thinking)
+              ? request.maxThinking : config.thinking;
             const messages = session.agent.state.messages;
             const observed = messages
               .flatMap(message => message.role === "toolResult" && !message.isError && request.sourceTools?.includes(message.toolName)
                 ? [{ tool: message.toolName, content: message.content }] : []);
             const sources = request.selectSources ? request.selectSources(observed) : observed;
+            // Keep the evidence prefix stable across draft repairs and avoid JSON inside JSON strings.
+            const evidence = sources.flatMap(source => source.content.map(block => {
+              if (block.type !== "text") return block;
+              let material: unknown = block.text ?? "";
+              try { material = JSON.parse(block.text ?? ""); } catch { /* Plain source text remains verbatim. */ }
+              return { type: "text" as const, text: JSON.stringify({ sources: [{ tool: source.tool, material }] }) };
+            }));
             const response = await runtime.completeSimple(model, { systemPrompt: request.systemPrompt,
-              messages: [{ role: "user", content: sources.length ? JSON.stringify({ draft: request.text, sources }) : request.text, timestamp: started }] }, {
-              signal, reasoning: config.thinking === "off" ? undefined : config.thinking,
+              messages: [
+                ...(evidence.length ? [{ role: "user" as const, content: sdkContent(evidence), timestamp: started }] : []),
+                { role: "user", content: JSON.stringify({ draft: request.draft }), timestamp: started },
+              ] }, {
+              signal, reasoning: thinking === "off" ? undefined : thinking,
               onPayload: value => {
                 const payload = object(transformPayload(value, config));
                 const format = { name: "tool_check", strict: true, schema: request.outputSchema };
                 if (config.api === "openai-responses") payload.text = { ...object(payload.text ?? {}), format: { type: "json_schema", ...format } };
                 else payload.response_format = { type: "json_schema", json_schema: format };
-                if (config.provider === "deepseek" && config.api === "openai-responses" && config.thinking === "off") payload.reasoning = { effort: "none" };
+                if (config.supportsExplicitPromptCaching === true && config.api === "openai-responses" && /^gpt-(?:5\.6|6)(?:[.-]|$)/.test(config.model)) {
+                  payload.prompt_cache_key = "assistant-check";
+                  payload.prompt_cache_options = { mode: "implicit" };
+                  delete payload.prompt_cache_retention;
+                }
+                if (config.provider === "deepseek" && config.api === "openai-responses" && thinking === "off") payload.reasoning = { effort: "none" };
                 return payload;
               },
             });

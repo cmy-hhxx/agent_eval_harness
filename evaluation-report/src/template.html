@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="以四个知道对标先进 Agent 评测体系：行业方法、当前能力、建设路线与真实实验。">
-  <title>Agent 评测体系 · 行业对标与建设路线</title>
+  <meta name="description" content="美团、AWS、Harbor 等主流评测流程，以及基于开源 Pi 的现有评测方案。">
+  <title>Agent 评测体系 · 行业流程与现有方案</title>
   <!-- 样式：共用基础 → 各主题 -->
   <link rel="stylesheet" href="shared/tokens.css">
   <link rel="stylesheet" href="shared/base.css">
@@ -22,7 +22,7 @@
     <a class="site-name" href="#research">评测体系</a>
     <nav class="navigation" aria-label="汇报主题">
       <button type="button" data-page="research" aria-current="page">行业对标</button>
-      <button type="button" data-page="flow">真实案例</button>
+      <button type="button" data-page="flow">现有评测方案</button>
       <button type="button" data-page="architecture">Agent 协作</button>
       <button type="button" data-page="rules">判决规则</button>
       <button type="button" data-page="prompts">提示词</button>
@@ -30,11 +30,25 @@
     </nav>
   </header>
   <main id="main" tabindex="-1">
-    <section class="page" id="page-research" aria-label="行业对标与建设路线">
+    <section class="page" id="page-research" aria-label="行业评测流程">
       <div id="researchBody"></div>
     </section>
     <section class="page" id="page-flow" aria-labelledby="flowTitle" hidden>
-      <div class="page-heading"><h1 id="flowTitle">multi-agent评测机制</h1></div>
+      <div class="page-heading"><h1 id="flowTitle">现有评测方案</h1></div>
+      <div class="pi-evidence">
+        <figure>
+          <div class="pi-crop pi-crop-website"><img src="assets/pi-website.png" width="3606" height="1654" alt="Pi 官网：Pi is a minimal agent harness. Adapt Pi to your workflows." loading="lazy"></div>
+          <figcaption><a href="https://pi.dev/" target="_blank" rel="noopener noreferrer">Pi 官网</a></figcaption>
+        </figure>
+        <figure>
+          <div class="pi-crop pi-crop-github"><img src="assets/pi-github.png" width="3206" height="1678" alt="Pi GitHub 仓库简介：统一 LLM API、Agent 循环、TUI 与 CLI；MIT 许可；截图显示 114.7k Stars。" loading="lazy"></div>
+          <figcaption><a href="https://github.com/earendil-works/pi" target="_blank" rel="noopener noreferrer">earendil-works/pi</a></figcaption>
+        </figure>
+      </div>
+      <dl class="pi-summary">
+        <div><dt>开源底座 · <a href="https://github.com/earendil-works/pi" target="_blank" rel="noopener noreferrer">Pi</a></dt><dd>提供模型调用、会话和工具执行循环。</dd></div>
+        <div><dt>我们做的</dt><dd>把 Pi 任务串成评测流程，编写证据读取、代码复算、结果提交等工具，并完成结果校验与保存。</dd></div>
+      </dl>
       <div id="flowBody"></div>
     </section>
     <section class="page" id="page-architecture" aria-labelledby="architectureTitle" hidden>
@@ -73,6 +87,7 @@
   <script id="report-architecture" src="pages/architecture/index.js"></script>
   <script id="report-experiments" src="pages/experiments/index.js"></script>
   <script id="report-prompts" src="pages/prompts/index.js"></script>
+  <script id="report-research-flows" src="pages/research/flows.js"></script>
   <script id="report-research" src="pages/research/index.js"></script>
 
   <!-- 启动：挂载页面与导航 -->

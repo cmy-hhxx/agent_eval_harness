@@ -4,6 +4,7 @@ import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import { originalResultRow, stageResult, resultFile, acceptedRewrites } from "./results.js";
+import { analysisRunOverview } from "./analysis-progress.js";
 
 type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
 type Patch = { path: string[]; value?: unknown; from?: string[] }[];
@@ -375,6 +376,7 @@ function decodeState(
 
 export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
+  overview: analysisRunOverview,
   decode: decodeState,
   resultId: (row) => String(row.task_id ?? row.comparison_id),
   references(checkpoint, taskIds) {

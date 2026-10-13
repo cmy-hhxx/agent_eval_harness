@@ -15,16 +15,16 @@ export function comparisonFromToolOutput(output, state) {
   let receipt;
   try { receipt = JSON.parse(output); } catch { return null; }
   const diagram = receipt?.kind === 'comparison-diagram' ? receipt.diagram : null;
-  if (!diagram || !text(diagram.title, 40) || !text(diagram.verdict) || !text(diagram.reason, 160)
+  if (!diagram || !text(diagram.title, 120) || !text(diagram.verdict) || !text(diagram.reason, 600)
     || (diagram.reasonHighlight !== undefined && !uniquePhrase(diagram.reason, diagram.reasonHighlight, 16))
-    || (diagram.caveat !== undefined && !text(diagram.caveat, 100))
+    || (diagram.caveat !== undefined && !text(diagram.caveat, 400))
     || !Array.isArray(diagram.candidates) || diagram.candidates.length !== 2
     || !diagram.candidates.every(candidate => candidate && text(candidate.model) && text(candidate.name)
-      && typeof candidate.outcome === 'string' && Object.hasOwn(outcomes, candidate.outcome) && text(candidate.summary, 80)
+      && typeof candidate.outcome === 'string' && Object.hasOwn(outcomes, candidate.outcome) && text(candidate.summary, 240)
       && Array.isArray(candidate.paths) && candidate.paths.length >= 1 && candidate.paths.length <= 3
       && candidate.paths.every(path => path && typeof path === 'object' && !Array.isArray(path)
         && Object.keys(path).every(key => ['title', 'evidence', 'impact', 'assessment', 'highlights'].includes(key))
-        && text(path.title, 16) && text(path.evidence, 141) && text(path.impact, 36)
+        && text(path.title, 48) && text(path.evidence, 801) && text(path.impact, 240)
         && typeof path.assessment === 'string' && Object.hasOwn(assessments, path.assessment) && validHighlights(path)))
     || diagram.candidates[0].model === diagram.candidates[1].model) return null;
   const highlightCount = diagram.candidates.flatMap(candidate => candidate.paths).reduce((count, path) => count + (path.highlights ? 1 : 0), diagram.reasonHighlight === undefined ? 0 : 1);

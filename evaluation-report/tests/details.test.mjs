@@ -40,9 +40,9 @@ function assertEvidence(container, entries, kind) {
   });
 }
 
-test('84份归因完整呈现424项核验、491条发现、53条数值和115条正确性证据', t => {
+test('120份归因完整呈现302项核验、312条发现、44条数值和83条正确性证据', t => {
   const page = environment(t);
-  assert.equal(examples.length,84);
+  assert.equal(examples.length,120);
   const totals={assessments:0,findings:0,numeric:0,correctness:0};
   for (const {pair,candidate} of examples) {
     page.render({pair,candidate});
@@ -112,19 +112,19 @@ test('84份归因完整呈现424项核验、491条发现、53条数值和115条�
       totals.correctness+=candidate.correctnessEvidence.length;
     }
   }
-  assert.deepEqual(totals,{assessments:424,findings:491,numeric:53,correctness:115});
+  assert.deepEqual(totals,{assessments:302,findings:312,numeric:44,correctness:83});
 });
 
-test('数值核验保留标准4687、实际4575、精度与冲突标记，不把标准冲突改成正确', t => {
+test('数值核验保留标准2417、实际2476及精度，不把错误金额改成正确', t => {
   const page=environment(t);
-  const example=examples.find(({candidate})=>candidate.numericChecks.some(check=>check.expected==='4687'&&check.actual==='4575'));
+  const example=examples.find(({candidate})=>candidate.numericChecks.some(check=>check.expected==='2417'&&check.actual==='2476'));
   assert.ok(example);
   page.render(example);
   assert.equal(page.body.querySelector('[data-correctness-state]').textContent,'未匹配标准');
-  assert.equal(page.body.querySelector('[data-standard-conflict]').textContent,'标准冲突');
+  assert.equal(page.body.querySelector('[data-standard-conflict]'),null);
   const row=page.body.querySelector('[data-numeric-index="0"]');
-  assert.equal(row.querySelector('[data-numeric-field="expected"]').textContent,'4687');
-  assert.equal(row.querySelector('[data-numeric-field="actual"]').textContent,'4575');
+  assert.equal(row.querySelector('[data-numeric-field="expected"]').textContent,'2417');
+  assert.equal(row.querySelector('[data-numeric-field="actual"]').textContent,'2476');
   assert.equal(row.querySelector('[data-numeric-field="scale"]').textContent,'1');
   assert.equal(row.querySelector('[data-numeric-mode]').dataset.numericMode,'exact');
   assert.equal(row.querySelector('[data-numeric-matches]').textContent,'不一致');

@@ -62,6 +62,30 @@ test("Serper news preserves untrusted relative dates, locale, domains and pagina
   assert(!Object.hasOwn(result.results[0], "imageUrl"));
 });
 
+test("Serper inherits shared filters, honors per-query overrides and audits the effective scope", async () => {
+  const sent: unknown[] = [];
+  const search = createSerperSearch({ apiKey: "key", fetch: stub((_, options) => {
+    sent.push(JSON.parse(options.body as string));
+    return json({ organic: [{ ...item, link: "https://pbc.gov.cn/a" }, { ...item, link: "https://sec.gov/b" }] });
+  }) });
+  const input = { domains: ["PBC.GOV.CN"], country: "cn", language: "zh-cn", queries: [
+    { query: "利率" }, { query: "rates", domains: ["sec.gov"], country: "us", language: "en" },
+  ] };
+  const original = structuredClone(input);
+  const result = await search.search(input, signal());
+  assert.deepEqual(input, original);
+  assert.deepEqual(sent, [
+    { q: "利率 (site:pbc.gov.cn)", gl: "cn", hl: "zh-cn", num: 10, page: 1 },
+    { q: "rates (site:sec.gov)", gl: "us", hl: "en", num: 10, page: 1 },
+  ]);
+  assert.deepEqual(result.attempts.map(({ domains, country, language }) => ({ domains, country, language })), [
+    { domains: ["pbc.gov.cn"], country: "cn", language: "zh-cn" }, { domains: ["sec.gov"], country: "us", language: "en" },
+  ]);
+  assert.deepEqual(result.results.map(row => ({ domain: row.domain, queries: row.matches.map(match => match.queryIndex) })), [
+    { domain: "pbc.gov.cn", queries: [0] }, { domain: "sec.gov", queries: [1] },
+  ]);
+});
+
 test("Serper maps supported relative time ranges without fabricating credit costs", async () => {
   for (const [timeRange, tbs] of [["day", "qdr:d"], ["week", "qdr:w"], ["month", "qdr:m"], ["year", "qdr:y"]] as const) {
     const search = createSerperSearch({ apiKey: "key", fetch: stub((_, options) => {
@@ -94,6 +118,9 @@ test("Serper validates the current batch contract, calendar dates and normalized
     ...["2024-02-30", "2023-02-29", "2024-13-01", "2024-01-00", "0000-01-01", "2024-1-01", null, 20241001].map((dateFrom) => ({ ...request(), dateFrom })),
     { ...request(), dateFrom: "2024-02-02", dateTo: "2024-02-01" }, { ...request(), dateTo: "2024-02-30" },
     { ...request(), dateTo: "2024-02-01", timeRange: "day" }, { ...request(), query: "x" },
+    { ...request(), domains: ["https://sec.gov"] }, { ...request(), country: "US" }, { ...request(), language: null },
+    { country: "China", queries: [{ query: "x", country: "us" }] },
+    { domains: ["sec.gov"], queries: [{ query: "x" }, { query: "x", domains: ["SEC.GOV"] }] },
     { queries: [{ query: " x ", domains: ["SEC.GOV", "pbc.gov.cn"] }, { query: "x", domains: ["pbc.gov.cn", "sec.gov"], country: "cn", language: "zh-cn", page: 1 }] }];
   for (const value of invalid) await assert.rejects(search.search(value as WebSearchRequest, signal()), /搜索|dateFrom|dateTo/);
   assert.equal(calls, 0);

@@ -14,7 +14,7 @@
       const card=agent=>`<article class="agent-role" data-agent-role="${agent.id}"><h2>${agent.title}</h2><p class="agent-input">${agent.input}</p><p class="agent-action">${agent.action}</p><p class="agent-output">${agent.output}</p></article>`;
       container.innerHTML=`<div class="architecture-counts"><span><b>${report.cases.length}</b> 个案例</span><span><b>${counts.length}</b> 场对局</span><span><b>${counts.filter(item=>item.status==='decided').length}</b> 正式判决</span><span><b>${counts.filter(item=>item.status==='needs_review').length}</b> 待核</span></div>
         <div class="agent-system"><div class="agent-row agent-row-main">${agents.filter(agent=>agent.side==='top').map(card).join('')}</div>
-        <div class="host-lane"><div class="host-coordinator"><h2>任务协调</h2><p>分派任务、传递结果，能同时做的就一起做</p><div class="host-artifacts">验收清单 <span>／</span> 核验结果 <span>／</span> 判决与证据</div></div></div>
+        <div class="host-lane"><div class="host-coordinator"><h2>Pi 任务编排</h2><p>Pi 负责模型与工具循环；我们串联评测步骤、提供工具、校验和保存结果。</p><div class="host-artifacts">验收清单 <span>／</span> 核验结果 <span>／</span> 判决与证据</div></div></div>
         <div class="agent-row agent-row-support">${agents.filter(agent=>agent.side==='bottom').map(card).join('')}</div></div>`;
     },
   };

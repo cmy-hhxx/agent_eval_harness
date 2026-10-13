@@ -145,7 +145,7 @@ test("Eris uses existing evaluations for ordinary analysis and draws single-case
   assert.match(toolDescriptions.show_comparison, /组名与胜负绑定正式结果/);
   assert.match(toolDescriptions.show_comparison, /complete:true，成功即结束/);
   assert.match(toolDescriptions.show_comparison, /complete:false，继续用正文/);
-  assert.match(toolDescriptions.show_comparison, /counterEvidence.*已知.*没有则填 null/);
+  assert.match(toolDescriptions.show_comparison, /counterEvidence.*已知.*没有则省略或填 null/);
   assert.match(toolDescriptions.show_comparison, /不为填写此字段另开调查/);
 });
 
@@ -156,6 +156,8 @@ test("Eris retains evidence boundaries and statistics semantics without a fixed 
   assert.match(systemPrompt, /截断材料不能支持全量否定/);
   assert.match(systemPrompt, /Fast、Expert 分别比较.*真实分母/);
   assert.match(systemPrompt, /历史累计与运行中批次可能重叠，分别展示/);
+  assert.match(systemPrompt, /评测进度用一句话概括/);
+  assert.match(systemPrompt, /结论根据本次数据分析/);
   assert.match(systemPrompt, /未知值保持未知/);
   assert.match(toolDescriptions.list_data, /query 筛选不改变统计范围/);
   assert.match(toolDescriptions.list_data, /excludeCases.*items\[\]\.case/);

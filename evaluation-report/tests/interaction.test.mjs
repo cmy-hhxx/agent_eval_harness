@@ -22,6 +22,12 @@ const markers=page=>[...page.document.querySelectorAll('.matrix-row')].map(row=>
 const expectedWinner=(pair,labels)=>pair.status==='needs_review'?'待核':pair.winnerIndex===null?(pair.outcome==='both_good'?'都好':'都差'):`${labels[pair.winnerIndex]} 胜`;
 const valueText=value=>typeof value==='string'?value:JSON.stringify(value);
 const dimensions=node=>['width','height'].map(name=>Number(node.getAttribute(name)));
+function selectCase(page,index){
+ const pair=page.window.EvaluationReportData.cases[index].pairs[0];
+ const filters={'[data-tier-filter]':pair.tier,'[data-kind-filter]':pair.hasStandardAnswer?'objective':'subjective'};
+ for(const [selector,value] of Object.entries(filters))if(page.document.querySelector(selector).value!==value)page.change(selector,value);
+ page.change('[data-case-select]',index);
+}
 // Compare all prose characters while allowing only candidate identity substitutions.
 // Mapping and source ownership are checked separately, including every matrix column.
 function withoutIdentities(value,pair){
@@ -83,18 +89,20 @@ function assertOwnership(page,pair,swapped){
  }
 }
 
-test('30题42场保持固定卡片，长输入与点评可读全文，84份回答不截断',async t=>{
+test('60场保持固定卡片，长输入与点评可读全文，120份回答不截断',async t=>{
  const page=environment(t);await page.load();const cases=page.window.EvaluationReportData.cases;
- assert.equal(cases.length,30);assert.equal(cases.flatMap(c=>c.pairs).length,42);
+ assert.equal(cases.length,60);assert.equal(cases.flatMap(c=>c.pairs).length,60);
+ assert.deepEqual([...page.document.querySelectorAll('[data-case-select] option')].map(option=>option.textContent),Array.from(cases.filter(entry=>entry.pairs[0].tier==='Fast'&&!entry.pairs[0].hasStandardAnswer),entry=>entry.title+' · Fast'));
+ assert.equal(page.document.querySelector('[data-tier-filter]').disabled,false);
  let answers=0,pending=0,longInputs=0,longVerdicts=0;
  for(const [i,group] of cases.entries()){
-  page.change('[data-case-select]',i);
-  for(const [p,pair] of group.pairs.entries()){
-   page.change('[data-pair-select]',p);
+  selectCase(page,i);
+  for(const pair of group.pairs){
    assertFixedCards(page);assertOwnership(page,pair,false);
    const inputPreview=page.document.querySelector('[data-overview-question]');assertPreview(inputPreview,group.question);
    longInputs+=Number(inputPreview.dataset.truncated==='true');
-   assert.equal(page.document.querySelector('.case-kind').textContent,pair.hasStandardAnswer?'客观题':'主观题');
+   assert.equal(page.document.querySelector('[data-kind-filter]').value,pair.hasStandardAnswer?'objective':'subjective');
+   assert.equal(page.document.querySelector('[data-tier-filter]').value,pair.tier);
    assert.equal(Boolean(page.document.querySelector('[data-standard-answer]')),pair.hasStandardAnswer);
    if(pair.hasStandardAnswer)assertPreview(page.document.querySelector('[data-standard-answer-value]'),valueText(pair.groundTruth.value));
    page.key('[data-input-control]','Enter');
@@ -116,25 +124,25 @@ test('30题42场保持固定卡片，长输入与点评可读全文，84份回�
     assert.equal(page.document.querySelector('dialog').open,true);
     assert.equal(page.document.querySelector('[data-full-answer]').textContent,candidate.finalAnswer);
     assert.equal(page.document.querySelector('[data-full-answer]').hidden,true);
-    assert.equal(page.document.querySelector('[data-answer-reading] script,img,iframe,audio,video'),null,'阅读排版不执行HTML或加载外链');
+    assert.equal(page.document.querySelector('[data-answer-reading] :is(script,img,iframe,audio,video)'),null,'阅读排版不执行HTML或加载外链');
     page.click('[data-answer-format]');assert.equal(page.document.querySelector('[data-full-answer]').hidden,false);
     page.click('[data-answer-format]');assert.equal(page.document.querySelector('[data-answer-reading]').hidden,false);
-    assert.equal(page.document.querySelector('[data-full-answer] script,img,iframe,audio,video'),null,'回答中的HTML和链接不执行、不联网');
+    assert.equal(page.document.querySelector('[data-full-answer] :is(script,img,iframe,audio,video)'),null,'回答中的HTML和链接不执行、不联网');
     page.key('dialog','Escape');assert.equal(page.document.querySelector('dialog').open,false);answers++;
     assert.equal(page.document.querySelectorAll(`[data-problem-candidate="${index}"]`).length,candidate.findings.filter(f=>f.type==='problem').length,'包括责任待定位的全部问题');
    }
   }
  }
- assert.equal(answers,84);assert.equal(pending,5);assert.ok(longInputs>0);assert.ok(longVerdicts>0);
+ assert.equal(answers,120);assert.equal(pending,0);assert.ok(longInputs>0);assert.ok(longVerdicts>0);
 });
 
 test('交换重排回答、归因、匿名包、矩阵与问题，详情归属和原获胜模型不变',async t=>{
  const page=environment(t);await page.load();const cases=page.window.EvaluationReportData.cases;
  const snapshot=JSON.stringify(page.window.EvaluationReportData);
  for(const [i,group] of cases.entries()){
-  page.change('[data-case-select]',i);
-  for(const [p,pair] of group.pairs.entries()){
-   page.change('[data-pair-select]',p);assert.equal(page.document.querySelector('[data-revealed-model]'),null);
+  selectCase(page,i);
+  for(const pair of group.pairs){
+   assert.equal(page.document.querySelector('[data-revealed-model]'),null);
    const before=markers(page),winner=page.document.querySelector('#winnerLabel').textContent;assertOwnership(page,pair,false);
    page.key('[data-reveal-control]','Enter');assert.equal(page.document.querySelectorAll('[data-revealed-model]').length,2);
    assert.equal(page.document.querySelector('dialog').open,false,'揭示身份不应打开点评详情');
@@ -173,9 +181,9 @@ test('交换重排回答、归因、匿名包、矩阵与问题，详情归属�
 test('逐项对照覆盖所有比较，归因卡计数与完整核验输出保持对应',async t=>{
  const page=environment(t);await page.load();const cases=page.window.EvaluationReportData.cases;
  for(const [i,group] of cases.entries()){
-  page.change('[data-case-select]',i);
-  for(const [p,pair] of group.pairs.entries()){
-   page.change('[data-pair-select]',p);page.click('[data-swap-control]');const seen=new Set();
+  selectCase(page,i);
+  for(const pair of group.pairs){
+   page.click('[data-swap-control]');const seen=new Set();
    do {assertOwnership(page,pair,true);for(const row of page.document.querySelectorAll('.matrix-row'))seen.add(Number(row.dataset.matrixRow));const next=page.document.querySelector('[data-matrix-next]');if(!next)break;page.click(next);} while(!seen.has(Number(page.document.querySelector('.matrix-row').dataset.matrixRow)));
    assert.deepEqual([...seen].sort((a,b)=>a-b),Array.from(pair.comparisons,(_,i)=>i));
    assertFixedCards(page);
@@ -202,7 +210,7 @@ test('逐项对照覆盖所有比较，归因卡计数与完整核验输出保�
     assert.deepEqual([...page.document.querySelectorAll('[data-check-finding]')].map(node=>node.dataset.checkFinding).sort(),Array.from(candidate.findings,f=>f.finding_id).sort());
     assert.equal(page.document.querySelectorAll('[data-numeric-index]').length,pair.hasStandardAnswer?candidate.numericChecks.length:0);
     assert.equal(page.document.querySelectorAll('[data-check-evidence="correctness"]').length,pair.hasStandardAnswer?candidate.correctnessEvidence.length:0);
-    assert.equal(page.document.querySelector('[data-detail-body] script,img,iframe,audio,video'),null);
+    assert.equal(page.document.querySelector('[data-detail-body] :is(script,img,iframe,audio,video)'),null);
     page.click('[data-detail-close]');
    }
    const roles=[...page.document.querySelectorAll('#flowBody [data-agent-role]')];assert.deepEqual(roles.map(node=>node.dataset.agentRole),['criteria','attribution','attribution','comparison']);
@@ -285,9 +293,8 @@ test('宽窄布局全部分页的比较表与判决共用中线，双路证据�
  for(const width of [1400,716]){
   Object.defineProperty(page.window,'innerWidth',{value:width,configurable:true});page.window.dispatchEvent(new page.window.Event('resize'));
   for(const [index,group] of page.window.EvaluationReportData.cases.entries()){
-   page.change('[data-case-select]',index);
-   for(const [pairIndex,pair] of group.pairs.entries()){
-    page.change('[data-pair-select]',pairIndex);
+   selectCase(page,index);
+   for(const pair of group.pairs){
     const seen=new Set();
     while(true){
      const signature=page.document.querySelector('.matrix-row')?.dataset.matrixRow??'empty';
@@ -299,11 +306,61 @@ test('宽窄布局全部分页的比较表与判决共用中线，双路证据�
    }
   }
  }
- assert.equal(pages,116);assert.equal(emptyPages,10);
+ assert.equal(pages,132);assert.equal(emptyPages,0);
+});
+
+test('Fast与Expert联动主客观筛选，四种组合独立翻页且覆盖全部60题',async t=>{
+ const page=environment(t);await page.load();
+ const cases=page.window.EvaluationReportData.cases;
+ const options=()=>[...page.document.querySelectorAll('[data-case-select] option')].map(option=>Number(option.value));
+ const current=()=>Number(page.document.querySelector('[data-case-select]').value);
+ const position=()=>page.document.querySelector('.case-position').textContent;
+ assert.deepEqual([...page.document.querySelector('[data-kind-filter]').options].map(option=>option.textContent),['主观题','客观题']);
+ assert.deepEqual([...page.document.querySelector('[data-tier-filter]').options].map(option=>option.textContent),['Fast','Expert']);
+ assert.equal(page.document.querySelector('[data-kind-filter]').value,'subjective');
+ assert.equal(page.document.querySelector('[data-tier-filter]').value,'Fast');
+ const seen=new Set();
+ for(const [tier,kind,count] of [['Fast','subjective',20],['Expert','subjective',20],['Expert','objective',10],['Fast','objective',10]]){
+  for(const [selector,value] of [['[data-tier-filter]',tier],['[data-kind-filter]',kind]]){
+   if(page.document.querySelector(selector).value===value)continue;
+   page.change(selector,value);
+   assert.equal(page.document.activeElement,page.document.querySelector(selector));
+   assert.equal(page.document.querySelector('dialog').open,false);
+   assert.equal(page.document.querySelector('[data-revealed-model]'),null);
+   assert.equal(page.document.querySelector('[data-swap-control]').getAttribute('aria-pressed'),'false');
+   assert.equal(page.document.querySelector('.matrix-row').dataset.matrixRow,'0');
+  }
+  const indices=options();assert.equal(indices.length,count);
+  assert.deepEqual(indices,Array.from(cases.flatMap((entry,i)=>entry.pairs[0].tier===tier&&entry.pairs[0].hasStandardAnswer===(kind==='objective')?[i]:[])));
+  indices.forEach(i=>seen.add(i));
+  assert.equal(page.document.querySelector('[data-tier-filter]').value,tier);
+  assert.equal(page.document.querySelector('[data-kind-filter]').value,kind);
+  assert.equal(current(),indices[0]);assert.equal(position(),'01 / '+count);
+  assertOwnership(page,cases[current()].pairs[0],false);
+  assert.equal(Boolean(page.document.querySelector('[data-standard-answer]')),kind==='objective');
+  page.change('[data-case-select]',indices[1]);assert.equal(current(),indices[1]);assert.equal(position(),'02 / '+count);
+  page.key('[data-case-next]','End');assert.equal(current(),indices.at(-1));assert.equal(position(),count+' / '+count);
+  page.click('[data-case-next]');assert.equal(current(),indices[0]);
+  page.click('[data-case-prev]');assert.equal(current(),indices.at(-1));
+  page.key('[data-case-prev]','Home');assert.equal(current(),indices[0]);
+  page.key('[data-case-next]','ArrowRight');assert.equal(current(),indices[1]);
+  page.key('[data-case-prev]','ArrowLeft');assert.equal(current(),indices[0]);
+  for(const selector of ['[data-tier-filter]','[data-kind-filter]']){page.key(selector,'ArrowLeft');assert.equal(current(),indices[0],'原生筛选方向键不触发案例翻页');}
+  page.click('[data-page="rules"]');page.click('[data-page="flow"]');
+  Object.defineProperty(page.window,'innerWidth',{value:tier==='Fast'?1400:716,configurable:true});page.window.dispatchEvent(new page.window.Event('resize'));
+  assert.deepEqual(options(),indices);assert.equal(current(),indices[0]);
+  const paged=indices.find(i=>cases[i].pairs[0].comparisons.length>5);
+  if(paged!==undefined){page.change('[data-case-select]',paged);page.click('[data-matrix-next]');assert.equal(page.document.querySelector('.matrix-row').dataset.matrixRow,'5');}
+  page.click('[data-reveal-control]');page.click('[data-swap-control]');page.click('[data-input-control]');
+ }
+ assert.equal(seen.size,60,'全部案例都可通过四种组合访问');
+ page.change('[data-kind-filter]','subjective');assert.equal(options().length,20);
+ assert.equal(page.document.querySelector('[data-tier-filter]').value,'Fast');assert.equal(position(),'01 / 20');
+ assert.equal(page.document.querySelector('[data-standard-answer]'),null);
 });
 
 test('翻页键盘、断点重排与重新挂载保持正确状态，无重复监听',async t=>{
- const page=environment(t);await page.load();page.key('[data-case-next]','End');assert.equal(page.document.querySelector('[data-case-select]').value,'29');page.click('[data-case-next]');assert.equal(page.document.querySelector('[data-case-select]').value,'0');
+ const page=environment(t);await page.load();const indices=[...page.document.querySelectorAll('[data-case-select] option')].map(option=>option.value);page.key('[data-case-next]','End');assert.equal(page.document.querySelector('[data-case-select]').value,indices.at(-1));page.click('[data-case-next]');assert.equal(page.document.querySelector('[data-case-select]').value,indices[0]);
  page.click('[data-reveal-control]');page.click('[data-swap-control]');const winner=page.document.querySelector('#winnerLabel').textContent;
  const pair=page.window.EvaluationReportData.cases[0].pairs[0];
  for(const width of [1400,1080,716,1660]){
@@ -314,7 +371,7 @@ test('翻页键盘、断点重排与重新挂载保持正确状态，无重复�
  }
  const root=page.document.querySelector('#flowBody'),oldControl=page.document.querySelector('[data-swap-control]'),oldScene=page.document.querySelector('#mechanismScene');
  const controller=page.window.ReportFlow.render(root,page.window.EvaluationReportData);page.click(oldControl);assert.equal(oldScene.querySelector('[data-swap-control]').getAttribute('aria-pressed'),'true');
- page.click('[data-case-next]');assert.equal(page.document.querySelector('[data-case-select]').value,'1');
+ page.click('[data-case-next]');assert.equal(page.document.querySelector('[data-case-select]').value,indices[1]);
  page.click('[data-input-control]');page.click('[data-page="rules"]');assert.equal(page.document.querySelector('dialog').open,false,'离开主题关闭详情');page.click('[data-page="flow"]');
  controller.destroy();const before=root.innerHTML;page.click('[data-swap-control]');page.click('[data-case-next]');page.key('[data-input-control]','Enter');page.window.dispatchEvent(new page.window.Event('resize'));assert.equal(root.innerHTML,before);
 });
@@ -322,7 +379,9 @@ test('翻页键盘、断点重排与重新挂载保持正确状态，无重复�
 test('离线单文件可重开六个主题，来源HTML不会执行',async t=>{
  const temporary=await mkdtemp(join(tmpdir(),'report-current-'));t.after(()=>rm(temporary,{recursive:true,force:true}));
  const output=await buildReport({output:join(temporary,'report.html')});const page=environment(t,await readFile(output,'utf8'),true);
- assert.equal(page.document.querySelectorAll('[data-case-select] option').length,30);
+ assert.equal(page.document.querySelectorAll('[data-case-select] option').length,20);
+ assert.equal(page.document.querySelector('[data-tier-filter]').value,'Fast');
+ assert.equal(page.document.querySelector('[data-kind-filter]').value,'subjective');
  for(const name of ['research','architecture','rules','prompts','experiments','flow']){page.click(`[data-page="${name}"]`);assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);assert.equal(page.document.querySelector(`#page-${name}`).hidden,false);}
  assert.equal(page.document.querySelector('[src^="http"],link[rel="stylesheet"],script[src]'),null);
  assert.equal(page.document.querySelectorAll('#architectureBody [data-agent-role]').length,6);
@@ -331,7 +390,7 @@ test('离线单文件可重开六个主题，来源HTML不会执行',async t=>{
  page.click('[data-input-control]');assert.equal(page.document.querySelector('[data-full-question]').textContent,page.window.EvaluationReportData.cases[0].question);
 });
 
-test('默认进入行业对标，章节支持键盘切换且完整研究与来源可离线阅读',async t=>{
+test('默认进入行业流程，各方案图与来源可离线阅读并支持键盘切换',async t=>{
  const page=environment(t,html,false,'');await page.load();
  assert.equal(page.document.querySelector('#page-research').hidden,false);
  assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);
@@ -346,12 +405,90 @@ test('默认进入行业对标，章节支持键盘切换且完整研究与来�
  assert.equal(tabs[0].getAttribute('aria-selected'),'true');
  page.key('#'+tabs[0].id,'End');
  assert.equal(page.document.activeElement,tabs.at(-1));
- assert.equal(page.document.querySelector('.research-document').querySelectorAll('h2').length,5);
+ assert.equal(page.document.querySelector('.research-document').querySelectorAll('h2').length,4);
  const sources=page.window.EvaluationResearchData.sources;
  assert.equal(new Set(sources.map(source=>source.id)).size,sources.length);
  assert.ok(sources.some(source=>source.url.includes('tech.meituan.com')));
  assert.ok(sources.some(source=>source.url.includes('developer.volcengine.com')));
  for(const link of page.document.querySelectorAll('.research-cite')) assert.ok(sources.some(source=>source.url===link.href));
- assert.match(page.document.querySelector('#research-panel-overview').textContent,/固定六题/);
+ for(const id of ['meituan','aws','bytedance','harbor','langfuse','phoenix','opencompass','evalscope','lmharness','sources'])assert.ok(tabs.some(tab=>tab.dataset.researchTab===id));
+ assert.equal(tabs.some(tab=>tab.dataset.researchTab==='repositories'),false,'仓库入口独立于方案标签');
+ const catalog=page.document.querySelector('[data-research-catalog]');
+ assert.equal(catalog.parentElement,page.document.querySelector('.research-hero'),'仓库入口放在标题旁');
+ for(const tab of tabs.filter(tab=>tab.dataset.researchTab!=='sources')){
+  const panel=page.document.querySelector('#'+tab.getAttribute('aria-controls'));
+  assert.equal(panel.querySelectorAll('.research-facts dt').length,4);
+  for(const figure of panel.querySelectorAll('.research-flow')){
+   assert.ok(figure.querySelectorAll('.research-node').length>=6);
+   assert.ok(figure.querySelectorAll('.research-references a').length>0,'每张图独立附来源');
+   for(const link of figure.querySelectorAll('.research-references a'))assert.ok(sources.some(source=>source.url===link.href)||/^https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/[a-f0-9]{40}\//.test(link.href),'源码来源固定到查询时提交');
+  }
+ }
+ assert.equal(page.document.querySelectorAll('#research-panel-harbor .research-flow').length,4);
+ page.click(catalog);
+ assert.equal(catalog.getAttribute('aria-expanded'),'true');
+ assert.equal(catalog.textContent,'← 返回流程');
+ assert.equal(page.document.querySelector('.research-nav').hidden,true);
+ assert.equal(page.document.querySelectorAll('.research-panel:not([hidden])').length,1);
+ assert.equal(page.document.querySelector('#research-panel-repositories').hidden,false);
+ const rows=[...page.document.querySelectorAll('.research-repository-table tbody tr')];
+ const stars=rows.map(row=>Number(row.cells[1].textContent.replaceAll(',','')));
+ assert.deepEqual(stars,[...stars].sort((a,b)=>b-a));
+ for(const row of rows){
+  const repo=page.window.ReportResearchFlows.repositories[row.dataset.repository];
+  const times=[...row.querySelectorAll('time')];
+  assert.deepEqual(times.map(time=>time.dateTime),[repo.createdAt,repo.pushedAt]);
+  for(const time of times){assert.match(time.textContent,/^\d{4}-\d{2}-\d{2}$/);assert.match(time.title,/北京时间/);}
+  assert.ok(Date.parse(repo.createdAt)<=Date.parse(repo.pushedAt));
+ }
+ assert.equal(page.document.querySelector('[data-repository="harbor"] time').textContent,'2025-08-05','UTC 创建时间按北京时间显示');
+ const sort=page.document.querySelector('[data-repository-sort="stars"]');
+ page.click(sort);
+ assert.equal(sort.closest('th').getAttribute('aria-sort'),'ascending');
+ assert.equal(sort.querySelector('[data-sort-indicator]').textContent,'↑');
+ assert.deepEqual([...page.document.querySelectorAll('.research-repository-table tbody tr')].map(row=>Number(row.cells[1].textContent.replaceAll(',',''))),[...stars].sort((a,b)=>a-b));
+ page.click(sort);
+ assert.equal(sort.closest('th').getAttribute('aria-sort'),'descending');
+ assert.deepEqual([...page.document.querySelectorAll('.research-repository-table tbody tr')].map(row=>Number(row.cells[1].textContent.replaceAll(',',''))),stars);
+ for(const [field,column] of [['createdAt',2],['pushedAt',3]]){
+  const button=page.document.querySelector(`[data-repository-sort="${field}"]`);
+  for(const direction of ['descending','ascending']){
+   page.click(button);
+   const timestamps=[...page.document.querySelectorAll('.research-repository-table tbody tr')].map(row=>Date.parse(row.cells[column].querySelector('time').dateTime));
+   assert.deepEqual(timestamps,[...timestamps].sort((a,b)=>direction==='descending'?b-a:a-b),'日期按完整时间戳排序，包括同一天内的先后');
+   assert.equal(button.closest('th').getAttribute('aria-sort'),direction);
+   assert.equal(page.document.querySelectorAll('.research-repository-table th[aria-sort]').length,1,'仅当前排序列显示排序状态');
+   assert.equal(button.querySelector('[data-sort-indicator]').textContent,direction==='descending'?'↓':'↑');
+  }
+ }
+ assert.equal(sort.querySelector('[data-sort-indicator]').textContent,'↕');
+ page.click(sort);
+ assert.equal(sort.closest('th').getAttribute('aria-sort'),'descending','切回 Stars 时先按从高到低排序');
+ assert.deepEqual([...page.document.querySelectorAll('.research-repository-table tbody tr')].map(row=>Number(row.cells[1].textContent.replaceAll(',',''))),stars);
+ page.click(catalog);
+ assert.equal(page.document.querySelector('.research-nav').hidden,false);
+ assert.equal(catalog.textContent,'GitHub 仓库');
+ assert.equal(page.document.querySelector('#research-panel-sources').hidden,false,'关闭仓库表恢复之前的方案');
+ page.click(catalog);
+ const currentUrl=page.window.location.href;
+ page.click('[data-research-home]');
+ assert.equal(page.window.location.href,currentUrl,'标题点击留在当前页面');
+ assert.equal(page.document.querySelector('#research-panel-sources').hidden,false,'标题点击返回之前的方案');
+ assert.equal(catalog.textContent,'GitHub 仓库');
+ page.click(catalog);
+ page.click('[data-research-open="harbor"]');
+ assert.equal(page.document.querySelector('#research-panel-harbor').hidden,false);
+ assert.equal(page.document.activeElement.id,'research-tab-harbor');
+ assert.equal(catalog.getAttribute('aria-expanded'),'false');
+ assert.equal(page.document.querySelector('#research-panel-repositories').hidden,true);
+ assert.doesNotMatch(page.document.querySelector('#researchBody').textContent,/建设路线|本轮建议|8–12 周|走向可证明|下一步证明|0.3–0.5/);
+ assert.match(page.document.querySelector('#research-panel-harbor').textContent,/tests\/test.sh/);
+ assert.match(page.document.querySelector('#research-panel-harbor').textContent,/隔离环境/);
+ assert.equal(page.document.querySelector('[data-page="flow"]').textContent,'现有评测方案');
+ assert.equal(page.document.querySelector('#flowTitle').textContent,'现有评测方案');
+ assert.match(page.document.querySelector('.pi-summary').textContent,/开源底座.*Pi/s);
+ assert.match(page.document.querySelector('.pi-summary').textContent,/把 Pi 任务串成评测流程/);
+ assert.equal(page.document.querySelectorAll('.pi-evidence img').length,2);
+ assert.match(page.document.querySelector('.pi-crop-github img').alt,/114.7k Stars/);
  assert.match(page.document.querySelector('.research-document').textContent,/这不是人工准确率/);
 });

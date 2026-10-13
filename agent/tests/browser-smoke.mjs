@@ -13,8 +13,16 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
  return {async prompt(text){
   executions++;stopped=false;
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
+  if(text==='请分析本地评测结果'){
+   const args={view:'statistics'},callId='statistics';
+   await event({type:'message_start',message:{role:'assistant'}});
+   await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'toolCall',id:callId,name:'list_data',arguments:args}],stopReason:'toolUse'}});
+   await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args});
+   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:JSON.stringify({kind:'statistics',history:{status:'published',snapshotAt:'2026-10-12 12:16:54.950',requestDates:['2026-09-22','2026-10-11'],caseCount:12114,totalCaseCount:20554,progress:{completedBattleCount:22293,expectedBattleCount:35838,completedCaseCount:11753,battleCompletionRate:62.2,caseCompletionRate:57.18}},currentRuns:[],additive:false})}],isError:false}});
+   await event({type:'turn_end'});await event({type:'turn_start'});
+  }
   await event({type:'message_start',message:{role:'assistant'}});
-  let output='';const chunks=text==='停止测试'?Array.from({length:300},()=> '进行中 '):['## 分析结果\n\n','证据一致。\n\n','```ts\n','const accepted = true;\n','```\n'];
+  let output='';const chunks=text==='停止测试'?Array.from({length:300},()=> '进行中 '):['## 分析结果\n\n','证据一致。\n\n','| 指标 | 已完成 | 完成率 |\n','| --- | ---: | ---: |\n','| 对战 | 22,293 | 62.20% |\n','| 题目 | 11,753 | 57.18% |\n\n','```ts\n','const accepted = true;\n','```\n'];
   for(const delta of chunks){if(stopped)break;output+=delta;await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});await delay(40);}
   await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'text',text:output}],stopReason:stopped?'aborted':'stop'}});
   await event({type:'turn_end'});await event({type:'agent_end'});
@@ -40,9 +48,11 @@ try{
  await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();
  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  await page.locator('code').filter({hasText:'const accepted'}).first().waitFor();
+ assert.equal(await page.getByRole('table').getByRole('row').count(),3,'streamed statistics Markdown renders as a table');
  await page.emulateMedia({colorScheme:'light'});await page.emulateMedia({colorScheme:'dark'});
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
  const before=executions;await page.reload();await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();assert.equal(executions,before);
+ assert.equal(await page.getByRole('table').getByRole('cell',{name:'62.20%',exact:true}).count(),1,'history preserves the statistics table');
  await page.screenshot({path:shots+'/assistant-light.png',fullPage:true,animations:'disabled',caret:'hide'});
  // Compare the unmodified upstream baseline with identical Session events.
  // Composer copy and unavailable controls are explicit product differences.
@@ -61,6 +71,27 @@ try{
   assert(actual.equals(original),'sidebar, header, conversation, Markdown and code-block pixels must match the upstream light UI');
   await reference.close();
  }
+ await page.locator('[data-turn-process]').click();
+ await page.locator('[data-process-activity][aria-expanded=false]').first().click();
+ const statistics=page.locator('[data-tool=list_data]');
+ await statistics.getByRole('button').first().click();
+ await statistics.getByText('历史累计',{exact:true}).waitFor();
+ for(const width of [1440,375]){
+  await page.setViewportSize({width,height:960});
+  await statistics.hover();
+  const card=statistics.locator('[data-inspect]');
+  const button=statistics.getByRole('button',{name:'查看',exact:true});
+  await button.waitFor();
+  const bounds=await card.boundingBox(),inspect=await button.boundingBox();
+  assert(bounds.height>100,'statistics card contains visible progress rows');
+  assert(inspect.x>=bounds.x&&inspect.y>=bounds.y&&inspect.x+inspect.width<=bounds.x+bounds.width&&inspect.y+inspect.height<=bounds.y+bounds.height,'the inspect button stays inside the statistics card');
+  assert.equal(await card.locator('li').evaluateAll(items=>items.some(item=>!item.textContent.trim())),false,'statistics details have no empty items');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'statistics do not overflow the page');
+  await statistics.screenshot({path:shots+`/statistics-${width}.png`,animations:'disabled',caret:'hide'});
+ }
+ assert.equal(executions,before,'opening historical statistics never invokes the model');
+ await page.setViewportSize({width:1440,height:960});
+ await page.locator('[data-turn-process]').click();
  await input.fill('停止测试');await input.press('Enter');await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({timeout:5000}).catch(async error=>{console.log(await page.locator('body').innerText(),await sessions.list('local'),executions,errors);throw error;});await delay(150);await page.getByRole('button',{name:'停止生成',exact:true}).click();await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  const bob=await browser.newPage();await bob.goto(server.url+'/u/bob/');await bob.locator('[contenteditable=true]').waitFor();assert(! (await bob.locator('body').innerText()).includes('请分析本地评测结果'));await bob.close();
  assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,erisBrand:true,noDeepseekLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,visualReference:process.env.AGENT_VISUAL_REFERENCE==='1'},null,2));

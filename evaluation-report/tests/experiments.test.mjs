@@ -5,184 +5,275 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { test } from 'node:test';
 import { JSDOM, VirtualConsole } from 'jsdom';
+import { extractFinalAnswer, effectiveReference } from '../scripts/snapshot.mjs';
 
 const directory = dirname(dirname(fileURLToPath(import.meta.url)));
 const repository = resolve(directory, '..');
-const [dataSource, renderer] = await Promise.all([
-  readFile(join(directory, 'src/data/experiments.js'), 'utf8'),
-  readFile(join(directory, 'src/pages/experiments/index.js'), 'utf8'),
-]);
-const scope = {window: {}};
-vm.runInNewContext(dataSource, scope);
-const snapshot = JSON.parse(JSON.stringify(scope.window.EvaluationExperimentData));
+const renderer = await readFile(join(directory, 'src/pages/experiments/index.js'), 'utf8');
+const context = {window: {}};
+for (const file of ['cases.js', 'experiments.js']) vm.runInNewContext(await readFile(join(directory, 'src/data', file), 'utf8'), context);
+vm.runInNewContext(renderer, context);
+const snapshot = JSON.parse(JSON.stringify(context.window.EvaluationExperimentData));
+const cases = JSON.parse(JSON.stringify(context.window.EvaluationReportData.cases));
+const summarize = samples => JSON.parse(JSON.stringify(context.window.ReportExperiments.summarize(samples)));
 const json = async file => JSON.parse(await readFile(file, 'utf8'));
 const jsonl = async file => (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 
 function page(t, data = snapshot) {
-  const errors = [];
-  const console = new VirtualConsole();
+  const errors = [], console = new VirtualConsole();
   console.on('jsdomError', error => errors.push(error.message));
-  const dom = new JSDOM('<main id="experiments"></main>', {runScripts: 'outside-only', virtualConsole: console});
+  const dom = new JSDOM('<main></main>', {runScripts: 'outside-only', virtualConsole: console});
   dom.window.eval(renderer);
   const container = dom.window.document.querySelector('main');
-  dom.window.ReportExperiments.render(container, data);
-  t.after(() => { dom.window.close(); assert.deepEqual(errors, []); });
+  const view = dom.window.ReportExperiments.render(container, data);
+  t.after(() => { view.destroy(); dom.window.close(); assert.deepEqual(errors, []); });
   return container;
 }
+function select(container, selector, value) {
+  const element = container.querySelector(selector);
+  element.value = value;
+  element.dispatchEvent(new container.ownerDocument.defaultView.Event('change', {bubbles: true}));
+  assert.equal(container.ownerDocument.activeElement, container.querySelector(selector));
+}
 
-test('真实实验固定六题三轮，按结果类型和稳定模型赢家核对5/6一致及小样本区间', () => {
-  assert.equal(snapshot.samples.length, 6);
-  assert.equal(new Set(snapshot.samples.map(sample => `${sample.case.batch_id}/${sample.case.case_id}`)).size, 6);
+test('实验与现有60题一一对应；180场独立ID，三轮使用Luna和当前实验评测器', () => {
+  assert.equal(snapshot.samples.length, 60);
+  assert.deepEqual(snapshot.samples.map(sample => sample.id), cases.map(item => item.pairs[0].id));
+  assert.equal(new Set(snapshot.samples.map(sample => sample.question.replace(/\s+/g, ''))).size, 60);
+  assert.equal(snapshot.samples.filter(sample => sample.hasStandardAnswer).length, 20);
+  assert.equal(snapshot.samples.filter(sample => sample.tier === 'Fast').length, 30);
+  assert.equal(snapshot.judge, 'gpt-6-luna');
+  assert.equal(snapshot.comparisonEvaluator, 'r196');
+  assert.equal(snapshot.totalConcurrency, 24);
   assert.deepEqual(snapshot.runs.map(run => run.swapped), [false, false, true]);
-  assert.equal(snapshot.samples.filter(sample => sample.hasStandardAnswer).length, 3);
-  assert.equal(snapshot.samples.filter(sample => sample.tier === 'Fast').length, 3);
-  assert.deepEqual(snapshot.coverage, {planned: 18, decided: 18, pending: 0, failed: 0, incomplete: 0});
-  const comparisons = snapshot.samples.flatMap(sample => sample.results);
-  assert.equal(comparisons.length, 18);
-  assert.equal(new Set(comparisons.map(result => result.comparisonId)).size, 18);
-  assert.equal(new Set(comparisons.map(result => result.taskId)).size, 18);
-  assert.ok(comparisons.every(result => result.evaluator === 'r153' && result.judge === 'MiniMax-M3'));
-  assert.deepEqual(snapshot.upstreamEvaluators, ['r151', 'r152']);
+  const results = snapshot.samples.flatMap(sample => sample.results);
+  assert.equal(results.length, 180);
+  assert.equal(new Set(results.map(result => result.taskId)).size, 180);
+  assert.equal(new Set(results.map(result => result.comparisonId)).size, 180);
   for (const sample of snapshot.samples) {
     const [first, repeat, swapped] = sample.results;
     assert.deepEqual(repeat.mapping, first.mapping);
     assert.deepEqual(swapped.mapping, {A: first.mapping.B, B: first.mapping.A});
-    for (const result of sample.results) {
-      assert.equal(result.status, 'decided');
+    for (const result of sample.results.filter(result => ['decided', 'needs_review'].includes(result.status))) {
+      assert.equal(result.judge, snapshot.judge);
+      assert.equal(result.evaluator, snapshot.comparisonEvaluator);
       if (result.outcome === 'win') assert.ok(Object.values(result.mapping).includes(result.winner));
       else assert.equal(result.winner, null);
     }
   }
-  for (const [name, round] of [['repeat', 1], ['swap', 2]]) {
-    const pairs = snapshot.samples.filter(sample => sample.results[0].status === 'decided' && sample.results[round].status === 'decided');
-    const disagreements = pairs.filter(sample => {
-      const [left, right] = [sample.results[0], sample.results[round]];
-      return left.outcome !== right.outcome || left.winner !== right.winner;
-    });
-    assert.equal(pairs.length, 6);
-    assert.deepEqual(disagreements.map(sample => sample.title), ['中谷物流毛利率']);
-    assert.equal(snapshot.metrics[name].paired, pairs.length);
-    assert.equal(snapshot.metrics[name].agree, pairs.length - disagreements.length);
-    assert.equal(snapshot.metrics[name].missing, 0);
-    assert.deepEqual(snapshot.metrics[name].disagreements, disagreements.map(sample => sample.id));
-    // Wilson 95% score interval for five successes among six independent case pairs.
-    assert.ok(Math.abs(snapshot.metrics[name].interval[0] - 0.43649717781353) < 1e-12);
-    assert.ok(Math.abs(snapshot.metrics[name].interval[1] - 0.969946630251694) < 1e-12);
-  }
-  assert.deepEqual(snapshot.samples[0].results.map(result => [result.outcome, result.winner]), [['win', 'a_fast'], ['both_good', null], ['both_good', null]]);
+  const summary = summarize(snapshot.samples);
+  assert.deepEqual(snapshot.coverage, summary.coverage);
+  assert.deepEqual(snapshot.metrics, summary.metrics);
+  assert.equal(snapshot.conclusion, summary.conclusion);
 });
 
-test('实验页直接展示18个真实结果，真实赢家不随匿名A/B位置改变，方法与边界可读', t => {
-  const container = page(t);
-  assert.equal(container.querySelectorAll('[data-experiment-case]').length, 6);
-  assert.equal(container.querySelectorAll('[data-round-result]').length, 18);
-  const metrics = [...container.querySelectorAll('[data-experiment-metric]')];
-  assert.deepEqual(metrics.map(node => node.querySelector('.exp-score strong').textContent), ['83.3%', '83.3%']);
-  metrics.forEach(node => {
-    assert.match(node.textContent, /5 \/ 6 对/);
-    assert.match(node.textContent, /95% 区间 43\.6%–97%/);
-    assert.match(node.textContent, /缺失 0 对/);
-  });
-  const shareholder = snapshot.samples.find(sample => sample.title === '同花顺股东增减持');
-  assert.ok(shareholder.results.every(result => result.winner === 'a_fast'));
-  const anonymousWinners = shareholder.results.map(result => Object.keys(result.mapping).find(label => result.mapping[label] === result.winner));
-  assert.notEqual(anonymousWinners[0], anonymousWinners[2]);
-  const row = [...container.querySelectorAll('[data-experiment-case]')].find(node => node.dataset.experimentCase === shareholder.id);
-  assert.deepEqual([...row.querySelectorAll('[data-round-result]')].map(node => node.textContent), ['A组胜', 'A组胜', 'A组胜']);
-  assert.equal(container.querySelectorAll('.exp-disagreement').length, 1);
-  assert.equal(container.querySelector('.exp-disagreement').dataset.experimentCase, snapshot.samples[0].id);
-  assert.match(container.querySelector('.exp-protocol').textContent, /冻结标准与归因只重跑比较/);
-  assert.match(container.querySelector('.exp-boundaries').textContent, /比较 r153/);
-  assert.match(container.querySelector('.exp-boundaries').textContent, /标准 \/ 归因 r151 \/ r152/);
-  assert.match(container.querySelector('.exp-boundaries').textContent, /提示词消融 未开展/);
-  assert.match(container.querySelector('.exp-boundaries').textContent, /人工一致性 无审定样本/);
-  assert.match(container.querySelector('.exp-method-body').textContent, /目的性选样/);
-  assert.match(container.querySelector('.exp-method-body').textContent, /未控制模型采样随机性/);
-  assert.match(container.querySelector('.exp-method-body').textContent, /不用于报告评测准确率/);
-  assert.match(container.querySelector('.exp-takeaway').textContent, /同位重复也有变化，不能单独归因于位置/);
+test('Fast/Expert与主客观联动；表格、覆盖、配对指标和详情只展示当前组合', t => {
+  const container = page(t), visited = new Set();
+  assert.deepEqual([...container.querySelector('[data-exp-kind]').options].map(option => option.value), ['subjective', 'objective']);
+  for (const tier of ['Fast', 'Expert']) for (const kind of ['subjective', 'objective']) {
+    select(container, '[data-exp-tier]', tier);
+    select(container, '[data-exp-kind]', kind);
+    assert.equal(container.querySelector('[data-exp-tier]').value, tier);
+    const samples = snapshot.samples.filter(sample => sample.tier === tier && sample.hasStandardAnswer === (kind === 'objective'));
+    const summary = summarize(samples);
+    const rows = [...container.querySelectorAll('[data-experiment-case]')];
+    assert.equal(rows.length, kind === 'objective' ? 10 : 20);
+    assert.deepEqual(rows.map(row => row.dataset.experimentCase), samples.map(sample => sample.id));
+    rows.forEach(row => visited.add(row.dataset.experimentCase));
+    assert.equal(container.querySelectorAll('[data-round-result]').length, samples.length * 3);
+    assert.equal(container.querySelectorAll('.exp-reason-list section').length, samples.length);
+    assert.match(container.querySelector('.exp-protocol').textContent, new RegExp(`${summary.coverage.decided} / ${summary.coverage.planned} 已决`));
+    for (const key of ['repeat', 'swap']) assert.match(container.querySelector(`[data-experiment-metric="${key}"]`).textContent,
+      new RegExp(`${summary.metrics[key].agree} / ${summary.metrics[key].paired} 对`));
+    assert.equal(container.querySelector('.exp-takeaway strong').textContent, summary.conclusion);
+  }
+  assert.equal(visited.size, 60);
+  assert.match(container.textContent, /稳定不等于正确/);
+  assert.match(container.textContent, /目的性选样/);
+  assert.match(container.textContent, /不用于报告评测准确率/);
   assert.equal(container.querySelectorAll('script,iframe,link,img[src]').length, 0);
 });
 
-test('缺失、待核和失败单列，不充当平局或进入双边已决分母；零配对不报百分比', t => {
+test('待核、失败、未完成不进入已决分母；真实赢家还原、Wilson区间与零配对', t => {
   const data = structuredClone(snapshot);
-  data.samples[1].results[1] = {...data.samples[1].results[1], status: 'needs_review', outcome: null, winner: null};
-  data.samples[2].results[1] = {...data.samples[2].results[1], status: 'failed', outcome: null, winner: null};
-  data.samples.forEach(sample => { sample.results[2] = {...sample.results[2], status: 'pending', outcome: null, winner: null}; });
-  data.coverage = {planned: 18, decided: 10, pending: 1, failed: 1, incomplete: 6};
-  data.metrics.repeat = {...data.metrics.repeat, agree: 3, paired: 4, missing: 2, interval: [0.300641842582402, 0.9544127391903]};
-  data.metrics.swap = {...data.metrics.swap, agree: 0, paired: 0, missing: 6, interval: null};
-  data.conclusion = '当前结果未全部完成。';
+  const samples = data.samples.filter(sample => sample.tier === 'Fast' && !sample.hasStandardAnswer);
+  for (const sample of samples) sample.results.forEach(result => Object.assign(result,
+    {status: 'decided', outcome: 'win', winner: 'a_fast', core: {a_fast: true, b_fast: true}}));
+  samples[0].results[1].outcome = 'both_good'; samples[0].results[1].winner = null;
+  samples[1].results[1].status = 'needs_review';
+  samples[2].results[1].status = 'failed';
+  samples.forEach(sample => { sample.results[2].status = 'pending'; });
+  const summary = summarize(samples);
+  assert.deepEqual(summary.coverage, {planned: 60, decided: 38, pending: 1, failed: 1, incomplete: 20});
+  assert.equal(summary.metrics.repeat.agree, 17);
+  assert.equal(summary.metrics.repeat.paired, 18);
+  assert.equal(summary.metrics.repeat.missing, 2);
+  assert.equal(summary.metrics.swap.paired, 0);
+  assert.equal(summary.metrics.swap.interval, null);
+  assert.equal(summary.metrics.swap.missing, 20);
+  const six = samples.slice(3, 9);
+  six[0].results[1].winner = 'b_fast';
+  const wilson = summarize(six).metrics.repeat.interval;
+  assert.ok(Math.abs(wilson[0] - 0.43649717781353) < 1e-12);
+  assert.ok(Math.abs(wilson[1] - 0.969946630251694) < 1e-12);
   const container = page(t, data);
-  const repeat = container.querySelector('[data-experiment-metric="repeat"]');
-  const swap = container.querySelector('[data-experiment-metric="swap"]');
-  assert.equal(repeat.querySelector('.exp-score strong').textContent, '75%');
-  assert.match(repeat.textContent, /3 \/ 4 对/);
-  assert.match(repeat.textContent, /缺失 2 对/);
-  assert.equal(swap.querySelector('.exp-score strong').textContent, '—');
-  assert.match(swap.textContent, /0 \/ 0 对/);
-  assert.match(swap.textContent, /暂无双边完成结果/);
-  assert.match(swap.textContent, /缺失 6 对/);
-  assert.doesNotMatch(swap.textContent, /NaN|100%|95% 区间/);
-  assert.match(container.querySelector('.exp-protocol').textContent, /10 \/ 18 已决1 待核 · 1 失败 · 6 未完成/);
-  const statuses = [...container.querySelectorAll('[data-round-result]')].map(node => node.textContent);
-  assert.equal(statuses.filter(value => value === '待核').length, 1);
-  assert.equal(statuses.filter(value => value === '失败').length, 1);
-  assert.equal(statuses.filter(value => value === '未完成').length, 6);
-  assert.equal(container.querySelectorAll('.exp-disagreement').length, 0, '尚无三轮完整结果，不能将缺失标为判决分歧');
+  assert.match(container.querySelector('[data-experiment-metric="swap"]').textContent, /—0 \/ 0 对暂无双边完成结果/);
+  assert.match(container.textContent, /待核/);
+  assert.match(container.textContent, /失败/);
+  assert.match(container.textContent, /未完成/);
+  const winner = samples[3];
+  winner.results.forEach(result => { result.status = 'decided'; result.outcome = 'win'; result.winner = 'a_fast'; });
+  const row = page(t, data).querySelector(`[data-experiment-case="${winner.id}"]`);
+  assert.deepEqual([...row.querySelectorAll('[data-round-result]')].map(cell => cell.textContent), ['A组胜', 'A组胜', 'A组胜']);
 });
 
-test('本地实验来源可用时核对协议、三轮正式判词、真实映射和完全冻结的上游结果', async t => {
-  const protocolFile = resolve(repository, snapshot.protocolSource);
-  const required = [protocolFile, ...snapshot.runs.flatMap(run => ['state.json', 'results/comparison.jsonl', 'results/criteria.jsonl', 'results/attribution.jsonl'].map(file => resolve(repository, run.path, file)))];
-  for (const file of required) {
-    try { await access(file); }
-    catch (error) { if (error.code === 'ENOENT') { t.skip(`离线副本未附带本地实验来源：${file}`); return; } throw error; }
-  }
-  const protocol = await json(protocolFile);
-  assert.equal(protocol.plannedCalls, 18);
-  assert.equal(protocol.repetitions, 3);
-  assert.equal(protocol.comparisonEvaluator, snapshot.comparisonEvaluator);
-  assert.equal(protocol.judge, 'MiniMax-M3');
-  const sourceResults = {};
-  for (const stage of ['criteria', 'attribution']) sourceResults[stage] = await jsonl(join(protocol.sourceRun, 'results', `${stage}.jsonl`));
-  const executions = [];
-  for (const [round, run] of snapshot.runs.entries()) {
-    const state = await json(resolve(repository, run.path, 'state.json'));
-    const comparisons = await jsonl(resolve(repository, run.path, 'results/comparison.jsonl'));
-    assert.equal(state.runId, run.id);
-    assert.equal(state.status, 'finished');
-    assert.equal(comparisons.length, 6);
-    assert.equal(Object.keys(state.tasks).length, 24);
-    assert.equal(state.executionScope.length, 6);
-    assert.deepEqual(state.config.rewrite, {comparison: false, attribution: false, clustering: false});
-    executions.push(state.config.execution);
-    for (const stage of ['criteria', 'attribution']) {
-      const frozen = await jsonl(resolve(repository, run.path, 'results', `${stage}.jsonl`));
-      assert.equal(frozen.length, stage === 'criteria' ? 6 : 12);
-      for (const row of frozen) assert.deepEqual(row, sourceResults[stage].find(source => source.task_id === row.task_id), '实验只复制选中依赖的原结果，不改写标准或归因');
+test('分歧单列且随筛选变化；逐轮保留正式取舍，分析与证据分开', async t => {
+  const container = page(t);
+  const analyses = await json(join(directory, 'src/data/experiment-analysis.json'));
+  const different = snapshot.samples.filter(sample => new Set(sample.results.map(result => `${result.outcome}:${result.winner}`)).size > 1);
+  assert.equal(different.length, 7);
+  assert.deepEqual(Object.keys(analyses).sort(), different.map(sample => sample.id).sort());
+  for (const [tier, kind, count] of [['Fast','subjective',6],['Fast','objective',1],['Expert','subjective',0],['Expert','objective',0]]) {
+    select(container, '[data-exp-tier]', tier); select(container, '[data-exp-kind]', kind);
+    const results = container.querySelector('.exp-table-wrap'), differences = container.querySelector('.exp-differences');
+    assert.ok(results.compareDocumentPosition(differences) & container.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.equal(results.closest('details'), null);
+    const articles = [...container.querySelectorAll('[data-disagreement-case]')];
+    assert.equal(articles.length, count);
+    for (const article of articles) {
+      assert.equal(article.tagName, 'DETAILS');
+      assert.equal(article.open, false);
+      article.querySelector(':scope > summary').click();
+      assert.equal(article.open, true);
+      const sample = different.find(sample => sample.id === article.dataset.disagreementCase);
+      assert.equal(sample.tier, tier); assert.equal(sample.hasStandardAnswer, kind === 'objective');
+      assert.deepEqual(sample.analysis, analyses[sample.id]);
+      assert.deepEqual(sample.analysis.roundComparisonIds, sample.results.map(result => result.comparisonId));
+      assert.equal(article.querySelector('.exp-analysis > p').textContent, sample.analysis.explanation);
+      for (const [index, round] of [...article.querySelectorAll('[data-disagreement-round]')].entries()) {
+        const result = sample.results[index];
+        assert.equal(round.querySelector('[data-round-tradeoff]').textContent, result.reason);
+        assert.equal(round.querySelector('.exp-round-label strong').textContent, result.outcome === 'both_good' ? '都好' : `${result.winner.startsWith('a_') ? 'A组' : 'B组'}胜`);
+        assert.ok(round.querySelector('.exp-source').textContent.includes(result.comparisonId));
+        assert.ok(round.querySelector('.exp-source').textContent.includes(result.source.file));
+        assert.ok(round.querySelector('.exp-round-evidence').textContent.includes(result.evidence.comparison.aspect));
+      }
+      article.querySelector(':scope > summary').click();
+      assert.equal(article.open, false);
     }
+    if (!count) assert.match(container.querySelector('.exp-no-differences').textContent, /没有三轮不一致/);
+  }
+  assert.match(container.querySelector('.exp-round-guide').textContent, /原位一/);
+  assert.match(container.querySelector('.exp-round-guide').textContent, /原位二.*材料与 A\/B 顺序不变，独立再判一次，不读取首判结论/);
+});
+
+test('汇总展示60题及四组统计；再次点击或选择筛选后恢复分组', t => {
+  const container = page(t);
+  select(container, '[data-exp-tier]', 'Expert'); select(container, '[data-exp-kind]', 'objective');
+  container.querySelector('[data-exp-overview]').click();
+  assert.equal(container.querySelector('[data-exp-overview]').getAttribute('aria-pressed'), 'true');
+  assert.equal(container.ownerDocument.activeElement, container.querySelector('[data-exp-overview]'));
+  assert.match(container.querySelector('.exp-protocol').textContent, /60 题 × 3 轮.*180 \/ 180 已决/);
+  assert.match(container.querySelector('[data-experiment-metric="repeat"]').textContent, /56 \/ 60 对/);
+  assert.match(container.querySelector('[data-experiment-metric="swap"]').textContent, /55 \/ 60 对/);
+  assert.deepEqual([...container.querySelectorAll('[data-experiment-group]')].map(row => [...row.cells].map(cell => cell.textContent)), [
+    ['Fast · 主观','20','16 / 20','16 / 20','6'], ['Fast · 客观','10','10 / 10','9 / 10','1'],
+    ['Expert · 主观','20','20 / 20','20 / 20','0'], ['Expert · 客观','10','10 / 10','10 / 10','0'],
+  ]);
+  assert.equal(container.querySelectorAll('[data-disagreement-case]').length, 7);
+  assert.equal(container.querySelectorAll('[data-disagreement-case][open]').length, 0);
+  assert.equal(container.querySelector('.exp-table').closest('details'), null);
+  assert.equal(container.querySelectorAll('[data-disagreement-round]').length, 21);
+  assert.equal(container.querySelector('.exp-takeaway strong').textContent, '53 / 60 题三轮结论一致');
+  assert.match(container.querySelector('.exp-analysis-boundary').textContent, /不能把变化直接归因为位置偏差/);
+  assert.equal(container.querySelectorAll('.exp-text-note').length, 3);
+  assert.match(container.querySelector('.exp-analysis-caution').textContent, /依据需复核/);
+  container.querySelector('[data-exp-overview]').click();
+  assert.equal(container.querySelector('[data-exp-tier]').value, 'Expert');
+  assert.equal(container.querySelector('[data-exp-kind]').value, 'objective');
+  assert.equal(container.querySelectorAll('[data-experiment-case]').length, 10);
+  container.querySelector('[data-exp-overview]').click();
+  select(container, '[data-exp-tier]', 'Fast');
+  assert.equal(container.querySelector('[data-exp-overview]').getAttribute('aria-pressed'), 'false');
+  assert.equal(container.querySelector('[data-exp-kind]').value, 'objective');
+  assert.equal(container.querySelectorAll('[data-disagreement-case]').length, 1);
+  assert.deepEqual([...container.querySelector('[data-exp-kind]').options].map(option => option.value), ['subjective','objective']);
+});
+
+test('报告分析与正式取舍按文本展示，不执行其中的HTML', t => {
+  const data = structuredClone(snapshot), sample = data.samples.find(sample => sample.analysis);
+  const text = '<img src=x onerror="alert(1)">';
+  sample.analysis.explanation = text; sample.results[0].reason = text;
+  const container = page(t, data), article = container.querySelector(`[data-disagreement-case="${sample.id}"]`);
+  assert.equal(article.querySelector('.exp-analysis > p').textContent, text);
+  assert.equal(article.querySelector('[data-round-tradeoff]').textContent, text);
+  assert.equal(article.querySelectorAll('img,script,iframe').length, 0);
+});
+
+test('本地实验收据与快照一致；上游材料逐条冻结，原位相同、换位只改匿名位置', async t => {
+  try { await access(join(repository, snapshot.protocolSource)); }
+  catch { t.skip('本机无实验运行来源；离线快照仍可独立验证'); return; }
+  const {readRunTasks, loadRunInputs} = await import('@eval/workflows/comparison');
+  const protocol = await json(join(repository, snapshot.protocolSource));
+  const states = await Promise.all(protocol.runs.map(run => readRunTasks(join(repository, run.path), [])));
+  const checkpoints = await Promise.all(protocol.runs.map(run => json(join(repository, run.path, 'state.json'))));
+  const inputs = await loadRunInputs(states[0].manifest, undefined, new Set(states[0].manifest.executionScope));
+  for (const item of cases) for (const candidate of item.pairs[0].candidates) {
+    const raw = inputs[candidate.inputId];
+    const registered = states[0].manifest.inputCatalog.find(input => input.input_id === candidate.inputId);
+    assert.equal(raw.trace_id, candidate.traceId);
+    assert.equal(raw.case_id, item.caseId);
+    assert.equal(raw.meta.question, item.question);
+    assert.equal(extractFinalAnswer(raw, registered.final_index).finalAnswer, candidate.finalAnswer);
+    assert.deepEqual(effectiveReference(raw), registered.reference);
+  }
+  for (const sourceRun of new Set(snapshot.samples.map(sample => sample.sourceRun))) {
+    const samples = snapshot.samples.filter(sample => sample.sourceRun === sourceRun);
+    const deps = [...new Set(samples.flatMap(sample => sample.upstream.map(upstream => upstream.taskId)))];
+    const source = await readRunTasks(join(repository, 'data/runs/comparison', sourceRun), deps);
+    for (const run of protocol.runs) {
+      const state = await readRunTasks(join(repository, run.path), deps);
+      for (const id of deps) {
+        assert.deepEqual(state.receipts[id].evaluation, source.receipts[id].evaluation);
+        assert.equal(state.receipts[id].submissionId, source.receipts[id].submissionId);
+        assert.equal(state.receipts[id].evaluatorVersion, source.receipts[id].evaluatorVersion);
+      }
+    }
+  }
+  for (const sample of snapshot.samples) {
+    const tasks = sample.results.map((result, index) => states[index].manifest.tasks.find(task => task.id === result.taskId));
+    const strip = task => { const copy = structuredClone(task); delete copy.id; delete copy.data.comparisonId; return copy; };
+    assert.deepEqual(strip(tasks[0]), strip(tasks[1]));
+    const swap = structuredClone(tasks[2]);
+    for (const field of ['inputIds', 'dependencies']) [swap[field].A, swap[field].B] = [swap[field].B, swap[field].A];
+    [swap.data.candidates.A, swap.data.candidates.B] = [swap.data.candidates.B, swap.data.candidates.A];
+    assert.deepEqual(strip(tasks[0]), strip(swap));
+    sample.results.forEach((result, index) => {
+      const receipt = checkpoints[index].tasks[result.taskId].receipt;
+      if (receipt) { assert.equal(receipt.judge, result.judge); assert.equal(receipt.evaluatorVersion, result.evaluator); }
+      assert.ok(checkpoints[index].executionScope.includes(result.taskId));
+    });
+  }
+  for (const [index, run] of protocol.runs.entries()) {
+    const rows = await jsonl(join(repository, run.path, 'results/comparison.jsonl'));
     for (const sample of snapshot.samples) {
-      const expected = sample.results[round];
-      const source = comparisons.find(row => row.comparison_id === expected.comparisonId);
-      assert.ok(source);
-      const task = state.tasks[expected.taskId];
-      assert.equal(task.receipt.evaluatorVersion, 'r153');
-      assert.equal(task.receipt.judge, 'MiniMax-M3');
-      assert.equal(task.receipt.exported.comparisonId, expected.comparisonId);
-      assert.deepEqual(Object.fromEntries(Object.entries(task.inputIds).map(([label,id]) => [label,state.inputs[id].version])), expected.mapping);
-      assert.deepEqual(source.case, sample.case);
-      assert.equal(source.has_standard_answer, sample.hasStandardAnswer);
-      const verdict = Object.values(source.verdicts)[0];
-      assert.equal(verdict.result, expected.outcome);
-      assert.equal(verdict.winner_version, expected.winner);
-      assert.equal(source.decision_basis.tradeoff, expected.reason);
-      assert.deepEqual(Object.fromEntries(Object.entries(source.assessments).map(([version,value]) => [version,value.meets_core])), expected.core);
-      for (const upstream of sample.upstream) assert.equal(state.tasks[upstream.taskId].receipt.evaluatorVersion, upstream.evaluator);
-      const declared = protocol.runs[round].tasks.find(item => item.taskId === expected.taskId);
-      assert.equal(declared.sourceComparisonId, sample.id);
-      assert.deepEqual(declared.mapping, expected.mapping);
+      const result = sample.results[index];
+      const row = rows.find(row => row.comparison_id === result.comparisonId);
+      if (result.status !== 'decided') { assert.equal(row, undefined); continue; }
+      const verdict = Object.values(row.verdicts)[0];
+      assert.equal(verdict.result, result.outcome);
+      assert.equal(verdict.winner_version, result.winner);
+      assert.equal(row.evaluator_version, snapshot.comparisonEvaluator);
+      assert.equal(result.reason, row.decision_basis.tradeoff);
+      if (result.evidence) {
+        assert.deepEqual(result.evidence.comparison, row.decision_basis.comparisons[0]);
+        for (const [version, findings] of Object.entries(result.evidence.citedFindings)) for (const finding of findings)
+          assert.equal(finding.text, row.evaluations[version].findings[finding.index].text);
+        if (result.evidence.originalTradeoff) {
+          const source = await readRunTasks(join(repository, run.path), [result.taskId]);
+          assert.equal(result.evidence.originalTradeoff, source.receipts[result.taskId].evaluation.decision_basis.tradeoff);
+        }
+      }
     }
   }
-  assert.deepEqual(executions[1], executions[0]);
-  assert.deepEqual(executions[2], executions[0], '工具、超时、修复和并发预算在三轮完全相同');
 });
