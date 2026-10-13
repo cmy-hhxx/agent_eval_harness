@@ -26,7 +26,7 @@ export function findingAppliesToPair(input: ComparisonInput, candidate: string, 
   // A dimension label cannot turn explicitly cited private rules into common evidence.
   // Require every real leaf origin of the complete block, never a coincident short phrase.
   const citedNorms = sources.flatMap(source => sourceContentBlocks(source.content, source.path).filter(block =>
-    block.origins.length && block.origins.every(origin => finding.evidence.some(evidence =>
+    block.origins.length && block.origins.every(origin => [...finding.evidence, ...finding.context_evidence ?? []].some(evidence =>
       evidence.source === undefined && evidence.source_input_id === undefined && evidenceCovers(trace!, input.candidates[candidate].candidate_id,
         evidence.evidence_id, evidenceId(input.candidates[candidate].candidate_id, source.message_index, "text", origin.path, origin.start, origin.end))))));
   if (citedNorms.some(block => !input.task_analysis.requirements.some(criterion =>

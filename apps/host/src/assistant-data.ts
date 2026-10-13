@@ -45,13 +45,23 @@ export class LocalAnalysisData implements AnalysisDataSource {
   async list(query: AnalysisQuery) {
     const offset = query.offset ?? 0, limit = Math.min(query.limit ?? 30, 100);
     if (!query.runId) {
-      const overviews = await readRunOverviews<AnalysisRunOverview>(this.directory);
+      const runDirectory = { complete: true, errors: [] as { runId: string | null; message: string }[] };
+      const unavailable = (runId: string | null, message: string) => {
+        runDirectory.complete = false;
+        runDirectory.errors.push({ runId, message });
+      };
+      let overviews: Awaited<ReturnType<typeof readRunOverviews<AnalysisRunOverview>>> = [];
+      try { overviews = await readRunOverviews<AnalysisRunOverview>(this.directory); }
+      catch (error) { unavailable(null, errorText(error)); }
       const items = [];
       const running: AnalysisRunOverview[] = [];
-      const runCounts = { scope: "all_registered_runs" as const, total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
+      const runCounts = { scope: "all_registered_runs", total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
       let selected: AnalysisRunOverview & { status: Checkpoint["status"] } | undefined;
-      for (const { runId, value } of overviews) {
-        if (value.runId !== runId) throw new Error("运行统计索引身份不一致：" + runId);
+      for (const { runId, value, error } of overviews) {
+        if (error !== undefined) { unavailable(runId, error); continue; }
+        if (value?.runId !== runId || !value.summary || !Object.hasOwn(runCounts.states, value.summary.status)) {
+          unavailable(runId, "运行统计索引身份或状态无效：" + runId); continue;
+        }
         const { summary, evaluatorVersion } = value, state = { status: summary.status };
         runCounts.total++;
         runCounts.states[state.status]++;
@@ -65,25 +75,32 @@ export class LocalAnalysisData implements AnalysisDataSource {
         if (preferred) selected = { ...value, status: state.status };
       }
       items.sort((a, b) => b.startedAt - a.startedAt || a.runId.localeCompare(b.runId));
+      const readSummary = async (run: AnalysisRunOverview) => {
+        try { return { ...run, summary: await this.runStatistics(run.runId) }; }
+        catch (error) { unavailable(run.runId, errorText(error)); return null; }
+      };
       if (query.view === "statistics") {
         let history;
         try {
           if (!this.publication) throw new Error("累计统计发布来源未配置。");
           history = await readPublishedStatistics(this.publication);
         } catch (error) { history = { status: "unavailable" as const, error: errorText(error), retryable: false }; }
-        const currentRuns = await Promise.all(running.map(async run => ({ ...run, summary: await this.runStatistics(run.runId) })));
-        return { kind: "statistics" as const, history, currentRuns, additive: false,
+        const currentRuns = (await Promise.all(running.map(readSummary))).filter(run => run !== null);
+        return { kind: "statistics" as const, history, currentRuns, runDirectory, additive: false,
           scope: "历史为最近一次完整发布的累计快照；运行中批次单列，两者可能重叠，不能直接相加。" };
       }
       if (query.view === "inputs" || query.view === "comparisons") {
-        if (!selected) throw new Error("没有含输入的已登记运行，无法查询输入或对战目录。");
-        return { ...await this.listRun({ ...query, runId: selected.runId }),
+        if (!selected) throw new Error(runDirectory.complete ? "没有含输入的已登记运行，无法查询输入或对战目录。"
+          : "运行目录不完整，无法自动选择含输入的运行；可传已知 runId 直接读取。" + JSON.stringify(runDirectory.errors));
+        return { ...await this.listRun({ ...query, runId: selected.runId }), runDirectory,
           selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const };
       }
-      const currentRun = selected ? { ...selected, summary: await this.runStatistics(selected.runId),
+      const current = selected ? await readSummary(selected) : null;
+      const currentRun = current && selected ? { ...selected, ...current,
         selectionReason: selected.status === "running" ? "running_with_inputs" as const : "latest_with_inputs" as const } : null;
       const filtered = query.query ? items.filter((item) => item.runId.includes(query.query!)) : items;
-      return { kind: "runs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), currentRun, runCounts };
+      if (!runDirectory.complete) runCounts.scope = "readable_registered_runs";
+      return { kind: "runs" as const, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), currentRun, runCounts, runDirectory };
     }
     return this.listRun({ ...query, runId: query.runId });
   }

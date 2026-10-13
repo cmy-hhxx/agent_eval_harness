@@ -60,8 +60,8 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     criterion_assessments: [{ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] }],
     meets_core: true, core_reason: "给出可用结果。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [] };
   const result = registry.resolve(binding,draft,reads) as AttributionResult;
-  assert.deepEqual(result.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final),
-    canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
+  assert.deepEqual(result.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final)]);
+  assert.deepEqual(result.criterion_assessments[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
   attributionProfile.validate!(binding.request, result, emptyAudit());
   const onlyNorm = structuredClone(draft);
   onlyNorm.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
@@ -73,16 +73,16 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   });
   const findingDraft = { ...draft, strengths: [{ dimension: "instruction_following",
     stage: "final_answer", importance: "medium", text: "按共同规范使用JSON。", reason: "交付格式满足真实要求。",
-    basis_index: attributionFindingBasis(binding.request.input).find(item=>item.norm_index===answer.norm_directory[0]!.norm_index)!.basis_index, evidence_indices: [],
+    basis_index: attributionFindingBasis(binding.request.input).find(item=>item.norm_index===answer.norm_directory[0]!.norm_index)!.basis_index, evidence_indices: [choose(finalRef)],
     evidence_status: "established" }] };
   const findingResult = registry.resolve(binding,findingDraft,reads) as AttributionResult;
   assert.equal(findingResult.findings[0]!.assessment.requirement_index, 0);
-  assert.deepEqual(findingResult.findings[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 0, norm),
-    canonicalEvidence(candidates.A.input_id, 1, question), canonicalEvidence(candidates.A.input_id, 2, final)]);
+  assert.deepEqual(findingResult.findings[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final)]);
+  assert.deepEqual(findingResult.findings[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
   attributionProfile.validate!(binding.request, findingResult, emptyAudit());
   for (const missingNorm of [0, 1]) {
     const incomplete = structuredClone(findingResult);
-    incomplete.findings[0]!.evidence = incomplete.findings[0]!.evidence.filter(item => item.message_index !== missingNorm);
+    incomplete.findings[0]!.context_evidence = incomplete.findings[0]!.context_evidence!.filter(item => item.message_index !== missingNorm);
     assert.throws(() => attributionProfile.validate!(binding.request, incomplete, emptyAudit()), (error: unknown) => {
       assert(error instanceof ValidationError);
       assert(error.issues!.some(issue => issue.code === "instruction_evidence_required" && issue.path === "/findings/0/evidence"));
@@ -157,9 +157,10 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   {
     const request = binding.request;
     const resolved = registry.resolve(binding,draft,reads) as AttributionResult;
-    assert.deepEqual(resolved.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text")]);
-    assert.deepEqual(resolved.criterion_assessments[1]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text"),
-      canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text")]);
+    assert.deepEqual(resolved.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text")]);
+    assert.deepEqual(resolved.criterion_assessments[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text")]);
+    assert.deepEqual(resolved.criterion_assessments[1]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text")]);
+    assert.deepEqual(resolved.criterion_assessments[1]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text")]);
     attributionProfile.validate!(request, resolved, emptyAudit());
     const normOnly = structuredClone(draft);
     normOnly.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
@@ -199,17 +200,17 @@ test("a headed private norm keeps all leaf origins without being promoted by a s
   const reads=emptyAudit(),finalNumber=selectEvidence(reads.evidenceBank!,finalRef).evidence_index;
   const draft:AttributionSubmission={is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks:[],summary:"已解释含义。",meets_core:true,core_reason:"给出了所求含义。",core_requirements:[1],
     criterion_assessments:[{status:"met",evidence_status:"established",summary:"给出了融资成本含义。",evidence_indices:[finalNumber]}],
-    problems:[],strengths:[{dimension:"instruction_following",stage:"final_answer",importance:"low",text:"纯概念解释没有加入投资风险提示。",reason:"该条件在本轮未触发。",basis_index:attributionFindingBasis(binding.request.input).find(item=>item.norm_index===own.norm_index)!.basis_index,evidence_indices:[],evidence_status:"established"}]};
+    problems:[],strengths:[{dimension:"instruction_following",stage:"final_answer",importance:"low",text:"纯概念解释没有加入投资风险提示。",reason:"该条件在本轮未触发。",basis_index:attributionFindingBasis(binding.request.input).find(item=>item.norm_index===own.norm_index)!.basis_index,evidence_indices:[finalNumber],evidence_status:"established"}]};
   const result=registry.resolve(binding,draft,reads) as AttributionResult;
   registry.validate(binding,result,reads);
   assert.equal(result.findings[0].assessment.requirement_index,null);
-  assert(parts.every(part=>result.findings[0].evidence.some(item=>item.quote===part)));
+  assert(parts.every(part=>result.findings[0].context_evidence!.some(item=>item.quote===part)));
   draft.strengths[0].dimension="format";
   const classified=registry.resolve(binding,draft,reads) as AttributionResult;
   registry.validate(binding,classified,reads);
   assert.equal(classified.findings[0].dimension,"format","topic labels do not change the selected rule's ownership");
   assert.equal(classified.findings[0].assessment.requirement_index,null);
-  assert(parts.every(part=>classified.findings[0].evidence.some(item=>item.quote===part)));
+  assert(parts.every(part=>classified.findings[0].context_evidence!.some(item=>item.quote===part)));
   const copied=structuredClone(rubric);copied.requirements[0].text=parts.join("\n");
   assert.deepEqual(criterionInstructionSources(trace,2,copied,candidates.A.input_id),criterionInstructionSources(trace,2,rubric,candidates.A.input_id));
 });

@@ -1,5 +1,5 @@
 import { canonical, ValidationError, type AgentRequest, type TaskAnalysis, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { cite, evidenceCovers, evidenceId, evidenceSources, images, parseEvidenceCoordinates, resolveEvidence, sourceContentBlocks, traceReadCoverage } from "@eval/tools";
+import { cite, evidenceCovers, evidenceSources, parseEvidenceCoordinates, sourceContentBlocks, traceReadCoverage } from "@eval/tools";
 import { instructionEvidenceContext } from "./instructions.js";
 import type { Evidence } from "./types.js";
 
@@ -117,26 +117,4 @@ export function findingNormSelectionIssues(request: AgentRequest, draft: unknown
     });
   }
   return issues;
-}
-
-/** Bind real final body as review scope, without asserting that it proves the finding. */
-export function finalAnswerScope(request: AgentRequest, observation: string, audit: ToolAudit, path: string): Evidence[] {
-  const raw = request.sources.answer.value as { messages: unknown[] };
-  const index = (request.input.answer as { final_message_index: number }).final_message_index;
-  const message = object(raw.messages[index]);
-  if (!message || message.role !== "assistant" && !(message.role === undefined && message.type === "final_answer"))
-    throw new ValidationError([{ category: "evidence", code: "finding_final_source_invalid", path,
-      message: "最终交付范围须来自本方真实 assistant/final_answer，不能用用户、工具或变造的 final_evidence 代替。" }]);
-  const content = message.content;
-  const paths = typeof content === "string" ? ["/content"] : Array.isArray(content)
-    ? content.flatMap((block, position) => { const value = object(block); return typeof value?.text === "string" &&
-      (value.type === undefined || ["text", "output_text"].includes(String(value.type))) ? [`/content/${position}/text`] : []; })
-    : typeof object(content)?.text === "string" ? ["/content/text"] : [];
-  const evidence: Evidence[] = evidenceSources(message).flatMap(source => source.kind === "text" && paths.includes(source.path) && source.text.length
-    ? [cite(request.sources.answer.id, index, source, 0, source.text.length)] : []);
-  if (images(message).length) evidence.push(resolveEvidence(raw, { evidence_id: evidenceId(request.sources.answer.id, index, "image"),
-    observation }, "answer", audit, path, request.sources.answer.id));
-  if (!evidence.length) throw new ValidationError([{ category: "evidence", code: "finding_final_source_invalid", path,
-    message: "没有真实最终正文或可查看图像，不能自动生成交付范围。" }]);
-  return evidence;
 }

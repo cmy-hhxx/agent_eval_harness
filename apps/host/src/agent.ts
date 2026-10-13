@@ -31,8 +31,6 @@ const data = new LocalAnalysisData(config.evaluation.output.path, {
 });
 logger.addSecrets(...configurationSecrets());
 const { model, gateways } = assistantModelConfiguration(createModelResolver(config.models)("attribution"), configuration);
-for (const gateway of gateways)
-  if (!process.env[gateway.model.apiKeyEnv]) throw new Error(`请在 config.ini 的 channel.${gateway.model.provider} 中配置 api_key`);
 const server = await serveAssistant({ port, userId, webDirectory: path.join(ROOT, "dist/agent/web"), endpoints: (url) => assistantEndpoints(new AssistantSessions({
   directory: path.join(ROOT, "data/assistant"), url, model, models: new GatewayAssistantModels(path.join(ROOT, "data/assistant"), model, gateways),
   ...createEris({ code: new LocalAnalysisCode(path.join(ROOT, "data/assistant"), path.join(ROOT, ".venv/bin/python")), data, specialists: new LocalSpecialists(path.join(ROOT, "data/assistant"), data, config, values.debug), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),

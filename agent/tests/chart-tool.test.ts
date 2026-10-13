@@ -16,6 +16,23 @@ const timing = { status: "finished", batches: ["2026-10-10"], timeScope: { timeZ
   evaluation: { from: "2026-10-10T08:16:00.000+08:00", to: "2026-10-12T06:54:00.000+08:00" as string | null },
   acceptedResults: { from: "2026-10-10T08:18:00.000+08:00", through: "2026-10-10T22:02:00.000+08:00" }, sampleTimeRange: null } };
 
+test("an out-of-range or missing-value annotation does not discard the actual chart", async () => {
+  const tool = chartTool(noData);
+  const input = { ...chart, references: undefined, series: [{ name: "胜场", values: [6, null] }], annotations: [
+    { categoryIndex: 9, seriesIndex: 0, note: "不存在的类别" },
+    { categoryIndex: 1, seriesIndex: 0, note: "没有记录的值" },
+    { categoryIndex: 0, seriesIndex: 0, note: "已有6场" },
+  ] };
+  const before = structuredClone(input);
+  const result = await tool.execute(input, context);
+  const output = JSON.parse(result.content[0].text!).chart;
+  assert.deepEqual(output.series, input.series);
+  assert.deepEqual(output.categories, input.categories);
+  assert.deepEqual(output.annotations, [input.annotations[2]]);
+  assert.deepEqual(result.details, { omittedAnnotations: [0, 1] });
+  assert.deepEqual(input, before);
+});
+
 test("formal statistics charts read counts once and preserve the model's analysis without copied data fields", async () => {
   const statistics = { runId: "run", comparisonTier: "Fast" };
   const references = [{ runId: "run", taskId: "accepted" }];

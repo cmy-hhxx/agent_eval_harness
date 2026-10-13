@@ -61,7 +61,7 @@
 .eris-comparison-impact { margin: 6px 0 0; padding-left: 10px; border-left: 2px solid #737a84; color: #293241; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .eris-comparison-impact > [data-comparison-content], .eris-comparison-summary > [data-comparison-content] { display: block; }
 .eris-comparison-summary { margin: 0; min-width: 0; color: #293241; overflow-wrap: anywhere; }
-.eris-comparison-highlight { color: #24282e; background: #fff16a; font-weight: 600; border-radius: 1px; box-decoration-break: clone; }
+.eris-comparison-highlight { color: #24282e; background: linear-gradient(transparent 25%, #fff1a8 25%, #fff1a8 92%, transparent 92%); font-weight: 600; border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .eris-comparison-phrase { display: inline-block; max-width: 100%; vertical-align: bottom; }
 .eris-comparison-value { display: inline-block; width: max-content; max-width: 100%; vertical-align: bottom; overflow-wrap: anywhere; }
 .eris-comparison-transitions { padding: 0 0 12px 122px; }

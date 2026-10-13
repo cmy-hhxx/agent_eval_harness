@@ -94,7 +94,7 @@ test("stopping during conversation preparation never starts a model turn", { tim
       const selection = { provider: model.provider, model: model.model };
       const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model, systemPrompt: "test", tools: [],
         models: {
-          async list() { if (phase === "models") await wait(); return { models: [], favorites: [], default: selection }; },
+          async list() { if (phase === "models") await wait(); return { models: [], failures: [], favorites: [], default: selection }; },
           async resolve() { return model; }, async favorites() {}, async readFavorites() { return []; },
         },
         driver: async ({ event, history }) => {

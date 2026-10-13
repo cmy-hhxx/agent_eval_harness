@@ -17,7 +17,7 @@ export function normSelection(directory: NormChoice[], finding: AttributionResul
     if (associated.length === 1) return associated[0]!.norm_index;
     if (associated.length > 1) throw new Error(`Fixture requirement ${index} has ambiguous norm owners`);
   }
-  const own = finding.evidence.filter(item => item.source === undefined && item.source_input_id === undefined);
+  const own = [...finding.evidence, ...finding.context_evidence ?? []].filter(item => item.source === undefined && item.source_input_id === undefined);
   const intersects = (selected: { evidence_id: string }, norm: { evidence_id: string }) => {
     const a = parseEvidenceCoordinates(selected.evidence_id), b = parseEvidenceCoordinates(norm.evidence_id);
     return a?.kind === "text" && b?.kind === "text" && a.input_id === b.input_id && a.message_index === b.message_index &&

@@ -16,7 +16,7 @@ import { attributionNotApplicableText } from "@eval/prompts";
 import { instructionEvidenceContext } from "./instructions.js";
 import { validateJudgment, submissionCoreRequirements } from "./validate.js";
 import { resolveNumericChecks, type NumericSubmissionCheck } from "./numeric-ledger.js";
-import { attributionNormDirectory, finalAnswerScope, submissionFindingEntries } from "./norm-directory.js";
+import { attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
 
 type EvidenceRef = { evidence_id: string; source?: string; observation?: string };
 type DraftFinding = {
@@ -61,7 +61,8 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
     table_resolutions?: { table_index: number; row_index: number; outcome: "supported" | "conflict"; reason: string; evidence: EvidenceRef[] }[];
   };
   const withNorms = (refs: EvidenceRef[], criterion: TaskAnalysis["requirements"][number] | undefined, location: string) => {
-    return instructionContext.appendNorms(resolveRefs(refs, location), instructionContext.forCriterion(criterion));
+    const context = instructionContext.forCriterion(criterion);
+    return { evidence: resolveRefs(refs, location), ...(context.length ? { context_evidence: context } : {}) };
   };
   const directory = attributionNormDirectory(request);
   const findings = submissionFindingEntries(value).map(({ finding: entry, path }, index) => {
@@ -74,12 +75,11 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
     const norm = ruleBound && finding.norm_index !== null ? directory[finding.norm_index!] : undefined;
     const requirementIndex = ruleBound ? norm?.requirement_index ?? null : finding.assessment.requirement_index ?? null;
     const { norm_index: _selection, ...canonicalFinding } = finding;
-    let evidence = instructionContext.appendNorms(selected.filter((item): item is Evidence => item !== undefined),
-      norm?.evidence ?? instructionContext.forRequirement(requirementIndex));
-    if (finding.stage === "final_answer") evidence = instructionContext.appendNorms(evidence,
-      finalAnswerScope(request, finding.assessment.observation, audit, `${path}/evidence`));
+    const evidence = selected.filter((item): item is Evidence => item !== undefined);
+    const context = norm?.evidence ?? instructionContext.forRequirement(requirementIndex);
     return { ...canonicalFinding, finding_id: "f" + index,
-      assessment: { ...finding.assessment, requirement_index: requirementIndex }, problem, evidence };
+      assessment: { ...finding.assessment, requirement_index: requirementIndex }, problem, evidence,
+      ...(context.length ? { context_evidence: context } : {}) };
   });
   const correctnessEvidence = available ? resolveRefs(value.correctness_evidence!, "/correctness_evidence") : [];
   const resolved = {
@@ -96,7 +96,7 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
         summary: attributionNotApplicableText, evidence: [],
       };
       const { assessment, index } = submitted.get(criterion.id)!;
-      return { ...structuredClone(assessment), evidence: withNorms(assessment.evidence, criterion, `/criterion_assessments/${index}/evidence`) };
+      return { ...structuredClone(assessment), ...withNorms(assessment.evidence, criterion, `/criterion_assessments/${index}/evidence`) };
     }),
     ...(available
       ? { correctness_evidence: correctnessEvidence }

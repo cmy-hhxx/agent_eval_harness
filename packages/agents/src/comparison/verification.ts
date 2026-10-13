@@ -352,7 +352,7 @@ function findingSharesReturnedFact(request: AgentRequest, finding: Finding, conc
 
 function findingSharesProof(request: AgentRequest, finding: Finding, concern: ComparisonMaterialInspection["concerns"][number],
   blocks: EvidenceReference[][], audit: ToolAudit, path: string) {
-  const own = finding.evidence.filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
+  const own = [...finding.evidence, ...finding.context_evidence ?? []].filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
   const source = request.sources[concern.candidate]!;
   return blocks.some(block => block.every(norm => own.some(evidence =>
     evidenceCovers(source.value as { messages: unknown[] }, source.id, evidence.evidence_id, norm.evidence_id)))) &&
@@ -368,7 +368,7 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
   if (!primary || primary.id === id || !criterionAppliesToPair(input, primary) || !target ||
     target.applies_to.length && !target.applies_to.includes(material.candidate_id) || selectedNormBlocks(request, concern, id).length ||
     !findingSharesActualAnswer(request, finding, concern, audit, path)) return false;
-  const own = finding.evidence.filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
+  const own = [...finding.evidence, ...finding.context_evidence ?? []].filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
   return normativeSources(raw, source.id, material.final_message_index).filter(norm => norm.role === "user").some(norm => {
     const blocks = sourceContentBlocks(norm.content, norm.path), targets = blocks.filter(block => hasSourceTextBlock(target.acceptance_rule, block.quote)),
       sources = evidenceSources(raw.messages[norm.message_index]);

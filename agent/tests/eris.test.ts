@@ -175,7 +175,9 @@ test("Eris's public definition includes every tool resource and validates before
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const received: unknown[] = [];
   const dependencies: ErisDependencies = { code: { execute: unexpected, read: unexpected },
-    data: { list: async (query) => { received.push(query); return { items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
+    data: { list: async (query) => { received.push(query); return query.sample
+      ? { kind: "comparisons", items: [], selection: { mode: "random", availableCaseCount: 0, remainingCaseCount: 0 } }
+      : { items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   };
   const eris = createEris(dependencies);
@@ -239,7 +241,9 @@ test("Eris's public definition includes every tool resource and validates before
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run" }] }, context), /inputId/);
   await assert.rejects(specialist.execute({ ...request, inputs: [{ runId: "run", inputId: "input", taskId: "task" }] }, context), /additional properties/);
   await assert.rejects(specialist.execute({ ...request, attributions: [{ inputId: "input", operationId: request.operationId, runId: "run", taskId: "task" }] }, context), /oneOf/);
-  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 }, sample, { view: "statistics" }, defaultSample, { view: "inputs" }, batch], "full directories omit the optional text filter; business filters are forwarded unchanged");
+  assert.deepEqual(received, [{ limit: 5 }, { runId: "run" }, { runId: "run", query: "A组Fast" }, { runId: "run", view: "comparisons", limit: 1 },
+    { ...sample, limit: 20, includeAnalysis: true }, { view: "statistics" }, { ...defaultSample, limit: 20 }, { view: "inputs" }, batch],
+    "sampling requests a bounded question pool while preserving business filters and ordinary directories");
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["unknown_tool"]), /ENOENT/);
 });

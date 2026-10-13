@@ -22,11 +22,14 @@ test("long attribution evidence keeps exact references and a bounded full-quote 
   result.correctness_evidence = [entry];
   result.criterion_assessments[0]!.evidence = [entry];
   result.findings[0]!.evidence = [entry];
+  result.findings[0]!.context_evidence = [entry];
+  result.criterion_assessments[0]!.context_evidence = [entry];
   result.table_resolutions = [{ table_id: "table", row_index: 0, outcome: "supported", reason: "引用原始行。", evidence: [entry] }];
   const before = structuredClone({ result, trace });
   const shown = attributionPresentation(result, "B", trace, evidenceInputId);
   const projected = [shown.correctness_evidence[0]!, shown.criterion_assessments[0]!.evidence[0]!,
-    shown.findings[0]!.evidence[0]!, shown.table_resolutions![0]!.evidence[0]!];
+    shown.findings[0]!.evidence[0]!, shown.table_resolutions![0]!.evidence[0]!,
+    shown.findings[0]!.context_evidence![0]!, shown.criterion_assessments[0]!.context_evidence![0]!];
   for (const item of projected) {
     assert("reference" in item);
     assert("quote_preview" in item);

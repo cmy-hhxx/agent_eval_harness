@@ -1,11 +1,12 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { canonical, parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import { erisComparisonCheck } from "@eval/prompts";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 import checkSchema from "../../../schemas/eris/comparison-check.json" with { type: "json" };
 import { comparisonChartData, validateChart, type ChartSpec } from "./chart.js";
 import { comparisonDiagram, type ComparisonDiagramInput } from "./comparison-diagram.js";
+import { comparisonSample } from "./comparison-sample.js";
 
 export interface ErisDependencies {
   data: AnalysisDataSource;
@@ -77,7 +78,7 @@ function reviewReferences(value: unknown, runId: string): AnalysisReference[] {
   return [...references.values()];
 }
 
-/** Select observed material for this pair, including earlier turns and uncited counterevidence. */
+/** Combine current case material with earlier observed evidence, including uncited counterevidence. */
 function comparisonSources(sources: AssistantSource[], reference: AnalysisReference, result: unknown): AssistantSource[] {
   const parsed = sources.map(source => ({ source, materials: source.content.flatMap(block => {
     if (block.type !== "text" || !block.text) return [];
@@ -128,7 +129,6 @@ function comparisonSources(sources: AssistantSource[], reference: AnalysisRefere
     });
     return [...content, ...(other.length ? [{ tool: source.tool, content: other }] : [])];
   });
-  if (!packed.length) throw new Error("缺少当前对战的核对材料，请先 read_case 读取本题与双方回答。");
   return packed;
 }
 
@@ -165,15 +165,17 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
   const validateChartReceipt = new Ajv2020({ strict: false }).compile({ ...schemas.show_chart,
     required: ["type", "title", "scope", "unit", "source", "categories", "series"] });
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
-    list_data: async (value) => {
-      const result = await options.data.list(value as JsonObject);
+    list_data: async (value, context) => {
+      const query = value as AnalysisQuery;
+      const sampled = query.sample ? await comparisonSample(options.data, query, context) : undefined;
+      const result: JsonObject = sampled?.result ?? await options.data.list(query);
       const current = result.currentRun as JsonObject | undefined;
       // Apply to every page, including empty searches. Chart validation still reads complete provenance.
-      return textResult({ ...result,
+      return { ...textResult({ ...result,
         ...(result.summary ? { summary: directorySummary(result.summary as JsonObject) } : {}),
         ...(current?.summary ? { currentRun: { ...current, summary: directorySummary(current.summary as JsonObject) } } : {}),
         ...(result.currentRuns ? { currentRuns: (result.currentRuns as JsonObject[]).map(run => ({ ...run, summary: directorySummary(run.summary as JsonObject) })) } : {}),
-      });
+      }), ...(sampled?.qualityCheck ? { details: { qualityCheck: sampled.qualityCheck } } : {}) };
     },
     read_case: async (value, context) => {
       const args = value as { reference: AnalysisReference | AnalysisCaseLookup; review?: boolean };
@@ -246,14 +248,49 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     },
     show_comparison: async (value, context) => {
       const args = value as ComparisonDiagramInput;
-      const result = await options.data.read(args.reference);
+      const material = await options.data.read(args.reference, { view: "case" });
+      context.signal.throwIfAborted();
+      const result = material.formal as JsonObject | undefined;
+      if (material.kind !== "case" || !result) throw new Error("当前对战缺少正式结果，尚未展示。");
       const { diagram, omittedHighlights } = comparisonDiagram(args, result);
       if (!context.complete) throw new Error("比较图结论核对不可用，尚未展示");
+      const reference = result.reference as AnalysisReference;
+      const answers = (Array.isArray(material.answers) ? material.answers as JsonObject[] : [])
+        .filter(answer => args.candidates.some(candidate => candidate.model === answer.model));
+      if (typeof material.question !== "string" || !material.question.trim() || answers.length !== 2
+        || new Set(answers.map(answer => answer.model)).size !== 2
+        || answers.some(answer => (answer.reference as AnalysisReference | undefined)?.runId !== reference.runId || !answer.answer))
+        throw new Error("当前对战的原始问题或双方回答缺失，尚未展示；请检查该对战的数据源。");
+      const sources: AssistantSource[] = [{ tool: "read_case", ...textResult({ ...material, answers }) }];
+      // A long final answer is represented by a preview in read_case; fetch all its pages before checking.
+      const continuations = await Promise.all(answers.map(async answer => {
+        const response = answer.answer as JsonObject;
+        if (response.complete === true && typeof response.text === "string") return [];
+        const source = response.reference as AnalysisReference | undefined;
+        if (response.complete !== false || !source || source.runId !== reference.runId || !source.inputId
+          || source.inputId !== (answer.reference as AnalysisReference).inputId || !Number.isInteger(source.messageIndex))
+          throw new Error("当前对战的原始回答缺少完整正文或有效引用，尚未展示。");
+        const pages: AssistantSource[] = [];
+        let offset = 0;
+        while (true) {
+          context.signal.throwIfAborted();
+          const page = await options.data.read(source, { offset, limit: 16000 });
+          if (page.kind !== "message" || typeof page.text !== "string") throw new Error("当前对战的原始回答续读失败，尚未展示。");
+          pages.push({ tool: "read_data", ...textResult(page) });
+          if (page.hasMore === false) break;
+          if (page.hasMore !== true || !Number.isInteger(page.nextOffset) || Number(page.nextOffset) <= offset)
+            throw new Error("当前对战的原始回答分页不完整，尚未展示。");
+          offset = Number(page.nextOffset);
+        }
+        return pages;
+      }));
+      sources.push(...continuations.flat());
+      context.signal.throwIfAborted();
       const { complete: _complete, reasonHighlight: _reasonHighlight, ...draft } = args;
       const check = await context.complete({ systemPrompt: erisComparisonCheck, maxThinking: "low", draft: { ...draft,
         candidates: args.candidates.map(candidate => ({ ...candidate, paths: candidate.paths.map(({ highlights: _highlights, ...path }) => path) })) }, outputSchema: checkSchema,
         sourceTools: ["read_case", "search_data", "read_evidence", "read_data"],
-        selectSources: sources => comparisonSources(sources, result.reference as AnalysisReference, result.result) });
+        selectSources: observed => comparisonSources([...sources, ...observed], reference, result.result) });
       let review: unknown;
       try { review = JSON.parse(check.text); } catch { /* Preserve invalid output and usage for diagnosis. */ }
       if (!validateCheck(review)) return { ...textResult({ kind: "comparison-check", error: "比较图结论核对格式无效，尚未展示", issues: schemaIssues(validateCheck.errors) }),
@@ -271,7 +308,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         references?: { runId?: string; operationId?: string; reference?: AnalysisReference; statistics?: { runId: string; comparisonTier: string } }[] };
       const references: NonNullable<typeof suppliedReferences> = statistics ? [{ statistics }] : suppliedReferences ?? [];
       let chart = { type: "heatmap", source: "本地评测材料", ...input } as ChartSpec;
-      if (!statistics) validateChart(chart);
+      if (!statistics) validateChart({ ...chart, annotations: undefined });
       const citations: unknown[] = [];
       const timeScopes = new Map<string, string>();
       // Only share within this chart. A later tool call must observe new accepted results.
@@ -309,10 +346,21 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         }
       }
       if (timeScopes.size) chart.scope = [...timeScopes.values()].join("；");
+      const omittedAnnotations: number[] = [];
+      if (chart.annotations) chart.annotations = chart.annotations.filter((annotation, index) => {
+        const valid = chart.categories[annotation.categoryIndex] !== undefined && chart.series[annotation.seriesIndex] !== undefined
+          && chart.series[annotation.seriesIndex].values[annotation.categoryIndex] != null
+          && (!["scatter", "bubble"].includes(chart.type) || chart.xValues?.[annotation.categoryIndex] != null)
+          && (chart.type !== "bubble" || chart.sizeValues?.[annotation.categoryIndex] != null);
+        if (!valid) omittedAnnotations.push(index);
+        return valid;
+      });
       if (!validateChartReceipt(chart)) throw new Error(`图表数据无法呈现：${JSON.stringify(schemaIssues(validateChartReceipt.errors))}`);
-      if (statistics) validateChart(chart);
+      validateChart(chart);
       const result = textResult({ kind: "chart", chart });
-      return citations.length ? { ...result, details: { references: citations } } : result;
+      return { ...result, ...(citations.length || omittedAnnotations.length ? { details: {
+        ...(citations.length ? { references: citations } : {}), ...(omittedAnnotations.length ? { omittedAnnotations } : {}),
+      } } : {}) };
     },
   };
   const ajv = new Ajv2020({ allErrors: true, strict: false });

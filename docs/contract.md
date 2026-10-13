@@ -155,7 +155,7 @@ Comparison 原始 summary、tradeoff，以及可选核验的 observation、conce
 
 Comparison 提交顶层 a_summary、b_summary、同序 comparisons、可选 preference 和 tradeoff。普通非空行只有 importance、可选 better_candidate、a_summary、b_summary；资源行只提交 importance 与可选 better_candidate，双方文案由可信指标生成；没有 assessments/A/B 子对象。只有 optional 槽可填 null。Schema 限定行数，目录给出适用范围与 advantage_candidates，业务校验严格检查优势资格；不为每行复制整份子 Schema。模型不提交 status、ranking、criterion_ids、finding_indices 或 decisive_findings。程序回填正式关联、状态、核心失败引用和排名；材料冲突、核心未知或未对齐的关键观察保留 needs_review。
 
-正式 `result.schema.json` 保持原有 decided/needs_review 结构。程序生成每行 aspect、criterion_ids、双方 finding_indices 与状态，不能因模型少抄 ID 丢覆盖。scope=source_only 的槽不能用于相对优势或决定性依据，任何维度引用私有规范都继承该边界；错误关联共同题目不能扩大私规范围。未绑定标准的 finding 若对方没有已接受的同方面事实，保持 unknown/uncertain，不能借“对方没有 finding”确定优势。uncertain 不能加强为 established。资源优势只使用双方共有的同种有效指标：完整耗时须双方均为有效非负值，token 须双方均为有效非负安全整数，总量冲突已在输入归一化时置空；缓存等其他字段异常不否定有效总量。只有一方有数据、双方各有不同指标或 token 冲突时不允许宣告资源优势；缺失/冲突不补零。耗时与 token 分别判断，token 不等于费用，单次时延受环境影响；任一方存在有效耗时或总 token 时，资源槽必须保留；模型视图提供 resource_metrics 和 comparable_metrics，程序逐项展示耗时与总 token 的绝对值，缺失或异常显示无有效记录；Agent 不编写资源行文案，不额外推算百分比。相似数值仍展示，不据此强行判优。双方核心状态决定通过/失败分层；双方均可用时，整场胜出由显式 preference 和该方已确认的中高共同优势共同支持，不从单项优势自动生成赢家。独有中高优势却未选择整场偏好时退回修正，差异影响不足则降低 importance，确有实质优势则明确 preference；仅有低影响差异不能硬选。全部未达标候选保持同层，tradeoff 仍说明剩余用途和修正代价。comparison_scope 和既有归因是比较依据，模型不新增 finding、改写归因或让 Attribution 修改排名；可选独立核验记录来源疑点。
+正式 `result.schema.json` 保持原有 decided/needs_review 结构。程序生成每行 aspect、criterion_ids、双方 finding_indices 与状态，不能因模型少抄 ID 丢覆盖。scope=source_only 的槽不能用于相对优势或决定性依据，任何维度引用私有规范都继承该边界；错误关联共同题目不能扩大私规范围。未绑定标准的 finding 若对方没有已接受的同方面事实，保持 unknown/uncertain，不能借“对方没有 finding”确定优势。uncertain 不能加强为 established。资源优势只使用双方共有的同种有效指标：完整耗时须双方均为有效非负值，token 须双方均为有效非负安全整数，总量冲突已在输入归一化时置空；缓存等其他字段异常不否定有效总量。只有一方有数据、双方各有不同指标或 token 冲突时不允许宣告资源优势；缺失/冲突不补零。耗时与 token 分别判断，token 不等于费用，单次时延受环境影响；任一方存在有效耗时或总 token 时，资源槽必须保留；模型视图提供 resource_metrics 和 comparable_metrics，程序逐项展示耗时与总 token 的绝对值，缺失或异常显示无有效记录；Agent 不编写资源行文案，不额外推算百分比。相似数值仍展示，不据此强行判优。双方核心状态决定通过/失败分层；双方均可用时，整场胜出由显式 preference 和该方已确认的中高共同优势共同支持，不从单项优势自动生成赢家。独有中高优势却未选择整场偏好时退回修正，差异影响不足则降低 importance，确有实质优势则明确 preference；仅有低影响差异不能产生正式胜者。全部未达标候选保持同层；都好、都差均在 tradeoff 明确有依据的相对偏好或无法区分的原因，详见[评语标准](quality.md#评语标准)。comparison_scope 和既有归因是比较依据，模型不新增 finding、改写归因或让 Attribution 修改排名；可选独立核验记录来源疑点。
 
 ### 可选独立核验
 
@@ -214,7 +214,7 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 - Rewrite 的模型侧 label/text/context 将 ASCII 尖括号显示为全角符号，保留标记名称、属性值、数字和既定判断；正式请求、源结果、id、preference 与 forbiddenPrefixes 保持原值。展示替换不代表原回答使用全角字符。提交 text 仍须为字符串，对象不会转换为文字。
 - 输入是 Workflow 选定的文本槽位（模型只见 `items[].label/text/context`，id 留在程序请求）及 case 的批次/case ID 或聚类的批次/模型定位信息，不含原题、原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
 - 模型提交 `texts: string[]`，与请求同序、同数量，不输出 id；Workflow 在提交校验后绑定正式 `{id,text}`，Agent 校验正式槽位及偏好，收据和内嵌 rewritten 仍保留可追溯身份；真实组别与模型称谓、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
-- 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。“双方都差：”后可以说明原裁决已有的相对优劣，不改变排名、赢家字段或统计；“双方都好：”仍不得改成某方更好。当前文案按收据接受时间逐槽取最新值，同一接受时间按任务清单次序后者获胜；未触及槽位保留此前文案，重放旧收据不回滚新文案。`rewritten.evaluator_version` 取最新接受的改写收据版本，每份历史收据仍保留并独立校验其原始版本和完整评价；被覆盖的历史文本通过状态差异记录恢复。
+- 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。都好、都差均保留 Comparison 在 `tradeoff` 中确定的相对偏好、依据及反向优势，正文可写“更倾向某方”；无可依据的偏好时说明原因。两类槽位还携带已确认的低影响单方优势，供润色保留细微差异；Rewrite 不自行数问题或选边，不改变排名、赢家字段或统计。当前文案按收据接受时间逐槽取最新值，同一接受时间按任务清单次序后者获胜；未触及槽位保留此前文案，重放旧收据不回滚新文案。`rewritten.evaluator_version` 取最新接受的改写收据版本，每份历史收据仍保留并独立校验其原始版本和完整评价；被覆盖的历史文本通过状态差异记录恢复。
 - 显式逐项改写只请求 `comparison.<行号>.<候选>.summary`；本格原文放在 `text`，同项对照和已确定的本项优势放在只读 `context`，不含证据；不把对照信息复制为点评前缀。Workflow 通过 `forbiddenPrefixes` 指定不可作为前缀的呈现标签，Rewrite 校验拒绝复制标签，避免将本项赢家名称贴到另一方事实前。每格先写具体得失，保留局部优势、各自约束与不确定性；仅更新这些槽位，已改写偏好、方面名、优势标记和引用保持不变。
 - 定向修复在任务数据中保存 `rewriteSlotIds`，请求必须与该非空、无重复的已知槽位集合完全对应；未知槽位在派发前拒绝。`executionScope` 保存本轮任务 UUID 清单；成功任务及其他范围外任务不会进入请求；同 run 冻结范围时不发现新增输入。准备修复保留既有源结果及文案，接受后只合并请求的槽位；旧成功任务的 attempts 和判决版本不随修复变化。CLI 选择与释放范围见[使用指南](usage.md#只补失败与同类故障熔断)。
 - 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。评测 run 的改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本）。独立聚类作业将槽位文案保存到 `results/rewrite.jsonl`，以 `source_task_id` 引用原聚类结果；两种工作流均不单独记录改写业务日志。
@@ -239,11 +239,13 @@ Clustering 模型材料与提交使用请求内短编号：观察为 O1、O2…�
 
 任务判据目录只选择本轮用户交付要求和真实候选用户约束，SYS/DEV 不整份升为任务判据或共同优势。内部指令仍完整保留在本方材料中，由 Attribution 和独立复核按真实指令层级、触发条件与实际行为单独核验；未入 requirements 的私规用 source_only finding 与完整本方规范和实际交付证据闭环，不能借共同问题扩大作用域。
 
-Workflow 用原整组去身份映射及当前候选真实 system/developer/user 完整规范块，匹配 criterion.acceptance_rule 中程序保留的原文；检查短句 text 不作为来源绑定依据，保留标题、正文、跨文本叶子条件和例外，不按近似含义或中文标点拆义务。`criterion_instruction_sources` 保留真实 evidence_id、消息、路径及完整原文；criterion_assessments 仍按该关联补入规范，模型须提供实际交付或执行证据。Attribution 的公开 `attributionNormDirectory(request)` 先按原 requirements 顺序列出本方适用且有可信真实规范绑定的项，再列未被这些项完整覆盖的本方 SYS/DEV 与未关联 USER 原块；目录只做物理来源分组，每项为 `norm_index / roles / requirement_index / evidence`，跨角色的真实规范束保留全部 roles。当前请求必须提供 `answer.norm_directory`，启动模型前与真实来源严格比较内容和顺序，未知来源不借 peer 补造。
+Workflow 用原整组去身份映射及当前候选真实 system/developer/user 完整规范块，匹配 criterion.acceptance_rule 中程序保留的原文；检查短句 text 不作为来源绑定依据，保留标题、正文、跨文本叶子条件和例外，不按近似含义或中文标点拆义务。`criterion_instruction_sources` 保留真实 evidence_id、消息、路径及完整原文；criterion_assessments 仍按该关联将完整规范放入 context_evidence，模型须另选聚焦的实际交付或执行证据。Attribution 的公开 `attributionNormDirectory(request)` 先按原 requirements 顺序列出本方适用且有可信真实规范绑定的项，再列未被这些项完整覆盖的本方 SYS/DEV 与未关联 USER 原块；目录只做物理来源分组，每项为 `norm_index / roles / requirement_index / evidence`，跨角色的真实规范束保留全部 roles。当前请求必须提供 `answer.norm_directory`，启动模型前与真实来源严格比较内容和顺序，未知来源不借 peer 补造。
 
 模型只看到统一的 finding_basis；选择一次 basis_index 后，程序绑定目录中已有的规范与任务要求关联，不读文字猜关联。strengths 与 problems 的固定行都使用同一个目录；分类为格式或证据质量等仍保留所选规范的本方作用域，不扩大共同义务。所选完整规范只作为来源，不证明条件触发、遵守或违反，不改 status/core；未选项不自动补入，正文或 reason 不用来猜关联。完整原规范已由真实 instruction_sources.content、同坐标 initial_material.value 或可信 criterion 原文展示时无需再次工具读取；只有真实隐藏或截断的选中长块须完整 read_trace。
 
-每条 final_answer finding 的本方最终正文及图像审阅范围由程序从 raw 真实 assistant/final_answer 内容绑定，显式 evidence_indices 可为空；非最终阶段仍需具体证据。自动范围不证明任何语义结论，延后最终正文与图片准入门槛保留。 超长片段从初始 final_answer 展示中省略，不向候选原文插入程序占位符；全部正文延后时展示字符串可为空，原始内容与证据坐标仍保留。模型的 deferred_final_material 目录提供可直接执行的 read_request；未读反馈从首个缺口给出补读参数，持续沿 next_offset 读取到原文终点。责任证据直接按本任务证据目录选择，再追加规范与最终范围，同一完整坐标去重且不重排原证据。程序按 strengths 后接 problems 的顺序生成 f0、f1 等本回答内 ID，真实发现无任意八条总量上限。已接受 canonical 收据按原坐标直接恢复，不重新解释新 selector、不添加新证据、不改变历史 ID。
+每条 finding 均须显式选择聚焦证据；final_answer 必须含本方真实最终正文或已查看图片，非最终阶段引用真实执行片段。新归因提交中的 correctness、逐项评审、finding 和表格核验引用，单条最多800个 UTF-16 字符，每组最多2400字符（重复引用也计入）；超限拒绝并提示重新选择，不自动截断、不用多段短引用拼回全文。程序不自动追加最终回答，所选完整规范独立放入 findings / criterion_assessments 的可选 context_evidence，保留原条件、例外和精确坐标；它只用于规范解释与作用域核对，不能代替实际交付、数值或责任证据。规范上下文也须验证真实来源；Comparison、独立核验、恢复和模型展示保留它，直接证据标注只使用 evidence。遗漏判断须完整审阅相关范围，在观察中说明检查范围与缺项，再引用相关章节或结尾定位；程序不把短片段认定为全文缺失证明。
+
+超长最终正文从初始 final_answer 展示中省略，不向原文插入占位符；deferred_final_material 提供 read_request，持续沿 next_offset 读至原文终点，图片也须实际查看。聚焦引用不缩减阅读门槛。程序按 strengths 后接 problems 的顺序生成 f0、f1 等本回答内 ID。已接受 canonical 收据按原坐标直接恢复，不重新执行新提交的聚焦规则，不添加证据或改变历史判词。
 
 新提交中高影响 problem 关联有效适用 requirement 时，不能同时声明该条 established/met，改 problem 为 uncertain 也不能绕过；不影响该项验收的低影响附属错误可以与 met 共存，不能为通过校验而降低真实影响；partial/unmet、判据 uncertain 和真实无关联仍保留自身语义。私有规则不扩大共同核心作用域，程序不代判违规或核心可用性。
 
@@ -253,7 +255,7 @@ Workflow 用原整组去身份映射及当前候选真实 system/developer/user 
 
 模型视图中超过200字符的来源与上下文展示 quote_preview、has_more、真实整段 reference、read_request 和 end_offset；来源块已完整展示在初始材料时直接核验，否则按返回 next_offset 补读到来源终点。来源歧义不猜选，未知不直接判伪造。数值、单位和实体语义核对使用等长遮蔽后的引用标记视图，原文、偏移和正式证据保持不变，注脚编号不成为指标值或实体名称。
 
-正式证据必填程序 evidence_id，并保留同坐标解析得到的 message_index/quote；规范自动追加和完整段落展开也保留各原始叶子的坐标。Comparison 直接投影这些坐标为 reference.evidence_index，不从引文反查重复位置；超过200字符时提供预览、read_request 和 end_offset。来源、路径、范围及原文不一致即拒绝。证据覆盖只按真实范围；JSON 覆盖文本须实际包含该完整叶子的序列化范围。最后模型生成与捕获回答只有真实生成链及完整有序文本叶子逐字相同才允许同范围对应，不根据偶然相同文字或图片未知状态推断支持、渲染或责任。
+正式证据必填程序 evidence_id，并保留同坐标解析得到的 message_index/quote；规范 context_evidence 保留各原始叶子的完整坐标，与直接支持判断的 evidence 分开。Comparison 直接投影这些坐标为 reference.evidence_index，不从引文反查重复位置；超过200字符时提供预览、read_request 和 end_offset。来源、路径、范围及原文不一致即拒绝。证据覆盖只按真实范围；JSON 覆盖文本须实际包含该完整叶子的序列化范围。最后模型生成与捕获回答只有真实生成链及完整有序文本叶子逐字相同才允许同范围对应，不根据偶然相同文字或图片未知状态推断支持、渲染或责任。
 
 Attribution / Comparison 的 `modelInput.task_focus` 先展示原问、`task_analysis.goal`、真实 `ground_truth` 和每条回答的定位。可见 `final_answer` 不超过16000字符时整段复制，超过时只保留原 `final_message_index` 与 `deferred_final_material` 目录，不截取局部。`question_timestamp` 取原始最后一条 `role=user` 消息的 timestamp 字符串，缺失或非字符串为 null，不解析自由文本或使用评测时钟。null 只说明原生字段缺失，其他可见时钟仍须从原始上下文核验，不能借缺字段断言没有时间依据。focus 的共同要求按 Criteria 完整候选作用域检查，保留 id、全局 `requirement_index`，1000字符以内的 text 完整复制，长文留在完整材料。归因模型视图的 `task_analysis.requirements` 每条显示对应原数组位置加1的 `requirement_index`，保留原 id/text，作用域改以 applicable_candidates 展示，重复的 acceptance_rule 仅在展示时省略；不按本候选适用列表重新编号。focus 与索引只用于呈现，可信 request、正式镜像与证据不新增字段。
 
@@ -293,8 +295,8 @@ expected 由程序保留标准原有小数位与科学计数法指数，actual �
 
 ### 文案校验
 
-偏好改写通过 `preference` 锁定既定对局结论，双方都好的文案拒绝常见整体胜出表述；都差文案允许保留原裁决的相对优劣，是否忠实保留主体、取舍和失败边界由语义复核确认；责任定义明确根因未定位却列组件时退回修正。这些检查只拦截明确矛盾，不能取代真实题集的语义复核。聚类的未知编号或跨组件归类反馈使用本次请求的短编号，不自动更正或猜测归属。
+偏好改写通过 `preference` 锁定既定对局结论前缀；都好、都差正文均可保留原裁决的相对偏好。是否忠实保留主体、取舍、共同可用或失败边界由语义复核确认，不以正文关键词代替判决。责任定义明确根因未定位却列组件时退回修正。这些检查只拦截明确矛盾，不能取代真实题集的语义复核。聚类的未知编号或跨组件归类反馈使用本次请求的短编号，不自动更正或猜测归属。
 
 改写硬校验槽位完整、唯一、文本非空、既定偏好前缀及 Workflow 指定的禁止前缀。`validate --require-rewrite` 对所需范围的全部已保存槽位应用当前机械契约，不只检查最近一次改写收据中的子集；语义复核单列为 required。简洁长度、数字保真及正文是否忠实表达判决由提示词引导和结果复核，不按“更好”等关键词判断胜负，不因数字集合变化或超长触发结构修复；这些机械检查不证明事实正确。
 
-归因的每条 strengths/problems 都明确选择 basis_index 或 null，不再提交 requirement_index 或 norm_index；是否能使用所选规范仍按真实来源和维度校验。普通 Comparison 的 better_candidate 和 preference 可省略，分别表示没有相对优势声明与偏好；普通行正文和重要性仍必填，资源行不提交正文。可选 Verifier 的 source_reviews 只提交真实疑点的非空索引选择，理由绑定本方已有要求或 finding，资源或不适用格不能请求修改来源。Schema 不完整不隐藏可独立判定的引用、数值槽或来源范围错误；同一修稿反馈一次列全，派生条件不成立时不追加噪声。
+归因的每条 strengths/problems 都明确选择 basis_index 或 null，不再提交 requirement_index 或 norm_index；是否能使用所选规范仍按真实来源和维度校验。普通 Comparison 的 better_candidate 和 preference 可省略，分别表示没有本项相对优势声明与整体胜出偏好；普通行正文和重要性仍必填，资源行不提交正文。可选 Verifier 的 source_reviews 只提交真实疑点的非空索引选择，理由绑定本方已有要求或 finding，资源或不适用格不能请求修改来源。Schema 不完整不隐藏可独立判定的引用、数值槽或来源范围错误；同一修稿反馈一次列全，派生条件不成立时不追加噪声。

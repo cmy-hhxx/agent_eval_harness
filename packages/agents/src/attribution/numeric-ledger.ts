@@ -2,6 +2,7 @@ import { ValidationError, type AgentRequest, type ToolAudit, type ValidationIssu
 import { numericReferenceDirectory, numericUnitIssue } from "./units.js";
 import { containsNumber, matchesReference } from "./numeric.js";
 import { ownEvidence, resolveAttributionEvidence } from "./source-evidence.js";
+import { focusedEvidenceIssues } from "./evidence-focus.js";
 import type { AttributionResult, Evidence } from "./types.js";
 
 type NumericCheck = AttributionResult["numeric_checks"][number];
@@ -21,7 +22,8 @@ function answerEvidenceCandidates(request: AgentRequest, audit: ToolAudit | unde
   (audit.evidenceBank ?? []).forEach((evidenceId, index) => {
     try {
       const item = resolveAttributionEvidence(request, { evidence_id: evidenceId }, audit, `/correctness_evidence/${index}`);
-      if (ownEvidence(item) && item.message_index === finalIndex && containsNumber(item.quote, actual)) found.push(index + 1);
+      if (ownEvidence(item) && item.message_index === finalIndex && containsNumber(item.quote, actual) &&
+        !focusedEvidenceIssues([item], "").length) found.push(index + 1);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       // Unregistered, foreign or image-only references cannot back an answer actual.

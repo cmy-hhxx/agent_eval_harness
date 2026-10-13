@@ -150,10 +150,12 @@ test("registered same-case facts preserve missing and different native timestamp
 test("foreign facts cannot replace this candidate's actual delivery or numeric correctness evidence", () => {
   const { binding, draft, ref } = fixture();
   draft.findings[0]!.evidence = [ref("B", 0, "/timestamp")];
+  hasIssue(() => resolveJudgment(binding.request, draft, audit()), "finding_final_evidence_required", "/findings/0/evidence");
+  draft.findings[0]!.evidence.push(ref("answer", 1, "/content"));
   const result = resolveJudgment(binding.request, draft, audit());
   registry.validate(binding, result, audit());
   const accepted = result as AttributionResult;
-  assert.equal(accepted.findings[0]!.evidence.at(-1)!.message_index, 1, "raw own final scope is program-bound after the peer fact");
+  assert.equal(accepted.findings[0]!.evidence.at(-1)!.message_index, 1, "own final excerpt is explicitly selected alongside the peer fact");
   accepted.findings[0]!.evidence.pop();
   hasIssue(() => registry.validate(binding, accepted, audit()), "peer_actual_evidence_required", "/findings/0/evidence");
   const numeric = fixture();
@@ -290,16 +292,17 @@ test("peer private instructions cannot close this candidate's instruction eviden
   registry.validate(binding, result, audit());
   const ownNorm = ref("answer", 0, "/content");
   assert.deepEqual(result.findings[0]!.evidence.map(item => item.evidence_id), [
-    originalEvidence[0]!.evidence_id, originalEvidence[1]!.evidence_id, ownNorm.evidence_id,
+    originalEvidence[0]!.evidence_id, originalEvidence[1]!.evidence_id,
   ]);
   assert.equal(result.findings[0]!.evidence[1]!.source, "B", "an explicit peer fact retains its foreign owner");
-  const completedNorm = result.findings[0]!.evidence[2]!;
+  const completedNorm = result.findings[0]!.context_evidence![0]!;
+  assert.equal(completedNorm.evidence_id, ownNorm.evidence_id);
   assert.equal(completedNorm.source, undefined);
   assert.equal(completedNorm.source_input_id, undefined);
   assert.equal(parseEvidenceCoordinates(completedNorm.evidence_id)!.input_id, INPUT_ID);
   assert.equal(completedNorm.quote, own.messages[0].content, "only the actual complete own SYS is attached");
   const peerOnly = structuredClone(result);
-  peerOnly.findings[0]!.evidence = peerOnly.findings[0]!.evidence.filter(item => item.evidence_id !== ownNorm.evidence_id);
+  delete peerOnly.findings[0]!.context_evidence;
   hasIssue(() => registry.validate(binding, peerOnly, audit()), "instruction_evidence_required", "/findings/0/evidence");
   assert.deepEqual({ request, draft }, before, "program closure does not rewrite the submitted selection or raw source");
 });

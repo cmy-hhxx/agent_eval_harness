@@ -25,6 +25,7 @@ export interface Finding {
   text: string;
   reason: string;
   evidence: Evidence[];
+  context_evidence?: Evidence[];
   assessment: {
     requirement_index: number | null;
     observation: string;

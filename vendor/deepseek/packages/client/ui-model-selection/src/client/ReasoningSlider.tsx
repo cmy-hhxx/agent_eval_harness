@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { IconGaugeOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './ReasoningSlider.module.css'
@@ -21,8 +21,9 @@ export function ReasoningSlider({ choices, value, defaultValue, busy, onCommit, 
 } & PropsLocale<'model'>) {
   const selected = choices.findIndex(choice => choice.effort === value)
   const [draft, setDraft] = useState(Math.max(0, selected))
+  const dragging = useRef(false)
   const id = useId()
-  useEffect(() => { if (!busy) setDraft(Math.max(0, selected)) }, [selected, busy])
+  useEffect(() => { if (!busy && !dragging.current) setDraft(Math.max(0, selected)) }, [selected, busy])
   const index = Math.min(draft, Math.max(0, choices.length - 1))
   const choice = choices[index]
   const maximum = Math.max(0, choices.length - 1)
@@ -36,10 +37,11 @@ export function ReasoningSlider({ choices, value, defaultValue, busy, onCommit, 
     const target = choices[next]
     if (!busy && target !== undefined && target.effort !== value) onCommit(target.effort)
   }
+  const cancel = (): void => { dragging.current = false; setDraft(Math.max(0, selected)) }
   return (
     <div className={css.card} data-reasoning-card data-maximum={isMaximum} style={{ '--effort-progress': `${progress * 100}%` } as CSSProperties}>
       <div className={css.heading}>
-        <IconGaugeOutlineRegular className={css.icon} size={20} />
+        <IconGaugeOutlineRegular className={css.icon} size={18} />
         <div className={css.copy}>
           <output className={css.level} htmlFor={`${id}-slider`} aria-live="polite">{choice?.label ?? value ?? t('effort.providerDefault')}</output>
           <div className={css.hint} id={`${id}-hint`}>{t(description)}</div>
@@ -47,7 +49,7 @@ export function ReasoningSlider({ choices, value, defaultValue, busy, onCommit, 
         <button className={css.reset} type="button" aria-label={t('effort.reset')} title={t('effort.reset')}
           disabled={busy || resetIndex < 0 || (value === defaultValue && draft === selected)}
           onClick={() => { setDraft(resetIndex); commit(resetIndex) }}>
-          {busy ? <StateDot state="ongoing" /> : <IconRefreshOutlineRegular size={20} />}
+          {busy ? <StateDot state="ongoing" /> : <IconRefreshOutlineRegular size={18} />}
         </button>
       </div>
       <div className={css.control}>
@@ -62,9 +64,11 @@ export function ReasoningSlider({ choices, value, defaultValue, busy, onCommit, 
           aria-label={t('menu.effort')} aria-valuetext={choice?.label ?? value ?? t('effort.providerDefault')}
           aria-describedby={`${id}-hint`} disabled={busy || choices.length < 2}
           onChange={event => { setDraft(Number(event.currentTarget.value)) }}
-          onPointerDown={event => { event.currentTarget.setPointerCapture?.(event.pointerId) }}
-          onPointerUp={event => { commit(Number(event.currentTarget.value)) }}
-          onPointerCancel={() => { setDraft(Math.max(0, selected)) }}
+          onPointerDown={event => { dragging.current = true; event.currentTarget.setPointerCapture?.(event.pointerId) }}
+          onPointerUp={event => { dragging.current = false; commit(Number(event.currentTarget.value)) }}
+          onPointerCancel={cancel}
+          onLostPointerCapture={() => { if (dragging.current) cancel() }}
+          onBlur={() => { if (dragging.current) cancel() }}
           onKeyDown={event => {
             if (adjustmentKeys.has(event.key)) event.stopPropagation()
             if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commit(index) }

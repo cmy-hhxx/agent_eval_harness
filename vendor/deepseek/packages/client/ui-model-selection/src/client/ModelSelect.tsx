@@ -380,11 +380,9 @@ export function ModelSelect(
 
   const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>, keepOpen: boolean): void => {
     if (result === undefined) return
+    if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])')?.focus() })
     if (result.ok) {
-      if (rootRef.current !== null) {
-        if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus() })
-        else closeAfterSelection()
-      }
+      if (rootRef.current !== null && !keepOpen) closeAfterSelection()
       return
     }
     const { error } = result

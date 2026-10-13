@@ -116,6 +116,67 @@ test("both-bad slots carry the accepted relative tradeoff through reversed blind
   assert(comparisonSlots(result)[0].text.includes(result.decision_basis.tradeoff));
 });
 
+test("tied verdict slots retain low-impact preference facts and counteradvantages without changing the result", () => {
+  for (const meetsCore of [true, false]) {
+    const result = structuredClone(comparison);
+    result.ranking = [["B", "A"]];
+    for (const label of ["A", "B"]) {
+      result.assessments[label].meets_core = meetsCore;
+      result.assessments[label].core_failure_refs = meetsCore ? [] : ["r1"];
+      result.decision_basis.comparisons[0].assessments[label].status = meetsCore ? "met" : "unmet";
+      result.decision_basis.comparisons[0].assessments[label].summary = meetsCore ? "正确给出4。" : "把结果写成5。";
+    }
+    result.decision_basis.comparisons[0].better_candidates = [];
+    result.decision_basis.tradeoff = `${meetsCore ? "双方核心结果正确" : "双方核心结果都错"}。【候选A】少一处操作数标签笔误，轻微偏好【候选A】；【候选B】完成更快，均不足以改变正式判决。`;
+    result.decision_basis.comparisons.push({
+      aspect: "操作数标签", criterion_ids: ["s1"], importance: "low", better_candidates: ["A"], assessments: {
+        A: { status: "met", evidence_status: "established", summary: "标签正确。", finding_indices: [] },
+        B: { status: "met", evidence_status: "established", summary: "有一处标签笔误，操作数仍可辨认。", finding_indices: [] },
+      },
+    }, {
+      aspect: "完成等待", criterion_ids: [], importance: "low", better_candidates: ["B"], assessments: {
+        A: { status: "met", evidence_status: "established", summary: "完成耗时：4.2 秒。", finding_indices: [] },
+        B: { status: "met", evidence_status: "established", summary: "完成耗时：3.5 秒。", finding_indices: [] },
+      },
+    });
+    const before = structuredClone(result), [item] = comparisonSlots(result);
+    assert.equal(item.preference, meetsCore ? "双方都好" : "双方都差");
+    assert(item.text.includes(result.decision_basis.tradeoff));
+    assert.match(item.text, /操作数标签：【候选B】：有一处标签笔误.*【候选A】：标签正确/);
+    assert.match(item.text, /完成等待：【候选B】：完成耗时：3\.5 秒.*【候选A】：完成耗时：4\.2 秒/);
+    if (!meetsCore) assert.match(item.text, /计算结果.*把结果写成5/);
+    const presented = display(item, { A: "B组Fast", B: "A组Fast" });
+    assert.match(presented.text, /B组Fast少一处操作数标签笔误，轻微偏好B组Fast；A组Fast完成更快/);
+    assert.match(presented.text, /操作数标签：A组Fast：有一处标签笔误.*B组Fast：标签正确/);
+    assert.match(presented.text, /完成等待：A组Fast：完成耗时：3\.5 秒.*B组Fast：完成耗时：4\.2 秒/);
+    assert.deepEqual(result, before);
+    result.assessments.A.meets_core = true;
+    result.assessments.B.meets_core = false;
+    result.ranking = [["A"], ["B"]];
+    assert.doesNotMatch(comparisonSlots(result)[0].text, /操作数标签：|完成等待：/,
+      "formal win slots retain their existing decisive-fact scope");
+  }
+});
+
+test("tied verdict slots exclude low-impact observations without a confirmed shared advantage", () => {
+  const result = structuredClone(comparison);
+  result.assessments.B.meets_core = true;
+  result.ranking = [["A", "B"]];
+  result.decision_basis.comparisons = [{
+    aspect: "本方专有规范", criterion_ids: ["r1"], importance: "low", better_candidates: [], assessments: {
+      A: { status: "met", evidence_status: "established", summary: "符合本方规范。", finding_indices: [] },
+      B: { status: "not_applicable", evidence_status: "established", summary: "该规范不适用于本方。", finding_indices: [] },
+    },
+  }, {
+    aspect: "未核实信息", criterion_ids: ["s1"], importance: "low", better_candidates: [], assessments: {
+      A: { status: "met", evidence_status: "established", summary: "已确认。", finding_indices: [] },
+      B: { status: "unknown", evidence_status: "uncertain", summary: "尚未核实。", finding_indices: [] },
+    },
+  }];
+  const [item] = comparisonSlots(result);
+  assert.doesNotMatch(item.text, /本方专有规范|未核实信息/);
+});
+
 test("attribution slots include the correctness reason only when it exists", () => {
   assert.deepEqual(attributionSlots(attribution).map((item) => item.id), ["summary", "correctness_reason"]);
   const subjective = { ...attribution, is_correct: null, correctness_reason: "" };

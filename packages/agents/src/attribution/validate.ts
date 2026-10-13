@@ -379,5 +379,9 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       item, location: `table_resolutions[${i}].evidence[${j}]`,
     })), audit),
   ));
+  for (const field of ["findings", "criterion_assessments"] as const) value[field].forEach((entry, i) =>
+    repairErrors.push(...validateAttributionEvidence(request, (entry.context_evidence ?? []).map((item, j) => ({
+      item, location: `/${field}/${i}/context_evidence/${j}`,
+    })), audit)));
   if (repairErrors.length) throw new ValidationError(repairErrors);
 }

@@ -23,8 +23,15 @@ const pair = (first = "a", second = "b", result = "win", winner: string | null =
 });
 const accepted = (comparisons = [pair()]): JsonObject => ({ kind: "accepted-result", reference, evaluatorVersion: "fixture-evaluator",
   result: { evaluation_type: "group_model_comparison", status: "decided" }, comparisonScope: { comparisons } });
+const caseMaterial = (formal = accepted()) => ({ kind: "case", reference, question: "请列出计算过程", formal,
+  answers: ["a", "b", "c"].map(model => ({ model, reference: { runId: reference.runId, inputId: `answer-${model}` },
+    answer: { text: `${model} 的完整回答`, complete: true } as JsonObject, trace: { nodes: [] } })) });
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-function comparisonTool(read: ErisDependencies["data"]["read"] = async () => accepted()) {
+function comparisonTool(readFormal: ErisDependencies["data"]["read"] = async () => accepted(), readCase?: ErisDependencies["data"]["read"]) {
+  const read: ErisDependencies["data"]["read"] = readCase ?? (async (ref, options) => {
+    assert.deepEqual(options, { view: "case" }, "the tool loads answers and the formal result in one case read");
+    return caseMaterial(await readFormal(ref));
+  });
   const tool = erisTools({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read, search: unexpected, image: unexpected },
     specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }, {}).find(tool => tool.name === "show_comparison");
   assert(tool, "show_comparison must be a registered Eris tool");
@@ -124,7 +131,9 @@ test("comparison checks retain this pair's earlier evidence and omit unrelated c
   const unrelated = source("read_data", { reference: { runId: "run", taskId: "another-case" }, text: "另一题的长评语" });
   const otherRun = source("search_data", { reference: { ...input, runId: "other-run" }, text: "另一运行" });
   await comparisonTool().execute(args, { ...context, async complete(request) {
-    assert.deepEqual(request.selectSources!([unrelated, evidence, otherRun, current, formal]), [source("read_evidence", node), current, formal]);
+    const selected = request.selectSources!([unrelated, evidence, otherRun, current, formal]);
+    assert.deepEqual(selected.slice(1), [source("read_evidence", node), current, formal]);
+    assert.deepEqual(JSON.parse(selected[0]!.content[0].text!).answers.map((answer: JsonObject) => answer.model), ["a", "b"]);
     return checked;
   } });
 });
@@ -155,15 +164,58 @@ test("comparison checks deduplicate exact evidence pages without losing changed 
       source("read_evidence", { reference: input, items: [changed, json, { kind: "message-error", reference: page.reference, error: "来源不可读" }] }),
     ]);
     const materials = selected.map(item => JSON.parse(item.content[0].text!));
-    assert.equal(materials.length, 6);
-    assert.deepEqual(materials.slice(1, 5), [page, later, changed, json]);
-    assert.equal(materials[5].error, "来源不可读");
-    assert.deepEqual(materials[0].answers[0].answer, current.answers[0].answer);
-    assert.deepEqual(materials[0].answers[0].trace, { nodes: [trace.nodes[0]] });
+    assert.equal(materials.length, 7);
+    assert.deepEqual(materials.slice(2, 6), [page, later, changed, json]);
+    assert.equal(materials[6].error, "来源不可读");
+    assert.deepEqual(materials[1].answers[0].answer, current.answers[0].answer);
+    assert.deepEqual(materials[1].answers[0].trace, { nodes: [trace.nodes[0]] });
     assert.deepEqual(current, before, "source packing cannot mutate conversation evidence");
-    assert.throws(() => request.selectSources!([]), /核对材料.*read_case/);
+    assert.equal(request.selectSources!([]).length, 1, "case evidence does not depend on surviving conversation messages");
     return checked;
   } });
+});
+
+test("comparison checks load this pair without a prior read_case and continue incomplete answer pages", async () => {
+  const material = caseMaterial();
+  const answerReference = { runId: reference.runId, inputId: "answer-a", messageIndex: 3 };
+  material.answers[0]!.answer = { reference: answerReference, preview: "截断预览", complete: false };
+  const reads: unknown[] = [];
+  const tool = comparisonTool(undefined, async (ref, options) => {
+    reads.push({ ref, options });
+    if (options?.view === "case") return material;
+    assert(options && options.view !== "evidence", "long answers use single-message pagination");
+    assert.deepEqual(ref, answerReference);
+    return { kind: "message", reference: answerReference, format: "text", offset: options.offset,
+      text: options.offset === 0 ? "支持证据" : "决定性的反证", hasMore: options.offset === 0, nextOffset: options.offset === 0 ? 4 : null };
+  });
+  const result = await tool.execute(args, { ...context, async complete(request) {
+    const sources = request.selectSources!([]).map(source => JSON.parse(source.content[0].text!));
+    assert.equal(sources[0].question, material.question);
+    assert.deepEqual(sources[0].formal, accepted());
+    assert.deepEqual(sources[0].answers.map((answer: JsonObject) => answer.model), ["a", "b"]);
+    assert.deepEqual(sources.slice(1).map(source => source.text), ["支持证据", "决定性的反证"]);
+    return { ...checked, text: '{"issues":[{"path":"/reason","reason":"忽略决定性的反证"}]}' };
+  } });
+  assert.deepEqual(reads, [
+    { ref: reference, options: { view: "case" } },
+    { ref: answerReference, options: { offset: 0, limit: 16000 } },
+    { ref: answerReference, options: { offset: 4, limit: 16000 } },
+  ], "one case read and two necessary answer pages use the data contract without a model repair round trip");
+  assert.equal(result.isError, true);
+  assert.equal(result.terminate, undefined, "automatically loaded counterevidence still blocks a misleading diagram");
+});
+
+test("missing original answers block comparison checks instead of accepting an ungrounded draft", async () => {
+  const tool = comparisonTool(undefined, async () => ({ ...caseMaterial(), answers: [] }));
+  await assert.rejects(tool.execute(args, { ...context, complete: unexpected }), /原始.*回答/);
+});
+
+test("incomplete answer pagination cannot silently bypass evidence checking", async () => {
+  const material = caseMaterial();
+  material.answers[0]!.answer = { reference: { runId: reference.runId, inputId: "answer-a", messageIndex: 3 }, complete: false, preview: "只有预览" };
+  const tool = comparisonTool(undefined, async (_ref, options) => options?.view === "case" ? material
+    : { kind: "message", text: "缺失后续内容", hasMore: true, nextOffset: 0 });
+  await assert.rejects(tool.execute(args, { ...context, complete: unexpected }), /分页不完整/);
 });
 
 test("comparison question lookup persists the resolved receipt for evidence and scene replay", async () => {
@@ -242,13 +294,53 @@ test("comparison highlights keep at most two marks without rejecting otherwise v
 test("comparison highlights reject wrong types and unknown fields before reading formal data", async () => {
   let reads = 0;
   const tool = comparisonTool(async () => { reads++; return accepted(); });
-  for (const highlights of [null, { impact: null }, { evidence: [] }, { evidence: "字".repeat(601) }])
+  for (const highlights of [[], { evidence: [] }, { evidence: "字".repeat(601) }])
     await assert.rejects(tool.execute({ ...args, candidates: [{ ...args.candidates[0],
       paths: [{ ...args.candidates[0]!.paths[0], highlights }] }, args.candidates[1]] }, context), /参数无效/);
-  for (const reasonHighlight of [null, [], "字".repeat(601)])
+  for (const reasonHighlight of [[], "字".repeat(601)])
     await assert.rejects(tool.execute({ ...args, reasonHighlight }, context), /参数无效/);
   await assert.rejects(tool.execute({ ...args, candidates: [{ ...args.candidates[0], summaryHighlight: "结论" }, args.candidates[1]] }, context), /参数无效/);
   assert.equal(reads, 0);
+});
+
+test("null comparison highlights are optional decorations", async () => {
+  for (const highlights of [null, { evidence: null, impact: null }]) {
+    const result = await comparisonTool().execute({ ...args, reasonHighlight: null, candidates: [
+      { ...args.candidates[0], paths: [{ ...args.candidates[0]!.paths[0], highlights }] }, args.candidates[1],
+    ] }, context);
+    const diagram = JSON.parse(result.content[0].text!).diagram;
+    assert.equal(diagram.reasonHighlight, undefined);
+    assert.equal(diagram.candidates[0].paths[0].highlights, undefined);
+    assert.equal((result.details as JsonObject).omittedHighlights, undefined);
+    assert.equal(result.terminate, true);
+  }
+});
+
+test("comparison highlights resolve formatting to an exact unique original span without rewriting text", async () => {
+  for (const [text, phrase, expected] of [
+    ["必须核对计算过程。", "  **计算过程**  ", "计算过程"],
+    ["必须核对计算过程。", "`计算过程`", "计算过程"],
+    ["已核对A \n B的数据。", "A B", "A \n B"],
+    ["已核对Ａ＋Ｂ的数据。", "A+B", "Ａ＋Ｂ"],
+    ["已核对😀Ａ的数据。", "😀A", "😀Ａ"],
+  ]) {
+    const result = await comparisonTool().execute({ ...args, reason: text, reasonHighlight: phrase, candidates: [
+      { ...args.candidates[0], paths: [{ ...args.candidates[0]!.paths[0], evidence: text, highlights: { evidence: phrase } }] }, args.candidates[1],
+    ] }, context);
+    const diagram = JSON.parse(result.content[0].text!).diagram;
+    assert.equal(diagram.reason, text);
+    assert.equal(diagram.reasonHighlight, expected);
+    assert.equal(diagram.candidates[0].paths[0].evidence, text);
+    assert.deepEqual(diagram.candidates[0].paths[0].highlights, { evidence: expected });
+    assert.equal((result.details as JsonObject).omittedHighlights, undefined);
+  }
+  for (const [reason, reasonHighlight] of [["A  B与Ａ Ｂ", "A B"], ["ＡＡＡ", "AA"], ["A" + " ".repeat(16) + "B", "A B"]]) {
+    const result = await comparisonTool().execute({ ...args, reason, reasonHighlight }, context);
+    const diagram = JSON.parse(result.content[0].text!).diagram;
+    assert.equal(diagram.reasonHighlight, undefined, "ambiguous or oversized source spans are never guessed");
+    assert.equal(diagram.reason, reason);
+    assert.equal(result.terminate, true);
+  }
 });
 
 test("empty, oversized and extra decorations never truncate the comparison text", async () => {

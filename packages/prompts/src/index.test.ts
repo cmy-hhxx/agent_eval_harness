@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, erisComparisonCheck, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
+import { agentPrompt, erisComparisonCheck, erisQuestionSelection, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -126,6 +126,7 @@ test("Eris assembles its compact policy and every tool from the resource tree", 
   for (const name of names)
     assert.equal(prompt.toolDescriptions[name], readFileSync(new URL("tools/" + name + ".md", resources), "utf8").trim());
   assert.equal(erisComparisonCheck, readFileSync(new URL("comparison-check.md", resources), "utf8").trim());
+  assert.equal(erisQuestionSelection, readFileSync(new URL("question-selection.md", resources), "utf8").trim());
   assert(prompt.systemPrompt.length < 2200);
   assert(prompt.systemPrompt.length + Object.values(prompt.toolDescriptions).join("").length < 11000);
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
@@ -133,7 +134,7 @@ test("Eris assembles its compact policy and every tool from the resource tree", 
 });
 
 test("Eris uses existing evaluations for ordinary analysis and draws single-case comparisons by default", () => {
-  const { systemPrompt, toolDescriptions } = erisPrompt(["show_comparison"]);
+  const { systemPrompt, toolDescriptions } = erisPrompt(["show_comparison", "read_case"]);
   assert.match(systemPrompt, /普通解读依据已有评测结论与双方回答/);
   assert.match(systemPrompt, /先追溯本地链路/);
   assert.match(systemPrompt, /用户要求复核或材料存在影响结论的矛盾时，再定向补查/);
@@ -147,6 +148,9 @@ test("Eris uses existing evaluations for ordinary analysis and draws single-case
   assert.match(toolDescriptions.show_comparison, /complete:false，继续用正文/);
   assert.match(toolDescriptions.show_comparison, /counterEvidence.*已知.*没有则省略或填 null/);
   assert.match(toolDescriptions.show_comparison, /不为填写此字段另开调查/);
+  assert.match(systemPrompt, /解释已有评语.*不使用 review:true/);
+  assert.match(toolDescriptions.read_case, /解释原评测.*省略 review/);
+  assert.match(toolDescriptions.show_comparison, /不为了复述图中内容继续调用模型/);
 });
 
 test("Eris retains evidence boundaries and statistics semantics without a fixed investigation sequence", () => {
@@ -157,6 +161,9 @@ test("Eris retains evidence boundaries and statistics semantics without a fixed 
   assert.match(systemPrompt, /Fast、Expert 分别比较.*真实分母/);
   assert.match(systemPrompt, /历史累计与运行中批次可能重叠，分别展示/);
   assert.match(systemPrompt, /评测进度用一句话概括/);
+  assert.match(systemPrompt, /至少完成一场对战的题数、已完成对战场数/);
+  assert.match(systemPrompt, /档位｜模型｜胜｜负｜都好｜都差｜胜率/);
+  assert.match(systemPrompt, /直接写“胜率”“准确率”“完成率”/);
   assert.match(systemPrompt, /结论根据本次数据分析/);
   assert.match(systemPrompt, /未知值保持未知/);
   assert.match(toolDescriptions.list_data, /query 筛选不改变统计范围/);
@@ -170,7 +177,7 @@ test("Eris retains evidence boundaries and statistics semantics without a fixed 
 });
 
 test("Eris diagram checks only substantive contradictions in known material", () => {
-  assert.match(erisComparisonCheck, /sources 是已读材料，不是额外取证任务/);
+  assert.match(erisComparisonCheck, /sources 包含.*已读的相关证据，不是额外取证任务/);
   assert.match(erisComparisonCheck, /无需重新评测或补查外部事实/);
   assert.match(erisComparisonCheck, /未重读原始链路本身不是问题/);
   assert.match(erisComparisonCheck, /不因措辞、写法或可选细节要求修订/);
@@ -179,7 +186,7 @@ test("Eris diagram checks only substantive contradictions in known material", ()
   assert.doesNotMatch(systemPrompt + toolDescriptions.show_comparison + erisComparisonCheck, /六家|非本体|配套定位/);
 });
 
-test("Eris follow-up suggestions follow the user's intent without topic or sentence restrictions", () => {
+test("Eris follow-up suggestions follow intent without steering into source verification", () => {
   const { predictionPrompt } = erisPrompt([]);
   assert.match(predictionPrompt, /最终回答是程序已取得的固定数据/);
   assert.match(predictionPrompt, /不能补全或改写原回答/);
@@ -189,6 +196,11 @@ test("Eris follow-up suggestions follow the user's intent without topic or sente
   assert.match(predictionPrompt, /用用户向 Eris 提问或布置任务的口吻/);
   assert.match(predictionPrompt, /跟随用户最新意图/);
   assert.match(predictionPrompt, /没有有用补充时留空/);
+  assert.match(predictionPrompt, /不主动建议.*来源核验/);
+  assert.match(predictionPrompt, /有什么问题、问题在哪、双方区别是什么、具体细节是什么/);
+  assert.match(predictionPrompt, /不建议改写、润色、补全.*归因/);
+  assert.match(predictionPrompt, /不能改变评测输出/);
+  assert.match(predictionPrompt, /已有评语提到.*证据不足.*不把它自动延伸/);
   assert.doesNotMatch(predictionPrompt, /只输出问句|只问一个点|10–20字|重心是.*归因|不要围绕|不安排下一步/);
 });
 

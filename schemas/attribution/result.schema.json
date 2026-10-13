@@ -292,6 +292,50 @@
                 "minLength": 1
               }
             }
+          },
+          "context_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id",
+                "message_index",
+                "quote"
+              ],
+              "properties": {
+                "message_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
+              }
+            },
+            "description": "程序绑定的完整规范上下文，保留条件与例外；不作为直接支持结论的聚焦引用。"
           }
         }
       }
@@ -474,6 +518,50 @@
                 ]
               }
             }
+          },
+          "context_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id",
+                "message_index",
+                "quote"
+              ],
+              "properties": {
+                "message_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
+              }
+            },
+            "description": "程序绑定的完整规范上下文，保留条件与例外；不作为直接支持结论的聚焦引用。",
+            "minItems": 1
           }
         }
       }

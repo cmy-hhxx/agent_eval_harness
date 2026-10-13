@@ -18,7 +18,7 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
   const directory = truth.available ? numericReferenceDirectory(truth.value) : [];
   const norms = attributionNormDirectory(request);
   const finding = (finding: AttributionResult["findings"][number]): FixtureFinding => {
-    const { problem: _derivedProblem, finding_id: _id, assessment, ...strength } = finding;
+    const { problem: _derivedProblem, finding_id: _id, context_evidence: _context, assessment, ...strength } = finding;
     const { requirement_index, ...observed } = assessment;
     return { ...strength,
       ...(finding.dimension === "instruction_following" ? { norm_index: normSelection(norms, finding), assessment: observed }
@@ -39,7 +39,7 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
     },
     criterion_assessments: result.criterion_assessments
       .filter(assessment => assessment.status !== "not_applicable")
-      .map(assessment => ({ ...assessment, evidence: refs(assessment.evidence) })),
+      .map(({ context_evidence: _context, ...assessment }) => ({ ...assessment, evidence: refs(assessment.evidence) })),
     findings: result.findings.map(finding),
   };
   if (!(request.input.ground_truth as { available: boolean }).available) {

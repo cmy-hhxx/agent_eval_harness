@@ -44,6 +44,10 @@ export class ModelDirectory {
   /** Latest selection operation wins; an older response never overwrites a newer one. */
   private generation = 0
   private disposed = false
+  private projectedSelection: ModelSelection | null | undefined
+  private projectionGeneration = 0
+  /** A successful RPC may arrive before the durable selection stream. */
+  private accepted?: ModelSelection
   private readonly unsubscribeCatalog: () => void
   private readonly unsubscribeSelection: () => void
 
@@ -82,8 +86,8 @@ export class ModelDirectory {
   }
 
   /**
-   * Select the complete provider/model/reasoning selection. The durable
-   * projection frame updates the shared current; failures surface on the store
+   * Select the complete provider/model/reasoning selection. Acknowledged
+   * selections bridge the wait for the durable projection; failures surface on the store
    * and return with the operation so each entry can present its own failure.
    * @param selection - provider, provider-owned model id, and optional adapter-owned effort.
    * @returns the selection outcome, including the original Remote failure.
@@ -94,6 +98,7 @@ export class ModelDirectory {
     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
     const generation = ++this.generation
+    const projectionGeneration = this.projectionGeneration
     this.store.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
     const result = await this.sessions.selectModel({
       sessionId: this.sessionId,
@@ -122,6 +127,7 @@ export class ModelDirectory {
         ...this.isBlank() ? {} : { session_id: this.sessionId }, model_name: to, switch_from: previousEffort ?? 'default', switch_to: nextEffort ?? 'default',
       })
     }
+    this.accepted = projectionGeneration === this.projectionGeneration ? selection : undefined
     this.store.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
     this.syncInputs()
     return { ok: true, value: undefined }
@@ -133,6 +139,7 @@ export class ModelDirectory {
   resetConnected(): void {
     if (this.disposed) return
     ++this.generation
+    this.accepted = undefined
     this.store.update((state) => {
       if (state.status === 'selecting') state.status = 'idle'
       state.pending = null
@@ -158,7 +165,13 @@ export class ModelDirectory {
     if (this.disposed) return
     const catalog = this.catalog.store.getSnapshot()
     const projected = modelSelectionProjection(this.projected.getSnapshot())
-    const intended = projected?.next ?? catalog.value?.default
+    if (!sameSelection(projected?.next, this.projectedSelection)) {
+      this.projectedSelection = projected?.next
+      // Even a change back to the previous value supersedes an in-flight acknowledgement.
+      ++this.projectionGeneration
+      this.accepted = undefined
+    }
+    const intended = this.accepted ?? projected?.next ?? catalog.value?.default
     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
     const retainedEffort = effort === undefined ? undefined
@@ -176,7 +189,7 @@ export class ModelDirectory {
       })
       return
     }
-    const selection = projected.next ?? catalog.value.default
+    const selection = this.accepted ?? projected.next ?? catalog.value.default
     const routable = catalog.value.groups.some(group => group.id === selection.provider
       && group.models.some(model => model.id === selection.model))
     this.store.set({
@@ -196,4 +209,8 @@ export class ModelDirectory {
 
 function modelSelectionProjection(value: unknown): ModelSelectionProjection | undefined {
   return value === undefined ? undefined : value as ModelSelectionProjection
+}
+
+function sameSelection(left: ModelSelection | null | undefined, right: ModelSelection | null | undefined): boolean {
+  return left?.provider === right?.provider && left?.model === right?.model && left?.reasoningEffort === right?.reasoningEffort
 }

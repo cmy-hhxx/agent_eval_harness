@@ -26,7 +26,7 @@ export default defineConfig({
     "packages/llm/llm/tests/{assistant-stream,assembler,message}.spec.ts",
     "packages/client/store/tests/store.client.spec.ts",
     "packages/client/ui-attachment/tests/message-image.client.spec.tsx",
-    "packages/client/ui-model-selection/tests/{catalog.client,model-select.client}.spec.{ts,tsx}",
+    "packages/client/ui-model-selection/tests/{catalog.client,directory.client,model-select.client}.spec.{ts,tsx}",
     "packages/llm/token-meter/tests/token-usage-projection.spec.ts",
     "packages/session/session-stats/tests/projection.spec.ts",
   ] },

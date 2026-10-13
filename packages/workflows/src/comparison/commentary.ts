@@ -72,8 +72,9 @@ export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "i
         text: [
           `已确定的对局结论：${verdictReason(decision, first, second)}`,
           `原裁决依据：${result.decision_basis.tradeoff}`,
-          ...result.decision_basis.comparisons.filter(row => row.importance !== "low" &&
-            (row.better_candidates.length || row.criterion_ids.some(id => Object.values(result.assessments).some(item => item.core_failure_refs.includes(id)))))
+          ...result.decision_basis.comparisons.filter(row => row.importance === "low"
+            ? decision.outcome !== "win" && row.better_candidates.length > 0
+            : row.better_candidates.length || row.criterion_ids.some(id => Object.values(result.assessments).some(item => item.core_failure_refs.includes(id))))
             .map((row) =>
             `${row.aspect}：【候选${first}】：${row.assessments[first]?.summary ?? ""}；【候选${second}】：${row.assessments[second]?.summary ?? ""}`),
         ].join("\n"),

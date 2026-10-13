@@ -278,6 +278,49 @@
                       ]
                     }
                   }
+                },
+                "context_evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidence_id",
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_input_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "dependentRequired": {
+                      "source": [
+                        "source_input_id"
+                      ],
+                      "source_input_id": [
+                        "source"
+                      ]
+                    }
+                  },
+                  "minItems": 1
                 }
               },
               "additionalProperties": false

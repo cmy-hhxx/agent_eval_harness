@@ -1421,7 +1421,7 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/pac
 +
 +/** Which pane the dropdown shows: the two-row root or the model list or reasoning slider. */
  type Pane = 'root' | 'model' | 'effort'
-
+ 
 -/** One dynamic effort row; undefined means preserve the provider default. */
 +/** One advertised effort stop; undefined means preserve the provider default. */
  interface EffortChoice {
@@ -1466,26 +1466,24 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/pac
      if (pane === 'model' && showSearch && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
        event.preventDefault()
        if (!busy && visibleModels.length > 0) {
-@@ -365,10 +378,13 @@
+@@ -365,10 +378,11 @@
      close()
    }
-
+ 
 -  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>): void => {
 +  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>, keepOpen: boolean): void => {
      if (result === undefined) return
++    if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])')?.focus() })
      if (result.ok) {
 -      if (rootRef.current !== null) closeAfterSelection()
-+      if (rootRef.current !== null) {
-+        if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus() })
-+        else closeAfterSelection()
-+      }
++      if (rootRef.current !== null && !keepOpen) closeAfterSelection()
        return
      }
      const { error } = result
-@@ -381,12 +397,12 @@
+@@ -381,12 +395,12 @@
      })
    }
-
+ 
 -  const submit = (selection: ModelSelection): void => {
 +  const submit = (selection: ModelSelection, keepOpen = false): void => {
      lastActionRef.current = 'select'
@@ -1495,9 +1493,9 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/pac
 -    void select(selection).then(settleSelection)
 +    void select(selection).then(result => { settleSelection(result, keepOpen) })
    }
-
+ 
    const choose = (selection: ModelSelection): void => {
-@@ -400,7 +416,6 @@
+@@ -400,7 +414,6 @@
    const chooseEffort = (effort: string | undefined): void => {
      if (state.current === null) return
      if (effectiveEffort === effort) {
@@ -1505,16 +1503,16 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/pac
        return
      }
      const selection: ModelSelection = {
-@@ -408,7 +423,7 @@
+@@ -408,7 +421,7 @@
        model: state.current.model,
        ...effort === undefined ? {} : { reasoningEffort: effort },
      }
 -    submit(selection)
 +    submit(selection, true)
    }
-
+ 
    const waiting = state.current === null && state.status === 'loading'
-@@ -479,9 +494,9 @@
+@@ -479,9 +492,9 @@
          <MenuSurface
            ref={menuRef}
            id={`${id}-menu`}
@@ -1526,7 +1524,7 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/pac
            aria-label={t('menu.aria')}
            aria-busy={state.status === 'loading' || busy}
          >
-@@ -615,28 +630,8 @@
+@@ -615,28 +628,8 @@
                )}
                {effortChoices.length === 0
                  ? <div className={css.empty}>{t('empty.efforts')}</div>
@@ -1563,8 +1561,8 @@ diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.module.cs
 @@ -124,6 +124,8 @@
    line-height: 18px;
  }
-
-+.effortMenu { padding: 0; border: 1px solid #dedee3; border-radius: 22px; background: #fff; box-shadow: 0 8px 28px #24243814; }
+ 
++.effortMenu { min-width: 0; max-width: calc(100vw - 24px); padding: 0; border: 1px solid #e3e3e8; border-radius: 18px; background: #fff; box-shadow: 0 6px 20px #24243812; }
 +
  .error,
  .warning {
@@ -1603,7 +1601,7 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +++ b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
 @@ -77,7 +77,7 @@
  afterEach(cleanup)
-
+ 
  describe('ModelSelect reasoning effort', () => {
 -  it('renders effort names without descriptions and submits the effort as part of the session selection', async () => {
 +  it('previews an advertised effort and persists once on release, keeping the slider open', async () => {
@@ -1620,7 +1618,7 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +    expect(slider.getAttribute('max')).toBe('2')
 +    expect(slider.getAttribute('aria-valuetext')).toBe('High')
      expect(screen.queryByText('Largest budget')).toBeNull()
-
+ 
 -    fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
 +    fireEvent.change(slider, { target: { value: '2' } })
 +    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
@@ -1643,7 +1641,7 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +      expect(slider.getAttribute('aria-valuetext')).toBe('High')
      })
    })
-
+ 
 @@ -139,8 +149,11 @@
        name: '选择模型，当前 Model，推理等级 Default',
      }))
@@ -1656,7 +1654,7 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +    fireEvent.change(slider, { target: { value: '1' } })
 +    expect(slider.getAttribute('aria-valuetext')).toBe('Standard')
    })
-
+ 
    it('shows the durable model id when the catalog has no matching display name', () => {
 @@ -176,7 +189,7 @@
        snapshot.routable = false
@@ -1666,18 +1664,18 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +      .toBe('deepseek-official/deepseek-v4-flashHigh')
      expect(directory.getSnapshot().current).toEqual(state().current)
    })
-
+ 
 @@ -293,7 +306,7 @@
      expect(trigger.getAttribute('aria-busy')).toBe('false')
    })
-
+ 
 -  it('spins on the chosen effort row only', () => {
 +  it('disables the slider and shows progress while the selection is pending', () => {
      const directory = createSnapshotStore<ModelDirectoryState>(state())
      const select = vi.fn((selection: ModelSelection) => {
        directory.set(state({ status: 'selecting', pending: selection }))
-@@ -303,10 +316,12 @@
-
+@@ -303,10 +316,36 @@
+ 
      fireEvent.click(screen.getByRole('button', { name: /选择模型|当前/ }))
      fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
 -    fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
@@ -1690,12 +1688,36 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +    expect(slider.hasAttribute('disabled')).toBe(true)
 +    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
 +    expect(screen.getByRole('button', { name: '恢复默认思考等级' }).querySelector('[data-state="ongoing"]')).not.toBeNull()
++  })
++
++  it('restores the saved effort when a slider change fails and permits the next adjustment', async () => {
++    const directory = createSnapshotStore<ModelDirectoryState>(state())
++    const select = vi.fn(async (selection: ModelSelection) => {
++      directory.set(state({ status: 'selecting', pending: selection }))
++      await Promise.resolve()
++      directory.set(state({ status: 'error', error: 'failed' }))
++      return { ok: false as const, error: new RemoteError('gateway/internal', 'failed', {}) }
++    })
++    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
++    fireEvent.click(screen.getByRole('button', { name: /选择模型|当前/ }))
++    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
++    const slider = screen.getByRole('slider')
++    fireEvent.change(slider, { target: { value: '2' } })
++    fireEvent.pointerUp(slider)
++    await screen.findByRole('alert')
++    expect(slider.getAttribute('aria-valuetext')).toBe('High')
++    expect(slider.hasAttribute('disabled')).toBe(false)
++    expect(document.activeElement).toBe(slider)
++    fireEvent.change(slider, { target: { value: '0' } })
++    fireEvent.pointerUp(slider)
++    expect(select).toHaveBeenLastCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'off' })
++    await waitFor(() => { expect(slider.hasAttribute('disabled')).toBe(false) })
    })
-
+ 
    it('portals the placed menu card to body and closes only on truly-outside mousedown', () => {
-@@ -363,12 +378,12 @@
+@@ -363,12 +402,12 @@
  })
-
+ 
  describe('ModelSelect keyboard walk', () => {
 -  function mountOpen() {
 +  function mountOpen(groups = state().groups) {
@@ -1708,10 +1730,10 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
        load={vi.fn()}
        select={select}
        t={t}
-@@ -377,63 +392,52 @@
+@@ -377,63 +416,52 @@
      return select
    }
-
+ 
 -  it.each(['model', 'effort'])('prevents button mousedown defaults in the %s pane without selecting it', (pane) => {
 +  it('prevents model button mousedown defaults without selecting it', () => {
      const select = mountOpen()
@@ -1803,11 +1825,11 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +    fireEvent.keyDown(cell, { key: 'Tab', shiftKey: true })
      expect(screen.queryByRole('menu')).toBeNull()
    })
-
-@@ -466,17 +470,16 @@
+ 
+@@ -466,17 +494,27 @@
      expect(fireEvent.keyDown(trigger, { key: 'Tab' })).toBe(true)
    })
-
+ 
 -  it('hands a drilled pane the focus its unmounted cell left behind, on the value in use', () => {
 -    mountOpen()
 +  it('focuses the reasoning slider at the value in use and cancels a drag without saving', () => {
@@ -1828,10 +1850,21 @@ diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.t
 +    fireEvent.pointerCancel(slider)
 +    expect(slider.getAttribute('aria-valuetext')).toBe('High')
 +    expect(select).not.toHaveBeenCalled()
++  })
++
++  it('discards a preview when pointer capture is lost before release', () => {
++    const select = mountOpen()
++    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
++    const slider = screen.getByRole('slider')
++    fireEvent.pointerDown(slider)
++    fireEvent.change(slider, { target: { value: '0' } })
++    fireEvent.lostPointerCapture(slider)
++    expect(slider.getAttribute('aria-valuetext')).toBe('High')
++    expect(select).not.toHaveBeenCalled()
    })
-
+ 
    it('keeps the card navigable when a pane has no rows, and leaves a retry its Tab', () => {
-@@ -526,8 +529,7 @@
+@@ -526,8 +564,7 @@
    it('Escape returns to the root pane with the keyboard on the cell that drilled in', () => {
      mountOpen()
      fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
@@ -1845,8 +1878,8 @@ diff --git a/packages/client/ui-model-selection/src/client/ReasoningSlider.tsx b
 new file mode 100644
 --- /dev/null
 +++ b/packages/client/ui-model-selection/src/client/ReasoningSlider.tsx
-@@ -0,0 +1,77 @@
-+import { useEffect, useId, useState, type CSSProperties } from 'react'
+@@ -0,0 +1,81 @@
++import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 +import { IconGaugeOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 +import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 +import css from './ReasoningSlider.module.css'
@@ -1869,8 +1902,9 @@ new file mode 100644
 +} & PropsLocale<'model'>) {
 +  const selected = choices.findIndex(choice => choice.effort === value)
 +  const [draft, setDraft] = useState(Math.max(0, selected))
++  const dragging = useRef(false)
 +  const id = useId()
-+  useEffect(() => { if (!busy) setDraft(Math.max(0, selected)) }, [selected, busy])
++  useEffect(() => { if (!busy && !dragging.current) setDraft(Math.max(0, selected)) }, [selected, busy])
 +  const index = Math.min(draft, Math.max(0, choices.length - 1))
 +  const choice = choices[index]
 +  const maximum = Math.max(0, choices.length - 1)
@@ -1884,10 +1918,11 @@ new file mode 100644
 +    const target = choices[next]
 +    if (!busy && target !== undefined && target.effort !== value) onCommit(target.effort)
 +  }
++  const cancel = (): void => { dragging.current = false; setDraft(Math.max(0, selected)) }
 +  return (
 +    <div className={css.card} data-reasoning-card data-maximum={isMaximum} style={{ '--effort-progress': `${progress * 100}%` } as CSSProperties}>
 +      <div className={css.heading}>
-+        <IconGaugeOutlineRegular className={css.icon} size={20} />
++        <IconGaugeOutlineRegular className={css.icon} size={18} />
 +        <div className={css.copy}>
 +          <output className={css.level} htmlFor={`${id}-slider`} aria-live="polite">{choice?.label ?? value ?? t('effort.providerDefault')}</output>
 +          <div className={css.hint} id={`${id}-hint`}>{t(description)}</div>
@@ -1895,7 +1930,7 @@ new file mode 100644
 +        <button className={css.reset} type="button" aria-label={t('effort.reset')} title={t('effort.reset')}
 +          disabled={busy || resetIndex < 0 || (value === defaultValue && draft === selected)}
 +          onClick={() => { setDraft(resetIndex); commit(resetIndex) }}>
-+          {busy ? <StateDot state="ongoing" /> : <IconRefreshOutlineRegular size={20} />}
++          {busy ? <StateDot state="ongoing" /> : <IconRefreshOutlineRegular size={18} />}
 +        </button>
 +      </div>
 +      <div className={css.control}>
@@ -1910,9 +1945,11 @@ new file mode 100644
 +          aria-label={t('menu.effort')} aria-valuetext={choice?.label ?? value ?? t('effort.providerDefault')}
 +          aria-describedby={`${id}-hint`} disabled={busy || choices.length < 2}
 +          onChange={event => { setDraft(Number(event.currentTarget.value)) }}
-+          onPointerDown={event => { event.currentTarget.setPointerCapture?.(event.pointerId) }}
-+          onPointerUp={event => { commit(Number(event.currentTarget.value)) }}
-+          onPointerCancel={() => { setDraft(Math.max(0, selected)) }}
++          onPointerDown={event => { dragging.current = true; event.currentTarget.setPointerCapture?.(event.pointerId) }}
++          onPointerUp={event => { dragging.current = false; commit(Number(event.currentTarget.value)) }}
++          onPointerCancel={cancel}
++          onLostPointerCapture={() => { if (dragging.current) cancel() }}
++          onBlur={() => { if (dragging.current) cancel() }}
 +          onKeyDown={event => {
 +            if (adjustmentKeys.has(event.key)) event.stopPropagation()
 +            if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commit(index) }
@@ -1928,29 +1965,29 @@ new file mode 100644
 --- /dev/null
 +++ b/packages/client/ui-model-selection/src/client/ReasoningSlider.module.css
 @@ -0,0 +1,28 @@
-+.card { --effort-accent: #b74a3d; --effort-tint: #fbefeb; width: min(336px, calc(100vw - 60px)); padding: 16px 12px 12px; }
++.card { --effort-accent: #b74a3d; --effort-tint: #fbefeb; box-sizing: border-box; width: min(304px, calc(100vw - 26px)); padding: 14px 12px 12px; }
 +.card[data-maximum="true"] { --effort-accent: #9f3338; --effort-tint: #f9ede7; }
-+.heading { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: start; gap: 8px; }
-+.icon { color: #929296; margin-top: 3px; }
++.heading { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: start; gap: 8px; }
++.icon { color: #929296; margin: 5px; }
 +.copy { min-width: 0; text-align: center; }
-+.level { display: block; text-transform: capitalize; color: var(--effort-accent); font-size: 20px; font-weight: 500; line-height: 26px; overflow-wrap: anywhere; }
-+.hint { color: #747478; margin-top: 3px; font-size: 13px; line-height: 20px; }
-+.reset { display: grid; place-items: center; width: 28px; height: 28px; margin: -1px -2px 0; padding: 0; color: #929296; background: none; border: 0; border-radius: 50%; cursor: pointer; }
++.level { display: block; text-transform: capitalize; color: var(--effort-accent); font-size: 18px; font-weight: 600; line-height: 26px; overflow-wrap: anywhere; }
++.hint { color: #747478; margin-top: 4px; font-size: 12px; line-height: 18px; }
++.reset { display: grid; place-items: center; width: 28px; height: 28px; margin: 0; padding: 0; color: #929296; background: none; border: 0; border-radius: 50%; cursor: pointer; }
 +.reset:hover:not(:disabled) { color: var(--effort-accent); background: var(--effort-tint); }
 +.reset:focus-visible { outline: 2px solid var(--effort-accent); outline-offset: 3px; }
 +.reset:disabled { cursor: default; opacity: .55; }
-+.control { position: relative; height: 44px; margin-top: 18px; }
-+.track { position: absolute; inset: 6px 0; overflow: hidden; border-radius: 999px; background: #f1ebe7; }
-+.fill { width: var(--effort-progress); min-width: 22px; height: 100%; overflow: hidden; border-radius: inherit; background: var(--effort-accent); }
++.control { position: relative; height: 36px; margin-top: 12px; }
++.track { position: absolute; inset: 5px 0; overflow: hidden; border-radius: 999px; background: #f1ebe7; }
++.fill { width: var(--effort-progress); min-width: 18px; height: 100%; overflow: hidden; border-radius: inherit; background: var(--effort-accent); }
 +.card[data-maximum="true"] .fill { background: linear-gradient(100deg, #8f303d 0%, #c94f3e 55%, #d69a52 100%); }
-+.particles { position: relative; width: 310px; max-width: 100%; height: 100%; }
++.particles { position: relative; width: 100%; height: 100%; }
 +.particles i { position: absolute; border-radius: 50%; background: #fff4d6; opacity: .65; animation: effort-drift 3.8s ease-in-out infinite alternate; }
 +@keyframes effort-drift { from { transform: translate(0, 3px); opacity: .25; } to { transform: translate(5px, -3px); opacity: .8; } }
-+.slider { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; width: 100%; height: 44px; border: 0; padding: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
-+.slider::-webkit-slider-runnable-track { height: 44px; background: transparent; }
-+.slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #e3e3e7; background: #fff; box-shadow: 0 1px 3px #24243820; }
-+.slider::-moz-range-track { height: 44px; background: transparent; }
-+.slider::-moz-range-thumb { width: 42px; height: 42px; border-radius: 50%; border: 1px solid #e3e3e7; background: #fff; box-shadow: 0 1px 3px #24243820; }
++.slider { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; width: 100%; height: 36px; border: 0; padding: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
++.slider::-webkit-slider-runnable-track { height: 36px; background: transparent; }
++.slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 36px; height: 36px; margin-top: 0; border-radius: 50%; border: 1px solid #d9d9df; background: #fff; box-shadow: 0 2px 5px #24243818; }
++.slider::-moz-range-track { height: 36px; background: transparent; }
++.slider::-moz-range-thumb { box-sizing: border-box; width: 36px; height: 36px; border-radius: 50%; border: 1px solid #d9d9df; background: #fff; box-shadow: 0 2px 5px #24243818; }
 +.slider:focus-visible { outline: 2px solid var(--effort-accent); outline-offset: 4px; border-radius: 999px; }
 +.slider:disabled { cursor: default; }
 +.control:has(.slider:disabled) { opacity: .6; }
@@ -1988,3 +2025,205 @@ diff --git a/packages/client/ui-primitives/tests/ansi.client.spec.ts b/packages/
      ['94', 'bright blue', 'var(--dsw-static-blue-400)'],
      ['36', 'cyan', 'var(--dsw-static-blue-600)'],
      ['96', 'bright cyan', 'var(--dsw-static-blue-500)'],
+diff --git a/packages/client/ui-model-selection/src/client/catalog.ts b/packages/client/ui-model-selection/src/client/catalog.ts
+index cbc9264..560e94f 100644
+--- a/packages/client/ui-model-selection/src/client/catalog.ts
++++ b/packages/client/ui-model-selection/src/client/catalog.ts
+@@ -11,7 +11,7 @@ export interface ModelCatalogState {
+   error: string | null
+ }
+ 
+-/** Loads at most one model catalog for the current Host generation. */
++/** Shares the current Host catalog; explicit loads retry partially failed catalogs. */
+ export class ModelCatalogDirectory {
+   /** Current shared catalog value and load lifecycle. */
+   readonly store: SnapshotStore<ModelCatalogState> = createSnapshotStore({
+@@ -46,7 +46,7 @@ export class ModelCatalogDirectory {
+    */
+   load(): Promise<ModelCatalog> {
+     const state = this.store.getSnapshot()
+-    if (state.status === 'ready' && state.value !== null) return Promise.resolve(state.value)
++    if (state.status === 'ready' && state.value !== null && state.value.failures.length === 0) return Promise.resolve(state.value)
+     if (this.inflight !== undefined) return this.inflight
+     const generation = this.generation
+     this.store.update((draft) => {
+diff --git a/packages/client/ui-model-selection/tests/catalog.client.spec.ts b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
+index f800266..dc1545a 100644
+--- a/packages/client/ui-model-selection/tests/catalog.client.spec.ts
++++ b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
+@@ -16,6 +16,22 @@ function directory(models: () => Promise<unknown>): ModelCatalogDirectory {
+ }
+ 
+ describe('ModelCatalogDirectory', () => {
++  it('keeps a partial catalog usable and retries its failed channels on the next load', async () => {
++    const partial = { ...catalog('available'), failures: [{ id: 'offline', name: 'Offline', message: 'fetch failed' }] }
++    const models = vi.fn()
++      .mockResolvedValueOnce({ ok: true, value: partial })
++      .mockResolvedValueOnce({ ok: true, value: catalog('recovered') })
++    const subject = directory(models)
++
++    await expect(subject.load()).resolves.toEqual(partial)
++    expect(subject.store.getSnapshot()).toMatchObject({ status: 'ready', value: partial, error: null })
++    const retry = subject.load()
++    expect(subject.load()).toBe(retry)
++    await expect(retry).resolves.toEqual(catalog('recovered'))
++    await expect(subject.load()).resolves.toEqual(catalog('recovered'))
++    expect(models).toHaveBeenCalledTimes(2)
++  })
++
+   it('shares one failing request, exposes the RPC error, and permits a retry', async () => {
+     const models = vi.fn()
+       .mockResolvedValueOnce({
+diff --git a/packages/client/ui-model-selection/src/client/directory.ts b/packages/client/ui-model-selection/src/client/directory.ts
+--- a/packages/client/ui-model-selection/src/client/directory.ts
++++ b/packages/client/ui-model-selection/src/client/directory.ts
+@@ -44,6 +44,10 @@
+   /** Latest selection operation wins; an older response never overwrites a newer one. */
+   private generation = 0
+   private disposed = false
++  private projectedSelection: ModelSelection | null | undefined
++  private projectionGeneration = 0
++  /** A successful RPC may arrive before the durable selection stream. */
++  private accepted?: ModelSelection
+   private readonly unsubscribeCatalog: () => void
+   private readonly unsubscribeSelection: () => void
+ 
+@@ -82,8 +86,8 @@
+   }
+ 
+   /**
+-   * Select the complete provider/model/reasoning selection. The durable
+-   * projection frame updates the shared current; failures surface on the store
++   * Select the complete provider/model/reasoning selection. Acknowledged
++   * selections bridge the wait for the durable projection; failures surface on the store
+    * and return with the operation so each entry can present its own failure.
+    * @param selection - provider, provider-owned model id, and optional adapter-owned effort.
+    * @returns the selection outcome, including the original Remote failure.
+@@ -94,6 +98,7 @@
+     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
+     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
+     const generation = ++this.generation
++    const projectionGeneration = this.projectionGeneration
+     this.store.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
+     const result = await this.sessions.selectModel({
+       sessionId: this.sessionId,
+@@ -122,6 +127,7 @@
+         ...this.isBlank() ? {} : { session_id: this.sessionId }, model_name: to, switch_from: previousEffort ?? 'default', switch_to: nextEffort ?? 'default',
+       })
+     }
++    this.accepted = projectionGeneration === this.projectionGeneration ? selection : undefined
+     this.store.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
+     this.syncInputs()
+     return { ok: true, value: undefined }
+@@ -133,6 +139,7 @@
+   resetConnected(): void {
+     if (this.disposed) return
+     ++this.generation
++    this.accepted = undefined
+     this.store.update((state) => {
+       if (state.status === 'selecting') state.status = 'idle'
+       state.pending = null
+@@ -158,7 +165,13 @@
+     if (this.disposed) return
+     const catalog = this.catalog.store.getSnapshot()
+     const projected = modelSelectionProjection(this.projected.getSnapshot())
+-    const intended = projected?.next ?? catalog.value?.default
++    if (!sameSelection(projected?.next, this.projectedSelection)) {
++      this.projectedSelection = projected?.next
++      // Even a change back to the previous value supersedes an in-flight acknowledgement.
++      ++this.projectionGeneration
++      this.accepted = undefined
++    }
++    const intended = this.accepted ?? projected?.next ?? catalog.value?.default
+     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
+     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
+     const retainedEffort = effort === undefined ? undefined
+@@ -176,7 +189,7 @@
+       })
+       return
+     }
+-    const selection = projected.next ?? catalog.value.default
++    const selection = this.accepted ?? projected.next ?? catalog.value.default
+     const routable = catalog.value.groups.some(group => group.id === selection.provider
+       && group.models.some(model => model.id === selection.model))
+     this.store.set({
+@@ -197,3 +210,7 @@
+ function modelSelectionProjection(value: unknown): ModelSelectionProjection | undefined {
+   return value === undefined ? undefined : value as ModelSelectionProjection
+ }
++
++function sameSelection(left: ModelSelection | null | undefined, right: ModelSelection | null | undefined): boolean {
++  return left?.provider === right?.provider && left?.model === right?.model && left?.reasoningEffort === right?.reasoningEffort
++}
+diff --git a/packages/client/ui-model-selection/tests/directory.client.spec.ts b/packages/client/ui-model-selection/tests/directory.client.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/client/ui-model-selection/tests/directory.client.spec.ts
+@@ -0,0 +1,67 @@
++import { describe, expect, it, vi } from 'vitest'
++import type { ModelSelection, ModelSelectionProjection } from '@deepseek-ai/dsh-api-session-controller/types'
++import type { SessionId } from '@deepseek-ai/dsh-session/types'
++import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
++import { ModelCatalogDirectory } from '../src/client/catalog.ts'
++import { ModelDirectory } from '../src/client/directory.ts'
++
++function fixture() {
++  const initial: ModelSelection = { provider: 'fixture', model: 'model', reasoningEffort: 'high' }
++  const selected = { ...initial, reasoningEffort: 'max' }
++  const projected = createSnapshotStore<ModelSelectionProjection>({ lastUsed: null, next: initial })
++  const catalog = new ModelCatalogDirectory({ remote: { session: { modelCatalog: async () => ({
++    ok: true, value: { default: initial, routableProviders: ['fixture'], failures: [],
++      groups: [{ id: 'fixture', name: 'Fixture', models: [{ id: 'model', name: 'Model' }] }] },
++  }) } } } as never)
++  const selectModel = vi.fn().mockResolvedValue({ ok: true, value: undefined })
++  const directory = new ModelDirectory({ selectModel }, 'session' as SessionId, () => true, catalog, projected, () => false)
++  return { initial, selected, projected, selectModel, directory }
++}
++
++describe('ModelDirectory selection acknowledgement', () => {
++  it('keeps the accepted effort until the durable selection changes, then follows later updates', async () => {
++    const { initial, selected, projected, directory } = fixture()
++    try {
++      await directory.load()
++      await directory.select(selected)
++      expect(directory.store.getSnapshot()).toMatchObject({ current: selected, status: 'ready', pending: null })
++      // An unchanged projection can be republished before the selection stream catches up.
++      projected.set({ lastUsed: initial, next: { ...initial } })
++      expect(directory.store.getSnapshot().current).toEqual(selected)
++      projected.set({ lastUsed: initial, next: selected })
++      expect(directory.store.getSnapshot().current).toEqual(selected)
++      const external = { ...initial, reasoningEffort: 'off' }
++      projected.set({ lastUsed: selected, next: external })
++      expect(directory.store.getSnapshot().current).toEqual(external)
++
++      await directory.select(selected)
++      directory.resetConnected()
++      expect(directory.store.getSnapshot().current).toEqual(external)
++    } finally { directory.dispose() }
++  })
++
++  it.each([
++    { name: 'a newer external selection', updates: ['max', 'off'], expected: 'off' },
++    { name: 'a selection changed back to the initial value', updates: ['max', 'high'], expected: 'high' },
++    { name: 'an unchanged selection republished before acknowledgement', updates: ['high'], expected: 'max' },
++    { name: 'the acknowledged selection already projected', updates: ['max'], expected: 'max' },
++  ])('preserves $name when an acknowledgement arrives late', async ({ updates, expected }) => {
++    const { initial, selected, projected, selectModel, directory } = fixture()
++    const response = Promise.withResolvers<{ ok: true; value: undefined }>()
++    selectModel.mockReturnValue(response.promise)
++    try {
++      await directory.load()
++      const selecting = directory.select(selected)
++      for (const reasoningEffort of updates)
++        projected.set({ lastUsed: initial, next: { ...initial, reasoningEffort } })
++      response.resolve({ ok: true, value: undefined })
++      await selecting
++      expect(directory.store.getSnapshot()).toMatchObject({
++        current: { ...initial, reasoningEffort: expected }, status: 'ready', pending: null,
++      })
++      const durable = projected.getSnapshot().next!
++      projected.set({ lastUsed: durable, next: { ...durable } })
++      expect(directory.store.getSnapshot().current?.reasoningEffort).toBe(expected)
++    } finally { directory.dispose() }
++  })
++})

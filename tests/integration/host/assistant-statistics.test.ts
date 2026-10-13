@@ -31,6 +31,16 @@ test("Eris historical statistics select the latest completed upload, validate it
     assert.equal(overview.history.status, "published");
     assert.equal(overview.additive, false);
     assert.deepEqual(overview.currentRuns, []);
+    await writeJson(path.join(directory, "runs/broken/state.json"), {});
+    const isolated = await source.list({ view: "statistics" });
+    assert(isolated.kind === "statistics");
+    assert.deepEqual(isolated.history, overview.history, "an unrelated missing overview must not hide the published snapshot");
+    assert.equal(isolated.runDirectory.complete, false);
+    await writeJson(path.join(directory, "not-a-directory"), {});
+    const unavailableDirectory = await new LocalAnalysisData(path.join(directory, "not-a-directory"), files).list({ view: "statistics" });
+    assert(unavailableDirectory.kind === "statistics");
+    assert.deepEqual(unavailableDirectory.history, overview.history);
+    assert.equal(unavailableDirectory.runDirectory.complete, false);
     await writeJsonl(files.logFile, [older, pending]);
     await assert.rejects(readPublishedStatistics(files), /日志记录缺失/, "missing published records never fall back silently");
     const partial = await source.list({ view: "statistics" });

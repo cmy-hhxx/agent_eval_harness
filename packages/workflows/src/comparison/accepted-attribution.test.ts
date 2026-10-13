@@ -35,7 +35,8 @@ test("accepted canonical coordinates preserve every business field and receipt",
   const { receipt, request } = fixture(), before = structuredClone({ receipt, request });
   const view = acceptedAttributionView(receipt, request);
   assert.deepEqual(view, receipt.evaluation);
-  assert.equal(view.findings[0].evidence.length, 2, "the original full norm is program-derived even though the model selected only actual output");
+  assert.equal(view.findings[0].evidence.length, 1);
+  assert.equal(view.findings[0].context_evidence!.length, 1, "full norms remain separate from selected output");
   assert.deepEqual({ receipt, request }, before);
   assert.notEqual(view, receipt.evaluation);
 });
@@ -125,6 +126,8 @@ test("each canonical criterion and table-resolution evidence slot is checked aga
   assert.deepEqual(acceptedAttributionView(receipt, request), result);
   for (const [item, path] of [
     [result.criterion_assessments[0].evidence[0], "/criterion_assessments/0/evidence/0"],
+    [result.criterion_assessments[0].context_evidence![0], "/criterion_assessments/0/context_evidence/0"],
+    [result.findings[0].context_evidence![0], "/findings/0/context_evidence/0"],
     [result.table_resolutions[0].evidence[0], "/table_resolutions/0/evidence/0"],
   ] as const) {
     const original = item.evidence_id;

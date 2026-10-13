@@ -13,11 +13,11 @@ export interface ComparisonDiagramInput {
       counterEvidence?: string | null;
       impact: string;
       assessment: "strength" | "problem" | "uncertain";
-      highlights?: { evidence?: string; impact?: string };
+      highlights?: { evidence?: string | null; impact?: string | null } | null;
     }[];
   }[];
   reason: string;
-  reasonHighlight?: string;
+  reasonHighlight?: string | null;
   caveat?: string;
 }
 
@@ -27,18 +27,50 @@ interface FormalPair {
   models: { model: string; modelName: string; result: "win" | "loss" | "both_good" | "both_bad" }[];
 }
 
+/** Ignore presentation differences while retaining offsets into the untouched source. */
+function highlightText(text: string) {
+  let value = "", offset = 0;
+  const spans: { start: number; end: number }[] = [];
+  for (const char of text) {
+    const start = offset;
+    offset += char.length;
+    const normalized = /\s/u.test(char) ? " " : /[！-～]/u.test(char) ? String.fromCharCode(char.charCodeAt(0) - 0xfee0) : char;
+    if (normalized === " " && value.endsWith(" ")) { spans[spans.length - 1]!.end = offset; continue; }
+    value += normalized;
+    for (let index = 0; index < normalized.length; index++) spans.push({ start, end: offset });
+  }
+  return { value, spans };
+}
+
+function highlightSpan(text: string, supplied: string): string | undefined {
+  let phrase = supplied.trim();
+  if (!phrase) return undefined;
+  const exact = text.indexOf(phrase);
+  if (exact >= 0) return exact === text.lastIndexOf(phrase) ? phrase : undefined;
+  for (const marker of ["**", "__", "`", "=="]) {
+    if (phrase.startsWith(marker) && phrase.endsWith(marker) && phrase.length > marker.length * 2) {
+      phrase = phrase.slice(marker.length, -marker.length).trim();
+      break;
+    }
+  }
+  const source = highlightText(text), target = highlightText(phrase).value;
+  const start = source.value.indexOf(target);
+  if (!target || start < 0 || start !== source.value.lastIndexOf(target)) return undefined;
+  return text.slice(source.spans[start]!.start, source.spans[start + target.length - 1]!.end);
+}
+
 /** The accepted pair owns template order, identities and verdict. */
 export function comparisonDiagram(input: ComparisonDiagramInput, receipt: JsonObject) {
   if (new Set(input.candidates.map(candidate => candidate.model)).size !== 2)
     throw new Error("比较图需要两个不同的模型");
   const omittedHighlights: string[] = [];
   let remainingHighlights = 2;
-  const highlight = (text: string, phrase: string | undefined, field: string, available = true) => {
-    if (phrase === undefined) return undefined;
-    if (available && remainingHighlights > 0 && phrase.trim() && Array.from(phrase).length <= 16
-      && text.indexOf(phrase) >= 0 && text.indexOf(phrase) === text.lastIndexOf(phrase)) {
+  const highlight = (text: string, phrase: string | null | undefined, field: string, available = true) => {
+    if (phrase == null) return undefined;
+    const span = available && remainingHighlights > 0 ? highlightSpan(text, phrase) : undefined;
+    if (span !== undefined && Array.from(span).length <= 16) {
       remainingHighlights--;
-      return phrase;
+      return span;
     }
     omittedHighlights.push(field);
     return undefined;

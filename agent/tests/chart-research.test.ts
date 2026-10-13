@@ -180,17 +180,31 @@ test('heatmaps preserve contrast and accessible readings without pointer tooltip
   assert.equal(data.chartReading(samples[0], missing.series[1].data[0], 0), '乙 · B组：未知');
 });
 
-test('invalid analytic shapes and unsupported annotations fail before source access', async () => {
+test('invalid analytic shapes fail before source access', async () => {
   for (const chart of [
     { ...samples[1], xValues: [1, 2] },
     { ...samples[1], xValues: [1, null, 3] }, { ...samples[1], xLabel: '' },
     { ...samples[2], series: [{ name: 'A', values: [1, null, 2] }] },
     { ...samples[3], series: [...base.series, ...base.series] },
-    { ...samples[0], annotations: [{ categoryIndex: 1, seriesIndex: 1, note: '不存在的点' }] },
-    { ...samples[0], annotations: [{ categoryIndex: 5, seriesIndex: 0, note: '越界' }] },
   ]) {
     await assert.rejects(tool.execute({ ...chart, references: [{ runId: 'test' }] }, context));
     assert.equal(chartFromToolOutput(JSON.stringify({ kind: 'chart', chart }), 'ok'), null);
+  }
+});
+
+test('omitting an unsupported annotation produces a renderable receipt with the same observations', async () => {
+  for (const annotation of [
+    { categoryIndex: 1, seriesIndex: 1, note: '不存在的点' },
+    { categoryIndex: 5, seriesIndex: 0, note: '越界' },
+  ]) {
+    const chart = { ...samples[0], annotations: [annotation] };
+    const result = await tool.execute({ ...chart, references: [{ runId: 'test' }] }, context);
+    const rendered = chartFromToolOutput(result.content[0].text!, 'ok');
+    assert(rendered);
+    assert.deepEqual(rendered.series, chart.series);
+    assert.deepEqual(rendered.annotations, []);
+    assert.equal(chartFromToolOutput(JSON.stringify({ kind: 'chart', chart }), 'ok'), null,
+      'a malformed receipt must never put a label on the wrong observation');
   }
 });
 

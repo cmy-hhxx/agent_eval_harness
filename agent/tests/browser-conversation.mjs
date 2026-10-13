@@ -335,6 +335,17 @@ try{
  await page.getByRole('menuitem',{name:/推理等级/}).click();
  await page.getByRole('slider',{name:'推理等级'}).press('End');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 max$/}).waitFor();
+ const effortCard=await page.locator('[data-reasoning-card]').boundingBox();
+ assert(effortCard&&effortCard.width<330&&effortCard.height<150,'the effort control retains a compact, full slider');
+ const effortSlider=page.getByRole('slider',{name:'推理等级'}),effortBounds=await effortSlider.boundingBox();
+ assert(effortBounds);
+ await page.mouse.move(effortBounds.x+effortBounds.width-18,effortBounds.y+effortBounds.height/2);
+ await page.mouse.down();
+ await page.mouse.move(effortBounds.x+18,effortBounds.y+effortBounds.height/2,{steps:8});
+ await page.mouse.up();
+ await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 off$/}).waitFor();
+ await effortSlider.press('End');
+ await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 max$/}).waitFor();
  await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 xhigh$/}).waitFor();
  await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');

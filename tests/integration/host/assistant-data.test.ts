@@ -51,6 +51,35 @@ test("cumulative overview never opens individual run checkpoints", async (t) => 
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
+test("an unavailable historical index cannot block valid runs or an explicit run query", async () => {
+  const fixture = await fixtureConfig();
+  try {
+    const source = await register(fixture.config);
+    const saved = await readJson<Checkpoint>(path.join(fixture.config.output.path, "source/state.json"));
+    await saveCheckpoint(path.join(fixture.config.output.path, "broken/state.json"), { ...saved, runId: "broken", status: "finished" });
+    await rm(path.join(fixture.config.output.path, "broken/overview.json"));
+    const directory = await source.list({});
+    assert.equal(directory.kind, "runs");
+    assert.equal(object(directory.currentRun).runId, "source");
+    assert.equal(object(directory.runCounts).scope, "readable_registered_runs");
+    assert.equal(directory.runDirectory.complete, false);
+    assert.equal(directory.runDirectory.errors[0]!.runId, "broken");
+    const selected = await source.list({ view: "inputs" });
+    assert(selected.kind === "inputs");
+    assert.equal(selected.runId, "source");
+    assert("runDirectory" in selected && !selected.runDirectory.complete);
+    const explicit = await source.list({ runId: "broken" });
+    assert.equal(explicit.kind, "inputs", "an explicit query reads the checkpoint, not its optional directory index");
+    await fs.writeFile(path.join(fixture.config.output.path, "broken/state.json"), "{");
+    await writeRunOverview(path.join(fixture.config.output.path, "broken"), analysisRunOverview({ ...saved, runId: "broken" }));
+    const partial = await source.list({ view: "statistics" });
+    assert(partial.kind === "statistics");
+    assert.deepEqual(partial.currentRuns.map(run => run.runId), ["source"]);
+    assert.equal(partial.runDirectory.complete, false);
+    await assert.rejects(source.list({ runId: "broken" }), /JSON|position|property/i);
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
 async function registerAccepted(config: EvalConfig, compare = (data: TaskData) => comparisonResult(Object.keys(data.candidates))) {
   let accepted: Record<string, SubmissionReceipt> = {};
   const source = await register(config, async (state, plan) => {
@@ -89,7 +118,10 @@ test("random case selection samples distinct questions and exhausts them across 
 });
 
 test("Eris samples a comparison without a preliminary run lookup and returns the resolved scope", async () => {
-  const fixture = await fixtureConfig();
+  const question = "为什么原油期货大涨而石油股票不涨？";
+  const fixture = await fixtureConfig(Array.from({ length: 4 }, () => [{ ...raw(), messages: [
+    { type: "message", role: "user", content: question }, { type: "message", role: "assistant", content: "需要区分成本、业务结构与市场预期。" },
+  ] }]));
   try {
     const { source } = await registerAccepted(fixture.config, data => {
       const labels = Object.keys(data.candidates), result = comparisonResult(labels);
@@ -101,11 +133,15 @@ test("Eris samples a comparison without a preliminary run lookup and returns the
       specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
     const result = await eris.tools.find(tool => tool.name === "list_data")!.execute(
       { view: "comparisons", sample: true, limit: 1, includeAnalysis: true },
-      { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {} });
+      { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {}, async complete(request) {
+        assert.deepEqual(request.draft, { questions: [{ index: 0, question }] });
+        return { text: JSON.stringify({ decisions: [{ index: 0, eligible: true, reason: "需分辨成本传导和市场预期的因果差异" }] }), elapsedMs: 5, usage: {} };
+      } });
     const sample = JSON.parse(result.content[0].text!);
     assert.equal(sample.kind, "comparisons");
     assert.equal(sample.runId, "source");
     assert.equal(sample.selectionReason, "running_with_inputs");
+    assert.equal(sample.selection.mode, "quality_random");
     assert.equal(sample.items.length, 1);
     assert.equal(sample.items[0].reference.runId, sample.runId);
     assert(sample.items[0].question.length > 0);

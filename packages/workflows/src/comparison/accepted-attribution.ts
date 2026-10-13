@@ -41,8 +41,10 @@ export function acceptedAttributionView(receipt: SubmissionReceipt, sourceReques
     }
   };
   evidence(result.correctness_evidence, "/correctness_evidence");
-  result.criterion_assessments.forEach((item, index) => evidence(item.evidence, `/criterion_assessments/${index}/evidence`));
-  result.findings.forEach((item, index) => evidence(item.evidence, `/findings/${index}/evidence`));
+  for (const field of ["criterion_assessments", "findings"] as const) result[field].forEach((item, index) => {
+    evidence(item.evidence, `/${field}/${index}/evidence`);
+    evidence(item.context_evidence ?? [], `/${field}/${index}/context_evidence`);
+  });
   result.table_resolutions?.forEach((item, index) => evidence(item.evidence, `/table_resolutions/${index}/evidence`));
   if (errors.length) throw new ValidationError(errors);
   return result;

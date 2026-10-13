@@ -96,6 +96,13 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
   const task = request.input.task_analysis as unknown as TaskAnalysis;
   const criteria = new Map([...task.requirements, ...task.scoring_points, ...task.red_flags].map(criterion => [criterion.id, criterion]));
   const errors: ValidationIssue[] = [...context.bindingIssues];
+  for (const field of ["findings", "criterion_assessments"] as const) result[field].forEach((item, index) => {
+    item.context_evidence?.forEach((evidence, i) => {
+      if (!ownEvidence(evidence) || !isNormEvidence(evidence, context.sources, context.raw, request.sources.answer.id))
+        errors.push({ category: "evidence", code: "instruction_context_invalid", path: `/${field}/${index}/context_evidence/${i}`,
+          message: "规范上下文只能保留本方真实指令来源，不能把最终回答、工具事实或 peer 放入上下文规避聚焦引用。" });
+    });
+  });
   const answerEvidence = (item: Evidence, finalOnly: boolean) => {
     if (item.message_index === context.finalIndex) return true;
     if (finalOnly || item.message_index >= context.finalIndex) return false;
@@ -136,7 +143,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
     const norms = context.forCriterion(criteria.get(assessment.criterion_id));
     if (!norms.length) return;
     const normSources = context.sources.filter(source => norms.some(norm => source.evidence.some(original => evidenceCovers(context.raw, request.sources.answer.id, original.evidence_id, norm.evidence_id))));
-    check(assessment.evidence, normSources, `/criterion_assessments/${index}/evidence`, false, norms);
+    check([...assessment.evidence, ...assessment.context_evidence ?? []], normSources, `/criterion_assessments/${index}/evidence`, false, norms);
   });
   result.findings.forEach((finding, index) => {
     if (finding.assessment.evidence_status !== "established") return;
@@ -144,7 +151,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
     const norms = context.forRequirement(finding.assessment.requirement_index);
     if (finding.dimension !== "instruction_following" && !norms.length) return;
     // Bound norms are required in full; independent explicit rules remain part of the evidence.
-    check(finding.evidence, context.sources, `/findings/${index}/evidence`, finding.stage === "final_answer", norms, true);
+    check([...finding.evidence, ...finding.context_evidence ?? []], context.sources, `/findings/${index}/evidence`, finding.stage === "final_answer", norms, true);
   });
   return errors;
 }

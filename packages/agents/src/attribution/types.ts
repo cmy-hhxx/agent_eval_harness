@@ -21,6 +21,8 @@ export interface Finding {
   text: string;
   reason: string;
   evidence: Evidence[];
+  /** Program-bound complete norms for interpretation; not direct supporting excerpts. */
+  context_evidence?: Evidence[];
   assessment: {
     requirement_index: number | null;
     observation: string;
@@ -34,6 +36,7 @@ export interface CriterionAssessment {
   evidence_status: "established" | "uncertain";
   summary: string;
   evidence: Evidence[];
+  context_evidence?: Evidence[];
 }
 export interface CoreAssessment {
   /** Null when the evidence does not establish whether the core result is usable. */

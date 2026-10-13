@@ -94,6 +94,19 @@ test("statistics cards keep unavailable history, live runs and unknown rates dis
   assert.equal(analysisToolModel("list_data", { state: "running", bodyRaw: '{"view":"statistics"}' }).details, undefined);
 });
 
+test("partial run directories keep published statistics visible without claiming zero live runs", () => {
+  const runDirectory = { complete: false, errors: [{ runId: "broken", message: "索引读取失败" }] };
+  const statistics = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
+    history: { status: "published", caseCount: 1, totalCaseCount: 1,
+      progress: { completedBattleCount: 1, expectedBattleCount: 1, completedCaseCount: 1 } }, currentRuns: [], runDirectory }) });
+  assert.match(statistics.summary, /累计评测.*1 场对战/);
+  assert.equal(statistics.details.items[1].title, "已读取的运行中批次");
+  assert.equal(statistics.details.items[2].description, "索引读取失败");
+  const directory = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "runs", total: 0, items: [], runDirectory }) });
+  assert.match(directory.summary, /运行目录不完整/);
+  assert.equal(directory.details.items[0].description, "索引读取失败");
+});
+
 test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
   assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "heatmap" } }) }),
     { summary: "显示热力矩阵 · 已完成" });

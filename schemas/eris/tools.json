@@ -32,7 +32,7 @@
       },
       "includeAnalysis": {
         "type": "boolean",
-        "description": "true 时同页返回完整原问、双方评测摘要、问题维度、胜负理由及取舍，不加载原始答案或链路；按 nextOffset 续页。"
+        "description": "true 时同页返回完整原问、双方评测摘要、问题维度、胜负理由及取舍，不加载原始答案或链路；按 nextOffset 续页。sample:true 自动包含这些内容。"
       },
       "offset": {
         "type": "integer",
@@ -42,7 +42,7 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 100,
-        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。随机找一题用 view:comparisons, sample:true, limit:1。"
+        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。随机找高质量问句用 view:comparisons, sample:true, limit:1；合格题不足时不补低质量题。"
       },
       "view": {
         "type": "string",
@@ -55,13 +55,13 @@
       },
       "sample": {
         "type": "boolean",
-        "description": "comparisons 随机抽取不同题目；excludeCases 可排除已展示题目。"
+        "description": "comparisons 在随机候选中筛选高质量问句，自动附完整原问及评测摘要；用于自主选例和换题。excludeCases 可排除已展示或已拒绝题目。"
       },
       "excludeCases": {
         "type": "array",
         "maxItems": 100,
         "uniqueItems": true,
-        "description": "comparisons 排除已展示案例的 case 坐标，所有档位一起排除。原样使用目录 items[].case 或 read_case.case。",
+        "description": "comparisons 排除案例的 case 坐标，所有档位一起排除。合并已展示的 items[].case 或 read_case.case 与 selection.rejectedCases。",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -1221,18 +1221,18 @@
                     "description": "本项对用户任务或判断的具体影响，结论与已知证据范围相称。"
                   },
                   "highlights": {
-                    "type": "object",
+                    "type": ["object", "null"],
                     "minProperties": 0,
                     "maxProperties": 2,
                     "additionalProperties": false,
-                    "description": "可省略；最多选择一个字段中的唯一连续短语，整图含顶部理由最多2处，不填写HTML或样式。",
+                    "description": "可省略或填null；最多选择一个字段中的唯一连续短语，整图含顶部理由最多2处，不填写HTML或样式。空格、加粗标记和全半角差异由程序定位回原文；无法唯一定位时只省略高亮。",
                     "properties": {
                       "evidence": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "maxLength": 600
                       },
                       "impact": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "maxLength": 600
                       }
                     }
@@ -1263,9 +1263,9 @@
         "description": "本次分析的结论、主要依据与必要边界。"
       },
       "reasonHighlight": {
-        "type": "string",
+        "type": ["string", "null"],
         "maxLength": 600,
-        "description": "可省略；仅突出reason中唯一出现的决定性短语，整图含分支高亮最多2处，不填写HTML或样式。"
+        "description": "可省略或填null；仅突出reason中唯一出现的决定性短语，整图含分支高亮最多2处，不填写HTML或样式。空格、加粗标记和全半角差异由程序定位回原文；无法唯一定位时只省略高亮。"
       },
       "caveat": {
         "type": "string",

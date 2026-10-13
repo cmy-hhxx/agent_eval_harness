@@ -15,6 +15,7 @@ const searchFields=value=>Object.entries(value).filter(([,entry])=>['string','nu
 const dateAssessment=value=>({not_requested:'未限定日期',unknown:'发布日期未确认',within_range:'在日期范围内',outside_range:'超出日期范围'}[value?.status]);
 const dateBasis=value=>({search_metadata:'搜索日期',page_metadata:'页面声明',none:'无日期依据'}[value?.basis]);
 const caption=value=>searchFields(value).map(({label,value})=>`${label}：${value}`).join(' · ');
+const runErrors=output=>rows(output?.runDirectory?.errors).map(error=>({title:error.runId?`运行读取失败 · ${error.runId}`:'运行目录读取失败',description:string(error.message),fields:[]}));
 function statisticsModel(model,output,status){
  const summary=`累计评测 · ${status}`;
  if(model.state==='error'||output?.kind!=='statistics')return {summary};
@@ -28,10 +29,12 @@ function statisticsModel(model,output,status){
   '完成对战':`${progress.completedBattleCount} / ${progress.expectedBattleCount} 场 · ${rate(progress.battleCompletionRate)}`,
   '快照时间':history.snapshotAt,'数据日期':dates.length?`${dates[0]} 至 ${dates.at(-1)}`:undefined,
  })}:{title:'累计统计不可用',description:string(history?.error),fields:[]}];
- items.push({title:'运行中批次',fields:searchFields({'批次数':runs.length}),...(runs.length?{groups:[{label:'各批次进度',items:runs.map(run=>({
+ const incomplete=output.runDirectory?.complete===false;
+ items.push({title:incomplete?'已读取的运行中批次':'运行中批次',fields:searchFields({'批次数':runs.length}),...(runs.length?{groups:[{label:'各批次进度',items:runs.map(run=>({
   title:run.runId,fields:searchFields({'回答数':run.summary?.inputCount,'题目数':run.summary?.caseCount,'正式对战':run.summary?.formalComparisonsAccepted}),
  }))}]}:{})});
- return {summary:published?`累计评测 · ${progress.completedBattleCount} 场对战 · ${status}`:`累计统计不可用 · ${runs.length} 个运行中批次`,details:{items}};
+ items.push(...runErrors(output));
+ return {summary:published?`累计评测 · ${progress.completedBattleCount} 场对战 · ${status}`:`累计统计不可用 · ${incomplete?'已读取 ':''}${runs.length} 个运行中批次`,details:{items}};
 }
 function caseDetails(output){
  const scope=output.formal?.comparisonScope;
@@ -123,6 +126,7 @@ export function analysisToolModel(name,model){
  if(name==='list_data'){
   const progress=output?.kind==='runs'?output.currentRun?.summary:output?.summary;
   summary=output?.kind==='comparisons'?`查询正式对战 · ${output.total} 场匹配 · 本页 ${output.items?.length??0} 场`:progress?`${output.kind==='runs'?'最近一轮':'本轮'} · ${progress.inputCount} 条回答 · ${progress.caseCount} 道题`:output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'次运行':output.kind==='inputs'?'条回答':'项结果'}`;
+  if(output?.runDirectory?.complete===false)summary+=' · 运行目录不完整';
  }
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
  if(name==='read_case')summary=['读取案例',output?.answers?`${output.answers.length} 条回答`:null,status].filter(Boolean).join(' · ');
@@ -146,10 +150,11 @@ export function analysisToolModel(name,model){
  if(name==='list_data'&&output?.kind==='comparisons')return {summary,details:{items:rows(output.items).map(row=>({
   title:string(row.question??row.questionPreview),description:rows(row.outcomes).map(outcome=>outcome.resultLabel).filter(Boolean).join(' · '),
   fields:fields({...row.reference,...row.case}),groups:[{label:'回答',items:rows(row.inputs).map(input=>({title:string(input.modelName),fields:fields(input.reference)}))}],
- })),empty:'没有匹配的正式对战'}};
+ })).concat(runErrors(output)),empty:'没有匹配的正式对战'}};
  if(output&&typeof output==='object'){
   const rows=output.items??output.matches??output.messages;
   const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.operationId??output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{})}];
+  if(name==='list_data')items.push(...runErrors(output));
   return {summary,details:{items,empty:'没有匹配的结果'}};
  }
  return {summary};

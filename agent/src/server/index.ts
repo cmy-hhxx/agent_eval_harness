@@ -46,12 +46,13 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime): Assistant
           if (!sessions.options.models || !Array.isArray(request.ids) || request.ids.some(id=>typeof id!=="string")) throw new Error("Invalid model selection");
           await sessions.options.models.favorites(userId, request.ids as string[]); return {accepted:true};
         case "session/modelCatalog": {
-          const directory = sessions.options.models ? await sessions.options.models.list(userId) : {models:[{id:sessions.options.model.model,name:sessions.options.model.model,provider:sessions.options.model.provider,providerName:"评测网关"}],favorites:[JSON.stringify([sessions.options.model.provider,sessions.options.model.model])],default:{provider:sessions.options.model.provider,model:sessions.options.model.model}};
+          // Explicit picker loads/retries refresh discovery; model requests reuse the loaded catalog.
+          const directory = sessions.options.models ? await sessions.options.models.list(userId, true) : {models:[{id:sessions.options.model.model,name:sessions.options.model.model,provider:sessions.options.model.provider,providerName:"评测网关"}],failures:[],favorites:[JSON.stringify([sessions.options.model.provider,sessions.options.model.model])],default:{provider:sessions.options.model.provider,model:sessions.options.model.model}};
           const providers = [...new Set(directory.models.map(model=>model.provider))];
           const favoriteOrder = new Map(directory.favorites.map((id,index)=>[id,index]));
           const order = (model: {provider:string;id:string}) => favoriteOrder.get(JSON.stringify([model.provider,model.id])) ?? directory.favorites.length;
           const models = directory.models.toSorted((left,right)=>order(left)-order(right));
-          return {groups:providers.map(provider=>({id:provider,name:directory.models.find(model=>model.provider===provider)!.providerName,models:models.filter(model=>model.provider===provider)})),failures:[],routableProviders:providers,default:directory.default};
+          return {groups:providers.map(provider=>({id:provider,name:directory.models.find(model=>model.provider===provider)!.providerName,models:models.filter(model=>model.provider===provider)})),failures:directory.failures,routableProviders:providers,default:directory.default};
         }
         case "session/skillList": return { items: [] };
         case "session/workspacePathApplications": return { applications: [] };

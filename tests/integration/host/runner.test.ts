@@ -199,6 +199,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert(Buffer.byteLength(JSON.stringify(summary, null, 2)) < 8000, "five-stage aggregate metrics stay compact without answer bodies");
     assert.deepEqual((await readdir(run)).sort(), [
       "_internal",
+      "overview.json",
       "report.md",
       "results",
       "state.json",
@@ -492,6 +493,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     assert.equal(workdirs.size, 7);
     const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
+      "overview.json",
       "report.md",
       "results",
       "state.json",

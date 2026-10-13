@@ -122,7 +122,8 @@
                   "minLength": 1
                 }
               }
-            }
+            },
+            "minItems": 1
           },
           "assessment": {
             "type": "object",
@@ -250,25 +251,6 @@
                   "properties": {
                     "requirement_index": false
                   }
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "stage": {
-                  "const": "final_answer"
-                }
-              },
-              "required": [
-                "stage"
-              ]
-            },
-            "else": {
-              "properties": {
-                "evidence": {
-                  "minItems": 1
                 }
               }
             }

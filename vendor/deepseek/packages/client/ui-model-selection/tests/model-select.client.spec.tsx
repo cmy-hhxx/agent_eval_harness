@@ -324,6 +324,30 @@ describe('ModelSelect reasoning effort', () => {
     expect(screen.getByRole('button', { name: '恢复默认思考等级' }).querySelector('[data-state="ongoing"]')).not.toBeNull()
   })
 
+  it('restores the saved effort when a slider change fails and permits the next adjustment', async () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state())
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ status: 'selecting', pending: selection }))
+      await Promise.resolve()
+      directory.set(state({ status: 'error', error: 'failed' }))
+      return { ok: false as const, error: new RemoteError('gateway/internal', 'failed', {}) }
+    })
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型|当前/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    const slider = screen.getByRole('slider')
+    fireEvent.change(slider, { target: { value: '2' } })
+    fireEvent.pointerUp(slider)
+    await screen.findByRole('alert')
+    expect(slider.getAttribute('aria-valuetext')).toBe('High')
+    expect(slider.hasAttribute('disabled')).toBe(false)
+    expect(document.activeElement).toBe(slider)
+    fireEvent.change(slider, { target: { value: '0' } })
+    fireEvent.pointerUp(slider)
+    expect(select).toHaveBeenLastCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'off' })
+    await waitFor(() => { expect(slider.hasAttribute('disabled')).toBe(false) })
+  })
+
   it('portals the placed menu card to body and closes only on truly-outside mousedown', () => {
     const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')!
     const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')!
@@ -478,6 +502,17 @@ describe('ModelSelect keyboard walk', () => {
     expect(document.activeElement).toBe(slider)
     fireEvent.change(slider, { target: { value: '0' } })
     fireEvent.pointerCancel(slider)
+    expect(slider.getAttribute('aria-valuetext')).toBe('High')
+    expect(select).not.toHaveBeenCalled()
+  })
+
+  it('discards a preview when pointer capture is lost before release', () => {
+    const select = mountOpen()
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    const slider = screen.getByRole('slider')
+    fireEvent.pointerDown(slider)
+    fireEvent.change(slider, { target: { value: '0' } })
+    fireEvent.lostPointerCapture(slider)
     expect(slider.getAttribute('aria-valuetext')).toBe('High')
     expect(select).not.toHaveBeenCalled()
   })

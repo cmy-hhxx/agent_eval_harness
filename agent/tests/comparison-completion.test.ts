@@ -24,15 +24,18 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
   const sourceText = JSON.stringify({ kind: "accepted-result", reference,
     text: scenario === "counterevidence" ? counterEvidence : "原文：有相关能力，目标用途未证实。" });
   const needsSource = scenario === "source" || scenario === "counterevidence" || scenario === "restored-source";
+  const formal = { kind: "accepted-result", reference, result: { status: "decided" }, comparisonScope: { comparisons: [{
+    result: "win", resultLabel: "B胜", models: [{ model: "a", modelName: "A", result: "loss" }, { model: "b", modelName: "B", result: "win" }],
+  }] } };
+  const currentCase = { kind: "case", reference, question: "请核对计算依据", formal,
+    answers: ["a", "b"].map(model => ({ model, reference: { runId: reference.runId, inputId: model }, answer: { text: `${model}的完整回答`, complete: true } })) };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected },
     search: { search: unexpected }, web: { read: unexpected }, data: { list: unexpected, search: unexpected, image: unexpected,
-      async read() { return { kind: "accepted-result", reference, result: { status: "decided" }, comparisonScope: { comparisons: [{
-        result: "win", resultLabel: "B胜", models: [{ model: "a", modelName: "A", result: "loss" }, { model: "b", modelName: "B", result: "win" }],
-      }] } }; },
+      async read(ref, options) { assert.deepEqual(ref, reference); assert.deepEqual(options, { view: "case" }); return currentCase; },
     } });
   let modelCalls = 0, checkCalls = 0;
-  const checkedSources: unknown[] = [];
+  const checkedSources: { tool: string; material: JsonObject }[][] = [];
   const errors: unknown[] = [];
   const gateway = await listen(async (req, res) => {
     const request = await body(req) as JsonObject;
@@ -40,19 +43,16 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
     if (isCheck) {
       checkCalls++;
       const messages = request.messages as JsonObject[];
-      assert.equal(messages.length, 2, "check requests contain only instructions and the draft, no session history");
+      assert.equal(messages.length, 3, "check requests contain instructions, evidence and the draft, no session reasoning");
       assert.equal(request.model, "fixture");
       assert.equal(request.max_completion_tokens, 4096);
       assert.equal((request.response_format as { json_schema: { strict: boolean } }).json_schema.strict, true);
-      const material = JSON.parse(messages[1]!.content as string);
-      if (needsSource) {
-        checkedSources.push(material.sources);
-        const draft = JSON.parse(material.draft);
-        assert(draft.candidates);
-        assert(!JSON.stringify(material).includes("错误的先前推理"), "the check sees original evidence, not the main model's reasoning");
-        if (scenario === "counterevidence") assert.equal(draft.candidates[1].paths[0].counterEvidence, checkCalls === 1 ? null : counterEvidence,
-          "a rejected draft must be corrected before it can pass the second check");
-      } else assert(material.candidates, "counterevidence remains in the exact draft");
+      checkedSources.push((messages[1]!.content as JsonObject[]).flatMap(block => JSON.parse(block.text as string).sources));
+      const { draft } = JSON.parse(messages[2]!.content as string);
+      assert(draft.candidates, "counterevidence remains in the exact draft");
+      assert(!JSON.stringify(messages).includes("错误的先前推理"), "the check sees original evidence, not the main model's reasoning");
+      if (scenario === "counterevidence") assert.equal(draft.candidates[1].paths[0].counterEvidence, checkCalls === 1 ? null : counterEvidence,
+        "a rejected draft must be corrected before it can pass the second check");
     } else modelCalls++;
     const chartCall = !isCheck && (scenario === "restored-source" ? modelCalls === 3 : needsSource ? modelCalls === 2 || scenario === "counterevidence" && modelCalls === 3 : modelCalls === 1 || scenario === "repair" && modelCalls === 2);
     const sourceCall = !isCheck && needsSource && modelCalls === 1;
@@ -103,9 +103,9 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
       }
       assert(completed, "a terminal chart is a successful response, not an interruption");
     }
-    if (needsSource) for (const sources of checkedSources) assert.deepEqual(sources,
-      [{ tool: "read_data", content: [{ type: "text", text: sourceText }] }],
-      "the checker receives original source tools, including earlier turns after restoring the session");
+    for (const sources of checkedSources) assert.deepEqual(sources,
+      [{ tool: "read_case", material: currentCase }, ...(needsSource ? [{ tool: "read_data", material: JSON.parse(sourceText) }] : [])],
+      "the checker always loads current answers and preserves observed evidence, including after session restoration");
     assert.equal(modelCalls, scenario === "complete" ? 1 : ["counterevidence", "restored-source"].includes(scenario) ? 3 : 2);
     assert.equal(checkCalls, scenario === "counterevidence" ? 2 : 1);
     const journal = (await readFile(path.join(assistantDirectory(directory, scope), "events.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));

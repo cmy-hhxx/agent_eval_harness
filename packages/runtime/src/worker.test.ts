@@ -971,8 +971,8 @@ test("file submission repairs evidence through locating, reading and editing aft
     expected.task_analysis = structuredClone(trustedAnalysis);
     expected.findings[0]!.assessment.observation = expected.findings[0]!.text;
     expected.findings[0]!.assessment.impact = expected.findings[0]!.reason;
-    expected.criterion_assessments[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
-    expected.findings[0]!.evidence.push(canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content));
+    expected.criterion_assessments[0]!.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
+    expected.findings[0]!.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
     assert.deepEqual(receipt?.evaluation, expected);
     assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
   } finally {

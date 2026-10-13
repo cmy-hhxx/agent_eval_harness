@@ -105,7 +105,7 @@ channel=deepseek
  applySettings(settings);
  const {model,gateways}=assistantModelConfiguration(evaluation,settings);
  const models:AssistantModelDirectory={
-  async list(){return {models:[],favorites:[],default:{provider:model.provider,model:model.model,reasoningEffort:model.thinking}};},
+  async list(){return {models:[],failures:[],favorites:[],default:{provider:model.provider,model:model.model,reasoningEffort:model.thinking}};},
   async resolve(selection){const gateway=gateways.find(gateway=>gateway.model.provider===selection.provider)!;return {...gateway.model,model:selection.model,thinking:selection.reasoningEffort??gateway.model.thinking};},
   async favorites(){},async readFavorites(){return [];},
  };

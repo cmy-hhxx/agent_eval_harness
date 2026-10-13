@@ -34,8 +34,10 @@ export function attributionPresentation(result: AttributionResult, candidate: st
   const evidence = (entries: Evidence[]) => entries.map(entry => evidencePresentation(entry, candidate, raw, inputId, sources, sourceIds));
   return { ...result,
     correctness_evidence: evidence(result.correctness_evidence),
-    criterion_assessments: result.criterion_assessments.map(item => ({ ...item, evidence: evidence(item.evidence) })),
-    findings: result.findings.map(item => ({ ...item, evidence: evidence(item.evidence) })),
+    criterion_assessments: result.criterion_assessments.map(item => ({ ...item, evidence: evidence(item.evidence),
+      ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) })),
+    findings: result.findings.map(item => ({ ...item, evidence: evidence(item.evidence),
+      ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) })),
     ...(result.table_resolutions ? { table_resolutions: result.table_resolutions.map(item =>
       ({ ...item, evidence: evidence(item.evidence) })) } : {}),
   };

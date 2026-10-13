@@ -88,6 +88,113 @@ test('channel whitelist, efforts and token limits are respected and missing conf
   await assert.rejects(missing.resolve({provider:'openai',model:'gpt-6-luna'}),/OpenAI.*缺少/);
 });
 
+test('a failed channel leaves the other channel selectable and catalog retries restore it',async(t)=>{
+  for(const failed of ['openai','evaluation-gateway']) await t.test(failed,async()=>{
+    const directory=await mkdtemp(tmpdir()+'/eris-channel-failure-');
+    const {model,gateways}=assistantModelConfiguration(gateway,configuration());
+    let offline=true;
+    const discoveries:string[]=[];
+    const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
+      discoveries.push(config.provider);
+      if(offline&&config.provider===failed)throw new TypeError('fetch failed');
+      return [{id:'gpt-6-luna',name:'Shared'}];
+    });
+    const sessions=new AssistantSessions({directory,url:'http://127.0.0.1:1',model,models,systemPrompt:'test',tools:[]});
+    const endpoints=assistantEndpoints(sessions);
+    const catalog=()=>endpoints.call('alice','session/modelCatalog',{},new AbortController().signal) as Promise<{
+      groups:{id:string}[];failures:{id:string;name:string;message:string}[];default:{provider:string;model:string};
+    }>;
+    const healthy=failed==='openai'?'evaluation-gateway':'openai';
+    try {
+      const result=await catalog();
+      assert.deepEqual(result.groups.map(group=>group.id),[healthy]);
+      assert.equal(result.default.provider,healthy);
+      assert.deepEqual(result.failures,[{id:failed,name:gateways.find(item=>item.model.provider===failed)!.name,message:'fetch failed'}]);
+      const session=await sessions.create('alice');
+      await sessions.selectModel({userId:'alice',sessionId:session.sessionId},result.default);
+      assert.equal((await sessions.list('alice'))[0].modelSelection?.provider,healthy);
+      const resolved=await models.resolve(result.default);
+      assert.equal(resolved.baseUrl,configuration().channels[healthy].baseUrl);
+      assert.equal(resolved.apiKeyEnv,configuration().channels[healthy].apiKeyEnv);
+      assert.equal(discoveries.length,2,'selection and request resolution reuse the available catalog');
+      await assert.rejects(models.resolve({provider:failed,model:'gpt-6-luna'}),/fetch failed/);
+      offline=false;
+      const recovered=await catalog();
+      assert.equal(recovered.groups.length,2);
+      assert.deepEqual(recovered.failures,[]);
+      assert.equal(recovered.default.provider,'openai');
+      assert.equal(discoveries.length,4,'the picker retry really refreshes provider discovery');
+    } finally {await sessions.dispose();await rm(directory,{recursive:true,force:true});}
+  });
+});
+
+test('a missing configured or default model leaves available models on the same channel selectable',async()=>{
+  const directory=await mkdtemp(tmpdir()+'/eris-partial-models-');
+  try {
+    const models=new GatewayAssistantModels(directory,gateway,[{name:'评测网关',model:gateway,
+      models:[{id:'gpt-6-luna',name:'Luna'},{id:'gpt-5.6-luna',name:'Luna 5.6'}]}],async()=>[
+      {id:'gpt-5.6-luna',name:'Available'},
+    ]);
+    const catalog=await models.list('alice');
+    assert.deepEqual(catalog.models.map(model=>model.id),['gpt-5.6-luna']);
+    assert.match(catalog.failures[0]!.message,/gpt-6-luna/);
+    assert.equal((await models.resolve({provider:gateway.provider,model:'gpt-5.6-luna'})).model,'gpt-5.6-luna');
+    await assert.rejects(models.resolve({provider:gateway.provider,model:'gpt-6-luna'}),/gpt-6-luna/,
+      'a saved unavailable selection must not be silently rerouted');
+    const unfiltered=new GatewayAssistantModels(directory,gateway,[{name:'评测网关',model:gateway}],async()=>[
+      {id:'gpt-5.6-luna',name:'Available'},
+    ]);
+    assert.equal((await unfiltered.list('alice')).models.length,1);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('unavailable favorites fall back to the same model on a healthy channel without overwriting preferences',async()=>{
+  const directory=await mkdtemp(tmpdir()+'/eris-favorite-fallback-');
+  const settings=configuration();delete settings.channels['evaluation-gateway'].model;
+  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  let offline=false;
+  const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
+    if(offline&&config.provider==='openai')throw new TypeError('fetch failed');
+    return [{id:'gpt-5.6-luna',name:'Other'},{id:'gpt-6-luna',name:'Shared'}];
+  });
+  const saved=[modelIdentity('openai','gpt-6-luna')];
+  try {
+    await models.favorites('alice',saved);
+    offline=true;
+    const fallback=await models.list('alice',true);
+    assert.equal(fallback.default.provider,'evaluation-gateway');
+    assert.equal(fallback.default.model,'gpt-6-luna');
+    assert.deepEqual(fallback.favorites,[modelIdentity('evaluation-gateway','gpt-6-luna')]);
+    assert.deepEqual(await models.readFavorites('alice'),saved);
+    offline=false;
+    const restored=await models.list('alice',true);
+    assert.equal(restored.default.provider,'openai');
+    assert.deepEqual(restored.favorites,saved);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('all failed channels report their names and can recover; concurrent loads share discovery',async()=>{
+  const directory=await mkdtemp(tmpdir()+'/eris-catalog-retry-');
+  const {model,gateways}=assistantModelConfiguration(gateway,configuration());
+  let offline=true,discoveries=0;
+  const models=new GatewayAssistantModels(directory,model,gateways,async()=>{
+    discoveries++;
+    if(offline)throw new TypeError('fetch failed');
+    return [{id:'gpt-6-luna',name:'Shared'}];
+  });
+  try {
+    const failed=await Promise.allSettled([models.list('alice'),models.list('bob',true)]);
+    for(const result of failed){
+      assert.equal(result.status,'rejected');
+      if(result.status==='rejected')assert.match(result.reason.message,/评测网关.*fetch failed.*OpenAI.*fetch failed/);
+    }
+    assert.equal(discoveries,2);
+    offline=false;
+    assert.equal((await models.list('alice')).models.length,2);
+    assert.equal(discoveries,4);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
 test('the conversation picker keeps every channel visible when favorites only contain the original gateway',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-channel-picker-');
   const settings=configuration(); settings.agent={};

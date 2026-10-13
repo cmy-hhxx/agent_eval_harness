@@ -3,6 +3,7 @@ import { correctnessEvidenceScopeIssues, peerFinalSubmissionIssues, resolveAttri
 import type { Evidence } from "./types.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { submissionFindingEntries } from "./norm-directory.js";
+import { finalFindingEvidenceIssues, focusedEvidenceIssues } from "./evidence-focus.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -14,7 +15,7 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
   const issues: ValidationIssue[] = [];
   const check = (refs: unknown, path: string) => {
     if (!Array.isArray(refs)) return undefined;
-    return refs.map((item, index): Evidence | undefined => {
+    const selected = refs.map((item, index): Evidence | undefined => {
       const ref = object(item);
       if (!ref || typeof ref.evidence_id !== "string") return;
       try {
@@ -26,6 +27,8 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
         issues.push(...error.issues!);
       }
     });
+    issues.push(...focusedEvidenceIssues(selected, path));
+    return selected;
   };
   const correctness = check(value.correctness_evidence, "/correctness_evidence");
   if (correctness) issues.push(...correctnessEvidenceScopeIssues(request, correctness, value.numeric_checks));
@@ -38,6 +41,7 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
   for (const { finding, path } of submissionFindingEntries(value)) {
     const selected = check(finding.evidence, `${path}/evidence`);
     if (selected) issues.push(...responsibilityIssues(request, finding.problem, selected, `${path}/problem`));
+    if (selected && finding.stage === "final_answer") issues.push(...finalFindingEvidenceIssues(request, selected, `${path}/evidence`));
   }
   if (Array.isArray(value.table_resolutions)) value.table_resolutions.forEach((entry, index) => {
     check(object(entry)?.evidence, `/table_resolutions/${index}/evidence`);
