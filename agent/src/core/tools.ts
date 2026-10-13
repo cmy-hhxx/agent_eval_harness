@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type SpecialistGateway, type SpecialistRequest, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import { erisComparisonCheck } from "@eval/prompts";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
@@ -66,6 +66,28 @@ function reviewReferences(value: unknown, runId: string): AnalysisReference[] {
   }
   visit(value);
   return [...references.values()];
+}
+
+/** Select observed material for this pair, including earlier turns and uncited counterevidence. */
+function comparisonSources(sources: AssistantSource[], reference: AnalysisReference, result: unknown): AssistantSource[] {
+  const parsed = sources.map(source => ({ source, materials: source.content.flatMap(block => {
+    if (block.type !== "text" || !block.text) return [];
+    try {
+      const value = JSON.parse(block.text);
+      return value && typeof value === "object" ? [value as JsonObject] : [];
+    } catch { return []; }
+  }) }));
+  const isPair = (ref?: AnalysisReference) => ref?.runId === reference.runId && ref.taskId === reference.taskId;
+  const inputIds = new Set(reviewReferences(result, reference.runId).map(ref => ref.inputId));
+  for (const { materials } of parsed) for (const material of materials) {
+    if (!isPair(material.reference as AnalysisReference | undefined)) continue;
+    for (const answer of (material.answers as { reference: AnalysisReference }[] | undefined) ?? [])
+      if (answer.reference.runId === reference.runId) inputIds.add(answer.reference.inputId);
+  }
+  return parsed.filter(({ materials }) => materials.some(material => {
+    const ref = material.reference as AnalysisReference | undefined;
+    return isPair(ref) || ref?.runId === reference.runId && !!ref.inputId && inputIds.has(ref.inputId);
+  })).map(({ source }) => source);
 }
 
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
@@ -172,7 +194,8 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const diagram = comparisonDiagram(args, result);
       if (!context.complete) throw new Error("比较图结论核对不可用，尚未展示");
       const check = await context.complete({ systemPrompt: erisComparisonCheck, text: JSON.stringify(args), outputSchema: checkSchema,
-        sourceTools: ["read_case", "search_data", "read_evidence", "read_data"] });
+        sourceTools: ["read_case", "search_data", "read_evidence", "read_data"],
+        selectSources: sources => comparisonSources(sources, result.reference as AnalysisReference, result.result) });
       let review: unknown;
       try { review = JSON.parse(check.text); } catch { /* Preserve invalid output and usage for diagnosis. */ }
       if (!validateCheck(review)) return { ...textResult({ kind: "comparison-check", error: "比较图结论核对格式无效，尚未展示", issues: schemaIssues(validateCheck.errors) }),

@@ -11,6 +11,7 @@ export interface AnalysisCaseLookup { runId: string; query: string; comparisonTi
 export interface AnalysisQuery {
   runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
   sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
+  comparisonTier?: string; outcome?: "win" | "both_good" | "both_bad" | "all"; includeAnalysis?: boolean;
 }
 export interface AnalysisResultReadOptions { view?: "summary" | "details"; offset?: number; limit?: number }
 export type AnalysisReadOptions = AnalysisResultReadOptions
@@ -136,6 +137,7 @@ export interface SpecialistGateway {
   invoke(scope: AssistantScope, request: SpecialistRequest, signal: AbortSignal, progress?: (value: unknown) => void): Promise<SpecialistResult>;
   read(scope: AssistantScope, operationId: string): Promise<SpecialistResult>;
 }
+export interface AssistantSource { tool: string; content: ToolResult["content"] }
 export interface AssistantTool {
   readOnly?: boolean;
   /** Validate raw arguments before an SDK can coerce values or drop nulls. */
@@ -145,7 +147,9 @@ export interface AssistantTool {
   inputSchema: JsonObject;
   execute(args: unknown, context: { scope: AssistantScope; callId: string; signal: AbortSignal; audience?: "model" | "user"; progress(value: unknown): void;
     /** One request to the current model with selected observed sources, without earlier reasoning or tools. */
-    complete?(request: { systemPrompt: string; text: string; outputSchema: JsonObject; sourceTools?: string[] }): Promise<{ text: string; elapsedMs: number; usage: JsonObject }>;
+    complete?(request: { systemPrompt: string; text: string; outputSchema: JsonObject; sourceTools?: string[];
+      selectSources?(sources: AssistantSource[]): AssistantSource[];
+    }): Promise<{ text: string; elapsedMs: number; usage: JsonObject }>;
   }): Promise<ToolResult>;
 }
 export interface AssistantPrompt {

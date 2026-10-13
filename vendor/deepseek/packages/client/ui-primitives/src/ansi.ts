@@ -37,6 +37,7 @@ export type AnsiLine = readonly AnsiSpan[]
  * semantic. Black and white both resolve to the primary label color so text
  * stays legible under either theme instead of matching the surface it sits
  * on; bright black takes the tertiary label color (the muted-gray role).
+ * Blue keeps its static palette color when the application changes its accent.
  * Cyan and bright cyan take two static blues: the design system has no cyan,
  * and anser's literal bright cyan is unreadable on the light theme's code
  * surface. Magenta has no token equivalent and falls through to anser's
@@ -52,7 +53,7 @@ const TOKEN_BY_BASIC_RGB: Record<string, string> = {
   '0,255,0': 'var(--dsw-alias-state-success-secondary)',
   '187,187,0': 'var(--dsw-alias-state-warn-primary)',
   '255,255,85': 'var(--dsw-alias-state-warn-secondary)',
-  '0,0,187': 'var(--dsw-alias-state-business-primary)',
+  '0,0,187': 'var(--dsw-static-deepseek-500)',
   '85,85,255': 'var(--dsw-static-blue-400)',
   '0,187,187': 'var(--dsw-static-blue-600)',
   '85,255,255': 'var(--dsw-static-blue-500)',

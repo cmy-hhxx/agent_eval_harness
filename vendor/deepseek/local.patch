@@ -526,18 +526,6 @@ diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/
              <input
                ref={fileInputRef}
                type="file"
-diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
---- a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
-+++ b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
-@@ -176,7 +176,7 @@ describe('ModelSelect reasoning effort', () => {
-       snapshot.routable = false
-     }) })
-     expect(screen.getByRole('button', { name: /选择模型，当前/ }).textContent)
--      .toMatchInlineSnapshot('"deepseek-official/deepseek-v4-flashHigh"')
-+      .toBe('deepseek-official/deepseek-v4-flashHigh')
-     expect(directory.getSnapshot().current).toEqual(state().current)
-   })
-
 diff --git a/packages/client/ui-primitives/tests/icons.client.spec.tsx b/packages/client/ui-primitives/tests/icons.client.spec.tsx
 --- a/packages/client/ui-primitives/tests/icons.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/icons.client.spec.tsx
@@ -1386,3 +1374,617 @@ diff --git a/packages/client/ui-conversation/src/client/input/editor/DraftEditor
        </div>
      </div>
    )
+diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.tsx b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+--- a/packages/client/ui-model-selection/src/client/ModelSelect.tsx
++++ b/packages/client/ui-model-selection/src/client/ModelSelect.tsx
+@@ -2,16 +2,18 @@
+  * ModelSelect: the composer's named model seat (`conversation.input.model`).
+  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
+  * the Model / Effort row pair (label + current value + a right chevron),
+- * each drilling into its own list — the provider-grouped model list over
+- * the shared directory, and the effort levels. The trigger (313:14108's
++ * each drilling into the provider-grouped model list or the effort slider.
++ * Effort previews locally and persists on pointer release or keyboard adjustment.
++ * The trigger (313:14108's
+  * ToggleButton) shows both: model name + effort in the caption tone.
+  * Model catalogs above four entries show search, which retains focus while
+  * ↑/↓ cycle the highlighted result; Enter and Tab accept it. Smaller model
+- * catalogs, root panes, and effort panes move focus between rows. Escape and Shift+Tab leave a drilled pane first and otherwise close
+- * back to the trigger. A drilled pane focuses the current effort or model
++ * catalogs and root panes move focus between rows; the effort slider retains
++ * native arrow and Tab behavior. Escape leaves a drilled pane first and otherwise
++ * closes back to the trigger. A drilled pane focuses the current effort or model
+  * search field. Provider headings paint their background only while pinned
+  * by scrolling. Clearing a query restores the full list and search focus.
+- * Selecting restores trigger focus without a ring until the trigger loses focus
++ * Selecting a model restores trigger focus without a ring until the trigger loses focus
+  * or the menu reopens. Model names match a case-insensitive ordered subsequence
+  * within each provider group, ranked by
+  * prefix, alignment score, then catalog order. Returning to the root pane
+@@ -23,7 +25,8 @@
+  * Retry remains the catalog-load surface. While the directory's pending
+  * selection is unsettled, the trigger shows a spinner in place of its
+  * chevron, and each row whose value that selection carries shows one in place
+- * of its check mark.
++ * of its check mark. The effort slider stays open after saving and shows pending
++ * state in its reset control.
+  */
+ import { MenuGroup, MenuSurface, observeStickyMenuGroups } from '@deepseek-ai/dsh-client-ui-primitives'
+ import {
+@@ -41,13 +44,13 @@
+ import type { ModelSelectInjected } from './slots.ts'
+ import css from './ModelSelect.module.css'
+ import { orderModelProviders } from './provider-order.ts'
+-
+-/** Which pane the dropdown shows: the two-row root or one drilled-in list. */
++import { ReasoningSlider } from './ReasoningSlider.tsx'
++
++/** Which pane the dropdown shows: the two-row root or the model list or reasoning slider. */
+ type Pane = 'root' | 'model' | 'effort'
+
+-/** One dynamic effort row; undefined means preserve the provider default. */
++/** One advertised effort stop; undefined means preserve the provider default. */
+ interface EffortChoice {
+-  key: string
+   effort: string | undefined
+   label: string
+ }
+@@ -128,10 +131,9 @@
+     ? []
+     : [
+       ...reasoning.defaultEffort === undefined
+-        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault') }]
++        ? [{ effort: undefined, label: t('effort.providerDefault') }]
+         : [],
+       ...reasoning.efforts.map((effort: ModelReasoningEffort) => ({
+-        key: `effort:${effort.id}`,
+         effort: effort.id,
+         label: effort.name,
+       })),
+@@ -174,6 +176,10 @@
+     paneFocus.current = null
+     if (!open || intent === null) return
+     if (intent === 'drill') {
++      if (pane === 'effort') {
++        ;(menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])') ?? triggerRef.current)?.focus()
++        return
++      }
+       if (pane === 'model' && showSearch) {
+         searchRef.current?.focus()
+         return
+@@ -302,6 +308,13 @@
+       return
+     }
+     if (!open) return
++    if (pane === 'effort') {
++      if (event.key === 'Tab' && event.target === triggerRef.current) {
++        event.preventDefault()
++        menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])')?.focus()
++      }
++      return
++    }
+     if (pane === 'model' && showSearch && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+       event.preventDefault()
+       if (!busy && visibleModels.length > 0) {
+@@ -365,10 +378,13 @@
+     close()
+   }
+
+-  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>): void => {
++  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>, keepOpen: boolean): void => {
+     if (result === undefined) return
+     if (result.ok) {
+-      if (rootRef.current !== null) closeAfterSelection()
++      if (rootRef.current !== null) {
++        if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus() })
++        else closeAfterSelection()
++      }
+       return
+     }
+     const { error } = result
+@@ -381,12 +397,12 @@
+     })
+   }
+
+-  const submit = (selection: ModelSelection): void => {
++  const submit = (selection: ModelSelection, keepOpen = false): void => {
+     lastActionRef.current = 'select'
+     // Disabled option rows cannot retain focus while a selection is pending.
+     setSelectionFocus(true)
+     triggerRef.current?.focus()
+-    void select(selection).then(settleSelection)
++    void select(selection).then(result => { settleSelection(result, keepOpen) })
+   }
+
+   const choose = (selection: ModelSelection): void => {
+@@ -400,7 +416,6 @@
+   const chooseEffort = (effort: string | undefined): void => {
+     if (state.current === null) return
+     if (effectiveEffort === effort) {
+-      closeAfterSelection()
+       return
+     }
+     const selection: ModelSelection = {
+@@ -408,7 +423,7 @@
+       model: state.current.model,
+       ...effort === undefined ? {} : { reasoningEffort: effort },
+     }
+-    submit(selection)
++    submit(selection, true)
+   }
+
+   const waiting = state.current === null && state.status === 'loading'
+@@ -479,9 +494,9 @@
+         <MenuSurface
+           ref={menuRef}
+           id={`${id}-menu`}
+-          className={css.menu}
++          className={clsx(css.menu, pane === 'effort' && css.effortMenu)}
+           style={menuPos ?? MEASURE_STYLE}
+-          role={pane === 'model' ? 'group' : 'menu'}
++          role={pane === 'root' ? 'menu' : 'group'}
+           aria-label={t('menu.aria')}
+           aria-busy={state.status === 'loading' || busy}
+         >
+@@ -615,28 +630,8 @@
+               )}
+               {effortChoices.length === 0
+                 ? <div className={css.empty}>{t('empty.efforts')}</div>
+-                : effortChoices.map(level => (
+-                  <button
+-                    ref={itemRef()}
+-                    type="button"
+-                    role="menuitemradio"
+-                    aria-checked={effectiveEffort === level.effort}
+-                    className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
+-                    key={level.key}
+-                    disabled={busy}
+-                    onClick={() => { chooseEffort(level.effort) }}
+-                  >
+-                    <span className={css.optionCopy}>
+-                      <span className={css.modelName}>{level.label}</span>
+-                    </span>
+-                    <span className={css.check}>
+-                      {pending !== null && pending.provider === state.current?.provider
+-                        && pending.model === state.current.model && pending.reasoningEffort === level.effort
+-                        ? <StateDot state="ongoing" />
+-                        : effectiveEffort === level.effort ? <IconCheckOutlineRegular /> : null}
+-                    </span>
+-                  </button>
+-                ))}
++                : <ReasoningSlider choices={effortChoices} value={effectiveEffort} defaultValue={reasoning?.defaultEffort}
++                    busy={busy} onCommit={chooseEffort} t={t} />}
+             </>
+           )}
+         </MenuSurface>,
+diff --git a/packages/client/ui-model-selection/src/client/ModelSelect.module.css b/packages/client/ui-model-selection/src/client/ModelSelect.module.css
+--- a/packages/client/ui-model-selection/src/client/ModelSelect.module.css
++++ b/packages/client/ui-model-selection/src/client/ModelSelect.module.css
+@@ -124,6 +124,8 @@
+   line-height: 18px;
+ }
+
++.effortMenu { padding: 0; border: 1px solid #dedee3; border-radius: 22px; background: #fff; box-shadow: 0 8px 28px #24243814; }
++
+ .error,
+ .warning {
+   display: flex;
+diff --git a/packages/client/ui-model-selection/src/client/locales.ts b/packages/client/ui-model-selection/src/client/locales.ts
+--- a/packages/client/ui-model-selection/src/client/locales.ts
++++ b/packages/client/ui-model-selection/src/client/locales.ts
+@@ -23,6 +23,12 @@
+   'menu.model': '模型',
+   'menu.effort': '推理等级',
+   'effort.providerDefault': 'Default',
++  'effort.reset': '恢复默认思考等级',
++  'effort.defaultHint': '使用模型默认设置',
++  'effort.offHint': '关闭额外思考',
++  'effort.fastHint': '更快响应',
++  'effort.balancedHint': '平衡思考深度与响应速度',
++  'effort.deepHint': '更深入思考，耗时可能更长',
+   'status.loading': '正在刷新模型列表…',
+   'error.action': '模型操作失败：{message}',
+   'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 DSH 后重试。',
+@@ -53,6 +59,12 @@
+   'menu.model': 'Model',
+   'menu.effort': 'Effort',
+   'effort.providerDefault': 'Default',
++  'effort.reset': 'Reset reasoning effort',
++  'effort.defaultHint': 'Use the model default',
++  'effort.offHint': 'No extra reasoning',
++  'effort.fastHint': 'Faster responses',
++  'effort.balancedHint': 'Balance depth and response time',
++  'effort.deepHint': 'Deeper reasoning may take longer',
+   'status.loading': 'Refreshing model list…',
+   'error.action': 'Model operation failed: {message}',
+   'error.sessionInUse': 'This session is already in use, possibly by another running DSH instance (such as dsh web or the desktop app). Quit other running DSH instances and try again.',
+diff --git a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+--- a/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
++++ b/packages/client/ui-model-selection/tests/model-select.client.spec.tsx
+@@ -77,7 +77,7 @@
+ afterEach(cleanup)
+
+ describe('ModelSelect reasoning effort', () => {
+-  it('renders effort names without descriptions and submits the effort as part of the session selection', async () => {
++  it('previews an advertised effort and persists once on release, keeping the slider open', async () => {
+     const directory = createSnapshotStore<ModelDirectoryState>(state())
+     const select = vi.fn(async (selection: ModelSelection) => {
+       directory.set(state({ current: selection }))
+@@ -97,11 +97,15 @@
+     })
+     fireEvent.click(trigger)
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+-      .toEqual(['Off', 'High', 'Max'])
++    const slider = screen.getByRole('slider', { name: '推理等级' })
++    expect(slider.getAttribute('max')).toBe('2')
++    expect(slider.getAttribute('aria-valuetext')).toBe('High')
+     expect(screen.queryByText('Largest budget')).toBeNull()
+
+-    fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
++    fireEvent.change(slider, { target: { value: '2' } })
++    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
++    expect(select).not.toHaveBeenCalled()
++    fireEvent.pointerUp(slider)
+     await waitFor(() => {
+       expect(select).toHaveBeenCalledWith({
+         provider: 'deepseek-official',
+@@ -109,7 +113,13 @@
+         reasoningEffort: 'max',
+       })
+       expect(trigger.getAttribute('aria-label')).toBe('选择模型，当前 DeepSeek-V4-Flash，推理等级 Max')
+-      expect(document.activeElement).toBe(trigger)
++      expect(document.activeElement).toBe(slider)
++    })
++    expect(select).toHaveBeenCalledTimes(1)
++    fireEvent.click(screen.getByRole('button', { name: '恢复默认思考等级' }))
++    await waitFor(() => {
++      expect(select).toHaveBeenLastCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' })
++      expect(slider.getAttribute('aria-valuetext')).toBe('High')
+     })
+   })
+
+@@ -139,8 +149,11 @@
+       name: '选择模型，当前 Model，推理等级 Default',
+     }))
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+-      .toEqual(['Default', 'Standard'])
++    const slider = screen.getByRole('slider')
++    expect(slider.getAttribute('max')).toBe('1')
++    expect(slider.getAttribute('aria-valuetext')).toBe('Default')
++    fireEvent.change(slider, { target: { value: '1' } })
++    expect(slider.getAttribute('aria-valuetext')).toBe('Standard')
+   })
+
+   it('shows the durable model id when the catalog has no matching display name', () => {
+@@ -176,7 +189,7 @@
+       snapshot.routable = false
+     }) })
+     expect(screen.getByRole('button', { name: /选择模型，当前/ }).textContent)
+-      .toMatchInlineSnapshot('"deepseek-official/deepseek-v4-flashHigh"')
++      .toBe('deepseek-official/deepseek-v4-flashHigh')
+     expect(directory.getSnapshot().current).toEqual(state().current)
+   })
+
+@@ -293,7 +306,7 @@
+     expect(trigger.getAttribute('aria-busy')).toBe('false')
+   })
+
+-  it('spins on the chosen effort row only', () => {
++  it('disables the slider and shows progress while the selection is pending', () => {
+     const directory = createSnapshotStore<ModelDirectoryState>(state())
+     const select = vi.fn((selection: ModelSelection) => {
+       directory.set(state({ status: 'selecting', pending: selection }))
+@@ -303,10 +316,12 @@
+
+     fireEvent.click(screen.getByRole('button', { name: /选择模型|当前/ }))
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
+-    expect(screen.getAllByRole('menuitemradio')
+-      .filter(row => row.querySelector('[data-state="ongoing"]') !== null)
+-      .map(row => row.textContent)).toEqual(['Max'])
++    const slider = screen.getByRole('slider')
++    fireEvent.change(slider, { target: { value: '2' } })
++    fireEvent.pointerUp(slider)
++    expect(slider.hasAttribute('disabled')).toBe(true)
++    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
++    expect(screen.getByRole('button', { name: '恢复默认思考等级' }).querySelector('[data-state="ongoing"]')).not.toBeNull()
+   })
+
+   it('portals the placed menu card to body and closes only on truly-outside mousedown', () => {
+@@ -363,12 +378,12 @@
+ })
+
+ describe('ModelSelect keyboard walk', () => {
+-  function mountOpen() {
++  function mountOpen(groups = state().groups) {
+     const select = vi.fn().mockResolvedValue({ ok: true, value: undefined })
+     render(<ModelSelect
+       locked={false}
+       available
+-      directory={createSnapshotStore(state())}
++      directory={createSnapshotStore(state({ groups }))}
+       load={vi.fn()}
+       select={select}
+       t={t}
+@@ -377,63 +392,52 @@
+     return select
+   }
+
+-  it.each(['model', 'effort'])('prevents button mousedown defaults in the %s pane without selecting it', (pane) => {
++  it('prevents model button mousedown defaults without selecting it', () => {
+     const select = mountOpen()
+-    const cell = screen.getByRole('menuitem', { name: pane === 'model' ? /^模型/ : /推理等级/ })
++    const cell = screen.getByRole('menuitem', { name: /^模型/ })
+     expect(fireEvent.mouseDown(cell.firstElementChild!)).toBe(false)
+     fireEvent.click(cell)
+     const rows = screen.getAllByRole('menuitemradio')
+     const focused = document.activeElement
+     expect(fireEvent.mouseDown(rows[0]!.firstElementChild!)).toBe(false)
+-    fireEvent.mouseUp(screen.getByRole('menu'))
++    fireEvent.mouseUp(screen.getByRole('group', { name: '模型与推理等级' }))
+     expect(select).not.toHaveBeenCalled()
+     fireEvent.keyDown(focused!, { key: 'Escape' })
+-    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: pane === 'model' ? /^模型/ : /推理等级/ }))
+-  })
+-
+-  it('↑↓ walk the rows of the shown pane, wrapping, and stay open', () => {
+-    mountOpen()
+-    // The trigger holds focus while the menu opens: the first forward step
+-    // enters at the first cell instead of skipping it. false = preventDefault ran.
+-    const cells = screen.getAllByRole('menuitem')
+-    expect(fireEvent.keyDown(cells[0]!, { key: 'ArrowDown' })).toBe(false)
+-    expect(document.activeElement).toBe(cells[0])
+-
+-    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
++    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /^模型/ }))
++  })
++
++  it('↑↓ walk model rows, wrapping, and stay open', () => {
++    mountOpen(modelGroups(3))
++    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
+     const rows = screen.getAllByRole('menuitemradio')
+-    expect(rows.map(row => row.textContent)).toEqual(['Off', 'High', 'Max'])
+-    // The pane opens on its checked row, so walking starts from High.
+-    fireEvent.keyDown(rows[1]!, { key: 'ArrowDown' })
++    fireEvent.keyDown(rows[0]!, { key: 'ArrowUp' })
+     expect(document.activeElement).toBe(rows[2])
+-    fireEvent.keyDown(rows[2]!, { key: 'ArrowDown' }) // wraps to the top
++    fireEvent.keyDown(rows[2]!, { key: 'ArrowDown' })
+     expect(document.activeElement).toBe(rows[0])
+-    fireEvent.keyDown(rows[0]!, { key: 'ArrowUp' }) // wraps to the bottom
+-    expect(document.activeElement).toBe(rows[2])
+-    expect(screen.getByRole('menu')).toBeTruthy()
+-  })
+-
+-  it('Tab settles the focused row like Enter and closes the menu', async () => {
++    expect(screen.getByRole('group', { name: '模型与推理等级' })).toBeTruthy()
++  })
++
++  it('keeps range arrow defaults and native Tab, committing a keyboard adjustment on keyup', async () => {
+     const select = mountOpen()
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    const rows = screen.getAllByRole('menuitemradio')
+-    fireEvent.keyDown(rows[1]!, { key: 'ArrowDown' }) // High → Max
+-    expect(fireEvent.keyDown(rows[2]!, { key: 'Tab' })).toBe(false)
+-    expect(select).toHaveBeenCalledWith({
+-      provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max',
+-    })
+-    await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull() })
+-  })
+-
+-  it('Shift+Tab leaves a drilled pane and then closes, like Escape', () => {
++    const slider = screen.getByRole('slider')
++    expect(fireEvent.keyDown(slider, { key: 'ArrowRight' })).toBe(true)
++    // jsdom has no native range adjustment; emulate the browser input event.
++    fireEvent.change(slider, { target: { value: '2' } })
++    expect(select).not.toHaveBeenCalled()
++    fireEvent.keyUp(slider, { key: 'ArrowRight' })
++    expect(select).toHaveBeenCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' })
++    await waitFor(() => { expect(document.activeElement).toBe(slider) })
++    expect(fireEvent.keyDown(slider, { key: 'Tab' })).toBe(true)
++  })
++
++  it('Shift+Tab leaves a drilled model pane and then closes, like Escape', () => {
+     mountOpen()
+-    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    const rows = screen.getAllByRole('menuitemradio')
+-    expect(fireEvent.keyDown(rows[0]!, { key: 'Tab', shiftKey: true })).toBe(false)
+-    // Back on the drilled cell, then closed on the second press.
+-    const cells = screen.getAllByRole('menuitem')
+-    expect(document.activeElement).toBe(cells[1])
+-    expect(screen.getByRole('menu')).toBeTruthy()
+-    fireEvent.keyDown(cells[1]!, { key: 'Tab', shiftKey: true })
++    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
++    expect(fireEvent.keyDown(screen.getAllByRole('menuitemradio')[0]!, { key: 'Tab', shiftKey: true })).toBe(false)
++    const cell = screen.getByRole('menuitem', { name: /^模型/ })
++    expect(document.activeElement).toBe(cell)
++    fireEvent.keyDown(cell, { key: 'Tab', shiftKey: true })
+     expect(screen.queryByRole('menu')).toBeNull()
+   })
+
+@@ -466,17 +470,16 @@
+     expect(fireEvent.keyDown(trigger, { key: 'Tab' })).toBe(true)
+   })
+
+-  it('hands a drilled pane the focus its unmounted cell left behind, on the value in use', () => {
+-    mountOpen()
++  it('focuses the reasoning slider at the value in use and cancels a drag without saving', () => {
++    const select = mountOpen()
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    const rows = screen.getAllByRole('menuitemradio')
+-    // The fixture's model defaults to the High effort: the checked row is where
+-    // the keyboard lands, not the top of the list.
+-    expect(rows[1]!.getAttribute('aria-checked')).toBe('true')
+-    expect(document.activeElement).toBe(rows[1])
+-    // The walk continues from there.
+-    fireEvent.keyDown(rows[1]!, { key: 'ArrowDown' })
+-    expect(document.activeElement).toBe(rows[2])
++    const slider = screen.getByRole('slider')
++    expect(slider.getAttribute('aria-valuetext')).toBe('High')
++    expect(document.activeElement).toBe(slider)
++    fireEvent.change(slider, { target: { value: '0' } })
++    fireEvent.pointerCancel(slider)
++    expect(slider.getAttribute('aria-valuetext')).toBe('High')
++    expect(select).not.toHaveBeenCalled()
+   })
+
+   it('keeps the card navigable when a pane has no rows, and leaves a retry its Tab', () => {
+@@ -526,8 +529,7 @@
+   it('Escape returns to the root pane with the keyboard on the cell that drilled in', () => {
+     mountOpen()
+     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+-    const rows = screen.getAllByRole('menuitemradio')
+-    fireEvent.keyDown(rows[0]!, { key: 'Escape' })
++    fireEvent.keyDown(screen.getByRole('slider'), { key: 'Escape' })
+     // The root pane is back with its two cells.
+     const cells = screen.getAllByRole('menuitem')
+     // Back on the drilled cell, so the next keystroke still reaches the menu.
+diff --git a/packages/client/ui-model-selection/src/client/ReasoningSlider.tsx b/packages/client/ui-model-selection/src/client/ReasoningSlider.tsx
+new file mode 100644
+--- /dev/null
++++ b/packages/client/ui-model-selection/src/client/ReasoningSlider.tsx
+@@ -0,0 +1,77 @@
++import { useEffect, useId, useState, type CSSProperties } from 'react'
++import { IconGaugeOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
++import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
++import css from './ReasoningSlider.module.css'
++
++interface EffortChoice {
++  effort: string | undefined
++  label: string
++}
++
++const adjustmentKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'])
++const particles = [[7, 38], [8, 26], [13, 31], [19, 40], [29, 54], [36, 34], [42, 49], [49, 33], [53, 28], [55, 40], [62, 45], [68, 62], [73, 29], [81, 44], [88, 31], [94, 57]]
++
++/** Preview locally while dragging; persist one advertised effort on release. */
++export function ReasoningSlider({ choices, value, defaultValue, busy, onCommit, t }: {
++  choices: readonly EffortChoice[]
++  value: string | undefined
++  defaultValue: string | undefined
++  busy: boolean
++  onCommit: (effort: string | undefined) => void
++} & PropsLocale<'model'>) {
++  const selected = choices.findIndex(choice => choice.effort === value)
++  const [draft, setDraft] = useState(Math.max(0, selected))
++  const id = useId()
++  useEffect(() => { if (!busy) setDraft(Math.max(0, selected)) }, [selected, busy])
++  const index = Math.min(draft, Math.max(0, choices.length - 1))
++  const choice = choices[index]
++  const maximum = Math.max(0, choices.length - 1)
++  const isMaximum = maximum > 0 && index === maximum
++  const progress = maximum === 0 ? 0 : index / maximum
++  const resetIndex = choices.findIndex(item => item.effort === defaultValue)
++  const description = choice?.effort === undefined ? 'effort.defaultHint'
++    : choice.effort === 'off' || choice.effort === 'none' ? 'effort.offHint'
++      : progress < .4 ? 'effort.fastHint' : progress < .75 ? 'effort.balancedHint' : 'effort.deepHint'
++  const commit = (next: number): void => {
++    const target = choices[next]
++    if (!busy && target !== undefined && target.effort !== value) onCommit(target.effort)
++  }
++  return (
++    <div className={css.card} data-reasoning-card data-maximum={isMaximum} style={{ '--effort-progress': `${progress * 100}%` } as CSSProperties}>
++      <div className={css.heading}>
++        <IconGaugeOutlineRegular className={css.icon} size={20} />
++        <div className={css.copy}>
++          <output className={css.level} htmlFor={`${id}-slider`} aria-live="polite">{choice?.label ?? value ?? t('effort.providerDefault')}</output>
++          <div className={css.hint} id={`${id}-hint`}>{t(description)}</div>
++        </div>
++        <button className={css.reset} type="button" aria-label={t('effort.reset')} title={t('effort.reset')}
++          disabled={busy || resetIndex < 0 || (value === defaultValue && draft === selected)}
++          onClick={() => { setDraft(resetIndex); commit(resetIndex) }}>
++          {busy ? <StateDot state="ongoing" /> : <IconRefreshOutlineRegular size={20} />}
++        </button>
++      </div>
++      <div className={css.control}>
++        <div className={css.track} aria-hidden="true">
++          <div className={css.fill}>
++            {isMaximum && <div className={css.particles}>
++              {particles.map(([x, y], n) => <i key={n} style={{ left: `${x}%`, top: `${y}%`, width: n % 4 === 0 ? 3 : 2, height: n % 4 === 0 ? 3 : 2, animationDelay: `${-n * .37}s` }} />)}
++            </div>}
++          </div>
++        </div>
++        <input id={`${id}-slider`} className={css.slider} type="range" min={0} max={maximum} step={1} value={index}
++          aria-label={t('menu.effort')} aria-valuetext={choice?.label ?? value ?? t('effort.providerDefault')}
++          aria-describedby={`${id}-hint`} disabled={busy || choices.length < 2}
++          onChange={event => { setDraft(Number(event.currentTarget.value)) }}
++          onPointerDown={event => { event.currentTarget.setPointerCapture?.(event.pointerId) }}
++          onPointerUp={event => { commit(Number(event.currentTarget.value)) }}
++          onPointerCancel={() => { setDraft(Math.max(0, selected)) }}
++          onKeyDown={event => {
++            if (adjustmentKeys.has(event.key)) event.stopPropagation()
++            if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commit(index) }
++          }}
++          onKeyUp={event => { if (adjustmentKeys.has(event.key)) commit(Number(event.currentTarget.value)) }}
++        />
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/client/ui-model-selection/src/client/ReasoningSlider.module.css b/packages/client/ui-model-selection/src/client/ReasoningSlider.module.css
+new file mode 100644
+--- /dev/null
++++ b/packages/client/ui-model-selection/src/client/ReasoningSlider.module.css
+@@ -0,0 +1,28 @@
++.card { --effort-accent: #b74a3d; --effort-tint: #fbefeb; width: min(336px, calc(100vw - 60px)); padding: 16px 12px 12px; }
++.card[data-maximum="true"] { --effort-accent: #9f3338; --effort-tint: #f9ede7; }
++.heading { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: start; gap: 8px; }
++.icon { color: #929296; margin-top: 3px; }
++.copy { min-width: 0; text-align: center; }
++.level { display: block; text-transform: capitalize; color: var(--effort-accent); font-size: 20px; font-weight: 500; line-height: 26px; overflow-wrap: anywhere; }
++.hint { color: #747478; margin-top: 3px; font-size: 13px; line-height: 20px; }
++.reset { display: grid; place-items: center; width: 28px; height: 28px; margin: -1px -2px 0; padding: 0; color: #929296; background: none; border: 0; border-radius: 50%; cursor: pointer; }
++.reset:hover:not(:disabled) { color: var(--effort-accent); background: var(--effort-tint); }
++.reset:focus-visible { outline: 2px solid var(--effort-accent); outline-offset: 3px; }
++.reset:disabled { cursor: default; opacity: .55; }
++.control { position: relative; height: 44px; margin-top: 18px; }
++.track { position: absolute; inset: 6px 0; overflow: hidden; border-radius: 999px; background: #f1ebe7; }
++.fill { width: var(--effort-progress); min-width: 22px; height: 100%; overflow: hidden; border-radius: inherit; background: var(--effort-accent); }
++.card[data-maximum="true"] .fill { background: linear-gradient(100deg, #8f303d 0%, #c94f3e 55%, #d69a52 100%); }
++.particles { position: relative; width: 310px; max-width: 100%; height: 100%; }
++.particles i { position: absolute; border-radius: 50%; background: #fff4d6; opacity: .65; animation: effort-drift 3.8s ease-in-out infinite alternate; }
++@keyframes effort-drift { from { transform: translate(0, 3px); opacity: .25; } to { transform: translate(5px, -3px); opacity: .8; } }
++.slider { appearance: none; -webkit-appearance: none; position: absolute; inset: 0; margin: 0; width: 100%; height: 44px; border: 0; padding: 0; background: transparent; cursor: pointer; touch-action: pan-y; }
++.slider::-webkit-slider-runnable-track { height: 44px; background: transparent; }
++.slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #e3e3e7; background: #fff; box-shadow: 0 1px 3px #24243820; }
++.slider::-moz-range-track { height: 44px; background: transparent; }
++.slider::-moz-range-thumb { width: 42px; height: 42px; border-radius: 50%; border: 1px solid #e3e3e7; background: #fff; box-shadow: 0 1px 3px #24243820; }
++.slider:focus-visible { outline: 2px solid var(--effort-accent); outline-offset: 4px; border-radius: 999px; }
++.slider:disabled { cursor: default; }
++.control:has(.slider:disabled) { opacity: .6; }
++@media (prefers-reduced-motion: reduce) { .particles i { animation: none; opacity: .6; } }
++@media (forced-colors: active) { .track { border: 1px solid CanvasText; } .fill, .card[data-maximum="true"] .fill { background: Highlight; } .slider::-webkit-slider-thumb { background: ButtonFace; border-color: ButtonText; } .particles { display: none; } }
+diff --git a/packages/client/ui-primitives/src/ansi.ts b/packages/client/ui-primitives/src/ansi.ts
+--- a/packages/client/ui-primitives/src/ansi.ts
++++ b/packages/client/ui-primitives/src/ansi.ts
+@@ -37,6 +37,7 @@
+  * semantic. Black and white both resolve to the primary label color so text
+  * stays legible under either theme instead of matching the surface it sits
+  * on; bright black takes the tertiary label color (the muted-gray role).
++ * Blue keeps its static palette color when the application changes its accent.
+  * Cyan and bright cyan take two static blues: the design system has no cyan,
+  * and anser's literal bright cyan is unreadable on the light theme's code
+  * surface. Magenta has no token equivalent and falls through to anser's
+@@ -52,7 +53,7 @@
+   '0,255,0': 'var(--dsw-alias-state-success-secondary)',
+   '187,187,0': 'var(--dsw-alias-state-warn-primary)',
+   '255,255,85': 'var(--dsw-alias-state-warn-secondary)',
+-  '0,0,187': 'var(--dsw-alias-state-business-primary)',
++  '0,0,187': 'var(--dsw-static-deepseek-500)',
+   '85,85,255': 'var(--dsw-static-blue-400)',
+   '0,187,187': 'var(--dsw-static-blue-600)',
+   '85,255,255': 'var(--dsw-static-blue-500)',
+diff --git a/packages/client/ui-primitives/tests/ansi.client.spec.ts b/packages/client/ui-primitives/tests/ansi.client.spec.ts
+--- a/packages/client/ui-primitives/tests/ansi.client.spec.ts
++++ b/packages/client/ui-primitives/tests/ansi.client.spec.ts
+@@ -50,7 +50,7 @@
+     ['92', 'bright green', 'var(--dsw-alias-state-success-secondary)'],
+     ['33', 'yellow', 'var(--dsw-alias-state-warn-primary)'],
+     ['93', 'bright yellow', 'var(--dsw-alias-state-warn-secondary)'],
+-    ['34', 'blue', 'var(--dsw-alias-state-business-primary)'],
++    ['34', 'blue', 'var(--dsw-static-deepseek-500)'],
+     ['94', 'bright blue', 'var(--dsw-static-blue-400)'],
+     ['36', 'cyan', 'var(--dsw-static-blue-600)'],
+     ['96', 'bright cyan', 'var(--dsw-static-blue-500)'],

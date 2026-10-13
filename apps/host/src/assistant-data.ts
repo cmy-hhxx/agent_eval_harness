@@ -100,6 +100,8 @@ export class LocalAnalysisData implements AnalysisDataSource {
     if (comparisonView) {
       if (!formalComparisonStats) throw new Error(JSON.stringify(summary.statisticsError));
       let filtered = formalComparisonStats.records.filter(record =>
+        (!query.comparisonTier || record.scope.comparisonTier === query.comparisonTier) &&
+        record.scope.comparisons.some(pair => query.outcome === "all" || (query.outcome ? pair.result === query.outcome : pair.result !== "both_good")) &&
         (!query.query || JSON.stringify(record).includes(query.query)) &&
         !query.excludeCases?.some(item => item.batchId === record.scope.case.batchId && item.caseId === record.scope.case.caseId));
       let selection;
@@ -118,12 +120,14 @@ export class LocalAnalysisData implements AnalysisDataSource {
         selection = { mode: "random" as const, availableCaseCount, remainingCaseCount: groups.length };
       }
       const items = filtered.slice(offset, offset + limit).map(({ reference, question, scope }) => ({
-        reference, questionPreview: question.slice(0, 300), questionChars: question.length,
+        reference, ...(query.includeAnalysis ? { question } : { questionPreview: question.slice(0, 300), questionChars: question.length }),
         comparisonTier: scope.comparisonTier, case: scope.case,
         inputs: Object.values(saved.tasks[reference.taskId]!.inputIds).map(inputId => ({
           ...model(saved.inputs[inputId]!.version), reference: { runId: query.runId!, inputId },
         })),
-        outcomes: scope.comparisons.map(({ result, resultLabel, winnerModel }) => ({ result, resultLabel, winnerModel })),
+        outcomes: scope.comparisons.map(({ result, resultLabel, winnerModel, reason }) => ({ result, resultLabel, winnerModel,
+          ...(query.includeAnalysis ? { reason } : {}) })),
+        ...(query.includeAnalysis ? { assessments: scope.assessments, tradeoff: scope.tradeoff } : {}),
       }));
       return { kind: "comparisons" as const, ...page(filtered.length, offset, limit, "items"), items,
         ...(selection ? { selection } : {}),

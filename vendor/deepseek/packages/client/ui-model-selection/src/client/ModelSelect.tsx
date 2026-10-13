@@ -2,16 +2,18 @@
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
  * the Model / Effort row pair (label + current value + a right chevron),
- * each drilling into its own list — the provider-grouped model list over
- * the shared directory, and the effort levels. The trigger (313:14108's
+ * each drilling into the provider-grouped model list or the effort slider.
+ * Effort previews locally and persists on pointer release or keyboard adjustment.
+ * The trigger (313:14108's
  * ToggleButton) shows both: model name + effort in the caption tone.
  * Model catalogs above four entries show search, which retains focus while
  * ↑/↓ cycle the highlighted result; Enter and Tab accept it. Smaller model
- * catalogs, root panes, and effort panes move focus between rows. Escape and Shift+Tab leave a drilled pane first and otherwise close
- * back to the trigger. A drilled pane focuses the current effort or model
+ * catalogs and root panes move focus between rows; the effort slider retains
+ * native arrow and Tab behavior. Escape leaves a drilled pane first and otherwise
+ * closes back to the trigger. A drilled pane focuses the current effort or model
  * search field. Provider headings paint their background only while pinned
  * by scrolling. Clearing a query restores the full list and search focus.
- * Selecting restores trigger focus without a ring until the trigger loses focus
+ * Selecting a model restores trigger focus without a ring until the trigger loses focus
  * or the menu reopens. Model names match a case-insensitive ordered subsequence
  * within each provider group, ranked by
  * prefix, alignment score, then catalog order. Returning to the root pane
@@ -23,7 +25,8 @@
  * Retry remains the catalog-load surface. While the directory's pending
  * selection is unsettled, the trigger shows a spinner in place of its
  * chevron, and each row whose value that selection carries shows one in place
- * of its check mark.
+ * of its check mark. The effort slider stays open after saving and shows pending
+ * state in its reset control.
  */
 import { MenuGroup, MenuSurface, observeStickyMenuGroups } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
@@ -41,13 +44,13 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
+import { ReasoningSlider } from './ReasoningSlider.tsx'
 
-/** Which pane the dropdown shows: the two-row root or one drilled-in list. */
+/** Which pane the dropdown shows: the two-row root or the model list or reasoning slider. */
 type Pane = 'root' | 'model' | 'effort'
 
-/** One dynamic effort row; undefined means preserve the provider default. */
+/** One advertised effort stop; undefined means preserve the provider default. */
 interface EffortChoice {
-  key: string
   effort: string | undefined
   label: string
 }
@@ -128,10 +131,9 @@ export function ModelSelect(
     ? []
     : [
       ...reasoning.defaultEffort === undefined
-        ? [{ key: 'provider-default', effort: undefined, label: t('effort.providerDefault') }]
+        ? [{ effort: undefined, label: t('effort.providerDefault') }]
         : [],
       ...reasoning.efforts.map((effort: ModelReasoningEffort) => ({
-        key: `effort:${effort.id}`,
         effort: effort.id,
         label: effort.name,
       })),
@@ -174,6 +176,10 @@ export function ModelSelect(
     paneFocus.current = null
     if (!open || intent === null) return
     if (intent === 'drill') {
+      if (pane === 'effort') {
+        ;(menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])') ?? triggerRef.current)?.focus()
+        return
+      }
       if (pane === 'model' && showSearch) {
         searchRef.current?.focus()
         return
@@ -302,6 +308,13 @@ export function ModelSelect(
       return
     }
     if (!open) return
+    if (pane === 'effort') {
+      if (event.key === 'Tab' && event.target === triggerRef.current) {
+        event.preventDefault()
+        menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]:not([disabled])')?.focus()
+      }
+      return
+    }
     if (pane === 'model' && showSearch && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
       event.preventDefault()
       if (!busy && visibleModels.length > 0) {
@@ -365,10 +378,13 @@ export function ModelSelect(
     close()
   }
 
-  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>): void => {
+  const settleSelection = (result: Awaited<ReturnType<ModelSelectInjected['select']>>, keepOpen: boolean): void => {
     if (result === undefined) return
     if (result.ok) {
-      if (rootRef.current !== null) closeAfterSelection()
+      if (rootRef.current !== null) {
+        if (keepOpen) queueMicrotask(() => { menuRef.current?.querySelector<HTMLInputElement>('input[type="range"]')?.focus() })
+        else closeAfterSelection()
+      }
       return
     }
     const { error } = result
@@ -381,12 +397,12 @@ export function ModelSelect(
     })
   }
 
-  const submit = (selection: ModelSelection): void => {
+  const submit = (selection: ModelSelection, keepOpen = false): void => {
     lastActionRef.current = 'select'
     // Disabled option rows cannot retain focus while a selection is pending.
     setSelectionFocus(true)
     triggerRef.current?.focus()
-    void select(selection).then(settleSelection)
+    void select(selection).then(result => { settleSelection(result, keepOpen) })
   }
 
   const choose = (selection: ModelSelection): void => {
@@ -400,7 +416,6 @@ export function ModelSelect(
   const chooseEffort = (effort: string | undefined): void => {
     if (state.current === null) return
     if (effectiveEffort === effort) {
-      closeAfterSelection()
       return
     }
     const selection: ModelSelection = {
@@ -408,7 +423,7 @@ export function ModelSelect(
       model: state.current.model,
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
-    submit(selection)
+    submit(selection, true)
   }
 
   const waiting = state.current === null && state.status === 'loading'
@@ -479,9 +494,9 @@ export function ModelSelect(
         <MenuSurface
           ref={menuRef}
           id={`${id}-menu`}
-          className={css.menu}
+          className={clsx(css.menu, pane === 'effort' && css.effortMenu)}
           style={menuPos ?? MEASURE_STYLE}
-          role={pane === 'model' ? 'group' : 'menu'}
+          role={pane === 'root' ? 'menu' : 'group'}
           aria-label={t('menu.aria')}
           aria-busy={state.status === 'loading' || busy}
         >
@@ -615,28 +630,8 @@ export function ModelSelect(
               )}
               {effortChoices.length === 0
                 ? <div className={css.empty}>{t('empty.efforts')}</div>
-                : effortChoices.map(level => (
-                  <button
-                    ref={itemRef()}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={effectiveEffort === level.effort}
-                    className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
-                    key={level.key}
-                    disabled={busy}
-                    onClick={() => { chooseEffort(level.effort) }}
-                  >
-                    <span className={css.optionCopy}>
-                      <span className={css.modelName}>{level.label}</span>
-                    </span>
-                    <span className={css.check}>
-                      {pending !== null && pending.provider === state.current?.provider
-                        && pending.model === state.current.model && pending.reasoningEffort === level.effort
-                        ? <StateDot state="ongoing" />
-                        : effectiveEffort === level.effort ? <IconCheckOutlineRegular /> : null}
-                    </span>
-                  </button>
-                ))}
+                : <ReasoningSlider choices={effortChoices} value={effectiveEffort} defaultValue={reasoning?.defaultEffort}
+                    busy={busy} onCommit={chooseEffort} t={t} />}
             </>
           )}
         </MenuSurface>,

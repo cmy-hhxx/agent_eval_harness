@@ -1,4 +1,4 @@
-读原问、答案和地图，区分解读评测与复核事实。
+按需读原问、答案和地图，适用于案例图、原文对照或事实复核。常规总结先用 list_data(includeAnalysis:true) 或 read_data 的评测结论，足够回答时不调用本工具。
 复核设 review:true：模型先看完整答案和 originalVerdicts 原胜负；不预载节点地图或旧评语。先按争议实体 search_data，再从 source.read 批量补读；界面仍保留完整地图。复核不要先读旧判词；作图工具自行读取原判定，界面仍可展开。
 
 用 reference:{runId,query:原问连续关键词,comparisonTier} 定位，不必先列目录或抄 ID；多场匹配则补长关键词。

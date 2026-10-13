@@ -333,9 +333,13 @@ try{
  assert(await modelTrigger.evaluate(node=>node===document.activeElement),'keyboard selection restores model trigger focus');
  await page.getByRole('button',{name:/gpt-5.6-luna/}).click();
  await page.getByRole('menuitem',{name:/推理等级/}).click();
- await page.getByRole('menuitemradio',{name:'high',exact:true}).click();
- await page.getByRole('button',{name:/gpt-5.6-luna.*high/}).waitFor();
- await page.reload();await page.getByRole('button',{name:/gpt-5.6-luna.*high/}).waitFor();
+ await page.getByRole('slider',{name:'推理等级'}).press('End');
+ await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 max$/}).waitFor();
+ await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');
+ await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 xhigh$/}).waitFor();
+ await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');
+ await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 high$/}).waitFor();
+ await page.reload();await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 high$/}).waitFor();
  await page.locator('[contenteditable=true]').fill('/model');
  await page.locator('[contenteditable=true]').press('Enter');
  const commandSearch=page.getByRole('textbox',{name:'筛选选项',exact:true});
@@ -373,8 +377,9 @@ try{
  await page.getByRole('menuitemradio',{name:lunaName,exact:true}).click();
  await page.getByRole('button',{name:/Luna Deeptopic/}).click();
  await page.getByRole('menuitem',{name:/推理等级/}).click();
- assert.equal(await page.getByRole('menuitemradio').count(),4,'OpenAI offers only its actual reasoning levels');
- await page.getByRole('menuitemradio',{name:'max',exact:true}).click();
+ assert.equal(await page.getByRole('slider',{name:'推理等级'}).getAttribute('max'),'3','OpenAI offers only its actual reasoning levels');
+ await page.getByRole('slider',{name:'推理等级'}).press('End');
+ await page.getByRole('button',{name:/Luna Deeptopic.*max/}).waitFor();
  await page.reload();await page.getByRole('button',{name:/Luna Deeptopic.*max/}).waitFor();
  await page.locator('[contenteditable=true]').fill('再次查询');await page.locator('[contenteditable=true]').press('Enter');
  await page.getByRole('heading',{name:'查询完成',exact:true}).nth(1).waitFor();assert.equal(selected.at(-1).provider,'openai');assert.equal(selected.at(-1).model,'gpt-5.6-luna-deeptopic-0825');assert.equal(selected.at(-1).thinking,'max');

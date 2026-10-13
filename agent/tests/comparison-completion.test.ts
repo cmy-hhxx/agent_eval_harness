@@ -21,6 +21,8 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
   const args = { reference, title: "核对计算依据", reason: "B保留了计算依据，A只有结论。", complete: scenario !== "continue",
     candidates: ["a", "b"].map(model => ({ model, summary: `${model}的答案`, paths: [{ title: "依据", evidence: "已读取原文。", counterEvidence: null, impact: "可核对。", assessment: "strength" }] })) };
   const counterEvidence = "本轮已生成K线资源；最终引用异常，图表内容尚未核验。";
+  const sourceText = JSON.stringify({ kind: "accepted-result", reference,
+    text: scenario === "counterevidence" ? counterEvidence : "原文：有相关能力，目标用途未证实。" });
   const needsSource = scenario === "source" || scenario === "counterevidence" || scenario === "restored-source";
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected },
@@ -80,7 +82,7 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
     { name: "read_more", description: "Read another source", readOnly: true, inputSchema: { type: "object", properties: {} },
       execute: async () => ({ content: [{ type: "text", text: "新增证据" }] }) },
     { name: "read_data", description: "Read original source", readOnly: true, inputSchema: { type: "object", properties: {} },
-      execute: async () => ({ content: [{ type: "text", text: scenario === "counterevidence" ? counterEvidence : "原文：有相关能力，目标用途未证实。" }] }) },
+      execute: async () => ({ content: [{ type: "text", text: sourceText }] }) },
   ], onError: error => errors.push(error) });
   let sessions = createSessions();
   try {
@@ -102,7 +104,7 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
       assert(completed, "a terminal chart is a successful response, not an interruption");
     }
     if (needsSource) for (const sources of checkedSources) assert.deepEqual(sources,
-      [{ tool: "read_data", content: [{ type: "text", text: scenario === "counterevidence" ? counterEvidence : "原文：有相关能力，目标用途未证实。" }] }],
+      [{ tool: "read_data", content: [{ type: "text", text: sourceText }] }],
       "the checker receives original source tools, including earlier turns after restoring the session");
     assert.equal(modelCalls, scenario === "complete" ? 1 : ["counterevidence", "restored-source"].includes(scenario) ? 3 : 2);
     assert.equal(checkCalls, scenario === "counterevidence" ? 2 : 1);

@@ -125,7 +125,7 @@ export function analysisToolModel(name,model){
  if(name==='execute_code'&&output)return {summary,details:{items:[{fields:searchFields({'退出码':output.exit_code,'超时':output.timed_out,'已取消':output.cancelled,'耗时（秒）':output.duration_seconds})},...['stdout','stderr'].filter(key=>output[key]).map(key=>({title:key,fields:[],code:{text:output[key],language:'text'}})),...rows(output.artifacts).map(item=>({title:item.name,fields:fields(item)}))]}};
  if(name==='specialist_output')return {summary,details:{items:[{title:'专业任务输出',fields:[],markdown:model.output}]}};
  if(name==='list_data'&&output?.kind==='comparisons')return {summary,details:{items:rows(output.items).map(row=>({
-  title:string(row.questionPreview),description:rows(row.outcomes).map(outcome=>outcome.resultLabel).filter(Boolean).join(' · '),
+  title:string(row.question??row.questionPreview),description:rows(row.outcomes).map(outcome=>outcome.resultLabel).filter(Boolean).join(' · '),
   fields:fields({...row.reference,...row.case}),groups:[{label:'回答',items:rows(row.inputs).map(input=>({title:string(input.modelName),fields:fields(input.reference)}))}],
  })),empty:'没有匹配的正式对战'}};
  if(output&&typeof output==='object'){

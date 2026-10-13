@@ -1,10 +1,10 @@
 (() => {
   'use strict';
   const report = window.EvaluationReportData;
-  const pages = ['flow', 'architecture', 'rules', 'prompts', 'experiments'];
+  const pages = ['research', 'flow', 'architecture', 'rules', 'prompts', 'experiments'];
   const $ = id => document.getElementById(id);
   function activatePage(value, updateHash = true, animate = true) {
-    const page = pages.includes(value) ? value : 'flow';
+    const page = pages.includes(value) ? value : 'research';
     document.querySelectorAll('.page').forEach(element => { element.hidden = element.id !== `page-${page}`; });
     document.querySelectorAll('[data-page]').forEach(button => {
       if (button.dataset.page === page) button.setAttribute('aria-current', 'page');
@@ -15,6 +15,7 @@
     if (animate) window.ReportMotion.reveal($(`page-${page}`), { distance: 3, duration: 140 });
     window.dispatchEvent(new Event('report-page-change'));
   }
+  window.ReportResearch.render($('researchBody'), report, window.EvaluationResearchData);
   window.ReportFlow.render($('flowBody'), report);
   window.ReportArchitecture.render($('architectureBody'), report);
   window.ReportExperiments.render($('experimentsBody'), window.EvaluationExperimentData);

@@ -27,7 +27,7 @@ TypeScript Host 编排 JSON 评测，Agent 通过 Profile 提供提示词、Sche
 
 ## 离线评测汇报
 
-打开 [evaluation-report/report.html](evaluation-report/report.html) 查看 30 题、42 场真实对局的多 Agent 评测机制，包含完整回答、核验依据、匿名身份揭示与双方问题归因。只需复制这一个 HTML 即可离线打开，无需服务器或安装依赖；文件不存在时先运行 `node evaluation-report/scripts/build.mjs`。案例保留 r151/r152 真实来源，提示词单独展示当前 r153；实验页呈现 6 题三轮 MiniMax 比较阶段的重复和换位对照。源码组织、数据来源与实验解释范围见[模块说明](evaluation-report/README.md)。
+打开 [evaluation-report/report.html](evaluation-report/report.html) 查看“四个知道”行业对标与建设路线，重点精读美团、字节实践，并对照轻量开源方法和本项目已有能力；研究资料获取日为 2026-10-13，全文与来源已内嵌。原有 30 题、42 场真实对局仍可查看完整回答、核验依据、匿名身份与双方归因。复制这一个 HTML 即可离线打开，无需服务器或安装依赖；文件不存在时运行 `node evaluation-report/scripts/build.mjs`。案例保留 r151/r152 来源，提示词单独展示 r153 快照；实验页保留 6 题三轮 MiniMax 比较阶段的重复和换位对照。研究源稿、构建与证据边界见[模块说明](evaluation-report/README.md)。
 
 ## 最短运行路径
 

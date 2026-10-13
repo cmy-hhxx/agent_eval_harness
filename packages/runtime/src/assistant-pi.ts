@@ -149,9 +149,10 @@ export const createPiConversation: ConversationDriverFactory = async (options) =
             signal?.throwIfAborted();
             const started = Date.now();
             const messages = session.agent.state.messages;
-            const sources = messages
+            const observed = messages
               .flatMap(message => message.role === "toolResult" && !message.isError && request.sourceTools?.includes(message.toolName)
                 ? [{ tool: message.toolName, content: message.content }] : []);
+            const sources = request.selectSources ? request.selectSources(observed) : observed;
             const response = await runtime.completeSimple(model, { systemPrompt: request.systemPrompt,
               messages: [{ role: "user", content: sources.length ? JSON.stringify({ draft: request.text, sources }) : request.text, timestamp: started }] }, {
               signal, reasoning: config.thinking === "off" ? undefined : config.thinking,

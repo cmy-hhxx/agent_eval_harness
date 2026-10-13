@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { JsonObject } from "@eval/contracts";
+import type { AssistantSource, JsonObject } from "@eval/contracts";
 import { erisTools, type ErisDependencies } from "../src/core/tools.js";
 
 const reference = { runId: "run", taskId: "formal-comparison" };
@@ -101,6 +101,20 @@ test("contradictory conclusions cannot publish or terminate before correction", 
     assert.equal((await tool.execute(args, { ...context, async complete() { return { ...checked, text }; } })).isError, true);
   await assert.rejects(tool.execute(args, { ...context, complete: undefined }), /尚未展示/);
   await assert.rejects(tool.execute(args, { ...context, async complete() { throw new Error("Gateway failed"); } }), /Gateway failed/);
+});
+
+test("comparison checks retain this pair's earlier evidence and omit unrelated cases", async () => {
+  const source = (tool: string, value: unknown): AssistantSource => ({ tool, content: [{ type: "text", text: JSON.stringify(value) }] });
+  const input = { runId: reference.runId, inputId: "answer-a" };
+  const evidence = source("read_evidence", { reference: input, items: [{ text: "未被原评语引用的反证" }] });
+  const current = source("read_case", { reference, answers: [{ reference: input }], question: "本题" });
+  const formal = source("read_data", { reference, comparisonScope: { tradeoff: "本题结论" } });
+  const unrelated = source("read_data", { reference: { runId: "run", taskId: "another-case" }, text: "另一题的长评语" });
+  const otherRun = source("search_data", { reference: { ...input, runId: "other-run" }, text: "另一运行" });
+  await comparisonTool().execute(args, { ...context, async complete(request) {
+    assert.deepEqual(request.selectSources!([unrelated, evidence, otherRun, current, formal]), [evidence, current, formal]);
+    return checked;
+  } });
 });
 
 test("comparison question lookup persists the resolved receipt for evidence and scene replay", async () => {

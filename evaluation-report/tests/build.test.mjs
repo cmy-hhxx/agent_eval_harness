@@ -65,14 +65,14 @@ test('导出不能覆盖页面或样式、数据、逻辑源文件', async () =>
   }
 });
 
-test('页面保留五个主题入口与独立挂载点，不添加下载入口', async () => {
+test('页面保留行业对标与五个证据主题的独立挂载点，不添加下载入口', async () => {
   const dom = new JSDOM(await readFile(join(directory, 'src/template.html'), 'utf8'));
   try {
     const { document } = dom.window;
     assert.equal(document.querySelector('[download],#downloadPromptsBtn,#exportHtmlBtn'), null);
     for (const control of document.querySelectorAll('button,a')) assert.doesNotMatch(control.textContent, /下载|导出/);
-    assert.deepEqual([...document.querySelectorAll('[data-page]')].map(button => button.dataset.page), ['flow', 'architecture', 'rules', 'prompts', 'experiments']);
-    for (const page of ['flow', 'architecture', 'rules', 'prompts', 'experiments']) {
+    assert.deepEqual([...document.querySelectorAll('[data-page]')].map(button => button.dataset.page), ['research', 'flow', 'architecture', 'rules', 'prompts', 'experiments']);
+    for (const page of ['research', 'flow', 'architecture', 'rules', 'prompts', 'experiments']) {
       assert.ok(document.querySelector(`#page-${page} #${page}Body`), `${page} 需要对应的独立渲染入口`);
     }
   } finally {

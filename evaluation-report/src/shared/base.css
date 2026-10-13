@@ -16,8 +16,8 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 .skip:focus { top: 12px; }
 .header { display: flex; align-items: center; gap: 34px; min-height: 52px; padding: 0 32px; border-bottom: 1px solid var(--border); }
 .site-name { font-size:var(--type-section); font-weight:var(--weight-heading); letter-spacing: -.025em; text-decoration: none; white-space: nowrap; }
-.navigation { display: flex; align-items: center; gap: 8px; }
-.navigation button { position: relative; border: 0; background: transparent; padding: 10px 14px; color: var(--muted-fg); font-size:var(--type-copy); }
+.navigation { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; }
+.navigation button { position: relative; border: 0; background: transparent; padding: 10px 14px; color: var(--muted-fg); font-size:var(--type-copy); white-space: nowrap; flex-shrink: 0; }
 .navigation button::after { content: ''; position: absolute; left: 14px; right: 14px; bottom: 2px; height: 2px; background: var(--primary); transform: scaleX(0); transition: transform 160ms var(--ease-out); }
 .navigation button[aria-current="page"] { color: var(--primary); }
 .navigation button[aria-current="page"]::after { transform: scaleX(1); }

@@ -9,11 +9,11 @@ import { buildReport } from '../scripts/build.mjs';
 const directory=dirname(dirname(fileURLToPath(import.meta.url)));
 const html=await readFile(join(directory,'src/template.html'),'utf8');
 const typographyTokens=await readFile(join(directory,'src/shared/tokens.css'),'utf8');
-function environment(t,markup=html,inline=false) {
+function environment(t,markup=html,inline=false,hash='flow') {
   const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message));
   const requests=[];
   const resources=inline?{interceptors:[requestInterceptor(request=>{requests.push(request.url);return new Response('',{status:503});})]}:undefined;
-  const dom=new JSDOM(markup,{url:'https://offline-report.invalid/report.html#flow',runScripts:inline?'dangerously':'outside-only',resources,pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.scrollTo=()=>{};w.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});w.fetch=url=>{requests.push(url);throw new Error('离线报告不能请求外部资源');};}});
+  const dom=new JSDOM(markup,{url:`https://offline-report.invalid/report.html#${hash}`,runScripts:inline?'dangerously':'outside-only',resources,pretendToBeVisual:true,virtualConsole:vc,beforeParse(w){w.scrollTo=()=>{};w.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});w.fetch=url=>{requests.push(url);throw new Error('离线报告不能请求外部资源');};}});
   if(!inline){const style=dom.window.document.createElement('style');style.textContent=typographyTokens;dom.window.document.head.append(style);}
   t.after(()=>{dom.window.close();assert.deepEqual(errors,[]);assert.deepEqual(requests,[],'离线报告不能依赖其他文件或网络请求');});
   return {window:dom.window,document:dom.window.document,async load(){if(!inline)for(const script of dom.window.document.querySelectorAll('script[src]'))dom.window.eval(await readFile(join(directory,'src',script.getAttribute('src')),'utf8'));},click(selector){const node=typeof selector==='string'?dom.window.document.querySelector(selector):selector;assert.ok(node,`Missing ${selector}`);node.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true}));},change(selector,value){const el=dom.window.document.querySelector(selector);el.value=String(value);el.dispatchEvent(new dom.window.Event('change',{bubbles:true}));},key(selector,key){dom.window.document.querySelector(selector).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));}};
@@ -319,14 +319,39 @@ test('翻页键盘、断点重排与重新挂载保持正确状态，无重复�
  controller.destroy();const before=root.innerHTML;page.click('[data-swap-control]');page.click('[data-case-next]');page.key('[data-input-control]','Enter');page.window.dispatchEvent(new page.window.Event('resize'));assert.equal(root.innerHTML,before);
 });
 
-test('离线单文件可重开五个主题，来源HTML不会执行',async t=>{
+test('离线单文件可重开六个主题，来源HTML不会执行',async t=>{
  const temporary=await mkdtemp(join(tmpdir(),'report-current-'));t.after(()=>rm(temporary,{recursive:true,force:true}));
  const output=await buildReport({output:join(temporary,'report.html')});const page=environment(t,await readFile(output,'utf8'),true);
  assert.equal(page.document.querySelectorAll('[data-case-select] option').length,30);
- for(const name of ['architecture','rules','prompts','experiments','flow']){page.click(`[data-page="${name}"]`);assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);assert.equal(page.document.querySelector(`#page-${name}`).hidden,false);}
+ for(const name of ['research','architecture','rules','prompts','experiments','flow']){page.click(`[data-page="${name}"]`);assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);assert.equal(page.document.querySelector(`#page-${name}`).hidden,false);}
  assert.equal(page.document.querySelector('[src^="http"],link[rel="stylesheet"],script[src]'),null);
  assert.equal(page.document.querySelectorAll('#architectureBody [data-agent-role]').length,6);
  assert.doesNotMatch(page.document.querySelector('#architectureBody').textContent,/关键问题没查齐|分开检查，也可能一起看错/);
  assertFixedCards(page);page.click('[data-swap-control]');assertOwnership(page,page.window.EvaluationReportData.cases[0].pairs[0],true);
  page.click('[data-input-control]');assert.equal(page.document.querySelector('[data-full-question]').textContent,page.window.EvaluationReportData.cases[0].question);
+});
+
+test('默认进入行业对标，章节支持键盘切换且完整研究与来源可离线阅读',async t=>{
+ const page=environment(t,html,false,'');await page.load();
+ assert.equal(page.document.querySelector('#page-research').hidden,false);
+ assert.equal(page.document.querySelectorAll('.page:not([hidden])').length,1);
+ const tabs=[...page.document.querySelectorAll('[data-research-tab]')];
+ for(const tab of tabs){
+  page.click(tab);
+  assert.equal(page.document.querySelectorAll('.research-panel:not([hidden])').length,1);
+  assert.equal(page.document.querySelector('#'+tab.getAttribute('aria-controls')).hidden,false);
+ }
+ page.key('#'+tabs.at(-1).id,'ArrowRight');
+ assert.equal(page.document.activeElement,tabs[0]);
+ assert.equal(tabs[0].getAttribute('aria-selected'),'true');
+ page.key('#'+tabs[0].id,'End');
+ assert.equal(page.document.activeElement,tabs.at(-1));
+ assert.equal(page.document.querySelector('.research-document').querySelectorAll('h2').length,5);
+ const sources=page.window.EvaluationResearchData.sources;
+ assert.equal(new Set(sources.map(source=>source.id)).size,sources.length);
+ assert.ok(sources.some(source=>source.url.includes('tech.meituan.com')));
+ assert.ok(sources.some(source=>source.url.includes('developer.volcengine.com')));
+ for(const link of page.document.querySelectorAll('.research-cite')) assert.ok(sources.some(source=>source.url===link.href));
+ assert.match(page.document.querySelector('#research-panel-overview').textContent,/固定六题/);
+ assert.match(page.document.querySelector('.research-document').textContent,/这不是人工准确率/);
 });

@@ -13,7 +13,26 @@
       "query": {
         "type": "string",
         "minLength": 1,
-        "description": "可选字面文本筛选词，不是数据类别；inputs 搜索标识与模型名，comparisons 搜索原问、模型和正式判词。查看目录时省略，不传 inputs、tasks 或空字符串。"
+        "description": "可选字面文本筛选词，不是数据类别；inputs 搜索标识与模型名，comparisons 搜索原问、模型和正式判词。档位和胜负用 comparisonTier、outcome 精确筛选，不用中文标签搜索。查看目录时省略。"
+      },
+      "comparisonTier": {
+        "type": "string",
+        "minLength": 1,
+        "description": "comparisons 精确筛选档位，如 Fast 或 Expert。"
+      },
+      "outcome": {
+        "type": "string",
+        "enum": [
+          "win",
+          "both_good",
+          "both_bad",
+          "all"
+        ],
+        "description": "comparisons 精确筛选胜负：win 有胜负，both_bad 双方都差，both_good 双方都好，all 全部。省略时排除双方都好，统计分母不变；仅用户明确要看好例或全部结果时包含 both_good。"
+      },
+      "includeAnalysis": {
+        "type": "boolean",
+        "description": "批量总结设 true：同页返回完整原问、双方评测摘要、问题维度、胜负理由及取舍，不加载原始答案或链路；按 nextOffset 续页，无需逐场 read_data。"
       },
       "offset": {
         "type": "integer",
@@ -163,6 +182,21 @@
             {
               "required": [
                 "excludeCases"
+              ]
+            },
+            {
+              "required": [
+                "comparisonTier"
+              ]
+            },
+            {
+              "required": [
+                "outcome"
+              ]
+            },
+            {
+              "required": [
+                "includeAnalysis"
               ]
             }
           ]

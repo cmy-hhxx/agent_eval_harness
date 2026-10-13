@@ -1,4 +1,4 @@
-补读单条材料或原评测。案例用 read_case，批量用 read_evidence；事实复核不回读旧评语，作图自动取得原判定。
+常规解释单场胜负、问题原因先读原评测结论；批量总结用 list_data(includeAnalysis:true)。需要原问与答案对照才用 read_case，追查链路按疑点用 read_evidence；事实复核不回读旧评语，作图自动取得原判定。
 
 - {runId,taskId} 默认 summary：comparisonScope 给结论和问题维度，result 补状态、标准答案、证据坐标；其他任务保留 rewritten 点评。summary 不分页。
 - 加 view:"details"：分页读取含证据的完整结果。

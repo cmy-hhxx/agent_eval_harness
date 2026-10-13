@@ -26,12 +26,12 @@ async function register(config: EvalConfig, accepted?: (state: RunState, plan: T
   return source;
 }
 
-async function registerAccepted(config: EvalConfig) {
+async function registerAccepted(config: EvalConfig, compare = (data: TaskData) => comparisonResult(Object.keys(data.candidates))) {
   let accepted: Record<string, SubmissionReceipt> = {};
   const source = await register(config, async (state, plan) => {
     for (const task of plan.tasks) {
       const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult()
-        : comparisonResult(Object.keys((task.data as TaskData).candidates));
+        : compare(task.data as TaskData);
       state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,
         evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };
       state.manifest.states[task.id] = { status: "succeeded", attempts: 1 };
@@ -47,19 +47,63 @@ test("random case selection samples distinct questions and exhausts them across 
   try {
     fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const { source } = await registerAccepted(fixture.config);
-    const sample = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 2 });
+    const sample = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 2 });
     assert(sample.kind === "comparisons");
     assert.equal(new Set(sample.items.map(item => item.case.caseId)).size, 2);
     assert.deepEqual(sample.selection, { mode: "random", availableCaseCount: 3, remainingCaseCount: 1 });
     assert.equal(sample.nextOffset, null, "a random sample cannot be resumed with a page offset");
     const excludeCases = sample.items.map(item => item.case);
-    const next = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 1, excludeCases });
+    const next = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1, excludeCases });
     assert(next.kind === "comparisons");
     assert.equal(next.items.length, 1);
     assert(!excludeCases.some(item => item.caseId === next.items[0]!.case.caseId));
-    const empty = await source.list({ runId: "source", view: "comparisons", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
+    const empty = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
     assert(empty.kind === "comparisons");
     assert.equal(empty.items.length, 0);
+  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("comparison summaries filter exact tiers and outcomes without loading raw answers or changing statistics", async () => {
+  const fixture = await fixtureConfig(Array.from({ length: 4 }, () => [raw("good"), raw("bad"), raw("winner")]));
+  try {
+    fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
+    const { source } = await registerAccepted(fixture.config, data => {
+      const labels = Object.keys(data.candidates), result = comparisonResult(labels);
+      const caseId = Object.values(data.candidates)[0]!.case_id;
+      if (caseId === "bad") for (const assessment of Object.values(result.assessments)) assessment.meets_core = false;
+      if (caseId === "winner") result.ranking = labels.map(label => [label]);
+      return result;
+    });
+    const defaults = await source.list({ runId: "source", view: "comparisons" });
+    assert(defaults.kind === "comparisons");
+    assert.equal(defaults.total, 4);
+    assert(defaults.items.every(item => item.outcomes.every(pair => pair.result !== "both_good")));
+    const sample = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 20 });
+    assert(sample.kind === "comparisons");
+    assert.equal(sample.selection?.availableCaseCount, 2);
+    assert(sample.items.every(item => item.case.caseId !== "good"));
+    const batch = await source.list({ runId: "source", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 });
+    assert(batch.kind === "comparisons");
+    assert.equal(batch.total, 1);
+    const item = batch.items[0]!, record = batch.summary.formalComparisonStats!.records.find(record => record.reference.taskId === item.reference.taskId)!;
+    assert("question" in item, "batch analysis includes the full question");
+    assert.equal(item.question, record.question);
+    assert.deepEqual(item.assessments, record.scope.assessments);
+    assert.equal(item.tradeoff, record.scope.tradeoff);
+    assert.equal(item.outcomes[0]!.reason, record.scope.comparisons[0]!.reason);
+    assert.deepEqual(batch.summary, defaults.summary);
+    assert.equal(batch.summary.formalComparisonStats!.comparisonCount, 6);
+    const good = await source.list({ runId: "source", view: "comparisons", outcome: "both_good" });
+    assert(good.kind === "comparisons");
+    assert.equal(good.total, 2);
+    const first = await source.list({ runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, limit: 2 });
+    assert(first.kind === "comparisons");
+    assert.equal(first.total, 6);
+    const rest = await source.list({ runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, offset: first.nextOffset!, limit: 20 });
+    assert(rest.kind === "comparisons");
+    assert.equal(rest.items.length, 4);
+    assert.equal(rest.hasMore, false);
+    assert.equal(new Set([...first.items, ...rest.items].map(item => item.reference.taskId)).size, 6);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
@@ -392,11 +436,15 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       { comparisonTier: "Expert", comparisonCount: 1, outcomes: { win: 0, both_good: 1, both_bad: 0 } },
     ]);
     assert(stats.tiers.every((tier) => tier.models.length === 2 && tier.models.every((model) => model.both_good === 1 && model.comparisonCount === 1)));
-    const first = await source.list({ runId: "source", view: "comparisons", query: "计算2+2", limit: 1 });
+    const defaults = await source.list({ runId: "source", view: "comparisons" });
+    assert(defaults.kind === "comparisons");
+    assert.equal(defaults.total, 0, "both-good cases are excluded from default example retrieval");
+    const first = await source.list({ runId: "source", view: "comparisons", outcome: "all", query: "计算2+2", limit: 1 });
     assert(first.kind === "comparisons");
     assert.equal(first.total, 2, "question search must find accepted battles without reading raw messages");
     assert.equal(first.items.length, 1);
     assert.equal(first.nextOffset, 1);
+    assert("questionPreview" in first.items[0], "directory entries include a question preview");
     assert.equal(first.items[0].questionPreview, "计算2+2");
     assert.equal(first.items[0].inputs.length, 2);
     for (const input of first.items[0].inputs) {
@@ -404,15 +452,15 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       assert.equal(saved.inputs[input.reference.inputId]!.version, input.model);
       assert.equal(input.comparisonTier, first.items[0].comparisonTier);
     }
-    const next = await source.list({ runId: "source", view: "comparisons", offset: first.nextOffset!, limit: 1 });
+    const next = await source.list({ runId: "source", view: "comparisons", outcome: "all", offset: first.nextOffset!, limit: 1 });
     assert(next.kind === "comparisons");
     assert.equal(next.hasMore, false);
     assert.notDeepEqual(next.items[0].reference, first.items[0].reference);
-    const different = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 1,
+    const different = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1,
       excludeCases: [first.items[0].case] });
     assert(different.kind === "comparisons");
     assert.equal(different.items.length, 0, "another example excludes every tier of the already viewed case");
-    const empty = await source.list({ runId: "source", view: "comparisons", query: "不存在的原问" });
+    const empty = await source.list({ runId: "source", view: "comparisons", outcome: "all", query: "不存在的原问" });
     assert(empty.kind === "comparisons");
     assert.equal(empty.total, 0);
     assert.deepEqual(empty.summary.formalComparisonStats, stats, "case search must not change aggregate denominators");
