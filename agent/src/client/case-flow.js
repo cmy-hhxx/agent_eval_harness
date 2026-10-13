@@ -1,4 +1,4 @@
-import { createElement as h, useId, useLayoutEffect, useRef } from 'react';
+import { createElement as h, useId, useLayoutEffect, useRef, useState } from 'react';
 
 const stages = { user_question: 'User input', llm_turn: 'Model call', reasoning: 'Reasoning', function_call: 'Tool call', tool_call: 'Tool call', function_call_output: 'Tool result', tool_result: 'Tool result', final_answer: 'Final answer' };
 export const traceStage = (node, finalIndex) => node.messageIndex === finalIndex ? 'Final answer'
@@ -7,10 +7,15 @@ export const traceLabel = (node, finalIndex) => `${traceStage(node, finalIndex)}
 const stageColors = { 'User input': '#466B91', Reasoning: '#756181', 'Tool call': '#3C746F', 'Tool result': '#3C746F', 'Final answer': '#48665B' };
 
 /** The centre rail records order. Only source-provided call coordinates create association edges. */
-export function traceFlowLayout(nodes) {
-  const boxes = nodes.map((node, index) => ({ node, x: 4, y: 4 + index * 48, width: 188, height: 32 }));
+export function traceFlowLayout(nodes, heights = []) {
+  let y = 4;
+  const boxes = nodes.map((node, index) => {
+    const box = { node, x: 4, y, width: 188, height: Math.max(32, heights[index] ?? 32) };
+    y += box.height + 16;
+    return box;
+  });
   const byIndex = new Map(boxes.map(box => [box.node.messageIndex, box]));
-  return { width: 228, height: Math.max(40, nodes.length * 48 - 8), boxes,
+  return { width: 228, height: Math.max(40, y - 12), boxes,
     order: boxes.slice(1).map((to, index) => ({ from: boxes[index], to })),
     calls: boxes.flatMap(to => {
       const from = byIndex.get(to.node.callMessageIndex);
@@ -20,9 +25,22 @@ export function traceFlowLayout(nodes) {
 }
 
 export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) {
-  const layout = traceFlowLayout(nodes), arrow = useId();
+  const [heights, setHeights] = useState([]);
+  const layout = traceFlowLayout(nodes, heights), arrow = useId();
   const selectedNode = nodes[selected];
   const viewport = useRef(null);
+  useLayoutEffect(() => {
+    const labels = [...viewport.current.querySelectorAll('[data-trace-label]')];
+    const measure = () => {
+      if (labels.some(label => !label.offsetHeight)) return;
+      const next = labels.map(label => label.offsetHeight + 14);
+      setHeights(previous => previous.length === next.length && previous.every((height, index) => height === next[index]) ? previous : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    labels.forEach(label => observer.observe(label));
+    return () => observer.disconnect();
+  }, [nodes, finalIndex]);
   useLayoutEffect(() => {
     const pane = viewport.current, box = layout.boxes[selected];
     if (!pane || !box) return;
@@ -35,7 +53,7 @@ export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) 
     const observer = new ResizeObserver(reveal);
     observer.observe(pane);
     return () => observer.disconnect();
-  }, [selected, nodes]);
+  }, [selected, nodes, heights]);
   return h('div', { ref: viewport, 'data-trace-viewport': true, tabIndex: 0, role: 'region', 'aria-label': `${modelName}链路滚动区`, style: { minWidth: 0, minHeight: 0, height: '100%', maxHeight: `min(${layout.height + 20}px, 560px, 65vh)`, contain: 'size', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'thin', scrollbarGutter: 'stable' } },
     h('div', { style: { position: 'sticky', top: 0, zIndex: 1, background: '#fff', display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, lineHeight: '16px', color: '#53616E', paddingBottom: 4 } },
       h('span', null, h('span', { style: { display: 'inline-block', width: 14, borderTop: '2px solid #536574', marginRight: 4, verticalAlign: 'middle' } }), '执行顺序'),
@@ -60,8 +78,8 @@ export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) 
             onClick: () => onSelect(index), onKeyDown: event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); onSelect(index); } }, style: { cursor: 'pointer' } },
             h('rect', { x, y, width, height, rx: endpoint ? 16 : 5, fill: 'none', pointerEvents: 'all', stroke: active ? color : '#CCD3DA', strokeWidth: active ? 1.5 : 1 }),
             h('rect', { x: x + 6, y: y + 9, width: 2, height: 14, rx: 1, fill: color, opacity: active ? 1 : 0.6, pointerEvents: 'none' }),
-            h('foreignObject', { x: x + 12, y: y + 7, width: width - 40, height: 18, style: { pointerEvents: 'none' } },
-              h('div', { style: { color: '#202B36', fontSize: 13, lineHeight: '18px', fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, traceLabel(node, finalIndex))),
+            h('foreignObject', { x: x + 12, y: y + 7, width: width - 40, height: height - 14, style: { pointerEvents: 'none' } },
+              h('div', { 'data-trace-label': true, style: { color: '#202B36', fontSize: 13, lineHeight: '18px', fontWeight: active ? 600 : 500, whiteSpace: 'normal', overflowWrap: 'anywhere' } }, traceLabel(node, finalIndex))),
             h('text', { x: x + width - 8, y: y + 20, fill: '#606C77', fontSize: 10, textAnchor: 'end' }, `#${node.messageIndex}`));
         })));
 }

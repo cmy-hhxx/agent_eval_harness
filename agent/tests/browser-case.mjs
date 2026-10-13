@@ -10,6 +10,7 @@ const shots = process.cwd() + '/.artifacts/agent-case';
 await mkdir(shots, { recursive: true });
 const reference = { runId: 'run', taskId: 'pair' }, args = { reference };
 const recordedReasoning = '原始条件仅命中3只，不足要求的8只。'.repeat(150) + '末尾证据仍保留。';
+const longToolName = 'web_search_company_announcements_and_financial_evidence';
 const evidenceTable = '|指数代码|指数简称|最新涨跌幅:前复权|最新价|指数类型|成分领域|涨跌幅[20261009]|\n|---|---|---|---|---|---|---|\n|886068.TI|AI视频|5.48%|2159.86点|同花顺概念指数|A股指数|20261009|\n|`885877.TI`|转基因|5.45%|1,920.15|' + '较长的说明保留完整内容并自然换行。'.repeat(8) + '|A股指数|2026-10-09 09:30:00|';
 const recordedEvidence = JSON.stringify([{ type: 'input_text', text: '<referencable-result>\nID: 15\n' }, { type: 'input_text', text: '以下是结果：\n已核验两行。\n' + evidenceTable + '\n\n[公告](https://example.com/evidence)\n<script>untrusted</script>' }, { type: 'input_text', text: '</referencable-result>' }]);
 const material = { kind: 'case', reference, question: '比较这两份回答是否解决用户问题', answers: ['A组Expert', 'B组Expert'].map((modelName, i) => ({
@@ -20,8 +21,8 @@ const material = { kind: 'case', reference, question: '比较这两份回答是�
   { messageIndex: 2, type: 'tool_result', name: 'memory', callMessageIndex: 1, preview: 'Error: missing argument', chars: 100 },
   { messageIndex: 3, type: 'reasoning', previewKind: 'summary', preview: recordedReasoning, chars: recordedReasoning.length + 80 },
   { messageIndex: 4, type: 'reasoning', chars: 30 },
-  { messageIndex: 5, type: 'tool_call', name: 'Search', preview: '{"query":"核实材料"}' },
-  { messageIndex: 6, type: 'tool_result', name: 'Search', callMessageIndex: 5, preview: '搜索材料' },
+  { messageIndex: 5, type: 'tool_call', name: longToolName, preview: '{"query":"核实材料"}' },
+  { messageIndex: 6, type: 'tool_result', name: longToolName, callMessageIndex: 5, preview: '搜索材料' },
   { messageIndex: 7, type: 'reasoning', preview: '对照来源核验。' },
   { messageIndex: 8, type: 'tool_call', name: 'FinQuery', preview: '{"query":"核对指标"}' },
   { messageIndex: 9, type: 'tool_result', name: 'FinQuery', callMessageIndex: 8, preview: i === 0 ? recordedEvidence : '|项目|结论|证据|日期|\n|---|---|---|---|\n|数量|不足|仅三项|20261009|' },
@@ -208,7 +209,15 @@ try {
   assert.equal(await models.nth(1).locator('[data-evidence-identifiers]').count(), 0, 'unrelated tables do not freeze arbitrary columns');
   await models.nth(1).locator('summary').first().click();
   await models.first().locator('summary').first().click();
-  assert.deepEqual(await models.first().locator('[data-trace-flow] foreignObject div').evaluateAll(nodes => nodes.filter(n => n.scrollWidth > n.clientWidth).map(n => n.textContent)), [], 'compact nodes keep tool labels readable');
+  await models.first().getByRole('button', { name: `#6 Tool result · ${longToolName}`, exact: true }).click();
+  assert.deepEqual(await models.first().locator('[data-trace-label]').evaluateAll(nodes => nodes.filter(n => {
+   const text = n.getBoundingClientRect(), container = n.parentElement.getBoundingClientRect();
+   return n.scrollWidth > n.clientWidth || text.bottom > container.bottom + 1;
+  }).map(n => n.textContent)), [], 'full tool labels fit horizontally and vertically, including long unbroken names');
+  assert(await models.first().getByRole('button', { name: `#6 Tool result · ${longToolName}`, exact: true }).evaluate(el => {
+   const box = el.querySelector('rect').getBoundingClientRect(), pane = el.closest('[data-trace-viewport]').getBoundingClientRect();
+   return box.height > 50 && box.top >= pane.top + 20 && box.bottom <= pane.bottom;
+  }), 'a selected multi-line tool label expands its node and stays visible');
   await models.first().getByRole('button', { name: '#10 Final answer', exact: true }).click();
   await models.first().locator('[data-evidence-preview]').getByText('A组Expert的实际最终回答', { exact: true }).waitFor();
   await models.first().getByRole('button', { name: '#2 Tool result · memory', exact: true }).click();

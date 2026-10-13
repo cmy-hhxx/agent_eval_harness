@@ -83,6 +83,11 @@ test('trace flow has one ordered rail and only source-confirmed call association
   assert.equal(flow.calls[0].from.node.messageIndex, 3);
   assert.equal(flow.calls[0].to.node.messageIndex, 9);
   for (let i = 1; i < flow.boxes.length; i++) assert(flow.boxes[i].y - flow.boxes[i - 1].y - flow.boxes[i - 1].height >= 16);
+  const wrapped = traceFlowLayout(nodes, [32, 86, 50, 68]);
+  assert.deepEqual(wrapped.boxes.map((box: { y: number }) => box.y), [4, 52, 154, 220], 'wrapped labels move every following node without reducing arrow spacing');
+  assert.equal(wrapped.height, 292, 'the viewport includes the full last node');
+  assert.equal(wrapped.calls[0].from, wrapped.boxes[1]);
+  assert.equal(wrapped.calls[0].to, wrapped.boxes[3], 'associations use the resized boxes');
   const svg = renderToStaticMarkup(createElement(TraceFlow, { nodes, finalIndex: 10, selected: 3, onSelect() {}, modelName: 'A组Fast' }));
   assert.equal((svg.match(/data-flow-edge="order"/g) ?? []).length, 3);
   assert.equal((svg.match(/data-flow-edge="call"/g) ?? []).length, 1);
