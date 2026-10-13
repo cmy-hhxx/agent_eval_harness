@@ -182,6 +182,7 @@ export type AssistantRecord =
 export interface AssistantModelOptions {
   model: ModelConfig;
   systemPrompt: string;
+  predictionPrompt?: string;
   recoveryMessage?: string;
   failureSummaryMessage?: string;
   tools: AssistantTool[];
@@ -194,6 +195,7 @@ export interface AssistantSessionRuntime {
   list(userId: string): Promise<AssistantSessionState[]>;
   create(userId: string, sessionId?: string): Promise<AssistantSessionState>;
   prompt(userId: string, value: AssistantPrompt): Promise<void>;
+  predict(scope: AssistantScope, sourceTurn: number, recentSuggestions: string[], signal: AbortSignal): Promise<{ text: string | null }>;
   cancel(scope: AssistantScope): Promise<void>;
   projections(scope: AssistantScope): Promise<unknown>;
   updateQueue(scope: AssistantScope, itemId: string, action: JsonObject): Promise<unknown>;

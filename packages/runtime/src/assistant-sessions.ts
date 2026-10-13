@@ -7,6 +7,7 @@ import { assistantSettingsDescribe, assistantSettingsMutation, createAssistantMe
 
 import { assistantContent, AssistantContentStream } from "./assistant-content.js";
 import { readAssistantSource } from "./assistant-source.js";
+import { createPiPrediction, type PredictionOptions } from "./assistant-prediction.js";
 
 class Feed {
   private listeners = new Set<(value: unknown) => void>();
@@ -40,6 +41,7 @@ interface Owned {
   driver?: ConversationDriver;
   driverSelection?: string;
   working?: Promise<void>;
+  prediction?: AbortController;
   mutation: Promise<void>;
   writes: Promise<void>;
   revision: number;
@@ -57,6 +59,7 @@ export interface AssistantRuntimeOptions extends AssistantModelOptions {
   models?: AssistantModelDirectory;
   url: string;
   driver?: ConversationDriverFactory;
+  predictor?: (options: PredictionOptions) => Promise<string | null>;
   ownership?: AssistantOwnership;
   onError?(error: unknown): void;
 }
@@ -403,6 +406,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const scope = { userId, sessionId: prompt.sessionId };
     const value = await this.target(scope);
     if ("url" in value) { await this.forward(value, userId, "session/prompt", { request: prompt }); return; }
+    value.prediction?.abort();
     const next = value.mutation.then(async () => {
       if (!(await value.journal.command(prompt))) return;
       if (Object.keys(value.journal.state.requests).length === 1) {
@@ -424,6 +428,34 @@ export class AssistantSessions implements AssistantSessionRuntime {
     const value = await this.target(scope);
     if ("url" in value) return this.forward(value, scope.userId, "session/projections", { request: { sessionId: scope.sessionId } });
     return sessionProjections(value.journal.state, value.journal, value.metrics);
+  }
+  async predict(scope: AssistantScope, sourceTurn: number, recentSuggestions: string[], signal: AbortSignal): Promise<{ text: string | null }> {
+    signal.throwIfAborted();
+    const value = await this.target(scope);
+    if ("url" in value) return await this.forward(value, scope.userId, "assistant/predict", { request: { sessionId: scope.sessionId, sourceTurn, recentSuggestions } }, signal) as { text: string | null };
+    await value.mutation;
+    await value.writes;
+    const current = () => !this.disposed && value.journal.state.status === "idle" && value.turn === sourceTurn
+      && !Object.values(value.journal.state.requests).some(status => status === "running" || status === "queued")
+      && object(value.journal.events.findLast(event => event.type === "turn/end")?.data.reason ?? {}).kind === "completed";
+    if (!this.options.predictionPrompt || !current()) return { text: null };
+    value.prediction?.abort();
+    const controller = new AbortController();
+    value.prediction = controller;
+    const bounded = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(8000)]);
+    const selection = value.journal.state.modelSelection ?? value.journal.state.modelUsed;
+    try {
+      const model = this.options.models && selection ? await this.options.models.resolve(selection) : this.options.model;
+      bounded.throwIfAborted();
+      if (!current()) return { text: null };
+      const text = await (this.options.predictor ?? createPiPrediction)({ model, instructions: this.options.predictionPrompt,
+        workdir: value.journal.directory, history: [...value.journal.events], recentSuggestions, signal: bounded });
+      return { text: !bounded.aborted && current() ? text : null };
+    } catch (error) {
+      if (signal.aborted || controller.signal.aborted) return { text: null };
+      this.options.onError?.(error);
+      throw error;
+    } finally { if (value.prediction === controller) value.prediction = undefined; }
   }
   async updateQueue(scope: AssistantScope, itemId: string, action: JsonObject) {
     const value = await this.target(scope);
@@ -454,11 +486,13 @@ export class AssistantSessions implements AssistantSessionRuntime {
   async selectModel(scope: AssistantScope, selection: AssistantModelSelection) {
     const value = await this.target(scope);
     if ("url" in value) { await this.forward(value, scope.userId, "session/selectModel", { request: {sessionId:scope.sessionId,...selection} }); return; }
+    value.prediction?.abort();
     const next = value.mutation.then(async () => {
       let model = this.options.model;
       if (!this.options.models) {
         if (selection.provider !== this.options.model.provider || selection.model !== this.options.model.model) throw new Error("Unknown model");
       } else model = await this.options.models.resolve(selection);
+      value.prediction?.abort();
       await this.append(value, "assistant/model-selection", { selection });
       if (value.journal.state.status !== "running") await this.append(value, "request/context", { contextWindow: model.contextWindow });
     });
@@ -545,8 +579,8 @@ export class AssistantSessions implements AssistantSessionRuntime {
       }
     }
   }
-  private async forward(owner: AssistantOwner, userId: string, method: string, args: unknown) {
-    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.timeout(30000) });
+  private async forward(owner: AssistantOwner, userId: string, method: string, args: unknown, signal?: AbortSignal) {
+    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
     if (!response.ok) throw new Error(`Session owner returned ${response.status}`);
     const envelope = await response.json() as { result: { ok: boolean; value?: JsonObject; error?: { message: string } } };
     if (!envelope.result.ok) throw new Error(envelope.result.error?.message ?? "Session owner failed");
@@ -558,6 +592,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     for (const promise of this.owned.values()) {
       const value = await promise.catch(() => undefined);
       if (!value) continue;
+      value.prediction?.abort();
       value.stopping = true;
       try { await value.driver?.abort(); await value.working; await value.driver?.dispose(); await value.journal.flush(); }
       finally { await value.release(); }

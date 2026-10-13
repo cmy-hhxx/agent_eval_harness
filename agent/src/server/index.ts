@@ -11,7 +11,7 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime): Assistant
   };
   const requestOf = (payload: unknown) => object(object(payload).args ?? {});
   return {
-    async call(userId, endpoint, payload) {
+    async call(userId, endpoint, payload, signal) {
       const args = requestOf(payload), request = object(args.request ?? {});
       const scope = { userId, sessionId: String(request.sessionId ?? object(request.address ?? {}).sessionId ?? "") };
       switch (endpoint) {
@@ -28,6 +28,10 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime): Assistant
           return sessions.rename(scope, request.title.trim());
         }
         case "session/page": return sessions.page(scope, request.beforeSeq as number | undefined, request.maxMessages as number | undefined);
+        case "assistant/predict":
+          if (typeof request.sourceTurn !== "number" || !Number.isInteger(request.sourceTurn) || request.sourceTurn < 1 || !Array.isArray(request.recentSuggestions)
+            || request.recentSuggestions.length > 16 || request.recentSuggestions.some((text: unknown) => typeof text !== "string" || [...text].length > 60)) throw new Error("Invalid prediction request");
+          return sessions.predict(scope, request.sourceTurn, request.recentSuggestions, signal);
         case "assistant/toolResult":
           if (typeof request.callId !== "string" || !request.callId || request.callId.length > 256) throw new Error("Invalid tool call");
           return sessions.toolResult(scope, request.callId);

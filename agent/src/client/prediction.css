@@ -1,0 +1,32 @@
+.eris-prediction {
+  position: absolute;
+  inset: 4px 8px auto 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dsw-alias-label-caption);
+  font-family: var(--dsw-font-family);
+  pointer-events: none;
+  user-select: none;
+}
+.eris-prediction-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.eris-prediction kbd {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+}
+[data-input-scroll]:has(.eris-prediction) [data-composer-placeholder] {
+  visibility: hidden;
+}
+[data-composer-composing] ~ .eris-prediction {
+  visibility: hidden;
+}

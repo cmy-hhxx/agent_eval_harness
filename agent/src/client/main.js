@@ -30,6 +30,7 @@ import * as modelSelection from "@deepseek-ai/dsh-client-ui-model-selection/clie
 import * as modelFavorites from "./models.js";
 import * as analysisToolViews from "./tools.js";
 import * as erisBrand from "./brand.js";
+import * as prediction from "./prediction.js";
 import { contribution } from "../core/remote-contract.js";
 
 // All presentation, stores, subscriptions and transport are the upstream plugins.
@@ -43,7 +44,7 @@ await Promise.all([
   ctx.plugin(settingsGeneral, { technicalRows: false }),
   ...[
   session, workspace, fileUpload, settings, locale, shortcuts, resources,
-  layout, sidebar, erisBrand, uiSession, sidebarRight, chat, tool, trajectory, analysisToolViews, inputTriggers, commands, modelSelection, modelFavorites,
+  layout, sidebar, erisBrand, uiSession, sidebarRight, chat, tool, trajectory, analysisToolViews, inputTriggers, commands, modelSelection, modelFavorites, prediction,
   ].map((plugin) => ctx.plugin(plugin.default ?? plugin)),
 ]);
 await ctx.plugin(uiWorkspace, { allowFork: false, readOnlyWorkspace: true });

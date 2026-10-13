@@ -152,7 +152,6 @@ diff --git a/packages/client/ui-chat/src/client/chat/RunningStatus.tsx b/package
        </span>
      </div>
 diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
-index 5c7a8e3..12d47db 100644
 --- a/packages/client/ui-chat/src/client/contract/slots.ts
 +++ b/packages/client/ui-chat/src/client/contract/slots.ts
 @@ -11,7 +11,7 @@ import type {
@@ -420,7 +419,15 @@ diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/clie
    maxConcurrentFileUploads: z.natural().min(1).default(2),
  })
 
-@@ -457,7 +459,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+@@ -423,6 +425,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+     children: {
+       'conversation.input.attachments': { kind: 'single', scope: 'session-maybe' },
+       'conversation.input.overlay': { kind: 'list', scope: 'session' },
++      'conversation.input.prediction': { kind: 'single', scope: 'session' },
+       'conversation.input.permission': { kind: 'single', scope: 'session' },
+       'conversation.input.left': { kind: 'list', scope: 'session' },
+       'conversation.input.plan': { kind: 'single', scope: 'session' },
+@@ -457,7 +460,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
        const bridge = hostPathBridge()
        return {
          keyboard: shell,
@@ -495,7 +502,13 @@ diff --git a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx b
 diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
 --- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
 +++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
-@@ -417,7 +417,7 @@ export const InputBar = memo(function InputBar({
+@@ -414,10 +414,13 @@ export const InputBar = memo(function InputBar({
+           onWorkspaceKeyDown={onWorkspaceKeyDown}
+           hint={hint}
+           showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
++          prediction={sessionId === undefined ? null : renderSlot('conversation.input.prediction', {
++            editor, disabled: !editable || running || commandMenuOpen,
++          })}
          />
          <div ref={rowRef} className={css.row}>
            <div className={css.tools} hidden={activity}>
@@ -504,7 +517,7 @@ diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/
                <button
                  type="button"
                  className={css.add}
-@@ -430,7 +430,7 @@ export const InputBar = memo(function InputBar({
+@@ -430,7 +433,7 @@ export const InputBar = memo(function InputBar({
                >
                  <IconPlusOutlineMedium size={14} />
                </button>
@@ -815,7 +828,6 @@ diff --git a/packages/client/ui-workspace/src/client/shortcuts.ts b/packages/cli
      if (target === undefined) return { status: 'blocked', reason: t('shortcut.noSession') }
      if (target.blank) return { status: 'blocked', reason: t('shortcut.noCompletedTurn') }
 diff --git a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
-index aba740d..ce31590 100644
 --- a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
 +++ b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
 @@ -1,4 +1,4 @@
@@ -834,7 +846,6 @@ index aba740d..ce31590 100644
 
      token._open = open
 diff --git a/packages/client/ui-primitives/tests/markdown.client.spec.tsx b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
-index c655a00..c2a8ba7 100644
 --- a/packages/client/ui-primitives/tests/markdown.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
 @@ -2,13 +2,31 @@
@@ -884,7 +895,6 @@ index c655a00..c2a8ba7 100644
        ['**Notice:**内容', 'Notice:'],
        ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）'],
 diff --git a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
-index d543741..8ae4b1a 100644
 --- a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
 +++ b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
 @@ -294,7 +294,7 @@
@@ -905,7 +915,6 @@ index d543741..8ae4b1a 100644
  .previewName {
    display: block;
 diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
-index eec1a12..c33021a 100644
 --- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
 +++ b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
 @@ -42,6 +42,10 @@ export function registerChatNodeRenderers(
@@ -920,7 +929,6 @@ index eec1a12..c33021a 100644
    ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
      name: 'conversation.chat.node',
 diff --git a/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx b/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
-index 76ce74e..920c46f 100644
 --- a/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
 +++ b/packages/client/ui-chat/src/client/chat/AssistantNodeView.tsx
 @@ -1,13 +1,16 @@
@@ -963,7 +971,6 @@ index 76ce74e..920c46f 100644
    )
  })
 diff --git a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
-index 681e8f5..d96136b 100644
 --- a/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
 +++ b/packages/client/ui-primitives/src/markdown/MarkdownDelegate.tsx
 @@ -18,6 +18,8 @@ export interface MarkdownDelegate {
@@ -1016,7 +1023,6 @@ index 681e8f5..d96136b 100644
      <MarkdownDelegateContext.Provider value={delegate}>
        {children}
 diff --git a/packages/client/ui-primitives/src/markdown/render.tsx b/packages/client/ui-primitives/src/markdown/render.tsx
-index cdb9afc..c18365f 100644
 --- a/packages/client/ui-primitives/src/markdown/render.tsx
 +++ b/packages/client/ui-primitives/src/markdown/render.tsx
 @@ -24,10 +24,11 @@ import type {} from 'mdast-util-math'
@@ -1066,7 +1072,6 @@ index cdb9afc..c18365f 100644
    return (
      <a
 diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
-index a76b58d..7ab25f3 100644
 --- a/packages/client/ui-primitives/src/index.ts
 +++ b/packages/client/ui-primitives/src/index.ts
 @@ -42,9 +42,6 @@ export { RiskConfirmation } from './RiskConfirmation.tsx'
@@ -1172,7 +1177,6 @@ diff --git a/packages/client/ui-chat/src/client/chat/AssistantMarkdown.tsx b/pac
 
 diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
 new file mode 100644
-index 0000000..0a8edfa
 --- /dev/null
 +++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
 @@ -0,0 +1,116 @@
@@ -1331,3 +1335,54 @@ diff --git a/packages/client/ui-chat/tests/reasoning-row.client.spec.tsx b/packa
    it.each([
      ['', ''],
      ['An unfinished line', ''],
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -1,5 +1,6 @@
+ /** Target-neutral Conversation slot declarations and composed component props. */
+ import type { ReactNode, RefObject } from 'react'
++import type { LexicalEditor } from 'lexical'
+ import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+ import type { SessionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
+ import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/client'
+@@ -195,6 +196,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     'conversation.input.dock': { kind: 'list'; scope: 'session'; owner: InputZone }
+     /** Floating entries rendered inside the resident composer card. */
+     'conversation.input.overlay': { kind: 'list'; scope: 'session' }
++    /** Application-owned draft prediction, sharing the composer's editor and lock state. */
++    'conversation.input.prediction': {
++      kind: 'single'
++      scope: 'session'
++      owner: { editor: LexicalEditor | null; disabled: boolean }
++    }
+     /** Ambient entries below the composer card. */
+     'conversation.composer.dock': { kind: 'list'; scope: 'session' }
+     /** Compact controls at the left of the composer tool row. */
+diff --git a/packages/client/ui-conversation/src/client/input/editor/DraftEditor.tsx b/packages/client/ui-conversation/src/client/input/editor/DraftEditor.tsx
+--- a/packages/client/ui-conversation/src/client/input/editor/DraftEditor.tsx
++++ b/packages/client/ui-conversation/src/client/input/editor/DraftEditor.tsx
+@@ -21,6 +21,7 @@ export interface DraftEditorProps {
+   readonly onWorkspaceKeyDown: KeyboardEventHandler<HTMLDivElement>
+   readonly hint: string | null
+   readonly showPlaceholder: boolean
++  readonly prediction?: ReactNode
+ }
+
+ /**
+@@ -30,7 +31,7 @@ export interface DraftEditorProps {
+  */
+ export function DraftEditor({
+   classNames: css, editor, scrollRef, editable, editorDisabled, phase, placeholderText, ariaLabel,
+-  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder,
++  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder, prediction,
+ }: DraftEditorProps): ReactNode {
+   return (
+     <div ref={scrollRef} className={css.scroll} data-input-scroll>
+@@ -57,6 +58,7 @@ export function DraftEditor({
+           </div>
+         )}
+         <DecoratorPortals editor={workspaceTrigger ? null : editor} />
++        {prediction}
+       </div>
+     </div>
+   )

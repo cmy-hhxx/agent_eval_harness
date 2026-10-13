@@ -1,5 +1,6 @@
 /** Target-neutral Conversation slot declarations and composed component props. */
 import type { ReactNode, RefObject } from 'react'
+import type { LexicalEditor } from 'lexical'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/client'
@@ -195,6 +196,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'conversation.input.dock': { kind: 'list'; scope: 'session'; owner: InputZone }
     /** Floating entries rendered inside the resident composer card. */
     'conversation.input.overlay': { kind: 'list'; scope: 'session' }
+    /** Application-owned draft prediction, sharing the composer's editor and lock state. */
+    'conversation.input.prediction': {
+      kind: 'single'
+      scope: 'session'
+      owner: { editor: LexicalEditor | null; disabled: boolean }
+    }
     /** Ambient entries below the composer card. */
     'conversation.composer.dock': { kind: 'list'; scope: 'session' }
     /** Compact controls at the left of the composer tool row. */

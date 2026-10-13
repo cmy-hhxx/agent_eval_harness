@@ -138,25 +138,23 @@ test("Eris keeps a compact policy and explicit tool interfaces", () => {
   assert.match(toolDescriptions.list_data, /非独立样本.*不能.*统计显著/);
   assert.match(systemPrompt, /总结、报告、表格.*对话展示，不生成下载链接/);
   assert.match(systemPrompt, /来源只写名称和日期，不附第三方链接/);
-  assert.match(systemPrompt, /正文只补充图中没有的关键证据、责任定位或判断边界/);
-  assert.match(systemPrompt, /不再列对照表，不复述问题、双方答案、图中结论/);
+  assert.match(toolDescriptions.show_comparison, /正文只补图外关键证据、责任或边界，不重列表格复述图/);
   assert.match(systemPrompt, /只有要求明确不约束该候选时才写“不适用”/);
   assert.match(systemPrompt, /没有出现某个错误写“未见同类问题”，材料不足写“待核验”，未记录写“未知”/);
   assert.match(systemPrompt, /相对胜方也可能有错误/);
   assert.match(systemPrompt, /哪一方.*哪一步.*证据.*影响/);
-  assert.match(systemPrompt, /核验后作图收尾/);
+  assert.match(systemPrompt, /按任务范围收尾/);
   assert.match(systemPrompt, /责任归到材料能支持的环节/);
   assert.match(systemPrompt, /真实标准答案.*标准值或要求.*双方实际答案以及差距/);
   assert.match(systemPrompt, /没有标准答案.*仅在影响理解处简提一次/);
   assert.match(systemPrompt, /不在首尾重复免责声明/);
-  assert.match(systemPrompt, /用户问了什么→回答给了什么→对用户有什么用/);
-  assert.match(systemPrompt, /一句依据＋一个明确影响/);
+  assert.match(toolDescriptions.show_comparison, /一句依据＋一个明确影响/);
   assert.doesNotMatch(systemPrompt, /核验发现|回答处理|判断影响|论证链/);
   assert.match(systemPrompt, /不因胜方而降级已确认错误/);
   assert.match(systemPrompt, /依据缺口不等于预测必错/);
   assert.match(systemPrompt, /材料与正式结论冲突时明示/);
   assert.match(systemPrompt, /已确认遗漏必要核验属于问题/);
-  assert.match(systemPrompt, /最终正文可为空/);
+  assert.match(toolDescriptions.show_comparison, /最终正文可为空/);
   assert.match(toolDescriptions.read_evidence, /同一回答批量取、跨回答并行/);
   assert.match(toolDescriptions.read_evidence, /截断不是完整证据/);
   assert.match(toolDescriptions.read_evidence, /全量否定前，相关节点必须读完整/);
@@ -190,7 +188,7 @@ test("Eris keeps a compact policy and explicit tool interfaces", () => {
   assert.match(toolDescriptions.call_specialist, /同档/);
   assert.match(toolDescriptions.list_data, /formalComparisonStats/);
   assert.match(toolDescriptions.list_data, /problemDimensions.*已确认 established.*待核验 uncertain/);
-  assert.match(systemPrompt, /先区分全局或单场/);
+  assert.match(systemPrompt, /先区分总览、批量分析或单例详析/);
   assert.match(systemPrompt, /不加载或展示链路地图，不展开个案/);
   assert.match(toolDescriptions.list_data, /comparisons/);
   assert.match(toolDescriptions.search_web, /queries/);
@@ -215,6 +213,18 @@ test("Eris keeps a compact policy and explicit tool interfaces", () => {
   assert.match(toolDescriptions.show_chart, /守恒无环流量/);
   assert.match(toolDescriptions.show_chart, /不生成置信带/);
   assert(recoveryMessage.length > 0);
+});
+
+test("Eris favors batch synthesis and short attribution follow-ups", () => {
+  const { systemPrompt, predictionPrompt, toolDescriptions } = erisPrompt(["show_comparison", "show_chart"]);
+  assert.match(systemPrompt, /批量分析：.*共性、差异、影响与改进，默认用紧凑表或短段落/);
+  assert.match(systemPrompt, /读取多个案例不等于需要逐题作图/);
+  assert.match(toolDescriptions.show_comparison, /适合单例详析.*批量分析优先用正文归纳/);
+  assert.match(toolDescriptions.show_chart, /批量案例按需汇总作图/);
+  assert.match(predictionPrompt, /重心是对被评回答做归因/);
+  assert.match(predictionPrompt, /从已有答案与证据中选一个尚未讲清的原因，不预设责任环节/);
+  assert.match(predictionPrompt, /通常10–20字，只问一个点/);
+  assert.match(predictionPrompt, /用户明确换题时跟随新意图/);
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {

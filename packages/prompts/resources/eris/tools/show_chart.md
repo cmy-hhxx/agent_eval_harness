@@ -1,6 +1,6 @@
 展示真实数据的统计图，成功后由界面自动放在本轮回答开头，正文不写图表引用。同轮相同统计来源、图形与指标的修订只显示最新成功图。
 
-两组对战用一张 heatmap，unit="场"；categories 为 Fast、Expert，四个 series 是 A组胜、B组胜、双方都好、双方都差；保留分档场数，不混成总排名。单题用 show_comparison。
+两组对战用一张 heatmap，unit="场"；categories 为 Fast、Expert，四个 series 是 A组胜、B组胜、双方都好、双方都差；保留分档场数，不混成总排名。批量案例按需汇总作图；show_comparison 更适合单例详析。
 
 选择能清楚回答问题的图：
 - 数值与差距：用 heatmap 逐项比较，频数矩阵用 bubble_matrix。

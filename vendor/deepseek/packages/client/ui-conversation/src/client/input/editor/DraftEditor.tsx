@@ -21,6 +21,7 @@ export interface DraftEditorProps {
   readonly onWorkspaceKeyDown: KeyboardEventHandler<HTMLDivElement>
   readonly hint: string | null
   readonly showPlaceholder: boolean
+  readonly prediction?: ReactNode
 }
 
 /**
@@ -30,7 +31,7 @@ export interface DraftEditorProps {
  */
 export function DraftEditor({
   classNames: css, editor, scrollRef, editable, editorDisabled, phase, placeholderText, ariaLabel,
-  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder,
+  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder, prediction,
 }: DraftEditorProps): ReactNode {
   return (
     <div ref={scrollRef} className={css.scroll} data-input-scroll>
@@ -57,6 +58,7 @@ export function DraftEditor({
           </div>
         )}
         <DecoratorPortals editor={workspaceTrigger ? null : editor} />
+        {prediction}
       </div>
     </div>
   )

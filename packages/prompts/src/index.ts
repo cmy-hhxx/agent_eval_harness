@@ -101,6 +101,6 @@ export function erisPrompt(toolNames: string[]) {
     if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new Error(`Invalid Eris tool name: ${name}`);
     return [name, resource(`eris/tools/${name}.md`)];
   }));
-  return { systemPrompt: resource("eris/system.md"), recoveryMessage: resource("eris/recovery.md"),
+  return { systemPrompt: resource("eris/system.md"), predictionPrompt: resource("eris/prediction.md"), recoveryMessage: resource("eris/recovery.md"),
     failureSummaryMessage: resource("eris/tool-failure.md"), toolDescriptions };
 }

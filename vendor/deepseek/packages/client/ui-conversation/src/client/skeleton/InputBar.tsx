@@ -414,6 +414,9 @@ export const InputBar = memo(function InputBar({
           onWorkspaceKeyDown={onWorkspaceKeyDown}
           hint={hint}
           showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
+          prediction={sessionId === undefined ? null : renderSlot('conversation.input.prediction', {
+            editor, disabled: !editable || running || commandMenuOpen,
+          })}
         />
         <div ref={rowRef} className={css.row}>
           <div className={css.tools} hidden={activity}>
