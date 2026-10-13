@@ -16,10 +16,14 @@ export interface PredictionOptions {
 /** Only visible dialogue and accepted visual receipts; never replay tools or private reasoning. */
 export function predictionContext(history: readonly AssistantEvent[]) {
   const textOf = (content: unknown) => assistantContent(content as JsonObject[]).filter(block => block.type === "text").map(block => String(block.text)).join("").trim();
-  const requestText = (event: AssistantEvent | undefined) => event ? [...textOf(event.data.content)].slice(0, 2400).join("") : "";
+  const excerpt = (text: string) => {
+    const chars = [...text];
+    return { text: chars.slice(0, 2400).join(""), truncated: chars.length > 2400 };
+  };
+  const requestText = (event: AssistantEvent | undefined) => excerpt(event ? textOf(event.data.content) : "");
   const initialRequest = requestText(history.find(event => event.type === "user/message"));
   const currentRequest = requestText(history.findLast(event => event.type === "user/message"));
-  const messages: { role: string; text: string }[] = [];
+  const messages: { role: string; text: string; truncated: boolean }[] = [];
   for (let index = history.length - 1; index >= 0 && messages.length < 10; index--) {
     const event = history[index];
     if (!["user/message", "assistant/message", "tool/result"].includes(event.type)) continue;
@@ -33,15 +37,14 @@ export function predictionContext(history: readonly AssistantEvent[]) {
         text = JSON.stringify(receipt);
       } catch { continue; }
     }
-    if (text) messages.push({ role: event.type === "user/message" ? "user" : "assistant", text: [...text].slice(0, 2400).join("") });
+    if (text) messages.push({ role: event.type === "user/message" ? "user" : "assistant", ...excerpt(text) });
   }
   return { initialRequest, currentRequest, dialogue: messages.reverse() };
 }
 
 export function predictionText(text: string, previous: readonly string[]): string | null {
   const value = text.trim();
-  if ([...value].length < 4 || [...value].length > 60 || /[\r\n`<>]|^[/#\[{"“]|^(?:[-*•]|\d+[.)])\s|^(?:建议|下一步|预测)[:：]/u.test(value)) return null;
-  if ((value.match(/[。！？!?]/g) ?? []).length > 1) return null;
+  if (!value || [...value].length > 1024 || /[\r\n`<>]|^[/#\[{"“]|^(?:[-*•]|\d+[.)])\s/u.test(value)) return null;
   if (/^(?:none|null|无建议|暂无建议|没有建议|保持沉默)$/i.test(value)) return null;
   const identity = (input: string) => input.replace(/[\s\p{P}]/gu, "").toLocaleLowerCase();
   if (previous.some(item => identity(item) === identity(value))) return null;
@@ -77,5 +80,5 @@ export async function createPiPrediction(options: PredictionOptions): Promise<st
   options.signal.throwIfAborted();
   if (response.stopReason !== "stop") throw new Error(response.errorMessage ?? `Prediction ended: ${response.stopReason}`);
   return predictionText(response.content.filter(block => block.type === "text").map(block => block.text).join(""),
-    [...options.recentSuggestions, context.initialRequest, ...context.dialogue.filter(message => message.role === "user").map(message => message.text)]);
+    [...options.recentSuggestions, context.initialRequest.text, ...context.dialogue.filter(message => message.role === "user").map(message => message.text)]);
 }

@@ -184,11 +184,15 @@ test("web reader validates every DNS address and rejects mixed public/private an
   }
 });
 
-test("web reader confirms only recognized proxy Fake-IP answers using public DNS and validates the replacement", async () => {
+for (const localAddresses of [
+  [{ address: "198.18.0.31", family: 4 }, { address: "2001:2::21", family: 6 }],
+  [{ address: "192.168.0.133", family: 4 }, { address: "192.168.205.22", family: 4 }],
+  [address, { address: "198.18.0.31", family: 4 }],
+]) test(`web reader verifies non-public DNS answers independently before connecting: ${localAddresses[0].address}`, async () => {
   let publicQueries = 0;
   let connections = 0;
   const tool = reader("safe text", "text/plain", {
-    lookup: async () => [{ address: "198.18.0.31", family: 4 }, { address: "2001:2::21", family: 6 }],
+    lookup: async () => localAddresses,
     publicLookup: async (hostname, requestSignal) => { publicQueries++; assert.equal(hostname, "example.com"); assert.equal(requestSignal.aborted, false); return [address]; },
     download: async (_url, validated) => { connections++; assert.deepEqual(validated, address); return { statusCode: 200, headers: { "content-type": "text/plain" }, body: body("safe text") }; },
   });
@@ -197,12 +201,27 @@ test("web reader confirms only recognized proxy Fake-IP answers using public DNS
   assert.equal(connections, 1);
   assert.equal(result.lines[0].text, "safe text");
   assert.equal(result.limitations.length, 0, "a successful DNS route is not a content limitation");
-  const rejected = reader("unused", "text/plain", { lookup: async () => [{ address: "198.18.0.31", family: 4 }], publicLookup: async () => [{ address: "127.0.0.1", family: 4 }] });
-  await assert.rejects(rejected.read({ url: "https://example.com/file" }, signal()), /DNS/);
   for (const bad of ["127.0.0.1", "10.0.0.1", "2001:2:1::1"]) {
-    const ordinaryPrivate = reader("unused", "text/plain", { lookup: async () => [{ address: bad, family: bad.includes(":") ? 6 : 4 }], publicLookup: async () => { throw new Error("must not query"); } });
-    await assert.rejects(ordinaryPrivate.read({ url: "https://example.com/file" }, signal()), (error: Error) => /DNS 不能/.test(error.message));
+    const privateAddress = { address: bad, family: bad.includes(":") ? 6 : 4 };
+    const rejected = reader("unused", "text/plain", { lookup: async () => localAddresses, publicLookup: async () => [privateAddress],
+      download: async () => { assert.fail("must not connect to a private address"); } });
+    await assert.rejects(rejected.read({ url: "https://example.com/file" }, signal()), /DNS 不能/);
   }
+});
+
+test("web reader tries another validated address when a connection fails and preserves error codes", async () => {
+  const second = { address: "93.184.216.35", family: 4 };
+  const attempts: string[] = [];
+  const tool = reader("safe", "text/plain", { lookup: async () => [address, second], download: async (_url, target) => {
+    attempts.push(target.address);
+    if (target === address) throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+    return { statusCode: 200, headers: { "content-type": "text/plain" }, body: body("safe") };
+  } });
+  assert.equal((await tool.read({ url: "https://example.com/file" }, signal())).lines[0].text, "safe");
+  assert.deepEqual(attempts, [address.address, second.address]);
+  const failed = reader("", "text/plain", { download: async () => { throw Object.assign(new Error("sensitive details"), { code: "ECONNRESET" }); } });
+  await assert.rejects(failed.read({ url: "https://example.com/file" }, signal()), (error: Error) =>
+    /网络请求失败.*example.com.*ECONNRESET/.test(error.message) && !error.message.includes("sensitive details"));
 });
 
 test("web reader bounds page titles separately from the body text budget", async () => {

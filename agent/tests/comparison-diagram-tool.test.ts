@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { erisComparisonCheck } from "@eval/prompts";
 import type { AssistantSource, JsonObject } from "@eval/contracts";
 import { erisTools, type ErisDependencies } from "../src/core/tools.js";
 
@@ -88,7 +89,7 @@ test("contradictory conclusions cannot publish or terminate before correction", 
   const before = structuredClone(args);
   const result = await tool.execute(args, { ...context, async complete(request) {
     assert.deepEqual(JSON.parse(request.text), args, "all titles, impacts, facts and counterfacts are checked together");
-    assert.match(request.systemPrompt, /未知不等于否定/);
+    assert.equal(request.systemPrompt, erisComparisonCheck);
     return { ...checked, text: JSON.stringify({ issues: [issue] }) };
   } });
   assert.equal(result.isError, true);

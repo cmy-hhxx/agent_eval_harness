@@ -30,7 +30,7 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime): Assistant
         case "session/page": return sessions.page(scope, request.beforeSeq as number | undefined, request.maxMessages as number | undefined);
         case "assistant/predict":
           if (typeof request.sourceTurn !== "number" || !Number.isInteger(request.sourceTurn) || request.sourceTurn < 1 || !Array.isArray(request.recentSuggestions)
-            || request.recentSuggestions.length > 16 || request.recentSuggestions.some((text: unknown) => typeof text !== "string" || [...text].length > 60)) throw new Error("Invalid prediction request");
+            || request.recentSuggestions.length > 16 || request.recentSuggestions.some((text: unknown) => typeof text !== "string" || [...text].length > 1024)) throw new Error("Invalid prediction request");
           return sessions.predict(scope, request.sourceTurn, request.recentSuggestions, signal);
         case "assistant/toolResult":
           if (typeof request.callId !== "string" || !request.callId || request.callId.length > 256) throw new Error("Invalid tool call");

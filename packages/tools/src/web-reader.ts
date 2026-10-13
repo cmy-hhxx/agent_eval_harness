@@ -120,16 +120,12 @@ async function defaultDownload(url: URL, address: ResolvedAddress, signal: Abort
   });
 }
 
-function proxyFakeAddress(address: string): boolean {
-  if (isIP(address) === 4) {
-    const [a, b] = address.split(".").map(Number); return a === 198 && (b === 18 || b === 19);
-  }
-  if (isIP(address) !== 6) return false;
-  const fields = address.split(":");
-  return parseInt(fields[0], 16) === 0x2001 && parseInt(fields[1], 16) === 2 && parseInt(fields[2] || "0", 16) === 0;
+function networkErrorCode(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
 }
 
-/** Resolve only recognized proxy Fake-IP answers via a fixed public HTTPS resolver. */
+/** Resolve non-public local DNS answers independently, then validate and pin the public replacement. */
 async function defaultPublicLookup(hostname: string, callerSignal: AbortSignal): Promise<ResolvedAddress[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -326,7 +322,7 @@ async function htmlDocument(input: ParserInput): Promise<ParsedDocument> {
       element.prepend("\n"); element.append("\n");
     }
     const bounded = boundLines(normalizeLines(content.textContent ?? "").map((text) => ({ text })), input.maxTextChars);
-    if (!bounded.lines.length) throw new Error("读取网页没有可提取正文；页面可能需要 JavaScript、登录或由图片组成。不要重试本页，改用搜索结果里的 PDF；没有 PDF 候选时重新搜索并在 query 加 filetype:pdf");
+    if (!bounded.lines.length) throw new Error("读取网页没有可提取正文；页面可能需要 JavaScript 验证、登录或由图片组成");
     if (bounded.lines.some((line) => /\bloading\s+(?:component|content|data|chart|table)\b(?:\s*[.…])?|(?:正在加载(?:组件|内容|数据|图表|表格)|加载中)[.…]/i.test(line.text)))
       limitations.push(`当前静态正文含客户端加载占位，相关内容未加载，无法据此核定缺失数据；${links.length ? "可继续读取返回的报告或附件链接" : "需另查可读取的报告正文或附件"}。`);
     if (bounded.truncated) limitations.push(`正文超过 ${input.maxTextChars} 字符，已截断；后续行不包含在本次结果中。`);
@@ -477,18 +473,23 @@ export function createWebReader(options: WebReaderOptions = {}): WebReader {
             const hostname = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
             let addresses: ResolvedAddress[];
             try { addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname); }
-            catch { throw new Error("读取公共地址 DNS 解析失败；该域名当前不可达，改用搜索结果里的 PDF，或重新搜索并在 query 加 filetype:pdf"); }
+            catch (error) { throw new Error(`读取公共地址 DNS 解析失败（${hostname}，${networkErrorCode(error)}）`); }
             controller.signal.throwIfAborted();
-            if (publicLookup && !isIP(hostname) && addresses.length && addresses.every((address) => proxyFakeAddress(address.address))) {
+            if (publicLookup && !isIP(hostname) && addresses.some((address) => !publicAddress(address.address))) {
               try { addresses = await publicLookup(hostname, controller.signal); }
-              catch { throw new Error("读取检测到代理 Fake-IP，但公共 DNS 核验失败"); }
+              catch { throw new Error(`读取本机 DNS 返回非公网地址，公共 DNS 核验失败（${hostname}）`); }
               controller.signal.throwIfAborted();
             }
             if (!addresses.length || addresses.some((address) => !publicAddress(address.address) || isIP(address.address) !== address.family))
               throw new Error("读取 DNS 不能指向私有、保留或本机网络");
-            let response: WebDownload;
-            try { response = await download(url, addresses[0], controller.signal); }
-            catch { throw new Error("读取公共网页网络请求失败"); }
+            let response: WebDownload | undefined;
+            const errors = new Set<string>();
+            for (const address of addresses) {
+              controller.signal.throwIfAborted();
+              try { response = await download(url, address, controller.signal); break; }
+              catch (error) { controller.signal.throwIfAborted(); errors.add(networkErrorCode(error)); }
+            }
+            if (!response) throw new Error(`读取公共网页网络请求失败（${hostname}，${[...errors].join("、")}）`);
             if (controller.signal.aborted) { response.destroy?.(); controller.signal.throwIfAborted(); }
             if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
               response.destroy?.();

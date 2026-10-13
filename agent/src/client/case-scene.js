@@ -85,7 +85,7 @@ function ModelScene({ answer, question, group }) {
       h('span', { style: { marginLeft: 10, fontSize: 11, fontWeight: 400, color: '#888' } }, `${nodes.length} 个节点 · ${trace?.toolCalls ?? 0} 次工具调用`)),
     expanded && node ? h('div', { 'data-case-workspace': true, style: { display: 'grid', gridTemplateColumns: '240px minmax(0, 1fr)', gap: 10, paddingBottom: 6, alignItems: 'start' } },
       h(TraceFlow, { nodes, finalIndex: trace.finalMessageIndex, selected, onSelect: setSelected, modelName: answer.modelName }),
-      h('div', { ref: evidence, 'data-case-evidence': true, tabIndex: 0, role: 'region', 'aria-label': `${answer.modelName}节点证据滚动区`, style: { minWidth: 0, minHeight: 0, alignSelf: 'stretch', contain: 'size', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarGutter: 'stable', color: '#202B36', paddingRight: 3 } },
+      h('div', { ref: evidence, 'data-case-evidence': true, tabIndex: 0, role: 'region', 'aria-label': `${answer.modelName}节点证据滚动区`, style: { minWidth: 0, minHeight: 'min(212px, 40vh)', maxHeight: 'min(560px, 65vh)', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarGutter: 'stable', color: '#202B36', paddingRight: 3 } },
         h('strong', { style: { display: 'block', fontSize: 13, lineHeight: 1.6 } }, `#${node.messageIndex} · ${traceLabel(node, trace.finalMessageIndex)}`),
         h(EvidenceLocation, { key: node.messageIndex, answer, node }),
         callIndex >= 0 ? h('button', { type: 'button', onClick: () => setSelected(callIndex), style: { cursor: 'pointer', marginTop: 6, padding: 0, color: '#666', background: 'none', border: 0, textDecoration: 'underline', fontSize: 12 } }, `来自调用 #${node.callMessageIndex}`) : null,

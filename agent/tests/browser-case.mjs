@@ -80,15 +80,17 @@ try {
   assert.doesNotMatch(await models.first().locator('svg[data-trace-flow]').textContent(), /源记录|字符/);
   assert.equal(await models.first().locator('[data-flow-edge=order]').count(), 10);
   assert.equal(await models.first().locator('[data-flow-edge=call][data-from="1"][data-to="2"]').count(), 1);
-  const overview = await models.first().locator('svg[data-trace-flow]').evaluate(svg => {
-   const pane = svg.parentElement, bounds = pane.getBoundingClientRect();
-   return { scrollable: pane.scrollHeight > pane.clientHeight + 1, clipped: [...svg.querySelectorAll('g[role=button]')].filter(node => {
-    const box = node.getBoundingClientRect(); return box.top < bounds.top || box.bottom > bounds.bottom;
-   }).map(node => node.getAttribute('aria-label')), fontSize: parseFloat(getComputedStyle(svg.querySelector('foreignObject div')).fontSize) };
+  const overview = await models.first().locator('[data-trace-viewport]').evaluate(pane => {
+   const bounds = pane.getBoundingClientRect(), selected = pane.querySelector('[aria-pressed=true]').getBoundingClientRect();
+   return { height: bounds.height, scrollable: pane.scrollHeight > pane.clientHeight + 1,
+    selectedVisible: selected.top >= bounds.top + 20 && selected.bottom <= bounds.bottom,
+    nodes: pane.querySelectorAll('[role=button]').length,
+    fontSize: parseFloat(getComputedStyle(pane.querySelector('foreignObject div')).fontSize) };
   });
-  assert.deepEqual(overview.clipped, [], 'the complete chain stays inside the flow area after selecting a node');
-  assert.equal(overview.scrollable, false, 'the flow does not add a nested scroll area');
-  assert(overview.fontSize >= 13, 'showing the whole chain does not shrink its labels');
+  assert(overview.height <= 240, 'short evidence keeps the scene compact instead of stretching to the whole chain');
+  assert(overview.scrollable && overview.selectedVisible, 'the compact flow keeps the selected node visible');
+  assert.equal(overview.nodes, 11, 'compact presentation retains every node');
+  assert(overview.fontSize >= 13, 'compact presentation does not shrink labels');
   const connector = await models.first().locator('[data-flow-edge=call]').evaluate(edge => {
    const svg = edge.closest('svg'), from = svg.querySelector('[aria-label^="#1 "] rect'), to = svg.querySelector('[aria-label^="#2 "] rect');
    const start = edge.getPointAtLength(0), end = edge.getPointAtLength(edge.getTotalLength());
@@ -118,9 +120,9 @@ try {
   const panels = await models.first().locator('[data-case-workspace]').evaluate(workspace => {
    const flow = workspace.querySelector('[data-trace-flow]').parentElement.getBoundingClientRect();
    const evidence = workspace.querySelector('[data-case-evidence]').getBoundingClientRect();
-   return { topGap: evidence.top - flow.top, bottomGap: flow.bottom - evidence.bottom, flowHeight: flow.height };
+   return { topGap: evidence.top - flow.top, flowHeight: flow.height, evidenceHeight: evidence.height };
   });
-  assert(Math.abs(panels.topGap) <= 1 && Math.abs(panels.bottomGap) <= 1, 'long evidence uses the full flow height without blank space below it: ' + JSON.stringify(panels));
+  assert(Math.abs(panels.topGap) <= 1 && panels.evidenceHeight > overview.height && panels.flowHeight <= panels.evidenceHeight + 1, 'long evidence expands the scene while the flow stays within it: ' + JSON.stringify(panels));
   assert(panels.flowHeight < 600, 'long evidence does not stretch the compact flow');
   await models.first().getByRole('button', { name: '#4 Reasoning', exact: true }).click();
   await models.first().getByText('源记录未提供推理正文或摘要', { exact: true }).waitFor();
@@ -303,6 +305,7 @@ try {
   return selected.top >= box.top + 20 && selected.bottom <= box.bottom && el.scrollTop < 100;
  }), 'source navigation brings the selected node below the sticky legend');
  assert.equal(await longModel.locator('[data-case-evidence]').evaluate(el => el.scrollTop), 0, 'a different node starts at the top of its evidence');
+ assert(await pane.evaluate(el => el.clientHeight <= 240), 'returning to a short call shrinks the scene after long evidence');
  await page.setViewportSize({ width: 1024, height: 720 });
  assert(await pane.evaluate(el => el.clientHeight <= innerHeight * .65 + 1));
  await longScene.locator('[data-case-model]').nth(1).locator('summary').first().click();

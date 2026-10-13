@@ -6,14 +6,14 @@
       "runId": {
         "type": "string",
         "minLength": 1,
-        "description": "省略时列评测运行和 currentRun 的统计计数；提供时按 view 分页列目录。summary 仅含整轮计数，不含整批判词。必须是真实运行标识，不是路径；未知时先调用 list_data({})。",
+        "description": "省略时列运行与 currentRun 的统计计数；提供真实运行标识时按 view 读取该运行。summary 只含整轮计数，不含整批判词。",
         "maxLength": 181,
         "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$"
       },
       "query": {
         "type": "string",
         "minLength": 1,
-        "description": "可选字面文本筛选词，不是数据类别；inputs 搜索标识与模型名，comparisons 搜索原问、模型和正式判词。档位和胜负用 comparisonTier、outcome 精确筛选，不用中文标签搜索。查看目录时省略。"
+        "description": "字面文本筛选：inputs 搜标识与模型名，comparisons 搜原问、模型和正式判词。档位与胜负可用 comparisonTier、outcome 精确筛选。"
       },
       "comparisonTier": {
         "type": "string",
@@ -28,11 +28,11 @@
           "both_bad",
           "all"
         ],
-        "description": "comparisons 精确筛选胜负：win 有胜负，both_bad 双方都差，both_good 双方都好，all 全部。省略时排除双方都好，统计分母不变；仅用户明确要看好例或全部结果时包含 both_good。"
+        "description": "comparisons 筛选胜负：win 有胜负，both_bad 双方都差，both_good 双方都好，all 全部。省略时排除双方都好，统计分母不变。"
       },
       "includeAnalysis": {
         "type": "boolean",
-        "description": "批量总结设 true：同页返回完整原问、双方评测摘要、问题维度、胜负理由及取舍，不加载原始答案或链路；按 nextOffset 续页，无需逐场 read_data。"
+        "description": "true 时同页返回完整原问、双方评测摘要、问题维度、胜负理由及取舍，不加载原始答案或链路；按 nextOffset 续页。"
       },
       "offset": {
         "type": "integer",
@@ -55,7 +55,7 @@
       },
       "sample": {
         "type": "boolean",
-        "description": "comparisons 随机抽取不同题目；再找一个时配合 excludeCases 排除已展示题目，不能用 offset+1 代替换题。"
+        "description": "comparisons 随机抽取不同题目；excludeCases 可排除已展示题目。"
       },
       "excludeCases": {
         "type": "array",
@@ -248,13 +248,13 @@
                 "minLength": 1,
                 "maxLength": 181,
                 "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                "description": "用户已给出 runId 时直接使用；未知时才调用 list_data，不是文件路径。"
+                "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
               },
               "query": {
                 "type": "string",
                 "minLength": 1,
                 "pattern": "\\S",
-                "description": "原问中的连续关键词，优先用它定位，避免抄写 taskId。"
+                "description": "原问中的连续关键词，用于定位对战。"
               },
               "comparisonTier": {
                 "type": "string",
@@ -277,7 +277,7 @@
                 "minLength": 1,
                 "maxLength": 181,
                 "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+                "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
               },
               "inputId": {
                 "type": "string",
@@ -318,7 +318,7 @@
       },
       "review": {
         "type": "boolean",
-        "description": "事实复核设true：提供完整原问、答案和originalVerdicts原胜负；按争议实体搜索原文，不预载节点清单或旧评语。界面仍可展开完整链路。"
+        "description": "true 时返回完整原问、答案和 originalVerdicts 原胜负，不预载旧评语与节点目录；界面仍可展开完整链路。"
       }
     },
     "required": [
@@ -338,7 +338,7 @@
             "minLength": 1,
             "maxLength": 181,
             "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
           },
           "inputId": {
             "type": "string",
@@ -403,7 +403,7 @@
           "summary",
           "details"
         ],
-        "description": "仅正式结果使用：summary 返回 comparisonScope 及状态、标准答案与证据坐标，不重复底层评语；details 按字符分页读取完整结果。事实复核不回读旧评语。"
+        "description": "正式结果的 summary 返回 comparisonScope 及状态、标准答案与证据坐标；details 按字符分页读取完整结果。"
       },
       "reference": {
         "type": "object",
@@ -414,7 +414,7 @@
             "minLength": 1,
             "maxLength": 181,
             "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
           },
           "inputId": {
             "type": "string",
@@ -467,7 +467,7 @@
       "offset": {
         "type": "integer",
         "minimum": 0,
-        "description": "顶层字段，与 reference 同级；不要写进 reference。"
+        "description": "顶层分页偏移，与 reference 同级。"
       },
       "limit": {
         "type": "integer",
@@ -562,7 +562,7 @@
             "minLength": 1,
             "maxLength": 181,
             "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
           },
           "inputId": {
             "type": "string",
@@ -575,7 +575,7 @@
         ]
       },
       "query": {
-        "description": "单个查询或1–8个独立查询；复核先搜争议实体名称。空格分词要求同一来源全部包含，不是语义搜索。",
+        "description": "单个查询或1–8个独立查询；空格分词要求同一来源全部包含，不是语义搜索。",
         "oneOf": [
           {
             "type": "string",
@@ -628,7 +628,7 @@
     "properties": {
       "queries": {
         "type": "array",
-        "description": "1–4条明确查询计划；单一事实默认只发1条精准查询，多个独立缺口才合并互补查询。",
+        "description": "1–4条独立搜索查询。",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -641,7 +641,7 @@
               "minLength": 1,
               "pattern": "\\S",
               "maxLength": 500,
-              "description": "必填；写明机构或公司 + 期间 + 指标口径。"
+              "description": "搜索关键词或问题。"
             },
             "domains": {
               "type": "array",
@@ -669,7 +669,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 3,
-              "description": "可选；1–3，默认1；只在必要的查询上翻页。"
+              "description": "结果页码，1–3，默认1。"
             }
           }
         },
@@ -683,7 +683,7 @@
           "web",
           "news"
         ],
-        "description": "只有 web（默认）和 news 两个合法值，没有 finance 等类别；提交其他值会被校验拒绝。"
+        "description": "web 搜索网页（默认），news 搜索新闻。"
       },
       "timeRange": {
         "type": "string",
@@ -703,7 +703,7 @@
       "dateTo": {
         "type": "string",
         "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-        "description": "可选；包含端点的 YYYY-MM-DD；历史审查设为问题截至日期。"
+        "description": "包含端点的截止日期，格式 YYYY-MM-DD。"
       },
       "limit": {
         "type": "integer",
@@ -744,7 +744,7 @@
             "minLength": 1,
             "maxLength": 181,
             "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
           },
           "inputId": {
             "type": "string",
@@ -819,7 +819,7 @@
               "minLength": 1,
               "maxLength": 181,
               "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+              "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
             },
             "inputId": {
               "type": "string",
@@ -854,7 +854,7 @@
               "minLength": 1,
               "maxLength": 181,
               "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+              "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
             },
             "taskId": {
               "type": "string",
@@ -1045,7 +1045,7 @@
     "properties": {
       "complete": {
         "type": "boolean",
-        "description": "必须明确是否完成：证据已核对且图完整回答请求填true，成功即结束；仍有其他任务或图外关键事实要补充填false。不要省略，也不要为一句空收尾填false。"
+        "description": "图完整回答请求时填 true，成功即结束；还有内容要补充时填 false。"
       },
       "reference": {
         "oneOf": [
@@ -1058,13 +1058,13 @@
                 "minLength": 1,
                 "maxLength": 181,
                 "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                "description": "用户已给出 runId 时直接使用；未知时才调用 list_data，不是文件路径。"
+                "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
               },
               "query": {
                 "type": "string",
                 "minLength": 1,
                 "pattern": "\\S",
-                "description": "原问中的连续关键词，优先用它定位，避免抄写 taskId。"
+                "description": "原问中的连续关键词，用于定位对战。"
               },
               "comparisonTier": {
                 "type": "string",
@@ -1126,7 +1126,7 @@
               "minLength": 1,
               "maxLength": 80,
               "pattern": "\\S",
-              "description": "用一句话概括这份回答实际给出的答案，具体用途与不足放对应卡片。"
+              "description": "概括这份回答实际给出的答案。"
             },
             "paths": {
               "type": "array",
@@ -1144,14 +1144,14 @@
                     "minLength": 1,
                     "maxLength": 80,
                     "pattern": "\\S",
-                    "description": "能推翻或限制本项判断的原文事实，优点、问题、待核验都必须检查。主张“配套定位准确”同样需要查反证：有配套能力不等于只有配套能力。不能把支持本项结论的材料当反证。保留已确认的其他相关能力和用途待核边界；没有相关反证才填null。"
+                    "description": "已读材料中能反驳或限制本项判断的相关事实；没有已知相关反证时填 null。"
                   },
                   "evidence": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 60,
                     "pattern": "\\S",
-                    "description": "把回答自己的断言与已读原文对照；自称配套、非本体或直接命中都只是待检验断言，不能作为能力事实。只写原文足以支持的结论，不从未提及推断不存在。"
+                    "description": "支持本项判断的具体依据，区分回答的说法与材料支持的事实。"
                   },
                   "assessment": {
                     "enum": [
@@ -1159,7 +1159,7 @@
                       "problem",
                       "uncertain"
                     ],
-                    "description": "按本项证据标记优点、已确认问题或事实待核验。已确认遗漏必要核验用 problem，即使候选是否达标仍未知；不按总胜负改变性质。 已明确另列为配套/扩展、未当作直接命中的，不判为误入选。"
+                    "description": "本项为优点 strength、已确认问题 problem 或事实待核验 uncertain；按证据判断，不随总胜负变化。"
                   },
                   "title": {
                     "type": "string",
@@ -1172,7 +1172,7 @@
                     "minLength": 1,
                     "maxLength": 36,
                     "pattern": "\\S",
-                    "description": "仅说明原回答对用户判断的支撑是否充分，不替用户重做企业筛选。材料不足写该结论缺核验、数量未获证实；不能写成候选不符合、应剔除、仅配套。确认具体设备属于配套，不代表已排除该公司的其他能力。"
+                    "description": "本项对用户任务或判断的具体影响，结论与已知证据范围相称。"
                   },
                   "highlights": {
                     "type": "object",
@@ -1204,7 +1204,7 @@
                   "assessment"
                 ]
               },
-              "description": "不同证据状态的对象分别列项：已确认不符合与目标用途待核验不能合成同一条、使用同一否定结论。只解释本次疑点及反证。"
+              "description": "关键依据、判断及其对用户的影响；证据状态不同的判断分别列项。"
             }
           },
           "required": [
@@ -1219,7 +1219,7 @@
         "minLength": 1,
         "maxLength": 160,
         "pattern": "\\S",
-        "description": "本次结论与证据边界，尽量80字内。汇总只评价原回复断言的支撑程度：未证实六家全符合，不等于六家中某家确定不符合。用途待核与明确配套分别说，不合并排除。不为原胜负辩护，不重做筛选名单。"
+        "description": "本次分析的结论、主要依据与必要边界。"
       },
       "reasonHighlight": {
         "type": "string",
@@ -1233,7 +1233,7 @@
         "minLength": 1,
         "maxLength": 100,
         "pattern": "\\S",
-        "description": "仅复述原问题明确规定的日期、档位、标准答案或范围；不能自行添加技术路线限制。原问有歧义时，在对应卡片说明不同定义下的判断，不在此替用户选择更窄定义。无必要则省略。"
+        "description": "影响理解的口径或局限，无需补充时省略。"
       }
     },
     "required": [
@@ -1387,7 +1387,7 @@
               "minLength": 1,
               "maxLength": 181,
               "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-              "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+              "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
             },
             "operationId": {
               "type": "string",
@@ -1403,7 +1403,7 @@
                   "minLength": 1,
                   "maxLength": 181,
                   "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+                  "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
                 },
                 "inputId": {
                   "type": "string",
@@ -1462,7 +1462,7 @@
                   "minLength": 1,
                   "maxLength": 181,
                   "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-                  "description": "原样使用目录返回的 runId。 必须是真实运行标识，不是路径；未知时先调用 list_data({})，不要填 .、.. 或占位符。"
+                  "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
                 },
                 "comparisonTier": {
                   "type": "string",
@@ -1474,7 +1474,7 @@
                 "runId",
                 "comparisonTier"
               ],
-              "description": "正式战绩汇总引用；使用 list_data 返回的运行和档位，一次核验并保存该档所有正式结果来源，不逐条复制 taskId。"
+              "description": "正式战绩引用，使用 list_data 返回的运行与档位，程序核验并保存该档全部正式结果来源。"
             }
           },
           "oneOf": [
@@ -1576,7 +1576,7 @@
             }
           ]
         },
-        "description": "本地评测来源数组。战绩例：\"references\":[{\"statistics\":{\"runId\":\"真实运行ID\",\"comparisonTier\":\"Fast\"}}]。statistics 必须位于 references 数组项内，不能放在工具顶层。外部材料省略 references。"
+        "description": "本地评测来源数组，如 [{\"statistics\":{\"runId\":\"实际运行ID\",\"comparisonTier\":\"Fast\"}}]；外部材料省略。"
       },
       "xValues": {
         "type": "array",
@@ -1632,7 +1632,7 @@
             "note"
           ]
         },
-        "description": "最多3处有证据的重点标注；用真实数据位置指出异常、差距或拐点，不重复标题。"
+        "description": "最多3处有材料依据的重点标注。"
       },
       "sizeValues": {
         "type": "array",

@@ -41,3 +41,5 @@
 `packages/agents/src/<stage>/fixtures/example.json` 是单元测试样例，不进入模型上下文；运行时不检索这些样例，也不依赖 Pi / Prime 原生 skills。
 
 Eris 的公开提示词入口为 `erisPrompt(toolNames)`；[createEris](../../agent/src/core/profile.ts) 统一装配提示词、Schema 与工具，由 Host 注入数据源、搜索、原文读取和专业网关。[下一问预测](resources/eris/prediction.md)通过同一入口提供，独立于对话系统提示。能力与数据见[Eris 说明](../../agent/README.md#能力与数据)，修改位置见[Eris 定义](../../agent/README.md#修改-eris)；专业判词仍由对应 Agent 产生。
+
+Eris 的系统提示只保留任务目标、分析范围与共用事实边界；参数含义和分页放工具说明与 Schema 描述，不写固定调查顺序、强制句式或个案补丁。普通解读复用已有评测与回答，单例默认作图，批量与追问按用户意图展开；[图稿核对](resources/eris/comparison-check.md)只检查已读材料中的实质矛盾，不另开调查或要求措辞修订。

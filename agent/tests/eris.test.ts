@@ -143,9 +143,12 @@ test("Eris's public definition includes every tool resource and validates before
   assert.equal(eris.systemPrompt, readFileSync(new URL("system.md", resources), "utf8").trim());
   assert.equal(eris.recoveryMessage, readFileSync(new URL("recovery.md", resources), "utf8").trim());
   assert.deepEqual(eris.tools.map((tool) => `${tool.name}.md`).sort(), readdirSync(new URL("tools/", resources)).sort());
-  for (const tool of eris.tools) assert.equal(tool.description, readFileSync(new URL(`tools/${tool.name}.md`, resources), "utf8").trim());
+  const schemas = JSON.parse(readFileSync(new URL("../../schemas/eris/tools.json", import.meta.url), "utf8"));
+  for (const tool of eris.tools) {
+    assert.equal(tool.description, readFileSync(new URL(`tools/${tool.name}.md`, resources), "utf8").trim());
+    assert.deepEqual(tool.inputSchema, schemas[tool.name]);
+  }
   const list = eris.tools.find((tool) => tool.name === "list_data")!;
-  assert.match(JSON.stringify(list.inputSchema), /字面文本筛选词.*不是数据类别/);
   const context = { scope: { userId: "alice", sessionId: "session" }, callId: "list", signal: new AbortController().signal, progress() {} };
   await assert.rejects(list.execute({ limit: 0 }, context));
   await assert.rejects(list.execute({ runId: "run", query: "" }, context));
@@ -171,9 +174,8 @@ test("Eris's public definition includes every tool resource and validates before
   const batch = { runId: "run", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 };
   await list.execute(batch, context);
   const read = eris.tools.find(tool => tool.name === "read_data")!;
-  assert.match(JSON.stringify(read.inputSchema), /顶层字段，与 reference 同级/);
   const searchTool = eris.tools.find(tool => tool.name === "search_web")!;
-  assert.match(JSON.stringify(searchTool.inputSchema), /只有 web（默认）和 news 两个合法值，没有 finance/);
+  assert.throws(() => searchTool.validate!({ queries: [{ query: "测试" }], category: "finance" }), /web.*news/);
   const chartTool = eris.tools.find(tool => tool.name === "show_chart")!;
   assert(!(chartTool.inputSchema as { required: string[] }).required.includes("references"), "external material charts omit local provenance references");
   await assert.rejects(read.execute({ reference: { runId: "run", inputId: "input", taskId: "task" } }, context), /oneOf/);

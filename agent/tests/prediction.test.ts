@@ -81,14 +81,17 @@ test("predictions follow the owning replica, stay out of history, and cancel on 
   } finally { release.resolve(null); await replica.dispose(); if (!closed) await server.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("prediction endpoint rejects malformed requests before dispatch", async () => {
+test("prediction endpoint validates requests and accepts longer natural suggestions", async () => {
   const directory = await mkdtemp(tmpdir() + "/eris-prediction-input-");
   const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model: {} as ModelConfig, systemPrompt: "test", tools: [] });
   try {
     const endpoints = assistantEndpoints(sessions);
     for (const request of [{ sourceTurn: "1", recentSuggestions: [] }, { sourceTurn: -1, recentSuggestions: [] },
-      { sourceTurn: 1, recentSuggestions: [3] }, { sourceTurn: 1, recentSuggestions: ["问".repeat(61)] },
+      { sourceTurn: 1, recentSuggestions: [3] }, { sourceTurn: 1, recentSuggestions: ["问".repeat(1025)] },
       { sourceTurn: 1, recentSuggestions: Array(17).fill("下一问") }])
       await assert.rejects(endpoints.call("local", "assistant/predict", { args: { request } }, new AbortController().signal), /Invalid prediction/);
+    const recentSuggestions = ["看看这两组回答的差异。".repeat(8)];
+    sessions.predict = async (_scope, _turn, recent) => { assert.deepEqual(recent, recentSuggestions); return { text: null }; };
+    assert.deepEqual(await endpoints.call("local", "assistant/predict", { args: { request: { sourceTurn: 1, recentSuggestions } } }, new AbortController().signal), { text: null });
   } finally { await sessions.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

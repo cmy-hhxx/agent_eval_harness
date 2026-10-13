@@ -13,6 +13,7 @@ for (const api of ["openai-responses", "openai-completions"] as const) test(`pre
   process.env.PREDICTION_TEST_KEY = "fixture";
   const calls: JsonObject[] = [];
   const suggestion = "A与B的统计口径哪里不同？";
+  const analysis = "A与B采用了不同口径。".repeat(250) + "B组完整分析。";
   const gateway = await listen(async (req, res) => {
     const payload = object(await body(req)); calls.push(payload);
     res.writeHead(200, { "content-type": "text/event-stream" });
@@ -35,7 +36,7 @@ for (const api of ["openai-responses", "openai-completions"] as const) test(`pre
     const instructions = erisPrompt([]).predictionPrompt;
     const text = await createPiPrediction({ model, workdir: directory, instructions,
       history: [{ type: "user/message", seq: 0, time: 0, data: { content: [{ type: "text", text: "比较A与B的证据" }] } },
-        { type: "assistant/message", seq: 1, time: 1, data: { message: { content: [{ type: "text", text: "A与B采用了不同口径" }] } } },
+        { type: "assistant/message", seq: 1, time: 1, data: { message: { content: [{ type: "text", text: analysis }] } } },
         { type: "user/message", seq: 2, time: 2, data: { content: [{ type: "text", text: "先看看答案能帮用户做什么" }] } }],
       recentSuggestions: [], signal: new AbortController().signal });
     assert.equal(text, suggestion);
@@ -52,9 +53,10 @@ for (const api of ["openai-responses", "openai-completions"] as const) test(`pre
     assert.equal(messageText(users.at(-1)!), instructions, "the final live request must be prediction instructions, after the completed dialogue");
     const content = users[0].content;
     const material = JSON.parse(typeof content === "string" ? content : (content as JsonObject[]).map(block => block.text).join(""));
-    assert.equal(material.initialRequest, "比较A与B的证据");
-    assert.equal(material.currentRequest, "先看看答案能帮用户做什么");
-    assert.equal(material.dialogue.at(-1).text, material.currentRequest);
+    assert.deepEqual(material.initialRequest, { text: "比较A与B的证据", truncated: false });
+    assert.deepEqual(material.currentRequest, { text: "先看看答案能帮用户做什么", truncated: false });
+    assert.equal(material.dialogue.at(-1).text, material.currentRequest.text);
+    assert.deepEqual(material.dialogue[1], { role: "assistant", text: analysis.slice(0, 2400), truncated: true });
     const abort = new AbortController(); abort.abort();
     await assert.rejects(createPiPrediction({ model, workdir: directory, instructions: "test", history: [], recentSuggestions: [], signal: abort.signal }));
     assert.equal(calls.length, 1, "aborted predictions must not reach the gateway");

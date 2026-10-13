@@ -26,11 +26,17 @@ export function TraceFlow({ nodes, finalIndex, selected, onSelect, modelName }) 
   useLayoutEffect(() => {
     const pane = viewport.current, box = layout.boxes[selected];
     if (!pane || !box) return;
-    const top = box.y + 20, bottom = top + box.height + 4;
-    if (top < pane.scrollTop + 20) pane.scrollTop = Math.max(0, top - 20);
-    else if (bottom > pane.scrollTop + pane.clientHeight) pane.scrollTop = bottom - pane.clientHeight;
+    const reveal = () => {
+      const top = box.y + 20, bottom = top + box.height + 4;
+      if (top < pane.scrollTop + 20) pane.scrollTop = Math.max(0, top - 20);
+      else if (bottom > pane.scrollTop + pane.clientHeight) pane.scrollTop = bottom - pane.clientHeight;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(pane);
+    return () => observer.disconnect();
   }, [selected, nodes]);
-  return h('div', { ref: viewport, 'data-trace-viewport': true, tabIndex: 0, role: 'region', 'aria-label': `${modelName}链路滚动区`, style: { minWidth: 0, maxHeight: 'min(560px, 65vh)', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'thin', scrollbarGutter: 'stable' } },
+  return h('div', { ref: viewport, 'data-trace-viewport': true, tabIndex: 0, role: 'region', 'aria-label': `${modelName}链路滚动区`, style: { minWidth: 0, minHeight: 0, height: '100%', maxHeight: `min(${layout.height + 20}px, 560px, 65vh)`, contain: 'size', overflowY: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'thin', scrollbarGutter: 'stable' } },
     h('div', { style: { position: 'sticky', top: 0, zIndex: 1, background: '#fff', display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, lineHeight: '16px', color: '#53616E', paddingBottom: 4 } },
       h('span', null, h('span', { style: { display: 'inline-block', width: 14, borderTop: '2px solid #536574', marginRight: 4, verticalAlign: 'middle' } }), '执行顺序'),
       h('span', null, h('span', { style: { display: 'inline-block', width: 14, borderTop: '2px dashed #356A63', marginRight: 4, verticalAlign: 'middle' } }), '调用关联')),
