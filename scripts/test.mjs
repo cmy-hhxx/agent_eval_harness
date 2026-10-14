@@ -22,13 +22,16 @@ const files = (
 )
   .flat()
   .sort();
-// Test files are I/O-bound; two files per core shortens the wall clock without
-// starving the timing-sensitive Worker waits.
-const concurrency = Math.min(24, Math.max(4, availableParallelism() * 2));
+// Worker tests spawn their own processes; cap file concurrency to avoid starving
+// their existing deadlines without extending timeouts or retrying failed tests.
+const concurrency = Math.min(4, availableParallelism());
 await run("node", [
   "--test",
   `--test-concurrency=${concurrency}`,
   ...files,
+  "scripts/attribution-review-tree.test.mjs",
+  "scripts/attribution-review-view.test.mjs",
+  "scripts/attribution-review.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
 ]);

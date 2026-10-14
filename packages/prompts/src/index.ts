@@ -80,8 +80,8 @@ export function criteriaText(name: "task_type" | "source_rule"): string {
   return resource(`criteria/default/${name}.md`);
 }
 
-/** Fixed wording for a review request; it never claims a comparison outcome. */
-export function comparisonText(name: "review_pending" | "not_applicable"): string {
+/** Program-owned Comparison wording; review requests never claim an outcome. */
+export function comparisonText(name: "review_pending" | "not_applicable" | "relative_preference" | "tradeoff_candidate"): string {
   return resource(`comparison/default/${name}.md`);
 }
 

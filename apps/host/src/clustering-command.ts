@@ -5,10 +5,11 @@ import { runEvaluation } from "@eval/host";
 import { clusteringJobRepository, clusteringJobWorkflow, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
 import { createModelResolver, type HostConfig } from "./config.js";
 import { services } from "./composition.js";
+import { createBalancedModels } from "./balanced-models.js";
 
 export async function runClusteringCommand(host: HostConfig, options: {
   runs?: string[]; runId?: string; output?: string; apply?: boolean;
-  engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[];
+  engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[]; balanceChannels?: boolean;
 }): Promise<number> {
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("cluster --apply 需要 --run-id 保存独立进度");
@@ -32,7 +33,8 @@ export async function runClusteringCommand(host: HostConfig, options: {
       states: saved.manifest.states } : prepared!.plan.summary, null, 2));
     return 0;
   }
-  const modelForStage = createModelResolver(host.models);
+  const routing = options.balanceChannels ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
+  const { modelForStage } = routing;
   for (const stage of new Set((saved?.manifest.tasks ?? prepared!.plan.tasks).map(task => task.stage))) {
     const model = modelForStage(stage);
     if (!process.env[model.apiKeyEnv]) throw new Error(`Missing ${model.apiKeyEnv}; configure the model key in config.ini`);
@@ -40,7 +42,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
   const controller = new AbortController(), interrupt = () => controller.abort(new Error("User interrupted"));
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
-    const result = await runEvaluation({ ...services, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
+    const result = await runEvaluation({ ...services, ...routing, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
       report: reportClusteringJob, snapshots: {}, runId: options.runId!, output, engine: options.engine as Engine,
       evaluatorVersion: host.evaluatorVersion, config,
       plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} },

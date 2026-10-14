@@ -5,6 +5,14 @@ import { attributionProfile, standardConflictReviewInstructions, type Attributio
 import { comparisonScope } from "@eval/agents/comparison";
 import type { TaskData } from "./types.js";
 import { bindTask } from "./binding.js";
+import { attributionRewritePlaceholder, inactiveCoverageSources, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+
+function reviewRewrite(template: PlannedTask, sourceTaskId: string): PlannedTask {
+  const data = template.data as TaskData;
+  const task = attributionRewritePlaceholder(sourceTaskId, { case: data.case, rewriteNames: data.rewriteNames });
+  (task.data as TaskData).revision = 1;
+  return task;
+}
 
 /** Recheck both sides against the same original evidence before any affected comparison. */
 const advanceStandardConflict: NonNullable<WorkflowDefinition["advance"]> = (task, _receipt, state) => {
@@ -45,8 +53,7 @@ const advanceStandardConflict: NonNullable<WorkflowDefinition["advance"]> = (tas
     reviews.set(source.id, review); tasks.push(review);
     const polish = state.manifest.tasks.find(item => item.stage === "rewrite" && item.dependencies.source === source.id);
     if (polish && (state.receipts[polish.id] || state.manifest.states[polish.id]?.status === "running"))
-      tasks.push({ ...polish, id: randomUUID(), dependencies: { source: review.id },
-        data: { ...(polish.data as TaskData), rewriteOf: { stage: "attribution", taskId: review.id, resultId: review.id }, revision: 1 } satisfies TaskData });
+      tasks.push(reviewRewrite(polish, review.id));
   }
   const replace = state.manifest.tasks.flatMap(consumer => {
     if (state.receipts[consumer.id] || state.manifest.states[consumer.id]?.status === "running" ||
@@ -93,8 +100,7 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
             reviewOf: { taskId: sourceId, round: 1, reasons: ["本次共同标准、标准答案或当前材料证据与原归因不一致，按本次材料独立核验。"] } } satisfies TaskData };
         reviews.set(sourceId, review); tasks.push(review);
         const polish = state.manifest.tasks.find((item) => item.stage === "rewrite" && item.dependencies.source === sourceId);
-        if (polish) tasks.push({ ...polish, id: randomUUID(), dependencies: { source: review.id },
-          data: { ...(polish.data as TaskData), rewriteOf: { stage: "attribution", taskId: review.id, resultId: review.id }, revision: 1 } satisfies TaskData });
+        if (polish) tasks.push(reviewRewrite(polish, review.id));
       }
       deps[label] = review.id;
       for (const cluster of state.manifest.tasks.filter((item) => item.stage === "clustering" && !state.receipts[item.id])) {
@@ -140,11 +146,23 @@ const advanceCoverage: NonNullable<WorkflowDefinition["advance"]> = (task, _rece
       if ((original.data as TaskData).reviewQuestions)
         (review.data as TaskData).reviewQuestions = [...(original.data as TaskData).reviewQuestions!];
       tasks.push(review); next[label]=id;
-      const polish = state.manifest.tasks.find(item => item.stage === "rewrite" && item.dependencies.source === original.id);
-      if(polish) tasks.push({...polish,id:randomUUID(),dependencies:{source:id},data:{...(polish.data as TaskData),
-        rewriteOf:{stage:"attribution",taskId:id,resultId:id},revision:1} satisfies TaskData});
     }
     replace.push({...comparison,dependencies:next,data:{...data,coverageReviewPrepared:true} satisfies TaskData});
+  }
+  const replacements = new Map(replace.map(item => [item.id, item]));
+  const inactive = inactiveCoverageSources([...state.manifest.tasks.map(item => replacements.get(item.id) ?? item), ...tasks]);
+  const reused = new Set<string>();
+  for (const review of [...tasks]) {
+    const sourceId = (review.data as TaskData).reviewOf!.taskId;
+    const rewrites = state.manifest.tasks.filter(item => item.stage === "rewrite" && item.dependencies.source === sourceId);
+    const unused = inactive.has(sourceId) && rewrites.find(item => !reused.has(item.id) && !state.receipts[item.id] &&
+      !(item.data as TaskData).rewriteSlotIds && state.manifest.states[item.id]?.attempts === 0 &&
+      !state.manifest.states[item.id]?.failure && state.manifest.states[item.id]?.status !== "running");
+    const template = unused || rewrites[0];
+    if (!template) continue;
+    const polish = reviewRewrite(template, review.id);
+    if (unused) { reused.add(unused.id); replace.push({ ...polish, id: unused.id }); }
+    else tasks.push(polish);
   }
   if ((task.data as TaskData).coverageReview) for (const cluster of state.manifest.tasks.filter(item => item.stage === "clustering" &&
     !state.receipts[item.id] && state.manifest.states[item.id]?.status !== "running")) {
@@ -155,10 +173,21 @@ const advanceCoverage: NonNullable<WorkflowDefinition["advance"]> = (task, _rece
 };
 
 /** Accepted formal comparisons and retrospective verification never reopen source results. */
-export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) =>
-  task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)
-    : task.stage !== "attribution" || state.manifest.tasks.some(item => (item.data as TaskData).standardConflictReview &&
-      (item.data as TaskData).reviewOf?.taskId === task.id) ? { tasks: [] }
+export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
+  if (task.stage === "attribution" && (inactiveCoverageSources(state.manifest.tasks).has(task.id) ||
+    state.manifest.tasks.some(item => (item.data as TaskData).standardConflictReview &&
+      (item.data as TaskData).reviewOf?.taskId === task.id))) return { tasks: [] };
+  const advance = task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)
+    : task.stage !== "attribution" ? { tasks: [] }
     : (receipt.evaluation as AttributionResult).standard_conflict && !(task.data as TaskData).standardConflictReview
       ? advanceStandardConflict(task, receipt, state, inputs)
       : advanceCoverage(task, receipt, state, inputs);
+  const retargeted = (advance.replace ?? []).some(replacement => replacement.stage === "rewrite" &&
+    state.manifest.tasks.some(previous => previous.id === replacement.id && (previous.data as TaskData).rewriteOf?.taskId === task.id) &&
+    (replacement.data as TaskData).rewriteOf?.taskId !== task.id);
+  const replacements = new Map((advance.replace ?? []).map(item => [item.id, item]));
+  const handedOff = inactiveCoverageSources([...state.manifest.tasks.map(item => replacements.get(item.id) ?? item), ...advance.tasks]);
+  const grouped = retargeted || handedOff.has(task.id) ? { tasks: [] } : planAttributionRewriteGroups(task, receipt, state);
+  return { tasks: [...advance.tasks, ...grouped.tasks],
+    ...((advance.replace?.length || grouped.replace?.length) ? { replace: [...advance.replace ?? [], ...grouped.replace ?? []] } : {}) };
+};

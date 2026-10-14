@@ -108,7 +108,8 @@
                     "label",
                     "definition",
                     "aliases",
-                    "occurrences"
+                    "occurrences",
+                    "examples"
                   ],
                   "properties": {
                     "id": {
@@ -134,7 +135,7 @@
                     },
                     "category_paths": {
                       "type": "array",
-                      "maxItems": 3,
+                      "maxItems": 1,
                       "uniqueItems": true,
                       "items": {
                         "type": "array",
@@ -146,6 +147,104 @@
                           "minLength": 1,
                           "maxLength": 80,
                           "pattern": "^(?![\\s\\S]*[<>\\[\\]{}\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029])"
+                        }
+                      }
+                    },
+                    "examples": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "input_id",
+                          "batch_id",
+                          "case_id",
+                          "finding_id",
+                          "evidence_status",
+                          "run_id",
+                          "task_id",
+                          "submission_id"
+                        ],
+                        "properties": {
+                          "input_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "batch_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "case_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "finding_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "evidence_status": {
+                            "enum": [
+                              "established",
+                              "uncertain"
+                            ]
+                          },
+                          "quote": {
+                            "type": "string",
+                            "maxLength": 601
+                          },
+                          "run_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "task_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "submission_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "finding": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "attribution": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "run",
+                              "run_id",
+                              "task_id",
+                              "submission_id",
+                              "evaluator_version"
+                            ],
+                            "properties": {
+                              "run": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "run_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "task_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "submission_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "evaluator_version": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -170,7 +269,8 @@
           "count",
           "established_count",
           "uncertain_count",
-          "examples"
+          "examples",
+          "established_answer_ids"
         ],
         "properties": {
           "id": {
@@ -238,6 +338,15 @@
                   ]
                 }
               }
+            },
+            "maxItems": 3
+          },
+          "established_answer_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

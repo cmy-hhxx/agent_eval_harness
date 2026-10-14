@@ -12,43 +12,56 @@ export interface CommentaryLookup {
 export function verdictSlotId(first: string, second: string): string {
   return `verdict.${[first, second].sort().join("__vs__")}.reason`;
 }
-export function isResourceRow(row: ComparisonResult["decision_basis"]["comparisons"][number]): boolean {
-  return !row.criterion_ids.length && Object.values(row.assessments).every(cell => !cell.finding_indices.length);
-}
 export function attributionSlots(result: AttributionResult): RewriteItem[] {
   const items: RewriteItem[] = [{ id: "summary", label: "回答结论", text: result.summary }];
+  if (result.core_assessment.reason.trim())
+    items.push({ id: "core_assessment.reason", label: "回答对用户请求的满足情况", text: result.core_assessment.reason,
+      context: "验收对象沿用本槽原文，不改变验收对象。用户索要方法或步骤时，评价回答是否给出可执行方法，不代表用户已经实施；用户要求执行时，才沿用原文的执行结果。不能把能否完成改成是否已经完成，不能新增执行证明要求；无法保证语义不变时保留原文。" });
   if (result.correctness_reason.trim())
     items.push({
       id: "correctness_reason",
       label: result.is_correct === false ? "判错理由" : "判对理由",
       text: result.correctness_reason,
     });
+  result.criterion_assessments.forEach((item, index) => {
+    if (item.summary.trim()) items.push({ id: `criterion_assessments.${index}.summary`, label: `检查项 ${index + 1} · 点评`, text: item.summary });
+  });
   result.findings.forEach((finding, index) => {
     for (const field of ["text", "reason"] as const)
       items.push({ id: `findings.${index}.${field}`, label: `发现 ${index + 1} · ${field === "text" ? "点评" : "理由"}`, text: finding[field] });
+    for (const field of ["observation", "impact"] as const)
+      if (finding.assessment[field].trim()) items.push({ id: `findings.${index}.assessment.${field}`,
+        label: `发现 ${index + 1} · ${field === "observation" ? "实际情况" : "实际影响"}`, text: finding.assessment[field] });
+    if (finding.problem) for (const field of ["label", "definition"] as const)
+      if (finding.problem[field].trim()) items.push({ id: `findings.${index}.problem.${field}`,
+        label: `发现 ${index + 1} · ${field === "label" ? "问题名称" : "问题描述"}`, text: finding.problem[field] });
+  });
+  result.table_resolutions?.forEach((item, index) => {
+    if (item.reason.trim()) items.push({ id: `table_resolutions.${index}.reason`, label: `表格核查 ${index + 1} · 理由`, text: item.reason });
   });
   return items;
 }
+/** Keep each semantic unit together; unrelated findings never share a positional chain. */
+export function attributionRewriteGroups(result: AttributionResult, slotIds?: readonly string[]): string[][] {
+  const selected = slotIds && new Set(slotIds), groups = new Map<string, string[]>();
+  for (const item of attributionSlots(result)) {
+    if (selected && !selected.has(item.id)) continue;
+    const key = /^findings\.\d+\./u.exec(item.id)?.[0] ??
+      (item.id.startsWith("criterion_assessments.") ? "criteria" : item.id.startsWith("table_resolutions.") ? "tables" : "overview");
+    const group = groups.get(key) ?? [];
+    group.push(item.id); groups.set(key, group);
+  }
+  return [...groups.values()].flatMap(group => Array.from({ length: Math.ceil(group.length / 20) },
+    (_, index) => group.slice(index * 20, (index + 1) * 20)));
+}
 export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
   if (scope === "all") return [...comparisonSlots(result, "verdicts"), ...comparisonSlots(result, "items")];
-  if (scope === "items") return result.decision_basis.comparisons.flatMap((row, index) =>
-    isResourceRow(row) ? [] :
-    Object.entries(row.assessments).map(([candidate, assessment]) => ({
-      id: `comparison.${index}.${candidate}.summary`,
-      label: `${row.aspect} · 【候选${candidate}】的逐项点评（只改写本格）`,
-      text: assessment.summary,
-      forbiddenPrefixes: [...new Set([
-        ...Object.keys(row.assessments).filter((label) => label !== candidate).map((label) => `【候选${label}】：`),
-        ...(row.better_candidates.length > 1 ? [row.better_candidates.map((label) => `【候选${label}】`).join("、") + "："] : []),
-        "没有已证实的单方优势：", "本项已确定的优势：", "待改写原文：",
-      ])],
-      context: [
-        `本项已确定的优势：${row.better_candidates.length ? row.better_candidates.map((label) => `【候选${label}】`).join("、") : "没有已证实的单方优势"}`,
-        ...Object.entries(row.assessments).filter(([label]) => label !== candidate)
-          .map(([label, other]) => `同项对照，不能写成本格事实：【候选${label}】：${other.summary}`),
-      ].join("\n"),
+  if (scope === "items") return [
+    ...Object.entries(result.assessments).map(([candidate, assessment]) => ({
+      id: `assessment.${candidate}.summary`, label: `【候选${candidate}】的整体总评`, text: assessment.summary,
     })),
-  );
+    { id: "tradeoff", label: "整体取舍依据", text: result.decision_basis.tradeoff },
+  ];
   const items: RewriteItem[] = [];
   const labels = result.ranking.flat();
   const tiers = tierOf(result.ranking);
@@ -85,9 +98,9 @@ export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "i
 export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
   return [
     ...result.new_classes.flatMap((item, index) =>
-      (["definition", "novelty"] as const).map((field) => ({
+      (["label", "definition", "novelty"] as const).map((field) => ({
         id: `new_classes.${index}.${field}`,
-        label: `${item.label} · ${field === "definition" ? "定义" : "新建理由"}`,
+        label: `${item.label} · ${field === "label" ? "名称" : field === "definition" ? "定义" : "新建理由"}`,
         text: item[field],
       })),
     ),
@@ -98,10 +111,34 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
       id: `assignments.${index}.deferred_reason`, label: "延期归类理由", text: item.deferred_reason,
     }]),
     ...(result.class_updates ?? []).flatMap((item, index) => [
+      ...(item.label === undefined ? [] : [{ id: `class_updates.${index}.label`, label: "维护后的类名称", text: item.label }]),
       ...(item.definition === undefined ? [] : [{ id: `class_updates.${index}.definition`, label: "维护后的类定义", text: item.definition }]),
       { id: `class_updates.${index}.reason`, label: "类维护理由", text: item.reason },
     ]),
   ];
+}
+/** Replace display prose only; source judgments, responsibility and evidence remain unchanged. */
+export function polishAttribution(result: AttributionResult, rewrites: Rewrites): AttributionResult {
+  const view = structuredClone(result);
+  if (rewrites.summary) view.summary = rewrites.summary;
+  if (rewrites.correctness_reason) view.correctness_reason = rewrites.correctness_reason;
+  if (rewrites["core_assessment.reason"] && view.core_assessment)
+    view.core_assessment.reason = rewrites["core_assessment.reason"];
+  view.criterion_assessments?.forEach((item, index) => {
+    if (rewrites[`criterion_assessments.${index}.summary`]) item.summary = rewrites[`criterion_assessments.${index}.summary`];
+  });
+  view.findings?.forEach((finding, index) => {
+    for (const field of ["text", "reason"] as const)
+      if (rewrites[`findings.${index}.${field}`]) finding[field] = rewrites[`findings.${index}.${field}`];
+    for (const field of ["observation", "impact"] as const)
+      if (rewrites[`findings.${index}.assessment.${field}`]) finding.assessment[field] = rewrites[`findings.${index}.assessment.${field}`];
+    if (finding.problem) for (const field of ["label", "definition"] as const)
+      if (rewrites[`findings.${index}.problem.${field}`]) finding.problem[field] = rewrites[`findings.${index}.problem.${field}`];
+  });
+  view.table_resolutions?.forEach((item, index) => {
+    if (rewrites[`table_resolutions.${index}.reason`]) item.reason = rewrites[`table_resolutions.${index}.reason`];
+  });
+  return view;
 }
 export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
   if (stage === "clustering") return clusteringSlots(result as ClusteringResult);
@@ -123,7 +160,7 @@ export function polishComparisonRow(
   if (!own && !Object.values(sourceRewrites).some(Boolean)) return row;
   const view = structuredClone(row);
   const assessments = view.assessments as Record<string, { summary: string }>;
-  const evaluations = view.evaluations as Record<string, { summary: string; correctness_reason: string; findings: AttributionResult["findings"] }>;
+  const evaluations = view.evaluations as unknown as Record<string, AttributionResult>;
   for (const [label, candidate] of Object.entries(data.candidates)) {
     const assessmentText = own?.[`assessment.${label}.summary`];
     if (assessmentText && assessments[candidate.version])
@@ -131,26 +168,10 @@ export function polishComparisonRow(
     const attribution = sourceRewrites[label];
     const review = evaluations[candidate.version];
     if (!attribution || !review) continue;
-    if (attribution.summary) review.summary = attribution.summary;
-    if (attribution.correctness_reason)
-      review.correctness_reason = attribution.correctness_reason;
-    review.findings?.forEach((finding, index) => {
-      for (const field of ["text", "reason"] as const) {
-        const text = attribution[`findings.${index}.${field}`];
-        if (text) finding[field] = text;
-      }
-    });
+    evaluations[candidate.version] = polishAttribution(review, attribution);
   }
   if (own?.tradeoff)
     (view.decision_basis as { tradeoff: string }).tradeoff = own.tradeoff;
-  const comparisons = (view.decision_basis as { comparisons: ComparisonResult["decision_basis"]["comparisons"] }).comparisons;
-  comparisons.forEach((row, index) => {
-    if (isResourceRow(row)) return;
-    for (const [label, candidate] of Object.entries(data.candidates)) {
-      const text = own?.[`comparison.${index}.${label}.summary`];
-      if (text) row.assessments[candidate.version]!.summary = text;
-    }
-  });
   const labelOf = new Map(
     Object.entries(data.candidates).map(([label, candidate]) => [candidate.version, label]),
   );

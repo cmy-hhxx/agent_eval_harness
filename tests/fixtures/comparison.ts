@@ -106,7 +106,7 @@ export async function fixtureConfig(
   const config = host.evaluation;
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
-  config.clustering = { ...config.clustering, enabled: clustering };
+  config.clustering = { ...config.clustering, enabled: clustering, minSupport: 1 };
   config.output = { kind: "directory", path: path.join(directory, "runs") };
   config.problemLibrary = { kind: "directory", path: path.join(directory, "problems") };
   config.execution.retries = 0;
@@ -173,9 +173,9 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
-  if ("texts" in properties) {
+  if ("rewrites" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };
-    return { texts: request.items.map(item => item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text) };
+    return { rewrites: request.items.map(item => ({ id: item.id, text: item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text })) };
   }
   if ("assignments" in properties) {
     const request = parsedMaterial(spec, revealed) as {
@@ -200,7 +200,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
           label: first.label,
           definition: `${first.label}。`,
           closest_existing: null,
-          novelty: "库为空，首次建立该类。",
+          novelty: "库为空，首次建立该类。", category_paths: [["数值可靠性"]],
         },
       ],
       merges: [],

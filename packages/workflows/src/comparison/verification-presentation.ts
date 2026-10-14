@@ -1,6 +1,6 @@
 import { comparisonSlotChoices } from "@eval/agents/comparison";
 import type { AgentRequest, TaskAnalysis } from "@eval/contracts";
-import { cite, displayEvidence, evidenceSources, hasSourceTextBlock, messageContentSources, instructionSources, originalUserTimestamp, parseEvidenceCoordinates } from "@eval/tools";
+import { cite, displayEvidence, evidenceSources, hasSourceTextBlock, images, messageContentSources, instructionSources, originalUserTimestamp, parseEvidenceCoordinates } from "@eval/tools";
 import type { AttributionResult } from "@eval/agents/attribution";
 import { verificationCheckAspects } from "@eval/agents/comparison";
 import type { ComparisonResult, RawInput } from "./types.js";
@@ -62,12 +62,15 @@ export function verificationPresentation(input: Record<string, unknown>, sources
   };
   const candidates = Object.fromEntries(Object.entries(materials).map(([label, material]) => {
     const raw = rawSources[label], timestamp = originalUserTimestamp(raw);
+    const imageCount = images(raw.messages[material.final_message_index]).length;
     // No offset, unavailable precision or malformed native dates remain unknown; originals stay unchanged.
     return [label, { question: material.question, original_user_timestamp: timestamp,
       original_user_timestamp_utc: timestampUTC(timestamp),
       question_evidence: (material.criterion_instruction_sources ?? {})[analysis.requirements.find(criterion =>
         common(criterion) && hasSourceTextBlock(criterion.acceptance_rule, material.question))?.id ?? ""]?.map(entry => sourceReference(label, entry)) ?? [],
       final_message_index: material.final_message_index, final_answer: contentText(raw.messages[material.final_message_index].content),
+      ...(imageCount ? { final_images: { image_count: imageCount,
+        view_request: { candidate: label, message_index: material.final_message_index } } } : {}),
       final_evidence: messageContentSources(raw.messages[material.final_message_index])
         .map(source => { const full = cite(sourceIds[label], material.final_message_index, source, 0, source.text.length);
           return displayEvidence(source.text.length <= 200 ? full : { ...full, quote: undefined,

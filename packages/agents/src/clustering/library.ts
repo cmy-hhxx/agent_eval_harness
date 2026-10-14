@@ -13,6 +13,7 @@ import type {
 import type { ClusteringResult } from "./types.js";
 import { categoryPathIssues, unionCategoryPaths } from "./organization.js";
 import { effectiveProblemOccurrences } from "./occurrence-review.js";
+import { representativeSamples } from "./samples.js";
 
 export const normalizeLabel = (label: string): string =>
   label.trim().replace(/\s+/gu, " ").toLowerCase();
@@ -39,7 +40,8 @@ export function emptyLibrary(model: string): ProblemLibrary {
 /** Active component directory with active classes and how many samples each class has. */
 export function projectLibrary(library: ProblemLibrary): ProblemProjection {
   const counts = new Map<string, Set<string>>();
-  for (const occurrence of effectiveProblemOccurrences(library)) {
+  const occurrences = effectiveProblemOccurrences(library);
+  for (const occurrence of occurrences) {
     const samples = counts.get(occurrence.class_id) ?? new Set<string>();
     samples.add(problemSampleKey(occurrence));
     counts.set(occurrence.class_id, samples);
@@ -60,6 +62,13 @@ export function projectLibrary(library: ProblemLibrary): ProblemProjection {
           aliases: problem.aliases,
           ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths.map(path => [...path]) }),
           occurrences: counts.get(problem.id)?.size ?? 0,
+          examples: representativeSamples(occurrences.filter(item => item.class_id === problem.id), item => ({
+            answer: item.input_id, date: item.batch_id, certainty: item.evidence_status, scene: item.case_id,
+            key: `${item.batch_id}\u0000${item.case_id}\u0000${item.finding_id}`,
+          })).map(({ input_id, batch_id, case_id, finding_id, evidence_status, run_id, task_id, submission_id, attribution }) => ({
+            input_id, batch_id, case_id, finding_id, evidence_status, run_id, task_id, submission_id,
+            ...(attribution ? { attribution: { ...attribution } } : {}),
+          })),
         })),
     })),
   };
@@ -102,6 +111,7 @@ export interface ClusteringObservation {
   count: number;
   established_count: number;
   uncertain_count: number;
+  established_answer_ids: string[];
   examples: {
     finding: string;
     reason: string;
@@ -212,10 +222,11 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       const explicitPaths = updateApplied(target.id) ? undefined :
         input.result.class_updates?.find(update => update.class_id === target.id)?.category_paths;
       const paths = unionCategoryPaths(target.category_paths, source.category_paths);
-      const categoryIssues = categoryPathIssues(explicitPaths ?? paths, `/merges/${mergeIndex}/category_paths`);
+      // No inherited paths is unorganized; only an explicit empty update attempts to clear a path.
+      const categoryIssues = categoryPathIssues(explicitPaths ?? (paths.length ? paths : undefined), `/merges/${mergeIndex}/category_paths`);
       if (categoryIssues.length) throw new ValidationError(categoryIssues);
-      if (paths.length > 3 && explicitPaths === undefined)
-        throw new Error("合并主题路径超过上限；需要明确维护目标类的 category_paths");
+      if (paths.length > 1 && explicitPaths === undefined)
+        throw new Error("合并后只能保留一条主要主题路径；需要明确维护目标类的 category_paths");
       if (target.category_paths !== undefined || source.category_paths !== undefined || explicitPaths !== undefined)
         target.category_paths = paths.map(path => [...path]);
       for (const occurrence of next.occurrences)
@@ -223,7 +234,9 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
           occurrence.previous_class_id = source.id;
           occurrence.class_id = target.id;
         }
-      event("class_merged", { from: source.id, into: target.id, reason: merge.reason });
+      event("class_merged", { from: source.id, into: target.id, reason: merge.reason,
+        run_id: input.run_id, task_id: input.task_id, submission_id: input.submission_id,
+        ...(input.run_path ? { run: input.run_path } : {}) });
       event("occurrence_moved", { from: source.id, into: target.id });
     }
   }
@@ -248,6 +261,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
     if (update.category_paths !== undefined) problem.category_paths = update.category_paths.map(path => [...path]);
     event("class_updated", { class_id: problem.id, submission_id: input.submission_id,
       task_id: input.task_id, run_id: input.run_id, reason: update.reason, before,
+      ...(input.run_path ? { run: input.run_path } : {}),
       after: { label: problem.label, definition: problem.definition, category_paths: problem.category_paths ?? [] } });
   }
 
@@ -309,7 +323,6 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         finding_id: ref.finding_id,
         evidence_status: ref.evidence_status,
         message_index: ref.message_index,
-        quote: ref.quote,
         source: ref.source,
         classification,
         previous_class_id: null,

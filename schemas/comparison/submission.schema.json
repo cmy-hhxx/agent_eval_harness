@@ -6,7 +6,9 @@
     "a_summary",
     "b_summary",
     "comparisons",
-    "tradeoff"
+    "relative_preference",
+    "a_tradeoff",
+    "b_tradeoff"
   ],
   "properties": {
     "comparisons": {
@@ -29,9 +31,19 @@
         null
       ]
     },
-    "tradeoff": {
+    "a_tradeoff": {
       "type": "string",
       "minLength": 1
+    },
+    "b_tradeoff": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relative_preference": {
+      "enum": [
+        "A",
+        "B"
+      ]
     },
     "a_summary": {
       "type": "string",
@@ -50,39 +62,6 @@
       ],
       "additionalProperties": false,
       "required": [
-        "importance",
-        "a_summary",
-        "b_summary"
-      ],
-      "properties": {
-        "importance": {
-          "enum": [
-            "high",
-            "medium",
-            "low"
-          ]
-        },
-        "better_candidate": {
-          "enum": [
-            "A",
-            "B",
-            null
-          ]
-        },
-        "a_summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "b_summary": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "resource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
         "importance"
       ],
       "properties": {
@@ -98,6 +77,22 @@
             "A",
             "B",
             null
+          ]
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "importance"
+      ],
+      "properties": {
+        "importance": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
           ]
         }
       }

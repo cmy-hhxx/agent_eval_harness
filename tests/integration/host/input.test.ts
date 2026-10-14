@@ -646,11 +646,13 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
       } else {
         assert(!rules.includes("不提交 evidence_id"));
         assert(!rules.includes("不新建问题节点"));
-        for (const rule of ["comparison_slots", "a_summary", "comparisons", "better_candidate", "preference"])
+        for (const rule of ["comparison_slots", "a_summary", "comparisons", "better_candidate", "preference", "a_tradeoff", "b_tradeoff"])
           assert(rules.includes(rule), rule);
         assert(!rules.includes("source_review"), "default comparison reads accepted attribution directly");
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
-        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "tradeoff"]);
+        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "a_tradeoff", "b_tradeoff"]);
+        assert(!Object.hasOwn(submission.properties, "tradeoff"), "free cross-candidate tradeoffs are not accepted");
+        assert.deepEqual((submission.properties.relative_preference as { enum: string[] }).enum, ["A", "B"]);
         assert(Object.hasOwn(submission.properties, "preference"), "a meaningful preference remains selectable");
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
@@ -658,7 +660,7 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         const rowDefinitions = (submission as any).$defs;
         assert.equal(rowDefinitions.commentary.type.includes("object"),true);
         assert(rows.minItems>0);assert.equal(rows.maxItems,rows.minItems);
-        assert.deepEqual(rowDefinitions.commentary.required,["importance","a_summary","b_summary"]);
+        assert.deepEqual(rowDefinitions.commentary.required,["importance"]);
         assert.deepEqual(rowDefinitions.resource.required,["importance"]);
         assert(!rowDefinitions.commentary.properties.assessments);
 

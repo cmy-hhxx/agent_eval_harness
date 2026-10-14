@@ -64,7 +64,8 @@
           "count",
           "established_count",
           "uncertain_count",
-          "refs"
+          "refs",
+          "established_answer_ids"
         ],
         "properties": {
           "id": {
@@ -190,6 +191,14 @@
                   }
                 }
               }
+            }
+          },
+          "established_answer_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

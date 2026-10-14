@@ -4,6 +4,7 @@ import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/cont
 import type { RewriteItem } from "@eval/agents/rewrite";
 import { rewriteAgent } from "@eval/agents/rewrite";
 import { AgentRegistry } from "@eval/host";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { attributionResult, comparisonResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import { bindTask } from "./workflow.js";
 import type { TaskData } from "./types.js";
@@ -20,16 +21,36 @@ function bindRewrite(stage: "attribution" | "comparison" | "clustering", evaluat
   return bindTask(task, {}, { source }, { tasks: [task] });
 }
 
-test("Workflow binds ordered text to original slot identities and rejects missing positions", () => {
+test("Rewrite submission carries fixed semantic identities and rejects missing or displaced slots", () => {
   const binding=bindRewrite("comparison",comparisonResult()),registry=new AgentRegistry([rewriteAgent]);
   const shown=binding.modelInput!.items as RewriteItem[];
-  assert(shown.every(item=>!Object.hasOwn(item,"id")));
-  const draft={texts:shown.map(item=>item.preference?item.preference+"：双方都给出了正确结果4。":item.text)};
+  assert(shown.every(item=>Object.hasOwn(item,"id")));
+  const draft={rewrites:shown.map(item=>({ id: item.id, text: item.preference?item.preference+"：双方都给出了正确结果4。":item.text }))};
   const before=structuredClone(draft),result=registry.resolve(binding,draft,emptyAudit()) as {rewrites:{id:string;text:string}[]};
   registry.validate(binding,result,emptyAudit());
   assert.deepEqual(result.rewrites.map(item=>item.id),(binding.request.input.items as RewriteItem[]).map(item=>item.id));
   assert.deepEqual(draft,before);
-  assert.throws(()=>registry.resolve(binding,{texts:draft.texts.slice(1)},emptyAudit()),/数量必须与槽位一致/);
+  const valid = new Ajv2020({ strict: false }).compile(registry.prepare(binding).evaluation.outputSchema);
+  assert(valid(draft), JSON.stringify(valid.errors));
+  assert(!valid({ rewrites: draft.rewrites.slice(1) }));
+  assert(!valid({ rewrites: [...draft.rewrites].reverse() }));
+  assert(!valid({ rewrites: draft.rewrites.map(item => ({ ...item, id: "findings.99.text" })) }));
+});
+
+test("core rewrite preserves a method's feasibility as its acceptance object in the actual model material", () => {
+  const result = attributionResult(false);
+  result.core_assessment.reason = "泛化的页面返回/关闭建议不足以证明用户能退出其所在社区。";
+  const before = structuredClone(result), binding = bindRewrite("attribution", result);
+  const original = (binding.request.input.items as RewriteItem[]).find(item => item.id === "core_assessment.reason")!;
+  const shown = (binding.modelInput!.items as RewriteItem[]).find(item => item.id === original.id)!;
+  assert.equal(shown.label, "A组Fast 回答对用户请求的满足情况");
+  assert.match(shown.context!, /用户索要方法或步骤时，评价回答是否给出可执行方法，不代表用户已经实施/u);
+  assert.match(shown.context!, /用户要求执行时，才沿用原文的执行结果/u);
+  assert.match(shown.context!, /无法保证语义不变时保留原文/u);
+  assert.equal(shown.text, before.core_assessment.reason);
+  assert.deepEqual(shown, original);
+  assert.deepEqual(binding.request.sources, {});
+  assert.deepEqual(result, before);
 });
 
 test("Rewrite receives real names with the original responsibility and resource values when blind positions reverse", () => {
@@ -64,14 +85,16 @@ test("comparison rewrite preserves the blind identity map beside unmodified cand
   assert(items[0].text.includes(result.decision_basis.tradeoff));
   assert.equal(items[0].label, "B组Fast与A组Fast的偏好及理由");
   assert(items.every(item => item.context?.split("\n")[0] === mapping));
-  assert.equal(items[1].label, "计算结果 · B组Fast的逐项点评（只改写本格）");
-  assert(items[1].context!.includes("同项对照，不能写成本格事实：A组Fast："));
-  assert(items[1].forbiddenPrefixes!.includes("A组Fast："));
+  assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+  assert.equal(items[1].label, "B组Fast的整体总评");
+  assert.equal(items[2].label, "A组Fast的整体总评");
+  assert.equal(items[3].text, result.decision_basis.tradeoff);
+  assert(!items.some(item => item.id.startsWith("comparison.")));
   const shown = binding.modelInput!.items as RewriteItem[];
   assert(shown.every(item => item.context?.split("\n")[0] === mapping));
 });
 
-test("Rewrite projects protocol seeds in verdicts and readonly cells without changing exact slot metadata", () => {
+test("Rewrite projects protocol seeds in verdict facts and overall prose without changing exact slot metadata", () => {
   const result = comparisonResult();
   result.ranking = [["A"], ["B"]];
   result.decision_basis.tradeoff = "漏插<visual>属小瑕疵；27.98%与27.18%-27.80%的口径不变。";
@@ -80,22 +103,26 @@ test("Rewrite projects protocol seeds in verdicts and readonly cells without cha
   row.better_candidates = ["A"];
   row.assessments.A!.summary = "使用<visual>展示27.98%。";
   row.assessments.B!.summary = "来源<trace ref=Ab12Cd3 />；模板[^<int>]。";
+  result.assessments.A!.summary = row.assessments.A!.summary;
+  result.assessments.B!.summary = row.assessments.B!.summary;
   const before = structuredClone(result);
   const binding = bindRewrite("comparison", result, { A: "A组<Fast>", B: "B组<Fast>" });
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 3);
+  assert.equal(shown.length, 4);
   assert(shown[0]!.text.includes("漏插＜visual＞属小瑕疵；27.98%与27.18%-27.80%的口径不变。"));
-  assert.equal(shown[1]!.label, "展示＜visual＞协议与x＜0条件 · A组＜Fast＞的逐项点评（只改写本格）");
+  assert.equal(shown[1]!.label, "A组＜Fast＞的整体总评");
   assert.equal(shown[1]!.text, "使用＜visual＞展示27.98%。");
-  assert(shown[1]!.context!.includes("来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。"));
+  assert.equal(shown[2]!.text, "来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。");
+  assert(shown[0]!.text.includes("展示＜visual＞协议与x＜0条件"));
+  assert(shown[0]!.text.includes("来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。"));
   assert.equal(shown[0]!.preference, "A组<Fast>更好");
-  assert(shown[1]!.forbiddenPrefixes!.includes("B组<Fast>："));
   assert.deepEqual(shown.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })),
     original.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })));
   assert(shown.every(item => !/[<>]/.test([item.label, item.text, item.context ?? ""].join("\n"))));
   assert.equal(original[1]!.text, "使用<visual>展示27.98%。");
-  assert(original[1]!.context!.includes("来源<trace ref=Ab12Cd3 />；模板[^<int>]。"));
+  assert.equal(original[2]!.text, "来源<trace ref=Ab12Cd3 />；模板[^<int>]。");
+  assert(!shown.some(item => item.id.startsWith("comparison.")));
   assert.deepEqual(result, before);
 });
 
@@ -104,6 +131,8 @@ test("all attribution rewrite slots preserve protocol attributes and figures in 
   const text = "<vis-html ref=html-7b1ac344 />保留24.2%、15.1%；x<0且x>5；已有＜visual＞。";
   result.summary = text;
   result.correctness_reason = text;
+  result.core_assessment.reason = text;
+  result.criterion_assessments.forEach(item => { item.summary = text; });
   const finding = result.findings[0]!;
   result.findings = Array.from({ length: 5 }, (_, index) => ({ ...structuredClone(finding), finding_id: `f${index}`,
     text, reason: text, assessment: { ...finding.assessment, observation: text, impact: text } }));
@@ -111,11 +140,11 @@ test("all attribution rewrite slots preserve protocol attributes and figures in 
   const binding = bindRewrite("attribution", result);
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 12);
-  assert(original.every(item => !item.id.includes(".assessment.")));
+  assert.equal(shown.length, 24);
+  assert(original.some(item => item.id === "findings.0.assessment.impact"));
   assert(shown.every(item => item.text === "＜vis-html ref=html-7b1ac344 /＞保留24.2%、15.1%；x＜0且x＞5；已有＜visual＞。"));
   assert(original.every(item => item.text === text));
-  assert(shown.every(item => !Object.hasOwn(item,"id")));
+  assert.deepEqual(shown.map(item => item.id), original.map(item => item.id));
   assert.deepEqual(result, before);
 });
 
@@ -128,11 +157,12 @@ test("clustering rewrite presentation covers ordinary HTML and mathematical angl
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
   assert.deepEqual(shown.map(item => ({ label: item.label, text: item.text })), [
+    { label: "＜div＞格式 · 名称", text: "＜div＞格式" },
     { label: "＜div＞格式 · 定义", text: "＜div＞5.1＜/div＞；a＜b＞c。" },
     { label: "＜div＞格式 · 新建理由", text: "保留＜tag attr='123'＞协议名和属性。" },
     { label: "合并理由", text: "x＜0；已有＜0＞。" },
   ]);
-  assert.equal(original[0]!.label, "<div>格式 · 定义");
-  assert.equal(original[0]!.text, "<div>5.1</div>；a<b>c。");
+  assert.equal(original[1]!.label, "<div>格式 · 定义");
+  assert.equal(original[1]!.text, "<div>5.1</div>；a<b>c。");
   assert.deepEqual(result, before);
 });

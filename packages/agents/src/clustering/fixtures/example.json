@@ -27,7 +27,8 @@
                 "aliases": [
                   "计算错误"
                 ],
-                "occurrences": 17
+                "occurrences": 17,
+                "examples": []
               }
             ]
           }
@@ -59,6 +60,10 @@
               "stage": "final_answer",
               "evidence_status": "uncertain"
             }
+          ],
+          "established_answer_ids": [
+            "answer1",
+            "answer2"
           ]
         },
         {
@@ -78,6 +83,10 @@
               "stage": "final_answer",
               "evidence_status": "established"
             }
+          ],
+          "established_answer_ids": [
+            "answer2",
+            "answer3"
           ]
         }
       ],
@@ -105,7 +114,13 @@
         "label": "单位换算遗漏",
         "definition": "最终结果没有换算成题目要求的单位。",
         "closest_existing": "class-arithmetic",
-        "novelty": "算术错误描述数值错误，本条是单位换算缺失，与数值正确性无关。"
+        "novelty": "算术错误描述数值错误，本条是单位换算缺失，与数值正确性无关。",
+        "category_paths": [
+          [
+            "数值可靠性",
+            "单位换算"
+          ]
+        ]
       }
     ],
     "merges": []

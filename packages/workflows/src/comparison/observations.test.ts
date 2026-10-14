@@ -135,12 +135,12 @@ test("a peer-first finding keeps the owner's real evidence coordinates in every 
     task_id: "task", submission_id: "submission", version: "a_fast", batch_id: "batch", observations,
     result: { assignments: observations.map((item, index) => ({ item_id: item.id, new_class_key: `class${index}` })),
       new_classes: observations.map((item, index) => ({ key: `class${index}`, component: item.component,
-        label: item.label, definition: item.definition, closest_existing: null, novelty: "无已有同组件类。" })), merges: [] } });
+        label: item.label, definition: item.definition, closest_existing: null, novelty: "无已有同组件类。", category_paths: [["数值可靠性"]] })), merges: [] } });
   assert.equal(library.occurrences.length, 2);
   assert.equal(countProblemSamples(library.occurrences), 1);
   for (const occurrence of library.occurrences) {
     assert.equal(occurrence.input_id, ownerId); assert.equal(occurrence.finding_id, finding.finding_id);
-    assert.equal(occurrence.message_index, 3); assert.equal(occurrence.quote, "本方实际输出的日期");
+    assert.equal(occurrence.message_index, 3); assert.equal(Object.hasOwn(occurrence, "quote"), false);
     assert.deepEqual(occurrence.source, own.source);
   }
   assert.deepEqual(own, before, "full formal evidence retains its peer-first order and source UUID");
@@ -155,4 +155,44 @@ test("an owner sample without genuine own evidence fails explicitly instead of s
   }
   finding.evidence = [];
   assert.throws(() => groupObservations([source("owner-input", "case", [finding])]), /问题样本缺少本方证据/);
+});
+
+function sample(input_id: string, batch_id: string, status: "established" | "uncertain", dimension: AttributionFinding["dimension"] = "correctness"): ProblemSource {
+  const findings = [problem("finding", "模型自身推理", "算术错误", input_id)];
+  findings[0]!.text = input_id;
+  findings[0]!.dimension = dimension;
+  findings[0]!.assessment.evidence_status = status;
+  return { input_id, batch_id, case_id: `case-${input_id}`, source: { file: "source", line: 1 }, findings };
+}
+
+test("observation counts retain findings while support contains confirmed independent answers", () => {
+  const first = sample("a", "2026-10-01", "established"), second = sample("b", "2026-10-02", "established");
+  const duplicate = structuredClone(first.findings[0]!);
+  duplicate.finding_id = "another-finding";
+  first.findings.push(duplicate);
+  const uncertain = structuredClone(duplicate);
+  uncertain.finding_id = "uncertain-finding";
+  uncertain.assessment.evidence_status = "uncertain";
+  first.findings.push(uncertain);
+  second.findings.push(structuredClone(uncertain));
+  const [item] = groupObservations([first, second]);
+  assert.equal(item!.count, 5);
+  assert.equal(item!.established_count, 3);
+  assert.equal(item!.uncertain_count, 2);
+  assert.deepEqual(item!.established_answer_ids, ["a", "b"]);
+  assert.equal(item!.refs.length, 5);
+});
+
+test("representative examples cover certainty, dates and situations from different answers deterministically", () => {
+  const sources = [sample("a", "2026-10-01", "established"), sample("b", "2026-10-02", "established"),
+    sample("c", "2026-10-03", "established"), sample("u", "2026-10-01", "uncertain"),
+    sample("d", "2026-10-03", "established", "completeness")];
+  const repeated = structuredClone(sources[2]!.findings[0]!);
+  repeated.finding_id = "second-finding";
+  sources[2]!.findings.push(repeated);
+  const [item] = groupObservations(sources);
+  assert.deepEqual(item!.examples.map(example => example.finding), ["c", "u", "d"]);
+  assert.deepEqual(groupObservations([...sources].reverse()), [item]);
+  assert.equal(item!.count, 6);
+  assert.equal(item!.established_answer_ids.length, 4);
 });

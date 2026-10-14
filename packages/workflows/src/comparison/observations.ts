@@ -1,14 +1,16 @@
 import { canonical } from "@eval/contracts";
-import type { PlannedTask } from "@eval/contracts";
+import type { PlannedTask, SubmissionReceipt } from "@eval/contracts";
 import {
   normalizeLabel,
+  representativeSamples,
   type ClusteringItem,
   type ClusteringObservation,
   type ClusteringObservationRef,
 } from "@eval/agents/clustering";
 import type { AttributionResult, ClusteringScope, TaskData } from "./types.js";
 
-type ReceiptLookup = (taskId: string) => { evaluation?: unknown } | undefined;
+type AcceptedObservation = { evaluation?: unknown } & Partial<Pick<SubmissionReceipt, "submissionId" | "evaluatorVersion" | "taskId">>;
+type ReceiptLookup = (taskId: string) => AcceptedObservation | undefined;
 
 export interface ProblemSource {
   input_id: string;
@@ -81,15 +83,12 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
       const entries = group.entries.sort((a, b) =>
         canonical([a.ref.case_id, a.ref.finding_id]) < canonical([b.ref.case_id, b.ref.finding_id]) ? -1 : 1,
       );
-      const examples: ClusteringItem["examples"] = [];
-      const seen = new Set<string>();
-      for (const entry of entries) {
-        const key = canonical([entry.example.finding, entry.example.evidence_status]);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        examples.push(entry.example);
-        if (examples.length >= 3) break;
-      }
+      const examples = representativeSamples(entries, ({ ref, example }) => ({
+        answer: ref.input_id, date: ref.batch_id ?? "", certainty: ref.evidence_status,
+        scene: canonical([example.dimension, example.stage, example.importance]),
+        content: canonical(example),
+        key: canonical([ref.case_id, ref.finding_id]),
+      })).map(entry => entry.example);
       return {
         id: `o${index + 1}`,
         component: group.component,
@@ -98,6 +97,8 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
         count: entries.length,
         established_count: entries.filter((entry) => entry.ref.evidence_status === "established").length,
         uncertain_count: entries.filter((entry) => entry.ref.evidence_status === "uncertain").length,
+        established_answer_ids: [...new Set(entries.filter(entry => entry.ref.evidence_status === "established")
+          .map(entry => entry.ref.input_id))].sort(),
         examples,
         refs: entries.map((entry) => entry.ref),
       };
@@ -106,24 +107,32 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
 
 function observationsFor(
   scope: ClusteringScope,
-  receipt: (inputId: string) => { evaluation?: unknown } | undefined,
+  receipt: (inputId: string) => AcceptedObservation | undefined,
+  origin?: { run: string; run_id: string },
 ): ClusteringObservation[] {
   return groupObservations(
-    Object.entries(scope.cases).map(([input_id, entry]) => ({
-      input_id,
-      case_id: entry.case_id,
-      source: entry.source,
-      findings:
-        ((receipt(input_id)?.evaluation as AttributionResult | undefined)?.findings) ?? [],
-    })),
+    Object.entries(scope.cases).map(([input_id, entry]) => {
+      const accepted = receipt(input_id);
+      if (origin && (!accepted?.taskId || !accepted.submissionId || !accepted.evaluatorVersion))
+        throw new Error("问题样本缺少已接受归因身份：" + input_id);
+      return {
+        input_id,
+        case_id: entry.case_id,
+        batch_id: scope.batch_id,
+        source: entry.source,
+        ...(origin ? { attribution: { ...origin, task_id: accepted!.taskId!,
+          submission_id: accepted!.submissionId!, evaluator_version: accepted!.evaluatorVersion! } } : {}),
+        findings: ((accepted?.evaluation as AttributionResult | undefined)?.findings) ?? [],
+      };
+    }),
   );
 }
 
 /** Rebuild the observations of a clustering task from its accepted attribution dependencies. */
-export function taskObservations(task: PlannedTask, receipt: ReceiptLookup): ClusteringObservation[] {
+export function taskObservations(task: PlannedTask, receipt: ReceiptLookup, origin?: { run: string; run_id: string }): ClusteringObservation[] {
   const scope = (task.data as TaskData).scope;
   if (!scope) throw new Error("clustering task is missing its scope");
-  const observations = observationsFor(scope, (inputId) => receipt(task.dependencies[inputId]!));
+  const observations = observationsFor(scope, (inputId) => receipt(task.dependencies[inputId]!), origin);
   const selected = (task.data as TaskData).reclassifyOf?.item_ids;
   return selected ? observations.filter(item => selected.includes(item.id)) : observations;
 }

@@ -175,14 +175,16 @@ export async function reviewProblemOccurrences(
     if (!row || row.task_id !== task.id || row.model !== decision.model || !Array.isArray(row.items) ||
       !observations.some(observation =>
         [component.label, ...component.aliases].some(name => normalizeLabel(name) === normalizeLabel(observation.component)) &&
-        observation.refs.some(ref => canonical(ref) === canonical({
+        observation.refs.some(({ quote: _quote, ...ref }) => canonical(ref) === canonical({
           input_id: occurrence.input_id, finding_id: occurrence.finding_id, case_id: occurrence.case_id,
-          source: occurrence.source, message_index: occurrence.message_index, quote: occurrence.quote,
+          source: occurrence.source, message_index: occurrence.message_index,
           evidence_status: occurrence.evidence_status,
-          ...(independent ? { batch_id: occurrence.batch_id, attribution: occurrence.attribution } : {}),
+          batch_id: occurrence.batch_id,
+          ...(independent ? { attribution: occurrence.attribution } : {}),
         })) && row.items!.some(item => canonical(item) === canonical(independent ? clusteringJobItems([observation])[0] : {
           id: observation.id, component: observation.component, label: observation.label,
           count: observation.count, established_count: observation.established_count, uncertain_count: observation.uncertain_count,
+          established_answer_ids: observation.established_answer_ids,
         })) && result.assignments.some(assignment => assignment.item_id === observation.id &&
           assignmentSupportsClass(initial, result, assignment, association.component_id, occurrence.class_id))))
       fail("问题样本在原接受聚类中没有该组件和原观察的实际归类：" + occurrence.id);

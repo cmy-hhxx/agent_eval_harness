@@ -307,10 +307,10 @@ test("source-review records distinguish a retained unknown from a blocking confl
 test("source blockers are program-owned after a single structural repair", () => {
  const data = pair(), registry = new AgentRegistry([comparisonAgent]);
  Object.assign(data.request.input,{ source_review:{ A:[{ kind:"unverified", reason:"尚缺影响结果的来源行。",requires_review:true }] } });
- const draft = submission(data.result,data.request); draft.tradeoff = "";
+ const draft = submission(data.result,data.request); draft.a_tradeoff = "";
  assert.throws(() => registry.resolve({ agent:"comparison",profile:"default",request:data.request },draft,audit),
   (error:unknown) => error instanceof ValidationError && error.issues!.every(issue => issue.category === "structure"));
- draft.tradeoff = "双方来源核查。";
+ draft.a_tradeoff = "来源尚待核查。";
  const result = registry.resolve({ agent:"comparison",profile:"default",request:data.request },draft,audit) as ComparisonResult;
  assert.equal(result.status,"needs_review"); assert.equal(result.review_requests[0].candidate,"A");
  registry.validate({ agent:"comparison",profile:"default",request:data.request },result,audit);
@@ -394,7 +394,7 @@ test("Comparison accepts an independently judged pair and mirrors the shared ana
   assert.deepEqual(resolved.assessments, example.result.assessments);
   assert.deepEqual(resolved.decision_basis.comparisons[0].criterion_ids,["sum"]);
   assert.deepEqual(resolved.decision_basis.comparisons[0].assessments.A.finding_indices,[0]);
-  assert.equal(resolved.decision_basis.tradeoff,example.result.decision_basis.tradeoff);
+  assert.equal(resolved.decision_basis.tradeoff,"相对更倾向【候选A】。【候选A】：正确给出结果。 【候选B】：正确给出结果。");
   validate(example.request, resolved);
   assert.throws(() => comparisonProfile.resolve!(example.request, example.result, audit), /additional properties/);
   const changed = pair(); changed.result.task_analysis.goal = "新目标";
@@ -694,8 +694,16 @@ test("a shared user delivery failure stays decisive for the current pair in a th
       issue.candidate === candidate && issue.actual === "sum")), "a shared A/B criterion is mandatory even when a third candidate has its own requirement");
 });
 
-test("established resource advantages can still support a winner when both shared deliveries are usable", () => {
+test("established resource advantages can support a winner when the task explicitly prioritizes waiting time", () => {
   const data = pair(), input = data.request.input as unknown as ComparisonInput;
+  const question = "尽快计算2+2，正确结果相同时优先缩短等待时间。";
+  input.task_analysis.goal = question;
+  for (const label of ["A", "B"] as const) {
+    data.request.input.candidates[label].question = question;
+    data.request.sources[label].value.messages[0].content = question;
+    input.attributions[label].task_analysis = structuredClone(input.task_analysis);
+  }
+  data.result.task_analysis = structuredClone(input.task_analysis);
   input.candidates.A.original_answer_timing.finish_seconds = 10;
   input.candidates.B.original_answer_timing.finish_seconds = 100;
   data.result.decision_basis.comparisons.push({ aspect: "完成等待", criterion_ids: [], importance: "medium",
@@ -711,6 +719,50 @@ test("established resource advantages can still support a winner when both share
   assert.equal(result.decision_basis.comparisons[1].assessments.B.evidence_status, "established");
 });
 
+test("established medium problems on both sides of one shared slot can retain medium importance without a preference", () => {
+  for (const swapped of [false, true]) {
+    const data = pair(), input = data.request.input as unknown as ComparisonInput;
+    for (const label of ["A", "B"] as const) {
+      const final = label === "A" ? "2+2=4。相加的两个数是1和3。" : "2+2=4。加法计算就是两个数相乘。";
+      data.request.input.candidates[label].final_answer = final;
+      data.request.sources[label].value.messages[1].content = final;
+      const attribution = input.attributions[label], finding = attribution.findings[0];
+      attribution.criterion_assessments[0].status = "partial";
+      attribution.core_assessment.reason = "结果4可用，但计算说明有局部错误。";
+      finding.type = "problem"; finding.dimension = "reasoning"; finding.importance = "medium";
+      finding.text = label === "A" ? "解释中的加数与题目不符。" : "把加法解释为乘法。";
+      finding.reason = "结果正确，但解释需要修正。";
+      finding.evidence = [canonicalEvidence(data.request.sources[label].id, 1, final)];
+      finding.assessment.observation = finding.text;
+      finding.assessment.impact = "局部解释错误，未使最终数值不可用。";
+      Object.assign(finding, { problem: { component: [], label: "计算说明错误", definition: finding.text } });
+    }
+    if (swapped) {
+      [data.request.sources.A, data.request.sources.B] = [data.request.sources.B, data.request.sources.A];
+      [input.candidates.A, input.candidates.B] = [input.candidates.B, input.candidates.A];
+      [input.attributions.A, input.attributions.B] = [input.attributions.B, input.attributions.A];
+    }
+    data.result.decision_basis.comparisons[0].importance = "medium";
+    data.result.decision_basis.tradeoff = "双方结果4可用，计算说明各有已确认的局部错误；共同槽内没有已证明的单方优势。";
+    const draft = submission(data.result, data.request), before = structuredClone({ request: data.request, draft });
+    assert.equal(draft.comparisons[0]!.importance, "medium");
+    assert.equal(draft.comparisons[0]!.better_candidate, null);
+    assert.equal(draft.preference, null);
+    const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
+    validate(data.request, result);
+    assert.deepEqual(result.ranking, [["A", "B"]]);
+    assert.equal(result.decision_basis.comparisons[0].importance, "medium");
+    assert.deepEqual(result.decision_basis.comparisons[0].better_candidates, []);
+    assert.deepEqual(result.decision_basis.decisive_findings, []);
+    for (const label of ["A", "B"] as const) {
+      assert.equal(result.assessments[label].meets_core, true);
+      assert.deepEqual(result.decision_basis.comparisons[0].assessments[label].finding_indices, [0]);
+      assert.equal(result.decision_basis.comparisons[0].assessments[label].evidence_status, "established");
+    }
+    assert.deepEqual({ request: data.request, draft }, before, "resolution preserves both accepted findings and the submitted choice");
+  }
+});
+
 test("an absent overall preference cannot silently turn a resource advantage into a winner", () => {
   const data = pair(), input = data.request.input as unknown as ComparisonInput;
   input.candidates.A.original_answer_timing.finish_seconds = 6.597;
@@ -718,9 +770,10 @@ test("an absent overall preference cannot silently turn a resource advantage int
   for (const preference of [null, undefined]) {
     const draft = submission(data.result, data.request);
     const slot = comparisonSlots(data.request).findIndex(item => item.kind === "resource");
-    draft.comparisons[slot] = { importance: "medium", better_candidate: "A" };
+    draft.comparisons[slot] = { importance: "medium" };
     draft.preference = preference;
-    draft.tradeoff = "双方结果相同，等待时间的微小差异不足以决定胜负。";
+    draft.a_tradeoff = "结果正确，等待时间的微小差异不足以决定胜负。";
+    draft.b_tradeoff = "结果正确，等待时间的微小差异不足以决定胜负。";
     const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
     assert.deepEqual(result.ranking, [["A", "B"]], "the resolver must preserve the submitted overall preference");
     assert.throws(() => validate(data.request, result), (error: unknown) => error instanceof ValidationError &&
@@ -859,7 +912,7 @@ test("scope differences do not create an advantage and row states cannot strengt
   data.result.decision_basis.comparisons[0].better_candidates = [];
   const repaired = resolve(data);
   validate(data.request, repaired);
-  assert.equal(repaired.decision_basis.tradeoff,retained.tradeoff);
+  assert.equal(repaired.decision_basis.tradeoff,`相对更倾向【候选A】。【候选A】：${data.result.assessments.A.summary} 【候选B】：${data.result.assessments.B.summary}`);
   assert.deepEqual(repaired.decision_basis.comparisons[0].criterion_ids,retained.comparisons[0].criterion_ids);
   data.request.input.task_analysis.requirements.push({ id: "own_b", text: "B的专有约束", applies_to: [data.request.input.candidates.B.candidate_id], acceptance_rule: "按B自己的要求完成。" } as never);
   data.request.input.attributions.A.criterion_assessments.push({ criterion_id: "own_b", status: "not_applicable", evidence_status: "established", summary: "不适用。", evidence: [] });
@@ -895,7 +948,31 @@ test("scope differences do not create an advantage and row states cannot strengt
 });
 
 test("uncertain findings cannot be decisive and one-sided material advantages cannot tie or reverse rank", () => {
-  const data = pair();
+  const data = pair(), input = data.request.input as unknown as ComparisonInput;
+  const question = "计算2+2，并简要说明计算过程。", final = "2+2=4。从2开始再数2个，得到4。";
+  input.task_analysis.goal = question;
+  input.task_analysis.requirements[0].text = "给出正确的加法结果并说明计算过程。";
+  input.task_analysis.requirements[0].acceptance_rule = "最终给出4，并说明2与2相加的过程。";
+  for (const label of ["A", "B"] as const) {
+    data.request.input.candidates[label].question = question;
+    data.request.sources[label].value.messages[0].content = question;
+    input.attributions[label].task_analysis = structuredClone(input.task_analysis);
+  }
+  data.result.task_analysis = structuredClone(input.task_analysis);
+  data.request.input.candidates.A.final_answer = final;
+  data.request.sources.A.value.messages[1].content = final;
+  input.attributions.A.findings[0].text = "结果正确，并说明了相加的过程。";
+  input.attributions.A.findings[0].evidence = [canonicalEvidence(data.request.sources.A.id, 1, final)];
+  const problem = input.attributions.B.findings[0];
+  problem.type = "problem"; problem.dimension = "completeness"; problem.importance = "medium";
+  problem.text = "结果正确，但没有说明计算过程。";
+  problem.reason = "用户要求说明计算过程，回答只给出结果4。";
+  problem.assessment.observation = problem.text;
+  problem.assessment.impact = "数值可用，但共同要求中的过程说明缺失。";
+  Object.assign(problem, { problem: { component: [], label: "计算过程缺失", definition: problem.text } });
+  input.attributions.B.criterion_assessments[0].status = "partial";
+  input.attributions.B.criterion_assessments[0].summary = problem.text;
+  data.result.decision_basis.comparisons[0].assessments.B.status = "partial";
   data.request.input.attributions.A.findings[0].assessment.evidence_status = "uncertain";
   assert.throws(() => validate(data.request, data.result), /uncertain finding 不能作为决定性依据/);
   data.result.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
@@ -908,6 +985,15 @@ test("uncertain findings cannot be decisive and one-sided material advantages ca
   assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
     !!error.issues?.some(issue => issue.code === "ranking_ignores_advantage"));
   data.result.ranking = [["A"], ["B"]]; validate(data.request, data.result);
+  for (const importance of ["medium", "high"] as const) {
+    data.result.decision_basis.comparisons[0].importance = importance;
+    const source = structuredClone(data.request.input.attributions), result = resolve(data);
+    validate(data.request, result);
+    assert.deepEqual(result.ranking, [["A"], ["B"]]);
+    assert.equal(result.decision_basis.comparisons[0].importance, importance);
+    assert.deepEqual(result.decision_basis.comparisons[0].better_candidates, ["A"]);
+    assert.deepEqual(data.request.input.attributions, source);
+  }
 });
 
 test("needs_review carries located requests and never produces a ranking or decisive finding", () => {

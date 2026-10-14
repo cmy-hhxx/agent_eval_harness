@@ -3,7 +3,7 @@ import { correctnessEvidenceScopeIssues, peerFinalSubmissionIssues, resolveAttri
 import type { Evidence } from "./types.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { submissionFindingEntries } from "./norm-directory.js";
-import { finalFindingEvidenceIssues, focusedEvidenceIssues } from "./evidence-focus.js";
+import { finalFindingEvidenceIssues } from "./evidence-focus.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -27,7 +27,6 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
         issues.push(...error.issues!);
       }
     });
-    issues.push(...focusedEvidenceIssues(selected, path));
     return selected;
   };
   const correctness = check(value.correctness_evidence, "/correctness_evidence");

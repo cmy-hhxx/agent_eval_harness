@@ -86,8 +86,15 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         (state.config as EvalConfig).rewrite.comparisonItems === true;
       const ready = publishableComparisons(state, requireItems);
       if (!ready.size) continue;
-      const labels = new Map(Object.values(state.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit)
-        .map((task) => [task.data.comparisonId, Object.keys(task.inputIds)]));
+      const rewriteIds = new Map<string, string[]>();
+      if (requireItems) for (const task of Object.values(state.tasks)) {
+        const source = task.data.rewriteOf;
+        if (source?.stage !== "comparison" || !task.receipt) continue;
+        const comparisonId = state.tasks[source.taskId]?.data.comparisonId;
+        if (!comparisonId || !ready.has(comparisonId)) continue;
+        if (!task.receipt.rewriteIds?.length) throw new Error("Accepted comparison rewrite scope missing: " + source.taskId);
+        rewriteIds.set(comparisonId, [...new Set([...(rewriteIds.get(comparisonId) ?? []), ...task.receipt.rewriteIds])]);
+      }
       for await (const item of readJsonl(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"))) {
         signal.throwIfAborted();
         const row = object(item), key = String(row.comparison_id), evaluatedAt = ready.get(key);
@@ -95,7 +102,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
         ready.delete(key);
         if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
-        if (requireItems) assertCompleteComparisonRewrite(row, labels.get(key)!);
+        if (requireItems) assertCompleteComparisonRewrite(row, rewriteIds.get(key) ?? []);
         yield { row, evaluatedAt };
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);
@@ -146,6 +153,9 @@ export async function statisticsSnapshot(
     for await (const input of snapshot.inputs()) statistics.addInput(input);
     for await (const result of snapshot.results()) statistics.addResult(result);
   }
+  if (statistics.labelConflicts.length) await logger.event("statistics_label_conflicts", {
+    component: "automations", automation_id: config.id, cases: statistics.labelConflicts,
+  });
   return statistics;
 }
 

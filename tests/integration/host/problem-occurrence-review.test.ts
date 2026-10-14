@@ -58,7 +58,7 @@ async function fixture(peer = false) {
   const result: ClusteringResult = {
     assignments: observations.map(item => ({ item_id: item.id, new_class_key: "n" })),
     new_classes: [{ key: "n", component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。",
-      closest_existing: null, novelty: "首次出现。", category_paths: [["可靠性", "数值"], ["来源", "数值"]] }],
+      closest_existing: null, novelty: "首次出现。", category_paths: [["可靠性", "数值"]] }],
     merges: [],
   };
   receipts[cluster.id] = receipt(cluster.id, result);
@@ -338,17 +338,14 @@ test("review rejects a class unrelated to the original accepted assignment", asy
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("review must retain the exact original observation message and quote", async () => {
+test("review must retain the exact original observation message coordinate", async () => {
   const f = await fixture();
   try {
-    const original = structuredClone(f.library.occurrences[0]!);
-    for (const change of [{ message_index: original.message_index + 1 }, { quote: "An unrecorded quote" }]) {
-      f.library.occurrences[0] = { ...original, ...change };
-      await writeJson(f.file, f.library);
-      const before = await readFile(f.file, "utf8");
-      await assert.rejects(reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" }), /原观察.*实际归类/);
-      assert.equal(await readFile(f.file, "utf8"), before);
-    }
+    f.library.occurrences[0]!.message_index++;
+    await writeJson(f.file, f.library);
+    const before = await readFile(f.file, "utf8");
+    await assert.rejects(reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" }), /原观察.*实际归类/);
+    assert.equal(await readFile(f.file, "utf8"), before);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 

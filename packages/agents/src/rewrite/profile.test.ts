@@ -5,9 +5,9 @@ import { rewriteAgent, rewriteProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
-test("cell rewrites cannot copy the winning model label onto the other model's facts", () => {
+test("candidate summary rewrites cannot copy the winning model label onto the other model's facts", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
-    { id: "comparison.0.B.summary", label: "B组Fast的点评", text: "没有给出结果。", context: "A组Fast给出结果。",
+    { id: "assessment.B.summary", label: "B组Fast的整体总评", text: "没有给出结果。", context: "A组Fast给出结果。",
       forbiddenPrefixes: ["A组Fast：", "B组Fast：", "没有已证实的单方优势："] },
   ] } };
   for (const prefix of request.input.items[0]!.forbiddenPrefixes)
@@ -54,7 +54,7 @@ test("Rewrite returns exactly the requested slots and nothing else", () => {
 
   const empty = structuredClone(example.result);
   empty.rewrites[0]!.text = "";
-  assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|texts/);
+  assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|rewrites/);
 });
 
 test("verdict length is a writing goal and does not discard necessary evidence", () => {
@@ -64,7 +64,7 @@ test("verdict length is a writing goal and does not discard necessary evidence",
   const text = "A更好：给出了指定期间的实际结果，并核对了筛选条件、统计对象及数据来源。B虽然耗时更短、消耗的token更少，但只提供方法，缺少用户要求的名单和计算结果。这里的偏好依据是核心任务是否完成，资源节省作为次要因素保留；同时，A对异常数据的说明仍不充分，后续需要补充缺失值的处理过程。两方的时间与token均来自本次回答的原始记录，不把裁判消耗计入，也不因记录字段名称不同而宣称无法比较。";
   assert(text.length > 160);
   const valid = new Ajv2020({ strict: false }).compile(rewriteProfile.modelSubmissionSchema!(request));
-  const draft = { texts: [text] };
+  const draft = { rewrites: [{ id: "tradeoff", text }] };
   assert(valid(draft), JSON.stringify(valid.errors));
   assert.deepEqual(rewriteProfile.validateSubmission?.(request, draft, audit) ?? [], []);
   const result = { rewrites: [{ id: "tradeoff", text }] };
@@ -75,11 +75,11 @@ test("verdict length is a writing goal and does not discard necessary evidence",
 test("rewrite number fidelity is reviewed semantically instead of rejecting numeric tokens", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
     { id: "tradeoff", label: "裁决短评", text: "A名单正确，B虽快且少用5,922 tokens，但名单错误。" },
-    { id: "comparison.0.B.summary", label: "用时", text: "B快1.782秒。" },
+    { id: "assessment.B.summary", label: "B组整体总评", text: "B快1.782秒。" },
   ] } };
   const result = { rewrites: [
     { id: "tradeoff", text: "A名单正确，B少用约六千 tokens，但名单错误。" },
-    { id: "comparison.0.B.summary", text: "B快约1.8秒。" },
+    { id: "assessment.B.summary", text: "B快约1.8秒。" },
   ] };
   rewriteProfile.validate!(request, result, audit);
   result.rewrites[0]!.text = "A名单正确，B少用5922 tokens但名单错误。";

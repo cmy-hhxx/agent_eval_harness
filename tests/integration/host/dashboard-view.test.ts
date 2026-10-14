@@ -278,13 +278,20 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
   const evaluation = attributionResult();
   const finding = evaluation.findings[0]!;
   evaluation.findings = [
-    { ...finding, type: "problem", text: "缺点原文" },
+    { ...finding, type: "problem", text: "缺点原文", problem: { component: [], label: "问题原名", definition: "问题定义原文" } },
     { ...finding, type: "strength", text: "优点原文" },
   ];
+  evaluation.table_resolutions = [{ table_id: "table", row_index: 0, outcome: "supported", reason: "表格核查原文", evidence: finding.evidence }];
   const row = { evaluation: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [
     { id: "findings.1.text", text: "优点改写" },
     { id: "summary", text: "总结改写" },
     { id: "findings.0.assessment.impact", text: "影响改写" },
+    { id: "core_assessment.reason", text: "主要任务已完成。" },
+    { id: "criterion_assessments.0.summary", text: "检查项通俗点评。" },
+    { id: "findings.0.assessment.observation", text: "观察通俗点评。" },
+    { id: "findings.0.problem.label", text: "通俗问题名称" },
+    { id: "findings.0.problem.definition", text: "通俗问题描述。" },
+    { id: "table_resolutions.0.reason", text: "通俗表格核查理由。" },
   ] } } };
   const original = structuredClone(row);
   const result = caseResultView("attribution", row)!;
@@ -303,7 +310,14 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
     assert.equal(link.dataset.findingTarget, target.id);
     assert.equal(target.querySelector(".rewrite-original .text-content").textContent, "优点原文");
     assert.equal(target.querySelector(".rewrite-polished .text-content").textContent, "优点改写");
-    assert.equal(document.querySelectorAll(".rewrite-pair").length, 3);
+    assert.equal(document.querySelectorAll(".rewrite-pair").length, 9);
+    const polished = [...document.querySelectorAll(".rewrite-polished .text-content")].map(item => item.textContent);
+    assert(polished.includes("主要任务已完成。"));
+    assert(polished.includes("检查项通俗点评。"));
+    assert(polished.includes("观察通俗点评。"));
+    assert(polished.includes("通俗问题名称"));
+    assert(polished.includes("通俗问题描述。"));
+    assert(polished.includes("通俗表格核查理由。"));
     assert.equal(document.querySelectorAll(".finding .evidence-list").length, 2);
     const back = target.querySelector(".findings-return");
     assert.equal(document.getElementById(decodeURIComponent(back.hash.slice(1))).getAttribute("aria-label"), "发现目录");
@@ -392,7 +406,7 @@ test("dashboard maps blind comparison slots to model fields and actual verdict p
   } finally { dom.window.close(); }
 });
 
-test("dashboard aligns models by version, prioritizes impact, and keeps rewrites and finding links attached to their row", () => {
+test("dashboard aligns models by version, prioritizes impact, and keeps accepted facts and finding links attached to their row", () => {
   const row = {
     ...comparisonResult(["left", "right"]),
     models: { left: { version: "A组Fast" }, right: { version: "B组Fast" } },
@@ -408,10 +422,6 @@ test("dashboard aligns models by version, prioritizes impact, and keeps rewrites
         right: { summary: "只提到人民币融资。", finding_indices: [0], status: "unmet", evidence_status: "established" },
       } },
     ] },
-    rewritten: { evaluator_version: "fixture", rewrites: [
-      { id: "comparison.1.B.summary", text: "比较远期与期权。" },
-      { id: "comparison.1.A.summary", text: "未比较对冲方案。<img src=x>" },
-    ] },
   };
   const { dom, document } = render("comparison", caseResultView("comparison", row, { A: "right", B: "left" })!);
   try {
@@ -420,11 +430,10 @@ test("dashboard aligns models by version, prioritizes impact, and keeps rewrites
     assert.equal(rows[1].dataset.comparisonIndex, "0");
     const left = rows[0].querySelector('[data-candidate="left"]');
     const right = rows[0].querySelector('[data-candidate="right"]');
-    assert.match(left.textContent, /更优.*比较远期与期权/s);
-    assert.match(right.textContent, /未比较对冲方案/);
+    assert.match(left.textContent, /更优.*比较了多种对冲工具/s);
+    assert.match(right.textContent, /只提到人民币融资/);
     assert.equal(right.querySelector("img"), null);
-    assert.equal(left.querySelector(".comparison-original").open, false);
-    assert.match(left.querySelector(".comparison-original").textContent, /比较了多种对冲工具/);
+    assert.equal(left.querySelector(".comparison-original"), null);
     const target = document.getElementById(left.querySelector("a").dataset.findingTarget);
     assert.match(target.id, /evaluations.left.findings.0$/);
     assert.equal(document.querySelector(".comparison-attributions").open, false);
@@ -507,10 +516,7 @@ test("comparison cells preserve complete states, confirmed advantages and direct
         tools: ["web_search"], candidate_tools: ["web_search"], confidence: "high", source: "evidence_message",
         locations: [{ message_index: 1, tool_name: "web_search", source_input_id: inputIds[version]! }],
       } })),
-    }])), verdicts: {}, rewritten: { evaluator_version: "fixture", rewrites: [
-      { id: "comparison.1.B.summary", text: "A交付改写 <img src=x>。" },
-      { id: "comparison.2.B.summary", text: "不适用的文字不能替代尚未确认的源状态。" },
-    ] },
+    }])), verdicts: {},
   };
   const original = structuredClone(row);
   const projected = caseResultView("comparison", row, { A: "kimi", B: "a_fast", C: "b_fast" })!;
@@ -603,8 +609,8 @@ test("comparison cells preserve complete states, confirmed advantages and direct
       "a source defect can belong to the confirmed relative advantage candidate");
     assert.equal(table.querySelector(".finding-type"), null, "the comparison table has no absolute strength or problem badges");
     const mixed = table.querySelector('[data-comparison-index="1"] [data-candidate="a_fast"]');
-    assert(mixed.querySelector(".comparison-copy > .expandable-text").textContent.includes("A交付改写 <img src=x>。"));
-    assert.equal(mixed.querySelector(".comparison-copy .comparison-original .text-content").textContent, "A交付原文。");
+    assert.equal(mixed.querySelector(".comparison-copy > .expandable-text").textContent.trim(), "A交付原文。");
+    assert.equal(mixed.querySelector(".comparison-copy .comparison-original"), null);
     const inlineStrength = mixed.querySelector('[data-finding-index="0"]');
     assert(field(inlineStrength, "text").querySelector(".rewrite-original").textContent.includes(evaluations.a_fast!.findings[0]!.text));
     assert(field(inlineStrength, "text").querySelector(".rewrite-polished").textContent.includes("A组Fast优点改写 <img src=x>。"));

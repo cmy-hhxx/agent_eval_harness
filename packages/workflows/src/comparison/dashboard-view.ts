@@ -1,12 +1,13 @@
 import path from "node:path";
 import { fileSourceReader, readJson, locateRun, problemLibraryFile, readProblemLibrary } from "@eval/data";
-import { safeId, type JsonObject, type ProblemLibrary, type ProblemOccurrence, type ProblemOrigin, type SubmissionReceipt, type TaskState } from "@eval/contracts";
+import { errorText, safeId, type JsonObject, type ProblemLibrary, type ProblemOccurrence, type ProblemOrigin, type SubmissionReceipt, type TaskState } from "@eval/contracts";
 import { readRunTasks } from "./run-data.js";
 import { buildPlan, contentText, locateRecordStream, type PlanOptions } from "./input.js";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import type { Checkpoint } from "./codec.js";
 import { verdictSlotId } from "./commentary.js";
 import { countProblemSamples, effectiveProblemOccurrences, problemSampleKey, projectLibrary } from "@eval/agents/clustering";
+import { clusteringClassText, readClusteringClassText, type ClusteringClassText } from "./clustering-presentation.js";
 
 /** Read-only workflow projection: the dashboard never interprets blind labels or result files. */
 async function checkpoint(run: string): Promise<Checkpoint> {
@@ -188,10 +189,6 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
     paths.set("tradeoff", "decision_basis.tradeoff");
     for (const [label, version] of Object.entries(versions))
       paths.set(`assessment.${label}.summary`, `assessments.${version}.summary`);
-    (row.decision_basis as { comparisons: unknown[] }).comparisons.forEach((_, index) => {
-      for (const [label, version] of Object.entries(versions))
-        paths.set(`comparison.${index}.${label}.summary`, `decision_basis.comparisons.${index}.assessments.${version}.summary`);
-    });
     const labels = new Map(Object.entries(versions).map(([label, version]) => [version, label]));
     for (const pair of Object.keys(row.verdicts as JsonObject)) {
       const [first, second] = pair.split("__vs__").map((version) => labels.get(version));
@@ -217,6 +214,9 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
         correctness_reason: clip(value.correctness_reason, 8000),
         correctness_evidence: clipEvidence(value.correctness_evidence),
         numeric_checks: value.numeric_checks,
+        ...(value.table_resolutions === undefined ? {} : { table_resolutions: (value.table_resolutions as JsonObject[]).map(item => ({
+          ...item, reason: clip(item.reason, 8000), evidence: clipEvidence(item.evidence),
+        })) }),
         criterion_assessments: value.criterion_assessments,
         core_assessment: value.core_assessment,
         summary: clip(value.summary, 8000),
@@ -463,6 +463,7 @@ export interface ProblemLibraryView {
   model: string;
   name: string;
   updated_at: string | null;
+  rewrite_error?: string;
   components: {
     id: string;
     label: string;
@@ -473,6 +474,11 @@ export interface ProblemLibraryView {
   merged: ProblemMergeView[];
   categories: ProblemCategoryView[];
   totals: { components: number; classes: number; occurrences: number };
+}
+/** Optional display polish must not hide intact knowledge or the source's real error. */
+async function problemLibraryText(config: EvalConfig, library: ProblemLibrary) {
+  try { return { text: await readClusteringClassText(config, library) }; }
+  catch (error) { return { text: clusteringClassText(library, []), rewrite_error: errorText(error) }; }
 }
 
 /** Prefix topic views share class IDs; counts always refer to distinct source findings. */
@@ -493,7 +499,7 @@ export function problemCategories(library: ProblemLibrary): ProblemCategoryView[
     .sort((a, b) => JSON.stringify(a.path).localeCompare(JSON.stringify(b.path)));
 }
 
-function mergedClasses(library: ProblemLibrary): ProblemMergeView[] {
+function mergedClasses(library: ProblemLibrary, text?: Map<string, ClusteringClassText>): ProblemMergeView[] {
   return Object.values(library.classes)
     .filter((problem) => problem.status === "merged")
     .map((problem) => {
@@ -502,9 +508,9 @@ function mergedClasses(library: ProblemLibrary): ProblemMergeView[] {
       );
       return {
         id: problem.id,
-        label: problem.label,
+        label: text?.get(problem.id)?.label ?? problem.label,
         into: problem.merged_into || "",
-        into_label: problem.merged_into ? (library.classes[problem.merged_into]?.label ?? null) : null,
+        into_label: problem.merged_into ? (text?.get(problem.merged_into)?.label ?? library.classes[problem.merged_into]?.label ?? null) : null,
         reason: event ? String(event.detail.reason ?? "") || null : null,
       };
     });
@@ -519,15 +525,17 @@ export async function listConfiguredProblemLibrary(config: EvalConfig): Promise<
     if (!library) return { model, name, updated_at: null, components: [], merged: [], categories: [],
       totals: { components: 0, classes: 0, occurrences: 0 } };
     const active = Object.values(library.classes).filter((problem) => problem.status === "active");
+    const { text, rewrite_error } = await problemLibraryText(config, library);
     return {
       model,
       name,
       updated_at: library.updated_at,
+      ...(rewrite_error ? { rewrite_error } : {}),
       components: projectLibrary(library).components.map(component => ({ ...component,
-        classes: component.classes.map(problem => ({ ...problem, first_seen: library.classes[problem.id]!.first_seen }))
+        classes: component.classes.map(problem => ({ ...problem, ...text.get(problem.id), first_seen: library.classes[problem.id]!.first_seen }))
           .sort((a, b) => b.occurrences - a.occurrences || a.label.localeCompare(b.label)),
       })),
-      merged: mergedClasses(library),
+      merged: mergedClasses(library, text),
       categories: problemCategories(library),
       totals: {
         components: Object.keys(library.components).length,
@@ -649,7 +657,8 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
   const selected = occurrences.slice((page - 1) * pageSize, page * pageSize);
   const recalls = await sampleRecalls(config, selected);
   const related = new Set([classId]);
-  const merged = mergedClasses(library);
+  const { text, rewrite_error } = await problemLibraryText(config, library);
+  const merged = mergedClasses(library, text);
   let changed = true;
   while (changed) {
     changed = false;
@@ -659,10 +668,11 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
   return {
     model,
     name: version.display_name || version.name,
+    ...(rewrite_error ? { rewrite_error } : {}),
     class: {
       id: problem.id,
-      label: problem.label,
-      definition: problem.definition,
+      label: text.get(problem.id)!.label,
+      definition: text.get(problem.id)!.definition,
       aliases: problem.aliases,
       status: problem.status,
       merged_into: problem.merged_into,
@@ -690,7 +700,6 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
       finding_id: occurrence.finding_id,
       evidence_status: occurrence.evidence_status,
       message_index: occurrence.message_index,
-      quote: occurrence.quote,
       source: occurrence.source,
       classification: occurrence.classification,
       previous_class_id: occurrence.previous_class_id,

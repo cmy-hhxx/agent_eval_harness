@@ -26,8 +26,8 @@ export interface ClusteringJobMaterial {
   config: ClusteringJobConfig;
 }
 export const clusteringJobItems = (observations: ClusteringObservation[]) =>
-  observations.map(({ id, component, label, count, established_count, uncertain_count, refs }) =>
-    ({ id, component, label, count, established_count, uncertain_count, refs }));
+  observations.map(({ id, component, label, count, established_count, uncertain_count, established_answer_ids, refs }) =>
+    ({ id, component, label, count, established_count, uncertain_count, established_answer_ids, refs }));
 export function jobMaterial(inputs: Record<string, unknown>, model: string): ClusteringJobMaterial {
   const value = inputs[model] as ClusteringJobMaterial | undefined;
   if (!value) throw new Error("聚类作业缺少模型材料：" + model);

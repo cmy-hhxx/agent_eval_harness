@@ -4,6 +4,8 @@ export * from "./adapters.js";
 export * from "./input.js";
 export * from "./input-catalog.js";
 export * from "./run-data.js";
+export * from "./task-progress.js";
+export * from "./attribution-rewrite-planning.js";
 export * from "./repair.js";
 export * from "./delivery.js";
 export * from "./dashboard-view.js";
@@ -24,5 +26,9 @@ export * from "./problem-occurrence-review.js";
 export * from "./analysis-progress.js";
 export * from "./analysis-comparison.js";
 export * from "./analysis-case.js";
+export * from "./attribution-job.js";
+export * from "./attribution-pilot-expansion.js";
+export * from "./attribution-targeted-review.js";
+export * from "./clustering-presentation.js";
 
 export { prepareComparisonVerification } from "./verification-preparation.js";

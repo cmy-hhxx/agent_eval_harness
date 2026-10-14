@@ -10,6 +10,8 @@ import type { ClusteringRequest } from "./types.js";
 export * from "./types.js";
 export * from "./library.js";
 export * from "./occurrence-review.js";
+export * from "./pending-observations.js";
+export { representativeSamples } from "./samples.js";
 const prompt = agentPrompt("clustering", []);
 export const clusteringProfile: AgentProfile = {
   id: "default",
@@ -31,7 +33,7 @@ export const clusteringProfile: AgentProfile = {
       ...(["schema_pattern", "clustering_category_characters"].includes(issue.code) ? {
         category_paths_rule: categorySegmentRule, category_paths_action: categorySegmentAction,
       } : {}),
-      ...(issue.code === "schema_type" ? { category_paths_rule: "category_paths 是路径数组；每条路径也是数组，每级直接填写字符串，不使用 item 对象或其他包装。每类最多三条路径，每条最多三级。" } : {}),
+      ...(issue.code === "schema_type" ? { category_paths_rule: "category_paths 是路径数组；每条路径也是数组，每级直接填写字符串，不使用 item 对象或其他包装。每类只保留一条主要路径，最多三级。" } : {}),
     };
   },
   toolNames: [],

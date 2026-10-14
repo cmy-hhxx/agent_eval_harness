@@ -94,13 +94,26 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
     state.receipts[review.id] = receipt(review.id, reviewed); state.manifest.states[review.id].status = "succeeded";
     const next = comparisonWorkflow.advance!(review, state.receipts[review.id], state, plan.inputs);
     assert.equal(next.tasks.filter(task => (task.data as TaskData).standardConflictReview).length, 0, "confirmation does not loop");
+    apply(state, next);
     const comparison = state.manifest.tasks.find(task => task.stage === "comparison")!;
     assert(Object.values(comparison.dependencies).includes(peerReview.id));
     assert(Object.values(comparison.dependencies).some(id => !state.receipts[id]), "comparison waits for the second review");
     const peerValue = evaluationFor(counterpart); peerValue.standard_conflict = confirmed;
     state.receipts[peerReview.id] = receipt(peerReview.id, peerValue);
     state.manifest.states[peerReview.id].status = "succeeded";
-    assert.deepEqual(comparisonWorkflow.advance!(peerReview, state.receipts[peerReview.id], state, plan.inputs).tasks, []);
+    const peerNext = comparisonWorkflow.advance!(peerReview, state.receipts[peerReview.id], state, plan.inputs);
+    assert(peerNext.tasks.every(task => task.stage === "rewrite"), "accepted source reviews only expand their independent text groups");
+    apply(state, peerNext);
+    for (const accepted of [review, peerReview]) {
+      const groups = state.manifest.tasks.filter(task => task.stage === "rewrite" && task.dependencies.source === accepted.id)
+        .map(task => (task.data as TaskData).rewriteSlotIds!);
+      assert.equal(groups.length, 3, "overview, criterion checks and the finding own separate text work");
+      assert(groups.some(ids => ids.includes("summary") && ids.includes("core_assessment.reason")));
+      assert(groups.some(ids => ids.every(id => id.startsWith("criterion_assessments."))));
+      assert(groups.some(ids => ids.every(id => id.startsWith("findings.0."))));
+      assert.deepEqual(comparisonWorkflow.advance!(accepted, state.receipts[accepted.id], state, plan.inputs), { tasks: [] },
+        "replaying an accepted review must preserve its already scheduled rewrite groups");
+    }
     state.receipts[counterpart.id] = receipt(counterpart.id, { ...peerValue, standard_conflict: true }); state.manifest.states[counterpart.id].status = "succeeded";
     assert.deepEqual(comparisonWorkflow.advance!(counterpart, state.receipts[counterpart.id], state, plan.inputs), { tasks: [] },
       "a late original proposal neither duplicates review nor changes downstream sources");
@@ -122,7 +135,7 @@ test("standard review uses only distinct current opponents and leaves absent pee
     const plan = await buildPlan(fixture.config), source = plan.tasks.find(task => task.stage === "attribution")!;
     const pair = plan.tasks.find(task => task.stage === "comparison")!;
     const receipt = { taskId: source.id, evaluation: { standard_conflict: true } } as SubmissionReceipt;
-    const state = { manifest: { tasks: [...plan.tasks, { ...pair, id: "same-opponent-another-pair" }], states: {} },
+    const state = { manifest: { config: fixture.config, tasks: [...plan.tasks, { ...pair, id: "same-opponent-another-pair" }], states: {} },
       receipts: { [source.id]: receipt } } as unknown as RunState;
     const withPeer = comparisonWorkflow.advance!(source, receipt, state, plan.inputs).tasks[0]!;
     assert.equal(Object.keys((withPeer.data as TaskData).referenceCandidates!).length, 1);
@@ -145,7 +158,7 @@ for (const status of ["running", "succeeded"] as const) test(`standard review pr
     const polish = plan.tasks.find(task => task.stage === "rewrite" && task.dependencies.source === counterpart.id)!;
     const protectedPair = { ...pair, id: "already-started-pair" };
     const receipt = { taskId: source.id, evaluation: { standard_conflict: true } } as SubmissionReceipt;
-    const state = { manifest: { tasks: [...plan.tasks, protectedPair], states: {
+    const state = { manifest: { config: fixture.config, tasks: [...plan.tasks, protectedPair], states: {
       [polish.id]: { status }, [protectedPair.id]: { status },
     } }, receipts: { [source.id]: receipt,
       ...(status === "succeeded" ? { [polish.id]: { taskId: polish.id }, [protectedPair.id]: { taskId: protectedPair.id } } : {}),
@@ -168,7 +181,7 @@ test("coverage review retains shared standard evidence and cannot restore late o
     const plan = await buildPlan(fixture.config), criteria = plan.tasks.find(task => task.stage === "criteria")!;
     const source = plan.tasks.find(task => task.stage === "attribution")!;
     const receipt = (task: PlannedTask, evaluation: unknown) => ({ taskId: task.id, evaluation, status: "succeeded", audit: emptyAudit() }) as SubmissionReceipt;
-    const state = { manifest: { tasks: [...plan.tasks], states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])) },
+    const state = { manifest: { config: fixture.config, tasks: [...plan.tasks], states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])) },
       receipts: { [criteria.id]: receipt(criteria, criteriaResult()) } } as unknown as RunState;
     const original = attributionResult(true, "2+2=4", true, source.inputIds.answer); original.standard_conflict = true;
     state.receipts[source.id] = receipt(source, original);
@@ -214,7 +227,7 @@ test("an ordinary standard mismatch does not request an extra standard review", 
     const evaluation = attributionResult(false, "2+2=4", true, task.inputIds.answer);
     evaluation.standard_conflict = false;
     const receipt = { taskId: task.id, evaluation } as SubmissionReceipt;
-    const state = { manifest: { tasks: plan.tasks }, receipts: { [task.id]: receipt } } as unknown as RunState;
+    const state = { manifest: { config: fixture.config, tasks: plan.tasks }, receipts: { [task.id]: receipt } } as unknown as RunState;
     assert.deepEqual(comparisonWorkflow.advance!(task, receipt, state, plan.inputs).tasks, []);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });

@@ -19,7 +19,7 @@ for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"
   const receipt=(taskId:string,evaluation:unknown,acceptedAt=1):SubmissionReceipt=>({taskId,evaluation,attemptId:taskId,submissionId:taskId,
    acceptedAt,status:"succeeded",evaluatorVersion:"fixture",judge:"fixture",audit:emptyAudit(),usage:emptyUsage()});
   const receipts:Record<string,SubmissionReceipt>={[criteria.id]:receipt(criteria.id,criteriaResult())};
-  const state={manifest:{tasks:[...plan.tasks],states:Object.fromEntries(plan.tasks.map(task=>[task.id,{status:receipts[task.id]?"succeeded":"pending",attempts:0}]))},receipts} as unknown as RunState;
+  const state={manifest:{config:fixture.config,tasks:[...plan.tasks],states:Object.fromEntries(plan.tasks.map(task=>[task.id,{status:receipts[task.id]?"succeeded":"pending",attempts:0}]))},receipts} as unknown as RunState;
   const apply=(change:ReturnType<NonNullable<WorkflowDefinition["advance"]>>)=>{
    for(const replacement of change.replace??[])state.manifest.tasks[state.manifest.tasks.findIndex(task=>task.id===replacement.id)]=replacement;
    for(const added of change.tasks){state.manifest.tasks.push(added);state.manifest.states[added.id]={status:"pending",attempts:0};}

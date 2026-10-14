@@ -28,6 +28,8 @@ export interface ClusteringItem {
   count: number;
   established_count: number;
   uncertain_count: number;
+  /** Confirmed independent answers; class support is the union across assigned items. */
+  established_answer_ids: string[];
   examples: ClusteringExample[];
 }
 export interface ClusteringRequest {
@@ -53,7 +55,7 @@ export interface ClusteringNewClass {
   /** Most similar active class in the same component; null when that component has no class. */
   closest_existing: string | null;
   novelty: string;
-  category_paths?: string[][];
+  category_paths: string[][];
 }
 export interface ClusteringClassUpdate {
   class_id: string;

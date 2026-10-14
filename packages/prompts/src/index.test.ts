@@ -98,7 +98,7 @@ test("rewrite asks for direct factual critique without boilerplate or stronger c
   const text = systemPrompt + "\n" + instructions;
   assert.match(text, /准确、直接、通俗/);
   assert.match(text, /短句和具体动词/);
-  assert.match(text, /删去空话和重复判词/);
+  assert.match(text, /只删槽内空话和重复判词，不合并或跳过槽位/);
   assert.match(text, /限定词原样保留/);
   assert.match(text, /决定正确性的数值、单位和专有名词原样保留/);
   assert(!text.includes("原样保留数字"), "self-rated 6/10 is not a source fact that must survive");

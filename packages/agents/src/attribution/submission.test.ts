@@ -123,7 +123,7 @@ test("lost tool data belongs to the actual answer input, not the tool or model b
 test("explicit responsibility distinguishes a faulty tool from a correct tool used as counterevidence",()=>{
   const f=toolFixture(),finding=f.draft.problems[0];
   const schema=attributionProfile.modelSubmissionSchema!(f.request) as any;
-  assert.deepEqual(schema.properties.problems.items.properties.component.items.enum,["模型自身推理","Calc"]);
+  assert.deepEqual(schema.properties.problems.items.properties.component.items.enum,["模型自身推理","Calc","回答呈现与采集","执行环境与权限配置"]);
   const value=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   assert.deepEqual(value.findings[0].problem!.component,["Calc"]);
   const originalEvidence=[...finding.evidence_indices];

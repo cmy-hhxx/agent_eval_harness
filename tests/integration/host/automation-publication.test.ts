@@ -56,7 +56,7 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("publication requires nonempty verdict and content rewrites while recorded resource cells keep their original text", () => {
+test("publication requires nonempty verdict and overall prose rewrites while derived cells keep their original text", () => {
   const findings = { a_fast: { finding_indices: [0] }, b_fast: { finding_indices: [0] } };
   const row: JsonObject = { comparison_id: "comparison", decision_basis: { comparisons: [
     { criterion_ids: ["r1"], assessments: findings },
@@ -64,17 +64,20 @@ test("publication requires nonempty verdict and content rewrites while recorded 
     { criterion_ids: [], assessments: findings },
   ] }, rewritten: { rewrites: [
     { id: "verdict.A__vs__B.reason", text: "双方都好：给出相同结果。" },
-    { id: "comparison.0.A.summary", text: "给出了结果。" },
-    { id: "comparison.0.B.summary", text: "给出了结果。" },
-    { id: "comparison.2.A.summary", text: "来源明确。" },
-    { id: "comparison.2.B.summary", text: "  " },
+    { id: "assessment.A.summary", text: "给出了结果。" },
+    { id: "assessment.B.summary", text: "给出了结果。" },
+    { id: "tradeoff", text: "  " },
   ] } };
-  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /comparison\.2\.B\.summary/);
+  const required = ["verdict.A__vs__B.reason", "assessment.A.summary", "assessment.B.summary", "tradeoff"];
+  assert.throws(() => assertCompleteComparisonRewrite(row, required), /tradeoff/);
   const items = (row.rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
-  items[4].text = "来源明确。";
-  assertCompleteComparisonRewrite(row, ["B", "A"]);
+  items[3].text = "来源明确。";
+  assertCompleteComparisonRewrite(row, required);
+  items.pop();
+  assertCompleteComparisonRewrite(row, required.slice(0, 3));
+  assert.throws(() => assertCompleteComparisonRewrite(row, required), /tradeoff/);
   items.shift();
-  assert.throws(() => assertCompleteComparisonRewrite(row, ["B", "A"]), /verdict\.A__vs__B\.reason/);
+  assert.throws(() => assertCompleteComparisonRewrite(row, required), /verdict\.A__vs__B\.reason/);
 });
 
 const date = "2026-09-30";
@@ -111,7 +114,9 @@ test("publication quarantines every duplicate input and only its affected battle
     } });
     for (const task of Object.values(saved.tasks)) {
       task.status = "succeeded";
-      task.receipt = { acceptedAt: 10, exported: {} } as NonNullable<typeof task.receipt>;
+      task.receipt = { acceptedAt: 10, exported: {}, ...(task.data.rewriteOf?.stage === "comparison" ? {
+        rewriteIds: ["verdict.A__vs__B.reason", "assessment.A.summary", "assessment.B.summary", "tradeoff"],
+      } : {}) } as NonNullable<typeof task.receipt>;
     }
     const output = Object.values(saved.tasks).filter(task => task.stage === "comparison").map(task => {
       const candidates = Object.values(task.inputIds).map(id => saved.inputs[id]);
@@ -123,7 +128,12 @@ test("publication quarantines every duplicate input and only its affected battle
         evaluations: Object.fromEntries(versions.map(id => [id, { is_correct: true }])),
         verdicts: { [versions.join("__vs__")]: { result: "both_good", winner_version: null } },
         decision_basis: { comparisons: [] },
-        rewritten: { rewrites: [{ id: "verdict.A__vs__B.reason", text: "双方均完成要求。" }] },
+        rewritten: { rewrites: [
+          { id: "verdict.A__vs__B.reason", text: "双方均完成要求。" },
+          { id: "assessment.A.summary", text: "已完成所求结果。" },
+          { id: "assessment.B.summary", text: "已完成所求结果。" },
+          { id: "tradeoff", text: "双方结果可用，现有差异较小。" },
+        ] },
       };
     });
     const stateFile = path.join(config.output.path, runId, "state.json");
@@ -180,6 +190,23 @@ test("publication quarantines every duplicate input and only its affected battle
     assert.equal((await collect(repaired.inputs())).length, 8);
     assert.deepEqual((await collect(repaired.results())).map(row => row.row), output,
       "fixing the source releases the original accepted results without evaluating them again");
+    await t.test("accepted receipts define delivery scope and partial polish cannot hide a missing slot", async () => {
+      const rewrites = Object.values(saved.tasks).filter(task => task.data.rewriteOf?.stage === "comparison");
+      for (const task of rewrites) task.receipt!.rewriteIds!.pop();
+      for (const row of output) row.rewritten.rewrites.pop();
+      await writeJson(stateFile, saved);
+      await writeJsonl(resultFile, output);
+      const accepted = await publicationSnapshot(settings, job, t.signal);
+      assert.equal((await collect(accepted.results())).length, output.length,
+        "accepted work does not acquire extra rewrite slots at delivery time");
+      const full = rewrites[0];
+      full.receipt!.rewriteIds!.push("tradeoff");
+      saved.tasks["partial-rewrite"] = { ...full, data: { ...full.data, comparisonRewriteScope: "verdicts" },
+        receipt: { ...full.receipt!, rewriteIds: ["verdict.A__vs__B.reason"] } };
+      await writeJson(stateFile, saved);
+      const incomplete = await publicationSnapshot(settings, job, t.signal);
+      await assert.rejects(collect(incomplete.results()), /Comparison rewrite incomplete.*tradeoff/);
+    });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -469,7 +496,7 @@ test("latest snapshot refreshes existing dates and includes new dates without do
   assert.equal(historical.stats[0].total.p50, 150);
 });
 
-test("case annotations fill unlabelled models without conflating dates or silently accepting conflicting labels", () => {
+test("case labels share across models and conflicting difficulties stay unclassified without losing battles", () => {
   const stats = new PublicationStatistics(configuredGroups);
   stats.addInput(inputs[0]);
   stats.addInput({ ...inputs[1], trace: { ...inputs[1].trace, meta: {} } });
@@ -479,7 +506,26 @@ test("case annotations fill unlabelled models without conflating dates or silent
   assert.equal(data.tasks.length, 1);
   assert.equal(data.tasks[0].progress.completedBattleCount, 1);
   assert.equal(data.difficultyLevels[0].progress.completedBattleCount, 1);
+  stats.addLabels({ batchId: date, caseId: "one", difficulty: "复杂" });
+  stats.addLabels({ batchId: date, caseId: "one", difficulty: "简单" });
+  stats.addLabels({ batchId: date, caseId: "one", difficulty: "未分层" });
+  const conflicted = stats.record("conflicted", Date.now()).data as Record<string, any>;
+  assertStatisticsLog(stats.record("conflicted", Date.now()));
+  assert.equal(conflicted.totalCaseCount, 1);
+  assert.equal(conflicted.progress.completedBattleCount, 1);
+  assert.deepEqual(conflicted.stats, data.stats);
+  assert.equal(conflicted.tasks[0].id, "客观题");
+  assert.equal(conflicted.difficultyLevels.find((row: any) => row.id === "unclassified").count, 1);
+  assert.equal(conflicted.difficultyLevels.find((row: any) => row.id === "unclassified").progress.completedBattleCount, 1);
+  assert.deepEqual(stats.labelConflicts, [{ batchId: date, caseId: "one", fields: ["difficulty"] }]);
   assert.throws(() => stats.addLabels({ batchId: date, caseId: "one", task: "其他分类" }), /Conflicting statistics task labels/);
+  const reversed = new PublicationStatistics(configuredGroups);
+  reversed.addLabels({ batchId: date, caseId: "one", difficulty: "复杂" });
+  reversed.addInput(inputs[0]);
+  reversed.addInput({ ...inputs[1], trace: { ...inputs[1].trace, meta: {} } });
+  reversed.addResult(result);
+  assert.deepEqual(reversed.record("conflicted", Date.now()).data, conflicted,
+    "a later agreeing model cannot hide the conflict, regardless of label read order");
 });
 
 test("daily statistics use a paired request date or the batch date when all request timestamps are absent", () => {

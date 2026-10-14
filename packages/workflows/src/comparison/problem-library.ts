@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ProblemLibrary, RunState } from "@eval/contracts";
 import { problemLibraryFile, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary } from "@eval/data";
 import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, problemSampleKey, type ClusteringResult } from "@eval/agents/clustering";
@@ -53,7 +54,9 @@ export async function syncProblemLibrary(
         if (!receipt) continue;
         const scope = (task.data as TaskData).scope!;
         const result = receipt.evaluation as ClusteringResult;
-        const observations = taskObservations(task, (id) => state.receipts[id]);
+        const observations = taskObservations(task, (id) => state.receipts[id], {
+          run: path.join(config.output.path, state.manifest.runId), run_id: state.manifest.runId,
+        });
         const before = library;
         library = applyClustering(library, {
           run_id: state.manifest.runId,

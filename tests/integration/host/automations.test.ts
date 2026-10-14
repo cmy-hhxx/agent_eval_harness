@@ -9,7 +9,7 @@ import { RemoteInputs } from "@eval/runtime/client";
 import { runPipeline, type AutomationJob, type AutomationState } from "@eval/automations";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
-import { assertStatisticsLog, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
+import { assertStatisticsLog, attributionSlots, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
 import { automationEvaluationConfig, loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationCommand } from "../../../apps/host/src/automation-command.js";
 import { publicationSnapshot, syncMongoDay } from "../../../apps/host/src/automation-publication.js";
@@ -190,7 +190,8 @@ test("automation plans attribution, comparison and both rewrites while deferring
       preflight: plan.summary, startedAt: Date.now(),
     } };
     const accepted = plan.tasks.find((task) => task.stage === "attribution")!;
-    state.receipts[accepted.id] = { taskId: accepted.id } as RunState["receipts"][string];
+    state.receipts[accepted.id] = { taskId: accepted.id,
+      evaluation: attributionResult(true, "2+2=4", true, accepted.inputIds.answer) } as RunState["receipts"][string];
     state.manifest.states[accepted.id].status = "succeeded";
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw(), raw("new-case")].map((record) => ({ ...record, batch_id: date })));
     await automationWorkflow.reconcile!(directory, state, evaluation);
@@ -229,10 +230,16 @@ test("automation defers unfinished clustering and later classifies attributions 
     const state: RunState = { usage: emptyUsage(), recordedAttempts: 0,
       receipts: Object.fromEntries(plan.tasks.map(task => {
         const rewrites = comparisonSlots(comparisonResult(), "all").map(({ id, text }) => ({ id, text }));
+        const attribution = task.stage === "attribution" ? attributionResult(true, "2+2=4", true, task.inputIds.answer)
+          : (task.data as TaskData).rewriteOf?.stage === "attribution" ? attributionResult(true, "2+2=4", true,
+            plan.tasks.find(source => source.id === task.dependencies.source)!.inputIds.answer) : undefined;
         return [task.id, { taskId: task.id,
           ...(task.stage === "comparison" ? { evaluation: comparisonResult(), exported: {
             id: (task.data as TaskData).comparisonId!, row: { rewritten: { rewrites } },
-          } } : (task.data as TaskData).rewriteOf?.stage === "comparison" ? { evaluation: { rewrites } } : {}),
+          } } : task.stage === "attribution" ? { evaluation: attribution }
+            : (task.data as TaskData).rewriteOf?.stage === "attribution" ? {
+              evaluation: { rewrites: attributionSlots(attribution!).map(({ id, text }) => ({ id, text })) },
+            } : (task.data as TaskData).rewriteOf?.stage === "comparison" ? { evaluation: { rewrites } } : {}),
         }];
       })) as RunState["receipts"], manifest: {
         format: "evaluation-run", runId: "daily", debug: false, status: "finished", startedAt: 1,
@@ -289,17 +296,17 @@ test("automation resumes current outputs across evaluator changes and delivers c
       return {
         async run() {
           await inspectFor(options);
-          const id = options.spec.taskId, task = plan.tasks.find((task) => task.id === id)!;
+          const id = options.spec.taskId, evaluationId = options.spec.evaluation.id;
           calls.set(id, (calls.get(id) ?? 0) + 1);
-          const stage = task.stage === "rewrite" ? `rewrite/${(task.data as TaskData).rewriteOf!.stage}` : task.stage;
-          if ((task.stage === "rewrite" || task.stage === "clustering") && !interrupted.has(stage)) {
+          const stage = evaluationId === "rewrite" ? `rewrite/${(parsedMaterial(options.spec) as { kind: string }).kind}` : evaluationId;
+          if ((evaluationId === "rewrite" || evaluationId === "clustering") && !interrupted.has(stage)) {
             interrupted.add(stage); interruptedTasks.add(id);
             const stopped = new Promise<void>((resolve) => { release = resolve; });
             controller.abort();
             await stopped;
             return;
           }
-          const result = task.stage === "attribution" ? attributionResult(false, "2+2=5", true, options.spec.inputs.find(input => input.name === "answer")!.id) : taskResult(options.spec);
+          const result = evaluationId === "attribution" ? attributionResult(false, "2+2=5", true, options.spec.inputs.find(input => input.name === "answer")!.id) : taskResult(options.spec);
           const submitted = await submitFor(options, draftFor(options.spec, result));
           assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
         },
@@ -531,6 +538,7 @@ test("the pipeline reopens a blocked ledger checkpoint and retries until recover
   const { directory, config } = await fixtureConfig();
   try {
     const date = "2026-10-08", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    settings.fromDate = date;
     const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
       unknown: { stage: "rewrite", status: "failed", data: {}, dependencies: {}, failure: {
         contentSubmissions: 1, fileErrors: 2,
@@ -734,9 +742,9 @@ test("a daily Fast run expands to Expert with all rewrites in the same directory
       await inspectFor(options);
       calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1);
       if (options.spec.evaluation.id === "rewrite") {
-        const items = (parsedMaterial(options.spec) as { items: { label: string; preference?: string }[] }).items;
-        assert(items.every(item => !Object.hasOwn(item,"id")));
-        requestedSlots.set(options.spec.taskId, [...(requestedSlots.get(options.spec.taskId) ?? []), items.map(item => item.preference ? "verdict." + item.label : "comparison." + item.label)]);
+        const items = (parsedMaterial(options.spec) as { items: { id: string; label: string; preference?: string }[] }).items;
+        assert(items.every(item => typeof item.id === "string" && item.id.length > 0));
+        requestedSlots.set(options.spec.taskId, [...(requestedSlots.get(options.spec.taskId) ?? []), items.map(item => item.id)]);
       }
       const reply = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
       assert.equal(reply.isError, undefined, JSON.stringify(reply));
@@ -791,7 +799,7 @@ test("a daily Fast run expands to Expert with all rewrites in the same directory
         assert.equal(after.receipts[id].submissionId, receipt.submissionId);
         const [original] = requestedSlots.get(id)!, [missing] = requestedSlots.get(supplemental.id)!;
         assert(original.every((slot) => slot.startsWith("verdict.")));
-        assert(missing.length > 0 && missing.every((slot) => slot.startsWith("comparison.")));
+        assert.deepEqual(new Set(missing), new Set(["assessment.A.summary", "assessment.B.summary", "tradeoff"]));
         const saved = after.receipts[source].exported!.row.rewritten as { rewrites: { id: string; text: string }[] };
         for (const item of (receipt.evaluation as { rewrites: { id: string; text: string }[] }).rewrites)
           assert.deepEqual(saved.rewrites.find((entry) => entry.id === item.id), item);

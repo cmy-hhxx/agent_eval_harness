@@ -7,6 +7,7 @@ import { bindTask } from "./workflow.js";
 import type { AgentBinding, ToolAudit } from "@eval/contracts";
 import { writeOverview } from "./report.js";
 import { loadRunInputs, readRunState } from "./run-data.js";
+import { loadAttributionJobInputs, type AttributionJobConfig } from "./attribution-job.js";
 import type { Candidate, EvalConfig, ComparisonResult, RawInput, TaskData } from "./types.js";
 import { adapt, candidateKey, taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -37,9 +38,12 @@ export async function validateRun(
     artifactErrors: string[] = [],
     receipts = new Map<string, SubmissionReceipt>();
   const inputIssues: ValidationIssue[] = [];
-  const inputs = await loadRunInputs(manifest, inputIssues);
-  evidenceErrors.push(...inputIssues.map((issue) => issue.message));
+  const selectedTasks = requirements.selectedOnly && manifest.executionScope ? new Set(manifest.executionScope) : undefined;
   const config = manifest.config as EvalConfig;
+  const inputs = (config as AttributionJobConfig).attributionJob
+    ? await loadAttributionJobInputs(manifest, selectedTasks)
+    : await loadRunInputs(manifest, inputIssues, selectedTasks);
+  evidenceErrors.push(...inputIssues.map((issue) => issue.message));
   const catalog =
     (manifest.inputCatalog as Candidate[]) ||
     manifest.tasks.flatMap((task) => Object.values((task.data as TaskData).candidates));

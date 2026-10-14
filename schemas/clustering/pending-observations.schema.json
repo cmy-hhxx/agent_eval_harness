@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pending", "at", "run"],
+  "properties": {
+    "pending": { "type": "array", "items": { "$ref": "#/$defs/ref" } },
+    "at": { "$ref": "#/$defs/text" },
+    "run": { "$ref": "#/$defs/text" }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "input_id", "finding_id", "attribution", "source", "batch_id", "case_id", "components", "evidence_status", "importance", "summary"],
+      "properties": {
+        "version": { "$ref": "#/$defs/text" },
+        "input_id": { "$ref": "#/$defs/text" },
+        "finding_id": { "$ref": "#/$defs/text" },
+        "batch_id": { "$ref": "#/$defs/text" },
+        "case_id": { "$ref": "#/$defs/text" },
+        "summary": { "$ref": "#/$defs/text" },
+        "components": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+        "evidence_status": { "enum": ["established", "uncertain"] },
+        "importance": { "enum": ["high", "medium", "low"] },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "line"],
+          "properties": {
+            "file": { "$ref": "#/$defs/text" },
+            "line": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "attribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run", "run_id", "task_id", "submission_id", "evaluator_version"],
+          "properties": {
+            "run": { "$ref": "#/$defs/text" },
+            "run_id": { "$ref": "#/$defs/text" },
+            "task_id": { "$ref": "#/$defs/uuid" },
+            "submission_id": { "$ref": "#/$defs/uuid" },
+            "evaluator_version": { "$ref": "#/$defs/text" }
+          }
+        }
+      }
+    }
+  }
+}

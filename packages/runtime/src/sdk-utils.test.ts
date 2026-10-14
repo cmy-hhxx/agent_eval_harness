@@ -102,14 +102,15 @@ const submissions = {
     strengths: [], problems: [],
   } satisfies AttributionSubmission,
   comparison: {
-    a_summary: "已完成。", b_summary: "已完成。", preference: null, tradeoff: "双方均完成核心要求。",
-    comparisons: [{ importance: "high", better_candidate: null, a_summary: "结果正确。", b_summary: "结果正确。" },
-      { importance: "low", better_candidate: null }],
+    a_summary: "已完成。", b_summary: "已完成。", preference: null, relative_preference: "A",
+    a_tradeoff: "完成核心要求。", b_tradeoff: "完成核心要求。",
+    comparisons: [{ importance: "high", better_candidate: null },
+      { importance: "low" }],
   } satisfies ComparisonSubmission,
-  rewrite: { texts: ["双方均完成核心要求。"] },
+  rewrite: { rewrites: [{ id: "summary", text: "双方均完成核心要求。" }] },
   clustering: {
     assignments: [{ item_id: "O1", class_id: "C1" }, { item_id: "O2", new_class_index: 0 }],
-    new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。" }],
+    new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。", category_paths: [["数值可靠性"]] }],
     merges: [],
   } satisfies ClusteringSubmission,
 };

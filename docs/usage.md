@@ -50,7 +50,7 @@ JSON 配置用 `models.<profile>.channel` 引用渠道，例如 `"judge": { "cha
 {"bindings":{"comparison":{"profile":"judge","channel":"openai","model":"your-openai-model-id"}}}
 ```
 
-看板的阶段模型下拉框列出全部渠道，并随选择一起提交渠道 ID 和模型 ID。Eris 同样按渠道选择模型，常用列表使用渠道与模型的组合身份。自动化可通过 `[automation].channels` 指定优先顺序，额度耗尽时切换渠道，详见[自动化](automations.md#启动)。
+看板的阶段模型下拉框列出全部渠道，并随选择一起提交渠道 ID 和模型 ID。Eris 同样按渠道选择模型，常用列表使用渠道与模型的组合身份。手动评测的 `run --balance-channels` 按 `config.ini` 各渠道的 `traffic_weight` 加权分配完整任务，普通重试保持原渠道；权重为正整数，省略时为 `1`。原渠道配置 `traffic_weight = 6`、OpenAI 渠道配置 `traffic_weight = 4`，每十个新任务分别分配六个、四个。自动化通过 `[automation].channels` 指定渠道池，使用相同权重，详见[自动化](automations.md#启动)。各渠道使用相同模型和阶段参数，配额耗尽时只向剩余渠道切换，全部耗尽后停止切换。
 
 模型与评测配置通过配置文件接口注入。`--config` 可重复，文件按出现顺序深度合并，相对路径按各自文件目录解析：
 
@@ -174,6 +174,29 @@ npm run eval -- run --dataset competitor_comparison --engine pi --run-id competi
 
 本机看板的输入选择目前仍按日期展示，命名文件会按其父目录兜底展示，尚不提供评测集选择；用上述 CLI 命令选择命名评测集。
 
+### 第三方模型
+
+使用 [third-party.example.json](../configs/third-party.example.json) 在当前四个模型之外登记 `baseline_fast`。示例的 `inputs.versions` 完整列出来源，因为配置数组会覆盖前一份配置；按实际参赛条件修改名称、档位和来源。`adapter: "a"` 表示输入结构，与厂商无关。Fast 三模型组展开为 A–B、A–基线、B–基线三场独立对局；Expert 保持当前模型对。更多模型通过多个二至三模型组选择对局，重复模型对只执行一次。
+
+第三方无需提供内部工具或推理，最小一行 JSONL 是真实原题和最终答案；业务标识须与其他候选一致。仅有答案正文时，采集方仍须带上该次任务的真实原题，不能从回答猜题或补造执行记录：
+
+```json
+{"batch_id":"baseline-check","case_id":"q1","messages":[{"role":"user","content":"2+2等于多少？"},{"role":"assistant","content":"4"}]}
+```
+
+标准答案可由同题任一候选的 `meta.ground_truth` 提供；没有标准答案时仍评审核心交付，标准一致性为 null。未采集的 SYS/DEV、推理、工具、模型标识、trace ID、耗时或 token 不补造；可见性与评审边界见[短链路材料](contract.md#短链路与仅答案材料)。
+
+将第三方文件放入示例配置的 `data/sources/model-answers/baseline_fast/`，准备同题的当前模型回答后运行：
+
+```bash
+npm run eval -- preflight --config configs/host.json --config configs/third-party.example.json
+npm run eval -- run --engine pi --run-id third-party-001 \
+  --config configs/host.json --config configs/third-party.example.json --config configs/local/models.json
+npm run benchmark -- summarize --run data/runs/comparison/third-party-001 --bootstrap-rounds 2000
+```
+
+新增参赛模型使用新 run ID；普通续跑保留原模型集合。正式产物为 `results/comparison.jsonl`，每行保留一场独立对局；待核保存在 `comparison-review.jsonl`。矩阵与去重质量口径见[统计分析](quality.md#矩阵区间与人工金标)。此接入路径使用本地 Host；自动取数与 Mongo 交付仍限定当前四模型，见[自动流水线](automations.md)。
+
 ## 日志
 
 应用启动时创建项目根目录的 `log/`。运行/评测日志只使用下列两个 UTF-8 单行 JSON 文件，追加写入，不按日期或 run 分文件；自动化的统计交付另写 [`comparison-statistics-log.jsonl`](automations.md#mongodb-增量交付与每四小时日志)：
@@ -256,6 +279,8 @@ npm run eval -- run --run-id daily-a --config configs/host.json --config configs
 
 评测 run 内的延期归类保留在 `results/clustering.jsonl`，不计作已归类或错误。`eval recluster --run PATH --task ID` 或显式 `--all` 预览可重归类观察；`--apply` 新建任务并固定范围，随后同 run-id 续跑。新任务只包含延期观察，使用当前问题库与剩余预算，保留原接受结果；重复准备复用未完成的重归类任务，保留该 UUID 的累计内容和文件错误计数，不补发额度。独立聚类作业保留所有已接受决定，包括延期；重新归类需创建新的作业 ID。
 
+独立聚类接受的结果没有待改写文本时，后置 Rewrite 不进入执行范围；续跑同样跳过，保留已有尝试和错误记录，不生成接受收据。
+
 Host 按每阶段、不同任务维护最近结果窗口；同一题的反复尝试不重复计数。错误路径中的数组下标归一化为 `*`，类别、错误码或其他路径不同则分别统计。触发后保存 `pausedStages`（阶段、错误签名、样例 task ID 和时间），停止该阶段新派发和后续 attempt 重试；已派发的 attempt 完成清理，其他健康阶段继续。暂停状态跨重启保留，未到阈值的统计窗口属于本次 Host 会话。容量不足在创建 attempt 前处理，不计为题目内容失败。
 
 先依据样例定位并修复原因，再显式解除相应阶段；不能用重启绕过熔断：
@@ -323,6 +348,47 @@ bash run.sh
 删除运行需在页面确认，删除范围包括该 run 的状态、结果、报告、统计、Debug 材料及两份运行日志中匹配该 run ID 的记录。运行中、未释放或损坏的锁、损坏日志均阻止删除。原始输入、其他运行、共享问题库和聚合交付回执保留；删除不可恢复。
 
 ## 可选复核与后置聚类
+
+### 从正式对比数据重新归因
+
+`reattribute` 从明确选择的来源 run 的正式对比结果选取回答，按日期、case 与模型去重；来源判词只用于定位，不复用旧归因。新作业重新整理共同要求，再逐回答执行 Attribution 与通俗改写，不执行 Comparison，不改来源 run。原始记录按业务身份批量重新定位，仍只保留在数据源。
+
+```bash
+npm run eval -- reattribute --run data/runs/comparison/daily-2026-10-01 \
+  --from-date 2026-10-01 --pilot-answers 30 --run-id attribution-pilot \
+  --config configs/host.json --config configs/local/models.json
+```
+
+`--run` 可重复；`--from-date` 按原样本批次日期筛选。默认只预览，`--apply` 才调用模型。`--pilot-answers 30` 表示30份模型回答，按日期、模型和有无标准答案分层选样；它保存完整计划及冻结执行范围，不能由试跑成功率推断总体准确率。
+
+新作业默认在 `data/runs/attribution/<run-id>/`。续跑使用相同作业 ID，不重复传来源或抽样参数；保留已接受结果与累计用量。试跑验收后，显式 `reattribute --run-id attribution-pilot --apply --discover-inputs` 才释放该作业完整计划。本轮仅试跑时不使用这个选项。校验试跑使用 `validate --run data/runs/attribution/attribution-pilot --selected`，覆盖归因和全部必需改写槽位。
+
+已有试跑用 `--pilot-per-model N` 扩大到每模型恰好N份回答。先保留已选回答，再从原冻结计划按日期和有无标准答案补齐各模型配额；任何模型不足或配额会收缩原范围时拒绝。任务 UUID、成功收据、累计尝试和原来源保持不变，只执行新选择及其共同标准、归因与改写依赖。默认仅预览，`--apply` 保存新范围并续跑；不能与 `--discover-inputs`、`--run`、`--from-date` 或 `--pilot-answers` 同用。
+
+```bash
+npm run eval -- reattribute --run-id attribution-pilot --pilot-per-model 100
+npm run eval -- reattribute --run-id attribution-pilot --pilot-per-model 100 \
+  --balance-channels --apply --config configs/host.json --config configs/local/models.json
+```
+
+归因接受后，改写自动按概述、全部判据、每个 finding 和全部表格理由分组，各组最多20槽。新增改写组留在原回答范围，不扩展试跑样本；模型直接提交固定槽位 ID 与文本，每槽独立保留事实、责任与不确定性。定向重写使用 `prepareAttributionRewrites` 的 `mode: "refresh"`，不重评归因。只补失败保留原试跑范围、已接受任务与累计提交账本；续跑仍能聚类此前成功的全部试跑回答。被后续分组完整覆盖的旧未接受改写保留在账本，独立归因作业不会再次派发，释放全量计划也不会将它复活。
+
+对可疑归因可用公开入口 `prepareAttributionTargetedReviews(run, { reviews: [{ taskId, reasons }], apply })` 准备定向复核，默认只预览；`apply` 在同一回答最新接受结果后追加复核任务与有限执行范围，保留原收据、尝试和改写。复核重新检查问题是否成立及责任，不限于填充组件，允许撤销假阳性；接受后自动补齐通俗改写。
+
+`run`、`reattribute`、`cluster` 可加 `--balance-channels`，按 `config.ini` 的 `traffic_weight` 加权分配完整任务到渠道；同一任务的普通重试保留渠道，明确额度耗尽时切换到尚可用渠道，各阶段模型和推理参数保持一致。并发仍由 `execution.concurrency` 控制。
+
+后置 `cluster` 可以选择完成的试跑作业；冻结范围外未执行回答不进入聚类。重建时为 `problemLibrary` 配置独立目录，先备份旧库，再验收新库与样本归属后切换。旧 run 的报告仍会应用自身已接受聚类，应保持历史库写入边界，避免历史收据进入新库。
+
+试跑审阅交付每模型一份归因 JSONL 和一个离线页面。JSONL 从正式归因结果按模型拆分，保留原判词及已接受改写。页面显示代表性聚类节点和分页样本表，只有任务摘要、问题摘要及责任、影响、证据状态，不嵌入原问题、标准答案或证据正文；全部样本入口保留没有问题 finding 的回答。
+
+页面按冻结选样的 input ID 读取范围内最新接受归因，定向复核替代旧结果，标题按 input ID 关联。归因树直接读取 `data/problems/<model>.json` 的活跃正式类和有效样本归属，一级为责任组件，下一层为具体缺陷；节点名称和点评采用已接受改写。四个模型独立建类，新增类须满足配置中的独立已确认回答支持数及类数预算。一个问题的多个已定位责任可以分别召回，全局问题数与回答数去重；未归类和责任未定位问题进入分页待观察池，不建立单问题节点。
+
+```bash
+node scripts/attribution-review.mjs --run data/runs/attribution/attribution-pilot \
+  --clustering data/runs/clustering/attribution-pilot-tree
+```
+
+默认读取 `data/problems`，可用 `--library` 指定目录；任务摘要取来源作业内的 `sample-summaries.json`，可用 `--samples` 指定。生成 `review.html` 和 `models/<model>.jsonl`。页面仅显示四模型独立树与 10 / 20 / 50 行分页样本表，无下载入口或原文链接。生成页面不改原正式结果、问题库或执行范围。
 
 普通运行完成共同标准、各回答归因、必要时最多一轮定向归因补查和每场一次对比，并默认自动润色归因与正式对比文案。需要独立检查已接受的正式对比时，先预览，再准备核验：
 
@@ -450,7 +516,9 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
   --config configs/host.json --config configs/local/models.json
 ```
 
-外部 Worker 由调用方管理，所有进程使用相同的模型 URL 和 key。任务开始前的健康检查最多等待10秒，避免短暂繁忙被误判为不可用；运行状态在观察到进展时快速复查，安静时回退到每秒一次，Worker 将连续事件合并写盘并保留完整有序回放，减少高并发 HTTP 和文件开关负载。停止信号会立即终止后续补位和依赖阻塞扫描。Worker 只监听回环地址，适用于可信单机调用。
+外部 Worker 由调用方管理，须配置 Host 所选渠道对应的密钥环境；每次任务由 Host 指定渠道。任务开始前的健康检查最多等待10秒，避免短暂繁忙被误判为不可用；运行状态在观察到进展时快速复查，安静时回退到每秒一次，Worker 将连续事件合并写盘并保留完整有序回放，减少高并发 HTTP 和文件开关负载。停止信号会立即终止后续补位和依赖阻塞扫描。Worker 只监听回环地址，适用于可信单机调用。
+
+Host 管理的 Worker 使用独立进程组，避免继承 Host 所在组的外部信号；主动关闭和父进程 IPC 断开仍会回收 Worker。非预期退出时，现有 `log/runtime.log` 的 `worker_exited` 记录进程 ID、端口、退出码或信号、IPC 断开时间、可确认的关闭原因与 stderr 尾部。正常收尾不记为异常；端口不可访问本身不证明是网关故障，未确认的退出原因保持未知。
 
 代码工具工作目录不是安全沙箱；取消、超时和 Worker 退出会回收所属进程组。进程组信号被系统拒绝时，通过断开 IPC 请求调用守护进程回收，避免取消异常终止 Worker。需要隔离不可信代码时，应在受限部署环境运行整个系统。
 

@@ -13,6 +13,8 @@ import { reportRun } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
 import { runClusteringCommand } from "./clustering-command.js";
+import { runAttributionCommand } from "./attribution-command.js";
+import { createBalancedModels } from "./balanced-models.js";
 import { startDashboard } from "./dashboard.js";
 import { pilotTaskIds, comparisonRewriteReview, readRunState } from "@eval/workflows/comparison";
 
@@ -53,6 +55,10 @@ async function main(): Promise<void> {
       "require-rewrite": { type: "string", multiple: true },
       "require-batch": { type: "string", multiple: true },
       "pilot-cases": { type: "string" },
+      "pilot-answers": { type: "string" },
+      "pilot-per-model": { type: "string" },
+      "from-date": { type: "string" },
+      "balance-channels": { type: "boolean" },
       selected: { type: "boolean" },
       port: { type: "string", default: "4173" },
       "dashboard-settings": { type: "string" },
@@ -60,11 +66,11 @@ async function main(): Promise<void> {
   });
   const command = positionals[0];
   const selectedRun = values.run?.[0];
-  if (command !== "cluster" && (values.run?.length ?? 0) > 1) throw new Error("只有 cluster 支持多个 --run");
+  if (!["cluster", "reattribute"].includes(command!) && (values.run?.length ?? 0) > 1) throw new Error("只有 cluster 和 reattribute 支持多个 --run");
   logRunId = values["run-id"] || (selectedRun ? path.basename(path.resolve(selectedRun)) : undefined);
   if (values.help || !command) {
     console.log(
-      `eval index|preflight|run|status|validate|report|cluster|verify-comparisons|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
+      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
 run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
@@ -80,6 +86,10 @@ report: [--details] 为 debug 运行导出逐题 JSON 与任务状态
 retry-failed: --run PATH [--task ID ...|--result ID ...] [--apply]
 cluster: --run PATH ... --run-id ID [--apply] 跨 run 按模型聚类；--apply 启动作业
 cluster: --run-id ID --apply 续跑独立聚类作业（无需重复指定来源）
+reattribute: --run PATH ... --run-id ID --from-date YYYY-MM-DD [--pilot-answers N] [--apply]
+reattribute: --run-id ID --apply 续跑；验收后 --discover-inputs 释放完整计划
+reattribute: --run-id ID --pilot-per-model N [--apply] 保留已选回答，按模型配额扩大有限试跑
+channels: run|reattribute|cluster --balance-channels 按 traffic_weight 加权分配完整任务
 verify-comparisons: --run PATH [--result ID ...] [--apply] 独立复核已接受的对局
 recluster: --run PATH [--task ID ...|--all] [--apply] 重新归类已接受的延期观察
 review-problem-occurrences: --review-file FILE [--apply] 默认只读预览，--apply 仅追加明确来源复核事件
@@ -113,15 +123,20 @@ dashboard: --port 4173 在本机启动控制看板`,
   if (values.dataset && !["index", "preflight", "run"].includes(command))
     throw new Error("--dataset 仅用于 index、preflight 和 run");
   if (values.catalog && !values.dataset) throw new Error("--catalog 需要同时指定 --dataset");
-  if (values.debug && !["run", "cluster"].includes(command)) throw new Error("--debug 仅用于 run 或 cluster");
+  if (values.debug && !["run", "cluster", "reattribute"].includes(command)) throw new Error("--debug 仅用于运行命令");
   for (const flag of ["discover-inputs", "resume-stage", "pilot-cases"] as const)
-    if (values[flag] && command !== "run" && !(flag === "resume-stage" && command === "cluster")) throw new Error(`--${flag} 仅用于 run`);
+    if (values[flag] && command !== "run" && !(flag !== "pilot-cases" && command === "reattribute") &&
+      !(flag === "resume-stage" && command === "cluster")) throw new Error(`--${flag} 不适用于当前命令`);
+  for (const flag of ["pilot-answers", "pilot-per-model", "from-date"] as const)
+    if (values[flag] && command !== "reattribute") throw new Error(`--${flag} 仅用于 reattribute`);
+  if (values["balance-channels"] && !["run", "reattribute", "cluster"].includes(command))
+    throw new Error("--balance-channels 仅用于 run、reattribute 或 cluster");
   for (const flag of ["require-rewrite", "require-batch", "selected"] as const)
     if (values[flag] && command !== "validate") throw new Error(`--${flag} 仅用于 validate`);
   if (values.result && !["rewrite-comparisons", "retry-failed", "rewrite-review", "verify-comparisons"].includes(command))
     throw new Error("--result 仅用于对比修复、复核或 rewrite-review");
   if (values["review-file"] && command !== "review-problem-occurrences") throw new Error("--review-file 仅用于 review-problem-occurrences");
-  if (values.apply && !["cluster", "verify-comparisons", "rewrite-comparisons", "retry-failed", "recluster", "review-problem-occurrences"].includes(command)) throw new Error("--apply 仅用于修复、聚类或复核命令");
+  if (values.apply && !["reattribute", "cluster", "verify-comparisons", "rewrite-comparisons", "retry-failed", "recluster", "review-problem-occurrences"].includes(command)) throw new Error("--apply 仅用于重归因、修复、聚类或复核命令");
   for (const flag of ["task"] as const)
     if (values[flag] && !["rewrite-comparisons", "retry-failed", "recluster"].includes(command)) throw new Error(`--${flag} 仅用于修复命令`);
   if (values.all && !["rewrite-comparisons", "recluster"].includes(command)) throw new Error("--all 仅用于 rewrite-comparisons 或 recluster");
@@ -225,12 +240,22 @@ dashboard: --port 4173 在本机启动控制看板`,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
   logger.addSecrets(...configurationSecrets());
+  if (command === "reattribute") {
+    if (values.input || values.batch || values.case || values["limit-cases"] || values.dataset)
+      throw new Error("reattribute 从正式对比结果选择回答，使用 --run、--from-date 和 --pilot-answers");
+    process.exitCode = await runAttributionCommand(host, { runs: values.run, runId: values["run-id"],
+      output: values.output, fromDate: values["from-date"], pilotAnswers: values["pilot-answers"] === undefined ? undefined : Number(values["pilot-answers"]),
+      pilotPerModel: values["pilot-per-model"] === undefined ? undefined : Number(values["pilot-per-model"]),
+      apply: values.apply, engine: values.engine, debug: values.debug, workers: values.worker,
+      resumeStages: values["resume-stage"], discoverInputs: values["discover-inputs"], balanceChannels: values["balance-channels"] });
+    return;
+  }
   if (command === "cluster") {
     if (values.input || values.batch || values.case || values["limit-cases"] || values.dataset)
       throw new Error("cluster 通过多个 --run 选择已接受归因，不接受原始输入筛选");
     process.exitCode = await runClusteringCommand(host, { runs: values.run, runId: values["run-id"],
       output: values.output, apply: values.apply, engine: values.engine, debug: values.debug,
-      workers: values.worker, resumeStages: values["resume-stage"] });
+      workers: values.worker, resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"] });
     return;
   }
   if (command === "review-problem-occurrences") {
@@ -317,7 +342,8 @@ dashboard: --port 4173 在本机启动控制看板`,
     throw new Error("没有可评对比组，请先查看 preflight");
   const engine = values.engine as Engine;
   if (!["pi", "prime"].includes(engine)) throw new Error("--engine must be pi or prime");
-  const modelForStage = createModelResolver(host.models);
+  const routing = values["balance-channels"] ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
+  const { modelForStage } = routing;
   for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
   for (const profile of boundProfiles(host.models))
     if (!process.env[profile.apiKeyEnv])
@@ -337,7 +363,7 @@ dashboard: --port 4173 在本机启动控制看板`,
       ...services,
       plan,
       policy: config.execution,
-      modelForStage,
+      ...routing,
       concurrency: config.execution.concurrency,
       skipFailed: values["skip-failed"],
       discoverInputs: values["discover-inputs"],

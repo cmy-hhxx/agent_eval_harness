@@ -104,9 +104,6 @@
 .occurrence-evidence::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
 .occurrence-evidence.established { color: #227063; }
 .occurrence-evidence.uncertain { color: #996723; }
-.occurrence-quote { margin: 12px 0; padding: 0 0 0 12px; border-left: 2px solid var(--line); color: #52636c; font-size: 12px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
-.occurrence-quote.is-clamped { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.occurrence-quote-toggle { margin-top: -5px; padding: 2px 0; color: var(--model-color); background: transparent; border: 0; font-size: 11px; }
 .occurrence-origin { margin-top: 9px; }
 .occurrence-origin > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; list-style: none; font-size: 11px; }
 .occurrence-origin > summary::-webkit-details-marker { display: none; }
@@ -165,7 +162,6 @@
 @media (pointer: coarse) {
   .problem-tree [role="treeitem"] { min-height: 44px; }
   .occurrence-recall { min-height: 40px; }
-  .occurrence-quote-toggle { min-height: 36px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .problems-page *, .problems-page *::before, .problems-page *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }

@@ -5,7 +5,7 @@ import path from "node:path";
 import type { AgentBackend } from "@eval/contracts";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
-import { buildPlan, deliveryCoverage, readRunState, reportRun, type TaskData } from "@eval/workflows/comparison";
+import { buildPlan, deliveryCoverage, prepareClusteringJob, readRunState, reportRun, type TaskData } from "@eval/workflows/comparison";
 import { prepareComparisonVerification } from "../../../packages/workflows/src/comparison/verification-preparation.js";
 import { services } from "../../fixtures/services.js";
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor, submitFor,
@@ -47,6 +47,8 @@ for (const fail of [false, true]) test(`an optional ${fail ? "failed" : "success
     assert.equal(profiles.length, records.length * 5);
     assert.equal(profiles.at(-1), "verification");
     assert.deepEqual(state.manifest.executionScope, ids);
+    assert.equal((await prepareClusteringJob([run], config)).config.clusteringJob.sources.length, records.length * 2,
+      "an optional audit scope must not replace the accepted answer selection for clustering");
     assert.equal(state.manifest.tasks.length, baseline.manifest.tasks.length + records.length, "audit never queues attribution reviews or follow-up comparisons");
     for (const task of baseline.manifest.tasks) {
       assert.deepEqual(state.receipts[task.id], baseline.receipts[task.id]);

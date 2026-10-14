@@ -8,7 +8,7 @@ import { runEvaluation, progressSnapshot } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import {
   buildPlan, readRunState, reportRun, prepareComparisonRewrites, prepareFailedTasks, deliveryCoverage, comparisonSlots,
-  comparisonRewriteReview, pilotTaskIds, type TaskData,
+  comparisonRewriteReview, pilotTaskIds, prepareClusteringJob, type TaskData,
   validateRun as validateDelivery,
 } from "@eval/workflows/comparison";
 import { services, validateRun, agents } from "../../fixtures/services.js";
@@ -24,7 +24,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
       calls++;
       const result = taskResult(options.spec);
       if (options.spec.evaluation.id === "rewrite")
-        (result as {texts:string[]}).texts = (result as {texts:string[]}).texts.map(text => text + `（修辞${calls}）`);
+        for (const item of (result as { rewrites: { text: string }[] }).rewrites) item.text += `（修辞${calls}）`;
       const submission = await submitFor(options, draftFor(options.spec, result));
       assert.equal(submission.isError, undefined, JSON.stringify(submission));
     }, async abort() {}, async dispose() {} };
@@ -40,11 +40,11 @@ test("slot repairs preview without mutation, preserve every other field and excl
     const baseline = await readRunState(run), checkpoint = await readFile(path.join(run, "state.json"), "utf8");
     const comparisons = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit), source = comparisons[0]!;
     const resultId = (source.data as TaskData).comparisonId!;
-    const selection = { scope: "items" as const, mode: "missing" as const, resultIds: [resultId], slotIds: ["comparison.0.A.summary"] };
+    const selection = { scope: "items" as const, mode: "missing" as const, resultIds: [resultId], slotIds: ["assessment.A.summary"] };
     const preview = await prepareComparisonRewrites(run, selection);
     assert.equal(preview.slots, 1);
     assert.equal(preview.selected[0]!.rewrite_task_id, null, "missing rewrite task can be prepared without input replan");
-    await assert.rejects(prepareComparisonRewrites(run, { ...selection, slotIds: ["comparison.99.A.summary"], apply: true }), /没有槽位/);
+    await assert.rejects(prepareComparisonRewrites(run, { ...selection, slotIds: ["assessment.Z.summary"], apply: true }), /没有槽位/);
     await assert.rejects(prepareComparisonRewrites(run, { scope: "items", mode: "refresh", apply: true }), /显式 --all/);
     await assert.rejects(prepareFailedTasks(run, { taskIds: ["unknown"], apply: true }), /未知任务/);
     assert.equal(await readFile(path.join(run, "state.json"), "utf8"), checkpoint);
@@ -59,6 +59,8 @@ test("slot repairs preview without mutation, preserve every other field and excl
     await runEvaluation(resume);
     assert.equal(calls, 9, "eight original judgments plus one selected rewrite");
     let after = await readRunState(run);
+    assert.equal((await prepareClusteringJob([run], config)).config.clusteringJob.sources.length, 4,
+      "a completed comparison rewrite scope does not hide any accepted attribution from clustering");
     assert.equal(after.manifest.tasks.filter((task) => task.stage === "comparison" && !(task.data as { verificationAudit?: boolean }).verificationAudit).length, 2);
     for (const task of baseline.manifest.tasks) {
       assert.deepEqual(after.receipts[task.id]!.evaluation, baseline.receipts[task.id]!.evaluation);
@@ -102,7 +104,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
     assert.equal(review.semantic_review, "required");
     const reviewResult = after.receipts[source.id]!.evaluation as Parameters<typeof comparisonSlots>[0];
     assert.equal(review.cases[0]!.slots.length, comparisonSlots(reviewResult, "all").length,
-      "review includes preference and every current cell with source/context");
+      "review includes preference and current model-written overall prose");
     assert.deepEqual(after.manifest.executionScope, [refresh.selected[0]!.rewrite_task_id]);
     for (const [id, receipt] of historicalReceipts) {
       assert.deepEqual(after.receipts[id].evaluation, receipt.evaluation);
@@ -111,13 +113,13 @@ test("slot repairs preview without mutation, preserve every other field and excl
     for (const version of config.inputs.versions) await rename(version.sources[0]!.path + ".unavailable", version.sources[0]!.path);
     const storedRows = comparisons.map((task) => structuredClone(after.receipts[task.id]!.exported!.row));
     const originalRows = structuredClone(storedRows);
-    const hiddenSlot = rewrites(storedRows[0]!).find((item) => item.id === "comparison.0.B.summary")!;
-    hiddenSlot.text = "没有已证实的单方优势：" + hiddenSlot.text;
+    const storedRewrite = storedRows[0]!.rewritten as { rewrites: { id: string; text: string }[] };
+    assert(storedRewrite.rewrites.some(item => item.id === "assessment.B.summary"));
+    storedRewrite.rewrites = storedRewrite.rewrites.filter(item => item.id !== "assessment.B.summary");
     await writeJsonl(path.join(run, "results/comparison.jsonl"), storedRows);
-    const invalid = await validateDelivery(run, (binding, result, audit) => agents.validate(binding, result, audit),
-      { rewriteScopes: ["items"], selectedOnly: true });
-    assert.equal(invalid.results.valid, true, "judge fields and latest receipt still match");
-    assert.equal(invalid.rewrites.valid, false, "acceptance checks older slots outside the latest partial rewrite receipt");
+    await assert.rejects(() => validateDelivery(run, (binding, result, audit) => agents.validate(binding, result, audit),
+      { rewriteScopes: ["items"], selectedOnly: true }), /改写槽位缺失：assessment.B.summary/,
+      "a latest partial receipt cannot hide another missing required overall slot");
     await writeJsonl(path.join(run, "results/comparison.jsonl"), originalRows);
     await runEvaluation({ ...resume, discoverInputs: true });
     after = await readRunState(run);
@@ -137,13 +139,14 @@ test("slot repairs preview without mutation, preserve every other field and excl
 
 for (const configured of [false, true]) test(`repeated comparison rewrite preparation preserves an exhausted ${configured ? "default" : "targeted"} content ledger and cannot dispatch again`, async () => {
   const { directory, config, modelForStage } = await fixtureConfig(undefined, configured);
+  config.rewrite.attribution = false;
   let calls = 0;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
     return { async run() {
       await inspectFor(options); calls++;
       const result = taskResult(options.spec);
       if (options.spec.evaluation.id === "rewrite") {
-        (result as {texts:string[]}).texts.fill("");
+        for (const item of (result as { rewrites: { text: string }[] }).rewrites) item.text = "";
         for (let index = 0; index <= options.spec.policy.repairAttempts; index++)
           assert.equal((await submitFor(options, draftFor(options.spec, result))).isError, true);
       } else assert.equal((await submitFor(options, draftFor(options.spec, result))).isError, undefined);

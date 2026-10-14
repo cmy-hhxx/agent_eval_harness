@@ -9,11 +9,20 @@ export function problemLibraryFile(target: ProblemLibraryTarget, model: string):
 }
 
 export async function readProblemLibrary(file: string): Promise<ProblemLibrary | undefined> {
-  return (await exists(file)) ? readJson<ProblemLibrary>(file) : undefined;
+  if (!(await exists(file))) return undefined;
+  const library = await readJson<ProblemLibrary>(file);
+  referenceOnly(library, file);
+  return library;
 }
 
 export async function writeProblemLibrary(file: string, library: ProblemLibrary): Promise<void> {
+  referenceOnly(library, file);
   await writeJson(file, library);
+}
+
+function referenceOnly(library: ProblemLibrary, file: string): void {
+  if (library.occurrences.some(occurrence => Object.hasOwn(occurrence, "quote")))
+    throw new Error("问题库出现样本只保存来源引用，不允许 quote：" + file);
 }
 
 /** Serialize read/modify/write per model, including reports from different run directories. */

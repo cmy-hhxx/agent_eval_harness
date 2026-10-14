@@ -24,6 +24,15 @@ export function comparisonResourcesComparable(input: ComparisonInput): boolean {
  return comparableResourceMetrics(input).length > 0;
 }
 
+/** Resource direction is measured dominance, never a model's quality preference. */
+export function comparisonResourceAdvantage(input: ComparisonInput): string | null {
+ const labels=Object.keys(input.candidates),keys=comparableResourceMetrics(input);
+ const metrics=Object.fromEntries(labels.map(label=>[label,comparisonResourceMetrics(input,label)]));
+ return labels.find(label=>keys.length>0 && labels.every(other=>other===label ||
+  keys.every(key=>metrics[label][key]!<=metrics[other][key]!) &&
+  keys.some(key=>metrics[label][key]!<metrics[other][key]!))) ?? null;
+}
+
 /** Empty row IDs may still have an existing source requirement through a cited finding. */
 export function comparisonCellCriterionIds(input: ComparisonInput, candidate: string, criterionIds: string[], findingIndices: number[]): string[] {
   if (criterionIds.length) return criterionIds;
@@ -70,6 +79,17 @@ export function comparisonCellState(input: ComparisonInput, candidate: string, c
 
 export function comparisonSlotCellState(input: ComparisonInput, candidate: string, slot: ComparisonSlot) {
  return comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
+}
+
+/** Each cell presents complete accepted facts from its own bound criterion and findings. */
+export function comparisonSlotSummary(input: ComparisonInput, candidate: string, slot: ComparisonSlot): string {
+ const attribution=input.attributions[candidate];
+ const facts=slot.criterion_ids.flatMap(id=>attribution.criterion_assessments.filter(fact=>fact.criterion_id===id).map(fact=>fact.summary));
+ const observations=slot.finding_indices[candidate].flatMap(index=>{
+  const finding=attribution.findings[index];
+  return [finding.text,finding.assessment.impact];
+ });
+ return [...new Set([...facts,...observations].map(text=>text.trim()).filter(Boolean))].join(' ');
 }
 
 /** Scope and already bound facts determine available choices, never their semantic direction. */
@@ -165,8 +185,9 @@ export function comparisonSlotChoices(request: AgentRequest) {
   optional: slot.optional, kind: slot.kind,
   ...(slot.kind === 'resource' ? { resource_metrics: Object.fromEntries(Object.keys(input.candidates).map(candidate =>
    [candidate,comparisonResourceMetrics(input,candidate)])), comparable_metrics: comparableResourceMetrics(input) } : {}),
-  advantage_candidates: comparisonAdvantageCandidates(Object.fromEntries(Object.keys(input.candidates).map(candidate =>
-   [candidate,comparisonSlotCellState(input,candidate,slot)])),slot.shared && (slot.kind !== 'resource' || comparisonResourcesComparable(input))),
+  advantage_candidates: slot.kind === 'resource' ? [comparisonResourceAdvantage(input)].filter((candidate): candidate is string=>candidate!==null)
+   : comparisonAdvantageCandidates(Object.fromEntries(Object.keys(input.candidates).map(candidate =>
+   [candidate,comparisonSlotCellState(input,candidate,slot)])),slot.shared),
   applicable_candidates: Object.keys(input.candidates).filter(candidate => slot.criterion_ids.length
    ? slot.criterion_ids.some(id => { const criterion = criteria.find(criterion => criterion.id === id)!;
      return !criterion.applies_to.length || criterion.applies_to.includes(input.candidates[candidate].candidate_id); })
@@ -178,7 +199,11 @@ export function comparisonSlotChoices(request: AgentRequest) {
    }))),
   standards: slot.criterion_ids.map(id => { const criterion = criteria.find(criterion => criterion.id === id)!;
    return { text: criterion.text, ...(criterion.acceptance_rule === criterion.text ? {} : { acceptance_rule: criterion.acceptance_rule }) }; }),
+  ...(slot.kind === 'criterion' ? { accepted_assessments: Object.fromEntries(Object.entries(input.attributions).map(([candidate,attribution]) =>
+   [candidate,attribution.criterion_assessments.filter(item => slot.criterion_ids.includes(item.criterion_id))
+    .map(({status,evidence_status,summary}) => ({status,evidence_status,summary}))])) } : {}),
   observations: Object.fromEntries(Object.entries(slot.finding_indices).map(([candidate,indices]) => [candidate,
    indices.map(index => { const finding = input.attributions[candidate].findings[index];
-    return { type: finding.type, text: finding.text, evidence_status: finding.assessment.evidence_status }; })])) }));
+    return { type: finding.type, text: finding.text, evidence_status: finding.assessment.evidence_status,
+     reason: finding.reason, impact: finding.assessment.impact }; })])) }));
 }

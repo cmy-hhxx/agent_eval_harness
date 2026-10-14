@@ -38,7 +38,7 @@
 | Eris 上游、浏览器或性能变化 | [Agent 验证命令](../agent/README.md#验证) |
 | 离线汇报变化 | [汇报模块验证](../evaluation-report/README.md#维护与构建) |
 
-测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 均先重建应用；构建前先确认没有活跃评测任务。`typecheck` 检查未使用的局部变量和参数，未调用导出还需搜索跨包引用、动态加载、回调和测试。
+测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test` 与 `test:full` 的测试文件并行上限为 4，避免 Worker 子进程争抢资源触发既有时限；不通过延长时限或自动重跑测试兜底。`npm test`、`test:full`、`test:integration` 均先重建应用；构建前先确认没有活跃评测任务。`typecheck` 检查未使用的局部变量和参数，未调用导出还需搜索跨包引用、动态加载、回调和测试。
 
 每轮收尾及契约或目录变更后，清理失效用例、旧字段和重复 fixture/helper；保留当前行为需要的测试，不删除真实输入、结果或缓存。模型提交 fixture 使用当前扁平载荷，见[归因提交](../tests/fixtures/attribution-submission.ts)与[对比提交](../tests/fixtures/comparison-submission.ts)；内部判断使用[判定 fixture](../tests/fixtures/attribution-judgment.ts)。SDK 工具 Schema 测试使用当前提交格式，正式结果格式由 Agent 与导出测试覆盖。独立核验 fixture 显式声明首查事实和最终选择，不从上游 met/core/ranking 或复核请求反推。Worker fixture 使用具名选项和有界等待，构造失败释放资源。
 

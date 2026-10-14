@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { PlannedTask, RunState } from "@eval/contracts";
 import { problemLibraryFile, readProblemLibrary, runLock } from "@eval/data";
 import { emptyLibrary, projectLibrary, type ClusteringResult } from "@eval/agents/clustering";
-import { comparisonSlots } from "./commentary.js";
+import { attributionRewriteGroups, attributionSlots, comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
-import { pendingTaskProgress, readRunState, writeRunState } from "./run-data.js";
+import { readRunState, writeRunState } from "./run-data.js";
+import { pendingTaskProgress } from "./task-progress.js";
 import { stageResult } from "./results.js";
-import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import { acceptedRewriteProjection } from "./rewrite-projection.js";
+import { supersededAttributionRewriteIds } from "./attribution-rewrite-planning.js";
+import type { AttributionResult, ComparisonResult, EvalConfig, TaskData } from "./types.js";
 
 export interface RepairSelection {
   taskIds?: string[];
@@ -15,6 +18,11 @@ export interface RepairSelection {
 }
 export interface RewriteSelection extends RepairSelection {
   scope: "items" | "verdicts";
+  mode: "missing" | "refresh";
+  slotIds?: string[];
+  all?: boolean;
+}
+export interface AttributionRewriteSelection extends RepairSelection {
   mode: "missing" | "refresh";
   slotIds?: string[];
   all?: boolean;
@@ -132,6 +140,8 @@ export async function prepareFailedTasks(run: string, selection: RepairSelection
   try {
     const state = await readRunState(run), tasks = state.manifest.tasks;
     const chosen = selectedTasks(state, selection);
+    const trialScope = (state.manifest.config as EvalConfig & { attributionJob?: unknown }).attributionJob && state.manifest.executionScope
+      ? new Set(state.manifest.executionScope) : undefined;
     const ids = new Set<string>();
     const failed = new Set(["failed", "blocked", "timed_out", "cancelled"]);
     const visitDependencies = (id: string) => {
@@ -146,16 +156,18 @@ export async function prepareFailedTasks(run: string, selection: RepairSelection
         // An accepted comparison may have an unfinished presentation task.
         if (!state.receipts[id]) visitDependencies(id);
         else for (const task of tasks)
-          if (Object.values(task.dependencies).includes(id) && !state.receipts[task.id]) visitDependencies(task.id);
+          if ((!trialScope || trialScope.has(task.id) || task.stage === "rewrite") &&
+            Object.values(task.dependencies).includes(id) && !state.receipts[task.id]) visitDependencies(task.id);
       }
     } else for (const task of tasks)
-      if (failed.has(state.manifest.states[task.id].status)) visitDependencies(task.id);
+      if ((!trialScope || trialScope.has(task.id)) && failed.has(state.manifest.states[task.id].status)) visitDependencies(task.id);
     // Only descendants of selected unfinished work join the frozen recovery scope.
     let expanded = true;
     while (expanded) {
       const size = ids.size;
       for (const task of tasks)
-        if (!state.receipts[task.id] && Object.values(task.dependencies).some((id) => ids.has(id)) &&
+        if ((!trialScope || trialScope.has(task.id) || task.stage === "rewrite") &&
+          !state.receipts[task.id] && Object.values(task.dependencies).some((id) => ids.has(id)) &&
           // A batch clustering shard must not pull unrelated unfinished cases into a local repair.
           (task.stage !== "clustering" || Object.values(task.dependencies).every((id) => state.receipts[id] || ids.has(id))))
           visitDependencies(task.id);
@@ -172,7 +184,8 @@ export async function prepareFailedTasks(run: string, selection: RepairSelection
         delete progress.attemptId;
         delete progress.reason;
       }
-      await freeze(run, state, [...ids]);
+      // A trial keeps its accepted answers in scope for delivery and post-run clustering.
+      await freeze(run, state, [...new Set([...(trialScope ?? []), ...ids])]);
     }
     return { applied: !!selection.apply, selected, count: selected.length,
       protected_accepted: Object.keys(state.receipts).length };
@@ -265,6 +278,82 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
     return { applied: !!selection.apply, mode: selection.mode, scope: selection.scope,
       count: selected.length, slots: selected.reduce((sum, task) => sum + task.slots.length, 0),
       protected_accepted: protectedAccepted, selected };
+  } finally { await release(); }
+}
+
+/** New presentation tasks target immutable accepted attributions, grouped by semantic unit. */
+export async function prepareAttributionRewrites(run: string, selection: AttributionRewriteSelection) {
+  if (!["missing", "refresh"].includes(selection.mode)) throw new Error("无效的改写模式");
+  if (selection.mode === "refresh" && !selection.all && !selection.taskIds?.length && !selection.resultIds?.length)
+    throw new Error("刷新已有文案必须选择 --task、--result 或显式 --all");
+  if (selection.all && (selection.taskIds?.length || selection.resultIds?.length))
+    throw new Error("--all 不能与任务或结果选择同时使用");
+  const requested = new Set(selection.slotIds);
+  if (selection.slotIds && (!requested.size || requested.size !== selection.slotIds.length))
+    throw new Error("槽位选择不能为空或重复");
+  const release = await runLock(run);
+  try {
+    const state = await readRunState(run), tasks = state.manifest.tasks, sources = new Set<string>();
+    const config = state.manifest.config as EvalConfig & { attributionJob?: unknown };
+    const trialScope = config.attributionJob && state.manifest.executionScope ? new Set(state.manifest.executionScope) : undefined;
+    const explicit = !!(selection.taskIds?.length || selection.resultIds?.length);
+    for (const id of selection.taskIds ?? []) {
+      const task = tasks.find(task => task.id === id), data = task?.data as TaskData | undefined;
+      if (task?.stage === "attribution") sources.add(id);
+      else if (task?.stage === "rewrite" && data?.rewriteOf?.stage === "attribution") sources.add(data.rewriteOf.taskId);
+      else throw new Error("只能选择归因或归因改写任务：" + id);
+    }
+    for (const id of selection.resultIds ?? []) {
+      if (!tasks.some(task => task.stage === "attribution" && task.id === id)) throw new Error("未知归因结果：" + id);
+      sources.add(id);
+    }
+    const latest = new Map<string, PlannedTask>();
+    for (const task of tasks) if (task.stage === "attribution" && state.receipts[task.id]) {
+      if (!explicit && trialScope && !trialScope.has(task.id)) continue;
+      const inputId = (task.data as TaskData).candidates.A!.input_id, previous = latest.get(inputId);
+      if (!previous || state.receipts[previous.id]!.acceptedAt <= state.receipts[task.id]!.acceptedAt) latest.set(inputId, task);
+    }
+    const plans: { source: PlannedTask; rewrite?: PlannedTask; slots: string[] }[] = [];
+    for (const source of explicit ? tasks.filter(task => sources.has(task.id)) : latest.values()) {
+      const receipt = state.receipts[source.id];
+      if (!receipt) throw new Error("归因尚未接受，先补跑失败任务：" + source.id);
+      const result = receipt.evaluation as AttributionResult, available = attributionSlots(result);
+      for (const id of requested) if (!available.some(item => item.id === id)) throw new Error(`结果 ${source.id} 没有槽位 ${id}`);
+      const filled = new Set(acceptedRewriteProjection(state, source.id)?.rewritten.rewrites.filter(item => item.text.trim()).map(item => item.id));
+      const slots = available.filter(item => (!requested.size || requested.has(item.id)) &&
+        (selection.mode === "refresh" || !filled.has(item.id))).map(item => item.id);
+      for (const group of attributionRewriteGroups(result, slots)) {
+        const pending = tasks.filter(task => {
+          const data = task.data as TaskData, owned = data.rewriteSlotIds;
+          return task.stage === "rewrite" && data.rewriteOf?.stage === "attribution" && data.rewriteOf.taskId === source.id &&
+            !state.receipts[task.id] && owned?.length === group.length && group.every(id => owned.includes(id));
+        });
+        if (pending.length > 1) throw new Error("重复的未完成归因改写槽位任务：" + source.id);
+        plans.push({ source, rewrite: pending[0], slots: group });
+      }
+    }
+    const selected = plans.map(plan => ({ source_task_id: plan.source.id, result_id: plan.source.id,
+      rewrite_task_id: plan.rewrite?.id ?? null, slots: plan.slots }));
+    const protectedAccepted = Object.keys(state.receipts).length;
+    if (selection.apply && plans.length) {
+      const ids: string[] = [];
+      for (const [index, plan] of plans.entries()) {
+        const candidate = (plan.source.data as TaskData).candidates.A!, version = config.inputs.versions.find(item => item.id === candidate.version);
+        const rewrite = plan.rewrite ?? { id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: plan.source.id },
+          data: { stage: "rewrite", candidates: {}, reference: null, rewriteOf: { stage: "attribution", taskId: plan.source.id, resultId: plan.source.id },
+            rewriteSlotIds: plan.slots, rewriteNames: { A: version?.display_name || version?.name || candidate.name },
+            case: { batch_id: candidate.batch_id, case_id: candidate.case_id, question: candidate.question } } satisfies TaskData };
+        if (!plan.rewrite) tasks.push(rewrite);
+        state.manifest.states[rewrite.id] = pendingTaskProgress(state.manifest.states[rewrite.id]);
+        ids.push(rewrite.id); selected[index]!.rewrite_task_id = rewrite.id;
+      }
+      const trial = config.attributionJob ? state.manifest.executionScope ?? [] : [];
+      const superseded = supersededAttributionRewriteIds(state);
+      await freeze(run, state, [...new Set([...trial, ...ids])].filter(id => !superseded.has(id)));
+    }
+    return { applied: !!selection.apply, mode: selection.mode, count: selected.length,
+      sources: new Set(selected.map(item => item.source_task_id)).size,
+      slots: selected.reduce((sum, item) => sum + item.slots.length, 0), protected_accepted: protectedAccepted, selected };
   } finally { await release(); }
 }
 

@@ -45,8 +45,10 @@ export interface RunOptions extends EvaluationServices {
   plan: TaskPlan;
   policy: Policy;
   modelForStage: (stage: string) => ModelConfig;
+  /** Select a channel for a complete task, retaining its saved route when available. */
+  modelForTask?: (task: PlannedTask, previousChannel?: string) => ModelConfig;
   /** Return true only after selecting a different channel for subsequent attempts. */
-  onModelQuotaExhausted?: (model: ModelConfig) => boolean;
+  onModelQuotaExhausted?: (model: ModelConfig, task: PlannedTask) => boolean;
   concurrency: number;
   retries: number;
   skipFailed?: boolean;
@@ -74,6 +76,22 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     run = layout.directory,
     unlock = await runLock(run);
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
+  const workerExitLogs: Promise<void>[] = [];
+  async function launchWorker(engine: Engine, directory: string) {
+    const worker = await spawnWorker(engine, directory, options.runtime);
+    workerExitLogs.push(worker.exited.then(async (exit) => {
+      if (exit.expectedClose) return;
+      await options.logger?.error(`Worker ${exit.pid} exited unexpectedly`, {
+        component: "host", event: "worker_exited", run_id: options.runId,
+        detail: JSON.stringify({ engine, worker_pid: exit.pid, worker_url: exit.url, exit_code: exit.exitCode, signal: exit.signal,
+          disconnected_at: exit.disconnectedAt, exited_at: exit.exitedAt,
+          shutdown_reason: exit.shutdownReason, stderr: exit.stderr }),
+      });
+      options.onProgress?.(`worker_exited ${JSON.stringify({ pid: exit.pid, url: exit.url,
+        exitCode: exit.exitCode, signal: exit.signal, shutdownReason: exit.shutdownReason })}`);
+    }).catch(error => { options.onProgress?.(`Worker 退出记录失败：${errorText(error)}`); }));
+    return worker;
+  }
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason || new Error("Interrupted"));
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -256,10 +274,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           i++
         )
           owned.push(
-            await spawnWorker(
+            await launchWorker(
               engine,
               path.join(working, "workers", `${engine}-${i}-${randomUUID()}`),
-              options.runtime,
             ),
           );
       workerUrls = owned.map((w) => w.url);
@@ -308,7 +325,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       let workerUrl = worker.url;
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id];
-      const model = options.modelForStage(task.stage);
+      const taskModel = () => options.modelForTask?.(task, state.channel) ?? options.modelForStage(task.stage);
+      const model = taskModel();
       const retries = retryBudgets.get(task.id) ?? {
         transport: 0, content: 0,
       };
@@ -346,10 +364,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           return;
         }
         await previous.close();
-        const replacement = await spawnWorker(
+        const replacement = await launchWorker(
           identity.engine,
           path.join(working, "workers", `${identity.engine}-${randomUUID()}`),
-          options.runtime,
         );
         owned.push(replacement);
         workerUrl = replacement.url;
@@ -357,6 +374,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (paused(task)) return;
       // Automatic retries and explicit resume share the task's cumulative content cap.
+      state.channel = model.provider;
       const policy = { ...options.policy, repairAttempts: contentRemaining(task) - 1 };
       const spec: AttemptSpec = {
         runId: options.runId,
@@ -667,12 +685,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         }]);
       const rerouted = !receipt && !controller.signal.aborted && !paused(task) && !state.failure?.stopped &&
         contentLedgerConfirmed && contentRemaining(task) > 0 &&
-        (record.status ?? status)?.modelQuotaExhausted === true && options.onModelQuotaExhausted?.(model) === true &&
-        options.modelForStage(task.stage).provider !== model.provider;
+        (record.status ?? status)?.modelQuotaExhausted === true && options.onModelQuotaExhausted?.(model, task) === true &&
+        taskModel().provider !== model.provider;
       const pause = controller.signal.aborted || rerouted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, errors);
       if (!receipt && !controller.signal.aborted) await options.logger?.error(state.reason || "No committed receipt", {
         component: "host", event: rerouted ? "model_channel_switched" : "attempt_failed", run_id: options.runId, task_id: task.id,
-        ...(rerouted ? { from_channel: model.provider, to_channel: options.modelForStage(task.stage).provider,
+        ...(rerouted ? { from_channel: model.provider, to_channel: taskModel().provider,
           reason: "model_quota_exhausted" } : {}),
         attempt_id: spec.attemptId, stage: task.stage, errors,
         detail: status?.errorDetail ?? record.status?.errorDetail,
@@ -760,10 +778,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             (worker) => !busy.has(worker) && worker.health.identity.engine === engine,
           ).length;
           for (let i = idle; i < target && !controller.signal.aborted; i++) {
-            const worker = await spawnWorker(
+            const worker = await launchWorker(
               engine,
               path.join(working, "workers", `${engine}-${randomUUID()}`),
-              options.runtime,
             );
             owned.push(worker);
             const health = await request<WorkerStatus>(`${worker.url}/api/health`);
@@ -773,7 +790,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         }
       }
       let scheduled = false, blocked = false;
-      for (const task of scheduleTasks(manifest.tasks, manifest.states)) {
+      for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states)) {
         if (controller.signal.aborted) break;
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
@@ -873,6 +890,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
     await Promise.all(owned.map((worker) => worker.close()));
+    await Promise.all(workerExitLogs);
     if (store && store.manifest.status === "running") {
       store.manifest.status = "interrupted";
       await store.save();

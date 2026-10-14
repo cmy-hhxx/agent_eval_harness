@@ -86,7 +86,7 @@ GPT-5.6 / GPT-6 系列的 Responses 评测请求在固定系统提示词末尾�
 
 `Workflow.bind` 接收当前任务清单，用于恢复共享标准与去身份映射。可信请求供 Schema、引用及业务校验使用，`AgentBinding.modelInput` 仅用于模型展示。证据目录由 Tools 登记实际返回页，Worker 在返回前保存，Host 核对追加前缀和真实来源。正式结果与首查恢复使用完整坐标；映射与证据细节见[数据契约](contract.md#证据与导出)。
 
-Workflow 拥有盲测、归因补查、可选核验、改写槽位及聚类分片。Rewrite 模型只返回同序 `texts`，Workflow 绑定 `{id,text}` 并回填源结果。原始输入留在源文件，状态保存恢复索引和未接受草稿，正式正文保存在 JSONL；完整和按任务读取复用流式路径，检查重复、冲突与缺行。
+Workflow 拥有盲测、归因补查、可选核验、改写槽位及聚类分片。归因接受后，Workflow 将点评按概述、判据、各 finding 和表格分组，每组最多20槽；新组进入同一回答的执行范围。Rewrite 模型返回同序 `rewrites: [{id,text}]`，动态 Schema 固定每个位置的槽位 ID，Workflow 按槽回填源结果；跨槽内容不能合并。原始输入留在源文件，状态保存恢复索引和未接受草稿，正式正文保存在 JSONL；完整和按任务读取复用流式路径，检查重复、冲突与缺行。
 
 CLI 为运行选择统一底座；Host 库可用 `engineForTask` 路由到混合 Worker 池：
 

@@ -84,7 +84,7 @@ export function parseSettings(text: string): ApplicationSettings {
       continue;
     }
     if (!/^channel\.[a-z][a-z0-9_-]*$/.test(name)) error("section");
-    for (const key of values.keys()) if (!["name", "base_url", "api_key", "api", "model", "thinking", "context_window", "max_output_tokens", "supports_developer_role", "supports_explicit_prompt_caching", "models", "efforts"].includes(key)) error(key);
+    for (const key of values.keys()) if (!["name", "base_url", "api_key", "api", "model", "thinking", "context_window", "max_output_tokens", "supports_developer_role", "supports_explicit_prompt_caching", "traffic_weight", "models", "efforts"].includes(key)) error(key);
     const id = name.slice("channel.".length), baseUrl = optional("base_url");
     if (!baseUrl) error("base_url");
     try {
@@ -104,7 +104,7 @@ export function parseSettings(text: string): ApplicationSettings {
     channels[id] = { provider: id, name: optional("name") ?? id, baseUrl: baseUrl!, api: api as ModelConfig["api"], apiKeyEnv,
       model: optional("model"), ...parameters, ...(capability === undefined ? {} : { supportsDeveloperRole: capability === "true" }),
       ...(caching === undefined ? {} : { supportsExplicitPromptCaching: caching === "true" }),
-      models: list("models"), efforts };
+      models: list("models"), efforts, trafficWeight: positive("traffic_weight") ?? 1 };
   }
   if (!Object.keys(channels).length) throw new Error("config.ini requires at least one [channel.<id>]");
   if (agent.channel && !channels[agent.channel]) throw new Error("Unknown config.ini [agent].channel");

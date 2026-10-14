@@ -8,7 +8,7 @@
 | `attribution/` | 单条回答归因请求、固定 strengths/problems 行与统一 basis_index、程序绑定后的 judgment 与正式结果 |
 | `comparison/` | 请求、一次对比提交与结果；可选独立核验的原材料 inspection 与最终 verification-submission；首查与确认共用同任务预算 |
 | `rewrite/` | 改写阶段的请求、提交和结果；只交换文本槽位、不解析证据，模型提交 texts 数组，Workflow 绑定正式槽位身份 |
-| `clustering/` | 聚类阶段的请求、短编号提交和持久化身份结果；submission/result 分离；显式来源复核请求 occurrence-review.schema.json |
+| `clustering/` | 聚类阶段请求、短编号提交与持久化结果；显式来源复核及引用型待观察池 pending-observations.schema.json |
 | `workflow/` | Workflow 组合后的正式导出、回溯标注与聚类产物 Schema |
 | `eris/` | 独立分析助手的数据读取、专业任务与图表工具输入 |
 
@@ -26,6 +26,6 @@
 
 Criteria 的 submission 接收三组 `{source_indices,text}`，同一来源可支持多个独立检查项。程序生成身份、作用域及包含完整原文的验收依据。Attribution 用单个 json 字符串传输，Worker 严格解码后按 submission 验证；内容是固定 strengths/problems 两数组及标量，每种行不含互斥字段，统一用 basis_index 选择真实依据；无标准答案时也保留明确的空对错字段。`judgment.schema.json` 只校验程序绑定后的内部判断，不是模型入口。正式结果继续保留完整证据坐标与来源身份。
 
-普通 Comparison 提交 a_summary、b_summary、comparisons、preference、tradeoff；行内也是双方字符串，没有嵌套候选对象。对比前可由 Workflow 执行最多一轮归因补查，正式接受后不自动重开。独立 verification 的核验记录不改主线判词。Rewrite 的 submission 只接收同序 texts，Workflow 绑定 `{id,text}` 后按 result 验证及保存，原收据格式不变。
+普通 Comparison 提交 a_summary、b_summary、comparisons、可选 preference、必填 relative_preference（A 或 B）、a_tradeoff 和 b_tradeoff；行内也是双方字符串，没有嵌套候选对象。对比前可由 Workflow 执行最多一轮归因补查，正式接受后不自动重开。独立 verification 的核验记录不改主线判词。Rewrite 的 submission 只接收同序 texts，Workflow 绑定 `{id,text}` 后按 result 验证及保存，原收据格式不变。
 
 专业评测 Schema 修改顺序：Schema → 对应 Profile 的 `index.ts` → `validate.ts` /（如有）`resolve.ts` → [集中提示词](../packages/prompts/README.md)、测试样例和测试。分析助手工具输入改动同步 `agent/src/core/tools.ts`、提示词与测试。不要为旧 Schema 保留别名或兼容入口；项目哈希、摘要和跨 run 结果缓存规则见[开发指南](../docs/development.md#禁止项目哈希与兼容层)。

@@ -109,8 +109,8 @@ test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve curr
   const draft = {
     a_summary: '原文含 "引号"、\\ 路径和\n换行',
     b_summary: "B 给出了不同结果。",
-    comparisons: [{importance:"high",better_candidate:"A",a_summary:"A 给出正确结果4。",b_summary:"B 给出错误结果5。"},null],
-    preference:"A",tradeoff:"A给出4，B给出5，核心数值的差异决定取舍。",
+    comparisons: [{importance:"high",better_candidate:"A"},null],
+    preference:"A",relative_preference:"A",a_tradeoff:"给出正确结果4。",b_tradeoff:"给出错误结果5。",
   };
   const args = JSON.stringify(draft);
   const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",

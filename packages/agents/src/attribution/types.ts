@@ -50,7 +50,7 @@ export interface CoreAssessment {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Evidence-backed tools, 上下文组装与传递 and/or 模型自身推理; empty when responsibility is unresolved. */
+  /** Evidence-backed tool names or supported responsibility roles; empty when responsibility is unresolved. */
   component: string[];
   label: string;
   definition: string;

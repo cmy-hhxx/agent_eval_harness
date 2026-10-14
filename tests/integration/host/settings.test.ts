@@ -17,12 +17,14 @@ base_url = https://first.example/v1
 api_key = "first=key#;"
 model = shared-model
 supports_explicit_prompt_caching = true
+traffic_weight = 6
 [channel.openai]
 name = OpenAI
 base_url = https://second.example/v1
 api_key = 'second=key#;'
 api = openai-completions
 supports_developer_role = false
+traffic_weight = 4
 [agent]
 channel = openai
 model = shared-model
@@ -38,6 +40,8 @@ test("INI channels preserve literal secrets, reject ambiguous input and never qu
   assert.equal(config.environment[config.channels.openai.apiKeyEnv], "second=key#;");
   assert.equal(config.environment.SEARCH_API_KEY, "search=key#;");
   assert.deepEqual(config.automation.channels, ["openai", "evaluation-gateway"]);
+  assert.equal(config.channels["evaluation-gateway"].trafficWeight, 6);
+  assert.equal(config.channels.openai.trafficWeight, 4);
   const identities = parseSettings(ini + "\n[channel.evaluation_gateway]\nbase_url=https://third.example\napi_key=third\n");
   const references = Object.values(identities.channels).map(channel => channel.apiKeyEnv);
   assert.equal(new Set(references).size, 3);
@@ -53,6 +57,7 @@ test("INI channels preserve literal secrets, reject ambiguous input and never qu
     ini.replace("api = openai-completions", "api = unsupported"),
     ini.replace("supports_developer_role = false", "supports_developer_role = 0"),
     ini.replace("supports_explicit_prompt_caching = true", "supports_explicit_prompt_caching = 1"),
+    ...["0", "-1", "1.5", "six"].map(value => ini.replace("traffic_weight = 6", `traffic_weight = ${value}`)),
     ini.replace("channels = openai, evaluation-gateway", "channels = openai, absent"),
     ini.replace("channels = openai, evaluation-gateway", "channels = openai, openai"),
     ini.replace("channels = openai, evaluation-gateway", "channels ="),

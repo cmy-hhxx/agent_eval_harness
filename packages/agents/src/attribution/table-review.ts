@@ -1,5 +1,5 @@
 import { canonical, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { compareTraceTableRows, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
+import { compareTraceTableRows, evidenceCovers, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
 import type { AttributionResult, Evidence } from "./types.js";
 import { ownEvidence } from "./source-evidence.js";
 
@@ -102,10 +102,21 @@ export function attributionTableChecks(raw: { messages: unknown[] }, inputId: st
     return { ...checked, rows, summary };
   });
 }
-function supports(evidence: Evidence[], row: TableRowCheck): boolean {
-  const contains = (expected: { message_index: number; quote: string }) => evidence.some(item =>
-    ownEvidence(item) && item.message_index === expected.message_index && item.quote.includes(expected.quote));
-  return contains(row.answer.evidence) && row.sources.some(source => contains(source.evidence));
+function supports(evidence: Evidence[], row: TableRowCheck, plan: TableCheckRequest, raw: { messages: unknown[] }, inputId: string): boolean {
+  const contains = (expected: TableRowCheck["answer"]["evidence"], values: string[]) => {
+    const selected = evidence.filter(item => ownEvidence(item) && item.message_index === expected.message_index &&
+      (evidenceCovers(raw, inputId, expected.evidence_id, item.evidence_id) ||
+        evidenceCovers(raw, inputId, item.evidence_id, expected.evidence_id)));
+    // Findings cite the compared cells; complete rows remain in the program-owned table material.
+    return selected.some(item => item.quote.includes(expected.quote)) || values.every(value =>
+      value.length > 0 && selected.some(item => entityText(item.quote).includes(entityText(value))));
+  };
+  return row.sources.some(source => {
+    const mapping = plan.sources.find(item => item.table_id === source.table_id)!;
+    const pairs = [...mapping.key_columns, ...mapping.value_columns];
+    return contains(row.answer.evidence, pairs.map(pair => row.answer.cells[pair.answer] ?? "")) &&
+      contains(source.evidence, pairs.map(pair => source.cells[pair.source] ?? ""));
+  });
 }
 function rowStatus(row: TableRowCheck, plan: TableCheckRequest): TableRowCheck["status"] {
   if (row.status === "unverified") return row.status;
@@ -178,7 +189,7 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         const completeEvidence = hasEvidence(resolution.evidence, row.answer.evidence) &&
           row.sources.every(source => hasEvidence(resolution.evidence, source.evidence));
         const supportedProblem = result.findings.some(finding => finding.type === "problem" &&
-          finding.assessment.evidence_status === "established" && supports(finding.evidence, row));
+          finding.assessment.evidence_status === "established" && supports(finding.evidence, row, plan, raw, inputId));
         resolved = completeEvidence && !!resolution.reason.trim() &&
           (resolution.outcome === "supported" ? originalSupport : supportedProblem);
         if (!resolved) errors.push({ category: "evidence", code: "table_resolution_unsupported", path: "/table_resolutions",
@@ -195,7 +206,7 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
           reason: `${location}缺少可匹配的来源行；这不证明答案错误，需要核对来源截断、对象与范围。` });
         continue;
       }
-      const findings = result.findings.filter(finding => finding.type === "problem" && supports(finding.evidence, row));
+      const findings = result.findings.filter(finding => finding.type === "problem" && supports(finding.evidence, row, plan, raw, inputId));
       if (!resolved && (status === "ambiguous" || !findings.some(finding => finding.assessment.evidence_status === "established")))
         concerns.push({ kind: "unresolved_conflict", table_id: plan.answer_table_id, row_index: row.row_index,
           reason: `${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。` });

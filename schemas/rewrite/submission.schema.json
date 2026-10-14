@@ -2,6 +2,19 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["texts"],
-  "properties": { "texts": { "type": "array", "items": { "type": "string", "minLength": 1 } } }
+  "required": ["rewrites"],
+  "properties": {
+    "rewrites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
 }

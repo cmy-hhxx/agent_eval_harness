@@ -44,7 +44,8 @@
           "label",
           "count",
           "established_count",
-          "uncertain_count"
+          "uncertain_count",
+          "established_answer_ids"
         ],
         "properties": {
           "id": {
@@ -63,8 +64,22 @@
             "type": "integer",
             "minimum": 1
           },
-          "established_count": { "type": "integer", "minimum": 0 },
-          "uncertain_count": { "type": "integer", "minimum": 0 }
+          "established_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uncertain_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "established_answer_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },

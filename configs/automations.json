@@ -1,7 +1,7 @@
 {
   "id": "remote-evaluation",
   "sourceUrl": "http://117.50.195.94:2256",
-  "fromDate": "2026-10-08",
+  "fromDate": "2026-10-14",
   "completedDates": [],
   "hostConfigs": ["host.json", "local/models.json", "automations-host.json"],
   "stateDirectory": "../data/automations/remote-evaluation",

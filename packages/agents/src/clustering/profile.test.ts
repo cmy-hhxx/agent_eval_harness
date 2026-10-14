@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError, type AgentRequest } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
-import { clusteringAgent, clusteringProfile } from "./index.js";
+import { applyClustering, clusteringAgent, clusteringProfile, emptyLibrary, projectLibrary } from "./index.js";
 import { categoryPathIssues } from "./organization.js";
 import type { ClusteringRequest, ClusteringResult, ClusteringSubmission } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
@@ -118,7 +118,7 @@ test("Clustering cannot omit a closest class when its component has candidates, 
   const bound = request(), input = requestInput(bound), draft = submission();
   input.library.components[0]!.aliases = ["推理"];
   input.library.components.push({ id: "component-tool", label: "搜索工具", definition: "", aliases: [],
-    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1 }] });
+    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1, examples: [] }] });
   input.items[1]!.component = "推理";
   draft.new_classes[0]!.component = " 推理 ";
   delete draft.new_classes[0]!.closest_existing;
@@ -146,7 +146,7 @@ test("Clustering fills null from this component's candidates rather than the who
   input.items = [input.items[1]!];
   input.library.components[0]!.classes = [];
   input.library.components.push({ id: "component-tool", label: "搜索工具", definition: "", aliases: [],
-    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1 }] });
+    classes: [{ id: "class-tool", label: "搜索覆盖不足", definition: "d", aliases: [], occurrences: 1, examples: [] }] });
   draft.assignments = [{ item_id: "O1", new_class_index: 0 }];
   delete draft.new_classes[0]!.closest_existing;
   const binding = { agent: "clustering", profile: "default", request: bound };
@@ -266,11 +266,31 @@ test("clustering keeps problem classes within their component", () => {
   const crossMerge = request();
   requestInput(crossMerge).library.components.push({
     id: "component-tool", label: "搜索工具", definition: "", aliases: [],
-    classes: [{ id: "class-tool", label: "算术错误", definition: "d", aliases: [], occurrences: 1 }],
+    classes: [{ id: "class-tool", label: "算术错误", definition: "d", aliases: [], occurrences: 1, examples: [] }],
   });
   const crossResult = result();
   crossResult.merges = [{ into: "class-arithmetic", from: ["class-tool"], reason: "名字相同" }];
   assert.throws(() => clusteringProfile.validate!(crossMerge, crossResult, audit), /同一组件/);
+});
+
+test("new classes require confirmed independent answers across all assigned observations", () => {
+  const bound = request(), input = requestInput(bound), draft = result();
+  input.budget.min_support = 3;
+  draft.assignments[0] = { item_id: "o1", new_class_key: "n1" };
+  input.items[0]!.established_answer_ids = ["answer1", "answer2"];
+  input.items[1]!.established_answer_ids = ["answer2"];
+  input.items[1]!.count = 100;
+  input.items[1]!.established_count = 20;
+  input.items[1]!.uncertain_count = 80;
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /已确认独立回答数低于/);
+  input.items[1]!.established_answer_ids = ["answer2", "answer3"];
+  clusteringProfile.validate!(bound, draft, audit);
+  input.items[0]!.established_answer_ids = [];
+  input.items[1]!.established_answer_ids = [];
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /疑似样本不计支持/);
+  draft.new_classes = [];
+  draft.assignments = input.items.map(item => ({ item_id: item.id, deferred_reason: "只有疑似样本，等待独立已确认回答。" }));
+  clusteringProfile.validate!(bound, draft, audit);
 });
 
 test("Clustering merges must target existing active classes exactly once", () => {
@@ -373,14 +393,14 @@ test("deferred observations require a real creation or support limit and remain 
 
 test("topics and directory maintenance use current class references without changing responsibility", () => {
   const bound = request(), draft = submission();
-  draft.new_classes[0]!.category_paths = [["工具使用", "工具结果解释"], ["指令遵循", "遗漏"]];
+  draft.new_classes[0]!.category_paths = [["工具使用", "工具结果解释"]];
   draft.class_updates = [{ class_id: "C1", definition: "模型计算步骤与可核验数字不符。", category_paths: [["数值可靠性"]], reason: "界定结果偏差，不推断额外根因。" }];
   const resolved = clusteringProfile.resolve!(bound, draft, audit) as ClusteringResult;
   assert.equal(resolved.class_updates![0]!.class_id, "class-arithmetic");
   clusteringProfile.validate!(bound, resolved, audit);
   const repeat = structuredClone(resolved);
   repeat.new_classes[0]!.category_paths = [["工具使用", "遗漏"], [" 工具使用 ", "遗漏"]];
-  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), /主题路径不能重复/);
+  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), ValidationError);
   repeat.new_classes[0]!.category_paths = [["工具使用", " 工具使用 "]];
   assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), /不能重复同一级/);
   repeat.new_classes[0]!.category_paths = [["一", "二", "三", "四"]];
@@ -390,10 +410,29 @@ test("topics and directory maintenance use current class references without chan
   assert.throws(() => clusteringProfile.resolve!(bound, bad, audit), ValidationError);
 });
 
+test("every new class requires exactly one primary topic path", () => {
+  const bound = request(), draft = submission();
+  const missing = structuredClone(draft) as unknown as { new_classes: { category_paths?: string[][] }[] };
+  delete missing.new_classes[0]!.category_paths;
+  assert.throws(() => clusteringProfile.resolve!(bound, missing, audit), ValidationError);
+  for (const paths of [[], [["可靠性"], ["工具使用"]]]) {
+    draft.new_classes[0]!.category_paths = paths;
+    assert.throws(() => clusteringProfile.resolve!(bound, draft, audit), ValidationError);
+  }
+  draft.new_classes[0]!.category_paths = [["数值可靠性", "单位换算"]];
+  const resolved = clusteringProfile.resolve!(bound, draft, audit);
+  clusteringProfile.validate!(bound, resolved, audit);
+  draft.class_updates = [{ class_id: "C1", category_paths: [], reason: "清空主要主题。" }];
+  assert.throws(() => clusteringProfile.resolve!(bound, draft, audit), ValidationError);
+  delete draft.class_updates[0]!.category_paths;
+  draft.class_updates[0]!.definition = "明确计算偏差的范围。";
+  clusteringProfile.validate!(bound, clusteringProfile.resolve!(bound, draft, audit), audit);
+});
+
 test("persistent definitions reject current directory references but preserve business codes", () => {
   const bound = request(), draft = result();
   const component = requestInput(bound).library.components[0]!;
-  for (let index = 2; index <= 18; index++) component.classes.push({ id: `class-${index}`, label: `其他现象${index}`, definition: "d", aliases: [], occurrences: 1 });
+  for (let index = 2; index <= 18; index++) component.classes.push({ id: `class-${index}`, label: `其他现象${index}`, definition: "d", aliases: [], occurrences: 1, examples: [] });
   draft.new_classes[0]!.definition = "型号 C18 与 C1 不同，错误码（C18）等问题应保留业务含义。";
   clusteringProfile.validate!(bound, draft, audit);
   for (const definition of ["不同于问题类 C18 的另一种问题。", "并非某种现象（C1）等问题。", "item_id: O2 的问题。"] ) {
@@ -404,14 +443,47 @@ test("persistent definitions reject current directory references but preserve bu
 
 test("merging topics requires an explicit choice when the union exceeds the limit", () => {
   const bound = request(), draft = result(), component = requestInput(bound).library.components[0]!;
-  component.classes[0]!.category_paths = [["一"], ["二"]];
-  component.classes.push({ id: "other-class", label: "近义计算错", definition: "d", aliases: [], occurrences: 1, category_paths: [["三"], ["四"]] });
+  component.classes[0]!.category_paths = [["一"]];
+  component.classes.push({ id: "other-class", label: "近义计算错", definition: "d", aliases: [], occurrences: 1, examples: [], category_paths: [["二"]] });
   draft.merges = [{ into: "class-arithmetic", from: ["other-class"], reason: "同一现象。" }];
-  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /超过三条/);
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /只能保留一条/);
   draft.class_updates = [{ class_id: "class-arithmetic", category_paths: [["数值可靠性", "计算"]], reason: "合并后统一主题。" }];
   clusteringProfile.validate!(bound, draft, audit);
   draft.class_updates.push({ class_id: "other-class", definition: "d", reason: "同时维护被合并类。" });
   assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /不能同时维护 from/);
+});
+
+for (const paths of [undefined, []] as (string[][] | undefined)[]) test(`an accepted merge preserves ${paths ? "empty" : "omitted"} inherited topic paths`, () => {
+  const bound = request(), input = requestInput(bound), component = input.library.components[0]!;
+  component.classes = [component.classes[0]!, { ...component.classes[0]!, id: "other-class", label: "近义计算错" }];
+  for (const problem of component.classes) {
+    if (paths === undefined) delete problem.category_paths;
+    else problem.category_paths = structuredClone(paths);
+  }
+  input.items = []; input.budget.active_classes = 2;
+  const registry = new AgentRegistry([clusteringAgent]), binding = { agent: "clustering", profile: "default", request: bound };
+  registry.prepare(binding);
+  const merged = registry.resolve(binding, { assignments: [], new_classes: [],
+    merges: [{ into: "C1", from: ["C2"], reason: "同一计算错误。" }] }, audit) as ClusteringResult;
+  registry.validate(binding, merged, audit);
+  const library = emptyLibrary(input.model), { classes, ...details } = component;
+  library.components[component.id] = { ...details, first_seen: null };
+  for (const problem of classes) library.classes[problem.id] = { ...problem, component_id: component.id,
+    status: "active", merged_into: null, first_seen: null };
+  const receipt = { run_id: "run", evaluator_version: "fixture", task_id: "merge", submission_id: "accepted-merge",
+    version: input.model, batch_id: "batch", observations: [], result: merged };
+  const original = structuredClone(library), [target, source] = classes;
+  const applied = applyClustering(library, receipt);
+  assert.equal(applied.classes[source.id]!.merged_into, target.id);
+  assert.equal(projectLibrary(applied).components[0]!.classes.length, 1);
+  assert.deepEqual(applied.classes[target.id]!.category_paths, paths);
+  assert(applied.classes[target.id]!.aliases.includes(source.label));
+  assert(applied.events.some(event => event.type === "class_merged"));
+  assert.deepEqual(library, original, "applying a receipt does not mutate its input library");
+  assert.equal(applyClustering(applied, receipt), applied, "replaying the accepted merge is idempotent");
+  assert.throws(() => applyClustering(library, { ...receipt, result: { ...merged,
+    class_updates: [{ class_id: target.id, category_paths: [], reason: "清空主题。" }] } }), ValidationError,
+    "an explicitly submitted empty path is still rejected");
 });
 
 test("Clustering rejects marked category names through public submission validation without sanitizing them", () => {

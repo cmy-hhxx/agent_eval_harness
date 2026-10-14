@@ -82,7 +82,9 @@ test("reference storage lists actual result files and keeps rewrites embedded in
     assert.match(audit.steps[1].output!, /不自动开启归因或对比重评/);
     assert.match(reference.flow.branches.find((branch) => branch.name === "问题库维护")!.condition, /不依赖对比裁决/);
     assert.equal(reference.flow.branches.find((branch) => branch.name === "聚类改写")!.enabled, reference.clustering.enabled && reference.rewrite.clustering);
-    assert.equal(reference.flow.branches.find((branch) => branch.name === "逐项点评改写")!.enabled, reference.rewrite.comparison && reference.rewrite.comparisonItems === true);
+    const proseRewrite = reference.flow.branches.find((branch) => branch.name === "总评与取舍改写")!;
+    assert.equal(proseRewrite.enabled, reference.rewrite.comparison && reference.rewrite.comparisonItems === true);
+    assert.equal(proseRewrite.steps[0]!.name, "双方整体总评与取舍");
     assert.match(document.querySelector("#reference-content").textContent, /任务内正整数 evidence_index/);
     document.querySelector('[data-open-stage="comparison"][data-open-profile="verification"]').click();
     assert.equal(document.querySelector('[data-profile="verification"]').getAttribute("aria-pressed"), "true");

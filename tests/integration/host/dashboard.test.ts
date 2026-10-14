@@ -16,8 +16,8 @@ import { emptyUsage, evidenceId, type JsonObject, type ProblemLibrary, type RunS
 import { exists, fileSourceReader, readJson, runLock, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import {
-  attributionRow, buildPlan, caseResultView, createResultWriter, listInputInventory, listRunCases, readCaseDetail,
-  readRegisteredInput, readRunTasks, readTaskResult, writeRunState,
+  attributionRow, buildPlan, caseResultView, clusteringRow, createResultWriter, listInputInventory, listRunCases, readCaseDetail,
+  readRegisteredInput, readRunTasks, readTaskResult, taskObservations, writeRunState,
   type Candidate, type Checkpoint, type TaskData,
 } from "@eval/workflows/comparison";
 import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
@@ -27,7 +27,7 @@ const gateway = "https://private-gateway.example/v1";
 
 async function setup(rewrite = false, clustering = false, rows?: Parameters<typeof fixtureConfig>[0]) {
   const { directory, config } = await fixtureConfig(rows ?? [
-    [raw("q1", "4", clustering ? "2+2=5" : "2+2=4"), raw("q2")], [], [raw("q1"), raw("q2")], [],
+    [raw("q1", "4", clustering ? "2+2=5" : "2+2=4"), raw("q2", "4", clustering ? "2+2=5" : "2+2=4")], [], [raw("q1"), raw("q2")], [],
   ], rewrite, clustering);
   const configFile = path.join(directory, "dashboard-config.json");
   await writeJson(configFile, {
@@ -62,7 +62,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
     (item.data as TaskData).candidates.A.case_id === "q1")!;
   const receipt: SubmissionReceipt = {
     taskId: task.id, attemptId: "attempt-1", submissionId: "submission-1",
-    evaluation: clustering ? attributionResult(false, "2+2=5") : attributionResult(), audit: emptyAudit(), usage: emptyUsage(),
+    evaluation: attributionResult(!clustering, clustering ? "2+2=5" : "2+2=4", true, task.inputIds.answer), audit: emptyAudit(), usage: emptyUsage(),
     evaluatorVersion: fakeEvaluatorVersion,
     judge: "fixture-model",
     acceptedAt: Date.now(), status: "succeeded",
@@ -86,7 +86,27 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
   if (clustering) {
     const firstInput = (plan.catalog as Candidate[]).find((candidate) => candidate.input_id === task.inputIds.answer)!;
     const secondInput = (plan.catalog as Candidate[]).find((candidate) => candidate.version === "a_fast" && candidate.case_id === "q2")!;
+    const secondTask = plan.tasks.find((item) => item.stage === "attribution" && item.inputIds.answer === secondInput.input_id)!;
+    const secondEvaluation = attributionResult(false, "2+2=5", true, secondInput.input_id);
+    secondEvaluation.findings[0]!.assessment.evidence_status = "uncertain";
+    const secondReceipt: SubmissionReceipt = { ...receipt, taskId: secondTask.id, attemptId: "attempt-2",
+      submissionId: "submission-2", evaluation: secondEvaluation };
+    secondReceipt.exported = { id: secondTask.id, file: "attribution.jsonl", row: attributionRow(secondTask, secondReceipt) };
+    // The accepted metadata remains, while this sample's formal row is deliberately unavailable.
+    state.receipts[secondTask.id] = secondReceipt;
+    state.manifest.states[secondTask.id] = { status: "succeeded", attempts: 1 };
     const clusteringTask = plan.tasks.find((item) => item.stage === "clustering" && (item.data as TaskData).scope?.version === "a_fast")!;
+    const clusteringReceipt: SubmissionReceipt = { ...receipt, taskId: clusteringTask.id, attemptId: "clustering-attempt",
+      submissionId: "clustering-submission", evaluation: {
+        assignments: [{ item_id: "o1", class_id: "k1" }], new_classes: [],
+        merges: [{ from: ["k2"], into: "k1", reason: "同一现象。" }],
+      } };
+    const clustered = clusteringRow(clusteringTask, clusteringReceipt, taskObservations(clusteringTask, (id) => state.receipts[id]));
+    clusteringReceipt.exported = { id: clusteringTask.id, file: "clustering.jsonl", row: clustered };
+    state.receipts[clusteringTask.id] = clusteringReceipt;
+    state.manifest.states[clusteringTask.id] = { status: "succeeded", attempts: 1 };
+    state.recordedAttempts = 3;
+    await writeJsonl(path.join(run, "results", "clustering.jsonl"), [clustered]);
     await writeJson(path.join(run, "stats.json"), {
       problem_library: {
         a_fast: {
@@ -94,7 +114,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           classes: 1,
           occurrences: 2,
           assigned: 2,
-          proposed_new_classes: 1,
+          proposed_new_classes: 0,
           merged_classes: 1,
         },
       },
@@ -150,14 +170,15 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           case_id: "q1",
           input_id: firstInput.input_id,
           run_id: "run-one",
+          attribution: { run, run_id: "run-one", task_id: task.id,
+            submission_id: receipt.submissionId, evaluator_version: receipt.evaluatorVersion },
           task_id: clusteringTask.id,
-          submission_id: "s1",
+          submission_id: clusteringReceipt.submissionId,
           finding_id: "f0",
           evidence_status: "established",
           message_index: 1,
-          quote: "2+2=5",
           source: { file: firstInput.source, line: firstInput.line },
-          classification: "created",
+          classification: "assigned",
           previous_class_id: null,
           at: "2026-01-02T00:00:00.000Z",
         },
@@ -170,12 +191,13 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           case_id: "q2",
           input_id: secondInput.input_id,
           run_id: "run-one",
+          attribution: { run, run_id: "run-one", task_id: secondTask.id,
+            submission_id: secondReceipt.submissionId, evaluator_version: secondReceipt.evaluatorVersion },
           task_id: clusteringTask.id,
-          submission_id: "s2",
+          submission_id: clusteringReceipt.submissionId,
           finding_id: "f0",
           evidence_status: "uncertain",
           message_index: 1,
-          quote: "3+3=7",
           source: { file: secondInput.source, line: secondInput.line },
           classification: "assigned",
           previous_class_id: "k2",
@@ -187,7 +209,8 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           id: "e1",
           type: "class_merged",
           at: "2026-01-02T00:00:00.000Z",
-          detail: { from: "k2", into: "k1", reason: "同一现象。" },
+          detail: { from: "k2", into: "k1", reason: "同一现象。", run_id: "run-one",
+            task_id: clusteringTask.id, submission_id: clusteringReceipt.submissionId },
         },
       ],
     });
@@ -697,7 +720,8 @@ test("dashboard keeps clustering tasks run-level and never mixes them into cases
     ).json();
     assert.equal(detail.tasks.filter((task: { stage: string }) => task.stage === "clustering").length, 0);
     const listing = await (await fetch(`${server.url}/api/dashboard/runs`)).json();
-    assert.equal(listing.runs[0].stages.clustering.pending, 2, "one clustering task per model");
+    assert.equal(listing.runs[0].stages.clustering.pending, 1);
+    assert.equal(listing.runs[0].stages.clustering.succeeded, 1, "one clustering task per model");
     assert.equal(listing.runs[0].evaluator_version, fakeEvaluatorVersion);
     assert.equal(listing.runs[0].problem_library.a_fast.classes, 1, "library growth rides the run overview");
     const settings = await (await fetch(`${server.url}/api/dashboard/config`)).json();
@@ -725,10 +749,12 @@ test("dashboard problem library lists every configured model and recalls intact 
     for (const [label, inputId] of Object.entries(task.inputIds))
       if (inputId === fixture.task.inputIds.answer) task.inputIds[label] = otherInputId;
   await writeJson(path.join(otherRun, "state.json"), otherState);
-  await writeJsonl(path.join(otherRun, "results", "attribution.jsonl"), [{ ...fixture.row, input_id: otherInputId }]);
+  await writeJsonl(path.join(otherRun, "results", "attribution.jsonl"), [{ ...fixture.row, input_id: otherInputId,
+    evaluation: attributionResult(false, "2+2=5", true, otherInputId) }]);
   const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
   const stored = await readJson<ProblemLibrary>(libraryFile);
   stored.occurrences.push({ ...stored.occurrences[0], id: "o3", run_id: "run-two", input_id: otherInputId,
+    attribution: { ...stored.occurrences[0].attribution!, run: otherRun, run_id: "run-two" },
     at: "2025-12-31T00:00:00.000Z" });
   await writeJson(libraryFile, stored);
   const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
@@ -757,7 +783,8 @@ test("dashboard problem library lists every configured model and recalls intact 
     assert.equal(classDetail.total, 3);
     assert.equal(classDetail.occurrences[0].case_id, "q1", "newest occurrence first");
     assert.equal(classDetail.occurrences[0].evaluator_version, fakeEvaluatorVersion);
-    assert.equal(classDetail.occurrences[0].quote, "2+2=5");
+    assert.equal(classDetail.occurrences[0].message_index, 1);
+    assert(!("quote" in classDetail.occurrences[0]), "problem library samples expose source coordinates only");
     assert.equal(classDetail.occurrences[1].previous_class_id, "k2");
     assert.equal(classDetail.class.aliases[0], "计算错误");
     assert.deepEqual(classDetail.lineage, library[0].merged);
@@ -819,13 +846,40 @@ test("dashboard problem recall names missing references and never emits unusable
     library.occurrences[0] = { ...occurrence, input_id: "missing-input" };
     await writeJson(libraryFile, library);
     await check("sample_missing");
-    library.occurrences[0] = { ...occurrence, run_id: "removed-run" };
+    library.occurrences[0] = { ...occurrence, run_id: "removed-run", attribution: { ...occurrence.attribution!,
+      run: path.join(fixture.config.output.path, "removed-run"), run_id: "removed-run" } };
     await writeJson(libraryFile, library);
     await check("run_missing");
     await writeJson(path.join(fixture.config.output.path, "unreadable-run", "state.json"), { format: "invalid" });
-    library.occurrences[0] = { ...occurrence, run_id: "unreadable-run" };
+    library.occurrences[0] = { ...occurrence, run_id: "unreadable-run", attribution: { ...occurrence.attribution!,
+      run: path.join(fixture.config.output.path, "unreadable-run"), run_id: "unreadable-run" } };
     await writeJson(libraryFile, library);
     await check("run_unavailable");
+  } finally {
+    await server.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("dashboard exposes clustering text source errors while retaining original classes and intact sample recall", async () => {
+  const fixture = await setup(false, true);
+  const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
+  const library = await readJson<ProblemLibrary>(libraryFile);
+  library.events[0]!.detail.submission_id = "changed-clustering-submission";
+  await writeJson(libraryFile, library);
+  const server = await startDashboard({ configPaths: [fixture.configFile], port: 0 });
+  try {
+    const listing = await fetch(`${server.url}/api/dashboard/library`);
+    assert.equal(listing.status, 200);
+    const model = (await listing.json()).find((item: { model: string }) => item.model === "a_fast");
+    assert.match(model.rewrite_error, /聚类展示来源收据身份已改变/);
+    assert.equal(model.components[0].classes[0].label, library.classes.k1!.label);
+    const response = await fetch(`${server.url}/api/dashboard/library/a_fast/classes/k1`);
+    assert.equal(response.status, 200);
+    const detail = await response.json();
+    assert.match(detail.rewrite_error, /聚类展示来源收据身份已改变/);
+    assert.equal(detail.class.definition, library.classes.k1!.definition);
+    assert.equal(detail.occurrences[0].recall.available, true);
   } finally {
     await server.close();
     await rm(fixture.directory, { recursive: true, force: true });
@@ -839,6 +893,7 @@ test("dashboard problem samples paginate in stable order and validate page numbe
   for (let index = 0; index < 50; index++) library.occurrences.push({
     ...library.occurrences[0], id: `o-extra-${String(index).padStart(2, "0")}`,
     input_id: randomUUID(), case_id: `q-extra-${index}`,
+    attribution: { ...library.occurrences[0].attribution!, run: path.join(fixture.config.output.path, "removed-run"), run_id: "removed-run" },
     run_id: "removed-run", at: "2025-12-31T00:00:00.000Z",
   });
   await writeJson(libraryFile, library);
@@ -871,10 +926,10 @@ test("dashboard counts one finding across components and topics while retaining 
   const fixture = await setup(false, true);
   const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
   const library = await readJson<ProblemLibrary>(libraryFile);
-  library.classes.k1.category_paths = [["正确性", "数值"], ["数值可靠性"]];
+  library.classes.k1.category_paths = [["正确性", "数值"]];
   library.components.c2 = { ...library.components.c1, id: "c2", label: "工具输出解读" };
   library.classes.k3 = { ...library.classes.k1, id: "k3", component_id: "c2", label: "工具数值误读",
-    aliases: [], category_paths: [["正确性", "数值"], ["工具结果"]] };
+    aliases: [], category_paths: [["正确性", "数值"]] };
   library.occurrences.push(
     { ...library.occurrences[0], id: "o-shared", class_id: "k3" },
     { ...library.occurrences[0], id: "o-repeated", at: "2025-12-31T00:00:00.000Z" },

@@ -32,12 +32,11 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
     : slot.criterion_ids.some(id => row.criterion_ids.includes(id)) || Object.entries(slot.finding_indices).some(([label,indices]) =>
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return null;
-   if (slot.kind === 'resource') return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null };
-   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,
-    a_summary: row?.assessments.A?.summary ?? result.assessments.A.summary,
-    b_summary: row?.assessments.B?.summary ?? result.assessments.B.summary };
+   if (slot.kind === 'resource') return { importance: row?.importance ?? 'medium' };
+   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
-  tradeoff: result.decision_basis?.tradeoff ?? '来源存在待核事项。' };
+  relative_preference: result.ranking?.[0]?.[0] === 'B' ? 'B' : 'A',
+  a_tradeoff: result.assessments.A.summary, b_tradeoff: result.assessments.B.summary };
 }
 export function requestComparisonSubmission(request: AgentRequest, result: ComparisonResult) {
  return comparisonSubmission(result, comparisonSlots(request));

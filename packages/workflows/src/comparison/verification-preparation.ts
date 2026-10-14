@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { PlannedTask } from "@eval/contracts";
 import { runLock } from "@eval/data";
-import { pendingTaskProgress, readRunState, writeRunState } from "./run-data.js";
+import { readRunState, writeRunState } from "./run-data.js";
+import { pendingTaskProgress } from "./task-progress.js";
 import type { ComparisonResult, TaskData } from "./types.js";
 
 export interface ComparisonVerificationSelection {

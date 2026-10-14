@@ -96,6 +96,7 @@ export function comparisonRow(
     });
     evaluations[c.version] = {
       is_correct: attribution.is_correct,
+      ...(attribution.standard_conflict !== undefined ? { standard_conflict: attribution.standard_conflict } : {}),
       correctness_reason: attribution.correctness_reason,
       correctness_evidence: attribution.correctness_evidence,
       numeric_checks: attribution.numeric_checks,
@@ -210,8 +211,8 @@ export function clusteringRow(
     task_id: task.id,
     model: scope.version,
     batch_id: scope.batch_id,
-    items: observations.map(({ id, component, label, count, established_count, uncertain_count }) =>
-      ({ id, component, label, count, established_count, uncertain_count })),
+    items: observations.map(({ id, component, label, count, established_count, uncertain_count, established_answer_ids }) =>
+      ({ id, component, label, count, established_count, uncertain_count, established_answer_ids })),
     result: receipt.evaluation as ClusteringResult,
   };
 }

@@ -14,6 +14,7 @@ import {
 } from "./models.js";
 export * from "./models.js";
 export * from "./settings.js";
+export { createBalancedModels } from "./balanced-models.js";
 import { readSettings, applySettings, type ApplicationSettings } from "./settings.js";
 
 const API_KINDS: ModelProfile["api"][] = ["openai-completions", "openai-responses"];
@@ -27,11 +28,11 @@ const EXECUTION_DEFAULTS = {
 };
 const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
-  maxClassesPerModel: 80,
-  maxNewClassesPerTask: 8,
+  maxClassesPerModel: 40,
+  maxNewClassesPerTask: 3,
   maxComponentsPerModel: 12,
-  consolidateAt: 60,
-  minSupport: 1,
+  consolidateAt: 30,
+  minSupport: 3,
   maxCasesPerTask: 100,
 };
 type ConfigObject = Record<string, unknown>;

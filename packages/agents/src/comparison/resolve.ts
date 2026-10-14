@@ -4,7 +4,7 @@ import { comparisonText, comparisonResourceText } from "@eval/prompts";
 import schema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import { criterionAppliesToPair } from "./pair-scope.js";
-import { comparisonSlots, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonSlots, comparisonSlotCellState, comparisonSlotSummary, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
 /** Model-facing and local validation share the same program-owned row identities. */
 export function comparisonSubmissionSchema(request: AgentRequest) {
@@ -57,7 +57,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
         message: "本槽位为必需要求、优点、中高重要性问题或已记录的资源指标，须保留双方评审；仅 optional 槽可填 null。" });
       return [];
     }
-    const betterCandidate = row.better_candidate ?? null;
+    const betterCandidate = slot.kind === "resource" ? comparisonResourceAdvantage(input) : row.better_candidate ?? null;
     if (betterCandidate && !slot.shared) rowIssues.push({ category: "decision", code: "comparison_advantage_scope_mismatch",
       path: `/comparisons/${index}/better_candidate`, message: "该槽位属于候选专有要求；相对优势只可用于共同适用方面，保留本行并填 better_candidate=null。" });
     const resolved = { aspect: slot.aspect, criterion_ids: [...slot.criterion_ids], importance: row.importance,
@@ -65,13 +65,13 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       assessments: Object.fromEntries(labels.map(label => {
         const state = comparisonSlotCellState(input,label,slot);
         return [label, { summary: slot.kind === "resource" ? comparisonResourceText(comparisonResourceMetrics(input,label))
-          : state.status === "not_applicable" ? comparisonText("not_applicable") : (label === "A" ? row.a_summary! : row.b_summary!),
+          : state.status === "not_applicable" ? comparisonText("not_applicable") : comparisonSlotSummary(input,label,slot),
           finding_indices: [...slot.finding_indices[label]], ...state }];
       })) };
     if (betterCandidate && slot.shared && !comparisonAdvantageCandidates(resolved.assessments,
       slot.kind !== 'resource' || comparisonResourcesComparable(input)).includes(betterCandidate))
       rowIssues.push({ category: "decision", code: "comparison_advantage_unproven", path: `/comparisons/${index}/better_candidate`,
-        message: "相对优势需要双方在同一标准下都有已确认的事实；资源须有双方同种有效指标，耗时不能与 token 数相互比较。未知或不适用不能推定落后。保留本槽，better_candidate=null，a_summary/b_summary 写清已核对事实与未知范围。" });
+        message: "相对优势需要双方在同一标准下都有已确认的事实；未知或不适用不能推定落后。保留本槽，better_candidate=null，点评由已接受事实呈现。" });
     return [resolved];
   });
   if (rowIssues.length) throw new ValidationError(rowIssues);
@@ -94,6 +94,13 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       const finding = input.attributions[candidate].findings[finding_index];
       return finding.assessment.evidence_status === "established" ? [{ candidate, finding_index }] : [];
     }))).filter((ref,index,all) => all.findIndex(item => item.candidate === ref.candidate && item.finding_index === ref.finding_index) === index).slice(0,24);
+  const resources = comparisons.find(row => !row.criterion_ids.length &&
+    Object.values(row.assessments).every(cell => !cell.finding_indices.length));
+  const tradeoff = labels.map(candidate => comparisonText("tradeoff_candidate")
+    .replace("{candidate}", candidate).replace("{reason}", () => candidate === "A" ? value.a_tradeoff : value.b_tradeoff) +
+    (resources ? " " + resources.assessments[candidate].summary : "")).join(" ");
   return { status: "decided", review_requests: [], task_analysis: structuredClone(input.task_analysis), assessments, ranking,
-    decision_basis: { tradeoff: value.tradeoff, comparisons, decisive_findings } };
+    decision_basis: { tradeoff: (ranking.length === 1
+      ? comparisonText("relative_preference").replace("{candidate}", value.relative_preference) : "") + tradeoff,
+      comparisons, decisive_findings } };
 }

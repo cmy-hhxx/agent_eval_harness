@@ -19,6 +19,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
   count: 1,
   established_count: 1,
   uncertain_count: 0,
+  established_answer_ids: [inputId],
   examples: [
     {
       finding: label,
@@ -69,6 +70,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   observations[0]!.examples[0]!.evidence_status = "uncertain";
   observations[0]!.established_count = 0;
   observations[0]!.uncertain_count = 1;
+  observations[0]!.established_answer_ids = [];
   library = applyClustering(
     library,
     receipt(observations, {
@@ -80,7 +82,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
           label: "色值错误",
           definition: "颜色值与要求不符。",
           closest_existing: null,
-          novelty: "首个问题。",
+          novelty: "首个问题。", category_paths: [["数值可靠性"]],
         },
       ],
       merges: [],
@@ -98,6 +100,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   assert.equal(library.occurrences[0]!.input_id, "in-1");
   assert.equal(library.occurrences[0]!.evaluator_version, "r1");
   assert.equal(library.occurrences[0]!.source.line, 7);
+  assert.equal(Object.hasOwn(library.occurrences[0]!, "quote"), false, "bank occurrences retain coordinates without copying evidence text");
   assert.equal(library.occurrences[0]!.classification, "created");
   assert.equal(library.occurrences[0]!.evidence_status, "uncertain");
 
@@ -113,7 +116,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   assert.equal(projectLibrary(library).components[0]!.classes[0]!.occurrences, 1);
   const replayed = applyClustering(library, {
     ...receipt(observations, { assignments: [{ item_id: "o1", new_class_key: "n1" }], new_classes: [{
-      key: "n1", component: "色值工具", label: "色值错误", definition: "颜色值与要求不符。", closest_existing: null, novelty: "首个问题。",
+      key: "n1", component: "色值工具", label: "色值错误", definition: "颜色值与要求不符。", closest_existing: null, novelty: "首个问题。", category_paths: [["数值可靠性"]],
     }], merges: [] }),
     at: "2026-01-02T00:00:00.000Z",
   });
@@ -133,7 +136,7 @@ test("merges move occurrences, keep aliases and stay idempotent", () => {
           label: "算术错误",
           definition: "数值计算错误。",
           closest_existing: null,
-          novelty: "首个问题。",
+          novelty: "首个问题。", category_paths: [["数值可靠性"]],
         },
       ],
       merges: [],
@@ -150,7 +153,7 @@ test("merges move occurrences, keep aliases and stay idempotent", () => {
           label: "计算错误",
           definition: "计算过程出错。",
           closest_existing: Object.values(library.classes)[0]!.id,
-          novelty: "与算术错误措辞不同。",
+          novelty: "与算术错误措辞不同。", category_paths: [["数值可靠性"]],
         },
       ],
       merges: [],
@@ -199,8 +202,8 @@ test("identical labels on different tools create distinct classes and retain the
         { item_id: "o2", new_class_key: "n2" },
       ],
       new_classes: [
-        { key: "n1", component: "工具A", label: "超时", definition: "工具A超时。", closest_existing: null, novelty: "首次出现。" },
-        { key: "n2", component: "工具B", label: "超时", definition: "工具B超时。", closest_existing: null, novelty: "首次出现。" },
+        { key: "n1", component: "工具A", label: "超时", definition: "工具A超时。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] },
+        { key: "n2", component: "工具B", label: "超时", definition: "工具B超时。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] },
       ],
       merges: [],
     }),
@@ -221,8 +224,8 @@ test("a merged label resolves to the surviving class instead of creating a dupli
           { item_id: "o2", new_class_key: "n2" },
         ],
         new_classes: [
-          { key: "n1", component: "模型自身推理", label: "算术错误", definition: "d", closest_existing: null, novelty: "n" },
-          { key: "n2", component: "模型自身推理", label: "计算错误", definition: "d", closest_existing: null, novelty: "n" },
+          { key: "n1", component: "模型自身推理", label: "算术错误", definition: "d", closest_existing: null, novelty: "n", category_paths: [["数值可靠性"]] },
+          { key: "n2", component: "模型自身推理", label: "计算错误", definition: "d", closest_existing: null, novelty: "n", category_paths: [["数值可靠性"]] },
         ],
         merges: [],
       },
@@ -242,7 +245,7 @@ test("a merged label resolves to the surviving class instead of creating a dupli
     receipt([observation("o3", "模型自身推理", "计算错误", "in-3")], {
       assignments: [{ item_id: "o3", new_class_key: "n3" }],
       new_classes: [
-        { key: "n3", component: "模型自身推理", label: "计算错误", definition: "d", closest_existing: keep!.id, novelty: "n" },
+        { key: "n3", component: "模型自身推理", label: "计算错误", definition: "d", closest_existing: keep!.id, novelty: "n", category_paths: [["数值可靠性"]] },
       ],
       merges: [],
     }),
@@ -292,15 +295,15 @@ test("merge organization preserves the full pre-update topic union in its audit"
   let library = applyClustering(emptyLibrary("model"), receipt([
     observation("o1", "模型自身推理", "现象一", "in-1"), observation("o2", "模型自身推理", "现象二", "in-2"),
   ], { assignments: [{ item_id: "o1", new_class_key: "n1" }, { item_id: "o2", new_class_key: "n2" }], merges: [], new_classes: [
-    { key: "n1", component: "模型自身推理", label: "现象一", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["一"], ["二"]] },
-    { key: "n2", component: "模型自身推理", label: "现象二", definition: "近义定义。", closest_existing: null, novelty: "首例", category_paths: [["三"], ["四"]] },
+    { key: "n1", component: "模型自身推理", label: "现象一", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["一"]] },
+    { key: "n2", component: "模型自身推理", label: "现象二", definition: "近义定义。", closest_existing: null, novelty: "首例", category_paths: [["二"]] },
   ] }));
   const [first, second] = Object.values(library.classes);
   const merge = { ...receipt([], { assignments: [], new_classes: [], merges: [{ into: first!.id, from: [second!.id], reason: "同义合并。" }],
-    class_updates: [{ class_id: first!.id, category_paths: [["统一主题"]], reason: "合并后的四条路径统一整理。" }] }), submission_id: "organized-merge" };
+    class_updates: [{ class_id: first!.id, category_paths: [["统一主题"]], reason: "合并后的两条路径统一整理。" }] }), submission_id: "organized-merge" };
   library = applyClustering(library, merge);
   const event = library.events.find(event => event.type === "class_updated")!;
-  assert.deepEqual((event.detail.before as { category_paths: string[][] }).category_paths, [["一"], ["二"], ["三"], ["四"]]);
+  assert.deepEqual((event.detail.before as { category_paths: string[][] }).category_paths, [["一"], ["二"]]);
   assert.deepEqual((event.detail.after as { category_paths: string[][] }).category_paths, [["统一主题"]]);
   assert.equal((event.detail.before as { definition: string }).definition, "原定义。");
   assert.deepEqual(library.classes[first!.id]!.category_paths, [["统一主题"]]);
@@ -399,15 +402,46 @@ test("An already applied explicit update cannot bypass dirty topic union validat
 });
 
 
-test("An already applied invalid explicit update is skipped while a clean merge union is retained", () => {
+test("An already applied update cannot bypass the primary path budget during a new merge", () => {
   const library = topicLibrary(), [keep, drop] = Object.values(library.classes);
   const replay = receipt([], { assignments: [], new_classes: [], merges: [{ into: keep!.id, from: [drop!.id], reason: "合并现象。" }],
     class_updates: [{ class_id: keep!.id, category_paths: [["旧<标记>"]], reason: "旧维护。" }] });
   library.events.push({ id: "old-maintenance", type: "class_updated", at: replay.at!,
     detail: { submission_id: replay.submission_id, class_id: keep!.id } });
-  const before = structuredClone(library), changed = applyClustering(library, replay);
-  assert.deepEqual(changed.classes[keep!.id]!.category_paths, [["有效主题"], ["其他主题"]]);
+  const before = structuredClone(library);
+  assert.throws(() => applyClustering(library, replay), /只能保留一条主要主题路径/);
+  assert.deepEqual(library, before);
+  replay.submission_id = "new-maintenance";
+  replay.result.class_updates = [{ class_id: keep!.id, category_paths: [["有效主题"]], reason: "统一合并后的主要路径。" }];
+  const changed = applyClustering(library, replay);
+  assert.deepEqual(changed.classes[keep!.id]!.category_paths, [["有效主题"]]);
   assert.equal(changed.classes[drop!.id]!.status, "merged");
   assert.deepEqual(library, before);
   assert.equal(applyClustering(changed, replay), changed);
+});
+
+test("library recalls at most three independent effective answers with source identities", () => {
+  const observations = ["a", "b", "c", "u"].map(id => observation(`o-${id}`, "模型自身推理", "计算错误", id));
+  observations.forEach((item, index) => {
+    item.refs[0]!.batch_id = index < 2 ? "2026-10-01" : "2026-10-02";
+    item.refs[0]!.attribution = { run: "/runs/source", run_id: "source", task_id: `attr-${index}`,
+      submission_id: `submission-${index}`, evaluator_version: "test" };
+  });
+  observations[3]!.refs[0]!.evidence_status = "uncertain";
+  observations[3]!.established_answer_ids = [];
+  observations[0]!.refs.push({ ...observations[0]!.refs[0]!, finding_id: "same-answer-second-finding" });
+  const library = applyClustering(emptyLibrary("model"), receipt(observations, {
+    assignments: observations.map(item => ({ item_id: item.id, new_class_key: "n1" })), merges: [],
+    new_classes: [{ key: "n1", component: "模型自身推理", label: "计算错误", definition: "计算结果与数据不符。", closest_existing: null, novelty: "首例。", category_paths: [["数值可靠性"]] }],
+  }));
+  const [problem] = projectLibrary(library).components[0]!.classes;
+  assert.equal(problem!.examples.length, 3);
+  assert.equal(new Set(problem!.examples.map(item => item.input_id)).size, 3);
+  assert.equal(problem!.examples[0]!.evidence_status, "established");
+  assert(problem!.examples.some(item => item.evidence_status === "uncertain"));
+  assert.equal(new Set(problem!.examples.map(item => item.batch_id)).size, 2);
+  assert(problem!.examples.every(item => item.attribution?.run === "/runs/source" && item.finding_id));
+  assert.equal(problem!.occurrences, 5);
+  assert(!("finding" in problem!.examples[0]!), "the persisted library never duplicates full accepted finding text");
+  assert(!("quote" in problem!.examples[0]!), "a resumable directory projection retains source references without copying input text");
 });

@@ -1,4 +1,3 @@
-import { ValidationError } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
 import type { AgentDefinition, AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/rewrite/request.schema.json" with { type: "json" };
@@ -6,7 +5,7 @@ import submissionSchema from "../../../../schemas/rewrite/submission.schema.json
 import resultSchema from "../../../../schemas/rewrite/result.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
 export * from "./types.js";
-// The model returns ordered text; its Workflow binds formal slot identities before result validation.
+// The model returns the exact semantic slot ids and edits only their prose.
 export const rewriteProfile: AgentProfile = {
   id: "default",
 
@@ -17,15 +16,13 @@ export const rewriteProfile: AgentProfile = {
   toolNames: [],
   modelSubmissionSchema(request) {
     const value = structuredClone(submissionSchema);
-    const count = (request.input.items as unknown[]).length;
-    Object.assign(value.properties.texts, { minItems: count, maxItems: count });
+    const items = request.input.items as { id: string }[];
+    Object.assign(value.properties.rewrites, { minItems: items.length, maxItems: items.length,
+      prefixItems: items.map(item => ({ ...structuredClone(value.properties.rewrites.items),
+        properties: { ...structuredClone(value.properties.rewrites.items.properties), id: { type: "string", const: item.id } } })) });
     return value;
   },
-  validate(request,result,audit) {
-    try { validateEvaluation(request,result,audit); }
-    catch(error) { if (!(error instanceof ValidationError)) throw error;
-      throw new ValidationError(error.issues!.map(issue => ({...issue,path:issue.path.replace(/^\/rewrites\/(\d+)\/text$/u,"/texts/$1")}))); }
-  },
+  validate: validateEvaluation,
 };
 export const rewriteAgent: AgentDefinition = {
   id: "rewrite",

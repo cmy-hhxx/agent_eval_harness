@@ -70,15 +70,14 @@ test("fixed rows reject missing or extra positions and do not accept program-own
  const fresh=setup();Object.assign(fresh.draft.comparisons[0]!,{status:'met'});
  assert.throws(()=>fresh.registry.resolve(fresh.binding,fresh.draft,audit),/additional properties/);
 });
-test("direct resolution enforces the same row ownership as the model submission",()=>{
+test("direct resolution reserves derived cell prose for the program",()=>{
  const f=setup(),input=f.request.input as unknown as ComparisonInput;
  input.candidates.A.original_answer_timing.finish_seconds=1;
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
  const slots=comparisonSlots(f.request),criterion=slots.findIndex(slot=>slot.kind==='criterion'),resource=slots.findIndex(slot=>slot.kind==='resource');
  const accepted=structuredClone(draft);
- draft.comparisons[criterion]={importance:'medium'};
- assert.throws(()=>comparisonProfile.resolve!(f.request,draft,audit),error=>error instanceof ValidationError&&
-  error.issues!.some(issue=>issue.path===`/comparisons/${criterion}/a_summary`));
+ draft.comparisons[criterion]={importance:'low'};
+ assert.equal((comparisonProfile.resolve!(f.request,draft,audit) as ComparisonResult).status,'decided');
  Object.assign(accepted.comparisons[resource]!,{a_summary:'这不是资源数据。',b_summary:'这不是资源数据。'});
  assert.throws(()=>comparisonProfile.resolve!(f.request,accepted,audit),/additional properties/);
 });
@@ -95,8 +94,10 @@ test("only shared metrics can support a resource advantage",()=>{
  const slots=comparisonSlots(f.request),index=slots.findIndex(slot=>slot.kind==='resource');
  assert(index>=0);assert.deepEqual(comparisonSlotChoices(f.request)[index].advantage_candidates,[]);
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
- draft.comparisons[index]={importance:'medium',better_candidate:'A'};
- assert.throws(()=>f.registry.resolve(f.binding,draft,audit),/双方同种有效指标/);
+ draft.comparisons[index]={importance:'low'};
+ const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ assert.deepEqual(result.decision_basis.comparisons.find(row=>row.aspect==='原始完成时长与用量')!.better_candidates,[]);
 });
 test("recorded resource metrics require a row even when both candidates use the same amount",()=>{
  const f=setup(),input=f.request.input as unknown as ComparisonInput;
@@ -107,7 +108,7 @@ test("recorded resource metrics require a row even when both candidates use the 
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
  draft.comparisons[index]=null;
  assert.throws(()=>f.registry.resolve(f.binding,draft,audit));
- draft.comparisons[index]={importance:'low',better_candidate:null};
+ draft.comparisons[index]={importance:'low'};
  const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
  f.registry.validate(f.binding,result,audit);
  assert(result.decision_basis.comparisons.some(row=>row.aspect==='原始完成时长与用量'));
@@ -118,15 +119,15 @@ test("a cache anomaly does not hide valid total tokens or make their reporting m
  Object.assign(input.candidates.A.original_answer_usage,{total_tokens:120,total_tokens_basis:'reported',issues:['缓存输入 token 超过输入 token，不能比较缓存量']});
  Object.assign(input.candidates.B.original_answer_usage,{total_tokens:140,total_tokens_basis:'input_plus_output'});
  const slot=comparisonSlotChoices(f.request).find(slot=>slot.kind==='resource')!;
- assert.deepEqual(slot.advantage_candidates,['A','B']);
+ assert.deepEqual(slot.advantage_candidates,['A']);
  assert.deepEqual(slot.resource_metrics,{A:{finish_seconds:null,total_tokens:120},B:{finish_seconds:null,total_tokens:140}});
  assert.deepEqual(slot.comparable_metrics,['total_tokens']);
 });
 test("submission slots reuse typed row definitions and reserve resource prose for the program",()=>{
  const f=setup(),schema=comparisonProfile.modelSubmissionSchema!(f.request) as any;
  assert.deepEqual(schema.properties.comparisons.prefixItems,comparisonSlots(f.request).map(slot=>({$ref:`#/$defs/${slot.kind==='resource'?'resource':'commentary'}`})));
- assert.deepEqual(Object.keys(schema.$defs.commentary.properties).sort(),['a_summary','b_summary','better_candidate','importance']);
- assert.deepEqual(Object.keys(schema.$defs.resource.properties).sort(),['better_candidate','importance']);
+ assert.deepEqual(Object.keys(schema.$defs.commentary.properties).sort(),['better_candidate','importance']);
+ assert.deepEqual(Object.keys(schema.$defs.resource.properties).sort(),['importance']);
  assert.equal(schema.properties.comparisons.minItems,comparisonSlots(f.request).length);
 });
 
@@ -138,7 +139,7 @@ test("resource summaries preserve measured values and missing data independently
  input.candidates.B.original_answer_usage.total_tokens=11599;
  const index=comparisonSlots(f.request).findIndex(slot=>slot.kind==='resource');
  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
- draft.comparisons[index]={importance:'low',better_candidate:'B'};
+ draft.comparisons[index]={importance:'low'};
  const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
  f.registry.validate(f.binding,result,audit);
  const row=result.decision_basis.comparisons.find(row=>!row.criterion_ids.length)!;
@@ -152,4 +153,74 @@ test("resource summaries preserve measured values and missing data independently
  input.candidates.B.original_answer_usage.total_tokens=null;
  const missing=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
  assert.equal(missing.decision_basis.comparisons.find(row=>!row.criterion_ids.length)!.assessments.B.summary,'完成耗时：无有效记录；总 token：无有效记录。');
+});
+
+test("MCHP recorded resources derive the faster and lower-usage side without a model direction",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ input.candidates.A.original_answer_timing.finish_seconds=48.241;
+ input.candidates.A.original_answer_usage.total_tokens=60656;
+ input.candidates.B.original_answer_timing.finish_seconds=204.16;
+ input.candidates.B.original_answer_usage.total_tokens=120454;
+ const index=comparisonSlots(f.request).findIndex(slot=>slot.kind==='resource');
+ const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+ draft.comparisons[index]={importance:'low'};
+ const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ assert.deepEqual(result.decision_basis.comparisons.find(row=>row.aspect==='原始完成时长与用量')!.better_candidates,['A']);
+ assert.deepEqual(result.ranking,[['A','B']],'a low resource advantage does not choose the overall winner');
+});
+
+test("resource direction uses only common metrics and stays empty for equal or opposing measurements",()=>{
+ const cases=[
+  {seconds:[10,20],tokens:[200,100],better:[]},
+  {seconds:[10,10],tokens:[100,100],better:[]},
+  {seconds:[null,10],tokens:[100,200],better:['A']},
+  {seconds:[10,null],tokens:[null,200],better:[]},
+  {seconds:[0,10],tokens:[null,null],better:['A']},
+  {seconds:[10,10],tokens:[100,200],better:['A']},
+ ];
+ for(const row of cases) {
+  const f=setup(),input=f.request.input as unknown as ComparisonInput;
+  for(const [index,label] of ['A','B'].entries()) {
+   input.candidates[label].original_answer_timing.finish_seconds=row.seconds[index];
+   input.candidates[label].original_answer_usage.total_tokens=row.tokens[index];
+  }
+  const slots=comparisonSlots(f.request),index=slots.findIndex(slot=>slot.kind==='resource');
+  const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+  draft.comparisons[index]={importance:'low'};
+  const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+  f.registry.validate(f.binding,result,audit);
+  assert.deepEqual(result.decision_basis.comparisons.find(item=>item.aspect==='原始完成时长与用量')!.better_candidates,row.better);
+  assert.deepEqual(comparisonSlotChoices(f.request)[index].advantage_candidates,row.better);
+ }
+});
+
+test("Topu time and risk cells present their own accepted facts instead of shifted model prose",()=>{
+ const f=setup(),input=f.request.input as unknown as ComparisonInput;
+ const time='估值部分使用2026年10月12日的股价、市值和估值数据，符合题目所给的当前时点。';
+ const risk='回答给出配置安全边际、建议不宜重仓及参与逻辑，属于投资建议；开头直接给结论，没有先提示投资风险。';
+ input.task_analysis.requirements.push(
+  {id:'r2',text:'将当前估值按2026-10-12时点评估。',acceptance_rule:'将当前估值按2026-10-12时点评估。',applies_to:[input.candidates.A.candidate_id]},
+  {id:'r3',text:'投资类建议须在回答开头提示投资风险。',acceptance_rule:'投资类建议须在回答开头提示投资风险。',applies_to:[input.candidates.A.candidate_id]});
+ for(const label of ['A','B']) {
+  input.attributions[label].task_analysis=structuredClone(input.task_analysis);
+  f.request.input.attributions[label as 'A'|'B'].criterion_assessments.push(
+   {criterion_id:'r2',status:label==='A'?'met':'not_applicable',evidence_status:'established',summary:label==='A'?time:'这项要求不适用于本回答。',evidence:[]},
+   {criterion_id:'r3',status:label==='A'?'unmet':'not_applicable',evidence_status:'established',summary:label==='A'?risk:'这项要求不适用于本回答。',evidence:[]});
+ }
+ const draft=requestComparisonSubmission(f.request,example.result as ComparisonResult);
+ const slots=comparisonSlots(f.request),timeIndex=slots.findIndex(slot=>slot.criterion_ids.includes('r2')),
+  riskIndex=slots.findIndex(slot=>slot.criterion_ids.includes('r3'));
+ draft.comparisons[timeIndex]={importance:'low'};
+ draft.comparisons[riskIndex]={importance:'low'};
+ const result=f.registry.resolve(f.binding,draft,audit) as ComparisonResult;
+ f.registry.validate(f.binding,result,audit);
+ const timeRow=result.decision_basis.comparisons.find(row=>row.criterion_ids.includes('r2'))!,
+  riskRow=result.decision_basis.comparisons.find(row=>row.criterion_ids.includes('r3'))!;
+ assert.equal(timeRow.assessments.A.summary,time);
+ assert.equal(riskRow.assessments.A.summary,risk);
+ assert(!timeRow.assessments.A.summary.includes('投资风险'));
+ assert(!riskRow.assessments.A.summary.includes('敏感性'));
+ assert.equal(timeRow.assessments.B.status,'not_applicable');
+ assert.equal(riskRow.assessments.B.status,'not_applicable');
 });

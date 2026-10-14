@@ -13,6 +13,10 @@ export function references(input: ClusteringRequest) {
   const itemIds = new Map(input.items.map((entry, index) => [`O${index + 1}`, entry.id]));
   const display = new Map([...classIds, ...itemIds].map(([ref, id]) => [id, ref]));
   input.library.components.forEach((component, index) => display.set(component.id, `P${index + 1}`));
+  const answers = [...new Set([...input.items.flatMap(item => item.established_answer_ids),
+    ...classes.flatMap(problem => problem.examples.map(example => example.input_id))])].sort();
+  const answerIds = new Map(answers.map((id, index) => [`A${index + 1}`, id]));
+  answerIds.forEach((id, ref) => display.set(id, ref));
   const project = <T>(value: T): T => {
     if (typeof value === "string") return (display.get(value) ?? value) as T;
     if (Array.isArray(value)) return value.map(project) as T;
@@ -20,7 +24,7 @@ export function references(input: ClusteringRequest) {
       return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, project(child)])) as T;
     return value;
   };
-  return { classIds, itemIds, project };
+  return { classIds, itemIds, answerIds, project };
 }
 
 export function resolveSubmission(request: AgentRequest, draft: unknown): ClusteringResult {

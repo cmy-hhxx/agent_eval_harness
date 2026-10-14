@@ -100,7 +100,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
     item.context_evidence?.forEach((evidence, i) => {
       if (!ownEvidence(evidence) || !isNormEvidence(evidence, context.sources, context.raw, request.sources.answer.id))
         errors.push({ category: "evidence", code: "instruction_context_invalid", path: `/${field}/${index}/context_evidence/${i}`,
-          message: "规范上下文只能保留本方真实指令来源，不能把最终回答、工具事实或 peer 放入上下文规避聚焦引用。" });
+          message: "规范上下文只能保留本方真实指令来源，不能把最终回答、工具事实或 peer 放入上下文代替实际交付证据。" });
     });
   });
   const answerEvidence = (item: Evidence, finalOnly: boolean) => {

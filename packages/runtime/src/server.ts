@@ -715,7 +715,9 @@ export async function startWorker(
           // at the assistant error boundary, not in ordinary tool/validation text.
           (modelError === attempt.status.error && [
             "The server had an error processing your request.", "server_error:", "Error Code server_error:",
-          ].some(prefix => modelError!.startsWith(prefix)) || /fetch|network|connection|terminated|ECONN|429|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
+          ].some(prefix => modelError!.startsWith(prefix)) || modelError === attempt.status.error &&
+            /^(?:litellm\.APIError:\s*)?Responses API stream ended before response\.completed or response\.incomplete/i.test(modelError) ||
+            /fetch|network|connection|terminated|ECONN|429|overloaded|timeout|timed\s+out|Stream ended without finish_reason/i.test(
             attempt.status.error,
           ) || /\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+(?:error|status(?:\s+code)?))?|API\s+error)\s*[:(]?\s*5\d{2}\b/i.test(
             attempt.status.error,

@@ -5,6 +5,7 @@ import { type PlannedTask, type ProblemLibrary, type TaskPlan, type ValidationIs
 import { canonical, errorText, object, ValidationError } from "@eval/contracts";
 import { emptyLibrary, projectLibrary } from "@eval/agents/clustering";
 import { resolveAdapter } from "./adapters.js";
+import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js";
 import type {
   BatchPreflight,
   Candidate,
@@ -540,9 +541,9 @@ export async function buildPlan(
   const tasks: PlannedTask[] = [],
     criteriaTasks = new Map<string, PlannedTask>(),
     checks = new Map<string, PlannedTask>(),
-    rewrites = new Map<string, PlannedTask>(),
+    rewrites = new Map<string, PlannedTask[]>(),
     groupCounts: Record<string, number> = {};
-  /** One polish task per accepted source result; rewrite tasks own no input material. */
+  /** Reserve attribution's first group and preserve existing groups; rewrites own no input material. */
   function addRewrite(
     sourceStage: "attribution" | "comparison" | "clustering",
     sourceTaskId: string,
@@ -553,11 +554,20 @@ export async function buildPlan(
   ) {
     if (!config.rewrite[sourceStage]) return;
     if (rewrites.has(sourceTaskId)) return;
+    if (sourceStage === "attribution") {
+      const existing = previous?.tasks.filter(task => task.stage === "rewrite" && (task.data as TaskData).rewriteOf?.taskId === sourceTaskId) ?? [];
+      rewrites.set(sourceTaskId, (existing.length ? existing : [undefined]).map(prior => {
+        const task = attributionRewritePlaceholder(sourceTaskId, { case: context.case, rewriteNames: names }, prior);
+        (task.data as TaskData).revision = Math.max((prior?.data as TaskData | undefined)?.revision ?? 1, revision);
+        return task;
+      }));
+      return;
+    }
     const key = context.rewriteScope
       ? canonical([context.rewriteScope.batch_id, "rewrite", sourceTaskId])
       : canonical([context.case!.batch_id, context.case!.case_id, "rewrite", ["rewrite", sourceTaskId]]);
     const old = oldTasks.get(key);
-    rewrites.set(sourceTaskId, {
+    rewrites.set(sourceTaskId, [{
       id: old?.id || randomUUID(),
       stage: "rewrite",
       dependencies: { source: sourceTaskId },
@@ -577,7 +587,7 @@ export async function buildPlan(
         ...context,
         revision,
       },
-    });
+    }]);
   }
   const byBatch = new Map<string, BatchPreflight>();
   function batchStats(batch: string): BatchPreflight {
@@ -949,7 +959,7 @@ export async function buildPlan(
     return candidate.batch_id === review.batch_id && candidate.case_id === review.case_id;
   })) issues.push({ batch_id: review.batch_id, case_id: review.case_id, stage: "attribution", reason: "review_case_unavailable" });
   return {
-    tasks: [...criteriaTasks.values(), ...checks.values(), ...tasks, ...clusteringTasks, ...rewrites.values()],
+    tasks: [...criteriaTasks.values(), ...checks.values(), ...tasks, ...clusteringTasks, ...[...rewrites.values()].flat()],
     inputs,
     catalog,
     summary: {
@@ -959,7 +969,7 @@ export async function buildPlan(
       attribution_tasks: checks.size,
       comparison_tasks: tasks.filter(task => !(task.data as TaskData).verificationAudit).length,
       comparison_verification_tasks: tasks.filter(task => !!(task.data as TaskData).verificationAudit).length,
-      rewrite_tasks: rewrites.size,
+      rewrite_tasks: [...rewrites.values()].reduce((count, tasks) => count + tasks.length, 0),
       clustering_tasks: clusteringTasks.length,
       comparisons: config.comparisons,
       group_counts: groupCounts,

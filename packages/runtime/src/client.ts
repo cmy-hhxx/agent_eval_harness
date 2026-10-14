@@ -3,13 +3,34 @@ import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Engine, WorkerEvent } from "@eval/contracts";
 
+export interface WorkerExit {
+  readonly pid: number;
+  readonly url?: string;
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly expectedClose: boolean;
+  readonly disconnectedAt: number | null;
+  readonly exitedAt: number;
+  readonly shutdownReason?: "SIGTERM" | "SIGINT" | "disconnect";
+  readonly stderr: string;
+}
+
+export interface WorkerProcess {
+  readonly pid: number;
+  readonly url: string;
+  readonly exited: Promise<WorkerExit>;
+  close(): Promise<void>;
+}
+
 export async function spawnWorker(
   engine: Engine,
   directory: string,
   paths: { root: string; workerEntry: string },
-): Promise<{ url: string; close(): Promise<void> }> {
+): Promise<WorkerProcess> {
   await mkdir(directory, { recursive: true });
   const proc = fork(paths.workerEntry, ["--engine", engine, "--directory", directory, "--root", paths.root], {
+    // Isolate shell/group signals; IPC loss and explicit close still supervise it.
+    detached: true,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
     env: {
       ...process.env,
@@ -20,12 +41,40 @@ export async function spawnWorker(
     },
   });
   let stderr = "";
+  let url: string | undefined;
+  let expectedClose = false;
+  let disconnectedAt: number | null = null;
+  let exitedAt = 0;
+  let shutdownReason: WorkerExit["shutdownReason"];
   proc.stdout?.on("data", () => {});
   proc.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-12000);
   });
+  proc.once("disconnect", () => { disconnectedAt = Date.now(); });
+  proc.once("exit", () => {
+    exitedAt = Date.now();
+    // Drain this exit's pending pipe data, then release our read ends. An orphan
+    // inheriting a write end must not keep exit observation or close pending.
+    setImmediate(() => { proc.stdout?.destroy(); proc.stderr?.destroy(); });
+  });
+  proc.on("message", message => {
+    const value = message as { type?: string; reason?: string };
+    if (value.type === "shutdown" && ["SIGTERM", "SIGINT", "disconnect"].includes(value.reason ?? ""))
+      shutdownReason ??= value.reason as WorkerExit["shutdownReason"];
+  });
+  // close follows exit after the stdout/stderr pipes have drained.
+  const exited = new Promise<WorkerExit>(resolve => proc.once("close", (exitCode, signal) => resolve(Object.freeze({
+    pid: proc.pid!, ...(url ? { url } : {}), exitCode, signal, expectedClose,
+    disconnectedAt, exitedAt: exitedAt || Date.now(), ...(shutdownReason ? { shutdownReason } : {}), stderr,
+  }))));
+  const close = async () => {
+    if (proc.exitCode === null && proc.signalCode === null && shutdownReason === undefined && disconnectedAt === null && !exitedAt)
+      expectedClose = true;
+    await closeProcess(proc);
+    await exited;
+  };
   try {
-    const url = await new Promise<string>((resolve, reject) => {
+    url = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
         proc.kill("SIGTERM");
         reject(new Error("Worker startup timeout: " + stderr));
@@ -48,9 +97,9 @@ export async function spawnWorker(
         }
       });
     });
-    return { url, close: () => closeProcess(proc) };
+    return Object.freeze({ pid: proc.pid!, url, exited, close });
   } catch (error) {
-    await closeProcess(proc);
+    await close();
     throw error;
   }
 }

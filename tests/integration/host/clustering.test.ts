@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { AgentBackend, JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { exists, readJson, readJsonl, writeJson, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
@@ -34,10 +35,14 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
 function proposedClass(): ClusteringResult {
   return {
     assignments: [{ item_id: "o1", new_class_key: "new" }],
-    new_classes: [{ key: "new", component: "模型自身推理", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。" }],
+    new_classes: [{ key: "new", component: "模型自身推理", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
     merges: [],
   };
 }
+
+const attributedReceipt = (taskId: string, evaluation: AttributionResult) => ({
+  taskId, submissionId: randomUUID(), evaluatorVersion: fakeEvaluatorVersion, evaluation,
+});
 
 function backendWith(calls: { value: number }): AgentBackend {
   return {
@@ -258,9 +263,7 @@ test("accepted clustering is still written when the stage is disabled on resume"
   try {
     const plan = await buildPlan(config);
     const task = plan.tasks.find((entry) => entry.stage === "clustering")!;
-    const attributionReceipts = Object.values(task.dependencies).map((id) => [id, {
-      evaluation: attributionResult(false),
-    }]);
+    const attributionReceipts = Object.values(task.dependencies).map(id => [id, attributedReceipt(id, attributionResult(false))]);
     const state = {
       manifest: {
         runId: "resumed",
@@ -304,7 +307,7 @@ test("two runs writing the same model cannot lose each other's occurrences", asy
         } },
         dependencies: { [`${run}-${inputId}`]: dependencyId },
       }] },
-      receipts: { [dependencyId]: { evaluation: attributionResult(false) }, [task.id]: receipt(run) },
+      receipts: { [dependencyId]: attributedReceipt(dependencyId, attributionResult(false)), [task.id]: receipt(run) },
     }) as unknown as RunState;
     const model = (task.data as { scope: { version: string } }).scope.version;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -339,7 +342,7 @@ test("a model over the library cap cannot partially commit another model", async
     const receipts: Record<string, unknown> = {};
     for (const task of tasks) {
       for (const dependency of Object.values(task.dependencies))
-        receipts[dependency] = { evaluation: attributionResult(false) };
+        receipts[dependency] = attributedReceipt(dependency, attributionResult(false));
       receipts[task.id] = {
         submissionId: `s-${task.id}`,
         evaluatorVersion: fakeEvaluatorVersion,
@@ -416,13 +419,13 @@ test("explicit deferred reclassification preserves original receipts and uses on
           result = { assignments: material.items.map((item, index) => index === 0
             ? { item_id: item.id, new_class_key: "first" }
             : { item_id: item.id, deferred_reason: "本次新增类预算已用完，已有类不涵盖该现象。" }),
-            new_classes: [{ key: "first", component: first.component, label: first.label, definition: "第一现象。", closest_existing: null, novelty: "首例。" }], merges: [] };
+            new_classes: [{ key: "first", component: first.component, label: first.label, definition: "第一现象。", closest_existing: null, novelty: "首例。", category_paths: [["数值可靠性"]] }], merges: [] };
         } else {
           assert.equal(material.items.length, 1, "accepted assignments never reenter reclassification");
           const item = material.items[0]!;
           const closest = material.library.components.flatMap(component => component.classes)[0]!.id;
           result = { assignments: [{ item_id: item.id, new_class_key: "later" }],
-            new_classes: [{ key: "later", component: item.component, label: item.label, definition: "后续归类现象。", closest_existing: closest, novelty: "边界不同。" }], merges: [] };
+            new_classes: [{ key: "later", component: item.component, label: item.label, definition: "后续归类现象。", closest_existing: closest, novelty: "边界不同。", category_paths: [["数值可靠性"]] }], merges: [] };
         }
       }
       const submitted = await submitFor(options, draftFor(options.spec, result));
@@ -490,7 +493,7 @@ test("library statistics count a jointly attributed finding once", async () => {
     const plan = await buildPlan(config), task = plan.tasks.find(task => task.stage === "clustering")!;
     const evaluation = problemAttribution("5", "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd");
     evaluation.findings[0]!.problem!.component.push("Search");
-    const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, { evaluation }]));
+    const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, attributedReceipt(id, evaluation)]));
     const { taskObservations } = await import("@eval/workflows/comparison");
     const observations = taskObservations(task, id => receipts[id]);
     assert.equal(observations.length, 2);

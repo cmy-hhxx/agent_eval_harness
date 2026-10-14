@@ -111,7 +111,7 @@ export function dashboardReference(config: EvalConfig, evaluatorVersion: unknown
         ] },
         { name: "归因改写", condition: "已接受归因", enabled: config.rewrite.attribution, steps: [{ id: "attribution-rewrite", name: "归因文本槽位", stage: "rewrite", profile: "default" }] },
         { name: "对比偏好改写", condition: "对比已接受正式裁决", enabled: config.rewrite.comparison, steps: [{ id: "comparison-rewrite", name: "对战偏好理由", stage: "rewrite", profile: "default" }] },
-        { name: "逐项点评改写", condition: "对比改写与 comparisonItems 开启", enabled: config.rewrite.comparison && config.rewrite.comparisonItems === true, steps: [{ id: "comparison-items-rewrite", name: "全部候选格 summary", stage: "rewrite", profile: "default" }] },
+        { name: "总评与取舍改写", condition: "对比改写与 comparisonItems 开启", enabled: config.rewrite.comparison && config.rewrite.comparisonItems === true, steps: [{ id: "comparison-items-rewrite", name: "双方整体总评与取舍", stage: "rewrite", profile: "default" }] },
         { name: "问题库维护", condition: "全部基础归因完成后单独准备；使用已接受归因，不依赖对比裁决", enabled: config.clustering.enabled, steps: [
           { id: "clustering", name: "聚类决定", stage: "clustering", profile: "default" },
           { id: "problem-library", name: "模型问题库", output: "归类、新类、合并、目录与样本事件" },

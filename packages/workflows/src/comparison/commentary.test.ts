@@ -5,9 +5,11 @@ import type { JsonObject, PlannedTask, RunState } from "@eval/contracts";
 import type { Rewrites } from "@eval/agents/rewrite";
 import {
   attributionSlots,
+  attributionRewriteGroups,
   comparisonSlots,
   clusteringSlots,
   polishComparisonRow,
+  polishAttribution,
   verdictSlotId,
   type CommentaryLookup,
 } from "./commentary.js";
@@ -15,6 +17,38 @@ import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
 import { display } from "./results.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { attributionResult } from "../../../../tests/fixtures/comparison.js";
+
+test("attribution rewrite groups isolate duplicate prose and each finding even below the slot cap", () => {
+  const result = attributionResult(false);
+  const original = result.findings[0]!;
+  result.findings = [structuredClone(original), { ...structuredClone(original), finding_id: "f1" }];
+  for (const finding of result.findings) {
+    finding.assessment.observation = finding.text;
+    finding.assessment.impact = finding.reason;
+  }
+  const before = structuredClone(result), groups = attributionRewriteGroups(result);
+  assert.deepEqual(groups[0], ["summary", "core_assessment.reason", "correctness_reason"]);
+  assert.deepEqual(groups[1], ["criterion_assessments.0.summary"]);
+  assert.deepEqual(groups[2], attributionSlots(result).filter(item => item.id.startsWith("findings.0.")).map(item => item.id));
+  assert.deepEqual(groups[3], attributionSlots(result).filter(item => item.id.startsWith("findings.1.")).map(item => item.id));
+  assert(groups.every(group => group.length <= 20));
+  assert.deepEqual(groups.flat(), attributionSlots(result).map(item => item.id));
+  assert.deepEqual(attributionRewriteGroups(result, ["findings.1.problem.definition", "summary", "findings.0.text"]),
+    [["summary"], ["findings.0.text"], ["findings.1.problem.definition"]]);
+  assert.deepEqual(result, before);
+});
+
+test("criteria and table prose share bounded semantic batches without entering finding groups", () => {
+  const result = attributionResult(false);
+  result.criterion_assessments = Array.from({ length: 23 }, (_, index) => ({ ...result.criterion_assessments[0]!, criterion_id: `r${index}` }));
+  result.table_resolutions = Array.from({ length: 21 }, (_, index) => ({ table_id: "table", row_index: index, outcome: "conflict", reason: "此行值不符。", evidence: [] }));
+  const groups = attributionRewriteGroups(result);
+  assert.deepEqual(groups.map(group => group.length), [3, 20, 3, 6, 20, 1]);
+  assert(groups[1]!.every(id => id.startsWith("criterion_assessments.")));
+  assert(groups[2]!.every(id => id.startsWith("criterion_assessments.")));
+  assert(groups[4]!.every(id => id.startsWith("table_resolutions.")));
+  assert.deepEqual(groups.flat(), attributionSlots(result).map(item => item.id));
+});
 
 test("candidate display names replace only explicit markers and leave all other text unchanged", () => {
   const names = { A: "A组Fast", B: "B组Fast", C: "C组Fast" };
@@ -84,13 +118,13 @@ test("comparison rewrites only the pair preference using its accepted match fact
   assert.equal(comparisonSlots(bothMet)[0]!.preference, "双方都好");
 });
 
-test("recorded resource cells remain outside language rewrite slots", () => {
+test("program-derived comparison cells remain outside language rewrite slots", () => {
   const result = structuredClone(comparison);
   result.decision_basis.comparisons.push({ aspect: "原始完成时长与用量", criterion_ids: [], importance: "low", better_candidates: [],
     assessments: { A: { summary: "完成耗时：4.2 秒；总 token：80。", status: "met", evidence_status: "established", finding_indices: [] },
       B: { summary: "完成耗时：3.5 秒；总 token：100。", status: "met", evidence_status: "established", finding_indices: [] } } });
   const items = comparisonSlots(result, "items");
-  assert.deepEqual(items.map(item => item.id), ["comparison.0.A.summary", "comparison.0.B.summary"]);
+  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
   assert.deepEqual(result.decision_basis.comparisons[1].assessments.A.summary, "完成耗时：4.2 秒；总 token：80。");
 });
 
@@ -178,50 +212,69 @@ test("tied verdict slots exclude low-impact observations without a confirmed sha
 });
 
 test("attribution slots include the correctness reason only when it exists", () => {
-  assert.deepEqual(attributionSlots(attribution).map((item) => item.id), ["summary", "correctness_reason"]);
+  assert.deepEqual(attributionSlots(attribution).map((item) => item.id), ["summary", "core_assessment.reason", "correctness_reason"]);
   const subjective = { ...attribution, is_correct: null, correctness_reason: "" };
-  assert.deepEqual(attributionSlots(subjective).map((item) => item.id), ["summary"]);
+  assert.deepEqual(attributionSlots(subjective).map((item) => item.id), ["summary", "core_assessment.reason"]);
 });
 
-test("attribution rewrites only independent prose and projects the current slots without changing receipts", () => {
+test("attribution rewrites include displayed observations and impact without changing receipts", () => {
   const result = attributionResult();
   const valid = [{ id: "summary", text: "新结论" }, { id: "findings.0.text", text: "新点评" }, { id: "findings.0.reason", text: "新理由" }];
-  const stored = [...valid, { id: "findings.0.assessment.observation", text: "重复观察" },
-    { id: "findings.0.assessment.impact", text: "错位影响" }];
+  valid.push({ id: "findings.0.assessment.observation", text: "通俗观察" },
+    { id: "findings.0.assessment.impact", text: "通俗影响" });
+  const stored = [...valid, { id: "findings.0.problem.component", text: "不能改归属" }];
   const state = {
     manifest: { tasks: [{ id: "rewrite", stage: "rewrite", data: { rewriteOf: { taskId: "source", stage: "attribution" } } }] },
     receipts: { source: { evaluation: result }, rewrite: { acceptedAt: 1, evaluatorVersion: "fixture", evaluation: { rewrites: stored } } },
   } as unknown as RunState;
   const before = structuredClone(state);
-  assert.deepEqual(attributionSlots(result).map(item => item.id), ["summary", "correctness_reason", "findings.0.text", "findings.0.reason"]);
+  assert.deepEqual(attributionSlots(result).map(item => item.id), ["summary", "core_assessment.reason", "correctness_reason",
+    "criterion_assessments.0.summary", "findings.0.text", "findings.0.reason", "findings.0.assessment.observation", "findings.0.assessment.impact"]);
   const projection = acceptedRewriteProjection(state, "source")!;
   assert.deepEqual(projection.rewritten.rewrites, valid);
   assert.deepEqual([...projection.owners.keys()], valid.map(item => item.id));
   assert.deepEqual(state, before);
 });
 
-test("item refresh selects only comparison cells with local advantages and separate counterpart context", () => {
-  const before = structuredClone(comparison);
-  const items = comparisonSlots(comparison, "items");
-  assert.deepEqual(items.map((item) => item.id), ["comparison.0.A.summary", "comparison.0.B.summary"]);
-  assert(items.every((item) => !item.preference));
-  assert.equal(items[0]!.text, "正确给出4。");
-  assert(items[0]!.forbiddenPrefixes!.includes("【候选B】："));
-  assert(!items[0]!.forbiddenPrefixes!.includes("【候选A】："));
-  assert.match(items[0]!.context!, /本项已确定的优势：【候选A】/);
-  assert.match(items[0]!.context!, /不能写成本格事实：【候选B】：未给出结果/);
-  assert.deepEqual(comparison, before);
-  const shared = structuredClone(comparison);
-  shared.decision_basis.comparisons[0]!.better_candidates = [];
-  assert.match(comparisonSlots(shared, "items")[0]!.context!, /没有已证实的单方优势/);
+test("attribution display polish covers all prose while preserving judgments, responsibility and original evidence", () => {
+  const result = attributionResult(false);
+  result.table_resolutions = [{ table_id: "table", row_index: 0, outcome: "conflict", reason: "旧表格理由", evidence: result.correctness_evidence }];
+  const before = structuredClone(result), slots = attributionSlots(result);
+  const rewrites = Object.fromEntries(slots.map(item => [item.id, `通俗：${item.text}`]));
+  const view = polishAttribution(result, rewrites);
+  assert.equal(view.core_assessment.reason, `通俗：${result.core_assessment.reason}`);
+  assert.equal(view.criterion_assessments[0].summary, `通俗：${result.criterion_assessments[0].summary}`);
+  assert.equal(view.findings[0].assessment.observation, `通俗：${result.findings[0].assessment.observation}`);
+  assert.equal(view.findings[0].assessment.impact, `通俗：${result.findings[0].assessment.impact}`);
+  assert.equal(view.findings[0].problem!.label, `通俗：${result.findings[0].problem!.label}`);
+  assert.equal(view.findings[0].problem!.definition, `通俗：${result.findings[0].problem!.definition}`);
+  assert.equal(view.table_resolutions![0].reason, "通俗：旧表格理由");
+  assert.equal(view.is_correct, result.is_correct);
+  assert.equal(view.core_assessment.meets_core, result.core_assessment.meets_core);
+  assert.deepEqual(view.findings[0].problem!.component, result.findings[0].problem!.component);
+  assert.deepEqual(view.findings[0].evidence, result.findings[0].evidence);
+  assert.deepEqual(view.criterion_assessments.map(item => [item.status, item.evidence_status]),
+    result.criterion_assessments.map(item => [item.status, item.evidence_status]));
+  assert.deepEqual(result, before);
+  result.findings[0].assessment.impact = "";
+  assert(!attributionSlots(result).some(item => item.id === "findings.0.assessment.impact"));
 });
 
-test("complete comparison rewrite includes the verdict and every cell with its own context", () => {
+test("item refresh includes only model-written overall prose and preserves derived cells", () => {
+  const before = structuredClone(comparison), items = comparisonSlots(comparison, "items");
+  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+  assert.deepEqual(items.map(item => item.text), [comparison.assessments.A.summary, comparison.assessments.B.summary,
+    comparison.decision_basis.tradeoff]);
+  assert(!items.some(item => item.id.startsWith("comparison.")));
+  assert.deepEqual(comparison, before);
+});
+
+test("complete comparison rewrite includes the verdict and model-written overall prose", () => {
   const slots = comparisonSlots(comparison, "all");
   assert.deepEqual(slots, [...comparisonSlots(comparison, "verdicts"), ...comparisonSlots(comparison, "items")]);
-  assert.equal(new Set(slots.map((slot) => slot.id)).size, 3);
+  assert.equal(new Set(slots.map((slot) => slot.id)).size, 4);
   assert.equal(slots[0].preference, "【候选A】更好");
-  assert(slots.slice(1).every((slot) => slot.context && slot.forbiddenPrefixes?.length));
+  assert(!slots.some(slot => slot.id.startsWith("comparison.")));
 });
 
 test("presentation view applies already-unblinded rewrites by slot without interpreting their text", () => {
@@ -251,7 +304,6 @@ test("presentation view applies already-unblinded rewrites by slot without inter
     cmp: {
       "assessment.B.summary": "A组精简",
       tradeoff: "精简权衡",
-      "comparison.0.B.summary": "A组给出了4。",
       [verdictSlotId("A", "B")]: "精简判决",
     },
     "attr-b": { summary: "归因A精简", correctness_reason: "A组正确" },
@@ -268,7 +320,7 @@ test("presentation view applies already-unblinded rewrites by slot without inter
   });
   assert.equal((view.decision_basis as { tradeoff: string }).tradeoff, "精简权衡");
   const rows = (view.decision_basis as unknown as ComparisonResult["decision_basis"]).comparisons;
-  assert.equal(rows[0].assessments.a.summary, "A组给出了4。");
+  assert.equal(rows[0].assessments.a.summary, "原表现A", "program-derived cells cannot be overwritten by rewrite text");
   assert.equal(rows[0].assessments.b.summary, "原表现B");
   assert.deepEqual(rows[0].better_candidates, ["a"]);
   assert.equal((view.verdicts as Record<string, { reason: string }>)["a__vs__b"].reason, "精简判决");
@@ -290,18 +342,18 @@ test("presentation view applies already-unblinded rewrites by slot without inter
 test("clustering polish selects descriptions without changing class identities or assignments", () => {
   const result = {
     assignments: [{ item_id: "item1", new_class_key: "n1" }],
-    new_classes: [{ key: "n1", component: "工具", label: "缺失来源", definition: "没有列出来源。", closest_existing: "old", novelty: "适用边界不同。" }],
+    new_classes: [{ key: "n1", component: "工具", label: "缺失来源", definition: "没有列出来源。", closest_existing: "old", novelty: "适用边界不同。", category_paths: [["数值可靠性"]] }],
     merges: [{ into: "target", from: ["source"], reason: "同一问题。" }],
   };
   const before = structuredClone(result);
   assert.deepEqual(clusteringSlots(result).map((item) => item.id), [
-    "new_classes.0.definition", "new_classes.0.novelty", "merges.0.reason",
+    "new_classes.0.label", "new_classes.0.definition", "new_classes.0.novelty", "merges.0.reason",
   ]);
   assert.deepEqual(result, before);
   assert.deepEqual(clusteringSlots({ assignments: [{ item_id: "item1", class_id: "old" }], new_classes: [], merges: [] }), []);
   const maintenance = { assignments: [{ item_id: "item2", deferred_reason: "本次新增预算为零。" }], new_classes: [], merges: [],
-    class_updates: [{ class_id: "old", definition: "依据真实来源映射。", reason: "修正错误的编号判断。", category_paths: [["溯源"]] }] };
+    class_updates: [{ class_id: "old", label: "来源映射错误", definition: "依据真实来源映射。", reason: "修正错误的编号判断。", category_paths: [["溯源"]] }] };
   assert.deepEqual(clusteringSlots(maintenance).map(item => item.id), [
-    "assignments.0.deferred_reason", "class_updates.0.definition", "class_updates.0.reason",
+    "assignments.0.deferred_reason", "class_updates.0.label", "class_updates.0.definition", "class_updates.0.reason",
   ]);
 });

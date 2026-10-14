@@ -59,11 +59,15 @@ async function main() {
   if (process.send) process.send(ready);
   else console.log(JSON.stringify(ready));
   let closing = false;
-  const close = async () => {
+  const close = async (reason: "SIGTERM" | "SIGINT" | "disconnect") => {
     if (closing) return;
     closing = true;
+    const notified = process.connected && process.send
+      ? new Promise<void>(resolve => process.send!({ type: "shutdown", reason }, undefined, undefined, () => resolve()))
+      : Promise.resolve();
     try {
       await worker.close();
+      await notified;
       process.exit(0);
     } catch (error) {
       await logger.error(error, { component: "worker", event: "shutdown_failed" });
@@ -71,9 +75,9 @@ async function main() {
       process.exit(2);
     }
   };
-  process.once("SIGTERM", () => void close());
-  process.once("SIGINT", () => void close());
-  process.once("disconnect", () => void close());
+  process.once("SIGTERM", () => void close("SIGTERM"));
+  process.once("SIGINT", () => void close("SIGINT"));
+  process.once("disconnect", () => void close("disconnect"));
 }
 
 main().catch(async (error) => {

@@ -99,14 +99,26 @@ async function loadComparisonSamples(run) {
   const file = path.join(run, "results/comparison.jsonl"), rows = [];
   const stateFile = path.join(run, "state.json");
   const traces = new Map();
-  let stateStamp;
+  const reviewReceipts = new Map();
+  let stateStamp, planned = null;
   if (await exists(stateFile)) {
     const before = stateStamp = stamp(await localFiles.stat(stateFile));
     const checkpoint = await readJson(stateFile);
     if (stamp(await localFiles.stat(stateFile)) !== before) throw new Error("State changed while reading: " + stateFile);
+    const comparisons = Object.values(checkpoint.tasks ?? {}).filter((task) => task.stage === "comparison" && !task.data?.verificationAudit);
+    planned = { pair_cases: comparisons.length, needs_review: 0 };
     for (const [taskId, task] of Object.entries(checkpoint.tasks ?? {})) {
       const receipt = task.receipt, comparisonId = receipt?.exported?.comparisonId;
-      if (task.stage !== "comparison" || !comparisonId || receipt.exported.file === "comparison-review.jsonl") continue;
+      if (task.stage !== "comparison" || task.data?.verificationAudit || !receipt?.exported) continue;
+      if (task.status !== "succeeded") throw new Error("Exported comparison receipt is not succeeded: " + taskId);
+      if (receipt.exported.file === "comparison-review.jsonl") {
+        if (receipt.exported.taskId !== taskId) throw new Error("Review receipt task identity disagrees: " + taskId);
+        reviewReceipts.set(taskId, receipt);
+        continue;
+      }
+      if (!comparisonId || receipt.exported.file !== undefined && receipt.exported.file !== "comparison.jsonl" ||
+          receipt.evaluation?.status !== undefined && receipt.evaluation.status !== "decided")
+        throw new Error("Expected a decided comparison export receipt: " + taskId);
       if (traces.has(comparisonId)) throw new Error("Duplicate comparison receipt: " + comparisonId);
       traces.set(comparisonId, {
         evaluator_version: receipt.evaluatorVersion, judge: receipt.judge,
@@ -137,8 +149,27 @@ async function loadComparisonSamples(run) {
     }
     if (stamp(await localFiles.stat(file)) !== before) throw new Error("Results changed while reading: " + file);
   } else if (!(await exists(run))) throw new Error("Run does not exist: " + run);
+  if (planned !== null) {
+    const resultIds = new Set(rows.map((row) => row.comparison_id));
+    if (rows.some((row) => !traces.has(row.comparison_id)) || [...traces.keys()].some((id) => !resultIds.has(id)))
+      throw new Error("Comparison results and succeeded export receipts disagree: " + run);
+    const reviewFile = path.join(run, "results/comparison-review.jsonl"), reviewIds = new Set();
+    if (await exists(reviewFile)) {
+      const before = stamp(await localFiles.stat(reviewFile));
+      for await (const row of readJsonl(reviewFile)) {
+        const receipt = reviewReceipts.get(row.task_id);
+        if (!receipt || reviewIds.has(row.task_id) || row.evaluation_type !== "comparison_review" ||
+            row.result?.status !== "needs_review" || row.evaluator_version !== receipt.evaluatorVersion)
+          throw new Error("Review results and succeeded export receipts disagree: " + reviewFile);
+        reviewIds.add(row.task_id);
+      }
+      if (stamp(await localFiles.stat(reviewFile)) !== before) throw new Error("Results changed while reading: " + reviewFile);
+    }
+    if (reviewIds.size !== reviewReceipts.size) throw new Error("Review results and succeeded export receipts disagree: " + reviewFile);
+    planned.needs_review = reviewIds.size;
+  }
   if (stateStamp && stamp(await localFiles.stat(stateFile)) !== stateStamp) throw new Error("State changed while reading results: " + stateFile);
-  return pairSamples(rows, traces);
+  return { samples: pairSamples(rows, traces), planned };
 }
 
 if (command === "collect") {
@@ -351,14 +382,23 @@ if (command === "collect") {
   if (values.run?.length !== 2)
     throw new Error("compare --run ORIGINAL --run SWAPPED [--output REPORT.json]");
   const [left, right] = await Promise.all(values.run.map(loadComparisonSamples));
-  const report = compareSamples(left, right);
+  const report = compareSamples(left.samples, right.samples);
   if (values.output) await writeJson(values.output, report);
   console.log(JSON.stringify(report, null, 2));
 } else if (["summarize", "calibrate", "gold-template"].includes(command)) {
-  if (values.run?.length !== 1) throw new Error(command + " --run PATH [--output REPORT.json]");
-  const samples = await loadComparisonSamples(values.run[0]);
+  if (!values.run?.length || command !== "summarize" && values.run.length !== 1)
+    throw new Error(command + " --run PATH " + (command === "summarize" ? "[--run PATH] " : "") + "[--output REPORT.json]");
+  const loaded = await Promise.all(values.run.map(loadComparisonSamples)), samples = new Map();
+  for (const run of loaded) for (const [id, sample] of run.samples) {
+    if (samples.has(id)) throw new Error("Ambiguous duplicate case/model pair across runs: " + id);
+    samples.set(id, sample);
+  }
   let report;
-  if (command === "summarize") report = summarizeSamples(samples, { rounds: Number(values["bootstrap-rounds"]) });
+  if (command === "summarize") report = summarizeSamples(samples, { rounds: Number(values["bootstrap-rounds"]),
+    planned: loaded.every((run) => run.planned !== null) ? {
+      pair_cases: loaded.reduce((sum, run) => sum + run.planned.pair_cases, 0),
+      needs_review: loaded.reduce((sum, run) => sum + run.planned.needs_review, 0),
+    } : null });
   if (command === "calibrate") {
     if (!values.gold) throw new Error("calibrate --run PATH --gold EXPERT.json [--output REPORT.json]");
     report = calibrateSamples(samples, await readJson(values.gold));

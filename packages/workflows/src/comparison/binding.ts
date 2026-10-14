@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
@@ -35,6 +35,7 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     evidence_id: string; message_index: number; path: string; quote: string;
   }[]> | undefined;
   const norms = material.norm_directory as ReturnType<typeof attributionNormDirectory> | undefined;
+  const finalIndex = material.final_message_index as number, imageCount = images(raw.messages[finalIndex]).length;
   const citationRange = (source: CitationContext) => {
     const { quote, ...coordinates } = source;
     const displayed = shown(quote.length <= 200 ? source : {
@@ -44,6 +45,8 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   };
   return {
     ...material,
+    ...(imageCount ? { final_images: { image_count: imageCount,
+      view_request: { candidate, message_index: finalIndex } } } : {}),
     deferred_final_material: (material.deferred_final_material as { message_index: number; path: string; total_chars: number }[])
       .map(source => ({ ...source, read_request: { candidate, message_index: source.message_index,
         path: source.path, offset: 0, max_chars: 16000 } })),

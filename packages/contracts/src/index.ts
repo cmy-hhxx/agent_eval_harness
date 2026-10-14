@@ -230,7 +230,7 @@ export interface ProblemClass {
   status: "active" | "merged";
   merged_into: string | null;
   first_seen: ProblemOrigin | null;
-  /** Optional free topic paths; they organize classes and do not establish causes. */
+  /** Optional primary topic path; it organizes classes and does not establish causes. */
   category_paths?: string[][];
 }
 export interface ProblemOccurrence {
@@ -251,7 +251,6 @@ export interface ProblemOccurrence {
   /** Certainty of this occurrence, not of its problem class. */
   evidence_status: "established" | "uncertain";
   message_index: number;
-  quote: string;
   source: { file: string; line: number };
   classification: "assigned" | "created";
   previous_class_id: string | null;
@@ -264,7 +263,21 @@ export interface AttributionSource {
   submission_id: string;
   evaluator_version: string;
 }
-export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected";
+/** A source coordinate and short observation; it never stores evidence bodies. */
+export interface ProblemObservationRef {
+  version: string;
+  input_id: string;
+  finding_id: string;
+  attribution: AttributionSource;
+  source: { file: string; line: number };
+  batch_id: string;
+  case_id: string;
+  components: string[];
+  evidence_status: "established" | "uncertain";
+  importance: "high" | "medium" | "low";
+  summary: string;
+}
+export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected" | "pending_observations_replaced";
 export interface ProblemEvent {
   id: string;
   type: ProblemEventType;
@@ -279,6 +292,7 @@ export interface ProblemLibrary {
   classes: Record<string, ProblemClass>;
   occurrences: ProblemOccurrence[];
   events: ProblemEvent[];
+  pending_observations?: ProblemObservationRef[];
 }
 /** Recall projection handed to the clustering stage; one entry per active component. */
 export interface ProblemProjection {
@@ -293,6 +307,22 @@ export interface ProblemProjection {
       definition: string;
       aliases: string[];
       occurrences: number;
+      /** At most three distinct answers, recalled without copying accepted result bodies. */
+      examples: {
+        input_id: string;
+        batch_id: string;
+        case_id: string;
+        finding_id: string;
+        evidence_status: ProblemOccurrence["evidence_status"];
+        /** A bounded preview; the source occurrence keeps the original quote. */
+        quote?: string;
+        run_id: string;
+        task_id: string;
+        submission_id: string;
+        attribution?: AttributionSource;
+        finding?: string;
+        reason?: string;
+      }[];
       category_paths?: string[][];
     }[];
   }[];
@@ -528,6 +558,8 @@ export interface LogSink {
   evaluation(record: EvaluationLog): Promise<boolean>;
 }
 export interface TaskState {
+  /** Actual channel selected for the most recent dispatched attempt. */
+  channel?: string;
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
   attemptId?: string;
   attempts: number;

@@ -44,7 +44,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     .filter((entry) => component !== undefined && entry.id === componentKey(component))
     .flatMap((entry) => entry.classes.map(({ id, label }) => ({ id, label, component: entry.label })));
   const directoryRefs = references(input);
-  const temporaryRefs = new Set([...directoryRefs.classIds.keys(), ...directoryRefs.itemIds.keys(),
+  const temporaryRefs = new Set([...directoryRefs.classIds.keys(), ...directoryRefs.itemIds.keys(), ...directoryRefs.answerIds.keys(),
     ...input.library.components.map((_, index) => `P${index + 1}`)]);
   const description = (text: string | undefined, path: string) => {
     if (text === undefined) return;
@@ -100,8 +100,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const explicit = value.class_updates?.find(update => update.class_id === into)?.category_paths;
     const from = value.merges.filter(merge => merge.into === into).flatMap(merge => merge.from);
     const paths = explicit ?? unionCategoryPaths(...[into, ...from].map(id => classes.find(item => item.id === id)?.category_paths));
-    if (paths.length > 3) issue("clustering_merge_category_budget", `/merges/${index}`,
-      "合并后的主题路径超过三条；请在 class_updates 中明确整理 into 类的 category_paths。", paths);
+    if (paths.length > 1) issue("clustering_merge_category_budget", `/merges/${index}`,
+      "合并后只能保留一条主要主题路径；请在 class_updates 中明确整理 into 类的 category_paths。", paths);
   }
 
   const assigned = new Set<string>();
@@ -240,20 +240,20 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       input.budget.max_components,
     );
 
-  const support = new Map<string, number>();
+  const support = new Map<string, Set<string>>();
   for (const assignment of value.assignments)
-    if (assignment.new_class_key)
-      support.set(
-        assignment.new_class_key,
-        (support.get(assignment.new_class_key) ?? 0) + (items.get(assignment.item_id)?.count ?? 0),
-      );
+    if (assignment.new_class_key) {
+      const answers = support.get(assignment.new_class_key) ?? new Set<string>();
+      for (const answer of items.get(assignment.item_id)?.established_answer_ids ?? []) answers.add(answer);
+      support.set(assignment.new_class_key, answers);
+    }
   for (const entry of value.new_classes)
-    if ((support.get(entry.key) ?? 0) < input.budget.min_support)
+    if ((support.get(entry.key)?.size ?? 0) < input.budget.min_support)
       issue(
         "clustering_new_support",
         "/new_classes",
-        "该新类所覆盖观察的 count 之和低于 budget.min_support；不能用不同现象凑数，请复用合适的已有类或填写 deferred_reason 说明支持数量限制。",
-        { key: entry.key, support: support.get(entry.key) ?? 0 },
+        "该新类的已确认独立回答数低于 budget.min_support；同一回答多个发现只算一次，疑似样本不计支持。请复用合适类或填写 deferred_reason，不能用不同现象凑数。",
+        { key: entry.key, support: support.get(entry.key)?.size ?? 0 },
         input.budget.min_support,
       );
 
@@ -270,7 +270,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const newComponent = !componentIds.has(normalizeLabel(item.component));
     const limited = value.new_classes.length >= input.budget.max_new_classes || expectedClasses >= input.budget.max_classes ||
       (newComponent && (newComponents.size >= input.budget.max_new_components ||
-        input.budget.active_components + newComponents.size >= input.budget.max_components)) || item.count < input.budget.min_support;
+        input.budget.active_components + newComponents.size >= input.budget.max_components)) || item.established_answer_ids.length < input.budget.min_support;
     if (!limited) issue("clustering_deferred_unjustified", `/assignments/${index}`,
       "创建预算和支持数量充足时不能延期；请复用合适类或声明符合预算的新类。", assignment.item_id);
   }

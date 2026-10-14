@@ -1789,6 +1789,7 @@ for (const [message, retryable, quota = false] of [
   ["Connection error.", true],
   ["terminated", true],
   ["Request timed out.", true],
+  ["litellm.APIError: Responses API stream ended before response.completed or response.incomplete", true],
   ['evaluation-gateway API error (529): {"message":"当前服务集群负载较高，请稍后重试，感谢您的耐心等待。 (2064)","code":"server_error"}', true],
   ["HTTP 503 Service Unavailable", true],
   ["HTTP/2 500 Internal Server Error", true],
@@ -1801,6 +1802,7 @@ for (const [message, retryable, quota = false] of [
   ["Evaluation validation failed: expected 529 characters", false],
   ["Evaluation validation failed: expected 503 characters", false],
   ["Evaluation validation failed: The server had an error processing your request.", false],
+  ["Evaluation validation failed: Responses API stream ended before response.completed or response.incomplete", false],
   ["evaluation-gateway API error (422): invalid request", false],
 ] as const)
   test(`SDK error retryable=${retryable}: ${message}`, async () => {

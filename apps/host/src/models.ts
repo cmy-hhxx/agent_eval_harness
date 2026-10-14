@@ -15,6 +15,8 @@ export interface ModelProfile {
   /** Gateway capability, independent of the model name and endpoint URL. */
   supportsDeveloperRole?: boolean;
   supportsExplicitPromptCaching?: boolean;
+  /** Relative share of newly dispatched evaluation tasks for this channel. */
+  trafficWeight?: number;
   contextWindow?: number;
   maxOutputTokens?: number;
 }

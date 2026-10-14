@@ -121,7 +121,8 @@ for (const engine of ["pi", "prime"] as const)
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },
           engine, evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),
-          onModelQuotaExhausted: routing.onModelQuotaExhausted,
+          modelForTask: (task, previousChannel) => routing.modelForTask({ ...task, stage: "attribution" }, previousChannel),
+          onModelQuotaExhausted: (model, task) => routing.onModelQuotaExhausted(model, { ...task, stage: "attribution" }),
           policy: { ...config.execution, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
           agents: new AgentRegistry([{ id: "structured", profiles: { default: profile } }]), repository,
           taskSource: { id: "structured", bind: () => ({ agent: "structured", profile: "default", request: { input: {}, sources: {} } }) },

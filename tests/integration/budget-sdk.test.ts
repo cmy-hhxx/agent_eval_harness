@@ -135,7 +135,7 @@ for (const engine of ["pi", "prime"] as const)
       }
     });
 
-// A schema-valid unknown norm cannot establish compliance; the program binds known final delivery.
+// A schema-valid unknown norm cannot establish compliance; final delivery is explicitly selected.
 // File submission and its reserved writer remain available after repair exploration is exhausted.
 for (const engine of ["pi", "prime"] as const)
   for (const api of ["openai-completions", "openai-responses"] as const)
@@ -180,7 +180,7 @@ for (const engine of ["pi", "prime"] as const)
         Object.assign(result.findings[0], { dimension: "instruction_following", importance: "medium",
           text: "遵守结论优先与 Markdown 规范。", reason: "最终回答先给结论，再用 Markdown 表达依据。" });
         result.findings[0].assessment.requirement_index = null;
-        result.findings[0].evidence = [structuredClone(normProof), structuredClone(finalProof)];
+        result.findings[0].context_evidence = [structuredClone(normProof)];
         const draft = draftFor(prepared, result) as {
           strengths: { text: string; basis_index: number | null; evidence_status: string;
             evidence_indices: number[] }[];
@@ -190,12 +190,16 @@ for (const engine of ["pi", "prime"] as const)
         const basisIndex = draft.strengths[findingIndex]!.basis_index;
         assert.equal(typeof basisIndex, "number", "the fixture helper selects the exact program-owned norm");
         assert(attributionFindingBasis(request.input).some(item => item.basis_index === basisIndex && item.kind === "own_rule"));
-        draft.strengths[findingIndex]!.evidence_indices = [];
+        const finalEvidenceIndex = prepared.evidenceBank.indexOf(finalProof.evidence_id) + 1;
+        assert(finalEvidenceIndex > 0, "the final delivery is registered in the current evidence bank");
+        draft.strengths[findingIndex]!.evidence_indices = [finalEvidenceIndex];
         const validDraft = structuredClone(draft);
         const valid = registry.resolve(binding, validDraft, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] }) as AttributionResult;
         registry.validate(binding, valid, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] });
-        assert.deepEqual(valid.findings[findingIndex]!.evidence, [normProof, finalProof],
-          "the program binds the complete own norm and actual final delivery without model evidence copying");
+        assert.deepEqual(valid.findings[findingIndex]!.evidence, [finalProof],
+          "delivery evidence contains only the explicitly selected final answer");
+        assert.deepEqual(valid.findings[findingIndex]!.context_evidence, [normProof],
+          "the selected own-rule basis retains its complete norm separately");
         assert.equal(draft.strengths[findingIndex]!.evidence_status, "established");
         draft.strengths[findingIndex]!.basis_index = null;
         assert.throws(() => registry.resolve(binding, draft, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] }),
@@ -336,8 +340,9 @@ for (const engine of ["pi", "prime"] as const)
           assert.deepEqual(receipt?.audit.traceReads, [textRead, jsonRead, textRead, textRead, jsonRead],
             "both searches and the explicit reader retain the original source ranges");
           const accepted = receipt!.evaluation as AttributionResult;
-          assert.deepEqual(accepted.findings.find(finding => finding.text === "遵守结论优先与 Markdown 规范。")!.evidence,
-            [normProof, finalProof]);
+          const acceptedFinding = accepted.findings.find(finding => finding.text === "遵守结论优先与 Markdown 规范。")!;
+          assert.deepEqual(acceptedFinding.evidence, [finalProof]);
+          assert.deepEqual(acceptedFinding.context_evidence, [normProof]);
         } finally {
           if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway; else process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = previous;
           if (previousOffline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = previousOffline;

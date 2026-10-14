@@ -13,7 +13,7 @@ function model(id: string, name: string, count = 1) {
   return { model: id, name, updated_at: "2026-10-01T01:00:00Z", totals: { components: 1, classes: count, occurrences: count * 2 }, merged: [], categories: [], components: [{ id: `component-${id}`, label: "推理与验证", definition: "计算与判断", aliases: [], classes: Array.from({ length: count }, (_, index) => ({ id: `class-${id}-${index}`, label: index ? "答案缺少核对" : "计算存在错误", definition: index ? "未核对结果" : "计算结果不正确", aliases: index ? ["检查缺失"] : [], occurrences: 2, first_seen: null })) }] };
 }
 function detail(id: string, page = 1) {
-  return { model: id, name: id, class: { id: `class-${id}-0`, label: "计算存在错误", definition: "计算结果不正确", aliases: [], status: "active", first_seen: null }, component: { id: `component-${id}`, label: "推理与验证", definition: "计算与判断" }, total: 51, page, page_size: 50, lineage: [{ id: "old", label: "旧类", into: `class-${id}-0`, into_label: "计算存在错误", reason: "同义" }], occurrences: [true, false].map((available, index) => ({ id: `occurrence-${index}`, run_id: "run-1", batch_id: "batch-1", case_id: `case-${index}`, version: id, evaluator_version: "r52", finding_id: "f0", evidence_status: index ? "uncertain" : "established", message_index: 3, quote: index ? "待核实证据" : "确认的证据", source: { file: "/data/2026-10-01.jsonl", line: index + 1 }, classification: "assigned", previous_class_id: null, at: "2026-10-01T01:00:00Z", recall: { available, reason: available ? null : "run_missing", url: available ? "/?run=run-1&batch=batch-1&case=case-0&task=task-1&finding=f0" : null, attribution_task_id: available ? "task-1" : null } })) };
+  return { model: id, name: id, class: { id: `class-${id}-0`, label: "计算存在错误", definition: "计算结果不正确", aliases: [], status: "active", first_seen: null }, component: { id: `component-${id}`, label: "推理与验证", definition: "计算与判断" }, total: 51, page, page_size: 50, lineage: [{ id: "old", label: "旧类", into: `class-${id}-0`, into_label: "计算存在错误", reason: "同义" }], occurrences: [true, false].map((available, index) => ({ id: `occurrence-${index}`, run_id: "run-1", batch_id: "batch-1", case_id: `case-${index}`, version: id, evaluator_version: "r52", finding_id: "f0", evidence_status: index ? "uncertain" : "established", message_index: 3, source: { file: "/data/2026-10-01.jsonl", line: index + 1 }, classification: "assigned", previous_class_id: null, at: "2026-10-01T01:00:00Z", recall: { available, reason: available ? null : "run_missing", url: available ? "/?run=run-1&batch=batch-1&case=case-0&task=task-1&finding=f0" : null, attribution_task_id: available ? "task-1" : null } })) };
 }
 async function page(respond: (url: string) => unknown) {
   const dom = new JSDOM(await readFile(path.join(ROOT, "apps/host/dashboard/problems.html"), "utf8"), { url: "http://127.0.0.1:4173/problems" });
@@ -71,6 +71,8 @@ test("problem samples expose working recall links, unavailable reasons, provenan
     const link = view.document.querySelector(".occurrence-recall");
     assert.equal(link.getAttribute("href"), "/?run=run-1&batch=batch-1&case=case-0&task=task-1&finding=f0");
     assert.equal(view.document.querySelectorAll(".occurrence-recall").length, 1);
+    assert.equal(view.document.querySelector("blockquote, [data-quote]"), null);
+    assert.match(view.document.querySelector(".occurrence-origin dl").textContent, /消息#3/);
     assert.match(view.document.querySelector(".occurrence-unavailable").textContent, /不可召回.*运行已删除/);
     assert.match(view.document.querySelector(".occurrence-origin dl").textContent, /\/data\/2026-10-01.jsonl:1.*run-1.*f0/);
     assert.equal(view.document.querySelector(".problem-recall-count").textContent, "本页可召回 1 / 2");
@@ -125,5 +127,18 @@ test("topics show distinct defect counts and select the same existing class", as
     assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 1);
     assert.equal(view.document.querySelector("[aria-level='3']").dataset.class, "class-af-1");
     assert.match(view.document.querySelector("#problem-detail").textContent, /主题数值可靠性/);
+  } finally { view.dom.window.close(); }
+});
+
+test("unavailable polish shows its actual error while keeping canonical classes and samples browseable", async () => {
+  const view = await page(url => url === "/api/dashboard/library" ? [model("af", "A组Fast")] : {
+    ...detail("af"), rewrite_error: "聚类来源身份不一致 <img src=x>",
+  });
+  try {
+    await view.load();
+    assert.equal(view.document.querySelector("#problem-detail h1").textContent, "计算存在错误");
+    assert.match(view.document.querySelector(".problem-detail-error").textContent, /来源身份不一致 <img src=x>/);
+    assert.equal(view.document.querySelector(".problem-detail-error img"), null);
+    assert.equal(view.document.querySelectorAll(".occurrence-recall").length, 1);
   } finally { view.dom.window.close(); }
 });

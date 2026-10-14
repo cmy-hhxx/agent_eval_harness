@@ -1,0 +1,49 @@
+{
+  "inputs": {
+    "versions": [
+      {
+        "id": "a_fast",
+        "name": "A Fast",
+        "comparison_tier": "Fast",
+        "display_name": "A组Fast",
+        "adapter": "a",
+        "sources": [{ "kind": "directory", "path": "../data/sources/model-answers/a_fast" }]
+      },
+      {
+        "id": "a_expert",
+        "name": "A Expert",
+        "comparison_tier": "Expert",
+        "display_name": "A组Expert",
+        "adapter": "a",
+        "sources": [{ "kind": "directory", "path": "../data/sources/model-answers/a_expert" }]
+      },
+      {
+        "id": "b_fast",
+        "name": "B Fast",
+        "comparison_tier": "Fast",
+        "display_name": "B组Fast",
+        "adapter": "b",
+        "sources": [{ "kind": "directory", "path": "../data/sources/model-answers/b_fast" }]
+      },
+      {
+        "id": "b_expert",
+        "name": "B Expert",
+        "comparison_tier": "Expert",
+        "display_name": "B组Expert",
+        "adapter": "b",
+        "sources": [{ "kind": "directory", "path": "../data/sources/model-answers/b_expert" }]
+      },
+      {
+        "id": "baseline_fast",
+        "name": "Baseline Fast",
+        "comparison_tier": "Fast",
+        "adapter": "a",
+        "sources": [{ "kind": "directory", "path": "../data/sources/model-answers/baseline_fast" }]
+      }
+    ]
+  },
+  "comparisons": [
+    ["a_fast", "b_fast", "baseline_fast"],
+    ["a_expert", "b_expert"]
+  ]
+}

@@ -65,7 +65,8 @@
           "label",
           "definition",
           "closest_existing",
-          "novelty"
+          "novelty",
+          "category_paths"
         ],
         "properties": {
           "key": {
@@ -98,7 +99,7 @@
           },
           "category_paths": {
             "type": "array",
-            "maxItems": 3,
+            "maxItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "array",
@@ -111,7 +112,8 @@
                 "maxLength": 80,
                 "pattern": "^(?![\\s\\S]*[<>\\[\\]{}\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029])"
               }
-            }
+            },
+            "minItems": 1
           }
         }
       }
@@ -208,7 +210,7 @@
           },
           "category_paths": {
             "type": "array",
-            "maxItems": 3,
+            "maxItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "array",
@@ -221,7 +223,8 @@
                 "maxLength": 80,
                 "pattern": "^(?![\\s\\S]*[<>\\[\\]{}\\u0000-\\u001F\\u007F-\\u009F\\u2028\\u2029])"
               }
-            }
+            },
+            "minItems": 1
           },
           "reason": {
             "type": "string",

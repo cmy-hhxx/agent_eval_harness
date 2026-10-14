@@ -4,7 +4,6 @@ import {
   ValidationError,
   type RunManifest,
   type RunState,
-  type TaskState,
   type TaskPlan,
   type ValidationIssue,
 } from "@eval/contracts";
@@ -14,24 +13,12 @@ import type { BatchPreflight, Candidate, ComparisonResult, EvalConfig, TaskData 
 import { comparisonCodec } from "./codec.js";
 import { encodeResult, stageResult } from "./results.js";
 import { comparisonSlots } from "./commentary.js";
+import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+import { pendingTaskProgress } from "./task-progress.js";
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
 
-/** Preparing unfinished work never refunds calls already charged to its UUID. */
-export function pendingTaskProgress(previous?: TaskState, materialChanged = false): TaskState {
-  const next: TaskState = { ...previous, status: "pending", attempts: previous?.attempts ?? 0 };
-  delete next.attemptId;
-  delete next.reason;
-  delete next.nextRetryAt;
-  if (materialChanged && next.failure) {
-    const { draft: _draft, evidenceBank: _bank, inspection: _inspection, ...paid } = next.failure;
-    next.failure = { ...paid,
-      errors: paid.errors.filter(issue => issue.code === "submission_ledger_unavailable"),
-      repeatedErrors: 0, stopped: false };
-  }
-  return next;
-}
 export async function loadRunInputs(
   manifest: RunManifest,
   issues?: ValidationIssue[],
@@ -117,8 +104,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
   if (state.manifest.executionScope) {
-    const pending = new Set(state.manifest.executionScope.filter((id) => !state.receipts[id]));
     state.manifest.config = { ...config, execution: supplied.execution };
+    reconcileAttributionRewriteGroups(state);
+    const pending = new Set(state.manifest.executionScope!.filter((id) => !state.receipts[id]));
     return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
       catalog: state.manifest.inputCatalog, summary: state.manifest.preflight };
   }
@@ -266,5 +254,8 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     (plan.catalog as Candidate[]).map((c) => [c.input_id, { id: c.input_id, name: c.input_id }]),
   );
   state.manifest.preflight = plan.summary;
+  reconcileAttributionRewriteGroups(state);
+  plan.tasks = state.manifest.tasks;
+  plan.summary = state.manifest.preflight;
   return plan;
 }

@@ -13,7 +13,7 @@ function fixture() {
   const inputId = randomUUID();
   const observations = ["模型自身推理", "Search", "模型自身推理"].map((component, index) => ({
     id: "o" + index, component, label: "现象" + index, definition: "独立现象边界。",
-    count: 1, established_count: 0, uncertain_count: 1,
+    count: 1, established_count: 0, uncertain_count: 1, established_answer_ids: [],
     examples: [{ finding: "原主张", reason: "原理由", dimension: "correctness", importance: "low", stage: "final_answer", evidence_status: "uncertain" as const }],
     refs: [{ input_id: inputId, case_id: "case", source: { file: "source.jsonl", line: 1 },
       finding_id: "f0", message_index: 1, quote: "原回答", evidence_status: "uncertain" as const }],
@@ -23,7 +23,7 @@ function fixture() {
     version: "a_fast", batch_id: "batch", observations,
     result: { assignments: observations.map((item, index) => ({ item_id: item.id, new_class_key: "n" + index })),
       new_classes: observations.map((item, index) => ({ key: "n" + index, component: item.component, label: item.label,
-        definition: item.definition, closest_existing: null, novelty: "独立现象。", category_paths: [["来源", "主张"], ["可靠性"]] })), merges: [] },
+        definition: item.definition, closest_existing: null, novelty: "独立现象。", category_paths: [["来源", "主张"]] })), merges: [] },
   };
   const library = applyClustering(emptyLibrary("a_fast"), receipt);
   const decision: ProblemOccurrenceReviewDecision = {
@@ -88,7 +88,7 @@ test("merge, accepted receipt replay and another class assignment cannot revive 
     observations: [receipt.observations[0]!],
     result: { assignments: [{ item_id: "o0", new_class_key: "extra" }],
       new_classes: [{ key: "extra", component: "模型自身推理", label: "另一类", definition: "另一类。",
-        closest_existing: modelClasses[1]!.id, novelty: "明确维护。" }], merges: [] } });
+        closest_existing: modelClasses[1]!.id, novelty: "明确维护。", category_paths: [["数值可靠性"]] }], merges: [] } });
   assert(next.occurrences.length > library.occurrences.length);
   assert.equal(effectiveProblemOccurrences(next).length, 1);
   assert.equal(applyProblemOccurrenceReview(next, decision, [], { evaluatorVersion: "later" }), next);

@@ -1,8 +1,52 @@
 import { canonical, type RunState, type TaskPlan } from "@eval/contracts";
-import { comparisonSlots } from "./commentary.js";
+import { attributionSlots, comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
 import { display, stageResult, sourceRewriteTasks } from "./results.js";
-import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import type { AttributionResult, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import { latestAttributionRewriteTasks } from "./attribution-rewrite-planning.js";
+
+function attributionDeliveryCoverage(state: RunState, requirements: DeliveryRequirements) {
+  if (requirements.rewriteScopes?.length) throw new Error("归因作业不使用对比改写范围");
+  const selected = requirements.selectedOnly ? new Set(state.manifest.executionScope) : undefined;
+  if (requirements.selectedOnly && !state.manifest.executionScope) throw new Error("Run has no frozen execution scope");
+  const config = state.manifest.config as EvalConfig;
+  const latest = new Map<string, typeof state.manifest.tasks[number]>();
+  for (const task of state.manifest.tasks) {
+    if (task.stage !== "attribution" || (selected && !selected.has(task.id))) continue;
+    const candidate = (task.data as TaskData).candidates.A;
+    latest.set(canonical([candidate.batch_id, candidate.case_id, candidate.version]), task);
+  }
+  const errors: string[] = [], missingSlots: { task_id: string; result_id: string; slot_ids: string[] }[] = [];
+  const byBatch: Record<string, { planned: number; accepted: number; delivered: number }> = {};
+  let requiredSlots = 0, filledSlots = 0;
+  for (const task of latest.values()) {
+    const candidate = (task.data as TaskData).candidates.A;
+    const counts = byBatch[candidate.batch_id] ??= { planned: 0, accepted: 0, delivered: 0 };
+    counts.planned++;
+    const receipt = state.receipts[task.id];
+    if (!receipt || state.manifest.states[task.id]?.status !== "succeeded") {
+      errors.push(`${task.id}: attribution not completed`); continue;
+    }
+    counts.accepted++;
+    const expected = config.rewrite.attribution ? attributionSlots(receipt.evaluation as AttributionResult) : [];
+    const row = receipt.exported && stageResult("attribution", receipt.exported.row);
+    const rewritten = row?.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
+    const filled = new Set(rewritten?.rewrites.filter(item => item.text.trim()).map(item => item.id));
+    const missing = expected.filter(item => !filled.has(item.id));
+    requiredSlots += expected.length; filledSlots += expected.length - missing.length;
+    const outstanding = config.rewrite.attribution && latestAttributionRewriteTasks(state.manifest.tasks, task.id, expected.map(item => item.id))
+      .some(rewrite => !state.receipts[rewrite.id]);
+    if (missing.length) missingSlots.push({ task_id: task.id, result_id: task.id, slot_ids: missing.map(item => item.id) });
+    if (outstanding) errors.push(`${task.id}: attribution rewrite not completed`);
+    if (!missing.length && !outstanding) counts.delivered++;
+  }
+  if (!latest.size) errors.push("No planned attributions");
+  for (const batch of requirements.batchIds ?? []) if (!byBatch[batch]) errors.push(`missing batch: ${batch}`);
+  if (requirements.batchIds) for (const batch of Object.keys(byBatch))
+    if (!requirements.batchIds.includes(batch)) errors.push(`unexpected batch: ${batch}`);
+  return { valid: !errors.length && !missingSlots.length, by_batch: byBatch, errors,
+    required_slots: requiredSlots, filled_slots: filledSlots, missing_slots: missingSlots };
+}
 
 export interface DeliveryRequirements {
   rewriteScopes?: string[];
@@ -10,6 +54,8 @@ export interface DeliveryRequirements {
   selectedOnly?: boolean;
 }
 export function deliveryCoverage(state: RunState, requirements: DeliveryRequirements = {}) {
+  if ((state.manifest.config as EvalConfig & { attributionJob?: unknown }).attributionJob)
+    return attributionDeliveryCoverage(state, requirements);
   const scopes = new Set(requirements.rewriteScopes ?? []);
   if ([...scopes].some((scope) => scope !== "items" && scope !== "verdicts"))
     throw new Error("require-rewrite must be items or verdicts");

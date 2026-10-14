@@ -17,7 +17,7 @@ import { submissionEvidenceIssues } from "./submission-evidence.js";
 import { correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
-import { responsibilityComponent } from "./responsibility.js";
+import { responsibilityChoices, responsibilityIssues } from "./responsibility.js";
 
 interface Input {
   candidate_id: string;
@@ -252,9 +252,7 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("numeric_checks_without_reference", "/numeric_checks", "没有标准答案时数值核对表必须为空");
   }
 
-  const tools = new Set(input.answer.catalog.flatMap((message) =>
-    message.name && (["function_call", "function_call_output", "tool_call", "tool_result"].includes(message.type) || message.role === "tool") ? [message.name] : [],
-  ));
+  const components = new Set(responsibilityChoices(request));
   const findingIds = new Set<string>();
   const findingEntries = representation === "submission" ? submissionFindingEntries(draft)
     : Array.isArray(value.findings) ? value.findings.map((finding, index) => ({ finding, path: `/findings/${index}` })) : [];
@@ -302,8 +300,8 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
     if (representation === "submission" || !strings(problem.component)) return;
     problem.component.forEach((component, componentIndex) => {
-      if (component !== "模型自身推理" && component !== "上下文组装与传递" && !tools.has(component))
-        issue("problem_component_invalid", `${location}/problem/component/${componentIndex}`, "正式 problem.component 必须是本方工具名、「上下文组装与传递」或「模型自身推理」", component);
+      if (!components.has(component))
+        issue("problem_component_invalid", `${location}/problem/component/${componentIndex}`, "正式 problem.component 必须选择本方工具名或本方材料支持的责任环节", component);
     });
   });
   return errors;
@@ -325,16 +323,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     issue("standard_answer_mismatch", "/has_standard_answer", "has_standard_answer 必须与本题是否有标准答案一致", value.has_standard_answer, input.ground_truth.available);
   repairErrors.push(...numericLedgerIssues(request, value, "result"));
   value.findings.forEach((finding, index) => {
-    for (const component of finding.problem?.component ?? []) {
-      if (component !== "模型自身推理" &&
-        !finding.evidence.some((item) => responsibilityComponent(request, item) === component))
-        issue(
-          "problem_component_evidence_missing",
-          `/findings/${index}/evidence`,
-          "每个链路 component 必须引用本方对应工具或实际模型输入的证据，不能仅凭最终回答定位根因",
-          component,
-        );
-    }
+    repairErrors.push(...responsibilityIssues(request, finding.problem, finding.evidence, `/findings/${index}/problem`));
   });
 
   input.answer.deferred_final_material.forEach((material, index) => {

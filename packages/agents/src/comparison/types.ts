@@ -142,10 +142,8 @@ export interface ComparisonSlot {
 }
 export interface SubmittedComparison {
   importance: "high" | "medium" | "low";
+  /** Only commentary rows accept a model direction; resource direction is derived. */
   better_candidate?: string | null;
-  /** Omitted for recorded-resource rows; their wording is derived from measurements. */
-  a_summary?: string;
-  b_summary?: string;
 }
 /** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
 export interface ComparisonSubmission {
@@ -153,5 +151,9 @@ export interface ComparisonSubmission {
   b_summary: string;
   comparisons: (SubmittedComparison | null)[];
   preference?: string | null;
-  tradeoff: string;
+  /** Relative inclination within a both-good/both-bad result; never changes its ranking. */
+  relative_preference: "A" | "B";
+  /** Candidate-owned reasons; the program supplies identity and measured resources. */
+  a_tradeoff: string;
+  b_tradeoff: string;
 }

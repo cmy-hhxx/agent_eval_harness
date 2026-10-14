@@ -54,7 +54,7 @@ test("early user messages retain stable compaction boundaries and replay exactly
 });
 
 for (const api of ["openai-completions", "openai-responses"] as const)
-for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as const) test(`Eris harness: ${api} ${scenario}`, { timeout: 15000 }, async () => {
+for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as const) test(`Eris harness: ${api} ${scenario}`, { timeout: 15000 }, async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-harness-"));
   const scope = { userId: "test", sessionId: crypto.randomUUID() };
   const env = "ERIS_HARNESS_TEST_KEY", previous = process.env[env];
@@ -84,7 +84,8 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
     if (summary) {
       assert.equal(request.tool_choice, "none", "repeated failures still allow a final answer without more tools");
       assert.equal(request.parallel_tool_calls, false);
-      assert.match(JSON.stringify(messages), /利用已经成功读取的结果回答用户/);
+      assert(JSON.stringify(messages).includes(JSON.stringify(eris.failureSummaryMessage).slice(1, -1)),
+        "the model receives the current Eris failure-summary material");
     }
     const done = summary || scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7 || scenario === "extended" && modelCalls === 35;
     let args: JsonObject = {};
@@ -119,10 +120,10 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
   const run = async () => {
     const requestId = crypto.randomUUID();
     await sessions.prompt(scope.userId, { ...scope, requestId, mode: "queue", content: [{ type: "text", text: "核对数据" }] });
-    for (let n = 0; n < 1000; n++) {
+    while (!t.signal.aborted) {
       const state = (await sessions.list(scope.userId))[0].requests[requestId];
       if (state === "completed" || state === "interrupted") return state;
-      await delay(10);
+      await delay(10, undefined, { signal: t.signal });
     }
     throw new Error("Request did not settle");
   };

@@ -3,8 +3,6 @@ import type { Checkpoint } from "./codec.js";
 import type { EvalConfig } from "./types.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import statisticsLogSchema from "../../../../schemas/workflow/statistics-log.schema.json" with { type: "json" };
-import { isResourceRow, verdictSlotId } from "./commentary.js";
-import type { ComparisonResult } from "./types.js";
 import { expandComparisonPairs } from "./input.js";
 
 const logAjv = new Ajv2020({ allErrors: true });
@@ -16,14 +14,9 @@ export function assertStatisticsLog(record: unknown): asserts record is JsonObje
     throw new Error("Statistics log violates frozen contract: " + logAjv.errorsText(validateStatisticsLog.errors));
 }
 
-/** Check the actual merged JSONL text before publishing a complete comparison rewrite. */
-export function assertCompleteComparisonRewrite(row: JsonObject, labels: string[]): void {
-  const comparisons = (row.decision_basis as ComparisonResult["decision_basis"]).comparisons;
-  const required = labels.flatMap((first, index) => labels.slice(index + 1).map((second) => verdictSlotId(first, second)));
-  comparisons.forEach((comparison, index) => {
-    if (Array.isArray(comparison.criterion_ids) && isResourceRow(comparison)) return;
-    labels.forEach((label) => required.push(`comparison.${index}.${label}.summary`));
-  });
+/** Check the merged JSONL against the exact scope recorded in accepted rewrite receipts. */
+export function assertCompleteComparisonRewrite(row: JsonObject, required: readonly string[]): void {
+  if (!required.length) throw new Error(`Comparison rewrite scope missing: ${row.comparison_id}`);
   const rewritten = row.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
   const filled = new Set(rewritten?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
   const missing = required.filter((id) => !filled.has(id));
@@ -97,6 +90,7 @@ export class PublicationStatistics {
   private readonly inputs = new Map<string, InputSummary>();
   private readonly pairs = new Map<string, Pair>();
   private readonly labels = new Map<string, Pick<PublicationLabels, "task" | "difficulty">>();
+  private readonly conflictingDifficulties = new Set<string>();
   private readonly matchups: string[][] = [];
   private readonly batchMatchups = new Map<string, string[][]>();
   private readonly correctness = new Map<string, boolean | null>();
@@ -114,13 +108,22 @@ export class PublicationStatistics {
   private pairsForBatch(batchId: unknown): string[][] {
     return this.batchMatchups.get(String(batchId)) ?? this.matchups;
   }
+  get labelConflicts(): { batchId: string; caseId: string; fields: string[] }[] {
+    return [...this.conflictingDifficulties].map(key => {
+      const [batchId, caseId] = JSON.parse(key) as [string, string];
+      return { batchId, caseId, fields: ["difficulty"] };
+    });
+  }
   addLabels({ batchId, caseId, task, difficulty }: PublicationLabels) {
     const key = JSON.stringify([batchId, caseId]), existing = this.labels.get(key) ?? {};
     const values = { task: text(task), difficulty: text(difficulty) };
     for (const field of ["task", "difficulty"] as const) {
       const value = values[field];
       if (!value || value === "未分类" || value === "未分层") continue;
-      if (existing[field] && existing[field] !== value) throw new Error(`Conflicting statistics ${field} labels: ${key}`);
+      if (existing[field] && existing[field] !== value) {
+        if (field === "task") throw new Error(`Conflicting statistics task labels: ${key}`);
+        this.conflictingDifficulties.add(key);
+      }
       existing[field] = value;
     }
     this.labels.set(key, existing);
@@ -183,7 +186,8 @@ export class PublicationStatistics {
       row.date = dates.get(row.caseId) ?? row.batchDate;
       const labels = this.labels.get(row.caseId);
       row.task = labels?.task || "未分类";
-      row.difficulty = levels.some((level) => level[1] === labels?.difficulty) ? labels!.difficulty! : "未分层";
+      row.difficulty = !this.conflictingDifficulties.has(row.caseId) && levels.some((level) => level[1] === labels?.difficulty)
+        ? labels!.difficulty! : "未分层";
     }
     if (throughDate) rows = rows.filter((row) => row.date && row.date <= throughDate);
     const models = [...new Map(rows.map((row) => [row.id, { id: row.id, name: row.name }])).values()].sort((a, b) => a.id.localeCompare(b.id));
