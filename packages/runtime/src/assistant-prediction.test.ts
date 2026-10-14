@@ -44,11 +44,12 @@ test("prediction marks an excerpt ending inside A's answer without treating the 
   assert.deepEqual(context.currentRequest, { text: "", truncated: false });
 });
 
-test("prediction accepts natural follow-ups without restricting topic, length or sentence count", () => {
+test("prediction accepts short follow-ups and rejects long output without truncating it", () => {
   assert.equal(predictionText("  A与B的统计口径哪里不同？ ", []), "A与B的统计口径哪里不同？");
-  for (const text of ["继续", "谁赢了？为什么？", "给我一个改进方案，然后找一例验证。", "把这两个模型在不同场景里的表现放在一起比较，重点看看事实依据是否完整、结论能否支持用户决策，再结合错误的影响给出有针对性的改进建议。"])
+  for (const text of ["B也缺依据，为什么还能赢？", "A把哪天的下跌说成了上涨？", "换一例看看？", "😀".repeat(39) + "？"])
     assert.equal(predictionText(text, []), text);
-  for (const text of ["", "无建议", "NONE", "- 核对证据", "1. 核对证据", "问句\n解释", "```问句```", "“还有哪些证据？”", "问".repeat(1025)])
+  for (const text of ["", "无建议", "NONE", "- 核对证据", "1. 核对证据", "问句\n解释", "```问句```", "“还有哪些证据？”", "😀".repeat(40) + "？",
+    "这场里最关键的分歧是：A 直接解释“今天上涨”的原因，B 先指出当天还没开盘、最近交易日两只股票实际下跌。也就是说，A 的题材分析没有回答题目所设定的事实，B 则先纠正前提，所以评测判 B 胜。至于 B 后面对近期下跌原因的分析，评语认为依据不足；这不影响它在核心问题上的优势，但那部分结论应和“此前上涨催化”区分开。"])
     assert.equal(predictionText(text, []), null, text);
   assert.equal(predictionText("A与B的统计口径哪里不同？", ["A 与 B 的统计口径哪里不同"]), null);
 });

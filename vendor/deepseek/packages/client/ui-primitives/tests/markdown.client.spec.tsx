@@ -79,8 +79,16 @@ describe('MarkdownText', () => {
     expect(screen.getByRole('link', { name: 'https://deepseek.com' })).toBeTruthy()
   })
 
-  it('closes strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
+  it('handles strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
     const cases = [
+      ['把**“涨”**', '“涨”'],
+      ['把 **“涨”**', '“涨”'],
+      ['把**涨**', '涨'],
+      ['把**“涨**”', '“涨'],
+      ['**“涨”**当', '“涨”'],
+      ['将**（暂定）**作为结论', '（暂定）'],
+      ['将**(暂定)**作为结论', '(暂定)'],
+      ['A**“quoted”**B', '“quoted”'],
       ['**Fast：**B组目前占优', 'Fast：'],
       ['**场数：**105场', '场数：'],
       ['**结论（暂定）**A组领先', '结论（暂定）'],
@@ -108,6 +116,10 @@ describe('MarkdownText', () => {
       String.raw`\**注意：**内容`,
       '`**注意：**内容`',
       '**Notice:**text',
+      'ASCII**"quoted"**',
+      '把*“涨”*当',
+      '把`**“涨”**`当',
+      '$把**“涨”**当$',
       '*提醒！*继续',
       '$**注意：**内容$',
       '```md',
@@ -121,7 +133,8 @@ describe('MarkdownText', () => {
     expect([...container.querySelectorAll('strong')].map(node => node.textContent)).toEqual(['普通'])
     expect([...container.querySelectorAll('em')].map(node => node.textContent)).toEqual(['普通'])
     expect(container.querySelector('code')?.textContent).toBe('**注意：**内容')
-    expect(container.querySelector('.katex annotation')?.textContent).toBe('**注意：**内容')
+    expect([...container.querySelectorAll('.katex annotation')].map(node => node.textContent))
+      .toEqual(['把**“涨”**当', '**注意：**内容'])
     expect(container.querySelector('pre code')?.textContent).toContain('**注意：**内容')
     expect(container.textContent).toContain('**Notice:**text')
     expect(container.textContent).toContain('*提醒！*继续')

@@ -186,22 +186,30 @@ test("Eris diagram checks only substantive contradictions in known material", ()
   assert.doesNotMatch(systemPrompt + toolDescriptions.show_comparison + erisComparisonCheck, /六家|非本体|配套定位/);
 });
 
-test("Eris follow-up suggestions follow intent without steering into source verification", () => {
+test("Eris follow-up suggestions focus on model problems and attribution without assuming causes", () => {
   const { predictionPrompt } = erisPrompt([]);
   assert.match(predictionPrompt, /最终回答是程序已取得的固定数据/);
   assert.match(predictionPrompt, /不能补全或改写原回答/);
   assert.match(predictionPrompt, /不建议补贴、重传、续写或重新生成被评回答/);
   assert.match(predictionPrompt, /truncated 只表示该段为预测而节选/);
   assert.match(predictionPrompt, /不代表源数据缺失/);
-  assert.match(predictionPrompt, /用用户向 Eris 提问或布置任务的口吻/);
+  assert.match(predictionPrompt, /用用户向 Eris 提问的口吻/);
   assert.match(predictionPrompt, /跟随用户最新意图/);
   assert.match(predictionPrompt, /没有有用补充时留空/);
   assert.match(predictionPrompt, /不主动建议.*来源核验/);
-  assert.match(predictionPrompt, /有什么问题、问题在哪、双方区别是什么、具体细节是什么/);
+  assert.match(predictionPrompt, /一句简短追问.*通常10–25字.*最多40个字符/);
+  assert.match(predictionPrompt, /只问一个尚未讲清的具体问题/);
+  assert.match(predictionPrompt, /点明相关模型、原句或出错步骤/);
+  assert.match(predictionPrompt, /重心是模型的具体问题与归因/);
+  assert.match(predictionPrompt, /追问出错原因、推理过程或责任定位/);
+  assert.match(predictionPrompt, /不把未确认的原因写进问句前提/);
+  assert.match(predictionPrompt, /对评测判断、严重性或胜负的影响只在用户明确要求继续追问且尚未解释时展开/);
+  assert.match(predictionPrompt, /已有解释就转向未讲清的错误与归因细节/);
+  assert.match(predictionPrompt, /用日常说法直接问，不复述已有结论、不替 Eris 作答/);
   assert.match(predictionPrompt, /不建议改写、润色、补全.*归因/);
   assert.match(predictionPrompt, /不能改变评测输出/);
   assert.match(predictionPrompt, /已有评语提到.*证据不足.*不把它自动延伸/);
-  assert.doesNotMatch(predictionPrompt, /只输出问句|只问一个点|10–20字|重心是.*归因|不要围绕|不安排下一步/);
+  assert.doesNotMatch(predictionPrompt, /实际影响|怎样影响结论|不要围绕|不安排下一步/);
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {

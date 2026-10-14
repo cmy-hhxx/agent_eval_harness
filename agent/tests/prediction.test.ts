@@ -81,7 +81,7 @@ test("predictions follow the owning replica, stay out of history, and cancel on 
   } finally { release.resolve(null); await replica.dispose(); if (!closed) await server.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("prediction endpoint validates requests and accepts longer natural suggestions", async () => {
+test("prediction endpoint validates requests and accepts bounded recent suggestion context", async () => {
   const directory = await mkdtemp(tmpdir() + "/eris-prediction-input-");
   const sessions = new AssistantSessions({ directory, url: "http://127.0.0.1:1", model: {} as ModelConfig, systemPrompt: "test", tools: [] });
   try {

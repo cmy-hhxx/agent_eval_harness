@@ -47,6 +47,27 @@ describe('final-response visuals', () => {
 })
 
 describe('assistant Markdown across provider text fragments', () => {
+  it('renders quoted strong text inside Chinese prose while streaming, settling and restoring', () => {
+    const fragments = ['所以，B的判断主要是把**', '“消息出现时上涨、随后快速回吐”**', '当作题材交易兑现的行情信号。它并没有用资金流数据或实际减产数据证明“兑现”具体发生在哪一步；“题材兑现”仍是对价格走势和报道时序的解释，不是已被行情本身证实的因果关系。']
+    const source = fragments.join('')
+    const check = (container: HTMLElement) => {
+      expect(container.querySelector('strong')?.textContent).toBe('“消息出现时上涨、随后快速回吐”')
+      expect(container.querySelectorAll('p')).toHaveLength(1)
+      expect(container.textContent).toBe(source.replaceAll('**', ''))
+    }
+    const live = render(reply([], true))
+    for (let end = 1; end <= source.length; end++) {
+      live.rerender(reply([textBlock(source.slice(0, end))], true))
+    }
+    check(live.container)
+    live.rerender(reply(fragments.map(textBlock), true))
+    check(live.container)
+    live.rerender(reply(fragments.map(textBlock)))
+    check(live.container)
+    live.unmount()
+    check(render(reply([textBlock(source)])).container)
+  })
+
   it.each([false, true])('keeps split emphasis and words in one paragraph (streaming=%s)', (streaming) => {
     // The provider split the real Eris reply at these positions, without newlines.
     const fragments = ['**Fast 档（4', ' 场）**：核心交付完整', '度持平。']

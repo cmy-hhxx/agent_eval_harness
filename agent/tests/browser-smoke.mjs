@@ -8,6 +8,9 @@ import { assistantEndpoints } from '@eval/assistant/server';
 const directory=await mkdtemp(tmpdir()+'/assistant-browser-'),shots=process.cwd()+'/.artifacts/agent-browser';
 await mkdir(shots,{recursive:true});
 let executions=0,sessions;
+const quoted='“消息出现时上涨、随后快速回吐”';
+let releaseQuote;
+const quotePause=new Promise(resolve=>{releaseQuote=resolve;});
 const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(sessions=new AssistantSessions({directory,url,model:{provider:'test',model:'test'},systemPrompt:'test',tools:[],driver:async({event})=>{
  let stopped=false;
  return {async prompt(text){
@@ -22,8 +25,8 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
    await event({type:'turn_end'});await event({type:'turn_start'});
   }
   await event({type:'message_start',message:{role:'assistant'}});
-  let output='';const chunks=text==='停止测试'?Array.from({length:300},()=> '进行中 '):['## 分析结果\n\n','证据一致。\n\n','| 指标 | 已完成 | 完成率 |\n','| --- | ---: | ---: |\n','| 对战 | 22,293 | 62.20% |\n','| 题目 | 11,753 | 57.18% |\n\n','```ts\n','const accepted = true;\n','```\n'];
-  for(const delta of chunks){if(stopped)break;output+=delta;await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});await delay(40);}
+  let output='';const chunks=text==='停止测试'?Array.from({length:300},()=> '进行中 '):['## 分析结果\n\n','证据一致。\n\n','所以，B的判断主要是把**',quoted+'**','当作题材交易兑现的行情信号。\n\n','| 指标 | 已完成 | 完成率 |\n','| --- | ---: | ---: |\n','| 对战 | 22,293 | 62.20% |\n','| 题目 | 11,753 | 57.18% |\n\n','```ts\n','const accepted = true;\n','```\n'];
+  for(const delta of chunks){if(stopped)break;output+=delta;await event({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta}});if(delta===quoted+'**')await quotePause;await delay(40);}
   await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'text',text:output}],stopReason:stopped?'aborted':'stop'}});
   await event({type:'turn_end'});await event({type:'agent_end'});
  },async steer(){},async abort(){stopped=true;},async dispose(){}};
@@ -46,12 +49,19 @@ try{
  assert(!/DeepSeek|Harness/.test(await page.locator('body').innerText()));
  await input.fill('请分析本地评测结果');await input.press('Enter');
  await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();
+ const strong=page.locator('strong').filter({hasText:quoted});
+ await strong.waitFor();
+ assert.equal(await strong.innerText(),quoted,'quoted Chinese text is bold before the streamed reply completes');
+ assert(await page.getByRole('button',{name:'停止生成',exact:true}).isVisible());
+ releaseQuote();
  await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
+ assert.equal(await strong.locator('xpath=ancestor::p[1]').innerText(),'所以，B的判断主要是把'+quoted+'当作题材交易兑现的行情信号。','strong markers do not leak into the final prose');
  await page.locator('code').filter({hasText:'const accepted'}).first().waitFor();
  assert.equal(await page.getByRole('table').getByRole('row').count(),3,'streamed statistics Markdown renders as a table');
  await page.emulateMedia({colorScheme:'light'});await page.emulateMedia({colorScheme:'dark'});
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
  const before=executions;await page.reload();await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();assert.equal(executions,before);
+ assert.equal(await strong.innerText(),quoted,'history preserves quoted Chinese strong emphasis');
  assert.equal(await page.getByRole('table').getByRole('cell',{name:'62.20%',exact:true}).count(),1,'history preserves the statistics table');
  await page.screenshot({path:shots+'/assistant-light.png',fullPage:true,animations:'disabled',caret:'hide'});
  // Compare the unmodified upstream baseline with identical Session events.
@@ -96,4 +106,4 @@ try{
  const bob=await browser.newPage();await bob.goto(server.url+'/u/bob/');await bob.locator('[contenteditable=true]').waitFor();assert(! (await bob.locator('body').innerText()).includes('请分析本地评测结果'));await bob.close();
  assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,erisBrand:true,noDeepseekLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,visualReference:process.env.AGENT_VISUAL_REFERENCE==='1'},null,2));
  console.log('Browser checks passed; artifacts: '+shots);
-}finally{await browser?.close();await referenceServer?.close();await server.close();await rm(directory,{recursive:true,force:true});}
+}finally{releaseQuote();await browser?.close();await referenceServer?.close();await server.close();await rm(directory,{recursive:true,force:true});}

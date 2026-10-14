@@ -44,7 +44,7 @@ export function predictionContext(history: readonly AssistantEvent[]) {
 
 export function predictionText(text: string, previous: readonly string[]): string | null {
   const value = text.trim();
-  if (!value || [...value].length > 1024 || /[\r\n`<>]|^[/#\[{"“]|^(?:[-*•]|\d+[.)])\s/u.test(value)) return null;
+  if (!value || [...value].length > 40 || /[\r\n`<>]|^[/#\[{"“]|^(?:[-*•]|\d+[.)])\s/u.test(value)) return null;
   if (/^(?:none|null|无建议|暂无建议|没有建议|保持沉默)$/i.test(value)) return null;
   const identity = (input: string) => input.replace(/[\s\p{P}]/gu, "").toLocaleLowerCase();
   if (previous.some(item => identity(item) === identity(value))) return null;

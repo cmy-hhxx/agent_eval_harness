@@ -1,4 +1,4 @@
-/** Let asterisk strong emphasis close after non-ASCII punctuation or before adjacent CJK prose. */
+/** Let asterisk strong emphasis open and close at CJK and non-ASCII punctuation boundaries. */
 
 import { attention } from 'micromark-core-commonmark'
 import { unicodePunctuation } from 'micromark-util-character'
@@ -46,15 +46,19 @@ const tokenizeCjkFriendlyAttention: Tokenizer = function (effects, ok, nok) {
 
     const token = effects.exit('attentionSequence')
     const after = classifyCharacter(code)
-    const open = !after || (after === constants.characterGroupPunctuation && Boolean(before))
+    const commonMarkOpen = !after || (after === constants.characterGroupPunctuation && Boolean(before))
       || attentionMarkers.includes(code)
     const commonMarkClose = !before
       || (before === constants.characterGroupPunctuation && Boolean(after))
       || attentionMarkers.includes(previous)
     const markerCount = token.end.offset - token.start.offset
+    const cjkStrongOpen = markerCount >= 2
+      && unicodePunctuation(code)
+      && (isCjkCharacter(previous) || (code !== null && code > 0x7f))
     const cjkStrongClose = markerCount >= 2
       && unicodePunctuation(previous)
       && (isCjkCharacter(code) || (previous !== null && previous > 0x7f))
+    const open = commonMarkOpen || cjkStrongOpen
     const close = commonMarkClose || cjkStrongClose
 
     token._open = open

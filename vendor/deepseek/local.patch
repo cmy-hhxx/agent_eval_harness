@@ -820,19 +820,33 @@ diff --git a/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts b/p
 +++ b/packages/client/ui-primitives/src/markdown/cjkFriendlyStrong.ts
 @@ -1,4 +1,4 @@
 -/** Let asterisk strong emphasis close after punctuation when CJK prose continues without whitespace. */
-+/** Let asterisk strong emphasis close after non-ASCII punctuation or before adjacent CJK prose. */
++/** Let asterisk strong emphasis open and close at CJK and non-ASCII punctuation boundaries. */
 
  import { attention } from 'micromark-core-commonmark'
  import { unicodePunctuation } from 'micromark-util-character'
-@@ -54,7 +54,7 @@ const tokenizeCjkFriendlyAttention: Tokenizer = function (effects, ok, nok) {
+@@ -46,15 +46,19 @@
+
+     const token = effects.exit('attentionSequence')
+     const after = classifyCharacter(code)
+-    const open = !after || (after === constants.characterGroupPunctuation && Boolean(before))
++    const commonMarkOpen = !after || (after === constants.characterGroupPunctuation && Boolean(before))
+       || attentionMarkers.includes(code)
+     const commonMarkClose = !before
+       || (before === constants.characterGroupPunctuation && Boolean(after))
+       || attentionMarkers.includes(previous)
      const markerCount = token.end.offset - token.start.offset
++    const cjkStrongOpen = markerCount >= 2
++      && unicodePunctuation(code)
++      && (isCjkCharacter(previous) || (code !== null && code > 0x7f))
      const cjkStrongClose = markerCount >= 2
        && unicodePunctuation(previous)
 -      && isCjkCharacter(code)
 +      && (isCjkCharacter(code) || (previous !== null && previous > 0x7f))
++    const open = commonMarkOpen || cjkStrongOpen
      const close = commonMarkClose || cjkStrongClose
 
      token._open = open
+
 diff --git a/packages/client/ui-primitives/tests/markdown.client.spec.tsx b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
 --- a/packages/client/ui-primitives/tests/markdown.client.spec.tsx
 +++ b/packages/client/ui-primitives/tests/markdown.client.spec.tsx
@@ -869,19 +883,49 @@ diff --git a/packages/client/ui-primitives/tests/markdown.client.spec.tsx b/pack
    it('renders CommonMark and GFM elements as semantic DOM', () => {
      const markdown = [
        '# Heading',
-@@ -61,8 +79,11 @@ describe('MarkdownText', () => {
+@@ -61,8 +79,19 @@
      expect(screen.getByRole('link', { name: 'https://deepseek.com' })).toBeTruthy()
    })
 
 -  it('closes punctuation-terminated strong emphasis before adjacent CJK text', () => {
-+  it('closes strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
++  it('handles strong emphasis at CJK text and non-ASCII punctuation boundaries', () => {
      const cases = [
++      ['把**“涨”**', '“涨”'],
++      ['把 **“涨”**', '“涨”'],
++      ['把**涨**', '涨'],
++      ['把**“涨**”', '“涨'],
++      ['**“涨”**当', '“涨”'],
++      ['将**（暂定）**作为结论', '（暂定）'],
++      ['将**(暂定)**作为结论', '(暂定)'],
++      ['A**“quoted”**B', '“quoted”'],
 +      ['**Fast：**B组目前占优', 'Fast：'],
 +      ['**场数：**105场', '场数：'],
 +      ['**结论（暂定）**A组领先', '结论（暂定）'],
        ['**注意：**内容', '注意：'],
        ['**Notice:**内容', 'Notice:'],
        ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）'],
+@@ -87,6 +116,10 @@
+       String.raw`\**注意：**内容`,
+       '`**注意：**内容`',
+       '**Notice:**text',
++      'ASCII**"quoted"**',
++      '把*“涨”*当',
++      '把`**“涨”**`当',
++      '$把**“涨”**当$',
+       '*提醒！*继续',
+       '$**注意：**内容$',
+       '```md',
+@@ -100,7 +133,8 @@
+     expect([...container.querySelectorAll('strong')].map(node => node.textContent)).toEqual(['普通'])
+     expect([...container.querySelectorAll('em')].map(node => node.textContent)).toEqual(['普通'])
+     expect(container.querySelector('code')?.textContent).toBe('**注意：**内容')
+-    expect(container.querySelector('.katex annotation')?.textContent).toBe('**注意：**内容')
++    expect([...container.querySelectorAll('.katex annotation')].map(node => node.textContent))
++      .toEqual(['把**“涨”**当', '**注意：**内容'])
+     expect(container.querySelector('pre code')?.textContent).toContain('**注意：**内容')
+     expect(container.textContent).toContain('**Notice:**text')
+     expect(container.textContent).toContain('*提醒！*继续')
+
 diff --git a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
 --- a/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
 +++ b/packages/client/ui-primitives/src/markdown/MarkdownText.module.css
@@ -1167,7 +1211,7 @@ diff --git a/packages/client/ui-chat/tests/assistant-markdown-fragments.client.s
 new file mode 100644
 --- /dev/null
 +++ b/packages/client/ui-chat/tests/assistant-markdown-fragments.client.spec.tsx
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,137 @@
 +// @vitest-environment jsdom
 +import { cleanup, render } from '@testing-library/react'
 +import { afterEach, describe, expect, it } from 'vitest'
@@ -1217,6 +1261,27 @@ new file mode 100644
 +})
 +
 +describe('assistant Markdown across provider text fragments', () => {
++  it('renders quoted strong text inside Chinese prose while streaming, settling and restoring', () => {
++    const fragments = ['所以，B的判断主要是把**', '“消息出现时上涨、随后快速回吐”**', '当作题材交易兑现的行情信号。它并没有用资金流数据或实际减产数据证明“兑现”具体发生在哪一步；“题材兑现”仍是对价格走势和报道时序的解释，不是已被行情本身证实的因果关系。']
++    const source = fragments.join('')
++    const check = (container: HTMLElement) => {
++      expect(container.querySelector('strong')?.textContent).toBe('“消息出现时上涨、随后快速回吐”')
++      expect(container.querySelectorAll('p')).toHaveLength(1)
++      expect(container.textContent).toBe(source.replaceAll('**', ''))
++    }
++    const live = render(reply([], true))
++    for (let end = 1; end <= source.length; end++) {
++      live.rerender(reply([textBlock(source.slice(0, end))], true))
++    }
++    check(live.container)
++    live.rerender(reply(fragments.map(textBlock), true))
++    check(live.container)
++    live.rerender(reply(fragments.map(textBlock)))
++    check(live.container)
++    live.unmount()
++    check(render(reply([textBlock(source)])).container)
++  })
++
 +  it.each([false, true])('keeps split emphasis and words in one paragraph (streaming=%s)', (streaming) => {
 +    // The provider split the real Eris reply at these positions, without newlines.
 +    const fragments = ['**Fast 档（4', ' 场）**：核心交付完整', '度持平。']
