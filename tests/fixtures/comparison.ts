@@ -400,8 +400,15 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
   if ("assignments" in result) {
     // Current canonical keys remain in library decisions; the model selects array positions.
     const classes = result.new_classes as ({ key: string } & Record<string, unknown>)[];
-    result.assignments = (result.assignments as ({ new_class_key?: string } & Record<string, unknown>)[])
-      .map(({ new_class_key, ...assignment }) => {
+    const directory = (material as unknown as { library: { components: { classes: { id: string; label: string }[] }[] } })
+      .library.components.flatMap(component => component.classes);
+    result.assignments = (result.assignments as ({ new_class_key?: string; class_id?: string } & Record<string, unknown>)[])
+      .map(({ new_class_key, class_id, ...assignment }) => {
+        if (class_id !== undefined) {
+          const selected = directory.find(problem => problem.id === class_id);
+          if (!selected) throw new Error("Fixture assignment must select a current class");
+          return { ...assignment, class_label: selected.label };
+        }
         if (new_class_key === undefined) return assignment;
         const new_class_index = classes.findIndex(proposal => proposal.key === new_class_key);
         if (new_class_index < 0) throw new Error("Fixture assignment must bind a declared canonical new class");

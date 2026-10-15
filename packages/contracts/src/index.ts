@@ -277,7 +277,7 @@ export interface ProblemObservationRef {
   importance: "high" | "medium" | "low";
   summary: string;
 }
-export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected" | "pending_observations_replaced";
+export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected" | "pending_observations_replaced" | "assignments_replaced";
 export interface ProblemEvent {
   id: string;
   type: ProblemEventType;

@@ -277,7 +277,7 @@ npm run eval -- run --run-id daily-a --config configs/host.json --config configs
 
 不指定 ID 时选择失败、超时、取消和阻塞任务；`--task`、`--result` 可重复，后者使用正式 `comparison_id`。必要的未完成依赖与下游一起进入固定清单；共享聚类分片的其他依赖未完成时，不自动把它及其他题目拉入局部补跑。已成功任务不加入补跑；选择已成功的对比时，可以补它尚未完成的改写。预览列出任务、原状态和累计 attempts；`--apply` 只准备状态并保留原内容提交及文件错误计数，随后同 run 续跑，不要求手改 `state.json`。其他未完成任务与后来追加数据不混入。零项选择不改状态。
 
-评测 run 内的延期归类保留在 `results/clustering.jsonl`，不计作已归类或错误。`eval recluster --run PATH --task ID` 或显式 `--all` 预览可重归类观察；`--apply` 新建任务并固定范围，随后同 run-id 续跑。新任务只包含延期观察，使用当前问题库与剩余预算，保留原接受结果；重复准备复用未完成的重归类任务，保留该 UUID 的累计内容和文件错误计数，不补发额度。独立聚类作业保留所有已接受决定，包括延期；重新归类需创建新的作业 ID。
+评测 run 内的延期归类保留在 `results/clustering.jsonl`，不计作已归类或错误。`eval recluster --run PATH --task ID` 或显式 `--all` 预览可重归类观察；`--apply` 新建任务并固定范围，随后同 run-id 续跑。新任务只包含延期观察，使用当前问题库与剩余预算，保留原接受结果；重复准备复用未完成的重归类任务，保留该 UUID 的累计内容和文件错误计数，不补发额度。独立聚类作业在全目录整理后自动回捞本次延期观察一次，回捞只复用已有类；仍未归类的引用保留到问题库待观察池，下次扩量会自动带入。显式重聚类需创建新的作业 ID。
 
 独立聚类接受的结果没有待改写文本时，后置 Rewrite 不进入执行范围；续跑同样跳过，保留已有尝试和错误记录，不生成接受收据。
 
@@ -383,6 +383,8 @@ npm run eval -- reattribute --run-id attribution-pilot --pilot-per-model 100 \
 
 页面按冻结选样的 input ID 读取范围内最新接受归因，定向复核替代旧结果，标题按 input ID 关联。归因树直接读取 `data/problems/<model>.json` 的活跃正式类和有效样本归属，一级为责任组件，下一层为具体缺陷；节点名称和点评采用已接受改写。四个模型独立建类，新增类须满足配置中的独立已确认回答支持数及类数预算。一个问题的多个已定位责任可以分别召回，全局问题数与回答数去重；未归类和责任未定位问题进入分页待观察池，不建立单问题节点。
 
+`data/problems/review.html` 的问题图谱各层同级节点按当前筛选范围内的去重回答数降序排列；待观察、无问题记录固定在末尾，其内部子节点同样按数量降序。
+
 ```bash
 node scripts/attribution-review.mjs --run data/runs/attribution/attribution-pilot \
   --clustering data/runs/clustering/attribution-pilot-tree
@@ -425,7 +427,7 @@ npm run eval -- cluster --run-id october-problems
 
 默认产物在评测输出根目录旁的 `data/runs/clustering/<run-id>/`，可用 `--output DIR` 指定聚类作业根目录；续跑须使用同一目录。`state.json` 保存来源引用、任务与进度，`results/clustering.jsonl` 保存归类决定及来源坐标，`results/rewrite.jsonl` 保存聚类文案的槽位改写，`stats.json` 和 `report.md` 保存进度与问题库统计。聚类改写默认开启，可在首次创建时设 `rewrite.clustering=false`。原评测 run 的状态、正式结果和上传回执保持原样。
 
-有主线归因或必要补查仍 pending/running 时拒绝启动；失败归因跳过并计数，选定范围内成功且有正式收据的归因参与。聚类不等待对比、改写或可选核验。来源重复题选择、跨日期汇总、分片与末尾目录整理规则见[问题库契约](contract.md#问题库与聚类)。续跑固定来源和任务范围，已接受任务不重做；新增日期用新的作业 ID。更换模型、参数或评测器不拒绝续跑，旧收据保留原评测器标识。保护性阶段暂停修复后可用 `--resume-stage clustering` 或 `--resume-stage rewrite` 解除。原始回答文件离线不阻止聚类，但原 run 的状态和正式归因结果必须可读且引用一致；显式样本来源复核仍需原始材料。
+有主线归因或必要补查仍 pending/running 时拒绝启动；失败归因跳过并计数，选定范围内成功且有正式收据的归因参与。聚类不等待对比、改写或可选核验。来源重复题选择、跨日期汇总、分片与末尾目录整理规则见[问题库契约](contract.md#问题库与聚类)。新增作业自动加入同模型已定位责任的旧待观察发现，并冻结其原归因引用；未定位责任的发现继续保留。新归类替代该责任组件下的旧归属，保留历史和其他组件关联。续跑固定来源和任务范围，已接受任务不重做；新增日期用新的作业 ID。更换模型、参数或评测器不拒绝续跑，旧收据保留原评测器标识。保护性阶段暂停修复后可用 `--resume-stage clustering` 或 `--resume-stage rewrite` 解除。原始回答文件离线不阻止聚类，但原 run 的状态和正式归因结果必须可读且引用一致；显式样本来源复核仍需原始材料。
 
 ### 重新改写对比文案
 

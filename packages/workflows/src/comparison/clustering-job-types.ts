@@ -1,4 +1,4 @@
-import type { AttributionSource, JsonObject, ProblemProjection } from "@eval/contracts";
+import { canonical, type AttributionSource, type JsonObject, type ProblemProjection, type ProblemObservationRef } from "@eval/contracts";
 import type { ClusteringObservation } from "@eval/agents/clustering";
 import type { EvalConfig } from "./types.js";
 
@@ -10,7 +10,7 @@ export interface ClusteringJobSource extends AttributionSource {
   source: { file: string; line: number };
 }
 export interface ClusteringJobConfig extends EvalConfig {
-  clusteringJob: { runs: string[]; sources: ClusteringJobSource[] };
+  clusteringJob: { runs: string[]; sources: ClusteringJobSource[]; recall?: ProblemObservationRef[]; assignmentOnly?: boolean };
 }
 export interface ClusteringJobTask {
   model: string;
@@ -19,11 +19,26 @@ export interface ClusteringJobTask {
   rewriteOf?: string;
   /** A final directory pass after all shards of this model have settled. */
   consolidate?: true;
+  reclassify?: true;
+  revisit?: true;
 }
 export interface ClusteringJobMaterial {
   observations: ClusteringObservation[];
   library: ProblemProjection;
   config: ClusteringJobConfig;
+  pending: ProblemObservationRef[];
+}
+export function allClusteringJobSources(config: ClusteringJobConfig): ClusteringJobSource[] {
+  const sources = new Map(config.clusteringJob.sources.map(source => [source.input_id, source]));
+  for (const ref of config.clusteringJob.recall ?? []) {
+    const source = { ...ref.attribution, model: ref.version, batch_id: ref.batch_id,
+      case_id: ref.case_id, input_id: ref.input_id, source: ref.source };
+    const previous = sources.get(ref.input_id);
+    if (previous && canonical(previous) !== canonical(source))
+      throw new Error("待观察引用与所选归因冲突：" + ref.input_id);
+    sources.set(ref.input_id, previous ?? source);
+  }
+  return [...sources.values()];
 }
 export const clusteringJobItems = (observations: ClusteringObservation[]) =>
   observations.map(({ id, component, label, count, established_count, uncertain_count, established_answer_ids, refs }) =>
@@ -42,7 +57,7 @@ export function jobObservations(inputs: Record<string, unknown>, data: Clusterin
   return items;
 }
 export function jobBatchIds(inputs: Record<string, unknown>, data: ClusteringJobTask): string[] {
-  return [...new Set(jobMaterial(inputs, data.model).config.clusteringJob.sources
+  return [...new Set(allClusteringJobSources(jobMaterial(inputs, data.model).config)
     .filter(source => source.model === data.model).map(source => source.batch_id))].sort();
 }
 export interface ClusteringJobRow extends JsonObject {

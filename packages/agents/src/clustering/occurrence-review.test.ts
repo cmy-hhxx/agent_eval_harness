@@ -23,7 +23,7 @@ function fixture() {
     version: "a_fast", batch_id: "batch", observations,
     result: { assignments: observations.map((item, index) => ({ item_id: item.id, new_class_key: "n" + index })),
       new_classes: observations.map((item, index) => ({ key: "n" + index, component: item.component, label: item.label,
-        definition: item.definition, closest_existing: null, novelty: "独立现象。", category_paths: [["来源", "主张"]] })), merges: [] },
+        definition: item.definition, closest_existing: null, novelty: "独立现象。", category_paths: [["来源可靠性"]] })), merges: [] },
   };
   const library = applyClustering(emptyLibrary("a_fast"), receipt);
   const decision: ProblemOccurrenceReviewDecision = {

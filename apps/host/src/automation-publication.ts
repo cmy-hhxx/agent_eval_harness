@@ -142,7 +142,6 @@ export async function statisticsSnapshot(
   const labels = await dependencies.labels({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection,
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, jobs.map((job) => job.date), signal);
   const statistics = new PublicationStatistics([]);
-  for (const label of labels) statistics.addLabels(label);
   for (const job of jobs) {
     if (job.download !== "ready") {
       if (job.downloaded) throw new Error("Statistics input snapshot is not ready: " + job.date);
@@ -153,9 +152,7 @@ export async function statisticsSnapshot(
     for await (const input of snapshot.inputs()) statistics.addInput(input);
     for await (const result of snapshot.results()) statistics.addResult(result);
   }
-  if (statistics.labelConflicts.length) await logger.event("statistics_label_conflicts", {
-    component: "automations", automation_id: config.id, cases: statistics.labelConflicts,
-  });
+  for (const label of labels) statistics.addLabels(label);
   return statistics;
 }
 

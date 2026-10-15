@@ -496,36 +496,42 @@ test("latest snapshot refreshes existing dates and includes new dates without do
   assert.equal(historical.stats[0].total.p50, 150);
 });
 
-test("case labels share across models and conflicting difficulties stay unclassified without losing battles", () => {
+test("latest Mongo difficulty replaces old labels across models without losing battles", async () => {
   const stats = new PublicationStatistics(configuredGroups);
-  stats.addInput(inputs[0]);
-  stats.addInput({ ...inputs[1], trace: { ...inputs[1].trace, meta: {} } });
+  const localInputs = [inputs[0], { ...inputs[1], trace: { ...inputs[1].trace, meta: {} } }];
+  localInputs.forEach(input => stats.addInput(input));
   stats.addResult(result);
   stats.addLabels({ batchId: "2026-09-29", caseId: "one", task: "其他分类", difficulty: "复杂" });
   const data = stats.record("labels", Date.now()).data as Record<string, any>;
   assert.equal(data.tasks.length, 1);
   assert.equal(data.tasks[0].progress.completedBattleCount, 1);
   assert.equal(data.difficultyLevels[0].progress.completedBattleCount, 1);
-  stats.addLabels({ batchId: date, caseId: "one", difficulty: "复杂" });
   stats.addLabels({ batchId: date, caseId: "one", difficulty: "简单" });
-  stats.addLabels({ batchId: date, caseId: "one", difficulty: "未分层" });
-  const conflicted = stats.record("conflicted", Date.now()).data as Record<string, any>;
-  assertStatisticsLog(stats.record("conflicted", Date.now()));
-  assert.equal(conflicted.totalCaseCount, 1);
-  assert.equal(conflicted.progress.completedBattleCount, 1);
-  assert.deepEqual(conflicted.stats, data.stats);
-  assert.equal(conflicted.tasks[0].id, "客观题");
-  assert.equal(conflicted.difficultyLevels.find((row: any) => row.id === "unclassified").count, 1);
-  assert.equal(conflicted.difficultyLevels.find((row: any) => row.id === "unclassified").progress.completedBattleCount, 1);
-  assert.deepEqual(stats.labelConflicts, [{ batchId: date, caseId: "one", fields: ["difficulty"] }]);
+  stats.addLabels({ batchId: date, caseId: "one", difficulty: "复杂" });
+  const latest = stats.record("latest", Date.now()).data as Record<string, any>;
+  assertStatisticsLog(stats.record("latest", Date.now()));
+  assert.equal(latest.totalCaseCount, 1);
+  assert.equal(latest.progress.completedBattleCount, 1);
+  assert.deepEqual(latest.stats, data.stats);
+  assert.equal(latest.tasks[0].id, "客观题");
+  assert.equal(latest.difficultyLevels.find((row: any) => row.id === "L3").count, 1);
+  assert.equal(latest.difficultyLevels.find((row: any) => row.id === "L3").progress.completedBattleCount, 1);
   assert.throws(() => stats.addLabels({ batchId: date, caseId: "one", task: "其他分类" }), /Conflicting statistics task labels/);
-  const reversed = new PublicationStatistics(configuredGroups);
-  reversed.addLabels({ batchId: date, caseId: "one", difficulty: "复杂" });
-  reversed.addInput(inputs[0]);
-  reversed.addInput({ ...inputs[1], trace: { ...inputs[1].trace, meta: {} } });
-  reversed.addResult(result);
-  assert.deepEqual(reversed.record("conflicted", Date.now()).data, conflicted,
-    "a later agreeing model cannot hide the conflict, regardless of label read order");
+  const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  config.publication = { ...config.publication, mongoUriEnv: "PATH" };
+  const state = { jobs: Object.fromEntries([[date, { date, download: "ready" }]]) } as AutomationState;
+  const snapshot = await statisticsSnapshot(config, state, AbortSignal.timeout(5000), {
+    labels: async () => ["简单", "复杂"].map(difficulty => ({ batchId: date, caseId: "one", difficulty })),
+    snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(localInputs), results: () => rows([result]) }),
+  });
+  assert.deepEqual(snapshot.record("latest", Date.now()).data, latest,
+    "local input labels must not overwrite the latest Mongo difficulty");
+  for (const difficulty of ["未分层", ""]) {
+    snapshot.addLabels({ batchId: date, caseId: "one", difficulty });
+    const unclassified = snapshot.record("latest", Date.now()).data as Record<string, any>;
+    assert.equal(unclassified.difficultyLevels.find((row: any) => row.id === "unclassified").count, 1);
+    assert.deepEqual(unclassified.stats, data.stats);
+  }
 });
 
 test("daily statistics use a paired request date or the batch date when all request timestamps are absent", () => {

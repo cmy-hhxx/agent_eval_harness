@@ -28,6 +28,7 @@
         "min_support"
       ],
       "properties": {
+        "assignment_only": { "type": "boolean" },
         "active_classes": {
           "type": "integer",
           "minimum": 0

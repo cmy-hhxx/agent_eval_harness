@@ -57,6 +57,49 @@ async function fixture(caseCount = 2, components?: string[]) {
 const sourceFiles = (runs: string[]) => runs.flatMap(run => ["state.json", "results/attribution.jsonl"].map(file => path.join(run, file)));
 const contents = (files: string[]) => Promise.all(files.map(file => readFile(file, "utf8")));
 
+test("deferred findings persist across jobs and recall their pinned attribution without reading raw answers", async t => {
+  const f = await fixture(); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.rewrite.clustering = false;
+  const before = await contents(sourceFiles(f.runs));
+  const { config, plan } = await prepareClusteringJob([f.runs[0]], f.config, { assignmentOnly: true });
+  const receipts = Object.fromEntries(plan.tasks.map(task => [task.id, {
+    taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(), evaluatorVersion: fakeEvaluatorVersion,
+    judge: "fixture", acceptedAt: 1, status: "succeeded" as const, audit: emptyAudit(), usage: emptyUsage(),
+    evaluation: { assignments: (task.data as { itemIds: string[] }).itemIds.map(item_id =>
+      ({ item_id, deferred_reason: "固定目录尚无适用类。" })), new_classes: [], merges: [] },
+  }]));
+  const state: RunState = { manifest: { format: "evaluation-run", runId: "defer", status: "finished", config, engine: fakeIdentity,
+    evaluatorVersion: fakeEvaluatorVersion, debug: false, tasks: plan.tasks, inputs: {},
+    states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "succeeded", attempts: 1 }])),
+    preflight: plan.summary, startedAt: 1 }, receipts, usage: emptyUsage(), recordedAttempts: plan.tasks.length };
+  const run = path.join(f.directory, "defer");
+  await clusteringJobRepository.createResultWriter(run, plan.inputs)(state);
+  await clusteringJobRepository.writeRun(run, state);
+  for (const model of ["a_fast", "b_fast"]) {
+    const library = await readJson<ProblemLibrary>(problemLibraryFile(config.problemLibrary, model));
+    assert.equal(library.pending_observations!.length, 2);
+    assert.equal(library.occurrences.length, 0);
+  }
+  for (const version of f.config.inputs.versions) await rename(version.sources[0].path, version.sources[0].path + ".offline");
+  const next = await prepareClusteringJob([f.runs[1]], f.config);
+  assert.equal(next.config.clusteringJob.sources.length, 4);
+  assert.equal(next.config.clusteringJob.recall!.length, 4);
+  assert.equal(next.plan.summary.recalled_answers, 4);
+  assert(next.plan.tasks.every(task => ["clustering", "rewrite"].includes(task.stage)));
+  const item = (next.plan.inputs.a_fast as { observations: { count: number }[] }).observations[0];
+  assert.equal(item.count, 2, "old and new dates contribute support together");
+  assert.deepEqual(await contents(sourceFiles(f.runs)), before);
+  const broken = structuredClone(next.config);
+  broken.clusteringJob.recall![0].finding_id = "missing-finding";
+  const restored = { ...state, manifest: { ...state.manifest, config: broken, tasks: next.plan.tasks } };
+  await assert.rejects(clusteringJobWorkflow.reconcile!(run, restored, broken), /原发现已缺失或改变/);
+  const source = next.config.clusteringJob.recall![0].attribution;
+  const original = await readRunState(source.run);
+  original.receipts[source.task_id].submissionId = randomUUID();
+  await writeRunState(source.run, original);
+  await assert.rejects(prepareClusteringJob([f.runs[1]], f.config), /原归因引用已缺失或改变|身份不一致/);
+});
+
 test("multi-run clustering pools dates per model without reading raw answers or modifying source runs", async () => {
   const f = await fixture();
   try {

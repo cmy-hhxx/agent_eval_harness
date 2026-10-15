@@ -16,9 +16,9 @@ test("multiple component and topic views preserve one defect identity", () => {
     result: { assignments: [{ item_id: "o1", new_class_key: "model" }, { item_id: "o2", new_class_key: "tool" }], merges: [],
       new_classes: [
         { key: "model", component: "模型自身推理", label: "来源误读", definition: "模型误读来源。", closest_existing: null, novelty: "首例。",
-          category_paths: [["事实可靠性", "溯源"]] },
+          category_paths: [["事实可靠性"]] },
         { key: "tool", component: "Search", label: "返回有误", definition: "返回存在缺陷。", closest_existing: null, novelty: "首例。",
-          category_paths: [["事实可靠性", "工具返回"]] },
+          category_paths: [["事实可靠性"]] },
       ] },
   });
   assert.equal(library.occurrences.length, 2, "all source responsibility associations remain stored");
@@ -27,7 +27,7 @@ test("multiple component and topic views preserve one defect identity", () => {
   const shared = topics.find(topic => topic.path.join("/") === "事实可靠性")!;
   assert.equal(shared.class_ids.length, 2);
   assert.equal(shared.occurrences, 1);
-  assert.equal(topics.find(topic => topic.path.join("/") === "事实可靠性/工具返回")!.occurrences, 1);
+  assert.equal(topics.length, 1);
   assert(projectLibrary(library).components.every(component => component.classes[0]!.occurrences === 1));
   assert(topics.every(topic => topic.occurrences === 1));
 });

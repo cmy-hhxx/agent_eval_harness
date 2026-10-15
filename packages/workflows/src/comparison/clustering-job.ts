@@ -1,15 +1,15 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { canonical, type PlannedTask, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
+import { canonical, type PlannedTask, type ProblemObservationRef, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader, locateRun, problemLibraryFile, readJson, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary, writeJson, atomicWrite } from "@eval/data";
-import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, normalizeLabel, problemSampleKey, projectLibrary, type ClusteringResult } from "@eval/agents/clustering";
+import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, normalizeLabel, problemSampleKey, projectLibrary, replacePendingObservations, type ClusteringResult } from "@eval/agents/clustering";
 import { readRunTasks } from "./run-data.js";
 import type { Checkpoint } from "./codec.js";
 import { groupObservations, requestItems } from "./observations.js";
 import { clusteringSlots } from "./commentary.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { clusteringJobStorage } from "./clustering-job-codec.js";
-import { clusteringJobItems, jobBatchIds, jobMaterial, jobObservations, type ClusteringJobConfig, type ClusteringJobMaterial, type ClusteringJobSource, type ClusteringJobTask } from "./clustering-job-types.js";
+import { allClusteringJobSources, clusteringJobItems, jobBatchIds, jobMaterial, jobObservations, type ClusteringJobConfig, type ClusteringJobMaterial, type ClusteringJobSource, type ClusteringJobTask } from "./clustering-job-types.js";
+import { planClusteringTasks, planDeferredRecall } from "./clustering-job-plan.js";
 import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
 import { recallProblemLibrary } from "./problem-library-recall.js";
 
@@ -53,23 +53,43 @@ export async function readClusteringJobSources(sources: ClusteringJobSource[]) {
   return states;
 }
 export async function loadClusteringJobInputs(config: ClusteringJobConfig): Promise<Record<string, unknown>> {
-  const states = await readClusteringJobSources(config.clusteringJob.sources), inputs: Record<string, unknown> = {};
+  const sources = allClusteringJobSources(config);
+  const states = await readClusteringJobSources(sources), inputs: Record<string, unknown> = {};
+  const primary = new Set(config.clusteringJob.sources.map(source => source.input_id));
+  const recalled = new Set((config.clusteringJob.recall ?? []).map(problemSampleKey));
+  for (const ref of config.clusteringJob.recall ?? []) {
+    const finding = (states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as AttributionResult)
+      .findings.find(item => item.finding_id === ref.finding_id);
+    if (finding?.type !== "problem" || canonical(finding.problem?.component ?? []) !== canonical(ref.components) ||
+        finding.assessment.evidence_status !== ref.evidence_status)
+      throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
+  }
   for (const model of [...new Set(config.clusteringJob.sources.map(source => source.model))].sort()) {
-    const observations = groupObservations(config.clusteringJob.sources.filter(source => source.model === model).map(source => ({
+    const pending: ProblemObservationRef[] = [];
+    const observations = groupObservations(sources.filter(source => source.model === model).map(source => {
+      const findings = (states.get(source.run)!.receipts[source.task_id].evaluation as AttributionResult).findings
+        .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, finding_id: finding.finding_id })));
+      for (const finding of findings) if (finding.type === "problem") pending.push({ version: model,
+        input_id: source.input_id, finding_id: finding.finding_id, batch_id: source.batch_id, case_id: source.case_id,
+        source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
+          submission_id: source.submission_id, evaluator_version: source.evaluator_version },
+        components: finding.problem?.component ?? [], evidence_status: finding.assessment.evidence_status,
+        importance: finding.importance, summary: finding.text });
+      return {
       input_id: source.input_id, case_id: source.case_id, batch_id: source.batch_id, source: source.source,
       attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
         submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-      findings: (states.get(source.run)!.receipts[source.task_id].evaluation as AttributionResult).findings,
-    })));
+      findings,
+    }; }));
     const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model)) ?? emptyLibrary(model);
     if (library.model !== model) throw new Error("问题库模型身份不一致：" + model);
-    inputs[model] = { observations, library: await recallProblemLibrary(library, config.output.path), config } satisfies ClusteringJobMaterial;
+    inputs[model] = { observations, pending, library: await recallProblemLibrary(library, config.output.path), config } satisfies ClusteringJobMaterial;
   }
   return inputs;
 }
 
 /** Freeze the latest accepted answer per model/date/case across the explicit source selection. */
-export async function prepareClusteringJob(runs: string[], base: EvalConfig, options: { inputIds?: string[] } = {}): Promise<{ config: ClusteringJobConfig; plan: TaskPlan }> {
+export async function prepareClusteringJob(runs: string[], base: EvalConfig, options: { inputIds?: string[]; assignmentOnly?: boolean } = {}): Promise<{ config: ClusteringJobConfig; plan: TaskPlan }> {
   const requested = options.inputIds && new Set(options.inputIds);
   if (requested && (!requested.size || options.inputIds!.some(id => !id.trim()))) throw new Error("聚类输入选择不能为空");
   if (requested && requested.size !== options.inputIds!.length) throw new Error("聚类输入选择包含重复 input_id");
@@ -112,41 +132,23 @@ export async function prepareClusteringJob(runs: string[], base: EvalConfig, opt
   if (new Set(sources.map(source => source.input_id)).size !== sources.length)
     throw new Error("跨 run 输入 UUID 对应多个不同案例，无法聚类");
   const config: ClusteringJobConfig = { ...base, comparisons: [],
-    inputs: { versions: [] }, clusteringJob: { runs: directories, sources } };
+    inputs: { versions: [] }, clusteringJob: { runs: directories, sources, ...(options.assignmentOnly ? { assignmentOnly: true } : {}) } };
+  const chosen = new Set(sources.map(source => source.input_id));
+  const recall: ProblemObservationRef[] = [];
+  for (const model of new Set(sources.map(source => source.model))) {
+    const library = await readProblemLibrary(problemLibraryFile(base.problemLibrary, model));
+    recall.push(...(library?.pending_observations ?? []).filter(ref => ref.components.length && !chosen.has(ref.input_id)));
+  }
+  config.clusteringJob.recall = recall;
   const inputs = await loadClusteringJobInputs(config), tasks: PlannedTask[] = [];
   for (const model of Object.keys(inputs)) {
     const material = jobMaterial(inputs, model);
-    const buckets = new Map<string, typeof material.observations>();
-    for (const item of material.observations) {
-      buckets.set(item.component, [...buckets.get(item.component) ?? [], item]);
-    }
-    const shards: string[][] = [];
-    for (const [, items] of [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      let itemIds: string[] = [], answers = new Set<string>();
-      for (const item of items) {
-        const combined = new Set([...answers, ...item.refs.map(ref => ref.input_id)]);
-        if (itemIds.length && combined.size > config.clustering.maxCasesPerTask) {
-          shards.push(itemIds); itemIds = []; answers = new Set();
-        }
-        itemIds.push(item.id);
-        item.refs.forEach(ref => answers.add(ref.input_id));
-      }
-      if (itemIds.length) shards.push(itemIds);
-    }
-    let previous: string | undefined;
-    for (const [index, itemIds] of [...shards, ...(shards.length > 1 ? [[]] : [])].entries()) {
-      const id = randomUUID();
-      const consolidate = index === shards.length ? { consolidate: true as const } : {};
-      tasks.push({ id, stage: "clustering", dependencies: previous ? { previous } : {}, inputIds: {},
-        data: { model, itemIds, ...consolidate } satisfies ClusteringJobTask });
-      if (config.rewrite.clustering) tasks.push({ id: randomUUID(), stage: "rewrite", dependencies: { source: id }, inputIds: {},
-        data: { model, itemIds, rewriteOf: id, ...consolidate } satisfies ClusteringJobTask });
-      previous = id;
-    }
+    tasks.push(...planClusteringTasks(model, material.observations, config));
   }
   return { config, plan: { tasks, inputs, summary: {
     runs: directories, attribution_answers: sources.length, excluded_attributions: excluded,
     out_of_scope_attributions: outsideScope, duplicate_answers: duplicates,
+    recalled_problems: recall.length, recalled_answers: new Set(recall.map(ref => ref.input_id)).size,
     models: Object.fromEntries(Object.keys(inputs).map(model => [model, {
       answers: sources.filter(source => source.model === model).length,
       observations: jobMaterial(inputs, model).observations.length,
@@ -182,13 +184,27 @@ async function syncJobLibrary(run: string, state: RunState, inputs: Record<strin
         const result = receipt.evaluation as ClusteringResult;
         library = applyClustering(library, { run_id: state.manifest.runId, run_path: run,
           evaluator_version: receipt.evaluatorVersion, task_id: task.id, submission_id: receipt.submissionId,
-          version: model, batch_id: "", observations, result });
+          version: model, batch_id: "", observations, result, replace_assignments: data.reclassify });
         const selected = new Set(result.assignments.filter(item => !item.deferred_reason).map(item => item.item_id));
         for (const ref of observations.filter(item => selected.has(item.id)).flatMap(item => item.refs)) assigned.add(problemSampleKey(ref));
       }
       const projection = projectLibrary(library), classes = projection.components.reduce((sum, component) => sum + component.classes.length, 0);
       if (classes > config.clustering.maxClassesPerModel || projection.components.length > config.clustering.maxComponentsPerModel)
         throw new Error("聚类作业问题库超过类或组件上限：" + model);
+      if (state.manifest.tasks.some(task => task.stage === "clustering" &&
+          (task.data as ClusteringJobTask).model === model && (task.data as ClusteringJobTask).reclassify && state.receipts[task.id])) {
+        const material = jobMaterial(inputs, model), processed = new Set(material.pending.map(problemSampleKey));
+        const active = new Set(effectiveProblemOccurrences(library).map(item => canonical([
+          item.input_id, item.finding_id, library.classes[item.class_id].component_id])));
+        const pending = [...(library.pending_observations ?? []).filter(ref => !processed.has(problemSampleKey(ref))),
+          ...material.pending.filter(ref => !ref.components.length || ref.components.some(label => {
+            const component = Object.values(library.components).find(item => [item.label, ...item.aliases]
+              .some(alias => normalizeLabel(alias) === normalizeLabel(label)));
+            return !component || !active.has(canonical([ref.input_id, ref.finding_id, component.id]));
+          }))];
+        if (canonical(pending) !== canonical(library.pending_observations ?? []))
+          library = replacePendingObservations(library, pending, { at: new Date().toISOString(), run });
+      }
       writes.push(async () => {
         if (library !== saved && state.manifest.tasks.some(task => task.stage === "clustering" &&
           (task.data as ClusteringJobTask).model === model && state.receipts[task.id])) await writeProblemLibrary(file, library);
@@ -239,9 +255,9 @@ export const clusteringJobWorkflow: WorkflowDefinition = {
     excludeEmptyClusteringRewrites(state);
     return { tasks: state.manifest.tasks, inputs, summary: state.manifest.preflight };
   },
-  advance(_task, _receipt, state) {
+  advance(task, _receipt, state, inputs) {
     excludeEmptyClusteringRewrites(state);
-    return { tasks: [] };
+    return { tasks: planDeferredRecall(task, state, inputs) };
   },
   bind(task, inputs, dependencies, context) {
     const data = task.data as ClusteringJobTask, material = jobMaterial(inputs, data.model);
@@ -253,6 +269,7 @@ export const clusteringJobWorkflow: WorkflowDefinition = {
       return bindRewriteItems(input);
     }
     const classes = material.library.components.reduce((sum, component) => sum + component.classes.length, 0);
+    const assignmentOnly = !!data.revisit || !!material.config.clusteringJob.assignmentOnly;
     const limits = material.config.clustering;
     const items = jobObservations(inputs, data);
     const known = new Set(material.library.components.flatMap(component => [component.label, ...component.aliases].map(normalizeLabel)));
@@ -263,12 +280,13 @@ export const clusteringJobWorkflow: WorkflowDefinition = {
       model: data.model, batch_ids: jobBatchIds(inputs, data),
       library, items: requestItems(items), budget: {
         active_classes: classes, max_classes: limits.maxClassesPerModel,
-        max_new_classes: data.consolidate ? 0 : Math.min(limits.maxNewClassesPerTask, Math.max(0, limits.maxClassesPerModel - classes)),
+        max_new_classes: data.consolidate || assignmentOnly ? 0 : Math.min(limits.maxNewClassesPerTask, Math.max(0, limits.maxClassesPerModel - classes)),
         active_components: material.library.components.length, max_components: limits.maxComponentsPerModel,
         max_new_components: Math.min(Math.max(0, limits.maxComponentsPerModel - material.library.components.length),
           new Set(items.map(item => normalizeLabel(item.component)).filter(component => !known.has(component))).size),
-        consolidate: !!data.consolidate || classes >= limits.consolidateAt ||
-          !context.tasks.some(next => next.stage === "clustering" && next.dependencies.previous === task.id),
+        consolidate: !assignmentOnly && (!!data.consolidate || classes >= limits.consolidateAt ||
+          !context.tasks.some(next => next.stage === "clustering" && next.dependencies.previous === task.id)),
+        ...(assignmentOnly ? { assignment_only: true } : {}),
         min_support: limits.minSupport,
       },
     } } };

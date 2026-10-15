@@ -17,18 +17,22 @@ export async function publishMongo(
     writeMongoPublication(collection, date, inputs, results, signal, config.inputsUnchanged));
 }
 
-/** Read case annotations only; model IDs and stored answers are not transformed or downloaded. */
+/** Oldest first: the last record per case supplies its current difficulty, with _id breaking time ties. */
 export async function readMongoLabels(config: MongoPublicationConfig, dates: string[], signal: AbortSignal): Promise<PublicationLabels[]> {
   if (!dates.length) return [];
   return withMongoPublication(config, signal, async (collection) => {
     const documents = await collection.find({ kind: "input", batchId: { $in: dates } }, {
       signal, timeoutMS: OPERATION_TIMEOUT_MS, timeoutMode: "iteration", batchSize: 500,
-      projection: { _id: 0, batchId: 1, "trace.case_id": 1, "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1 },
+      projection: { _id: 1, createdAt: 1, batchId: 1, "trace.case_id": 1, "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1 },
     }).toArray();
+    // A server sort blocks the first batch until all historical traces have been scanned.
+    for (const doc of documents) if (typeof doc._id !== "string" || !(doc.createdAt instanceof Date) || !Number.isFinite(doc.createdAt.getTime()))
+      throw new Error("Mongo label lacks a valid createdAt or record ID");
+    documents.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
     return documents.map((doc) => {
       const caseId = doc.trace?.case_id ?? doc.trace?.meta?.case_id;
       if (typeof doc.batchId !== "string" || typeof caseId !== "string" || !caseId) throw new Error("Mongo label lacks business identity");
-      return { batchId: doc.batchId, caseId, task: doc.trace?.meta?.task, difficulty: doc.trace?.meta?.difficulty };
+      return { batchId: doc.batchId, caseId, task: doc.trace?.meta?.task, difficulty: doc.trace?.meta?.difficulty ?? "" };
     });
   });
 }

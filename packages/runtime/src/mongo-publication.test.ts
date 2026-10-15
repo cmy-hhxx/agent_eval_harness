@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BSON, type Document } from "mongodb";
-import { writeMongoPublication } from "./mongo-publication.js";
+import { BSON, MongoClient, type Document } from "mongodb";
+import { readMongoLabels, writeMongoPublication } from "./mongo-publication.js";
 import type { PublicationInput, PublicationResult } from "@eval/contracts";
 
 async function* rows<T>(items: T[]) { yield* items; }
@@ -35,6 +35,40 @@ function fakeCollection(seed: Document[] = []) {
   } as unknown as Parameters<typeof writeMongoPublication>[0];
   return { docs, collection, writes: () => writes, failOnce: () => { failNext = true; } };
 }
+
+test("Mongo labels read oldest to newest with a stable tie break and preserve an empty latest difficulty", async (t) => {
+  const documents = [
+    { _id: "input:c", createdAt: new Date(2000), difficulty: "复杂" },
+    { _id: "input:a", createdAt: new Date(1000), difficulty: "简单" },
+    { _id: "input:b", createdAt: new Date(2000), difficulty: "中等" },
+    { _id: "input:d", createdAt: new Date(3000), difficulty: undefined },
+  ];
+  const signal = AbortSignal.timeout(5000);
+  t.mock.method(MongoClient.prototype, "connect", async function (this: MongoClient) { return this; });
+  t.mock.method(MongoClient.prototype, "close", async () => {});
+  t.mock.method(MongoClient.prototype, "db", () => ({
+    listCollections: () => ({ hasNext: async () => true }),
+    collection: () => ({
+      find(query: Document, options: Document) {
+        assert.deepEqual(query, { kind: "input", batchId: { $in: [date] } });
+        assert.equal(options.sort, undefined, "do not block the first cursor batch on a full-history server sort");
+        assert.equal(options.signal, signal);
+        assert.equal(options.timeoutMode, "iteration");
+        assert.deepEqual(options.projection, { _id: 1, createdAt: 1, batchId: 1, "trace.case_id": 1,
+          "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1 });
+        return { toArray: async () => documents.map(doc => ({ _id: doc._id, createdAt: doc.createdAt,
+          batchId: date, trace: { case_id: "one", meta: { task: "分类", difficulty: doc.difficulty } } })) };
+      },
+    }),
+  }));
+  const config = { uri: "mongodb://localhost", database: "test", collection: "inputs" };
+  const expected = ["简单", "中等", "复杂", ""].map(difficulty => ({ batchId: date, caseId: "one", task: "分类", difficulty }));
+  assert.deepEqual(await readMongoLabels(config, [date], signal), expected);
+  documents.reverse();
+  assert.deepEqual(await readMongoLabels(config, [date], signal), expected);
+  documents[0].createdAt = new Date(NaN);
+  await assert.rejects(readMongoLabels(config, [date], signal), /valid createdAt/);
+});
 
 test("Mongo publication reuses business identity, preserves B/source fields and is idempotent after partial writes", async () => {
   const db = fakeCollection(); db.failOnce();

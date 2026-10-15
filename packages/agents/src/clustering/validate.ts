@@ -25,6 +25,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const errors: ValidationIssue[] = [];
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
     errors.push({ category: "decision", code, path, message, actual, expected });
+  if (input.budget.assignment_only && (value.new_classes.length || value.merges.length || value.class_updates?.length))
+    issue("clustering_directory_frozen", "/", "回捞只允许归入现有类或保留待观察，不能新建、合并或修改目录。");
 
   const items = new Map(input.items.map((item) => [item.id, item]));
   const classes = input.library.components.flatMap((component) => component.classes);
@@ -102,6 +104,12 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     const paths = explicit ?? unionCategoryPaths(...[into, ...from].map(id => classes.find(item => item.id === id)?.category_paths));
     if (paths.length > 1) issue("clustering_merge_category_budget", `/merges/${index}`,
       "合并后只能保留一条主要主题路径；请在 class_updates 中明确整理 into 类的 category_paths。", paths);
+  }
+  if (input.budget.consolidate) for (const problem of classes.filter(problem => !fromIds.has(problem.id))) {
+    const paths = value.class_updates?.find(update => update.class_id === problem.id)?.category_paths ?? problem.category_paths;
+    if (paths?.length !== 1 || paths[0].length !== 1)
+      issue("clustering_direction_missing", "/class_updates",
+        "全目录整理须为每个保留类指定一个问题方向；请用 class_updates.category_paths 填写一条一级路径。", problem.id);
   }
 
   const assigned = new Set<string>();

@@ -10,6 +10,7 @@ import {
 } from "./library.js";
 import { ValidationError } from "@eval/contracts";
 import type { ClusteringResult } from "./types.js";
+import { effectiveProblemOccurrences } from "./occurrence-review.js";
 
 const observation = (id: string, component: string, label: string, inputId: string): ClusteringObservation => ({
   id,
@@ -62,6 +63,33 @@ const topicLibrary = () => applyClustering(emptyLibrary("model"), receipt([], { 
   { key: "n1", component: "模型自身推理", label: "现象一", definition: "原定义。", closest_existing: null, novelty: "首例", category_paths: [["有效主题"]] },
   { key: "n2", component: "模型自身推理", label: "现象二", definition: "近义定义。", closest_existing: null, novelty: "首例", category_paths: [["其他主题"]] },
 ] }));
+
+test("reclassification supersedes one component, retains history, and survives old receipt replay and merges", () => {
+  let library = topicLibrary();
+  const [first, second] = Object.keys(library.classes);
+  const items = [observation("o1", "模型自身推理", "时间字段错误", "answer")];
+  const assign = (submission_id: string, class_id?: string): ApplyClusteringInput => ({
+    ...receipt(items, { assignments: [{ item_id: "o1", ...(class_id ? { class_id } : { deferred_reason: "无适用类" }) }],
+      new_classes: [], merges: [] }), submission_id, replace_assignments: true,
+  });
+  const original = assign("original", first), revised = assign("revised", second);
+  library = applyClustering(library, original);
+  const before = structuredClone(library.occurrences);
+  library = applyClustering(library, revised);
+  assert.deepEqual(library.occurrences.slice(0, 1), before);
+  assert.equal(library.occurrences.length, 2);
+  assert.deepEqual(effectiveProblemOccurrences(library).map(o => o.class_id), [second]);
+  assert.strictEqual(applyClustering(library, original), library, "replay cannot restore the superseded class");
+  library = applyClustering(library, assign("deferred"));
+  assert.equal(effectiveProblemOccurrences(library).length, 0);
+  library = applyClustering(library, assign("recalled", second));
+  assert.equal(effectiveProblemOccurrences(library).length, 1);
+  library = applyClustering(library, { ...receipt([], { assignments: [], new_classes: [],
+    merges: [{ into: first!, from: [second!], reason: "同类合并" }],
+    class_updates: [{ class_id: first!, category_paths: [["时间错误"]], reason: "统一方向" }] }), submission_id: "merge" });
+  assert.deepEqual(effectiveProblemOccurrences(library).map(o => o.class_id), [first]);
+  assert.strictEqual(applyClustering(library, revised), library);
+});
 
 test("clustering creates components and classes and keeps occurrence lineage", () => {
   let library = emptyLibrary("a_fast");
@@ -261,11 +289,11 @@ test("a merged label resolves to the surviving class instead of creating a dupli
 test("directory updates preserve UUID, source samples and an idempotent before/after audit", () => {
   const original = applyClustering(emptyLibrary("a_fast"), receipt([observation("o1", "模型自身推理", "旧标签", "in-1")], {
     assignments: [{ item_id: "o1", new_class_key: "new" }],
-    new_classes: [{ key: "new", component: "模型自身推理", label: "旧标签", definition: "旧定义", closest_existing: null, novelty: "首例", category_paths: [["可靠性", "引用"]] }], merges: [],
+    new_classes: [{ key: "new", component: "模型自身推理", label: "旧标签", definition: "旧定义", closest_existing: null, novelty: "首例", category_paths: [["引用可靠性"]] }], merges: [],
   }));
   const id = Object.keys(original.classes)[0]!, before = structuredClone(original), occurrence = original.occurrences[0]!;
   const update = receipt([], { assignments: [], new_classes: [], merges: [],
-    class_updates: [{ class_id: id, label: "引用无法解析", definition: "依据真实来源标识判断映射，来源支持主张另行核查。", category_paths: [["来源溯源", "映射"]], reason: "调用次数不能证明来源编号错误。" }] });
+    class_updates: [{ class_id: id, label: "引用无法解析", definition: "依据真实来源标识判断映射，来源支持主张另行核查。", category_paths: [["来源溯源"]], reason: "调用次数不能证明来源编号错误。" }] });
   update.submission_id = "maintenance-1";
   const changed = applyClustering(original, update), problem = changed.classes[id]!;
   assert.deepEqual(original, before, "copy-on-write preserves the input directory");
@@ -274,7 +302,7 @@ test("directory updates preserve UUID, source samples and an idempotent before/a
   assert.deepEqual(changed.occurrences[0], occurrence);
   assert(problem.aliases.includes("旧标签"));
   const event = changed.events.find(event => event.type === "class_updated")!;
-  assert.deepEqual(event.detail.before, { label: "旧标签", definition: "旧定义", category_paths: [["可靠性", "引用"]] });
+  assert.deepEqual(event.detail.before, { label: "旧标签", definition: "旧定义", category_paths: [["引用可靠性"]] });
   assert.equal((event.detail.after as { definition: string }).definition, problem.definition);
   assert.equal(event.detail.reason, "调用次数不能证明来源编号错误。");
   assert.equal(applyClustering(changed, update), changed);
@@ -409,7 +437,7 @@ test("An already applied update cannot bypass the primary path budget during a n
   library.events.push({ id: "old-maintenance", type: "class_updated", at: replay.at!,
     detail: { submission_id: replay.submission_id, class_id: keep!.id } });
   const before = structuredClone(library);
-  assert.throws(() => applyClustering(library, replay), /只能保留一条主要主题路径/);
+  assert.throws(() => applyClustering(library, replay), /只能保留一个问题方向/);
   assert.deepEqual(library, before);
   replay.submission_id = "new-maintenance";
   replay.result.class_updates = [{ class_id: keep!.id, category_paths: [["有效主题"]], reason: "统一合并后的主要路径。" }];

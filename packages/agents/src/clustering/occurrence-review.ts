@@ -91,15 +91,39 @@ function reviewDetail(library: ProblemLibrary, event: ProblemEvent): ProblemOccu
 /** The immutable accepted rows remain present; withdrawals affect only the current view. */
 export function effectiveProblemOccurrences(library: ProblemLibrary): ProblemOccurrence[] {
   const rejected = new Set<string>();
+  const latest = new Map<string, string | null>();
+  const byId = new Map(library.occurrences.map(item => [item.id, item]));
   const reviewIds = new Set<string>();
   for (const event of library.events) {
+    if (event.type === "assignments_replaced") {
+      const targets = event.detail.targets;
+      if (!Array.isArray(targets) || typeof event.detail.submission_id !== "string")
+        fail("重新归类事件损坏：" + event.id);
+      for (const target of targets) {
+        if (!target || typeof target !== "object" || Array.isArray(target) ||
+          typeof target.input_id !== "string" || typeof target.finding_id !== "string" ||
+          typeof target.component_id !== "string" || !library.components[target.component_id] ||
+          (target.occurrence_id !== null && typeof target.occurrence_id !== "string")) fail("重新归类目标损坏：" + event.id);
+        const association = { input_id: target.input_id, finding_id: target.finding_id, component_id: target.component_id };
+        const key = problemAssociationKey(association);
+        if (target.occurrence_id !== null) {
+          const occurrence = byId.get(target.occurrence_id);
+          if (!occurrence || problemAssociationKey(problemAssociation(library, occurrence)) !== key)
+            fail("重新归类目标改变了问题身份或责任组件：" + event.id);
+        }
+        latest.set(key, target.occurrence_id);
+      }
+    }
     if (event.type !== "occurrence_rejected") continue;
     if (reviewIds.has(event.id)) fail("问题样本复核事件 UUID 重复：" + event.id);
     reviewIds.add(event.id);
     for (const target of reviewDetail(library, event).targets) rejected.add(problemAssociationKey(target.association));
   }
-  return rejected.size
-    ? library.occurrences.filter(item => !rejected.has(problemAssociationKey(problemAssociation(library, item))))
+  return rejected.size || latest.size
+    ? library.occurrences.filter(item => {
+      const key = problemAssociationKey(problemAssociation(library, item));
+      return !rejected.has(key) && (!latest.has(key) || latest.get(key) === item.id);
+    })
     : library.occurrences;
 }
 

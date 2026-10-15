@@ -2,6 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyUsage, type PlannedTask, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { clusteringJobWorkflow } from "./clustering-job.js";
+import { planClusteringTasks, planDeferredRecall } from "./clustering-job-plan.js";
+import type { ClusteringJobConfig, ClusteringJobMaterial } from "./clustering-job-types.js";
+import type { ClusteringObservation } from "@eval/agents/clustering";
+
+test("directory completion recalls only deferred observations once, without creating classes or attribution work", () => {
+  const config = { clusteringJob: { sources: [] }, clustering: { maxCasesPerTask: 1 },
+    rewrite: { clustering: false } } as unknown as ClusteringJobConfig;
+  const observations = ["a", "b"].map(id => ({ id, component: "模型自身推理", refs: [{ input_id: id }] })) as ClusteringObservation[];
+  const tasks = planClusteringTasks("model", observations, config);
+  const state = { manifest: { tasks }, receipts: Object.fromEntries(tasks.slice(0, 2).map((t, i) =>
+    [t.id, { evaluation: { assignments: [{ item_id: observations[i]!.id,
+      ...(i ? { class_id: "class" } : { deferred_reason: "首批没有适用类" }) }] } }])) } as unknown as RunState;
+  const inputs = { model: { config, observations } as ClusteringJobMaterial };
+  const final = tasks.at(-1)!;
+  const recall = planDeferredRecall(final, state, inputs);
+  assert.equal(recall.length, 1);
+  assert.deepEqual(recall[0]!.data, { model: "model", itemIds: ["a"], reclassify: true, revisit: true });
+  assert.deepEqual(recall[0]!.dependencies, { previous: final.id });
+  state.manifest.tasks.push(...recall);
+  assert.deepEqual(planDeferredRecall(final, state, inputs), []);
+  assert.deepEqual(planDeferredRecall(recall[0]!, state, inputs), []);
+  assert(planClusteringTasks("model", observations, { ...config, clusteringJob: { sources: [], runs: [], assignmentOnly: true } })
+    .every(t => t.stage === "clustering" && !(t.data as { consolidate?: true }).consolidate));
+});
 
 function fixture(frozen: boolean): RunState {
   const source = (id: string): PlannedTask => ({ id, stage: "clustering", inputIds: {}, dependencies: {},

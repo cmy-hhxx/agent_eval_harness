@@ -47,17 +47,23 @@ export function resolveSubmission(request: AgentRequest, draft: unknown): Cluste
     .filter(entry => entry.id === componentIds.get(normalizeLabel(component)))
     .flatMap(entry => entry.classes.map(({ id, label }) => ({ id, label, component: entry.label })));
   const result: ClusteringResult = {
-    assignments: value.assignments.map(({ new_class_index, ...entry }, index) => {
+    assignments: value.assignments.map(({ new_class_index, class_label, ...entry }, index) => {
       if (new_class_index !== undefined && new_class_index >= value.new_classes.length)
         errors.push({ category: "decision", code: "clustering_new_class_index", path: `/assignments/${index}/new_class_index`,
           message: "请选择本次 new_classes 数组中实际存在的位置，位置从 0 开始。", actual: new_class_index,
           expected: { available_new_classes: value.new_classes.map(({ component, label }, index) => ({ index, component, label })) } });
+      const itemId = resolve(entry.item_id, refs.itemIds, `/assignments/${index}/item_id`);
+      const item = input.items.find(item => item.id === itemId);
+      const choices = item ? classChoices(item.component) : [];
+      const selected = class_label === undefined ? undefined : choices.find(choice => choice.label === class_label);
+      if (class_label !== undefined && !selected)
+        errors.push({ category: "decision", code: "clustering_class_label_unknown", path: `/assignments/${index}/class_label`,
+          message: "请选择当前观察所属组件中的完整类名；没有适用类时新建或说明待观察原因，不猜测编号或相近名称。",
+          actual: class_label, expected: choices.map(choice => choice.label) });
       return {
         ...entry,
-        item_id: resolve(entry.item_id, refs.itemIds, `/assignments/${index}/item_id`),
-        ...(entry.class_id === undefined ? {} : {
-          class_id: resolve(entry.class_id, refs.classIds, `/assignments/${index}/class_id`),
-        }),
+        item_id: itemId,
+        ...(selected === undefined ? {} : { class_id: selected.id }),
         ...(new_class_index === undefined ? {} : { new_class_key: newClassKey(new_class_index) }),
       };
     }),

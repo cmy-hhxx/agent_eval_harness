@@ -14,8 +14,8 @@ export function categoryPathIssues(paths: string[][] | undefined, location: stri
   if (!paths.length) errors.push({ category: "decision", code: "clustering_primary_category_missing",
     path: location, message: "明确填写主题路径时必须保留一条主要路径，不能清空。", actual: paths });
   for (const [index, path] of paths.entries()) {
-    if (path.length < 1 || path.length > 3) errors.push({ category: "decision", code: "clustering_category_depth",
-      path: `${location}/${index}`, message: "主要主题路径须包含一至三级。", actual: path });
+    if (path.length !== 1) errors.push({ category: "decision", code: "clustering_category_depth",
+      path: `${location}/${index}`, message: "责任组件与具体问题之间只保留一个问题方向；路径须恰好一级。", actual: path });
     for (const [levelIndex, segment] of path.entries())
       if (invalidCategoryCharacters.test(segment)) errors.push({ category: "decision", code: "clustering_category_characters",
         path: `${location}/${index}/${levelIndex}`, message: categorySegmentRule, actual: segment,
@@ -30,7 +30,7 @@ export function categoryPathIssues(paths: string[][] | undefined, location: stri
     seen.add(key);
   }
   if (paths.length > 1) errors.push({ category: "decision", code: "clustering_category_budget",
-    path: location, message: "每个问题类只能保留一条主要主题路径，最多三级。", actual: paths });
+    path: location, message: "每个问题类只能保留一个问题方向，填写一条一级路径。", actual: paths });
   return errors;
 }
 
@@ -48,8 +48,9 @@ export function unionCategoryPaths(...groups: (string[][] | undefined)[]): strin
 export function temporaryReferenceInDescription(text: string, available: Set<string>): string | undefined {
   const contexts = [
     /(?:问题类|类编号|观察编号|组件编号|回答编号|class_id|item_id|answer_id|closest_existing)\s*[:：=]?\s*["'（(]?([OCPA][1-9]\d*)\b/gu,
-    /[（(]([OCPA][1-9]\d*)[）)]\s*(?:等)?(?:问题|类|观察|组件|回答)/gu,
+    /[（(]\s*([OCPA][1-9]\d*)\s*[）)]/gu,
     /(?:不同于|区别于|与)\s*([OCPA][1-9]\d*)\s*(?:问题类|类|回答)/gu,
+    /(?:归入|归到|归|转入|参见)\s*["'（(]?([OCPA][1-9]\d*)\b/gu,
   ];
   for (const expression of contexts) for (const match of text.matchAll(expression))
     if (available.has(match[1]!) && !/(?:型号|牌号|货号|代码|错误码|代号)\s*$/u.test(text.slice(0, match.index))) return match[1];

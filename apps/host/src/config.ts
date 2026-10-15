@@ -33,7 +33,7 @@ const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   maxComponentsPerModel: 12,
   consolidateAt: 30,
   minSupport: 3,
-  maxCasesPerTask: 100,
+  maxCasesPerTask: 30,
 };
 type ConfigObject = Record<string, unknown>;
 

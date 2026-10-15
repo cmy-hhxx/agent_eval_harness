@@ -132,6 +132,8 @@ export interface ApplyClusteringInput {
   run_path?: string;
   observations: ClusteringObservation[];
   result: ClusteringResult;
+  /** Replace this finding's current class within its original component, retaining history. */
+  replace_assignments?: boolean;
   at?: string;
 }
 
@@ -151,6 +153,8 @@ function originFor(input: ApplyClusteringInput, ref: ClusteringObservationRef | 
  * then occurrences; idempotent by component + class label/alias and `(class, input, finding)`.
  */
 export function applyClustering(library: ProblemLibrary, input: ApplyClusteringInput): ProblemLibrary {
+  if (input.replace_assignments && library.events.some(event => event.type === "assignments_replaced" &&
+    event.detail.submission_id === input.submission_id)) return library;
   const at = input.at ?? new Date().toISOString();
   const next: ProblemLibrary = {
     ...library,
@@ -329,6 +333,27 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         at,
       });
     }
+  }
+  if (input.replace_assignments) {
+    const targets: JsonObject[] = [];
+    for (const assignment of input.result.assignments) {
+      const observation = observations.get(assignment.item_id);
+      if (!observation) throw new Error("重新归类缺少原观察：" + assignment.item_id);
+      const component = Object.values(next.components).find(item => matchesLabel(item, observation.component));
+      const problem = assignment.class_id ? resolveActiveClass(next, assignment.class_id) :
+        assignment.new_class_key ? createdClasses.get(assignment.new_class_key)?.problem : undefined;
+      if (problem && problem.component_id !== component?.id) throw new Error("重新归类不能改变责任组件");
+      if (!component) continue; // An unclassified component has no previous class to supersede.
+      for (const ref of observation.refs) {
+        const occurrence = problem && next.occurrences.find(item => item.class_id === problem.id &&
+          item.input_id === ref.input_id && item.finding_id === ref.finding_id);
+        if (problem && !occurrence) throw new Error("重新归类缺少已保存的样本关联");
+        targets.push({ input_id: ref.input_id, finding_id: ref.finding_id, component_id: component.id,
+          occurrence_id: occurrence ? occurrence.id : null });
+      }
+    }
+    event("assignments_replaced", { run_id: input.run_id, task_id: input.task_id,
+      submission_id: input.submission_id, targets, ...(input.run_path ? { run: input.run_path } : {}) });
   }
   if (!changed) return library;
   next.updated_at = at;

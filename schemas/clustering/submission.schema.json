@@ -21,9 +21,10 @@
             "type": "string",
             "pattern": "^O[1-9][0-9]*$"
           },
-          "class_id": {
+          "class_label": {
             "type": "string",
-            "pattern": "^C[1-9][0-9]*$"
+            "minLength": 1,
+            "maxLength": 80
           },
           "new_class_index": {
             "type": "integer",
@@ -38,7 +39,7 @@
         "oneOf": [
           {
             "required": [
-              "class_id"
+              "class_label"
             ]
           },
           {
@@ -98,7 +99,7 @@
             "items": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 1,
               "uniqueItems": true,
               "items": {
                 "type": "string",
@@ -172,7 +173,7 @@
             "items": {
               "type": "array",
               "minItems": 1,
-              "maxItems": 3,
+              "maxItems": 1,
               "uniqueItems": true,
               "items": {
                 "type": "string",

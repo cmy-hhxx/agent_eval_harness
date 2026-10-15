@@ -90,7 +90,6 @@ export class PublicationStatistics {
   private readonly inputs = new Map<string, InputSummary>();
   private readonly pairs = new Map<string, Pair>();
   private readonly labels = new Map<string, Pick<PublicationLabels, "task" | "difficulty">>();
-  private readonly conflictingDifficulties = new Set<string>();
   private readonly matchups: string[][] = [];
   private readonly batchMatchups = new Map<string, string[][]>();
   private readonly correctness = new Map<string, boolean | null>();
@@ -108,30 +107,22 @@ export class PublicationStatistics {
   private pairsForBatch(batchId: unknown): string[][] {
     return this.batchMatchups.get(String(batchId)) ?? this.matchups;
   }
-  get labelConflicts(): { batchId: string; caseId: string; fields: string[] }[] {
-    return [...this.conflictingDifficulties].map(key => {
-      const [batchId, caseId] = JSON.parse(key) as [string, string];
-      return { batchId, caseId, fields: ["difficulty"] };
-    });
-  }
+  /** Apply Mongo labels after local inputs, in ascending createdAt / _id order. */
   addLabels({ batchId, caseId, task, difficulty }: PublicationLabels) {
     const key = JSON.stringify([batchId, caseId]), existing = this.labels.get(key) ?? {};
-    const values = { task: text(task), difficulty: text(difficulty) };
-    for (const field of ["task", "difficulty"] as const) {
-      const value = values[field];
-      if (!value || value === "未分类" || value === "未分层") continue;
-      if (existing[field] && existing[field] !== value) {
-        if (field === "task") throw new Error(`Conflicting statistics task labels: ${key}`);
-        this.conflictingDifficulties.add(key);
-      }
-      existing[field] = value;
+    const value = text(task);
+    if (value && value !== "未分类" && value !== "未分层") {
+      if (existing.task && existing.task !== value) throw new Error(`Conflicting statistics task labels: ${key}`);
+      existing.task = value;
     }
+    if (difficulty !== undefined) existing.difficulty = text(difficulty);
     this.labels.set(key, existing);
   }
   addInput({ versionId, trace }: PublicationInput) {
     const meta = object(trace.meta ?? {}), caseId = JSON.stringify([trace.batch_id, trace.case_id]);
-    this.addLabels({ batchId: text(trace.batch_id), caseId: text(trace.case_id), task: text(meta.task), difficulty: text(meta.difficulty) });
     const difficulty = text(meta.difficulty);
+    this.addLabels({ batchId: text(trace.batch_id), caseId: text(trace.case_id), task: text(meta.task),
+      ...(difficulty ? { difficulty } : {}) });
     this.inputs.set(JSON.stringify([caseId, versionId]), { caseId, date: requestDate(text(trace.request_time)), batchDate: requestDate(text(trace.batch_id)), id: versionId, name: text(trace.version),
       task: text(meta.task) || "未分类", difficulty: levels.some((level) => level[1] === difficulty) ? difficulty : "未分层",
       meta: { first_token_time_cost: meta.first_token_time_cost, finish_answer_time_cost: meta.finish_answer_time_cost, usage: meta.usage },
@@ -186,7 +177,7 @@ export class PublicationStatistics {
       row.date = dates.get(row.caseId) ?? row.batchDate;
       const labels = this.labels.get(row.caseId);
       row.task = labels?.task || "未分类";
-      row.difficulty = !this.conflictingDifficulties.has(row.caseId) && levels.some((level) => level[1] === labels?.difficulty)
+      row.difficulty = levels.some((level) => level[1] === labels?.difficulty)
         ? labels!.difficulty! : "未分层";
     }
     if (throughDate) rows = rows.filter((row) => row.date && row.date <= throughDate);

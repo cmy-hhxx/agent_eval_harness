@@ -58,7 +58,7 @@ async function fixture(peer = false) {
   const result: ClusteringResult = {
     assignments: observations.map(item => ({ item_id: item.id, new_class_key: "n" })),
     new_classes: [{ key: "n", component: "模型自身推理", label: "算术错误", definition: "计算与事实不符。",
-      closest_existing: null, novelty: "首次出现。", category_paths: [["可靠性", "数值"]] }],
+      closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
     merges: [],
   };
   receipts[cluster.id] = receipt(cluster.id, result);

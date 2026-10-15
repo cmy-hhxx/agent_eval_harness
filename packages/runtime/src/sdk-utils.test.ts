@@ -109,7 +109,7 @@ const submissions = {
   } satisfies ComparisonSubmission,
   rewrite: { rewrites: [{ id: "summary", text: "双方均完成核心要求。" }] },
   clustering: {
-    assignments: [{ item_id: "O1", class_id: "C1" }, { item_id: "O2", new_class_index: 0 }],
+    assignments: [{ item_id: "O1", class_label: "算术错误" }, { item_id: "O2", new_class_index: 0 }],
     new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。", category_paths: [["数值可靠性"]] }],
     merges: [],
   } satisfies ClusteringSubmission,

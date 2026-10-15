@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r215",
+  "evaluatorVersion": "r224",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -79,7 +79,7 @@
     "maxComponentsPerModel": 12,
     "consolidateAt": 30,
     "minSupport": 3,
-    "maxCasesPerTask": 100
+    "maxCasesPerTask": 30
   },
   "models": {
     "judge": {

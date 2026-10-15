@@ -12,7 +12,7 @@ import { loadRunInputs, readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
 import type { AttributionResult, Candidate, EvalConfig, RawInput, TaskData } from "./types.js";
 import { clusteringJobStorage, loadClusteringJobInputs, readClusteringJobSources } from "./clustering-job.js";
-import { clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
+import { allClusteringJobSources, clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
 
 export interface ProblemOccurrenceReviewResult {
   review_id: string;
@@ -90,12 +90,12 @@ async function jobOrigin(state: RunState, taskId: string) {
   const config = state.manifest.config as ClusteringJobConfig;
   const task = state.manifest.tasks.find(task => task.id === taskId);
   if (!task || !state.receipts[taskId]) fail("独立聚类来源收据缺失");
-  const sources = await readClusteringJobSources(config.clusteringJob.sources);
+  const sources = await readClusteringJobSources(allClusteringJobSources(config));
   const observations = jobObservations(await loadClusteringJobInputs(config), task.data as ClusteringJobTask);
   return { sources, observations, binding: {
     task, submission_id: state.receipts[taskId].submissionId, evaluation: state.receipts[taskId].evaluation,
     items: state.receipts[taskId].exported?.row.items,
-    sources: config.clusteringJob.sources.map(source => {
+    sources: allClusteringJobSources(config).map(source => {
       const original = sources.get(source.run)!;
       return { source, task: original.manifest.tasks.find(task => task.id === source.task_id),
         receipt: original.receipts[source.task_id], catalog: original.manifest.inputCatalog };
@@ -150,7 +150,7 @@ export async function reviewProblemOccurrences(
     const attributionTask = sourceState?.manifest.tasks.find(task => task.id === attributionTaskId);
     const attribution = attributionTaskId ? sourceState?.receipts[attributionTaskId] : undefined;
     const owner = (attributionTask?.data as TaskData | undefined)?.candidates.A;
-    const scopeCase = independent ? (state.manifest.config as ClusteringJobConfig).clusteringJob.sources.find(source =>
+    const scopeCase = independent ? allClusteringJobSources(state.manifest.config as ClusteringJobConfig).find(source =>
       source.input_id === occurrence.input_id && source.task_id === attributionTaskId &&
       canonical({ run: source.run, run_id: source.run_id, task_id: source.task_id,
         submission_id: source.submission_id, evaluator_version: source.evaluator_version }) === canonical(occurrence.attribution))

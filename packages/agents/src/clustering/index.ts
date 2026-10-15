@@ -29,11 +29,11 @@ export const clusteringProfile: AgentProfile = {
   validationIssueContext(_request, _draft, issue) {
     if (!["schema_type", "schema_pattern", "clustering_category_characters"].includes(issue.code) || !/^\/(?:new_classes|class_updates)\/\d+\/category_paths(?:\/\d+){0,2}$/.test(issue.path)) return undefined;
     return {
-      category_paths_example: [["主题", "子主题", "具体方面"]],
+      category_paths_example: [["指令遵循"]],
       ...(["schema_pattern", "clustering_category_characters"].includes(issue.code) ? {
         category_paths_rule: categorySegmentRule, category_paths_action: categorySegmentAction,
       } : {}),
-      ...(issue.code === "schema_type" ? { category_paths_rule: "category_paths 是路径数组；每条路径也是数组，每级直接填写字符串，不使用 item 对象或其他包装。每类只保留一条主要路径，最多三级。" } : {}),
+      ...(issue.code === "schema_type" ? { category_paths_rule: "category_paths 填写一个问题方向，形如 [[\"指令遵循\"]]；直接填写字符串，不使用 item 对象或其他包装，不重复组件和具体问题。" } : {}),
     };
   },
   toolNames: [],

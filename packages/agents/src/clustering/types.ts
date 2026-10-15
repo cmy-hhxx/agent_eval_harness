@@ -10,6 +10,8 @@ export interface ClusteringBudget {
   max_new_components: number;
   consolidate: boolean;
   min_support: number;
+  /** Revisit deferred items against a settled directory without changing that directory. */
+  assignment_only?: boolean;
 }
 export interface ClusteringExample {
   finding: string;
@@ -40,7 +42,7 @@ export interface ClusteringRequest {
   items: ClusteringItem[];
 }
 export interface ClusteringAssignment {
-  /** Resolved identities; the model submits request-local O/C references instead. */
+  /** Resolved identities; the model submits an O reference and the current class name. */
   item_id: string;
   class_id?: string;
   new_class_key?: string;
@@ -80,7 +82,9 @@ export interface ClusteringResult {
 
 /** Request-local model choices; generated new-class keys belong to the resolved result. */
 export interface ClusteringSubmission {
-  assignments: Array<Omit<ClusteringAssignment, "new_class_key"> & {
+  assignments: Array<Omit<ClusteringAssignment, "new_class_key" | "class_id"> & {
+    /** Exact current label in the observation's original component. */
+    class_label?: string;
     /** Zero-based position in this submission's new_classes array. */
     new_class_index?: number;
   }>;

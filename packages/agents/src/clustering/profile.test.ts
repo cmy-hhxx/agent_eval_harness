@@ -11,6 +11,37 @@ const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: []
 const request = () => structuredClone(example.request) as unknown as AgentRequest;
 const requestInput = (value: AgentRequest) => value.input as unknown as ClusteringRequest;
 const result = () => structuredClone(example.result) as unknown as ClusteringResult;
+
+test("assignment selects the exact class name within its component, independent of directory numbering", () => {
+  const bound = request(), input = requestInput(bound), component = input.library.components[0]!;
+  input.items = [input.items[0]!];
+  const wanted = component.classes[0]!;
+  component.classes.unshift({ ...wanted, id: "unrelated", label: "未知用户风险画像" });
+  input.library.components.push({ ...component, id: "other-component", label: "另一个工具", aliases: [],
+    classes: [{ ...wanted, id: "same-label-other-component" }] });
+  const draft = { assignments: [{ item_id: "O1", class_label: wanted.label }], new_classes: [], merges: [] };
+  const resolve = () => clusteringProfile.resolve!(bound, draft, audit) as ClusteringResult;
+  assert.deepEqual(resolve().assignments, [{ item_id: input.items[0]!.id, class_id: wanted.id }]);
+  component.classes.reverse();
+  assert.deepEqual(resolve().assignments, [{ item_id: input.items[0]!.id, class_id: wanted.id }]);
+  draft.assignments[0]!.class_label = "目录中没有这个类";
+  assert.throws(resolve, error => {
+    assert(error instanceof ValidationError);
+    assert.equal(error.issues?.[0]?.path, "/assignments/0/class_label");
+    assert.deepEqual(error.issues?.[0]?.expected, component.classes.map(c => c.label));
+    return true;
+  });
+});
+
+test("assignment-only recall cannot change the directory", () => {
+  const bound = request(); requestInput(bound).budget.assignment_only = true;
+  assert.throws(() => clusteringProfile.validate!(bound, result(), audit), /回捞只允许/);
+  const empty = request(); requestInput(empty).items = []; requestInput(empty).budget.assignment_only = true;
+  const id = requestInput(empty).library.components[0]!.classes[0]!.id;
+  assert.throws(() => clusteringProfile.validate!(empty, { assignments: [], new_classes: [], merges: [],
+    class_updates: [{ class_id: id, definition: "扩大范围。", reason: "尝试改目录" }] }, audit), /回捞只允许/);
+  assert.doesNotThrow(() => clusteringProfile.validate!(empty, { assignments: [], new_classes: [], merges: [] }, audit));
+});
 const submission = (): ClusteringSubmission => {
   const canonical = result();
   const input = requestInput(request());
@@ -20,7 +51,7 @@ const submission = (): ClusteringSubmission => {
     assignments: canonical.assignments.map(({ item_id, class_id, new_class_key, ...entry }) => ({
       ...entry,
       item_id: `O${input.items.findIndex(item => item.id === item_id) + 1}`,
-      ...(class_id === undefined ? {} : { class_id: classReference(class_id) }),
+      ...(class_id === undefined ? {} : { class_label: classes.find(entry => entry.id === class_id)!.label }),
       ...(new_class_key === undefined ? {} : {
         new_class_index: canonical.new_classes.findIndex(entry => entry.key === new_class_key),
       }),
@@ -162,25 +193,25 @@ test("Clustering schema feedback shows string-only topic paths without convertin
   const bound = request();
   const binding = { agent: "clustering", profile: "default", request: bound };
   const draft = submission();
-  draft.new_classes[0]!.category_paths = [["指令遵循", { item: "风格禁令" }]] as unknown as string[][];
+  draft.new_classes[0]!.category_paths = [[{ item: "风格禁令" }]] as unknown as string[][];
   draft.class_updates = [{ class_id: "C1", category_paths: [[{ item: "数值可靠性" }]] as unknown as string[][], reason: "整理主题。" }];
   const before = structuredClone({ bound, draft });
   assert.throws(() => registry.resolve(binding, draft, audit), error => {
     assert(error instanceof ValidationError);
     const issues = error.issues!.filter(issue => issue.code === "schema_type");
-    assert.deepEqual(issues.map(issue => issue.path), ["/new_classes/0/category_paths/0/1", "/class_updates/0/category_paths/0/0"]);
+    assert.deepEqual(issues.map(issue => issue.path), ["/new_classes/0/category_paths/0/0", "/class_updates/0/category_paths/0/0"]);
     for (const issue of issues) {
       const expected = issue.expected as Record<string, unknown>;
-      assert.deepEqual(expected.category_paths_example, [["主题", "子主题", "具体方面"]]);
+      assert.deepEqual(expected.category_paths_example, [["指令遵循"]]);
       assert.equal(expected.type, "string");
-      assert.match(String(expected.category_paths_rule), /每级直接填写字符串/);
+      assert.match(String(expected.category_paths_rule), /直接填写字符串/);
       assert.equal(typeof issue.actual, "object");
     }
     return true;
   });
   assert.deepEqual({ bound, draft }, before);
-  draft.new_classes[0]!.category_paths = [["指令遵循", "遗漏", "单位换算"]];
-  draft.class_updates![0]!.category_paths = [["数值可靠性", "计算"]];
+  draft.new_classes[0]!.category_paths = [["指令遵循"]];
+  draft.class_updates![0]!.category_paths = [["计算与逻辑错误"]];
   const resolved = registry.resolve(binding, draft, audit);
   registry.validate(binding, resolved, audit);
   assert.deepEqual((resolved as ClusteringResult).new_classes[0]!.category_paths, draft.new_classes[0]!.category_paths);
@@ -332,7 +363,7 @@ test("clustering uses request-local references and persists exact identities for
   assert.deepEqual(resolved.merges[0], { into: first, from: [second], reason: "同一计算错误" });
   clusteringProfile.validate!(bound, resolved, audit);
   assert.deepEqual(bound, before, "rendering and resolution must not mutate stored material");
-  assert.equal(draft.assignments[0]!.class_id, "C1");
+  assert.equal(draft.assignments[0]!.class_label, "算术错误");
   const prompt = clusteringProfile.renderPrompt(bound.input);
   for (const id of [first, second, observed]) assert(!prompt.includes(id), "model material must not require UUID copying");
   assert(prompt.includes('"id":"C1"') && prompt.includes('"id":"C2"') && prompt.includes('"id":"O1"'));
@@ -340,7 +371,7 @@ test("clustering uses request-local references and persists exact identities for
   const reordered = structuredClone(bound);
   requestInput(reordered).library.components[0]!.classes.reverse();
   const reorderedResult = clusteringProfile.resolve!(reordered, draft, audit) as ClusteringResult;
-  assert.equal(reorderedResult.assignments[0]!.class_id, second, "references belong to the bound request, not a global cache");
+  assert.equal(reorderedResult.assignments[0]!.class_id, first, "class names retain meaning when the directory order changes");
   const resumed = clusteringProfile.renderPrompt(reordered.input, undefined, {
     draft, errors: [{ category: "decision", code: "old", path: "/assignments/0", message: "stale-reference-marker" }],
     contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "previous",
@@ -350,7 +381,7 @@ test("clustering uses request-local references and persists exact identities for
 
   for (const invalid of [first, "P1", "C999"]) {
     const bad = structuredClone(draft);
-    bad.assignments[0]!.class_id = invalid;
+    bad.assignments[0]!.class_label = invalid;
     assert.throws(() => clusteringProfile.resolve!(bound, bad, audit), ValidationError);
   }
   const missing = structuredClone(draft);
@@ -393,7 +424,7 @@ test("deferred observations require a real creation or support limit and remain 
 
 test("topics and directory maintenance use current class references without changing responsibility", () => {
   const bound = request(), draft = submission();
-  draft.new_classes[0]!.category_paths = [["工具使用", "工具结果解释"]];
+  draft.new_classes[0]!.category_paths = [["数据理解错误"]];
   draft.class_updates = [{ class_id: "C1", definition: "模型计算步骤与可核验数字不符。", category_paths: [["数值可靠性"]], reason: "界定结果偏差，不推断额外根因。" }];
   const resolved = clusteringProfile.resolve!(bound, draft, audit) as ClusteringResult;
   assert.equal(resolved.class_updates![0]!.class_id, "class-arithmetic");
@@ -402,7 +433,7 @@ test("topics and directory maintenance use current class references without chan
   repeat.new_classes[0]!.category_paths = [["工具使用", "遗漏"], [" 工具使用 ", "遗漏"]];
   assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), ValidationError);
   repeat.new_classes[0]!.category_paths = [["工具使用", " 工具使用 "]];
-  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), /不能重复同一级/);
+  assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), ValidationError);
   repeat.new_classes[0]!.category_paths = [["一", "二", "三", "四"]];
   assert.throws(() => clusteringProfile.validate!(bound, repeat, audit), ValidationError);
   const bad = structuredClone(draft) as unknown as Record<string, unknown>;
@@ -415,11 +446,11 @@ test("every new class requires exactly one primary topic path", () => {
   const missing = structuredClone(draft) as unknown as { new_classes: { category_paths?: string[][] }[] };
   delete missing.new_classes[0]!.category_paths;
   assert.throws(() => clusteringProfile.resolve!(bound, missing, audit), ValidationError);
-  for (const paths of [[], [["可靠性"], ["工具使用"]]]) {
+  for (const paths of [[], [["可靠性"], ["工具使用"]], [["指令遵循", "遗漏"]]]) {
     draft.new_classes[0]!.category_paths = paths;
     assert.throws(() => clusteringProfile.resolve!(bound, draft, audit), ValidationError);
   }
-  draft.new_classes[0]!.category_paths = [["数值可靠性", "单位换算"]];
+  draft.new_classes[0]!.category_paths = [["计算与逻辑错误"]];
   const resolved = clusteringProfile.resolve!(bound, draft, audit);
   clusteringProfile.validate!(bound, resolved, audit);
   draft.class_updates = [{ class_id: "C1", category_paths: [], reason: "清空主要主题。" }];
@@ -429,13 +460,23 @@ test("every new class requires exactly one primary topic path", () => {
   clusteringProfile.validate!(bound, clusteringProfile.resolve!(bound, draft, audit), audit);
 });
 
+test("directory consolidation organizes every retained class without changing responsibility", () => {
+  const bound = request(), input = requestInput(bound), draft = result();
+  input.budget.consolidate = true;
+  assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /每个保留类/);
+  draft.class_updates = [{ class_id: "class-arithmetic", category_paths: [["计算与逻辑错误"]], reason: "按错误动作整理方向。" }];
+  clusteringProfile.validate!(bound, draft, audit);
+  assert.equal(input.library.components[0]!.label, "模型自身推理");
+});
+
 test("persistent definitions reject current directory references but preserve business codes", () => {
   const bound = request(), draft = result();
   const component = requestInput(bound).library.components[0]!;
-  for (let index = 2; index <= 18; index++) component.classes.push({ id: `class-${index}`, label: `其他现象${index}`, definition: "d", aliases: [], occurrences: 1, examples: [] });
-  draft.new_classes[0]!.definition = "型号 C18 与 C1 不同，错误码（C18）等问题应保留业务含义。";
+  for (let index = 2; index <= 19; index++) component.classes.push({ id: `class-${index}`, label: `其他现象${index}`, definition: "d", aliases: [], occurrences: 1, examples: [] });
+  draft.new_classes[0]!.definition = "型号 C18 与 C1 不同，错误码（C18）等问题应保留业务含义，证券代码（C1）与牌号 (C19) 也不是类编号。";
   clusteringProfile.validate!(bound, draft, audit);
-  for (const definition of ["不同于问题类 C18 的另一种问题。", "并非某种现象（C1）等问题。", "item_id: O2 的问题。"] ) {
+  for (const definition of ["不同于问题类 C18 的另一种问题。", "并非某种现象（C1）等问题。", "item_id: O2 的问题。",
+    "日期、期间及项目阶段错置归C19。", "可复算的数值冲突归C1。", "不包括金融分析框架缺项（C5）。"]) {
     draft.new_classes[0]!.definition = definition;
     assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /临时编号/);
   }
@@ -447,7 +488,7 @@ test("merging topics requires an explicit choice when the union exceeds the limi
   component.classes.push({ id: "other-class", label: "近义计算错", definition: "d", aliases: [], occurrences: 1, examples: [], category_paths: [["二"]] });
   draft.merges = [{ into: "class-arithmetic", from: ["other-class"], reason: "同一现象。" }];
   assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /只能保留一条/);
-  draft.class_updates = [{ class_id: "class-arithmetic", category_paths: [["数值可靠性", "计算"]], reason: "合并后统一主题。" }];
+  draft.class_updates = [{ class_id: "class-arithmetic", category_paths: [["计算与逻辑错误"]], reason: "合并后统一主题。" }];
   clusteringProfile.validate!(bound, draft, audit);
   draft.class_updates.push({ class_id: "other-class", definition: "d", reason: "同时维护被合并类。" });
   assert.throws(() => clusteringProfile.validate!(bound, draft, audit), /不能同时维护 from/);
@@ -533,10 +574,10 @@ test("Category character rules cover requests, submissions, results and precise 
       assert.equal(issue.actual, marked);
       return true;
     });
-    const paths = [["可用", marked]], before = structuredClone(paths);
+    const paths = [[marked]], before = structuredClone(paths);
     const issue = categoryPathIssues(paths, "/category_paths")[0]!;
     assert.equal(issue.code, "clustering_category_characters");
-    assert.equal(issue.path, "/category_paths/0/1");
+    assert.equal(issue.path, "/category_paths/0/0");
     assert.equal(issue.actual, marked);
     assert.match(String((issue.expected as Record<string, unknown>).category_paths_action), /重新填写/);
     assert.deepEqual(paths, before);
@@ -546,7 +587,7 @@ test("Category character rules cover requests, submissions, results and precise 
 test("Category names allow arbitrary ordinary text without provider word filtering", () => {
   const registry = new AgentRegistry([clusteringAgent]);
   const bound = request();
-  const paths = [["minimax 语义 🧭 (输入/输出) — 12", "来源可靠性（多源）", "误解：单位转换"]];
+  const paths = [["minimax 语义 🧭 (输入/输出) — 12"]];
   requestInput(bound).library.components[0]!.classes[0]!.category_paths = structuredClone(paths);
   const binding = { agent: "clustering", profile: "default", request: bound };
   const draft = submission();
