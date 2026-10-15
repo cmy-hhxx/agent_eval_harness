@@ -2,7 +2,7 @@ import path from "node:path";
 import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, fileSourceReader, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
-import { PublicationStatistics, publishableComparisons, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
+import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import { automationDateSelected, type AutomationJob, type AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
@@ -86,6 +86,9 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         (state.config as EvalConfig).rewrite.comparisonItems === true;
       const ready = publishableComparisons(state, requireItems);
       if (!ready.size) continue;
+      const comparisonInputs = new Map(Object.values(state.tasks)
+        .filter(task => task.stage === "comparison" && !task.data.verificationAudit)
+        .map(task => [task.data.comparisonId, task.inputIds]));
       const rewriteIds = new Map<string, string[]>();
       if (requireItems) for (const task of Object.values(state.tasks)) {
         const source = task.data.rewriteOf;
@@ -103,7 +106,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         ready.delete(key);
         if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
         if (requireItems) assertCompleteComparisonRewrite(row, rewriteIds.get(key) ?? []);
-        yield { row, evaluatedAt };
+        yield { row: publicationComparison(row, comparisonInputs.get(key)!, state.inputs), evaluatedAt };
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);
     }

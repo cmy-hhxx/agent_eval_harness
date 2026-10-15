@@ -4,11 +4,12 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
+import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, bindTask, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
+import type { RewriteItem } from "@eval/agents/rewrite";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { publicationSnapshot, publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
-import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, raw } from "../../fixtures/comparison.js";
+import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, comparisonResult, emptyAudit, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
 test("comparison delivery waits for shared criteria and evaluation rewrites, never clustering", async () => {
@@ -99,6 +100,68 @@ async function collect<T>(rows: AsyncIterable<T>): Promise<T[]> {
   return result;
 }
 
+for (const reversed of [false, true]) test(`publication keeps rewrite ownership when blind positions are ${reversed ? "reversed" : "forward"}`, async t => {
+  const { directory, config } = await fixtureConfig(Array.from({ length: 4 }, () => [{ ...raw(), batch_id: date }]), true);
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  config.comparisons = configuredGroups;
+  config.rewrite.comparisonItems = true;
+  const plan = await buildPlan(config), runId = "rewrite-ownership";
+  const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+    format: "evaluation-run", debug: false, runId, status: "finished", evaluatorVersion: fakeEvaluatorVersion,
+    engine: fakeIdentity, config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+    states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+    preflight: plan.summary, startedAt: 1,
+  } };
+  const saved = comparisonCodec.encode(state), output: JsonObject[] = [];
+  for (const task of Object.values(saved.tasks)) {
+    task.status = "succeeded";
+    task.receipt = { acceptedAt: 10, exported: {}, ...(task.data.rewriteOf?.stage === "comparison" ? {
+      rewriteIds: ["verdict.A__vs__B.reason", "assessment.A.summary", "assessment.B.summary", "tradeoff"],
+    } : {}) } as NonNullable<typeof task.receipt>;
+  }
+  for (const task of plan.tasks.filter(task => task.stage === "comparison")) {
+    const source = saved.tasks[task.id];
+    const inputIds = Object.values(source.inputIds).sort((a, b) => saved.inputs[a].version.localeCompare(saved.inputs[b].version));
+    const versions = inputIds.map(id => saved.inputs[id].version);
+    source.inputIds = Object.fromEntries(["A", "B"].map((label, index) => [label, inputIds[reversed ? 1 - index : index]]));
+    const names = Object.fromEntries(Object.entries(source.inputIds).map(([label, id]) => [label, saved.inputs[id].name]));
+    const original = comparisonResult();
+    for (const label of ["A", "B"]) original.assessments[label].summary = `【候选${label}】${saved.inputs[source.inputIds[label]].version.startsWith("a_") ? "分层选股的PE门槛不一致。" : "八维度全面胜出的说法夸大。"}`;
+    const rewriteTask = structuredClone(plan.tasks.find(item => item.dependencies.source === task.id)!);
+    rewriteTask.data = { ...rewriteTask.data as JsonObject, rewriteNames: names, comparisonRewriteScope: "all" };
+    const binding = bindTask(rewriteTask, {}, { source: { taskId: task.id, attemptId: "attempt", submissionId: "submission",
+      acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: original,
+      audit: emptyAudit(), usage: emptyUsage() } }, { tasks: [task, rewriteTask] });
+    output.push({ ...result.row, comparison_id: source.data.comparisonId,
+      case: { batch_id: date, case_id: "q1" },
+      models: Object.fromEntries([...versions].reverse().map(id => [id, {}])),
+      assessments: Object.fromEntries(versions.map(id => [id, { meets_core: true }])),
+      evaluations: Object.fromEntries(versions.map(id => [id, { is_correct: true }])),
+      verdicts: { [versions.join("__vs__")]: { result: "both_good", winner_version: null } },
+      rewritten: { evaluator_version: "fixture", rewrites: (binding.request.input.items as RewriteItem[]).map(item => ({ id: item.id, text: item.text })) },
+    });
+  }
+  const stateFile = path.join(config.output.path, runId, "state.json"), resultFile = path.join(config.output.path, runId, "results/comparison.jsonl");
+  const hostFile = path.join(directory, "host.json");
+  await writeJson(stateFile, saved);
+  await writeJsonl(resultFile, output);
+  await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...config });
+  const before = await readFile(resultFile, "utf8");
+  const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile] };
+  const snapshot = await publicationSnapshot(settings, { date, runIds: [runId], adopted: true } as AutomationJob, t.signal);
+  const delivered = await collect(snapshot.results());
+  assert.equal(delivered.length, 2);
+  for (const { row } of delivered) {
+    const rewrites = (row.rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
+    const a = rewrites.find(item => item.id === "assessment.A.summary")!.text;
+    const b = rewrites.find(item => item.id === "assessment.B.summary")!.text;
+    assert.match(a, /分层选股的PE门槛不一致/, "published A must belong to versionA regardless of the blind label");
+    assert.match(b, /八维度全面胜出的说法夸大/, "published B must belong to versionB regardless of the blind label");
+  }
+  assert.equal(await readFile(resultFile, "utf8"), before, "publication must preserve accepted local rewrite slots");
+  assert.deepEqual(await collect(snapshot.results()), delivered, "retries must not swap already mapped text again");
+});
+
 test("publication quarantines every duplicate input and only its affected battles without modifying accepted work", async (t) => {
   const originals = ["healthy", "conflict"].map(id => ({ ...raw(id), batch_id: date }));
   const { directory, config } = await fixtureConfig(Array.from({ length: 4 }, () => originals), true);
@@ -119,6 +182,8 @@ test("publication quarantines every duplicate input and only its affected battle
       } : {}) } as NonNullable<typeof task.receipt>;
     }
     const output = Object.values(saved.tasks).filter(task => task.stage === "comparison").map(task => {
+      task.inputIds = Object.fromEntries(Object.values(task.inputIds)
+        .sort((a, b) => saved.inputs[a].version.localeCompare(saved.inputs[b].version)).map((id, index) => [index === 0 ? "A" : "B", id]));
       const candidates = Object.values(task.inputIds).map(id => saved.inputs[id]);
       const versions = candidates.map(input => input.version).sort();
       return { ...result.row, comparison_id: task.data.comparisonId,

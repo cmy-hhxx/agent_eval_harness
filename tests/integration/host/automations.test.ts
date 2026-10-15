@@ -372,7 +372,22 @@ test("automation resumes current outputs across evaluator changes and delivers c
         for await (const result of results) {
           stats.addResult(result); comparisonCount++;
           const receipt = Object.values(saved.receipts).find(item => item.exported && item.exported.id === result.row.comparison_id && !item.exported.auxiliary)!;
-          assert.deepEqual(result.row, receipt.exported!.row, "delivery preserves the full current result and its evaluator provenance");
+          assert.deepEqual({ ...result.row, rewritten: receipt.exported!.row.rewritten }, receipt.exported!.row,
+            "delivery preserves the full current judgment and its evaluator provenance");
+          const original = receipt.exported!.row.rewritten as { evaluator_version: string; rewrites: { id: string; text: string }[] };
+          const published = result.row.rewritten as typeof original;
+          assert.equal(published.evaluator_version, original.evaluator_version);
+          assert.equal(published.rewrites.length, original.rewrites.length);
+          const sourceTask = saved.manifest.tasks.find(task => task.id === receipt.taskId)!;
+          const candidates = (sourceTask.data as TaskData).candidates;
+          const versions = Object.values(candidates).map(candidate => candidate.version).sort();
+          for (const [label, candidate] of Object.entries(candidates)) {
+            const column = versions.indexOf(candidate.version) === 0 ? "A" : "B";
+            assert.equal(published.rewrites.find(item => item.id === `assessment.${column}.summary`)?.text,
+              original.rewrites.find(item => item.id === `assessment.${label}.summary`)?.text);
+          }
+          for (const id of ["tradeoff", "verdict.A__vs__B.reason"])
+            assert.deepEqual(published.rewrites.find(item => item.id === id), original.rewrites.find(item => item.id === id));
           assert.equal(result.row.status, "decided");
         }
         return { inputs: inputCount, comparisons: comparisonCount, inserted: comparisonCount, updated: 0 };

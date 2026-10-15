@@ -140,7 +140,7 @@ MongoDB 在输入下载校验完成后开始同步，不等待整日评测或日
 
 需要立即补一条全局日志时，停止流水线后执行 `npm run automations -- publish-log`。此命令只统计、落盘和上传日志，不调用模型；上一条尚未成功的日志复用原 traceId 和已落盘内容继续交付，成功后清除本轮错误，只有已完成记录进入交付历史；下一轮仍按原来的四小时整点执行。
 
-Mongo 输入用 `kind=input`，评测结果用 `kind=comparison`；所有新写入使用 `a_fast / b_fast / a_expert / b_expert`。输入保留 `versions`、`task`、`meta` 和原始消息。comparison 保留归因评测及内嵌改写，含 `result.comparison`、`versionA/B`、`evaluatedAt`，专题 `task` 与对应输入一致，不另写 attribution 文档。沿用已有原始 case 对应的数据库 ID；新 case 用持久化 UUID。业务键 upsert，已存在且内容相同的记录不重写，部分批次失败可安全续传；不删除、不迁移其他日期或旧模型记录。当前目标集合的旧 comparison 校验器不接受已在使用的顶层 `task`，沿用既有上传方式，仅对 comparison 写入使用 `bypassDocumentValidation`；输入仍受校验器约束，集合配置不修改。
+Mongo 输入用 `kind=input`，评测结果用 `kind=comparison`；所有新写入使用 `a_fast / b_fast / a_expert / b_expert`。输入保留 `versions`、`task`、`meta` 和原始消息。comparison 保留归因评测及内嵌改写，含 `result.comparison`、`versionA/B`、`evaluatedAt`，专题 `task` 与对应输入一致，不另写 attribution 文档。`versionA/B` 按稳定版本 ID 排序；Workflow 根据源 Comparison 检查点保存的 `inputIds → inputs[].version`，将改写候选槽位从盲测 A/B 转为这两列的位置。整体总评和已接受的逐格点评使用同一映射；整场偏好与取舍保持原文，不按正文称谓或 JSON 字段顺序猜测归属。映射缺失、不匹配或槽位重复时拒绝交付。本地收据、JSONL、判决与证据不因此改变，每次上传或续传均从本地原始槽位重新投影。沿用已有原始 case 对应的数据库 ID；新 case 用持久化 UUID。业务键 upsert，已存在且内容相同的记录不重写，部分批次失败可安全续传；不删除、不迁移其他日期或旧模型记录。当前目标集合的旧 comparison 校验器不接受已在使用的顶层 `task`，沿用既有上传方式，仅对 comparison 写入使用 `bypassDocumentValidation`；输入仍受校验器约束，集合配置不修改。
 
 Mongo 与统计日志共用输入隔离规则：先完整扫描当前日期的输入，按日期、原始 `case_id` 和模型识别重复；同一标识的全部记录均排除，即使内容相同也不任选一条。仅引用冲突模型输入的对局暂缓交付，同题其他有效模型对和其他题目继续上传、统计。隔离只影响本轮交付视图，不删除或改写源文件、已接受任务、收据及正式结果，也不触发重新评测；旧输入回补不能绕过隔离。冲突标识写入现有 `log/runtime.log` 的 `publication_inputs_quarantined` 事件，统计 JSON 结构不变。上游修正输入并完成刷新后，下一轮重新扫描，原有已接受结果可直接恢复交付。扫描与后续读取校验同一文件修订，文件被替换或修改时明确重试，避免用旧隔离清单处理新内容。
 

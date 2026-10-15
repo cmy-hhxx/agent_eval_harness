@@ -23,6 +23,27 @@ export function assertCompleteComparisonRewrite(row: JsonObject, required: reado
   if (missing.length) throw new Error(`Comparison rewrite incomplete: ${row.comparison_id}: ${missing.join(", ")}`);
 }
 
+/** Mongo's A/B columns follow sorted version IDs, independently of the persisted blind positions. */
+export function publicationComparison(row: JsonObject, inputIds: Record<string, string>, inputs: Record<string, Pick<Checkpoint["inputs"][string], "version">>): JsonObject {
+  const versions = Object.keys(object(row.models)).sort();
+  const candidates = Object.entries(inputIds).map(([label, id]) => [label, inputs[id]?.version] as const);
+  if (versions.length !== 2 || candidates.length !== 2 || new Set(candidates.map(([, version]) => version)).size !== 2 ||
+      candidates.some(([label, version]) => !["A", "B"].includes(label) || !versions.includes(version)))
+    throw new Error("Comparison publication identity mapping invalid: " + row.comparison_id);
+  const columns = new Map(candidates.map(([label, version]) => [label, versions.indexOf(version) === 0 ? "A" : "B"]));
+  const rewritten = row.rewritten as { evaluator_version: string; rewrites: { id: string; text: string }[] };
+  const rewrites = rewritten.rewrites.map(item => ({ ...item,
+    id: item.id.replace(/^(assessment|comparison\.\d+)\.([A-Z])\.summary$/u, (_match, slot: string, label: string) => {
+      const column = columns.get(label);
+      if (!column) throw new Error("Comparison rewrite candidate missing: " + item.id);
+      return `${slot}.${column}.summary`;
+    }),
+  }));
+  if (new Set(rewrites.map(item => item.id)).size !== rewrites.length)
+    throw new Error("Comparison publication rewrite slots duplicated: " + row.comparison_id);
+  return { ...row, rewritten: { ...rewritten, rewrites } };
+}
+
 /** Clustering writes a separate artifact; it cannot delay an already polished comparison.jsonl row. */
 export function publishableComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
   const ready = new Map<string, number>();
