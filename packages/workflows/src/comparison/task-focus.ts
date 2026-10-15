@@ -44,7 +44,7 @@ export function taskFocus(
       }] : [];
     }),
     answers: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
-      const lastUser = originals[label]!.messages.findLast(message => message.role === "user");
+      const lastUser = originals[label]!.messages.findLast(message => message.role === "user" || message.role === undefined && message.type === "user_question");
       return [label, {
         question_timestamp: typeof lastUser?.timestamp === "string" ? lastUser.timestamp : null,
         final_message_index: material.final_message_index,

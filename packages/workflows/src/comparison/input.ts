@@ -4,7 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import { type PlannedTask, type ProblemLibrary, type TaskPlan, type ValidationIssue } from "@eval/contracts";
 import { canonical, errorText, object, ValidationError } from "@eval/contracts";
 import { emptyLibrary, projectLibrary } from "@eval/agents/clustering";
-import { resolveAdapter } from "./adapters.js";
+import { inputAdapters, resolveAdapter } from "./adapters.js";
+import { normalizeInput } from "./input-record.js";
 import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js";
 import type {
   BatchPreflight,
@@ -43,12 +44,13 @@ export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> 
   return sources;
 }
 export function adapt(
-  raw: RawInput,
+  value: unknown,
   item: VersionConfig,
   source: string,
   line: number,
   defaultBatch?: string,
 ): Candidate {
+  const session = Object.hasOwn(object(value), "traces"), raw = normalizeInput(value);
   const meta = raw.meta || {};
   const errors: ValidationIssue[] = [];
   if (
@@ -100,12 +102,19 @@ export function adapt(
     messages.some((m) => !m || typeof m !== "object" || Array.isArray(m))
   )
     throw new Error("缺少有效回答或采集失败");
-  const adapter = resolveAdapter(item.adapter);
+  const adapter = session
+    ? Object.values(inputAdapters).find(adapter => messages.every(message => adapter.accepts(message)))
+    : resolveAdapter(item.adapter);
+  if (!adapter) throw new Error("链路含未支持的消息类型");
   if (messages.some((m) => !adapter.accepts(m))) throw new Error("链路含未支持的消息类型");
-  const lastUser = messages.findLastIndex((m) => m.role === "user");
+  const lastUser = messages.findLastIndex((m) => m.role === "user" || m.role === undefined && m.type === "user_question");
   if (lastUser < 0) throw new Error("无法定位用户问题");
   const final = messages.findLastIndex(
-    (m, i) => i > lastUser && m.role === "assistant" && !!contentText(m.content).trim(),
+    (m, i) => i > lastUser &&
+      (session && messages[lastUser].type === "user_question"
+        ? m.type === "final_answer" && (m.role === undefined || m.role === "assistant")
+        : m.role === "assistant" || m.role === undefined && m.type === "final_answer") &&
+      !!contentText(m.content).trim(),
   );
   if (final < 0) throw new Error("最后一轮没有完整最终回答");
   const content = messages[lastUser].content;
@@ -121,7 +130,8 @@ export function adapt(
           .map((k) => meta[k])
           .filter((v) => v !== null && v !== undefined && v !== "");
   if (new Set(references.map(canonical)).size > 1) throw new Error("ground_truth 与 std_answer 冲突");
-  const llm = adapter.answerModel(raw, messages, final);
+  const llm = session && typeof meta.model === "string" && meta.model.trim()
+    ? meta.model : adapter.answerModel(raw, messages, final);
   const fields = {
     first_token_seconds: "first_token_time_cost",
     first_answer_seconds: "first_answer_time_cost",
@@ -175,7 +185,7 @@ function recordMatch(
   try {
     const raw = object(JSON.parse(value)) as RawInput;
     const record = adapt(raw, version, source, line, defaultBatch);
-    return candidateKey(record) === candidateKey(candidate) ? { raw, line, record } : undefined;
+    return candidateKey(record) === candidateKey(candidate) ? { raw: normalizeInput(raw), line, record } : undefined;
   } catch {
     return undefined;
   }
@@ -293,7 +303,7 @@ const scanInputFile: InputScanner = async function* (source, version, defaultBat
       entry.batchId = batch ? String(batch) : null;
       entry.caseId = id ? String(id) : null;
       entry.record = adapt(raw, version, source, index, defaultBatch);
-      entry.raw = raw;
+      entry.raw = normalizeInput(raw);
     } catch (error) { entry.error = error; }
     yield entry;
   }
@@ -944,7 +954,7 @@ export async function buildPlan(
               const current = adapt(raw, version, source, index, config.inputs.default_batch_id);
               if (candidateKey(current) !== candidateKey(candidate) || current.question !== candidate.question || current.final_index !== candidate.final_index)
                 throw new Error("读取期间输入源记录发生变化，请重试：" + source);
-              return raw;
+              return normalizeInput(raw);
             },
           });
         }

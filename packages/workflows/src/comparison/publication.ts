@@ -45,7 +45,7 @@ export function publicationComparison(row: JsonObject, inputIds: Record<string, 
 }
 
 /** Clustering writes a separate artifact; it cannot delay an already polished comparison.jsonl row. */
-export function publishableComparisons(state: Checkpoint, requireItems = false): Map<string, number> {
+export function publishableComparisons(state: Checkpoint): Map<string, number> {
   const ready = new Map<string, number>();
   const entries = Object.entries(state.tasks);
   const rewrites = new Map<string, string[]>();
@@ -66,8 +66,6 @@ export function publishableComparisons(state: Checkpoint, requireItems = false):
       planned.forEach((rewrite) => required.add(rewrite));
     }
     if (missing || !rewrites.get(id)?.length) continue;
-    if ((requireItems || config.rewrite.comparisonItems) && !rewrites.get(id)!.some((rewrite) =>
-      state.tasks[rewrite].data.comparisonRewriteScope === "all")) continue;
     const tasks = [...required].map((taskId) => state.tasks[taskId]);
     if (tasks.some((item) => !item || item.status !== "succeeded" || !item.receipt?.exported)) continue;
     const at = Math.max(...tasks.map((item) => item.receipt!.acceptedAt));

@@ -2,8 +2,8 @@ import path from "node:path";
 import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, fileSourceReader, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
-import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
-import { automationDateSelected, type AutomationJob, type AutomationState } from "@eval/automations";
+import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
+import type { AutomationJob, AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
 import { loadConfig } from "./config.js";
@@ -29,7 +29,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         for await (const { line } of fileSourceReader.lines(file, revision)) {
           signal.throwIfAborted();
           if (!line.trim()) continue;
-          const raw = object(JSON.parse(line)), meta = object(raw.meta ?? {});
+          const raw = normalizeInput(JSON.parse(line)), meta = object(raw.meta ?? {});
           if (!Array.isArray(raw.messages)) throw new Error("Publication input messages must be an array");
           if (!raw.messages.length) continue;
           const batch = raw.batch_id ?? meta.batch_id ?? job.date, caseId = raw.case_id ?? meta.case_id;
@@ -82,15 +82,13 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
   async function* results(): AsyncGenerator<PublicationResult> {
     for (const { id, state } of runs) {
       if (!state) continue;
-      const requireItems = (automationDateSelected(config, job.date) && !job.adopted) ||
-        (state.config as EvalConfig).rewrite.comparisonItems === true;
-      const ready = publishableComparisons(state, requireItems);
+      const ready = publishableComparisons(state);
       if (!ready.size) continue;
       const comparisonInputs = new Map(Object.values(state.tasks)
         .filter(task => task.stage === "comparison" && !task.data.verificationAudit)
         .map(task => [task.data.comparisonId, task.inputIds]));
       const rewriteIds = new Map<string, string[]>();
-      if (requireItems) for (const task of Object.values(state.tasks)) {
+      for (const task of Object.values(state.tasks)) {
         const source = task.data.rewriteOf;
         if (source?.stage !== "comparison" || !task.receipt) continue;
         const comparisonId = state.tasks[source.taskId]?.data.comparisonId;
@@ -105,7 +103,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
         ready.delete(key);
         if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
-        if (requireItems) assertCompleteComparisonRewrite(row, rewriteIds.get(key) ?? []);
+        assertCompleteComparisonRewrite(row, rewriteIds.get(key) ?? []);
         yield { row: publicationComparison(row, comparisonInputs.get(key)!, state.inputs), evaluatedAt };
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);

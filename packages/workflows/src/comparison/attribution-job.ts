@@ -2,6 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { canonical, type PlannedTask, type RunManifest, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader, locateRun, readJson } from "@eval/data";
+import { normalizeInput } from "./input-record.js";
 import type { Checkpoint } from "./codec.js";
 import { adapt, candidateKey, inputSources } from "./input.js";
 import { bindTask } from "./binding.js";
@@ -72,7 +73,7 @@ async function comparisonAnswers(runs: string[], fromBatch?: string) {
 
 /** Resolve all requested answers in one pass per source; byte coordinates stay in memory only. */
 export async function loadAttributionJobInputs(
-  manifest: Pick<RunManifest, "tasks" | "config" | "inputCatalog">, taskIds?: ReadonlySet<string>,
+  manifest: Pick<RunManifest, "tasks" | "config" | "inputCatalog">, taskIds?: ReadonlySet<string>, records?: Map<string, Candidate>,
 ): Promise<Record<string, unknown>> {
   const config = manifest.config as AttributionJobConfig, inputs: Record<string, unknown> = {};
   const needed = new Set(manifest.tasks.filter(task => !taskIds || taskIds.has(task.id)).flatMap(task => Object.values(task.inputIds)));
@@ -99,8 +100,9 @@ export async function loadAttributionJobInputs(
         candidate.trace_id = record.trace_id;
         candidate.llm = record.llm;
         located.add(candidate.input_id);
+        records?.set(candidate.input_id, record);
         Object.defineProperty(inputs, candidate.input_id, { enumerable: true, configurable: true,
-          get: () => JSON.parse(fileSourceReader.record(file, byteOffset, byteLength, revision)) });
+          get: () => normalizeInput(JSON.parse(fileSourceReader.record(file, byteOffset, byteLength, revision))) });
       }
     }
     const missing = selected.filter(candidate => !located.has(candidate.input_id));

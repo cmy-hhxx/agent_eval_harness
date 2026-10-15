@@ -65,7 +65,7 @@ export function createAutomationWorkflow(limit: number): WorkflowDefinition {
     plan: async (config) => limitAutomationPlan(await comparisonWorkflow.plan(config), limit),
     reconcile: async (run, state, current) => {
       const previous = state.manifest.tasks;
-      const plan = limitAutomationPlan(await reconcileRun(run, state, current, { extendVersions: true }),
+      const plan = limitAutomationPlan(await reconcileRun(run, state, current, { extendVersions: true, preserveCompletedResults: true }),
         limit, new Set(Object.keys(state.receipts)), previous);
       state.manifest.tasks = plan.tasks;
       const active = new Set(plan.tasks.filter(isAutomationTask).map((task) => task.id));
@@ -102,10 +102,10 @@ export async function checkpoint(output: string, runId: string): Promise<Checkpo
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 
-export function summarize(checkpoints: Checkpoint[], requireItems = true): EvaluationSummary {
+export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
   const summary: EvaluationSummary = { stages: {}, skipped: 0, issues: 0, readyComparisons: 0 };
   for (const state of checkpoints) {
-    summary.readyComparisons += publishableComparisons(state, requireItems).size;
+    summary.readyComparisons += publishableComparisons(state).size;
     summary.skipped += (state.preflight.skipped as unknown[]).length;
     summary.issues += (state.preflight.issues as unknown[]).length;
     for (const task of Object.values(state.tasks)) {
@@ -232,9 +232,6 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     return;
   }
   const selection = saved.config as EvalConfig;
-  if (job.mongo?.synced && Object.values(saved.tasks).some((task) =>
-    task.data.rewriteOf?.stage === "comparison" && task.data.comparisonRewriteScope !== "all"))
-    delete job.mongo.synced;
   if (["completed", "waiting_inputs"].includes(job.evaluation) &&
       REMOTE_MODELS.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
   const review = terminalReviewReason([saved]);
@@ -243,7 +240,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
     job.evaluationError = review;
     return;
   }
-  const complete = publishableComparisons(saved, true);
+  const complete = publishableComparisons(saved);
   const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit);
   if (finalComparisons.length > complete.size &&
       Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
@@ -274,7 +271,7 @@ export async function evaluationTargets(config: AutomationConfig, output: string
       [model, Object.values(saved.inputs).filter((input) => input.version === model).length]));
     // Do not hide newly arrived rows behind a historical completion marker.
     const matched = REMOTE_MODELS.every((model) => counts[model] === day.rows[model]);
-    return { runIds, adopted: matched, summary: summarize([saved], !matched) };
+    return { runIds, adopted: matched, summary: summarize([saved]) };
   }
   return { runIds, adopted: false };
 }

@@ -8,8 +8,8 @@ import type { AgentBinding, ToolAudit } from "@eval/contracts";
 import { writeOverview } from "./report.js";
 import { loadRunInputs, readRunState } from "./run-data.js";
 import { loadAttributionJobInputs, type AttributionJobConfig } from "./attribution-job.js";
-import type { Candidate, EvalConfig, ComparisonResult, RawInput, TaskData } from "./types.js";
-import { adapt, candidateKey, taskCase } from "./input.js";
+import type { Candidate, EvalConfig, ComparisonResult, TaskData } from "./types.js";
+import { candidateKey, taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
@@ -40,9 +40,10 @@ export async function validateRun(
   const inputIssues: ValidationIssue[] = [];
   const selectedTasks = requirements.selectedOnly && manifest.executionScope ? new Set(manifest.executionScope) : undefined;
   const config = manifest.config as EvalConfig;
+  const records = new Map<string, Candidate>();
   const inputs = (config as AttributionJobConfig).attributionJob
-    ? await loadAttributionJobInputs(manifest, selectedTasks)
-    : await loadRunInputs(manifest, inputIssues, selectedTasks);
+    ? await loadAttributionJobInputs(manifest, selectedTasks, records)
+    : await loadRunInputs(manifest, inputIssues, selectedTasks, records);
   evidenceErrors.push(...inputIssues.map((issue) => issue.message));
   const catalog =
     (manifest.inputCatalog as Candidate[]) ||
@@ -52,15 +53,8 @@ export async function validateRun(
   ).values()) {
     if (!Object.hasOwn(inputs, candidate.input_id)) continue;
     try {
-      const version = config.inputs.versions.find((version) => version.id === candidate.version);
-      if (!version) throw new Error("Input version is not registered");
-      const actual = adapt(
-        inputs[candidate.input_id] as RawInput,
-        version,
-        candidate.source,
-        candidate.line,
-        config.inputs.default_batch_id,
-      );
+      // Compare the candidate parsed from the source, not its normalized material view.
+      const actual = records.get(candidate.input_id)!;
       if (
         candidateKey(actual) !== candidateKey(candidate) ||
         actual.question !== candidate.question ||

@@ -26,7 +26,7 @@ const answerText = (value: unknown) => contentText(value).replace(/<visual>\s*\{
   .replace(/\s+/gu, " ").trim();
 const assistantKey = (value: unknown): string | undefined => {
   const message = object(value);
-  if (message?.role !== "assistant") return undefined;
+  if (!message || message.role !== "assistant" && !(message.role === undefined && message.type === "final_answer")) return undefined;
   const text = answerText(message.content), calls = message.tool_calls ?? [];
   if (!text && (!Array.isArray(calls) || !calls.length)) return undefined;
   return canonical({ text, tool_calls: calls });
@@ -41,7 +41,7 @@ const contextOf = (turn: Record<string, unknown>): { messages: unknown[]; path: 
 const finalIndexOf = (raw: { messages: unknown[] }, provided?: number) =>
   provided ?? raw.messages.findLastIndex(message => {
     const value = object(message);
-    return value?.role === "assistant" && !!contentText(value.content).trim();
+    return value && (value.role === "assistant" || value.role === undefined && value.type === "final_answer") && !!contentText(value.content).trim();
   });
 
 /** Return the actual final-answer assistant history in source order, excluding independent planners. */
@@ -85,16 +85,18 @@ export function normativeSources(raw: { messages: unknown[] }, inputId: string, 
   const result: NormativeSource[] = [], seen = new Set<string>();
   const add = (messageIndex: number, path: string, value: unknown) => {
     const message = object(value);
-    if (message?.role !== "system" && message?.role !== "developer" && message?.role !== "user") return;
+    if (!message) return;
+    const role = message.role ?? (message.type === "user_question" ? "user" : undefined);
+    if (role !== "system" && role !== "developer" && role !== "user") return;
     if (message.content === undefined || !contentText(message.content).trim()) return;
-    const key = canonical([message.role, message.content]);
+    const key = canonical([role, message.content]);
     if (seen.has(key)) return;
     seen.add(key);
     const paths = new Set(contentPaths(message.content, path));
     const evidence = evidenceSources(raw.messages[messageIndex]).filter(source => source.kind === "text" &&
       source.text.length && paths.has(source.path))
       .map(source => cite(inputId, messageIndex, source, 0, source.text.length));
-    result.push({ message_index: messageIndex, path, role: message.role, content: structuredClone(message.content), evidence });
+    result.push({ message_index: messageIndex, path, role, content: structuredClone(message.content), evidence });
   };
   raw.messages.slice(0, finalIndex).forEach((message, index) => {
     add(index, "/content", message);

@@ -45,9 +45,9 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
     assert.equal(publishableComparisons(saved).size, 1);
     comparisonRewrite.status = "succeeded";
     comparisonRewrite.data.comparisonRewriteScope = "verdicts";
-    assert.equal(publishableComparisons(saved).size, 1, "verdict-only polish is not a complete comparison rewrite");
+    assert.equal(publishableComparisons(saved).size, 2, "completed results retain their accepted rewrite scope");
     (saved.config as typeof config).rewrite.comparisonItems = false;
-    assert.equal(publishableComparisons(saved, true).size, 1, "current automation requirements apply before the run is reconciled");
+    assert.equal(publishableComparisons(saved).size, 2, "current configuration does not invalidate accepted work");
     (saved.config as typeof config).rewrite.comparisonItems = true;
     comparisonRewrite.data.comparisonRewriteScope = "all";
     assert.equal(publishableComparisons(saved).size, 2);

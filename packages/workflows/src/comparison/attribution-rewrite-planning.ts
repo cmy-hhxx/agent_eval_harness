@@ -82,7 +82,7 @@ export function supersededAttributionRewriteIds(state: RunState): Set<string> {
 }
 
 /** Reconciliation expands only active source answers, including a frozen rewrite-only repair. */
-export function reconcileAttributionRewriteGroups(state: RunState): void {
+export function reconcileAttributionRewriteGroups(state: RunState, preserveCompletedResults = false): void {
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
   const bySource = new Map<string, PlannedTask[]>(), proposals = inactiveCoverageSources(state.manifest.tasks);
   for (const task of state.manifest.tasks) {
@@ -94,6 +94,7 @@ export function reconcileAttributionRewriteGroups(state: RunState): void {
   for (const source of [...state.manifest.tasks]) {
     if (source.stage !== "attribution" || !state.receipts[source.id]) continue;
     const rewrites = bySource.get(source.id) ?? [];
+    if (preserveCompletedResults && rewrites.length && rewrites.every(task => state.receipts[task.id])) continue;
     if (scope && !scope.has(source.id) && !rewrites.some(task => scope.has(task.id))) continue;
     if (proposals.has(source.id)) continue;
     const planned = planAttributionRewriteGroups(source, state.receipts[source.id]!, state, rewrites);

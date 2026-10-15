@@ -63,7 +63,11 @@ Criteria 绑定来源、Attribution 绑定选择并展开证据、Comparison 从
 
 `meta.ok=false`、无完整最终回答、无法解析或未知消息类型的记录不能参与比较。标准答案从 `meta.ground_truth` / `meta.std_answer` 获取；排除被显式忽略、缺失、null 和空字符串的值后，剩余值需要一致。同批次、同 case 的有效版本共享标准答案：只要其中一份提供了标准答案，所有参与对比的版本都会归因，并在共享标准答案存在时核对其一致性，包括本条 `has_standard_answer=false` 的版本；仅写 `true` 而不提供标准答案时归因仍会运行，只是 `is_correct=null`。
 
-输入结构通过适配器注册表声明。当前注册 `a`（OpenAI 风格 `messages`：`message` / `reasoning` / `function_call` / `function_call_output`）和 `b`（显式轮次：`user_question` / `llm_turn` / `tool_call` / `tool_result` / `final_answer`），版本配置的 `adapter` 按 id 引用。新增结构只需实现 [InputAdapter](../packages/workflows/src/comparison/adapters.ts) 并在注册表登记，`adapt` 与配置校验不再分支。适配器保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的对比组失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使受影响模型对失效；不同批次分别检查，允许标准答案不同。
+顶层 `messages` 结构通过适配器注册表声明。当前注册 `a`（OpenAI 风格：`message` / `reasoning` / `function_call` / `function_call_output`）和 `b`（显式轮次：`user_question` / `llm_turn` / `tool_call` / `tool_result` / `final_answer`），版本配置的 `adapter` 按 id 引用；消息结构扩展见 [InputAdapter](../packages/workflows/src/comparison/adapters.ts)。适配器保持原始消息和多模态内容，不重排消息序号，不补造缺失回答。每个 `batch_id + case_id + version` 对应一份回答；相同标识出现多份回答时报告标识冲突，使涉及它的对比组失效，不擅自选择或覆盖。同批次、同 case 的问题或标准答案冲突会使受影响模型对失效；不同批次分别检查，允许标准答案不同。
+
+会话结构 `{ meta, traces: [{ meta, messages }] }` 由[统一读取入口](../packages/workflows/src/comparison/input-record.ts)按记录自动识别，不绑定 A/B、模型 ID 或文件名，可与顶层 `messages` 记录存在于同一来源。当前只接收恰好一个 trace；空数组、多 trace、同时提供顶层 `messages` 与 `traces`、无效消息结构，以及已声明但不符的 `n_traces/n_messages` 均明确拒绝。消息按注册适配器识别；`user_question/final_answer` 可省略 role，显式轮次必须有完整 `final_answer`，不能拿中间 `llm_turn` 代替。
+
+会话读取只生成内存中的统一材料：消息原文和索引保持不变，不重复保留整份 traces；文件回读、续跑、看板与上传使用同一入口。外层身份字段与默认批次沿用上表规则，内外层同时声明的 case、batch、session ID 必须一致；外层题目信息和标准答案优先。trace ID、模型、usage 和回答耗时取 `traces[0].meta`，缺失值保持未知，不使用会话总量补充；模型缺失时仍可读取本轮 llm_turn 的模型记录。任一层 `ok=false` 不能评测。trace 的 timestamp 不推断为 request_time 或用户提问时间。资源字段路径指向统一材料的 `meta`。已处理源文件、已接受任务及正式结果不迁移、不重评。
 
 不按文件行号分组。本地评测集索引记录来源文件与行字节范围，只存业务标识和定位坐标，不存完整消息或问题/标准答案；预检和评测仍重新校验原始记录。登记、选择、索引存储及无效记录处理见[输入治理](usage.md#输入治理)。实际记录数、缺失版本、对比组数和跳过原因通过 `preflight` 获取。`by_batch` 按批次汇总样本数、有效回答数、归因任务数、对比任务数、跳过对比组数和输入异常数。样本数包含已识别身份但回答无效的样本；异常和跳过记录保留批次、case 及已定位输入的文件和行号，无法识别批次的异常只计入全局诊断。文档不保存随数据变化的批次统计。
 

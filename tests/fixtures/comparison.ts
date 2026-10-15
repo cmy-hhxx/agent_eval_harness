@@ -55,6 +55,17 @@ export function raw(caseId = "q1", reference: unknown = "4", answer = "2+2=4"): 
     meta: { ok: true, ground_truth: reference, finish_answer_time_cost: 1200 },
   };
 }
+export function sessionRaw(caseId = "q1", reference: unknown = "4", answer = "2+2=4") {
+  const input = raw(caseId, reference, answer), sessionId = "session-" + caseId;
+  return {
+    meta: { ...input.meta, case_id: caseId, session_id: sessionId, n_traces: 1, n_messages: 2 },
+    traces: [{ meta: { trace_id: "trace-" + caseId, session_id: sessionId, model: "session-model", n_messages: 2,
+      timestamp: "2026-10-15T08:00:00+08:00", finish_answer_time_cost: 1200,
+      usage: { input_tokens: 20, output_tokens: 10 } },
+    messages: input.messages.map(({ role: _role, ...message }, index) => ({ ...message,
+      type: index === 0 ? "user_question" : "final_answer" })) }],
+  };
+}
 export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAnalysis = criteriaResult()): ComparisonResult {
   return {
     status: "decided", review_requests: [],

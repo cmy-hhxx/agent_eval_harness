@@ -43,7 +43,7 @@ function projectExecution(runs: Checkpoint[]) {
 }
 
 /** Derived from persisted Host receipts, so refreshes and restarts never increment counters. */
-export function completionTimeline(runs: Checkpoint[], requireItems = true) {
+export function completionTimeline(runs: Checkpoint[]) {
   const hours = new Map<number, { start: number; completed: number; stages: Record<string, number> }>();
   const bucket = (at: number) => {
     const start = Math.floor(at / HOUR) * HOUR;
@@ -57,15 +57,15 @@ export function completionTimeline(runs: Checkpoint[], requireItems = true) {
       const counts = bucket(task.receipt.acceptedAt).stages;
       counts[task.stage] = (counts[task.stage] ?? 0) + 1;
     }
-    for (const at of publishableComparisons(run, requireItems).values()) bucket(at).completed++;
+    for (const at of publishableComparisons(run).values()) bucket(at).completed++;
   }
   return [...hours.values()].sort((a, b) => b.start - a.start);
 }
 
 function project(job: AutomationJob, runs: Checkpoint[], limit: number) {
   return {
-    summary: runs.length ? summarize(runs, !job.adopted) : undefined,
-    hours: completionTimeline(runs, !job.adopted),
+    summary: runs.length ? summarize(runs) : undefined,
+    hours: completionTimeline(runs),
     progress: remoteDateProgress(job.date, runs, limit),
     runs: runs.map(run => ({ runId: run.runId, status: run.status, evaluatorVersion: run.evaluatorVersion,
       concurrency: run.concurrency, usage: run.usage, execution: projectExecution([run]) })),

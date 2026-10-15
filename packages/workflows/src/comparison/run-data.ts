@@ -11,6 +11,7 @@ import { createRunRepository, fileSourceReader } from "@eval/data";
 import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, selectComparisonGroups, taskCase, taskIdentity } from "./input.js";
 import type { BatchPreflight, Candidate, ComparisonResult, EvalConfig, TaskData } from "./types.js";
 import { comparisonCodec } from "./codec.js";
+import { normalizeInput } from "./input-record.js";
 import { encodeResult, stageResult } from "./results.js";
 import { comparisonSlots } from "./commentary.js";
 import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
@@ -23,6 +24,7 @@ export async function loadRunInputs(
   manifest: RunManifest,
   issues?: ValidationIssue[],
   taskIds?: ReadonlySet<string>,
+  records?: Map<string, Candidate>,
 ): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
@@ -32,11 +34,12 @@ export async function loadRunInputs(
   for (const [source, candidates] of sources) {
     const found: Record<string, unknown> = {};
     let revision: string;
-    const register = (candidate: Candidate, byteOffset: number, byteLength: number) => {
+    const register = (candidate: Candidate, record: Candidate, byteOffset: number, byteLength: number) => {
+      records?.set(candidate.input_id, record);
       Object.defineProperty(found, candidate.input_id, {
         enumerable: true,
         configurable: true,
-        get: () => JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision)),
+        get: () => normalizeInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
       });
     };
     try {
@@ -52,8 +55,8 @@ export async function loadRunInputs(
             const version = config.inputs.versions.find((item) => item.id === candidate.version);
             if (!version) throw new Error("Input version is not registered");
             const raw = JSON.parse(line);
-            if (candidateKey(adapt(raw, version, source, index, config.inputs.default_batch_id)) === candidateKey(candidate))
-              register(candidate, byteOffset, byteLength);
+            const record = adapt(raw, version, source, index, config.inputs.default_batch_id);
+            if (candidateKey(record) === candidateKey(candidate)) register(candidate, record, byteOffset, byteLength);
           } catch { /* Reordered or missing records are resolved by business identity below. */ }
         }
         byLine.delete(index);
@@ -77,8 +80,8 @@ export async function loadRunInputs(
         const version = config.inputs.versions.find((version) => version.id === candidate.version);
         if (!version) throw new Error("Input version is not registered");
         if (!Object.hasOwn(found, candidate.input_id)) {
-          const { byteOffset, byteLength } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
-          register(candidate, byteOffset, byteLength);
+          const { record, byteOffset, byteLength } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
+          register(candidate, record, byteOffset, byteLength);
         }
       } catch (error) {
         errors.push({
@@ -100,12 +103,13 @@ export async function loadRunInputs(
   else if (errors.length) throw new ValidationError(errors);
   return inputs;
 }
-export async function reconcileRun(_run: string, state: RunState, current: unknown, options?: { extendVersions: boolean }): Promise<TaskPlan> {
+export async function reconcileRun(_run: string, state: RunState, current: unknown,
+  options?: { extendVersions: boolean; preserveCompletedResults?: boolean }): Promise<TaskPlan> {
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
   if (state.manifest.executionScope) {
     state.manifest.config = { ...config, execution: supplied.execution };
-    reconcileAttributionRewriteGroups(state);
+    reconcileAttributionRewriteGroups(state, options?.preserveCompletedResults);
     const pending = new Set(state.manifest.executionScope!.filter((id) => !state.receipts[id]));
     return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
       catalog: state.manifest.inputCatalog, summary: state.manifest.preflight };
@@ -227,6 +231,8 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     for (const [sourceId, rewrites] of bySource) {
       const source = state.receipts[sourceId];
       if (!source) continue;
+      // Incremental automation keeps the exact presentation already accepted for a finished result.
+      if (options?.preserveCompletedResults && rewrites.every(task => state.receipts[task.id])) continue;
       const stored = source.exported && stageResult("comparison", source.exported.row).rewritten as
         { rewrites: { id: string; text: string }[] } | undefined;
       const filled = new Set(stored?.rewrites.filter((item) => item.text.trim()).map((item) => item.id));
@@ -254,7 +260,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     (plan.catalog as Candidate[]).map((c) => [c.input_id, { id: c.input_id, name: c.input_id }]),
   );
   state.manifest.preflight = plan.summary;
-  reconcileAttributionRewriteGroups(state);
+  reconcileAttributionRewriteGroups(state, options?.preserveCompletedResults);
   plan.tasks = state.manifest.tasks;
   plan.summary = state.manifest.preflight;
   return plan;

@@ -10,7 +10,7 @@ import { attributionSlots, attributionRewriteGroups } from "./commentary.js";
 import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import { prepareAttributionRewrites } from "./repair.js";
-import { comparisonRepository, readRunState } from "./run-data.js";
+import { comparisonRepository, readRunState, reconcileRun } from "./run-data.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { attributionJobWorkflow } from "./attribution-job.js";
 import type { TaskData } from "./types.js";
@@ -58,6 +58,18 @@ test("attribution refresh previews semantic groups without mutation and preserve
   assert.equal(prepared.count, 4);
   assert.deepEqual(new Set(after.manifest.executionScope), new Set([...state.manifest.executionScope!, ...prepared.selected.map(item => item.rewrite_task_id!)]));
   assert(!after.manifest.executionScope!.some(id => after.manifest.tasks.find(task => task.id === id)?.stage === "comparison"));
+});
+
+test("incremental reconciliation preserves completed attribution text without adding new groups", async t => {
+  const { run, source, rewrite, state, result } = await setup(t);
+  (rewrite.data as TaskData).rewriteSlotIds = ["summary"];
+  accept(state, rewrite, { rewrites: [{ id: "summary", text: result.summary }] });
+  delete state.manifest.executionScope;
+  const accepted = structuredClone(state.receipts);
+  await reconcileRun(run, state, state.manifest.config, { extendVersions: true, preserveCompletedResults: true });
+  assert.deepEqual(state.manifest.tasks.filter(task => (task.data as TaskData).rewriteOf?.taskId === source.id)
+    .map(task => task.id), [rewrite.id]);
+  assert.deepEqual(state.receipts, accepted);
 });
 
 test("targeted attribution text refresh preserves judgments, evidence and historical rewrites", async t => {

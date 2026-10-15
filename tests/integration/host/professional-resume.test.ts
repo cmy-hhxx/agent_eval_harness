@@ -12,7 +12,7 @@ import {
 } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
 import { submitFor, inspectFor,
-  attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, taskResult,
+  attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, sessionRaw, taskResult,
 } from "../../fixtures/comparison.js";
 
 interface FormalComparison {
@@ -101,6 +101,38 @@ async function resumeExperiment(change: "none" | "rubric" | "reference" | "sourc
     },
   };
 }
+
+test("same-run discovery evaluates newly appended session inputs while preserving accepted flat-input work", async () => {
+  const experiment = await resumeExperiment("none");
+  try {
+    assert.equal((await runEvaluation(experiment.options)).completed_comparisons, 1);
+    const original = await readRunState(experiment.run), originalRows = await formalRows(experiment.run);
+    const sourceBytes = new Map<string, string>();
+    // The original run did not need a default batch. New session rows carry the same explicit batch.
+    for (const version of experiment.config.inputs.versions.filter(version => version.id.endsWith("fast"))) {
+      const file = version.sources[0].path;
+      sourceBytes.set(file, await readFile(file, "utf8"));
+      await writeJsonl(file, [raw(), { ...sessionRaw("q2"), batch_id: "b1" }]);
+      assert((await readFile(file, "utf8")).startsWith(sourceBytes.get(file)!));
+    }
+    assert.equal((await runEvaluation({ ...experiment.options, discoverInputs: true,
+      evaluatorVersion: "session-input-evaluator" })).completed_comparisons, 2);
+    const resumed = await readRunState(experiment.run), rows = await formalRows(experiment.run);
+    for (const [id, receipt] of Object.entries(original.receipts)) {
+      assert.deepEqual(resumed.receipts[id], receipt);
+      assert.equal(experiment.entered.filter(call => call.taskId === id).length, 1, "accepted work is never called again");
+    }
+    assert.deepEqual(rows.find(row => row.comparison_id === originalRows[0].comparison_id), originalRows[0]);
+    for (const [id, receipt] of Object.entries(resumed.receipts))
+      if (!original.receipts[id]) assert.equal(receipt.evaluatorVersion, "session-input-evaluator");
+    const validation = await validateRun(experiment.run);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+    for (const [file, bytes] of sourceBytes) assert((await readFile(file, "utf8")).startsWith(bytes));
+  } finally {
+    await experiment.worker.close();
+    await rm(experiment.directory, { recursive: true, force: true });
+  }
+});
 
 test("same-run AB to ABC expansion reuses accepted sources when the shared criteria are unchanged", async () => {
   const experiment = await resumeExperiment("none");
