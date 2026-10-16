@@ -201,3 +201,23 @@ test("historical rewrite replay uses the newest accepted owner per slot despite 
   assert.equal(((encodeResult(current, state, {}).row.evaluation as Record<string, unknown>).rewritten as { rewrites: { text: string }[] }).rewrites[0]!.text,
     "旧文案", "equal real acceptance times use the final manifest occurrence as the stable tie breaker");
 });
+
+test("re-export preserves accepted comparison slots outside the current rewrite plan", () => {
+  const { receipt } = fixture();
+  const source = { id: receipt.taskId, stage: "comparison", inputIds: {}, dependencies: {},
+    data: { stage: "comparison" } } as PlannedTask;
+  receipt.evaluation = { status: "decided", ranking: [["A", "B"]], assessments: {
+    A: { meets_core: true, summary: "甲总评" }, B: { meets_core: true, summary: "乙总评" },
+  }, decision_basis: { tradeoff: "取舍", comparisons: [] } };
+  receipt.exported = { id: source.id, file: "comparison.jsonl", row: { comparison_id: source.id } };
+  const rewrite = { id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: source.id },
+    data: { stage: "rewrite", rewriteOf: { stage: "comparison", taskId: source.id } } } as PlannedTask;
+  const rewrites = [{ id: "verdict.A__vs__B.reason", text: "已接受偏好理由" },
+    { id: "comparison.0.A.summary", text: "已接受甲点评" }, { id: "comparison.0.B.summary", text: "已接受乙点评" }];
+  const polish = { ...receipt, taskId: rewrite.id, evaluation: { rewrites } };
+  const state = { receipts: { [source.id]: receipt, [rewrite.id]: polish },
+    manifest: { tasks: [source, rewrite] } } as unknown as RunState;
+  const before = structuredClone(state);
+  assert.deepEqual(encodeResult(rewrite, state, {}).row.rewritten, { evaluator_version: "test", rewrites });
+  assert.deepEqual(state, before);
+});

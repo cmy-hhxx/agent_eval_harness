@@ -5,7 +5,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { AgentBackend, AttemptRecord, JsonObject } from "@eval/contracts";
-import { createFileLogger, exists, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
+import { createFileLogger, exists, hasLiveRunOwner, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs, readRunState, writeRunState } from "@eval/workflows/comparison";
 import { startWorker } from "@eval/runtime/worker";
 import { body, listen } from "@eval/runtime/http";
@@ -16,6 +16,19 @@ import { services } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
 import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
+
+test("a failed checkpoint save during cleanup still releases the Host lock", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
+  try {
+    const plan = await buildPlan(config), runId = "failed-save-unlocks";
+    await assert.rejects(runEvaluation({ ...services, runId, output: config.output, config, engine: "pi",
+      identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, plan, policy: config.execution, modelForStage,
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [],
+      repository: { ...services.repository, async writeRun() { throw new Error("checkpoint save failed"); } },
+    }), /checkpoint save failed/);
+    assert.equal(await hasLiveRunOwner(path.join(config.output.path, runId)), false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("repository defaults give criteria, each attribution and comparison three independent repairs and preserve accepted tasks on resume", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);

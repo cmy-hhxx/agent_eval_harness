@@ -889,14 +889,20 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (progressTimer) clearInterval(progressTimer);
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
-    await Promise.all(owned.map((worker) => worker.close()));
-    await Promise.all(workerExitLogs);
-    if (store && store.manifest.status === "running") {
-      store.manifest.status = "interrupted";
-      await store.save();
+    try {
+      await Promise.all(owned.map((worker) => worker.close()));
+      await Promise.all(workerExitLogs);
+      if (store && store.manifest.status === "running") {
+        store.manifest.status = "interrupted";
+        await store.save();
+      }
+    } finally {
+      // A failed checkpoint must not keep this date locked for the lifetime of the automation.
+      try { await http?.close(); }
+      finally {
+        try { await workspace?.close(); }
+        finally { await unlock(); }
+      }
     }
-    await http?.close();
-    await workspace?.close();
-    await unlock();
   }
 }

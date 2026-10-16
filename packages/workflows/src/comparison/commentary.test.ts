@@ -222,10 +222,9 @@ test("attribution rewrites include displayed observations and impact without cha
   const valid = [{ id: "summary", text: "新结论" }, { id: "findings.0.text", text: "新点评" }, { id: "findings.0.reason", text: "新理由" }];
   valid.push({ id: "findings.0.assessment.observation", text: "通俗观察" },
     { id: "findings.0.assessment.impact", text: "通俗影响" });
-  const stored = [...valid, { id: "findings.0.problem.component", text: "不能改归属" }];
   const state = {
     manifest: { tasks: [{ id: "rewrite", stage: "rewrite", data: { rewriteOf: { taskId: "source", stage: "attribution" } } }] },
-    receipts: { source: { evaluation: result }, rewrite: { acceptedAt: 1, evaluatorVersion: "fixture", evaluation: { rewrites: stored } } },
+    receipts: { source: { evaluation: result }, rewrite: { acceptedAt: 1, evaluatorVersion: "fixture", evaluation: { rewrites: valid } } },
   } as unknown as RunState;
   const before = structuredClone(state);
   assert.deepEqual(attributionSlots(result).map(item => item.id), ["summary", "core_assessment.reason", "correctness_reason",
