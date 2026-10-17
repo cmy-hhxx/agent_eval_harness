@@ -1,0 +1,1 @@
+instruction_sources 展示材料中可确认作用于最终回答的 system/developer；未提供的指令保持未知。citation_inventory 只定位来源，不证明整句支持或成品渲染。原始材料保留在 input_file，延后展示的最终回答片段列在 deferred_final_material。

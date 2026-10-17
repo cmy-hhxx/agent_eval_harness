@@ -11,6 +11,7 @@ export * from "./repair.js";
 export * from "./delivery.js";
 export * from "./dashboard-view.js";
 export * from "./codec.js";
+export type { Checkpoint } from "./checkpoint.js";
 export * from "./report.js";
 export * from "./results.js";
 export * from "./commentary.js";

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
@@ -25,6 +26,7 @@ import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneratio
 
 /** Project only generated evidence directories; original message values stay untouched. */
 function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string) {
+  const { identity: _identity, ...anonymous } = material;
   const shown = <T extends { evidence_id: string }>(value: T) => displayEvidence(value);
   const finalEvidence = material.final_evidence as ReturnType<typeof cite>[];
   const initial = material.initial_material as { message_index: number; value: unknown; evidence: ReturnType<typeof cite>[] }[];
@@ -44,7 +46,7 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     return { ...displayed, read_request: { ...source.read_request, candidate } };
   };
   return {
-    ...material,
+    ...anonymous,
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
     deferred_final_material: (material.deferred_final_material as { message_index: number; path: string; total_chars: number }[])
@@ -231,7 +233,7 @@ function bindSourceTask(
   const criteriaTask = context.tasks.find(item => item.id === task.dependencies.criteria && item.stage === "criteria");
   if (!criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
   const criteriaBlind = blindMaterials((criteriaTask.data as TaskData).candidates);
-  const blind = attribution ? undefined : criteriaBlind;
+  const blind = criteriaBlind;
   const reference = structuredClone(data.reference);
   const task_analysis = structuredClone(acceptedAnalysis ?? criteria!.evaluation);
   if (attribution) for (const [key, peer] of Object.entries(data.referenceCandidates ?? {})) {
@@ -331,7 +333,7 @@ function bindSourceTask(
           input_file: `inputs/${label}.json`,
           original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
           ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
-          note: "instruction_sources 展示材料中可确认作用于最终回答的 system/developer；未提供的指令保持未知。citation_inventory 只定位来源，不证明整句支持或成品渲染。原始材料保留在 input_file，延后展示的最终回答片段列在 deferred_final_material。",
+          note: workflowText("attribution-material"),
         },
       ];
     }),
@@ -399,6 +401,7 @@ function bindSourceTask(
   const input = attribution
     ? {
       candidate_id: data.candidates.A.input_id,
+      allow_standard_conflict: data.standardAnswerReview === true,
       task_analysis,
       ...(reviewContext ? { review_context: reviewContext } : {}),
       ground_truth: { available: data.reference !== null, value: reference },

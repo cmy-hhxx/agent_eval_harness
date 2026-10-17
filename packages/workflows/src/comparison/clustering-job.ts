@@ -3,7 +3,7 @@ import { canonical, type PlannedTask, type ProblemObservationRef, type RunReposi
 import { fileSourceReader, locateRun, problemLibraryFile, readJson, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary, writeJson, atomicWrite } from "@eval/data";
 import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, normalizeLabel, problemSampleKey, projectLibrary, replacePendingObservations, type ClusteringResult } from "@eval/agents/clustering";
 import { readRunTasks } from "./run-data.js";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 import { groupObservations, requestItems } from "./observations.js";
 import { clusteringSlots } from "./commentary.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";

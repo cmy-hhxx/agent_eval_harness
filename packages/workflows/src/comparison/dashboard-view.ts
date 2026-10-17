@@ -4,7 +4,7 @@ import { errorText, safeId, type JsonObject, type ProblemLibrary, type ProblemOc
 import { readRunTasks } from "./run-data.js";
 import { buildPlan, contentText, locateRecordStream, type PlanOptions } from "./input.js";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 import { verdictSlotId } from "./commentary.js";
 import { countProblemSamples, effectiveProblemOccurrences, problemSampleKey, projectLibrary } from "@eval/agents/clustering";
 import { clusteringClassText, readClusteringClassText, type ClusteringClassText } from "./clustering-presentation.js";
@@ -187,8 +187,11 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
   const paths = new Map<string, string>();
   if (stage === "comparison" && rewritten) {
     paths.set("tradeoff", "decision_basis.tradeoff");
-    for (const [label, version] of Object.entries(versions))
+    for (const [label, version] of Object.entries(versions)) {
       paths.set(`assessment.${label}.summary`, `assessments.${version}.summary`);
+      (source.decision_basis as ComparisonResult["decision_basis"]).comparisons.forEach((_row, index) =>
+        paths.set(`comparison.${index}.${label}.summary`, `decision_basis.comparisons.${index}.assessments.${version}.summary`));
+    }
     const labels = new Map(Object.entries(versions).map(([label, version]) => [version, label]));
     for (const pair of Object.keys(row.verdicts as JsonObject)) {
       const [first, second] = pair.split("__vs__").map((version) => labels.get(version));

@@ -77,3 +77,83 @@ test("automation balances tasks and shares exhausted channels across dates witho
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("automation caps OpenAI attempts while other channels use free slots, including retries and resume", async () => {
+  const previousKey = process.env.AUTOMATION_CONCURRENCY_TEST_KEY;
+  const rows = [raw("q1"), raw("q2"), raw("q3")];
+  const { directory, config, models } = await fixtureConfig([rows, [], rows, []]);
+  models.channels.openai = { ...models.channels["evaluation-gateway"], provider: "openai",
+    baseUrl: "https://preferred.example/v1", apiKeyEnv: "AUTOMATION_CONCURRENCY_TEST_KEY" };
+  process.env.AUTOMATION_CONCURRENCY_TEST_KEY = "concurrency-test-secret";
+  const plan = await buildPlan(config);
+  const routing = createAutomationModels(models, ["openai", "evaluation-gateway"], new Set(), { openai: 1 });
+  const attributions = plan.tasks.filter(task => task.stage === "attribution");
+  assert.equal(attributions.length, 6);
+  for (const task of plan.tasks)
+    routing.modelForTask(task, attributions.indexOf(task) >= 0 && attributions.indexOf(task) < 4 ? "openai" : "evaluation-gateway");
+  const active = new Map<string, { channel: string; stage: string }>(), attempts = new Map<string, number>();
+  let peakOpenai = 0, sharedSlots = false, failedTask: string | undefined;
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("Channel-limited tasks must leave slots for other channels"));
+    release();
+  }, 10_000);
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
+    async run() {
+      const spec = options.spec, channel = spec.model.provider;
+      active.set(spec.taskId, { channel, stage: spec.evaluation.id });
+      attempts.set(spec.taskId, (attempts.get(spec.taskId) ?? 0) + 1);
+      peakOpenai = Math.max(peakOpenai, [...active.values()].filter(value => value.channel === "openai").length);
+      try {
+        if (channel === "openai" && !failedTask) {
+          failedTask = spec.taskId;
+          options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error",
+            errorMessage: "OpenAI API error (503): Service temporarily unavailable" } });
+          return;
+        }
+        if (spec.evaluation.id === "attribution") {
+          const held = [...active.values()].filter(value => value.stage === "attribution");
+          if (held.some(value => value.channel === "openai") && held.filter(value => value.channel === "evaluation-gateway").length >= 2) {
+            sharedSlots = true;
+            release();
+          }
+          await barrier;
+        }
+        if (!controller.signal.aborted)
+          assert.equal((await submitFor(options, draftFor(spec, taskResult(spec)))).terminate, true);
+      } finally { active.delete(spec.taskId); }
+    }, async abort() { release(); }, async dispose() {},
+  }; } };
+  const workers: Awaited<ReturnType<typeof startWorker>>[] = [];
+  try {
+    assert.throws(() => createAutomationModels(models, ["openai"], new Set(), { missing: 1 }), /Unknown automation channel limit/);
+    for (const index of [0, 1, 2, 3]) workers.push(await startWorker(backend, path.join(directory, `worker-${index}`)));
+    const options = { ...services, ...routing, runId: "limited-channels", output: config.output, config, plan,
+      engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, policy: config.execution,
+      concurrency: 4, retries: 1, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url), signal: controller.signal };
+    const result = await runEvaluation(options);
+    assert.equal(controller.signal.aborted, false);
+    assert.equal(peakOpenai, 1);
+    assert.equal(sharedSlots, true, "OpenAI backlog must not stop other channels from filling available slots");
+    assert.deepEqual(result.paused_stages, []);
+    const saved = await readRunState(path.join(config.output.path, options.runId));
+    for (const task of plan.tasks) {
+      assert.equal(saved.manifest.states[task.id].status, "succeeded");
+      assert.equal(saved.manifest.states[task.id].attempts, task.id === failedTask ? 2 : 1);
+      assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, 1);
+    }
+    const before = [...attempts.values()].reduce((sum, count) => sum + count, 0);
+    await runEvaluation(options);
+    assert.equal([...attempts.values()].reduce((sum, count) => sum + count, 0), before, "resume preserves accepted work");
+    await assert.rejects(runEvaluation({ ...options, channelConcurrency: { openai: 0 } }), /positive integer limits/);
+  } finally {
+    clearTimeout(timeout);
+    release();
+    if (previousKey === undefined) delete process.env.AUTOMATION_CONCURRENCY_TEST_KEY;
+    else process.env.AUTOMATION_CONCURRENCY_TEST_KEY = previousKey;
+    await Promise.all(workers.map(worker => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

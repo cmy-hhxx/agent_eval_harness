@@ -16,6 +16,7 @@ export interface AutomationConfig extends PipelineOptions {
   engine: Engine;
   requestTimeoutMs: number;
   dailyComparisonLimitPerTier: number;
+  channelConcurrency?: Record<string, number>;
   publishProgress: boolean;
   publication: {
     logFile: string;
@@ -31,7 +32,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
   const keys = ["id", "sourceUrl", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
-    "requestTimeoutMs", "dailyComparisonLimitPerTier", "publishProgress", "publication"];
+    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publication"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
     if (typeof raw[key] !== "string" || !raw[key]) throw new Error(`Invalid automations.${key}`);
@@ -59,6 +60,11 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
   const hostConfigs = strings("hostConfigs").map((entry) => path.resolve(directory, entry));
   if (!hostConfigs.length) throw new Error("hostConfigs must not be empty");
+  const channelConcurrency = raw.channelConcurrency as AutomationConfig["channelConcurrency"];
+  if (channelConcurrency !== undefined && (!channelConcurrency || typeof channelConcurrency !== "object" ||
+      Array.isArray(channelConcurrency) || Object.entries(channelConcurrency).some(([channel, limit]) =>
+        !/^[a-z][a-z0-9_-]*$/.test(channel) || !Number.isSafeInteger(limit) || limit <= 0)))
+    throw new Error("Invalid automations.channelConcurrency");
   const publication = raw.publication as AutomationConfig["publication"];
   const publicationKeys = ["logFile", "logUrl", "mongoUriEnv", "mongoDatabase", "mongoCollection", "mongoTlsCAFileEnv"];
   if (!publication || typeof publication !== "object" || Array.isArray(publication) ||
@@ -77,6 +83,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     pollMs: number("pollMs"), refreshMs: number("refreshMs"), retryMs: number("retryMs"),
     maxEvaluationAttempts: number("maxEvaluationAttempts"), requestTimeoutMs: number("requestTimeoutMs"),
     dailyComparisonLimitPerTier: number("dailyComparisonLimitPerTier"),
+    channelConcurrency,
     publishProgress: raw.publishProgress,
     publication: { ...publication, logFile: path.resolve(directory, publication.logFile), logUrl: logUrl.href },
   };

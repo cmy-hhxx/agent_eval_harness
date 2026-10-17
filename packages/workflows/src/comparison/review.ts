@@ -1,11 +1,39 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { ValidationError, type PlannedTask, type WorkflowDefinition } from "@eval/contracts";
-import { attributionProfile, standardConflictReviewInstructions, type AttributionResult } from "@eval/agents/attribution";
-import { comparisonScope } from "@eval/agents/comparison";
-import type { TaskData } from "./types.js";
+import { workflowText, standardConflictReviewInstructions } from "@eval/prompts";
+import { ValidationError, type PlannedTask, type RunState, type WorkflowDefinition } from "@eval/contracts";
+import { attributionProfile, type AttributionResult } from "@eval/agents/attribution";
+import type { EvalConfig, TaskData } from "./types.js";
 import { bindTask } from "./binding.js";
-import { attributionRewritePlaceholder, inactiveCoverageSources, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+import { attributionRewritePlaceholder, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+
+/** Turning the opt-in off releases unfinished consumers back to their original accepted sources. */
+export function configureStandardReview(state: RunState, enabled: boolean): void {
+  for (const task of state.manifest.tasks) if (task.stage === "attribution" && !state.receipts[task.id])
+    (task.data as TaskData).standardAnswerReview = enabled;
+  if (enabled) return;
+  const originals = new Map(state.manifest.tasks.flatMap(task => {
+    const data = task.data as TaskData;
+    return data.standardConflictReview && data.reviewOf && !state.receipts[task.id]
+      ? [[task.id, data.reviewOf.taskId] as const] : [];
+  }));
+  const removed = new Set(originals.keys());
+  for (const task of state.manifest.tasks) {
+    if (state.receipts[task.id]) continue;
+    if (task.stage === "rewrite" && originals.has(task.dependencies.source)) {
+      removed.add(task.id); continue;
+    }
+    task.dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, originals.get(id) ?? id]));
+  }
+  state.manifest.tasks = state.manifest.tasks.filter(task => !removed.has(task.id));
+  for (const id of removed) delete state.manifest.states[id];
+  if (state.manifest.pausedStages) state.manifest.pausedStages = state.manifest.pausedStages
+    .map(pause => ({ ...pause, taskIds: pause.taskIds.filter(id => !removed.has(id)) })).filter(pause => pause.taskIds.length);
+  if (state.manifest.executionScope) {
+    const scope = new Set(state.manifest.executionScope.flatMap(id => removed.has(id) ? originals.has(id) ? [originals.get(id)!] : [] : [id]));
+    state.manifest.executionScope = [...scope];
+  }
+}
 
 function reviewRewrite(template: PlannedTask, sourceTaskId: string): PlannedTask {
   const data = template.data as TaskData;
@@ -96,8 +124,9 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
         review = { id: randomUUID(), stage: "attribution", dependencies: { criteria: task.id }, inputIds: { answer: candidate.input_id },
           data: { stage: "attribution", candidates: { A: candidate }, reference: data.reference, criteriaScope: data.criteriaScope,
             initialContextChars: compared.initialContextChars, revision: 1,
+            standardAnswerReview: (state.manifest.config as EvalConfig).standardAnswerReview === true,
             ...((original.data as TaskData).reviewQuestions ? { reviewQuestions: [...(original.data as TaskData).reviewQuestions!] } : {}),
-            reviewOf: { taskId: sourceId, round: 1, reasons: ["本次共同标准、标准答案或当前材料证据与原归因不一致，按本次材料独立核验。"] } } satisfies TaskData };
+            reviewOf: { taskId: sourceId, round: 1, reasons: [workflowText("criteria-review")] } } satisfies TaskData };
         reviews.set(sourceId, review); tasks.push(review);
         const polish = state.manifest.tasks.find((item) => item.stage === "rewrite" && item.dependencies.source === sourceId);
         if (polish) tasks.push(reviewRewrite(polish, review.id));
@@ -114,80 +143,18 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
   return { tasks, replace: [...replace.values()] };
 };
 
-/** Before the first comparison, ask both source agents once about unmatched material observations. */
-const advanceCoverage: NonNullable<WorkflowDefinition["advance"]> = (task, _receipt, state, inputs) => {
-  const tasks: PlannedTask[] = [], replace: PlannedTask[] = [];
-  for (const comparison of state.manifest.tasks.filter(item => item.stage === "comparison" &&
-    !(item.data as TaskData).verificationAudit && !(item.data as TaskData).coverageReviewPrepared &&
-    Object.values(item.dependencies).includes(task.id) && !state.receipts[item.id] &&
-    Object.values(item.dependencies).every(id => state.receipts[id]))) {
-    const data = comparison.data as TaskData;
-    const dependencies = Object.fromEntries(Object.entries(comparison.dependencies).map(([key,id]) => [key,state.receipts[id]]));
-    const binding = bindTask(comparison,{...inputs},dependencies,{tasks:state.manifest.tasks});
-    const scope = comparisonScope(binding.request);
-    const observations = Object.keys(data.candidates).flatMap(label => {
-      const attribution = dependencies[label].evaluation as AttributionResult;
-      return attribution.findings.flatMap((finding,index) => finding.type === "problem" && finding.assessment.requirement_index === null &&
-        finding.importance !== "low" && scope.findings[label][index].scope === "pair" ? [finding.text] : []);
-    });
-    if (!observations.length) continue;
-    const next = { ...comparison.dependencies };
-    for (const [label,candidate] of Object.entries(data.candidates)) {
-      const original = state.manifest.tasks.find(item => item.id === comparison.dependencies[label])!;
-      const originalData = original.data as TaskData;
-      const id = randomUUID();
-      const review: PlannedTask = { id,stage:"attribution",inputIds:{...original.inputIds},dependencies:{criteria:comparison.dependencies.criteria},
-        data:{stage:"attribution",candidates:{A:candidate},reference:data.reference,criteriaScope:data.criteriaScope,group:data.group,coverageReview:true,
-          ...(originalData.referenceCandidates ? {referenceCandidates:originalData.referenceCandidates} : {}),
-          ...(originalData.standardConflictReview ? {standardConflictReview:true} : {}),
-          initialContextChars:data.initialContextChars,revision:1,reviewOf:{taskId:original.id,round:1,
-            reasons:[...(originalData.standardConflictReview ? originalData.reviewOf!.reasons : []),
-              "核查以下同题比较点在本方回答中的实际表现；这些观察不是本方既定事实。确实涉及某项共同交付时，将本方 finding 关联对应要求并同步逐项状态；私规不扩大为共同要求，无关内容不强行关联。",...new Set(observations)]}} satisfies TaskData };
-      if ((original.data as TaskData).reviewQuestions)
-        (review.data as TaskData).reviewQuestions = [...(original.data as TaskData).reviewQuestions!];
-      tasks.push(review); next[label]=id;
-    }
-    replace.push({...comparison,dependencies:next,data:{...data,coverageReviewPrepared:true} satisfies TaskData});
-  }
-  const replacements = new Map(replace.map(item => [item.id, item]));
-  const inactive = inactiveCoverageSources([...state.manifest.tasks.map(item => replacements.get(item.id) ?? item), ...tasks]);
-  const reused = new Set<string>();
-  for (const review of [...tasks]) {
-    const sourceId = (review.data as TaskData).reviewOf!.taskId;
-    const rewrites = state.manifest.tasks.filter(item => item.stage === "rewrite" && item.dependencies.source === sourceId);
-    const unused = inactive.has(sourceId) && rewrites.find(item => !reused.has(item.id) && !state.receipts[item.id] &&
-      !(item.data as TaskData).rewriteSlotIds && state.manifest.states[item.id]?.attempts === 0 &&
-      !state.manifest.states[item.id]?.failure && state.manifest.states[item.id]?.status !== "running");
-    const template = unused || rewrites[0];
-    if (!template) continue;
-    const polish = reviewRewrite(template, review.id);
-    if (unused) { reused.add(unused.id); replace.push({ ...polish, id: unused.id }); }
-    else tasks.push(polish);
-  }
-  if ((task.data as TaskData).coverageReview) for (const cluster of state.manifest.tasks.filter(item => item.stage === "clustering" &&
-    !state.receipts[item.id] && state.manifest.states[item.id]?.status !== "running")) {
-    const inputId=task.inputIds.answer;
-    if(Object.hasOwn(cluster.dependencies,inputId)) replace.push({...cluster,dependencies:{...cluster.dependencies,[inputId]:task.id}});
-  }
-  return {tasks,replace};
-};
-
 /** Accepted formal comparisons and retrospective verification never reopen source results. */
 export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
-  if (task.stage === "attribution" && (inactiveCoverageSources(state.manifest.tasks).has(task.id) ||
-    state.manifest.tasks.some(item => (item.data as TaskData).standardConflictReview &&
-      (item.data as TaskData).reviewOf?.taskId === task.id))) return { tasks: [] };
+  if (task.stage === "attribution" && state.manifest.tasks.some(item =>
+    (item.data as TaskData).standardConflictReview && (item.data as TaskData).reviewOf?.taskId === task.id)) return { tasks: [] };
   const advance = task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)
-    : task.stage !== "attribution" ? { tasks: [] }
-    : (receipt.evaluation as AttributionResult).standard_conflict && !(task.data as TaskData).standardConflictReview
-      ? advanceStandardConflict(task, receipt, state, inputs)
-      : advanceCoverage(task, receipt, state, inputs);
+    : task.stage === "attribution" && (state.manifest.config as EvalConfig).standardAnswerReview === true &&
+      (receipt.evaluation as AttributionResult).standard_conflict && !(task.data as TaskData).standardConflictReview
+      ? advanceStandardConflict(task, receipt, state, inputs) : { tasks: [] };
   const retargeted = (advance.replace ?? []).some(replacement => replacement.stage === "rewrite" &&
     state.manifest.tasks.some(previous => previous.id === replacement.id && (previous.data as TaskData).rewriteOf?.taskId === task.id) &&
     (replacement.data as TaskData).rewriteOf?.taskId !== task.id);
-  const replacements = new Map((advance.replace ?? []).map(item => [item.id, item]));
-  const handedOff = inactiveCoverageSources([...state.manifest.tasks.map(item => replacements.get(item.id) ?? item), ...advance.tasks]);
-  const grouped = retargeted || handedOff.has(task.id) ? { tasks: [] } : planAttributionRewriteGroups(task, receipt, state);
+  const grouped = retargeted ? { tasks: [] } : planAttributionRewriteGroups(task, receipt, state);
   return { tasks: [...advance.tasks, ...grouped.tasks],
     ...((advance.replace?.length || grouped.replace?.length) ? { replace: [...advance.replace ?? [], ...grouped.replace ?? []] } : {}) };
 };

@@ -1,4 +1,4 @@
-import type { EvidenceReference, JsonSchema, ValidationIssue } from "./index.js";
+import type { EvidenceReference, JsonSchema, ValidationIssue } from "./primitives.js";
 import { evidenceImageAvailable, evidenceSources, overlapsImagePlaceholder, parseEvidenceCoordinates } from "./evidence.js";
 import { ValidationError } from "./validation.js";
 

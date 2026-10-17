@@ -9,7 +9,7 @@ import { buildPlan, readRunState, type AttributionResult, type TaskData } from "
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor, parsedMaterial, submitFor, taskResult } from "../../fixtures/comparison.js";
 import { services, validateRun } from "../../fixtures/services.js";
 
-test("Host completes coverage review and rewrite without reviving replaced-source groups on resume", { timeout: 60_000 }, async t => {
+test("Host preserves one attribution per answer and records unresolved comparison without automatic rechecks", { timeout: 60_000 }, async t => {
   let phase = "setup", calls = 0, lastProgress: string | undefined;
   const callsByStage: Record<string, number> = {};
   t.signal.addEventListener("abort", () => {
@@ -46,16 +46,17 @@ test("Host completes coverage review and rewrite without reviving replaced-sourc
     };
     phase = "initial-evaluation";
     const summary = await runEvaluation(options), run = path.join(fixture.config.output.path, options.runId);
-    const accepted = await readRunState(run), lastOriginal = originalCompletions.at(-1)!;
+    const accepted = await readRunState(run);
     assert.equal(originalCompletions.length, 2);
-    assert.equal(accepted.manifest.tasks.filter(task => (task.data as TaskData).coverageReview).length, 2);
-    assert(!accepted.manifest.tasks.some(task => task.stage === "rewrite" && task.dependencies.source === lastOriginal),
-      "the last source's unpaid placeholder is retargeted rather than followed by new old-source groups");
+    assert.equal(accepted.manifest.tasks.filter(task => task.stage === "attribution").length, 2);
+    assert(!accepted.manifest.tasks.some(task => (task.data as TaskData).reviewOf));
+    assert(accepted.manifest.tasks.filter(task => task.stage === "comparison").every(task =>
+      (accepted.receipts[task.id]?.evaluation as { status: string }).status === "needs_review"));
     assert.equal(summary.status, "finished");
-    assert(Object.values(accepted.manifest.states).every(progress => progress.status === "succeeded"),
+    assert(accepted.manifest.tasks.filter(task => task.stage !== "rewrite" || (task.data as TaskData).rewriteOf?.stage === "attribution").every(task => accepted.manifest.states[task.id].status === "succeeded"),
       "handoff leaves no permanently pending or blocked work");
     phase = "stored-result-validation";
-    assert.equal((await validateRun(run)).valid, true);
+    assert.equal((await validateRun(run)).delivery.valid, false);
     const callsBeforeResume = calls;
     phase = "same-run-resume";
     await runEvaluation(options);

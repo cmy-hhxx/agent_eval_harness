@@ -1,3 +1,5 @@
+import type { JsonSchema, JsonObject, ModelConfig, ToolResult, TraceRead, FailureCategory, ValidationIssue } from "./primitives.js";
+export type * from "./primitives.js";
 export { presentSource, type SourcePresentation } from "./source-presentation.js";
 export type Engine = "pi" | "prime";
 export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
@@ -6,8 +8,6 @@ export { mergeRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars
 export * from "./automations.js";
 export type * from "./criteria.js";
 export type * from "./publication.js";
-export type JsonSchema = Record<string, unknown>;
-export type JsonObject = Record<string, unknown>;
 
 export interface Policy {
   timeoutSeconds: number;
@@ -28,20 +28,6 @@ export const DEFAULT_POLICY: Policy = {
   codeTimeoutSeconds: 60,
   maxOutputChars: 16000,
 };
-export interface ModelConfig {
-  provider: string;
-  baseUrl: string;
-  api: "openai-completions" | "openai-responses";
-  apiKeyEnv: string;
-  model: string;
-  thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-  /** Explicit endpoint capability; false preserves system instructions as system messages. */
-  supportsDeveloperRole?: boolean;
-  /** Opt in only on endpoints supporting prompt_cache_breakpoint and prompt_cache_options. */
-  supportsExplicitPromptCaching?: boolean;
-  contextWindow: number;
-  maxOutputTokens: number;
-}
 export interface EvaluationSpec {
   id: string;
   profile: string;
@@ -114,31 +100,10 @@ export interface WorkerEvent {
   type: "started" | "model" | "tool_start" | "tool_end" | "usage" | "submission" | "finished";
   data: unknown;
 }
-export interface ToolContent {
-  type: "text" | "image";
-  text?: string;
-  data?: string;
-  mimeType?: string;
-}
-export interface ToolResult {
-  content: ToolContent[];
-  details?: unknown;
-  isError?: boolean;
-  terminate?: boolean;
-}
 export interface Artifact {
   id: string;
   name: string;
   bytes: number;
-}
-/** Characters actually returned from one trace source; ranges are half-open UTF-16 offsets. */
-export interface TraceRead {
-  candidate: string;
-  message_index: number;
-  kind: "text" | "json";
-  path: string;
-  start: number;
-  end: number;
 }
 /** Recomputable table comparison coordinates; never stores copied cells or verdicts. */
 export interface TableCheckSpec {
@@ -336,11 +301,6 @@ export interface SubmissionReceipt extends Submission {
   judge: string;
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
-}
-/** A copied self-contained registered source coordinate. */
-export interface EvidenceReference {
-  evidence_id: string;
-  observation?: unknown;
 }
 /** A resolved source coordinate and its exact display text; neither replaces the other. */
 export interface ResolvedEvidence {
@@ -617,24 +577,6 @@ export interface RunState {
   receipts: Record<string, SubmissionReceipt>;
   usage: Usage;
   recordedAttempts: number;
-}
-
-export type FailureCategory =
-  | "input"
-  | "structure"
-  | "evidence"
-  | "decision"
-  | "file"
-  | "transport"
-  | "interruption";
-export interface ValidationIssue {
-  code: string;
-  path: string;
-  candidate?: string;
-  expected?: unknown;
-  actual?: unknown;
-  message: string;
-  category: FailureCategory;
 }
 export interface FailureContext {
   /** Keep prior choices stable even when the last draft or inspection failed. */

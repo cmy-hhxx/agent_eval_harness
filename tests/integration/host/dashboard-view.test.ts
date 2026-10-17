@@ -327,6 +327,20 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
   } finally { dom.window.close(); }
 });
 
+test("checklist rewrite paths follow saved blind identities without changing the raw comparison", () => {
+  const result = comparisonResult();
+  const row = { ...result, verdicts: {}, rewritten: { evaluator_version: "fixture", rewrites: [
+    { id: "comparison.0.A.summary", text: "右模型逐项点评。" },
+    { id: "comparison.0.B.summary", text: "左模型逐项点评。" },
+  ] } };
+  const before = structuredClone(row);
+  const view = caseResultView("comparison", row, { A: "right", B: "left" })!;
+  assert.deepEqual((view.rewritten as { rewrites: { path: string }[] }).rewrites.map(item => item.path), [
+    "decision_basis.comparisons.0.assessments.right.summary", "decision_basis.comparisons.0.assessments.left.summary",
+  ]);
+  assert.deepEqual(row, before);
+});
+
 test("comparison shows each model's attribution with its own rewrites, directory and isolated finding IDs", () => {
   const evaluation = attributionResult();
   const result = caseResultView("comparison", {

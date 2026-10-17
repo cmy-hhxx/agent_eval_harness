@@ -6,17 +6,6 @@ import { sourceRewriteTasks } from "./rewrite-projection.js";
 import { pendingTaskProgress } from "./task-progress.js";
 import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
 
-/** A pair review replaces a source only after its last current comparison hands off. */
-export function inactiveCoverageSources(tasks: readonly PlannedTask[]): Set<string> {
-  const active = new Set(tasks.filter(task => task.stage === "comparison" && !(task.data as TaskData).verificationAudit)
-    .flatMap(task => Object.values(task.dependencies)));
-  return new Set(tasks.flatMap(task => {
-    const data = task.data as TaskData;
-    return task.stage === "attribution" && data.coverageReview && data.reviewOf && !active.has(data.reviewOf.taskId)
-      ? [data.reviewOf.taskId] : [];
-  }));
-}
-
 /** The result determines groups only after acceptance; this task reserves its first group. */
 export function attributionRewritePlaceholder(
   sourceTaskId: string, context: Pick<TaskData, "case" | "rewriteNames">, previous?: PlannedTask,
@@ -31,7 +20,6 @@ export function planAttributionRewriteGroups(
   source: PlannedTask, receipt: SubmissionReceipt, state: RunState, rewrites = sourceRewriteTasks(state.manifest.tasks, source.id),
 ): ReturnType<NonNullable<WorkflowDefinition["advance"]>> {
   if (source.stage !== "attribution" || !(state.manifest.config as EvalConfig).rewrite.attribution) return { tasks: [] };
-  if (inactiveCoverageSources(state.manifest.tasks).has(source.id)) return { tasks: [] };
   const result = receipt.evaluation as AttributionResult;
   const filled = new Set(rewrites.filter(task => state.receipts[task.id]).flatMap(task =>
     (state.receipts[task.id]!.evaluation as RewriteResult).rewrites.map(item => item.id)));
@@ -84,7 +72,7 @@ export function supersededAttributionRewriteIds(state: RunState): Set<string> {
 /** Reconciliation expands only active source answers, including a frozen rewrite-only repair. */
 export function reconcileAttributionRewriteGroups(state: RunState, preserveCompletedResults = false): void {
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
-  const bySource = new Map<string, PlannedTask[]>(), proposals = inactiveCoverageSources(state.manifest.tasks);
+  const bySource = new Map<string, PlannedTask[]>(), proposals = new Set<string>();
   for (const task of state.manifest.tasks) {
     const data = task.data as TaskData;
     if (task.stage === "rewrite" && data.rewriteOf?.stage === "attribution")

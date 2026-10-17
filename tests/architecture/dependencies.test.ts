@@ -28,10 +28,10 @@ const allowed: Record<string, string[]> = {
   runtime: ["contracts", "data", "tools"],
   host: ["contracts", "data", "runtime"],
   agents: ["contracts", "tools", "prompts"],
-  workflows: ["contracts", "data", "tools", "agents"],
+  workflows: ["contracts", "data", "tools", "agents", "prompts"],
 };
 
-test("public package boundaries, independent Agents and acyclic implementation imports", async () => {
+test("public package boundaries, independent Agents and acyclic implementation and type imports", async () => {
   const config = JSON.parse(await readFile(path.join(root, "tsconfig.json"), "utf8"));
   const aliases = config.compilerOptions.paths as Record<string, string[]>;
   const sources = [...(await files("packages")), ...(await files("apps")), ...(await files("agent/src"))].filter(
@@ -81,14 +81,7 @@ test("public package boundaries, independent Agents and acyclic implementation i
           target.split("/")[3],
           `Agents must not import each other: ${file} -> ${target}`,
         );
-      const typesOnly = ts.isImportDeclaration(node)
-        ? node.importClause?.isTypeOnly ||
-          (!node.importClause?.name &&
-            node.importClause?.namedBindings &&
-            ts.isNamedImports(node.importClause.namedBindings) &&
-            node.importClause.namedBindings.elements.every((item) => item.isTypeOnly))
-        : node.isTypeOnly;
-      if (!typesOnly && target.endsWith(".ts")) edges.push(target);
+      if (target.endsWith(".ts")) edges.push(target);
     }
     graph.set(file, edges);
   }

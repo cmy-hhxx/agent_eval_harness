@@ -333,6 +333,9 @@
       "additionalProperties": {
         "$ref": "#/$defs/reference_material"
       }
+    },
+    "allow_standard_conflict": {
+      "type": "boolean"
     }
   },
   "$defs": {

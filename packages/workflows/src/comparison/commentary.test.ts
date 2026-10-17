@@ -118,13 +118,13 @@ test("comparison rewrites only the pair preference using its accepted match fact
   assert.equal(comparisonSlots(bothMet)[0]!.preference, "双方都好");
 });
 
-test("program-derived comparison cells remain outside language rewrite slots", () => {
+test("checklist prose is rewritten while program-derived resource measurements remain original", () => {
   const result = structuredClone(comparison);
   result.decision_basis.comparisons.push({ aspect: "原始完成时长与用量", criterion_ids: [], importance: "low", better_candidates: [],
     assessments: { A: { summary: "完成耗时：4.2 秒；总 token：80。", status: "met", evidence_status: "established", finding_indices: [] },
       B: { summary: "完成耗时：3.5 秒；总 token：100。", status: "met", evidence_status: "established", finding_indices: [] } } });
   const items = comparisonSlots(result, "items");
-  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
   assert.deepEqual(result.decision_basis.comparisons[1].assessments.A.summary, "完成耗时：4.2 秒；总 token：80。");
 });
 
@@ -259,21 +259,22 @@ test("attribution display polish covers all prose while preserving judgments, re
   assert(!attributionSlots(result).some(item => item.id === "findings.0.assessment.impact"));
 });
 
-test("item refresh includes only model-written overall prose and preserves derived cells", () => {
+test("item refresh includes checklist and overall prose without changing source judgments", () => {
   const before = structuredClone(comparison), items = comparisonSlots(comparison, "items");
-  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+  assert.deepEqual(items.map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
   assert.deepEqual(items.map(item => item.text), [comparison.assessments.A.summary, comparison.assessments.B.summary,
+    comparison.decision_basis.comparisons[0].assessments.A.summary, comparison.decision_basis.comparisons[0].assessments.B.summary,
     comparison.decision_basis.tradeoff]);
-  assert(!items.some(item => item.id.startsWith("comparison.")));
+  assert(items.some(item => item.id.startsWith("comparison.")));
   assert.deepEqual(comparison, before);
 });
 
 test("complete comparison rewrite includes the verdict and model-written overall prose", () => {
   const slots = comparisonSlots(comparison, "all");
   assert.deepEqual(slots, [...comparisonSlots(comparison, "verdicts"), ...comparisonSlots(comparison, "items")]);
-  assert.equal(new Set(slots.map((slot) => slot.id)).size, 4);
+  assert.equal(new Set(slots.map((slot) => slot.id)).size, 6);
   assert.equal(slots[0].preference, "【候选A】更好");
-  assert(!slots.some(slot => slot.id.startsWith("comparison.")));
+  assert(slots.some(slot => slot.id.startsWith("comparison.")));
 });
 
 test("presentation view applies already-unblinded rewrites by slot without interpreting their text", () => {
@@ -302,6 +303,7 @@ test("presentation view applies already-unblinded rewrites by slot without inter
   const bySource: Record<string, Rewrites> = {
     cmp: {
       "assessment.B.summary": "A组精简",
+      "comparison.0.B.summary": "A组逐项精简",
       tradeoff: "精简权衡",
       [verdictSlotId("A", "B")]: "精简判决",
     },
@@ -319,7 +321,7 @@ test("presentation view applies already-unblinded rewrites by slot without inter
   });
   assert.equal((view.decision_basis as { tradeoff: string }).tradeoff, "精简权衡");
   const rows = (view.decision_basis as unknown as ComparisonResult["decision_basis"]).comparisons;
-  assert.equal(rows[0].assessments.a.summary, "原表现A", "program-derived cells cannot be overwritten by rewrite text");
+  assert.equal(rows[0].assessments.a.summary, "A组逐项精简", "checklist prose follows the saved blind identity mapping");
   assert.equal(rows[0].assessments.b.summary, "原表现B");
   assert.deepEqual(rows[0].better_candidates, ["a"]);
   assert.equal((view.verdicts as Record<string, { reason: string }>)["a__vs__b"].reason, "精简判决");

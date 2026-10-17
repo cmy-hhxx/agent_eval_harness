@@ -66,7 +66,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (command === "run") {
     if (!process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
     logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
-    createAutomationModels(host.models, host.automation.channels);
+    createAutomationModels(host.models, host.automation.channels, undefined, config.channelConcurrency);
   }
   const release = await runLock(config.stateDirectory);
   let releaseSources: (() => Promise<void>) | undefined;

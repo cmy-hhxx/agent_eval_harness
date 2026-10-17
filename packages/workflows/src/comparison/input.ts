@@ -721,6 +721,7 @@ export async function buildPlan(
           stage: "attribution",
           // Internal slot only; attribution materials and tools use `answer`.
           candidates: { A: record },
+          standardAnswerReview: config.standardAnswerReview === true,
           reference,
           criteriaScope,
           initialContextChars: config.execution.initialContextChars,

@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import { rm } from "node:fs/promises";
 import { emptyUsage, type PlannedTask, type RunState, type SubmissionReceipt, type WorkflowDefinition } from "@eval/contracts";
-import { standardConflictReviewInstructions } from "@eval/agents/attribution";
+import { standardConflictReviewInstructions } from "@eval/prompts";
 import { evidenceId } from "@eval/tools";
 import { attributionResult, criteriaResult, emptyAudit, fakeIdentity, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import { comparisonWorkflow } from "./workflow.js";
-import { reconcileRun } from "./run-data.js";
+import { configureStandardReview } from "./review.js";
+import { readRunState, reconcileRun, writeRunState } from "./run-data.js";
+import { prepareFailedTasks } from "./repair.js";
 import { summarizeResults } from "./report.js";
 import type { TaskData } from "./types.js";
 
@@ -19,10 +22,87 @@ function apply(state: RunState, change: ReturnType<NonNullable<WorkflowDefinitio
   }
 }
 
+test("standard review is opt-in and disabling it releases pending consumers without changing accepted history", async t => {
+  const fixture = await fixtureConfig([[raw()], [], [raw()], []], false, true);
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const plan = await buildPlan(fixture.config), source = plan.tasks.find(task => task.stage === "attribution")!;
+  const receipt = { taskId: source.id, evaluation: { standard_conflict: true } } as SubmissionReceipt;
+  const state = { manifest: { config: fixture.config, tasks: [...plan.tasks], states: Object.fromEntries(plan.tasks.map(task =>
+    [task.id, { status: task.id === source.id ? "succeeded" : "pending", attempts: 0 }])) }, receipts: { [source.id]: receipt } } as unknown as RunState;
+  assert.deepEqual(comparisonWorkflow.advance!(source, receipt, state, plan.inputs), { tasks: [] });
+  fixture.config.standardAnswerReview = true;
+  configureStandardReview(state, true);
+  const before = structuredClone(state.receipts);
+  apply(state, comparisonWorkflow.advance!(source, receipt, state, plan.inputs));
+  const reviews = state.manifest.tasks.filter(task => (task.data as TaskData).standardConflictReview);
+  assert.equal(reviews.length, 2);
+  assert(state.manifest.tasks.some(task => task.stage === "comparison" && Object.values(task.dependencies).includes(reviews[0].id)));
+  configureStandardReview(state, false);
+  assert(!state.manifest.tasks.some(task => (task.data as TaskData).standardConflictReview));
+  for (const task of state.manifest.tasks) assert(!Object.values(task.dependencies).some(id => reviews.some(review => review.id === id)));
+  assert.deepEqual(state.receipts, before);
+  assert(state.manifest.tasks.filter(task => task.stage === "attribution" && !state.receipts[task.id])
+    .every(task => (task.data as TaskData).standardAnswerReview === false));
+});
+
+test("disabling standard review after scoped retry preserves original tasks and cumulative failure budgets", async t => {
+  const fixture = await fixtureConfig([[raw()], [], [raw()], []], false, false);
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  fixture.config.standardAnswerReview = true;
+  const plan = await buildPlan(fixture.config), criteria = plan.tasks.find(task => task.stage === "criteria")!;
+  const [source, peer] = plan.tasks.filter(task => task.stage === "attribution");
+  const comparison = plan.tasks.find(task => task.stage === "comparison")!;
+  const receipt = (taskId: string, evaluation: unknown): SubmissionReceipt => ({ taskId, evaluation,
+    attemptId: taskId, submissionId: taskId, acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture",
+    judge: "fixture", audit: emptyAudit(), usage: emptyUsage() });
+  const result = attributionResult(false, "2+2=4", true, source.inputIds.answer);
+  result.standard_conflict = true;
+  const receipts = { [criteria.id]: receipt(criteria.id, criteriaResult()), [source.id]: receipt(source.id, result) };
+  const state: RunState = { receipts, usage: emptyUsage(), recordedAttempts: 3, manifest: {
+    format: "evaluation-run", runId: "standard-review-retry", debug: false, status: "interrupted", startedAt: 1,
+    engine: fakeIdentity, evaluatorVersion: "fixture", config: fixture.config,
+    inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary, tasks: [...plan.tasks],
+    states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: receipts[task.id] ? "succeeded" : "cancelled", attempts: 1 }])) } };
+  state.manifest.states[peer.id].failure = { attemptId: peer.id, contentSubmissions: 2, fileErrors: 1,
+    repeatedErrors: 0, stopped: false,
+    errors: [{ category: "transport", code: "offline", path: "/", message: "offline" }] };
+  const peerProgress = structuredClone(state.manifest.states[peer.id]);
+  apply(state, comparisonWorkflow.advance!(source, receipts[source.id], state, plan.inputs));
+  const review = state.manifest.tasks.find(task => (task.data as TaskData).standardConflictReview &&
+    (task.data as TaskData).reviewOf!.taskId === peer.id)!;
+  state.manifest.states[review.id].status = "failed";
+
+  const run = path.join(fixture.directory, state.manifest.runId);
+  await reconcileRun(run, state, fixture.config);
+  await writeRunState(run, state);
+  await prepareFailedTasks(run, { taskIds: [review.id], apply: true });
+  const resumed = await readRunState(run), accepted = structuredClone(resumed.receipts);
+  const disabled = { ...fixture.config, standardAnswerReview: false };
+  const recovered = await reconcileRun(run, resumed, disabled);
+  const taskIds = new Set(resumed.manifest.tasks.map(task => task.id));
+  assert.deepEqual(resumed.manifest.executionScope!.filter(id => !taskIds.has(id)), [], "every resumed task must still exist");
+  assert(resumed.manifest.executionScope!.includes(peer.id));
+  assert(!resumed.manifest.tasks.some(task => (task.data as TaskData).standardConflictReview));
+  assert.deepEqual(resumed.manifest.tasks.find(task => task.id === comparison.id)!.dependencies, comparison.dependencies);
+  assert.deepEqual(resumed.manifest.states[peer.id], { ...peerProgress, revision: 1 });
+  assert.deepEqual(resumed.receipts, accepted);
+  const original = resumed.manifest.tasks.find(task => task.id === peer.id)!;
+  const binding = bindTask(original, recovered.inputs, { criteria: resumed.receipts[criteria.id] }, { tasks: resumed.manifest.tasks });
+  assert.equal(binding.request.input.allow_standard_conflict, false);
+  assert.equal(binding.request.input.candidate_id, peer.inputIds.answer);
+  await writeRunState(run, resumed);
+  const saved = await readRunState(run);
+  await reconcileRun(run, saved, disabled);
+  assert.deepEqual(saved.manifest.executionScope, resumed.manifest.executionScope);
+  assert.deepEqual(saved.manifest.states[peer.id], resumed.manifest.states[peer.id]);
+  assert.deepEqual(saved.receipts, accepted);
+});
+
 for (const confirmed of [false, true]) test(`standard conflict review ${confirmed ? "confirms" : "withdraws"} the proposal once before comparison and rewrite`, async () => {
   const spaced = raw(); spaced.messages[0].content = "计算 2 + 2";
   const fixture = await fixtureConfig([[raw()], [], [spaced], []], true, true);
   try {
+    fixture.config.standardAnswerReview = true;
     const plan = await buildPlan(fixture.config), criteria = plan.tasks.find(task => task.stage === "criteria")!;
     const source = plan.tasks.find(task => task.stage === "attribution")!;
     const evaluationFor = (task: PlannedTask) => {
@@ -132,6 +212,7 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
 test("standard review uses only distinct current opponents and leaves absent peer evidence absent", async () => {
   const fixture = await fixtureConfig([[raw()], [], [raw()], []], false, false);
   try {
+    fixture.config.standardAnswerReview = true;
     const plan = await buildPlan(fixture.config), source = plan.tasks.find(task => task.stage === "attribution")!;
     const pair = plan.tasks.find(task => task.stage === "comparison")!;
     const receipt = { taskId: source.id, evaluation: { standard_conflict: true } } as SubmissionReceipt;
@@ -152,6 +233,7 @@ test("standard review uses only distinct current opponents and leaves absent pee
 for (const status of ["running", "succeeded"] as const) test(`standard review preserves ${status} consumers and creates replacement polish`, async () => {
   const fixture = await fixtureConfig([[raw()], [], [raw()], []], true, true);
   try {
+    fixture.config.standardAnswerReview = true;
     const plan = await buildPlan(fixture.config), source = plan.tasks.find(task => task.stage === "attribution")!;
     const counterpart = plan.tasks.find(task => task.stage === "attribution" && task.id !== source.id)!;
     const pair = plan.tasks.find(task => task.stage === "comparison")!;
@@ -175,54 +257,10 @@ for (const status of ["running", "succeeded"] as const) test(`standard review pr
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
-test("coverage review retains shared standard evidence and cannot restore late original sources", async () => {
-  const fixture = await fixtureConfig([[raw()], [], [raw()], []], false, true);
-  try {
-    const plan = await buildPlan(fixture.config), criteria = plan.tasks.find(task => task.stage === "criteria")!;
-    const source = plan.tasks.find(task => task.stage === "attribution")!;
-    const receipt = (task: PlannedTask, evaluation: unknown) => ({ taskId: task.id, evaluation, status: "succeeded", audit: emptyAudit() }) as SubmissionReceipt;
-    const state = { manifest: { config: fixture.config, tasks: [...plan.tasks], states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])) },
-      receipts: { [criteria.id]: receipt(criteria, criteriaResult()) } } as unknown as RunState;
-    const original = attributionResult(true, "2+2=4", true, source.inputIds.answer); original.standard_conflict = true;
-    state.receipts[source.id] = receipt(source, original);
-    apply(state, comparisonWorkflow.advance!(source, state.receipts[source.id], state, plan.inputs));
-    const reviews = state.manifest.tasks.filter(task => (task.data as TaskData).standardConflictReview);
-    for (const review of reviews) {
-      const evaluation = attributionResult(true, "2+2=4", true, review.inputIds.answer); evaluation.standard_conflict = true;
-      const finding = evaluation.findings[0];
-      finding.type = "problem"; finding.assessment.requirement_index = null;
-      finding.problem = { component: ["模型自身推理"], label: "附加说明缺乏依据", definition: "附加说明无法从给定资料得到。" };
-      state.receipts[review.id] = receipt(review, evaluation); state.manifest.states[review.id].status = "succeeded";
-      apply(state, comparisonWorkflow.advance!(review, state.receipts[review.id], state, plan.inputs));
-    }
-    const coverage = state.manifest.tasks.filter(task => (task.data as TaskData).coverageReview);
-    assert.equal(coverage.length, 2);
-    for (const next of coverage) {
-      const prior = reviews.find(task => task.id === (next.data as TaskData).reviewOf!.taskId)!;
-      assert.equal((next.data as TaskData).standardConflictReview, true);
-      assert.deepEqual(next.inputIds, prior.inputIds);
-      assert.deepEqual((next.data as TaskData).referenceCandidates, (prior.data as TaskData).referenceCandidates);
-      assert((next.data as TaskData).reviewOf!.reasons.includes(standardConflictReviewInstructions));
-      assert.doesNotThrow(() => bindTask(next, plan.inputs, { criteria: state.receipts[criteria.id] }, { tasks: state.manifest.tasks }));
-      state.receipts[next.id] = receipt(next, original); state.manifest.states[next.id].status = "succeeded";
-      apply(state, comparisonWorkflow.advance!(next, state.receipts[next.id], state, plan.inputs));
-    }
-    const old = plan.tasks.find(task => task.stage === "attribution" && task.id !== source.id)!;
-    (old.data as TaskData).coverageReview = true;
-    const late = receipt(old, { ...original, standard_conflict: false });
-    assert.deepEqual(comparisonWorkflow.advance!(old, late, state, plan.inputs), { tasks: [] },
-      "a late non-proposing coverage source cannot replace the standard review in clustering");
-    assert.equal(state.manifest.tasks.filter(task => (task.data as TaskData).standardConflictReview).length, 4,
-      "coverage retains the review context rather than starting another standard round");
-    for (const cluster of state.manifest.tasks.filter(task => task.stage === "clustering"))
-      for (const [inputId, taskId] of Object.entries(cluster.dependencies))
-        assert.equal(taskId, coverage.find(task => task.inputIds.answer === inputId)!.id);
-  } finally { await rm(fixture.directory, { recursive: true, force: true }); }
-});
-
 test("an ordinary standard mismatch does not request an extra standard review", async () => {
   const fixture = await fixtureConfig([[raw()], [], [raw()], []], false, false);
   try {
+    fixture.config.standardAnswerReview = true;
     const plan = await buildPlan(fixture.config), task = plan.tasks.find(task => task.stage === "attribution")!;
     const evaluation = attributionResult(false, "2+2=4", true, task.inputIds.answer);
     evaluation.standard_conflict = false;

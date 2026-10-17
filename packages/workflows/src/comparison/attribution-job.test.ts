@@ -264,7 +264,7 @@ test("fresh attribution results and embedded rewrites remain readable by reports
   assert(clustering.config.clusteringJob.sources.every(source => source.evaluator_version === fakeEvaluatorVersion));
 });
 
-test("selected pilot delivery requires its rewrite and ignores unfinished answers outside its frozen scope", async t => {
+test("selected pilot delivery keeps original prose when rewrite is incomplete and ignores unselected answers", async t => {
   const fixture = await fixtureConfig(undefined, true);
   t.after(() => rm(fixture.directory, { recursive: true, force: true }));
   const catalog = await inputCatalog(fixture.config, [
@@ -290,10 +290,10 @@ test("selected pilot delivery requires its rewrite and ignores unfinished answer
   const validate = () => validateRun(run, (binding, result, audit) => agents.validate(binding, result, audit), { selectedOnly: true });
   await save();
   const incomplete = await validate();
-  assert.equal(incomplete.valid, false);
+  assert.equal(incomplete.valid, true);
   assert.equal(incomplete.results.valid, true);
-  assert.equal(incomplete.delivery.valid, false);
-  assert(incomplete.delivery.errors.some(error => error.includes("rewrite not completed")));
+  assert.equal(incomplete.delivery.valid, true);
+  assert(incomplete.delivery.missing_slots.length > 0, "missing polish remains visible without blocking original text");
   const rewrite = state.manifest.tasks.find(task => task.stage === "rewrite" && scope.has(task.id))!;
   const binding = attributionJobWorkflow.bind(rewrite, prepared.plan.inputs, { source: state.receipts[rewrite.dependencies.source] }, { tasks: state.manifest.tasks });
   const items = binding.request.input.items as { id: string; text: string }[];

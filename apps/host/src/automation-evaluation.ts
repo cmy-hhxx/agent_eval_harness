@@ -93,7 +93,7 @@ export function isAutomationTask(task: { stage: string; data: unknown }): boolea
 
 function automationPauses(state: Checkpoint) {
   return (state.pausedStages ?? []).map((pause) => ({ ...pause,
-    taskIds: pause.taskIds.filter((id) => state.tasks[id] && isAutomationTask(state.tasks[id])),
+    taskIds: pause.taskIds.filter((id) => state.tasks[id] && isAutomationTask(state.tasks[id]) && state.tasks[id].stage !== "rewrite"),
   })).filter((pause) => pause.taskIds.length);
 }
 
@@ -130,7 +130,7 @@ function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): str
   const exhausted = states.flatMap(state => Object.entries(state.tasks).flatMap(([id, task]) => {
     const count = task.failure?.contentSubmissions;
     const cap = 1 + (policy.stageRepairAttempts?.[task.stage] ?? policy.repairAttempts);
-    return isAutomationTask(task) && !task.receipt && Number.isSafeInteger(count) && count! >= cap
+    return isAutomationTask(task) && task.stage !== "rewrite" && !task.receipt && Number.isSafeInteger(count) && count! >= cap
       ? [`${state.runId ?? "run"}/${id}: content submissions ${count}/${cap}`] : [];
   }));
   return exhausted.length ? `Content submission budget exhausted: ${exhausted.join("; ")}. Adjust the cumulative cap or resolve the unfinished work.` : undefined;
@@ -144,7 +144,8 @@ export function automaticResumeStages(state: Checkpoint, policy: RepairPolicy): 
 export function checkpointRecovery(states: Checkpoint[], policy: RepairPolicy): "interrupted" | "transient" | undefined {
   if (exhaustedContentReason(states, policy)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
-  const tasks = states.flatMap((state) => Object.values(state.tasks).filter(isAutomationTask));
+  const tasks = states.flatMap((state) => Object.values(state.tasks).filter(task => isAutomationTask(task) &&
+    (task.stage !== "rewrite" || task.status === "pending" || task.status === "running")));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
   if (!failures.length && tasks.some((task) => ["cancelled", "running", "pending"].includes(task.status))) return "interrupted";
   if (failures.length && failures.every((task) => task.failure?.errors.length
@@ -178,7 +179,7 @@ function terminalReviewReason(states: Checkpoint[]): string | undefined {
         }
       }
     }
-    if (entries.some(([id, task]) => isAutomationTask(task) && (task.status !== "succeeded" || !task.receipt) &&
+    if (entries.some(([id, task]) => isAutomationTask(task) && task.stage !== "rewrite" && (task.status !== "succeeded" || !task.receipt) &&
       (task.status !== "blocked" || !descendants.has(id)))) return;
     reviews.push(...final.map(([id]) => id));
   }
@@ -198,6 +199,13 @@ function waitingForInputs(states: Checkpoint[], summary: EvaluationSummary, limi
     .some(skipped => (counts.get(groupKey(skipped.versions)) ?? 0) < limit));
 }
 
+function evaluationComplete(states: Checkpoint[], summary: EvaluationSummary): boolean {
+  return Object.entries(summary.stages).every(([name, stage]) => name === "rewrite"
+    ? states.every(state => !Object.values(state.tasks).some(task => isAutomationTask(task) && task.stage === "rewrite" &&
+      (task.status === "running" || task.status === "pending" && !state.pausedStages?.some(pause => pause.stage === "rewrite"))))
+    : stage.completed === stage.total);
+}
+
 export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, limit: number, empty = false): EvaluationOutcome {
   const blocked = exhaustedContentReason(states, policy);
   if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
@@ -209,7 +217,7 @@ export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSumma
     return { status: transient ? "retry" : "blocked", summary, transient,
       error: incompleteReason(states, summary) };
   }
-  if (Object.values(summary.stages).some((stage) => stage.completed !== stage.total))
+  if (!evaluationComplete(states, summary))
     return { status: "retry", summary, transient: checkpointRecovery(states, policy) !== undefined,
       error: incompleteReason(states, summary) };
   if (waitingForInputs(states, summary, limit, empty))
@@ -243,8 +251,8 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   const complete = publishableComparisons(saved);
   const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit);
   if (finalComparisons.length > complete.size &&
-      Object.values(job.summary.stages).every((stage) => stage.completed === stage.total)) return "interrupted";
-  if (Object.values(job.summary.stages).every((stage) => stage.completed === stage.total) && !automationPauses(saved).length) {
+      evaluationComplete([saved], job.summary)) return "interrupted";
+  if (evaluationComplete([saved], job.summary) && !automationPauses(saved).length) {
     job.evaluation = waitingForInputs([saved], job.summary, config.dailyComparisonLimitPerTier) ? "waiting_inputs" : "completed";
     job.evaluationAttempts = 0; job.nextEvaluationAt = 0;
     delete job.evaluationError;
@@ -281,7 +289,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   delete job.resumePaused;
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   const workflow = createAutomationWorkflow(config.dailyComparisonLimitPerTier);
-  const routing = createAutomationModels(host.models, host.automation.channels, exhaustedChannels);
+  const routing = createAutomationModels(host.models, host.automation.channels, exhaustedChannels, config.channelConcurrency);
   logger.addSecrets(...configurationSecrets());
   let empty = false, skipped = 0, issues = 0;
   const checkpoints: Checkpoint[] = [];

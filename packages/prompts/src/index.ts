@@ -22,6 +22,10 @@ const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
 export const standardConflictReviewInstructions = resource("attribution/standard-review.md");
+export const standardConflictInstructions = resource("attribution/standard-challenge.md");
+export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review"): string {
+  return resource(`workflow/${name}.md`);
+}
 export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),

@@ -237,7 +237,7 @@ export async function validateRun(
       0,
     ),
     errors: [...errors, ...evidenceErrors, ...rewriteErrors, ...delivery.errors,
-      ...delivery.missing_slots.map((row) => `${row.task_id}: missing rewrite slots: ${row.slot_ids.join(", ")}`)],
+      ...(requirements.rewriteScopes?.length ? delivery.missing_slots.map((row) => `${row.task_id}: missing rewrite slots: ${row.slot_ids.join(", ")}`) : [])],
     artifacts_checked: manifest.debug,
   };
   const file = locateRun(run).stats;

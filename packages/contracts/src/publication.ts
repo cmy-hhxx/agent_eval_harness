@@ -1,4 +1,4 @@
-import type { JsonObject } from "./index.js";
+import type { JsonObject } from "./primitives.js";
 
 export interface PublicationInput { versionId: string; trace: JsonObject }
 export interface PublicationResult { row: JsonObject; evaluatedAt: number }

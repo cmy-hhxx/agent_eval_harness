@@ -8,6 +8,8 @@
 |---|---|
 | `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 的系统和任务规则 |
 | `resources/comparison/verification/` | Comparison 独立首查及揭示后的核验规则 |
+| `resources/attribution/standard-challenge.md`、`standard-review.md` | 仅显式开启标准答案复核时发送的质疑与复核规则 |
+| `resources/workflow/` | Workflow 组装的材料说明、复核缘由和润色语义约束 |
 | `resources/tools/<tool>.md` | 内置评测工具描述 |
 | `resources/shared/` | 材料边界、任务焦点、预算、恢复与无提交补交说明 |
 | `resources/eris/` | Eris 系统、恢复及工具规则 |

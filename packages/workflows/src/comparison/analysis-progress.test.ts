@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { analysisProgress, analysisTaskPurpose } from "./analysis-progress.js";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 
 type Task = Checkpoint["tasks"][string];
 const task = (stage: Task["stage"], status: Task["status"], data: Task["data"] = { reference: null }, inputIds: Task["inputIds"] = {}, file?: string): Task => ({

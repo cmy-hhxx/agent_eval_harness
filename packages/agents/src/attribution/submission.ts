@@ -13,6 +13,9 @@ const validateShape = new Ajv2020({allErrors:true,strict:false}).compile(schema)
 function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAudit) {
   const value = object(submitted), bank = audit.evidenceBank ?? [], issues: ValidationIssue[] = [];
   const standard=(request.input.ground_truth as {available:boolean}).available;
+  if (value.standard_conflict === true && request.input.allow_standard_conflict !== true)
+    issues.push({ category: "decision", code: "standard_conflict_disabled", path: "/standard_conflict",
+      message: "本次未开启标准答案复核，按提供的标准核对结果，不提交标准冲突。" });
   if(!standard)for(const [field,empty]of [["is_correct",null],["correctness_reason",""],["correctness_evidence_indices",[]]] as const)
     if(Object.hasOwn(value,field) && (Array.isArray(empty)?!Array.isArray(value[field])||value[field].length>0:value[field]!==empty))
       issues.push({category:"decision",code:"correctness_without_standard",path:`/${field}`,actual:value[field],expected:empty,

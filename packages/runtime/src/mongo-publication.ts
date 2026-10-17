@@ -160,9 +160,10 @@ export async function writeMongoPublication(
     const versions = Object.keys(models ?? {}).sort(), rawId = identity?.case_id;
     const caseId = rawId && cases.get(rawId);
     if (identity?.batch_id !== date || !caseId || versions.length !== 2 || !Number.isFinite(evaluatedAt) ||
-        !versions.every((id) => inputTasks.has(JSON.stringify([rawId, id]))) ||
-        !Array.isArray((row.rewritten as Document)?.rewrites) || !(row.rewritten as Document).rewrites.length)
-      throw new Error("Comparison is missing paired input or completed rewrite");
+        !versions.every((id) => inputTasks.has(JSON.stringify([rawId, id]))))
+      throw new Error("Comparison is missing paired input or evaluation time");
+    if (row.rewritten !== undefined && (!Array.isArray((row.rewritten as Document)?.rewrites) || !(row.rewritten as Document).rewrites.length))
+      throw new Error("Invalid comparison rewrite");
     const task = inputTasks.get(JSON.stringify([rawId, versions[0]]));
     if (task !== inputTasks.get(JSON.stringify([rawId, versions[1]]))) throw new Error("Comparison input tasks differ");
     for (const version of versions) {

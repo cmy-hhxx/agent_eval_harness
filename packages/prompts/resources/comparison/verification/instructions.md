@@ -22,6 +22,8 @@ result 填 supported（全部适用要求已确认满足）、contradicted（已
 
 `inspection_context.verification_concerns` 是疑点目录，concern_index 使用该目录的零起始位置。concern_matches 只确认既有 established problem 已记录同一缺陷与责任；finding_indices 从 `inspection_context.eligible_match_choices` 对应的 eligible_findings.finding_index 选择。逐一对照实际行为、回答片段、完整规范与责任，准确对应才填写匹配。
 
+首查疑点经补读原文确认不成立时，可用 concern_refutations 选择 concern_index，填写 source_evidence 和 reason，说明原先遗漏的上下文及反证；至少引用一条真实原材料。不能仅因归因或草稿作了不同判断就撤销疑点。一个疑点只能匹配、反驳或保留待核，不得重复选择；首查记录本身保持原样。
+
 继续检查逐项状态和核心结论是否与原文一致。必要条件未满足时，检查回答还能否完成主要任务。首查为 unverified 时，查明归因中的结论依据哪份原文。归因已填 unknown 且未据此判错或判优劣时，无需复核。
 
 source_reviews 只列需要更正的归因疑点。slot_index 用揭示后 comparison_slots 的零起始位置，candidate 选该槽的 reviewable_candidates，reason 写具体冲突、来源与责任依据。同格疑点合为一条，无需更正填 []；资源槽和纯排名取舍不提交来源复核。

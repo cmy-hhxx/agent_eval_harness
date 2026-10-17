@@ -1,4 +1,4 @@
-import type { JsonObject, ValidationIssue } from "./index.js";
+import type { JsonObject, ValidationIssue } from "./primitives.js";
 
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map((v) => canonical(v ?? null)).join(",") + "]";

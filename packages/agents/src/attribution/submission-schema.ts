@@ -11,6 +11,8 @@ export function attributionSubmissionSchema(request: AgentRequest) {
   const issues = normDirectoryIssues(request);
   if (issues.length) throw new ValidationError(issues);
   const schema = structuredClone(submissionSchema);
+  if (request.input.allow_standard_conflict !== true)
+    delete (schema.properties as Record<string, unknown>).standard_conflict;
   Object.assign(schema.properties.problems.items.properties.component.items, { enum: responsibilityChoices(request) });
   const analysis=request.input.task_analysis as unknown as TaskAnalysis;
   const checkCount=[...analysis.requirements,...analysis.scoring_points,...analysis.red_flags]

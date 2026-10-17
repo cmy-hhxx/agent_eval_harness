@@ -5,7 +5,7 @@ import { locateRun, readJson } from "@eval/data";
 import { readRunTasks } from "./run-data.js";
 import { clusteringJobStorage } from "./clustering-job-codec.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 import type { EvalConfig, TaskData } from "./types.js";
 
 export interface ClusteringDisplaySource {

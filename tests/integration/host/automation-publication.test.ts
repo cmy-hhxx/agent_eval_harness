@@ -42,7 +42,12 @@ test("comparison delivery waits for shared criteria and evaluation rewrites, nev
     assert.equal(publishableComparisons(saved).size, 2, "clustering and its rewrite never gate comparison delivery");
     const comparisonRewrite = Object.values(saved.tasks).find((task) => task.data.rewriteOf?.stage === "comparison")!;
     comparisonRewrite.status = "failed";
-    assert.equal(publishableComparisons(saved).size, 1);
+    assert.equal(publishableComparisons(saved).size, 2, "failed text work does not block accepted decisions");
+    comparisonRewrite.status = "pending";
+    assert.equal(publishableComparisons(saved).size, 1, "publication waits for ongoing polishing");
+    saved.pausedStages = [{ stage: "rewrite", category: "structure", code: "invalid", path: "/", taskIds: [], at: 1 }];
+    assert.equal(publishableComparisons(saved).size, 2, "paused polishing falls back to accepted prose");
+    delete saved.pausedStages;
     comparisonRewrite.status = "succeeded";
     comparisonRewrite.data.comparisonRewriteScope = "verdicts";
     assert.equal(publishableComparisons(saved).size, 2, "completed results retain their accepted rewrite scope");

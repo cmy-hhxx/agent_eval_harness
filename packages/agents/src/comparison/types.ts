@@ -92,6 +92,8 @@ export interface ComparisonConcernMatch {
 }
 export interface ComparisonVerificationSubmission {
   concern_matches: ComparisonConcernMatch[];
+  /** Explicit corrections of the inspector's own concerns, backed by original material. */
+  concern_refutations?: { concern_index: number; source_evidence: ComparisonVerificationCheck["source_evidence"]; reason: string }[];
   /** Only nonempty review choices are submitted; the program owns the full row associations. */
   source_reviews: { slot_index: number; candidate: string; reason: string }[];
 }

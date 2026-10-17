@@ -13,6 +13,7 @@
   "retryMs": 30000,
   "maxEvaluationAttempts": 3,
   "dailyComparisonLimitPerTier": 300,
+  "channelConcurrency": { "openai": 1 },
   "requestTimeoutMs": 600000,
   "publishProgress": true,
   "publication": {

@@ -16,6 +16,7 @@ import { encodeResult, stageResult } from "./results.js";
 import { comparisonSlots } from "./commentary.js";
 import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
 import { pendingTaskProgress } from "./task-progress.js";
+import { configureStandardReview } from "./review.js";
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
@@ -107,8 +108,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   options?: { extendVersions: boolean; preserveCompletedResults?: boolean }): Promise<TaskPlan> {
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
+  configureStandardReview(state, supplied.standardAnswerReview === true);
   if (state.manifest.executionScope) {
-    state.manifest.config = { ...config, execution: supplied.execution };
+    state.manifest.config = { ...config, execution: supplied.execution, standardAnswerReview: supplied.standardAnswerReview === true };
     reconcileAttributionRewriteGroups(state, options?.preserveCompletedResults);
     const pending = new Set(state.manifest.executionScope!.filter((id) => !state.receipts[id]));
     return { tasks: state.manifest.tasks, inputs: await loadRunInputs(state.manifest, undefined, pending),
@@ -120,6 +122,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     ...config,
     execution: supplied.execution,
     reviewQuestions: supplied.reviewQuestions,
+    standardAnswerReview: supplied.standardAnswerReview === true,
     // Automation explicitly extends a daily run's model selection; normal resume retains its selection.
     comparisons: selectComparisonGroups(supplied.comparisons, versions.map((version) => version.id)),
     // Presentation and library stages may be enabled or disabled on resume without touching evaluations.
@@ -155,6 +158,13 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
         previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
   }
   const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));
+  // Pending standard reviews still need their original task and paid progress if the opt-in is disabled.
+  for (const task of tasks.values()) {
+    const data = task.data as TaskData;
+    if (data.standardConflictReview && data.reviewOf && !state.receipts[task.id]) dependencies.add(data.reviewOf.taskId);
+  }
+  for (const task of tasks.values()) if (task.stage === "attribution" && !state.receipts[task.id])
+    (task.data as TaskData).standardAnswerReview = selected.standardAnswerReview === true;
   for (const [id, task] of tasks)
     if (task.stage === "attribution" && !dependencies.has(id) && !state.receipts[id] &&
       !(task.data as TaskData).standardConflictReview) tasks.delete(id);

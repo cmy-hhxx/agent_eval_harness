@@ -35,6 +35,26 @@ function inspected(request: AgentRequest, value = checks(request), audit = empty
   return { ...audit, inspection: { id: "inspection", value: value as unknown as Record<string, unknown>, proof: {
     traceReads: structuredClone(audit.traceReads), viewedImages: [...audit.viewedImages] } } };
 }
+
+test("independent inspection concerns can be refuted with source evidence while the inspection remains immutable", () => {
+  const { request, input } = pair(), inspection = checks(request);
+  const check = inspection.checks.find(item => item.candidate === "A")!;
+  inspection.concerns.push({ candidate: "A", criterion_ids: [check.criterion_id], answer_evidence: check.answer_evidence,
+    source_evidence: [], reason: "初读怀疑结果缺失，补读后核对。" });
+  const audit = inspected(request, inspection), before = structuredClone(audit.inspection);
+  const refutation = { concern_index: 0, source_evidence: check.answer_evidence, reason: "回答原文已经明确给出结果4，初读遗漏。" };
+  const draft = finalFor({ concern_refutations: [refutation] });
+  const resolved = profile.resolve!(request, draft, audit);
+  assert.deepEqual(resolved, input.comparison_draft);
+  profile.validate!(request, resolved, audit);
+  assert.deepEqual(audit.inspection, before);
+  assert.equal((profile.resolve!(request, finalFor(), audit) as ComparisonResult).status, "needs_review");
+  for (const refs of [[{ ...refutation, source_evidence: [] }], [refutation, refutation],
+    [{ ...refutation, concern_index: 99 }], [{ ...refutation, source_evidence: [{ evidence_id: "invented" }] }]])
+    assert.throws(() => profile.resolve!(request, finalFor({ concern_refutations: refs }), audit), ValidationError);
+  assert.throws(() => profile.resolve!(request, finalFor({ concern_refutations: [refutation],
+    concern_matches: [{ concern_index: 0, finding_indices: [0], observation: "不能同时匹配和撤销。" }] }), audit), ValidationError);
+});
 function inspect(registry:AgentRegistry,binding:AgentBinding,value:unknown,audit:ToolAudit) {
   const bank=audit.evidenceBank ??= [];
   const canonical = registry.resolveInspection(binding,projectEvidenceReferences(inspectionSubmission(binding.request, value as ComparisonMaterialInspection),bank),audit);

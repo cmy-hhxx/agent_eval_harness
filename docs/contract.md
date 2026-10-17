@@ -93,7 +93,7 @@ Criteria 绑定来源、Attribution 绑定选择并展开证据、Comparison 从
 
 ### 归因与共同基准
 
-每条回答先经过归因 Agent，以 Workflow 的 `ground_truth.available` 为准。有标准答案且能够核实时，`is_correct` 为 true/false；确实无法核实时可为 null，但 `core_assessment.meets_core` 必须同时为 null，并引用适用 requirement 的 unknown/uncertain 评审，保留待核。两种情况都须填写非空核对理由和最终回答证据；已确认的缺失、数值不等价或量纲冲突不能改成未知。无标准答案时，固定填写 `is_correct=null`、`correctness_reason=""`、`correctness_evidence_indices=[]` 和 `numeric_checks=[]`，不判断与标准的一致性。四个字段仍存在，程序校验空值并生成对应正式结果。`standard_conflict` 默认 false；提示词仅允许用原始披露或完整数据复算证明标准答案的具体错误后提出复核；独立复核还须确认同场双方最终所求结果一致，缺少任一条件均撤销标记，证据门槛见[评测质量](quality.md#流程与科学边界)。无标准答案时禁止填写。该标记与 `is_correct=false` 并存，正确性理由以“标准答案待复核：”开头，关联最终回答和冲突依据，总评保留标记及简短原因。初次标记会为同场双方各触发一次独立归因复核，使用现有 reference_materials 相互登记原始输入，不引入任一方旧判词；对比等待双方复核，改写和聚类采用对应复核后的结论；原始收据保留，撤销的标记不进入当前标准冲突统计。复核不新增 Schema 字段，不自动改变对比状态或排除统计；语义判断由 Agent 完成，程序只按结构化标记安排复核，不按点评关键词判断。`has_standard_answer` 由 Host 从请求填入接受结果。模型工具 Schema 从可信请求选择，不采用展示投影决定这些字段。归因提交安全检查可识别字段中的覆盖、作用域、无标准答案、问题描述约束及当前证据数组中的引用坐标，与结构错误一并反馈；结构错误或缺项不会遮蔽已能解析的非法引用。合并后的反馈仅按完整错误内容去重；不同候选、判据、路径或修复细节分别保留。接受结果继续使用同一套独立规则和完整证据校验。
+每条回答先经过归因 Agent，以 Workflow 的 `ground_truth.available` 为准。有标准答案且能够核实时，`is_correct` 为 true/false；确实无法核实时可为 null，但 `core_assessment.meets_core` 必须同时为 null，并引用适用 requirement 的 unknown/uncertain 评审，保留待核。两种情况都须填写非空核对理由和最终回答证据；已确认的缺失、数值不等价或量纲冲突不能改成未知。无标准答案时，固定填写 `is_correct=null`、`correctness_reason=""`、`correctness_evidence_indices=[]` 和 `numeric_checks=[]`，不判断与标准的一致性。四个字段仍存在，程序校验空值并生成对应正式结果。`standardAnswerReview` 默认关闭，此时模型不获得 standard_conflict 提交字段，程序拒绝冲突声明；开启后 `standard_conflict` 默认 false，提示词仅允许用原始披露或完整数据复算证明标准答案的具体错误后提出复核；独立复核还须确认同场双方最终所求结果一致，缺少任一条件均撤销标记，证据门槛见[评测质量](quality.md#流程与科学边界)。无标准答案时禁止填写。该标记与 `is_correct=false` 并存，正确性理由以“标准答案待复核：”开头，关联最终回答和冲突依据，总评保留标记及简短原因。初次标记会为同场双方各触发一次独立归因复核，使用现有 reference_materials 相互登记原始输入，不引入任一方旧判词；对比等待双方复核，改写和聚类采用对应复核后的结论；原始收据保留，撤销的标记不进入当前标准冲突统计。复核不自动改变对比状态或排除统计；语义判断由 Agent 完成，程序只按结构化标记安排复核，不按点评关键词判断。`has_standard_answer` 由 Host 从请求填入接受结果。模型工具 Schema 从可信请求选择，不采用展示投影决定这些字段。归因提交安全检查可识别字段中的覆盖、作用域、无标准答案、问题描述约束及当前证据数组中的引用坐标，与结构错误一并反馈；结构错误或缺项不会遮蔽已能解析的非法引用。合并后的反馈仅按完整错误内容去重；不同候选、判据、路径或修复细节分别保留。接受结果继续使用同一套独立规则和完整证据校验。
 
 归因模型按 `criterion_checks` 固定顺序提交 `criterion_assessments`，每项只有 status、evidence_status、summary、evidence_indices；不提交判据 ID。顶层提交 meets_core、core_reason、core_requirements，后者只选择 applies_to=[] 的共同 requirements 正整数编号，动态提交 Schema 给出允许的编号。程序绑定正式 core_assessment.criterion_ids，并为其他候选专属要求生成 not_applicable；本方专有要求仍须逐项评审，但不能作为共同核心依据。缺项或多项拒绝，不猜测对应关系。核心 false 必须由已确认的共同 partial/unmet 支持；true 不能同时选择已确认 unmet 的核心项；null 保留具体未知范围，局部 partial 不机械等于核心失败。
 
@@ -113,7 +113,7 @@ Comparison 使用两条已接受归因完成一次比较，照录各回答核心
 
 Comparison 按 comparison_slots 固定顺序评审共同验收点和可比资源；关联到要求的既有 findings 放进对应行。独立 finding 保留在本方归因，不自动生成另一方空格。共同要求即使没有同名 finding，也使用各自已接受的 criterion_assessments；缺少 finding 不等于没有做到。专有要求只评本方，不参与横向优势。程序派生状态、关联与排名，只有同一适用方面的双方 established 事实才能支持优势。
 
-首次对比前，Workflow 检查是否存在尚未关联要求的共同范围中高重要性问题；存在时为双方各准备一次归因补查，将具体观察作为待查内容，不冒充本方事实。新归因独立核查本方材料，确实涉及共同交付时关联对应要求；不强造关联。原收据保留，未开始的对比依赖新收据；每场最多一轮。独立优点保留在本方点评，不冒充单方优势，也不阻塞已确认的共同标准。补查后关键问题仍未对齐时 Comparison 保存 needs_review，不将记录缺口写成双方没有差异。双方共同核心已确认失败时，额外未关联问题保留在各自归因，不因此阻塞都差判定；核心未知、专有失败、来源冲突和基准不一致仍须待核。已正式接受的对比及可选事后核验不触发这轮补查。
+Workflow 不因对手或未关联的中高重要性问题自动补查归因。同一共同标准下，每条回答的已接受归因供所有对局复用；独立优点保留在本方点评，不冒充单方优势。关键问题未对齐时 Comparison 保存 needs_review，不将记录缺口写成双方没有差异。双方共同核心已确认失败时，额外未关联问题保留在各自归因，不因此阻塞都差判定；核心未知、专有失败、来源冲突和基准不一致仍须待核。已接受的对比及可选事后核验不重新安排归因。标准答案复核仅由独立的 standardAnswerReview 开关控制，默认关闭；开启后按[证据门槛](quality.md#流程与科学边界)最多复核一轮。
 
 主线接受 `status=decided` 的 Comparison 后形成正式对比，不自动重做归因。已知材料冲突或核心未决的样本保存待核，不计 wins/both_good/both_bad、不上传；其他样本继续。`verify-comparisons` 为已正式决定的对比准备可选独立核验，结果单独写 `comparison-verification.jsonl`，核验失败或发现疑点不撤销正式结果、不重接下游依赖。归因与对比文案默认自动润色，可显式关闭；聚类单独读取已接受归因，其结果同样默认改写。
 
@@ -175,7 +175,7 @@ Comparison Workflow 默认每对仅计划一个 default 节点；接受的 decid
 
 可选 verification 通过 inspect_material 提交首查 JSON。按 verification_check_slots 固定顺序填写每条适用规则的 delivery、constraints 两个子槽，提交 result、source_evidence、observation；程序绑定候选、规则和完整最终交付审阅范围，模型不手填 answer_evidence。子槽合并优先 contradicted、unverified、supported，全部 not_applicable 才表示条件未触发。contradicted 须保留同一本方要求的具体 concerns；unverified 不被当作确定事实。concerns 使用真实零起始 requirement_indices 和数字证据选择；未入共同标准的本方私规用空数组，须有完整本方 SYS/DEV 与实际交付双证，不借他方、工具提示或元数据补规范。完整规范的条件、例外、全部叶子、延后正文与图片读取均严格校验；审阅范围不证明具体语义结论。Host 保存 canonical 检查点及读取审计，成功后揭示完整既有判词；首查与最终提交共享累计内容预算和串行队列。证据目录先由 Host 持久化，重发沿用 UUID 与载荷；恢复直接重验 canonical 检查点和原坐标，继续揭示后核验，不重新盲查或回退计数。
 
-揭示后核对已有 problem、采用的 strength 和比较格。准确对应本方 established problem 的发现用 concern_matches 选择 concern_index、finding_indices 并说明同一行为及责任链；同 criterion、相似标签或机械范围交叠不足以证明匹配。资格按同一输入 UUID、原消息、真实文本路径或 JSON 物理覆盖范围计算；本方真实工具返回可佐证事实，查询参数、用户复制、元数据或他方材料不能代替。私规匹配须保留同一完整本方规范和实际回答；空 criterion_ids 仅匹配本方 requirement_index=null 的 instruction_following established problem。最终提交 concern_matches 与 source_reviews 两个必填数组；后者只列真实需要更正的 {slot_index, candidate, reason}，没有额外疑点填 []。slot_index 是 comparison_slots 的零起始位置，candidate 须在 reviewable_candidates 中；重复、越界或不适用选择拒绝。准确记录的问题和核验通过的结论不重复提出。程序保留未匹配的已验证 concerns，复制只读主线结论或派生 needs_review 核验记录，不改排名、点评、核心状态或归因；疑点不自动创建归因或后续对比任务。
+揭示后核对已有 problem、采用的 strength 和比较格。准确对应本方 established problem 的发现用 concern_matches 选择 concern_index、finding_indices 并说明同一行为及责任链；同 criterion、相似标签或机械范围交叠不足以证明匹配。资格按同一输入 UUID、原消息、真实文本路径或 JSON 物理覆盖范围计算；本方真实工具返回可佐证事实，查询参数、用户复制、元数据或他方材料不能代替。私规匹配须保留同一完整本方规范和实际回答；空 criterion_ids 仅匹配本方 requirement_index=null 的 instruction_following established problem。最终提交 concern_matches 与 source_reviews 两个必填数组；后者只列真实需要更正的 {slot_index, candidate, reason}，没有额外疑点填 []。slot_index 是 comparison_slots 的零起始位置，candidate 须在 reviewable_candidates 中；重复、越界或不适用选择拒绝。准确记录的问题和核验通过的结论不重复提出。误报可以通过可选 concern_refutations 显式反驳：选择一个未匹配的 concern_index，附非空 source_evidence 与 reason，核查证据属于本任务真实原材料且已读取；与匹配互斥且不能重复。首查记录保持原样，草稿已有待核和其他独立疑点保留。程序保留未匹配且未反驳的已验证 concerns，复制只读主线结论或派生 needs_review 核验记录，不改排名、点评、核心状态或归因；疑点不自动创建归因或后续对比任务。
 
 
 模型侧 `comparison_slots` 给出方面、纯文本标准、来源观察、适用候选标签与 pair/source_only 范围，数组位置由程序绑定，不要求复制 canonical ID 或索引。覆盖由程序固定，缺/多槽按固定行数反馈 Schema 错误；独立图片/全文读取缺口仍同时反馈，依赖结构的检查等待合法结构。优势反馈指向可提交的 better_candidate 和对应 summary，不要求修程序关联。verification 尚未成功 inspect 时反馈下一动作 inspect_material；成功 checkpoint 由 Host/Worker 恢复，不能由模型创建或修补。结构和坐标通过不证明 observation、事实支持、归因责任或取舍正确，必须继续独立语义核验。
@@ -225,7 +225,7 @@ Clustering 的 `replacePendingObservations` 公开入口严格校验并替换待
 
 整场偏好理由以60–100字为表达目标，优先保留决定结论的事实与限定；不因超长机械拒绝，不截断句子，也不改动判决。
 
-改写配置为 rewrite.attribution / rewrite.comparison / rewrite.clustering，三项默认开启，可显式设为 false；归因、对比及后置聚类接受后自动把结论润色为更简洁规整的表达。归因初次规划一个占位任务，源结果接受后才确定语义分组；对比和聚类各规划一个改写任务。对比默认只改偏好理由，comparisonItems=true 同时加入普通逐项点评；资源行由程序生成，不进入改写，也不接受改写回填。改写只接收文本槽位、不接触证据或改变判决；自动化为完整交付仍强制开启归因、对比及逐项点评改写，见[自动化](automations.md)。
+改写配置为 rewrite.attribution / rewrite.comparison / rewrite.clustering，三项默认开启，可显式设为 false；归因、对比及后置聚类接受后自动把结论润色为更简洁规整的表达。归因初次规划一个占位任务，源结果接受后才确定语义分组；对比和聚类各规划一个改写任务。对比默认改写偏好理由、总评、取舍与 checklist 逐项点评；comparisonItems=false 可仅保留偏好理由；资源行由程序生成，不进入改写，也不接受改写回填。改写只接收文本槽位、不接触证据或改变判决；自动化为完整交付仍强制开启归因、对比及逐项点评改写，见[自动化](automations.md)。
 
 - 对比裁判继续盲测；Workflow 仅在改写前将槽位称谓还原为真实组别与模型名称（如 A组Fast、B组Fast），本地收据和 JSONL 的槽位 id 保留盲测位置。对比槽位的只读 context 同时提供完整候选身份映射，供 Rewrite 理解原文中仍保留的候选称谓；程序不匹配普通字母猜测身份。Rewrite 沿用真实称谓，本地展示按源任务映射回填。Mongo 交付另将候选槽位映射到 `versionA/B` 的展示位置，见[上传身份映射](automations.md#mongodb-增量交付与每四小时日志)。
 - 归因润色总结、正确性理由、核心完成理由、逐项检查、发现点评与理由、观察与影响、问题名称与定义及表格核查理由；问题描述的改写只用于展示，聚类始终读取被接受的原始归因。当前改写投影只保留源结果当前提供的槽位，历史收据不变，导出、报告和看板使用同一投影。
@@ -235,12 +235,12 @@ Clustering 的 `replacePendingObservations` 公开入口严格校验并替换待
 - 输入是 Workflow 选定的文本槽位（模型可见 `items[].id/label/text/context`）及 case 的批次/case ID 或聚类的批次/模型定位信息，不含原题、原始消息、证据和 finding 引文；模型看不到可用来重新判断的材料，只能润色。
 - 模型提交 `rewrites: [{id,text}]`，与请求同序、同数量；动态提交 Schema 通过每个位置的 `prefixItems` 和 `id.const` 固定槽位身份，Agent 再校验正式槽位及偏好，收据和内嵌 rewritten 保留同一身份。各槽分别改写，只能去除本槽重复表达，不能把不同槽位的内容合并、互换或省略；真实组别与模型称谓、事实相关的数字与单位、限制条件和不确定性原样保留；裁判无关的自评打分/置信度分档可以删除，不拿用户指令充当具体优点。
 - 对局偏好改写必须以真实胜者名加“更好：”、或“双方都好：”“双方都差：”开头；程序校验该前缀与已接受判决一致。都好、都差均保留 Comparison 在 `tradeoff` 中确定的相对偏好、依据及反向优势，正文保留“更倾向某方”及依据。两类槽位还携带已确认的低影响单方优势，供润色保留细微差异；Rewrite 不自行数问题或选边，不改变排名、赢家字段或统计。当前文案按收据接受时间逐槽取最新值，同一接受时间按任务清单次序后者获胜；未触及槽位保留此前文案，重放旧收据不回滚新文案。`rewritten.evaluator_version` 取最新接受的改写收据版本，每份历史收据仍保留并独立校验其原始版本和完整评价；被覆盖的历史文本通过状态差异记录恢复。
-- 显式逐项改写只请求 `comparison.<行号>.<候选>.summary`；本格原文放在 `text`，同项对照和已确定的本项优势放在只读 `context`，不含证据；不把对照信息复制为点评前缀。Workflow 通过 `forbiddenPrefixes` 指定不可作为前缀的呈现标签，Rewrite 校验拒绝复制标签，避免将本项赢家名称贴到另一方事实前。每格先写具体得失，保留局部优势、各自约束与不确定性；仅更新这些槽位，已改写偏好、方面名、优势标记和引用保持不变。
+- 逐项改写使用 `comparison.<行号>.<候选>.summary`；本格原文放在 `text`，原检查项标题放在只读 `context`，不含证据。每格保留具体得失、限制与不确定性，检查项标题、验收条件、状态、优势标记及引用保持原值。`items` 范围还包含双方总评和整体取舍。
 - 定向修复在任务数据中保存 `rewriteSlotIds`，请求必须与该非空、无重复的已知槽位集合完全对应；未知槽位在派发前拒绝。`executionScope` 保存本轮任务 UUID 清单；成功任务及其他范围外任务不会进入请求；同 run 冻结范围时不发现新增输入。准备修复保留既有源结果及文案，接受后只合并请求的槽位；旧成功任务的 attempts 和判决版本不随修复变化。CLI 选择与释放范围见[使用指南](usage.md#只补失败与同类故障熔断)。
 - 正式结果不变：`attribution.jsonl`、`comparison.jsonl` 保留裁判被接受时的原文；`ranking`、`meets_core`、`is_correct` 和证据不因改写变化。评测 run 的改写附在对应阶段结果的 `rewritten` 字段：归因为 `evaluation.rewritten`，对比为 `rewritten`，聚类为 `result.rewritten`（内容为 `evaluator_version` 与 `rewrites` 槽位文本）。独立聚类作业将槽位文案保存到 `results/rewrite.jsonl`，以 `source_task_id` 引用原聚类结果；两种工作流均不单独记录改写业务日志。
 - 看板同时展示原始输出和改写后内容，聚类详情在运行总览。问题库的类身份、归属与原始定义不被改写覆盖。看板按聚类收据及对应 Rewrite 投影通俗类名和定义；后续语义维护使不再对应的旧文案失效。
 - `report.md` 与 `task_summaries.md` 优先展示改写文案，离线校验仍以正式结果收据为准。导出保留完整已接受原文与改写，名称展开不另设点评字数上限。
-- 完整对比改写续跑时按源结果实际保存的槽位补缺，只请求缺失文字并合并回填，已有文案和源评测保留；接受后的补缺或显式定向刷新新增 UUID，相同来源、范围和槽位的未完成任务复用并保留已花提交额度。交付校验检查该源全部当前改写任务及缺失槽位，历史已接受任务不能掩盖尚未完成的刷新。
+- 完整对比改写续跑时按源结果实际保存的槽位补缺，只请求缺失文字并合并回填，已有文案和源评测保留；接受后的补缺或显式定向刷新新增 UUID，相同来源、范围和槽位的未完成任务复用并保留已花提交额度。普通交付允许原文兜底，任务状态、失败和缺失槽位照常记录；自动上传等待已安排的润色结束，失败不阻塞已接受的正式对比。显式 `--require-rewrite` 才将所选范围的缺失或未完成刷新作为验收错误，历史文案不能掩盖该刷新。
 - 普通续跑可以开启或关闭改写：已接受的改写保留，未完成且被关闭的改写任务不再计划；显式固定范围内按已准备任务执行，不重新规划开关。已接受的评测结果不受影响。
 
 ## 证据与导出

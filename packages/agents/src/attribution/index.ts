@@ -1,5 +1,4 @@
-import { agentPrompt } from "@eval/prompts";
-export { standardConflictReviewInstructions } from "@eval/prompts";
+import { agentPrompt, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -39,7 +38,9 @@ export const attributionProfile: AgentProfile = {
     const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
     const focus = input.task_focus as Record<string,unknown> | undefined;
-    const shown = { ...input, task_analysis: { ...analysis, requirements },
+    const { allow_standard_conflict, ...material } = input;
+    const shown = { ...material, task_analysis: { ...analysis, requirements },
+      ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
       answer: answerMaterial,

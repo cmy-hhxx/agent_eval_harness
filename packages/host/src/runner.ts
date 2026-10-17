@@ -50,6 +50,8 @@ export interface RunOptions extends EvaluationServices {
   /** Return true only after selecting a different channel for subsequent attempts. */
   onModelQuotaExhausted?: (model: ModelConfig, task: PlannedTask) => boolean;
   concurrency: number;
+  /** Limit active task attempts per model channel within the total concurrency. */
+  channelConcurrency?: Record<string, number>;
   retries: number;
   skipFailed?: boolean;
   discoverInputs?: boolean;
@@ -72,6 +74,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   safeId(options.runId);
   if (typeof options.evaluatorVersion !== "string" || !options.evaluatorVersion.trim())
     throw new Error("evaluatorVersion must be a non-empty string");
+  if (Object.values(options.channelConcurrency ?? {}).some(limit => !Number.isSafeInteger(limit) || limit <= 0))
+    throw new Error("channelConcurrency requires positive integer limits");
   const layout = runLayout(options.output, options.runId),
     run = layout.directory,
     unlock = await runLock(run);
@@ -753,6 +757,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
     }
     const running = new Map<string, Promise<void>>();
+    const runningChannels = new Map<string, string>();
     while (true) {
       if (controller.signal.aborted) break;
       changed = new Promise<void>((resolve) => {
@@ -825,6 +830,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (!capable.length) throw new Error("Required engine or tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
         if (!worker) continue;
+        if (options.channelConcurrency) {
+          const channel = (options.modelForTask?.(task, manifest.states[task.id].channel) ?? options.modelForStage(task.stage)).provider;
+          const limit = options.channelConcurrency[channel];
+          if (limit !== undefined && [...runningChannels.values()].filter(value => value === channel).length >= limit) continue;
+          runningChannels.set(task.id, channel);
+        }
         delete manifest.states[task.id].nextRetryAt;
         busy.add(worker);
         scheduled = true;
@@ -848,6 +859,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           })
           .finally(() => {
             running.delete(task.id);
+            runningChannels.delete(task.id);
             busy.delete(worker);
           });
         running.set(task.id, promise);

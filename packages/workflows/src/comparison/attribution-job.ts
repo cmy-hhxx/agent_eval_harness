@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { canonical, type PlannedTask, type RunManifest, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader, locateRun, readJson } from "@eval/data";
 import { normalizeInput } from "./input-record.js";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 import { adapt, candidateKey, inputSources } from "./input.js";
 import { bindTask } from "./binding.js";
-import { advanceReview } from "./review.js";
+import { advanceReview, configureStandardReview } from "./review.js";
 import { attributionRewritePlaceholder, reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
 import type { Candidate, EvalConfig, RawInput, TaskData, VersionConfig } from "./types.js";
 
@@ -157,6 +157,7 @@ export async function prepareAttributionJob(
       for (const candidate of scope) {
         const attribution: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteria.id }, inputIds: { answer: candidate.input_id },
           data: { stage: "attribution", candidates: { A: candidate }, reference, criteriaScope,
+            standardAnswerReview: config.standardAnswerReview === true,
             initialContextChars: config.execution.initialContextChars } satisfies TaskData };
         tasks.push(attribution); answerTasks.push({ candidate, task: attribution, standard: reference !== null });
         if (config.rewrite.attribution) tasks.push(attributionRewritePlaceholder(attribution.id, {
@@ -220,7 +221,8 @@ export const attributionJobWorkflow: WorkflowDefinition = {
   async reconcile(_run, state, supplied) {
     const saved = state.manifest.config as AttributionJobConfig, current = supplied as EvalConfig;
     if (!saved.attributionJob) throw new Error("该运行不是独立重归因作业");
-    state.manifest.config = { ...saved, execution: current.execution };
+    state.manifest.config = { ...saved, execution: current.execution, standardAnswerReview: current.standardAnswerReview === true };
+    configureStandardReview(state, current.standardAnswerReview === true);
     reconcileAttributionRewriteGroups(state);
     const inScope = state.manifest.executionScope && new Set(state.manifest.executionScope);
     const pending = new Set(state.manifest.tasks.filter(task => (!inScope || inScope.has(task.id)) && !state.receipts[task.id]).map(task => task.id));

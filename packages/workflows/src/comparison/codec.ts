@@ -1,33 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
-import type { JsonObject, RunManifest, RunState, SubmissionReceipt, TaskState } from "@eval/contracts";
+import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import { originalResultRow, stageResult, resultFile, acceptedRewrites } from "./results.js";
 import { analysisRunOverview } from "./analysis-progress.js";
 
-type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
-type Patch = { path: string[]; value?: unknown; from?: string[] }[];
-type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "submitted"> & {
-  evaluation?: unknown;
-  evaluationPatch?: Patch;
-  submittedPatch?: Patch;
-  rewriteIds?: string[];
-  exported?: DiskReference;
-};
-type SavedTask = TaskState & {
-  stage: Stage;
-  inputIds: Record<string, string>;
-  dependencies: Record<string, string>;
-  data: Omit<TaskData, "candidates" | "referenceCandidates" | "stage" | "revision">;
-  receipt?: SavedReceipt;
-};
-export interface Checkpoint extends Omit<RunManifest, "tasks" | "states" | "inputs" | "inputCatalog"> {
-  inputs: Record<string, Omit<Candidate, "input_id">>;
-  tasks: Record<string, SavedTask>;
-  usage: RunState["usage"];
-  recordedAttempts: number;
-}
+import type { Checkpoint, Patch, SavedReceipt, SavedTask } from "./checkpoint.js";
 
 /** Exact within-receipt text references keep reordered submission fields out of the state ledger. */
 function textReferences(value: unknown, path: string[] = [], result = new Map<string,string[]>()) {

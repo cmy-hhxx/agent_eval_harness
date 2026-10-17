@@ -41,6 +41,8 @@ export interface EvalConfig {
   problemLibrary: ProblemLibraryTarget;
   /** Two or three selected models, expanded into independent two-candidate comparisons. */
   comparisons: string[][];
+  /** Opt-in independent review of a claimed error in the standard answer. */
+  standardAnswerReview?: boolean;
   /** Explicit audit questions for selected cases; never accepted facts or requested verdicts. */
   reviewQuestions?: { batch_id: string; case_id: string; questions: string[] }[];
   /** Language polish targets. Every accepted source result gets one rewrite task. */
@@ -159,12 +161,9 @@ export interface TaskData {
   reviewOf?: { taskId: string; round: number; reasons: string[] };
   /** One independent evidence check before a proposed standard conflict reaches consumers. */
   standardConflictReview?: true;
+  standardAnswerReview?: boolean;
   /** User-selected semantic checks, applied equally to the case's candidate answers. */
   reviewQuestions?: string[];
-  /** A primary comparison may request one bounded attribution pass for unaligned material observations. */
-  coverageReviewPrepared?: true;
-  /** Required before its primary comparison and before clustering reads this answer. */
-  coverageReview?: true;
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;

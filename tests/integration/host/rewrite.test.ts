@@ -217,7 +217,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     const refreshedValidation = await validateRun(run);
     assert.equal(refreshedValidation.valid, true, JSON.stringify(refreshedValidation));
 
-    // Refresh model-written overall prose without touching program-derived cells.
+    // Refresh overall and checklist prose while the accepted raw cells remain immutable.
     const beforeItems = structuredClone(newRows);
     const itemRefresh = await prepareComparisonRewrites(run, { scope: "items", mode: "refresh", all: true, apply: true });
     assert.equal(itemRefresh.count, 1);
@@ -225,15 +225,15 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     await runEvaluation({ ...options, evaluatorVersion: "refreshed-items", plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 2);
     const afterItems = await rows(comparisonFile);
-    const proseIds = new Set(["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+    const proseIds = new Set(["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
     const prose = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => proseIds.has(item.id));
-    assert.equal(prose.length, 3);
+    assert.equal(prose.length, 5);
     assert(prose.every((item: any) => item.text.startsWith("精简：")));
-    assert(!(afterItems[0]!.rewritten as any).rewrites.some((item: any) => item.id.startsWith("comparison.")));
+    assert((afterItems[0]!.rewritten as any).rewrites.some((item: any) => item.id.startsWith("comparison.")));
     assert.deepEqual(afterItems[0]!.decision_basis, beforeItems[0]!.decision_basis);
     (afterItems[0]!.rewritten as any).rewrites = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => !proseIds.has(item.id));
     (beforeItems[0]!.rewritten as JsonObject).evaluator_version = "refreshed-items";
-    assert.deepEqual(afterItems, beforeItems, "only model-written overall prose is added");
+    assert.deepEqual(afterItems, beforeItems, "only selected display prose is added");
     const itemState = await readRunState(run);
     assert.deepEqual(itemState.receipts[comparisonTask.id]!.evaluation, originalJudge);
     assert.equal((itemState.manifest.tasks.find((task) => task.id === itemRewriteId)!.data as TaskData).comparisonRewriteScope, "items");

@@ -125,7 +125,7 @@ function optionsFor(
     modelForStage,
   };
 }
-test("attribution reads identity while comparison worker sees only its blind prompt and trace", async () => {
+test("attribution and comparison workers receive blind prompts and tool views while source coordinates remain exact", async () => {
   const first = raw("q", "4 来自 secret-model");
   first.messages[0]!.content = "计算2+2；请核查 a_fast 和 b_fast 的结果";
   first.messages[1]!.model = "secret-model";
@@ -150,9 +150,15 @@ test("attribution reads identity while comparison worker sees only its blind pro
             assert(!options.spec.prompt.includes('"final_answer"'), "criteria are fixed before answers are exposed");
             await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           } else if (stage === "attribution") {
-            assert.match(options.spec.prompt, /version_id/);
+            assert.doesNotMatch(options.spec.prompt, /version_id|display_name|answer_model/);
             assert.equal(options.spec.inputs[0]!.name, "answer");
-            assert.equal(input.messages[1]!.model, options.spec.prompt.includes('"version_id":"a_fast"') ? "secret-model" : "other-model");
+            assert.deepEqual(input, plan.inputs[options.spec.inputs[0]!.id]);
+            const read = await options.execute("read_trace", { candidate: "answer", message_index: 1 });
+            assert.equal(read.isError, undefined, JSON.stringify(read));
+            for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"]) {
+              assert(!options.spec.prompt.includes(identity), `attribution prompt leaks ${identity}`);
+              assert(!JSON.stringify(read).includes(identity), `attribution trace leaks ${identity}`);
+            }
             const result = taskResult(options.spec) as { summary: string };
             result.summary = "a_fast 或 b_fast 的有效计算";
             await submitFor(options, draftFor(options.spec, result));
@@ -425,6 +431,7 @@ test("model materials expose copyable references while business materials and or
       const expected = structuredClone(projected) as any;
       const expectedFocus = structuredClone(task_focus) as any;
       if(task.stage === "attribution") {
+        delete expected.allow_standard_conflict;
         expected.numeric_references=[];
         expected.finding_basis=attributionFindingBasis(expected).map(({norm_index:_n,requirement_index:_r,...item})=>item);
         delete expected.answer.norm_directory;

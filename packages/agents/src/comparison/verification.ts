@@ -542,8 +542,17 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
       issues.push(...error.issues!);
     }
   }
+  const refuted = new Set<number>();
+  for (const [index, refutation] of (submission.concern_refutations ?? []).entries()) {
+    const path = `/concern_refutations/${index}`;
+    if (!concerns[refutation.concern_index] || requestedMatches.has(refutation.concern_index) || refuted.has(refutation.concern_index))
+      issues.push({ category: "decision", code: "inspection_refutation_index", path,
+        message: "反驳只指向一个真实、未匹配且未重复的首查疑点。", actual: refutation.concern_index });
+    refuted.add(refutation.concern_index);
+    issues.push(...sourceEvidenceIssues(request, refutation.source_evidence, audit, `${path}/source_evidence`));
+  }
   if (issues.length) throw new ValidationError(issues);
-  return concerns.filter((_concern, index) => !requestedMatches.has(index)).map(localReview);
+  return concerns.filter((_concern, index) => !requestedMatches.has(index) && !refuted.has(index)).map(localReview);
 }
 
 /** Unknown facts remain unknown; only an upstream definite use of this same requirement needs correction. */

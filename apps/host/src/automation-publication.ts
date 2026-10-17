@@ -103,7 +103,8 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
         ready.delete(key);
         if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
-        assertCompleteComparisonRewrite(row, rewriteIds.get(key) ?? []);
+        const required = rewriteIds.get(key) ?? [];
+        if (required.length) assertCompleteComparisonRewrite(row, required);
         yield { row: publicationComparison(row, comparisonInputs.get(key)!, state.inputs), evaluatedAt };
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);

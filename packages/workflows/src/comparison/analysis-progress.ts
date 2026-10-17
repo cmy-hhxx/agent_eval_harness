@@ -1,5 +1,5 @@
 import type { TaskState } from "@eval/contracts";
-import type { Checkpoint } from "./codec.js";
+import type { Checkpoint } from "./checkpoint.js";
 import type { EvalConfig, Stage } from "./types.js";
 
 type SavedTask = Checkpoint["tasks"][string];

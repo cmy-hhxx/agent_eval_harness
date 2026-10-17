@@ -27,9 +27,7 @@
 4. 判断核心完成情况与标准答案。
 - core_requirements 选择 Schema 允许的共同 requirements 编号，覆盖完成原目标不可缺少的共同交付，core_reason 说明结果和必要限制。meets_core=true 表示已确认交付能完成主要任务；false 表示已确认缺口使任务失败；null 表示影响核心判断的事实尚未核实。所选项为 partial 仍判 true 时，说明剩余结果如何独立完成原目标、缺口及实际修正成本，不能只以有参考价值认定完成。局部偏差不自动使整体不可用，私有规范不替代共同核心要求。
 - 有标准答案时，只核对其中回答原题的结果；附带中间值、背景和示例不新增交付义务。is_correct 按对象与数值的实际含义判断一致性，证据至少包含本方最终回答；已确认不符填 false，一致填 true。供应商标识、名称和单位的可解释差异不按字面判错，附加内容的独立错误另记 finding。correctness_reason 说明对照，另判核心可用性；尚未核实时两者均为 null，并关联 unknown/uncertain。
-- 默认按标准答案核验，不主动质疑。standard_conflict 默认 false；初评只有原始披露或完整底层数据复算直接证明标准答案的具体错误时，才填 true 提请独立复核，无须当时已看到对方答案。独立复核再同时确认双方最终所求结果一致及直接反证成立，才能保留 true。工具返回与回答相符、更多小数位或双方答案相同，都不能证明标准答案错误；证据不足时按标准答案处理，不给任何一方免责。
-- 提请或确认复核时，is_correct=false 仅表示标准不符；correctness_reason 以“标准答案待复核：大概率是标准答案错了”开头，用题目要求、实际数值、来源或计算说明具体错误，总评保留待复核及关键依据。证据同时覆盖本方回答与标准冲突；不将标准错误记为候选 problem，不因此否定已完成的核心任务。其他独立错误照常核查。
-- 无标准答案时省略 standard_conflict，is_correct=null、correctness_reason=""、correctness_evidence_indices=[]、numeric_checks=[]，照常核查事实与交付。
+- 无标准答案时，is_correct=null、correctness_reason=""、correctness_evidence_indices=[]、numeric_checks=[]，照常核查事实与交付。
 
 5. 归因与提交。
 - 先确认问题本身成立，再定位责任。核对对象、时点、单位和指标：均线与期间最低价等不同指标可以同时正确，不能仅因数值不同判前后矛盾。任务理解、计划依赖、调用参数、来源获取与使用、结果核验、停止时机等只是检查线索；label 与 definition 用中文写实际错误机制，不强套类别或把普通优点、局部缺陷都写成关键步骤失败。

@@ -4,7 +4,7 @@ TypeScript Host 编排 JSON 评测，Agent 通过 Profile 提供提示词、Sche
 
 开发前先读 [AGENTS.md](AGENTS.md)；当前契约、模块边界和验证要求以此为准。
 
-主线是共同 Criteria → 每条回答 Attribution → 每场一次 Comparison，必要时在对比前补查一轮归因。正式结果默认经 Rewrite 润色，未决结果单独待核；独立核验和后置 Clustering 按需执行。流程边界见[评测质量](docs/quality.md#流程与科学边界)，操作见[使用指南](docs/usage.md)。
+主线是共同 Criteria → 每条回答 Attribution → 每场一次 Comparison，不自动补查归因。标准答案复核由独立开关控制，默认关闭。正式结果默认经 Rewrite 润色，失败时保留原文交付，未决结果单独待核；独立核验和后置 Clustering 按需执行。流程边界见[评测质量](docs/quality.md#流程与科学边界)，操作见[使用指南](docs/usage.md)。
 
 ## Agent 开发导航
 

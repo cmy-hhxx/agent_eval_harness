@@ -91,7 +91,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.models.models.judge?.thinking, "medium");
   assert.equal(host.evaluation.execution.concurrency, 8);
-  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, clustering: true });
+  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
   assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
@@ -149,14 +149,21 @@ test("omitted rewrite settings enable each stage while explicit opt-outs remain 
   try {
     const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
     delete source.rewrite;
+    delete source.standardAnswerReview;
     const file = path.join(directory, "defaults.json");
     await writeFile(file, JSON.stringify(source));
     const defaults = await loadConfig(file, testSettings("https://gateway.example/v1"));
-    assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, attribution: true, clustering: true });
+    assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, comparisonItems: true, attribution: true, clustering: true });
+    assert.equal(defaults.evaluation.standardAnswerReview, false);
+    source.standardAnswerReview = true;
     source.rewrite = { attribution: false };
     await writeFile(file, JSON.stringify(source));
     const partial = await loadConfig(file, testSettings("https://gateway.example/v1"));
-    assert.deepEqual(partial.evaluation.rewrite, { comparison: true, attribution: false, clustering: true });
+    assert.equal(partial.evaluation.standardAnswerReview, true);
+    source.standardAnswerReview = "true";
+    await writeFile(file, JSON.stringify(source));
+    await assert.rejects(loadConfig(file, testSettings("https://gateway.example/v1")), /standardAnswerReview/);
+    assert.deepEqual(partial.evaluation.rewrite, { comparison: true, comparisonItems: true, attribution: false, clustering: true });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -641,7 +648,7 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
-        assert(prepared.prompt.includes('"version_id"'));
+        assert(!prepared.prompt.includes('"version_id"'));
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
         assert(!rules.includes("不提交 evidence_id"));

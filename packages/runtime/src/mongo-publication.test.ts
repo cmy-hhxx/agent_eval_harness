@@ -94,11 +94,16 @@ test("Mongo publication reuses business identity, preserves B/source fields and 
   assert.equal(db.docs.size, 3);
 });
 
-test("Mongo publication rejects missing rewrites and conflicting existing case identities", async () => {
+test("Mongo publication accepts original prose, rejects malformed rewrites and conflicting case identities", async () => {
   const db = fakeCollection();
   const incomplete = structuredClone(result); delete incomplete.row.rewritten;
-  await assert.rejects(writeMongoPublication(db.collection, date, rows(inputs), rows([incomplete]), AbortSignal.timeout(5000)), /completed rewrite/);
-  assert([...db.docs.values()].every((doc) => doc.kind === "input"));
+  const delivered = await writeMongoPublication(db.collection, date, rows(inputs), rows([incomplete]), AbortSignal.timeout(5000));
+  assert.equal(delivered.comparisons, 1);
+  assert(!Object.hasOwn([...db.docs.values()].find(item => item.kind === "comparison")!.result.comparison, "rewritten"));
+  for (const malformed of [null, {}, { rewrites: [] }])
+    await assert.rejects(writeMongoPublication(db.collection, date, rows(inputs), rows([{ ...incomplete,
+      row: { ...incomplete.row, rewritten: malformed } }]), AbortSignal.timeout(5000)), /Invalid comparison rewrite/);
+  assert.equal([...db.docs.values()].filter(doc => doc.kind === "comparison").length, 1);
   const conflict = fakeCollection(inputs.map((input, i) => ({ _id: String(i), kind: "input", batchId: date, caseId: "case-" + i, trace: input.trace })));
   await assert.rejects(writeMongoPublication(conflict.collection, date, rows(inputs), rows([result]), AbortSignal.timeout(5000)), /Conflicting/);
   assert.equal(conflict.writes(), 0);

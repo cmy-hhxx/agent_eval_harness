@@ -85,11 +85,11 @@ test("comparison rewrite preserves the blind identity map beside unmodified cand
   assert(items[0].text.includes(result.decision_basis.tradeoff));
   assert.equal(items[0].label, "B组Fast与A组Fast的偏好及理由");
   assert(items.every(item => item.context?.split("\n")[0] === mapping));
-  assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "tradeoff"]);
+  assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
   assert.equal(items[1].label, "B组Fast的整体总评");
   assert.equal(items[2].label, "A组Fast的整体总评");
-  assert.equal(items[3].text, result.decision_basis.tradeoff);
-  assert(!items.some(item => item.id.startsWith("comparison.")));
+  assert.equal(items.at(-1)!.text, result.decision_basis.tradeoff);
+  assert(items.some(item => item.id.startsWith("comparison.")));
   const shown = binding.modelInput!.items as RewriteItem[];
   assert(shown.every(item => item.context?.split("\n")[0] === mapping));
 });
@@ -109,7 +109,7 @@ test("Rewrite projects protocol seeds in verdict facts and overall prose without
   const binding = bindRewrite("comparison", result, { A: "A组<Fast>", B: "B组<Fast>" });
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 4);
+  assert.equal(shown.length, 6);
   assert(shown[0]!.text.includes("漏插＜visual＞属小瑕疵；27.98%与27.18%-27.80%的口径不变。"));
   assert.equal(shown[1]!.label, "A组＜Fast＞的整体总评");
   assert.equal(shown[1]!.text, "使用＜visual＞展示27.98%。");
@@ -122,7 +122,7 @@ test("Rewrite projects protocol seeds in verdict facts and overall prose without
   assert(shown.every(item => !/[<>]/.test([item.label, item.text, item.context ?? ""].join("\n"))));
   assert.equal(original[1]!.text, "使用<visual>展示27.98%。");
   assert.equal(original[2]!.text, "来源<trace ref=Ab12Cd3 />；模板[^<int>]。");
-  assert(!shown.some(item => item.id.startsWith("comparison.")));
+  assert(shown.some(item => item.id.startsWith("comparison.")));
   assert.deepEqual(result, before);
 });
 

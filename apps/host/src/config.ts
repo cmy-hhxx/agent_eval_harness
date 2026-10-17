@@ -131,7 +131,8 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     output: source.output as OutputTarget,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
-    rewrite: { comparison: true, attribution: true, clustering: true },
+    standardAnswerReview: optionalBoolean(source.standardAnswerReview, "standardAnswerReview") ?? false,
+    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: true },
     clustering: { ...CLUSTERING_DEFAULTS },
   };
   if (source.reviewQuestions !== undefined) {
@@ -184,7 +185,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
         throw new Error(`Invalid rewrite.${key}`);
     config.rewrite = {
       comparison: source.rewrite.comparison !== false,
-      ...(source.rewrite.comparisonItems !== undefined ? { comparisonItems: source.rewrite.comparisonItems === true } : {}),
+      comparisonItems: source.rewrite.comparisonItems !== false,
       attribution: source.rewrite.attribution !== false,
       clustering: source.rewrite.clustering !== false,
     };

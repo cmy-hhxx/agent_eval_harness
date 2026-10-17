@@ -1,4 +1,5 @@
 import type { JsonObject, PlannedTask } from "@eval/contracts";
+import { workflowText } from "@eval/prompts";
 import type { ClusteringResult } from "@eval/agents/clustering";
 import type { RewriteItem, Rewrites } from "@eval/agents/rewrite";
 import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
@@ -16,7 +17,7 @@ export function attributionSlots(result: AttributionResult): RewriteItem[] {
   const items: RewriteItem[] = [{ id: "summary", label: "回答结论", text: result.summary }];
   if (result.core_assessment.reason.trim())
     items.push({ id: "core_assessment.reason", label: "回答对用户请求的满足情况", text: result.core_assessment.reason,
-      context: "验收对象沿用本槽原文，不改变验收对象。用户索要方法或步骤时，评价回答是否给出可执行方法，不代表用户已经实施；用户要求执行时，才沿用原文的执行结果。不能把能否完成改成是否已经完成，不能新增执行证明要求；无法保证语义不变时保留原文。" });
+      context: workflowText("core-rewrite") });
   if (result.correctness_reason.trim())
     items.push({
       id: "correctness_reason",
@@ -60,6 +61,12 @@ export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "i
     ...Object.entries(result.assessments).map(([candidate, assessment]) => ({
       id: `assessment.${candidate}.summary`, label: `【候选${candidate}】的整体总评`, text: assessment.summary,
     })),
+    ...result.decision_basis.comparisons.flatMap((row, index) => row.criterion_ids.length ||
+      Object.values(row.assessments).some(assessment => assessment.finding_indices.length)
+      ? Object.entries(row.assessments).filter(([, assessment]) => assessment.summary.trim()).map(([candidate, assessment]) => ({
+        id: `comparison.${index}.${candidate}.summary`, label: `检查项 ${index + 1} · 【候选${candidate}】点评`,
+        text: assessment.summary, context: row.aspect,
+      })) : []),
     { id: "tradeoff", label: "整体取舍依据", text: result.decision_basis.tradeoff },
   ];
   const items: RewriteItem[] = [];
@@ -172,6 +179,12 @@ export function polishComparisonRow(
   }
   if (own?.tradeoff)
     (view.decision_basis as { tradeoff: string }).tradeoff = own.tradeoff;
+  (view.decision_basis as ComparisonResult["decision_basis"]).comparisons.forEach((comparison, index) => {
+    for (const [label, candidate] of Object.entries(data.candidates)) {
+      const text = own?.[`comparison.${index}.${label}.summary`];
+      if (text && comparison.assessments[candidate.version]) comparison.assessments[candidate.version].summary = text;
+    }
+  });
   const labelOf = new Map(
     Object.entries(data.candidates).map(([label, candidate]) => [candidate.version, label]),
   );

@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r228",
+  "evaluatorVersion": "r229",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -70,7 +70,8 @@
   "rewrite": {
     "comparison": true,
     "attribution": true,
-    "clustering": true
+    "clustering": true,
+    "comparisonItems": true
   },
   "clustering": {
     "enabled": false,
@@ -131,5 +132,6 @@
   "problemLibrary": {
     "kind": "directory",
     "path": "../data/problems"
-  }
+  },
+  "standardAnswerReview": false
 }

@@ -1,4 +1,4 @@
-import type { TraceRead } from "./index.js";
+import type { TraceRead } from "./primitives.js";
 import { evidenceId } from "./evidence.js";
 
 const MAX_PAGE_CHARS = 16000;

@@ -200,8 +200,23 @@ test("no-standard submissions use explicit empty correctness fields and preserve
   });
 });
 
+test("standard challenge is hidden and rejected by default across submission and result validation",()=>{
+  const f=fixture(),schema=attributionProfile.modelSubmissionSchema!(f.request) as any;
+  assert(!Object.hasOwn(schema.properties,"standard_conflict"));
+  const prompt=attributionProfile.renderPrompt!(f.request.input);
+  assert(!prompt.includes("standard_answer_review"));
+  const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  assert.throws(()=>f.registry.resolve(f.binding,{...f.draft,is_correct:false,standard_conflict:true},f.audit),ValidationError);
+  assert.throws(()=>f.registry.validate(f.binding,{...result,is_correct:false,standard_conflict:true},f.audit),error=>
+    error instanceof ValidationError&&error.issues!.some(issue=>issue.code==="standard_conflict_disabled"));
+  f.request.input.allow_standard_conflict=true;
+  assert(Object.hasOwn((attributionProfile.modelSubmissionSchema!(f.request) as any).properties,"standard_conflict"));
+  assert(attributionProfile.renderPrompt!(f.request.input).includes("standard_answer_review"));
+});
+
 test("standard conflicts are an explicit flag and cannot excuse a passing or standard-free judgment",()=>{
   const f=fixture();
+  f.request.input.allow_standard_conflict=true;
   assert.equal(f.draft.standard_conflict,undefined);
   f.draft.is_correct=false;f.draft.standard_conflict=true;f.draft.correctness_reason="标准为38.1%，本方工具返回与口径支持38.41%。";
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
@@ -212,6 +227,7 @@ test("standard conflicts are an explicit flag and cannot excuse a passing or sta
     error.issues!.some(issue=>issue.code==="standard_conflict_correctness"));
   const request=structuredClone(example.request) as AgentRequest;
   request.input.ground_truth={available:false,value:null};
+  request.input.allow_standard_conflict=true;
   const noStandard=fixture(request);
   assert.throws(()=>noStandard.registry.resolve(noStandard.binding,{...noStandard.draft,standard_conflict:true},noStandard.audit),error=>error instanceof ValidationError&&
     error.issues!.some(issue=>issue.code==="standard_conflict_without_standard"));
@@ -219,6 +235,7 @@ test("standard conflicts are an explicit flag and cannot excuse a passing or sta
 
 test("a confirmed wrong reference does not force blame onto a correct answer or its tools",()=>{
   const request=structuredClone(example.request) as AgentRequest;
+  request.input.allow_standard_conflict=true;
   request.input.ground_truth={available:true,value:"5"};
   const f=fixture(request);
   f.draft.is_correct=false;f.draft.standard_conflict=true;

@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { publicationComparison } from "./publication.js";
 
+test("publication can deliver original prose when no rewrite was accepted", () => {
+  const row = { comparison_id: "pair", models: { a: {}, b: {} }, verdicts: { a__vs__b: { reason: "原始理由" } } };
+  assert.deepEqual(publicationComparison(row, { A: "a-input", B: "b-input" },
+    { "a-input": { version: "a" }, "b-input": { version: "b" } }), row);
+  assert(!Object.hasOwn(row, "rewritten"));
+});
+
 test("publication maps saved candidate slots by identity, including partial rewrites and third-party pairs", () => {
   const row = { comparison_id: "pair", models: { z_baseline: {}, a_fast: {} }, rewritten: {
     evaluator_version: "fixture", rewrites: [

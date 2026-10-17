@@ -1,4 +1,4 @@
-import type { JsonObject, ModelConfig, ToolResult } from "./index.js";
+import type { JsonObject, ModelConfig, ToolResult } from "./primitives.js";
 
 export interface AssistantScope { userId: string; sessionId: string }
 export interface AssistantExecutor { pid: number; instanceId: string; url: string }

@@ -7,7 +7,7 @@ import { buildPlan } from "./input.js";
 import { comparisonWorkflow } from "./workflow.js";
 import type { TaskData } from "./types.js";
 
-for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"]] as const)test(`bounded coverage review preserves ${findingType} source history and clustering ownership for ${modelCount} models`,async()=>{
+for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"]] as const)test(`each of ${modelCount} models owns one attribution despite unmatched ${findingType} findings`,async()=>{
  const fixture=await fixtureConfig([[raw()],[],[raw()],[]],false,true);
  try {
   if(modelCount===3){
@@ -32,32 +32,16 @@ for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"
    apply(comparisonWorkflow.advance!(task,receipts[task.id],state,plan.inputs));
   }
   const before=structuredClone(Object.fromEntries(attributes.map(task=>[task.id,receipts[task.id]])));
-  const reviews=state.manifest.tasks.filter(task=>(task.data as TaskData).coverageReview),pairs=modelCount*(modelCount-1)/2;
-  if(findingType==="strength"){
-   assert.deepEqual(reviews,[],"unlinked praise is not an unresolved delivery failure");
-   assert(state.manifest.tasks.filter(task=>task.stage==="clustering").every(task=>comparisonWorkflow.canStart!(task,state.manifest)));
-   return;
-  }
-  assert.equal(reviews.length,pairs*2);
-  assert.equal(new Set(reviews.map(task=>JSON.stringify([(task.data as TaskData).reviewOf!.taskId,(task.data as TaskData).group]))).size,reviews.length);
-  const clusters=state.manifest.tasks.filter(task=>task.stage==="clustering");
-  assert(clusters.length>0);
-  assert(clusters.every(task=>!comparisonWorkflow.canStart!(task,state.manifest)));
-  const latest=new Map<string,string>();
-  for(const [index,task]of reviews.entries()){
-   const original=(task.data as TaskData).reviewOf!.taskId;
-   receipts[task.id]={...structuredClone(receipts[original]),taskId:task.id,acceptedAt:index+2};
-   state.manifest.states[task.id].status="succeeded";latest.set(task.inputIds.answer,task.id);
-   const next=comparisonWorkflow.advance!(task,receipts[task.id],state,plan.inputs);
-   assert.deepEqual(next.tasks,[],"a source check never starts a second coverage round");apply(next);
-  }
-  for(const cluster of state.manifest.tasks.filter(task=>task.stage==="clustering")){
+  assert.equal(state.manifest.tasks.filter(task=>task.stage==='attribution').length,modelCount);
+  assert(!state.manifest.tasks.some(task=>(task.data as TaskData).reviewOf));
+  for(const comparison of state.manifest.tasks.filter(task=>task.stage==='comparison'))
+   for(const label of Object.keys((comparison.data as TaskData).candidates))
+    assert(attributes.some(task=>task.id===comparison.dependencies[label]));
+  for(const cluster of state.manifest.tasks.filter(task=>task.stage==='clustering')) {
    assert(comparisonWorkflow.canStart!(cluster,state.manifest));
-   for(const [inputId,taskId]of Object.entries(cluster.dependencies))assert.equal(taskId,latest.get(inputId));
+   for(const [inputId,taskId]of Object.entries(cluster.dependencies))assert.equal(taskId,attributes.find(task=>task.inputIds.answer===inputId)!.id);
   }
+  for(const task of attributes)assert.deepEqual(comparisonWorkflow.advance!(task,receipts[task.id],state,plan.inputs),{tasks:[]});
   assert.deepEqual(Object.fromEntries(attributes.map(task=>[task.id,receipts[task.id]])),before);
-  const compared=state.manifest.tasks.filter(task=>task.stage==="comparison");
-  assert(compared.every(task=>(task.data as TaskData).coverageReviewPrepared));
-  assert(compared.every(task=>Object.keys((task.data as TaskData).candidates).every(label=>reviews.some(review=>review.id===task.dependencies[label]))));
  }finally{await rm(fixture.directory,{recursive:true,force:true});}
 });

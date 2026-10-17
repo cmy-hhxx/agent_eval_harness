@@ -317,6 +317,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>
     repairErrors.push({ category: "decision", code, path, message, actual, expected });
 
+  if (value.standard_conflict && request.input.allow_standard_conflict !== true)
+    issue("standard_conflict_disabled", "/standard_conflict", "本次未开启标准答案复核，不能提交标准冲突。", true);
   if (canonical(value.task_analysis) !== canonical(input.task_analysis))
     issue("task_analysis_mismatch", "/task_analysis", "task_analysis 必须镜像请求中的共享判据，不能按回答改写", value.task_analysis, input.task_analysis);
   if (value.has_standard_answer !== input.ground_truth.available)

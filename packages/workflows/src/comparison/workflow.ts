@@ -15,7 +15,7 @@ export const comparisonWorkflow: WorkflowDefinition = {
   observesFailures: task => !(task.data as TaskData).verificationAudit,
   canStart: (task, manifest) => task.stage !== "clustering" || manifest.tasks
     .filter(item => item.stage === "attribution" && (!(item.data as TaskData).reviewOf ||
-      (item.data as TaskData).coverageReview || (item.data as TaskData).standardConflictReview))
+      (item.data as TaskData).standardConflictReview))
     .every(item => !["pending", "running"].includes(manifest.states[item.id].status)),
   blockedReason: (task, dependencies) => {
     if (task.stage !== "rewrite") return undefined;
