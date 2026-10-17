@@ -3,7 +3,7 @@ import { schemaIssues, ValidationError, type AgentRequest, type CriteriaInput, t
 import { criteriaText } from "@eval/prompts";
 import requestSchema from "../../../../schemas/criteria/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/criteria/submission.schema.json" with { type: "json" };
-import { criteriaSources, eligibleCriterionSource, type CriterionSource } from "./sources.js";
+import { criteriaSources, eligibleCriterionSource, requiredCriterionSource, type CriterionSource } from "./sources.js";
 import { criteriaGroups, criterionIdentity } from "./identity.js";
 
 export interface CriteriaSubmission {
@@ -59,7 +59,7 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       applies_to: applies.length === input.candidates.length ? [] : applies, acceptance_rule: rule(sources) };
     entries.push({ group, sourceIndices: criterion.source_indices, criterion: resolved });
   });
-  for (const source of catalogue.filter((source) => source.kind === "question"))
+  for (const source of catalogue.filter(requiredCriterionSource))
     if (!required.has(source.source_index)) {
       const positions = new Map(input.candidates.map((candidate, index) => [candidate.candidate_id, index + 1]));
       const merged = entries.filter(entry => entry.group === "requirements").flatMap((entry, index) => {
@@ -96,8 +96,8 @@ export function matchCriterionSources(input: CriteriaInput, criterion: TaskCrite
   const target = criterion.applies_to.length ? criterion.applies_to : input.candidates.map((candidate) => candidate.candidate_id);
   const complete = (selected: CriterionSource[]): CriterionSource[] | undefined => {
     const texts = new Set(selected.map((source) => source.text));
-    // Identical question/context paragraphs render once, but retain both their coverage and scope.
-    const mandatory = catalogue.filter((source) => source.kind === "question"
+    // Identical original blocks render once, but retain each required source's coverage.
+    const mandatory = catalogue.filter((source) => requiredCriterionSource(source)
       && !selected.includes(source) && texts.has(source.text));
     const initial = [...selected, ...mandatory];
     const finish = (sources: CriterionSource[]): CriterionSource[] | undefined => {

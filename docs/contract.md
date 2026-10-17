@@ -36,7 +36,7 @@
 
 | 阶段 | 一次处理 | 输出内容 | 下游用途 |
 |---|---|---|---|
-| Criteria | 同题、同标准的一组候选约束 | 从本轮问题与候选用户上下文的原文目录选择来源，标准答案留给后续归因核对；形成带 ID、`applies_to` 和 `acceptance_rule` 的 `task_analysis`，不向模型展示 SYS/DEV、回答或工具轨迹 | 写入 `criteria.jsonl`，作为归因与对比的共同基准 |
+| Criteria | 同题、同标准的一组候选约束 | 从题目、用户上下文、各组 SYS/DEV、统一模型质量规范和可用参考答案制定判据；形成带 ID、`applies_to` 和 `acceptance_rule` 的 `task_analysis`，不读取候选回答或工具轨迹 | 写入 `criteria.jsonl`，作为归因与对比的共同基准 |
 | Attribution、普通 Comparison | 一条已标明版本的回答 | 条件性的 `is_correct`、`correctness_reason` / `correctness_evidence`、可选的 `standard_conflict`、`criterion_assessments`、`core_assessment`、`summary`、有证据的优点及确定/疑似问题 `findings`；Host 在接受结果时加入 `has_standard_answer` | 写入 `attribution.jsonl`；Comparison 读取去身份视图，Clustering 读取问题观察并维护问题库 |
 | Comparison | 两个候选 | `status`、复核请求、分层 `ranking`、核心分类、带 criterion ID / 状态 / 证据状态的逐项对照及决定依据 | decided 写入 `comparison.jsonl`；needs_review 写入 `comparison-review.jsonl`，不派生判决 |
 | Rewrite | 一个归因语义组、对比或聚类结果的文本槽位 | 模型返回同序 `rewrites: [{id,text}]`，槽位 id 按位置固定，不含判定、证据或新增条目 | 按槽写入源结果的 `rewritten` 字段；报告与逐题总结优先展示改写文案 |
@@ -103,7 +103,9 @@ Criteria 绑定来源、Attribution 绑定选择并展开证据、Comparison 从
 
 Criteria 提交 requirements、scoring_points、red_flags 三个数组，每条只包含 source_indices 和不超过300字符的 text。text 是一个可分别核验的交付项；同一来源可以拆成多个不同检查项。模型材料只展示候选数量和来源适用位置，text 使用原题语言，不写候选身份；题中已给事实是输入条件，不自动成为复述或额外举证的义务。模型不生成判据 ID、候选 UUID、原文坐标或验收规则。程序按来源交集绑定 applies_to，按组生成 r1/f1/s1，并把完整所选原文与共用核验规则写入 acceptance_rule。原文条件、例外、单位与效力始终优先；检查短句是否忠实须语义复核，不能因引用合法就认定没有新增义务。Criteria 自查并由 Attribution 回到完整原文核对时窗、边界、日期与例外；程序不以数字白名单或比较词正则裁决条件是否保留，事件名、日期和代码中的数字不被强制解释成阈值。
 
-question 至少支撑一条共同 requirement；私有作用域的并集不构成公共覆盖。标准答案完整保留给后续归因和对比，不进入 Criteria 可选来源，不从标准答案的中间值或补充信息生成任务要求。SYS/DEV 不进入新任务要求，已识别的内部上下文、附件容器、NER 与用户结束后的元数据块不升为交付义务；它们原始材料仍用于本方核查。三组原始提交合计最多24条，只有检查内容、原文依据和作用域都相同的项目才归并；不能按相同来源编号删掉独立验收点。正式结果继续检查来源、作用域与重复项。
+标准生成按“读题定目标 → 整理模型质量与业务要求 → 有参考答案时补充正确性判据 → 核对来源与范围”执行。`question`、统一规范 `quality` 和存在时的 `reference` 各须有共同 requirement 覆盖；私有作用域的并集不构成公共覆盖。模型侧检查事实、推理、共同任务遵循与表达；业务侧从题目、用户上下文和各组 SYS/DEV 提取相关要求。各组特有条款只约束本组，来源原文及角色相同且覆盖全部候选时才成为共同来源；组合来源仍取适用范围交集。私有规则的符合情况不转记为共同质量优势。
+
+有参考答案时，Criteria 结合原题写清所求结果、关键要点和口径的正确性判据，不判断候选对错；归因统一核验，正确性判据与 `is_correct` 采用同一事实和证据。参考答案的背景、示例和中间值不增加交付义务，局部标准不符不自动等于核心失败。无参考答案时不生成参考对照项，仍检查事实、推理与业务交付。已识别的内部上下文、附件容器、NER 与用户结束后的元数据块不升为交付义务；原始材料仍用于本方核查。三组原始提交合计最多24条，只有检查内容、原文依据和作用域都相同的项目才归并；不能按相同来源编号删掉独立验收点。正式结果继续检查来源、作用域与重复项。
 
 已接受归因的来源视图直接核对正式 canonical 结果中每个完整 evidence_id 与原任务登记来源、消息、引文和 source 归属；图片还须对应真实图片及原查看记录。不重新执行当前提交 resolver，不重新解释 receipt.submitted、责任声明或已接受判词，不按引文搜索坐标，也不恢复缺少坐标的格式。坐标缺失、来源不符或原文不一致明确拒绝；合法结果只读投影，原收据、业务字段与累计账本不变。后续 Comparison 绑定和显式证据验收使用此视图；已持久化判词导出直接复用原行，不要求已完成任务重新读取输入或重新评测。
 
@@ -257,7 +259,7 @@ Clustering 的 `replacePendingObservations` 公开入口严格校验并替换待
 
 初始材料是渐进式披露的首屏：`initialContextChars` 专用于证据材料，原问、最终回答与完整规范另行展示，不挤占该预算。`initial_material` 先按最终引用放入预算可容纳的完整来源块及原始坐标，同一引用优先使用真实工具返回；没有对应原始返回时才使用模型实际可见的来源。剩余预算先放真实工具返回，再补充调用与模型过程消息，同类按新到旧选择；剔除大体积 `input_messages` 与模型参数，证据引文同样计入预算。来源块原样展示为 value 字符串，完整消息保留原对象；不摘要、不拼接片段，不以引用关系替代真实性判断。实际回答链上的 system/developer 单独放入 `instruction_sources`，完整保留原文，不在首屏消息中重复；程序沿最终回答对应的 LLM 输出及其真实 assistant 历史提取嵌套指令，排除工具规划器上下文。Criteria、Attribution 与 Comparison 的可信来源和正式规范保留原始字节及完整坐标。盲测只作用于模型展示与工具返回：Host 将可序列化 presentation 传给 Worker，工具在按原文分页和登记证据后脱敏展示文本、移除消息身份字段；ID、路径、分页偏移和图片字节不变，完整坐标始终解析原始输入，不建立展示坐标映射。`final_evidence`、`initial_material[].evidence`、`instruction_sources`、`citation_inventory` 和 `table_check_results` 的生成证据目录使用引文与 `reference` 展示；原始消息值中的同名字段保持原样，不递归改写。`read_trace` 可用 `path` 选择原始文本或结构化字段（对象、数组、数字、布尔值、null），省略或空字符串时读取整条消息 JSON 并给出文本路径目录。目录偏移 source_offset=0 是无作用的默认值，可与正文 path 同传；非零目录偏移不能用于具体正文路径。字符串使用原文本坐标，结构化字段使用其在整条消息 JSON 中的真实坐标；分页 offset/next_offset 始终相对于所选字段，模型不计算证据坐标；`source` 标明当前坐标来源，分页保持来源不变并使用返回的 `next_offset`。`read_trace` 和 `search_trace` 在 `maxOutputChars` 内分别缩短原文页、减少检索条目，始终完整返回配对的引文与 `reference`，不交给通用字符截断；其他工具超预算时仍截断并将完整内容存为可分页产物。
 
-任务判据目录只选择本轮用户交付要求和真实候选用户约束，SYS/DEV 不整份升为任务判据或共同优势。内部指令仍完整保留在本方材料中，由 Attribution 和独立复核按真实指令层级、触发条件与实际行为单独核验；未入 requirements 的私规用 source_only finding 与完整本方规范和实际交付证据闭环，不能借共同问题扩大作用域。
+任务判据目录覆盖共同模型质量、本题交付、可用参考答案和各组相关业务约束；SYS/DEV 按真实来源限定范围，不整份升为共同义务。内部指令完整保留在本方材料中，由 Attribution 和独立复核按真实指令层级、触发条件与实际行为核验；未入 requirements 的私规用 source_only finding 与完整本方规范和实际交付证据闭环，不能借共同问题扩大作用域。
 
 Workflow 用原整组去身份映射及当前候选真实 system/developer/user 完整规范块，匹配 criterion.acceptance_rule 中程序保留的原文；检查短句 text 不作为来源绑定依据，保留标题、正文、跨文本叶子条件和例外，不按近似含义或中文标点拆义务。`criterion_instruction_sources` 保留真实 evidence_id、消息、路径及完整原文；criterion_assessments 仍按该关联将完整规范放入 context_evidence，模型须另选聚焦的实际交付或执行证据。Attribution 的公开 `attributionNormDirectory(request)` 先按原 requirements 顺序列出本方适用且有可信真实规范绑定的项，再列未被这些项完整覆盖的本方 SYS/DEV 与未关联 USER 原块；目录只做物理来源分组，每项为 `norm_index / roles / requirement_index / evidence`，跨角色的真实规范束保留全部 roles。当前请求必须提供 `answer.norm_directory`，启动模型前与真实来源严格比较内容和顺序，未知来源不借 peer 补造。
 

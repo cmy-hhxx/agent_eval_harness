@@ -84,7 +84,8 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
   };
 }
 function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
-  return { requirements: [{ text: "完成用户所求结果。", source_indices: sources.filter((source) => source.kind === "question").map((source) => source.source_index) }],
+  return { requirements: [{ text: "正确、清楚地完成用户所求结果。" + (sources.some(source => source.kind === "reference") ? "所求结果与参考答案一致。" : ""),
+    source_indices: sources.filter((source) => ["question", "reference", "quality"].includes(source.kind)).map((source) => source.source_index) }],
     scoring_points: [], red_flags: [] };
 }
 export function criteriaResult(input: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },

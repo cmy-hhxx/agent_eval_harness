@@ -1,10 +1,11 @@
 import { canonical, type CriteriaInput } from "@eval/contracts";
+import { criteriaText } from "@eval/prompts";
 import { sourceTextBlocks } from "@eval/tools";
 
 /** Positive indices select entries in this request's fixed source catalogue. */
 export interface CriterionSource {
   source_index: number;
-  kind: "question" | "reference" | "instruction" | "context";
+  kind: "question" | "reference" | "instruction" | "context" | "quality";
   text: string;
   applies_to: string[];
   paths: string[];
@@ -49,11 +50,16 @@ export function criteriaSources(input: CriteriaInput): CriterionSource[] {
     });
   });
   for (const source of sources) if (source.applies_to.length === input.candidates.length) source.applies_to = [];
+  sources.push({ source_index: sources.length + 1, kind: "quality", text: criteriaText("model_quality"), applies_to: [], paths: [] });
   return sources;
 }
 
-/** Selection is separate from provenance: complete own SYS/DEV still ground accepted results. */
+/** Shared task, model quality and any reference must all have common checks. */
+export function requiredCriterionSource(source: CriterionSource): boolean {
+  return source.kind === "question" || source.kind === "quality" || source.kind === "reference";
+}
+
+/** Automatic context wrappers are material, not additional delivery requirements. */
 export function eligibleCriterionSource(source: CriterionSource): boolean {
-  return source.kind !== "reference" && source.role !== "system" && source.role !== "developer" &&
-    !(source.kind === "context" && /^(?:# 上下文[（(]内部信息|# 本轮提供的附件和 URL 内容|---用户提问结束---|NER 抽取结果|下文为系统自动生成的元数据)/u.test(source.text.trimStart()));
+  return !(source.kind === "context" && /^(?:# 上下文[（(]内部信息|# 本轮提供的附件和 URL 内容|---用户提问结束---|NER 抽取结果|下文为系统自动生成的元数据)/u.test(source.text.trimStart()));
 }

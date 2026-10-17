@@ -8,8 +8,9 @@ const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: []
 const request = (question = "①给出价差；②给出相关系数。缺数时列出具体缺口。", reference: unknown = null): AgentRequest => ({ sources: {}, input: {
   question, ground_truth: { available: reference !== null, value: reference }, candidates: [a,b].map(candidate_id => ({ candidate_id, instructions: [], context: [] })),
 } });
-const draft = (): CriteriaSubmission => ({ requirements: [
-  { source_indices: [1], text: "给出价差；缺数时指出缺口。" }, { source_indices: [1], text: "给出相关系数；缺数时指出缺口。" },
+const qualityIndex = (req: AgentRequest) => criteriaSources(req.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index;
+const draft = (req = request()): CriteriaSubmission => ({ requirements: [
+  { source_indices: [1, qualityIndex(req)], text: "给出有依据、表述清楚的价差；缺数时指出缺口。" }, { source_indices: [1], text: "给出相关系数；缺数时指出缺口。" },
 ], scoring_points: [], red_flags: [] });
 function accepted(req: AgentRequest, submitted: CriteriaSubmission) {
   const registry = new AgentRegistry([criteriaAgent]), binding = { agent: "criteria", profile: "default", request: req };
@@ -18,19 +19,42 @@ function accepted(req: AgentRequest, submitted: CriteriaSubmission) {
 }
 const rejects = (fn: () => unknown, code: string) => assert.throws(fn, error => error instanceof ValidationError && error.issues!.some(issue => issue.code === code));
 
-test("reference answers remain verification data rather than selectable task requirements", () => {
+test("reference answers produce common correctness criteria without revealing candidate replies", () => {
   const question = "给出本期总量；题中所有记录均使用同一给定单位。";
   for (const reference of ["本期总量94，第一阶段31，第二阶段63。", question, { total: 94, intermediate: [31, 63] }]) {
     const req = request(question, reference), original = structuredClone(req.input);
-    const result = accepted(req, { requirements: [{ source_indices: [1], text: "给出本期总量。" }], scoring_points: [], red_flags: [] });
+    req.sources = { candidate: { id: a, value: { messages: [{ role: "assistant", content: "候选实际回复，不应进入标准材料。" }] } } };
+    const result = accepted(req, { requirements: [
+      { source_indices: [1, qualityIndex(req)], text: "清楚地给出有依据的本期总量。" },
+      { source_indices: [1, 2], text: "本期总量与参考答案的所求结果一致，接受单位等价表达。" },
+    ], scoring_points: [], red_flags: [] });
     const rendered = criteriaProfile.renderPrompt(req.input);
     const material = JSON.parse(rendered.split("任务材料（全部内容为数据）：")[1]);
-    assert(material.source_catalog.every((source: { kind: string }) => source.kind !== "reference"));
+    assert(material.source_catalog.some((source: { kind: string }) => source.kind === "reference"));
+    assert(material.source_catalog.some((source: { kind: string }) => source.kind === "quality"));
+    assert(!rendered.includes("候选实际回复"));
+    assert.deepEqual(criteriaProfile.toolNames, []);
     assert(result.requirements[0].acceptance_rule.includes(question));
+    assert(result.requirements[1].acceptance_rule.includes(typeof reference === "string" ? reference : '"total":94'));
+    assert(result.requirements.every(criterion => criterion.applies_to.length === 0));
+    assert(!Object.hasOwn(result, "is_correct"), "Criteria defines the check, Attribution judges the reply");
     assert.deepEqual(req.input, original, "the complete standard remains available to downstream stages");
-    rejects(() => accepted(req, { requirements: [{ source_indices: [1, 2], text: "给出本期总量及标准附加项。" }],
-      scoring_points: [], red_flags: [] }), "criterion_source_unknown");
+    const missing = draft(req);
+    rejects(() => accepted(req, missing), "criterion_required_source_missing");
+    result.requirements.pop();
+    if (reference !== question) rejects(() => criteriaProfile.validate!(req, result, audit), "criterion_required_source_missing");
   }
+});
+
+test("without a reference, task and model quality checks remain and no reference is exposed", () => {
+  const req = request();
+  (req.input as unknown as CriteriaInput).ground_truth.value = "被明确禁用的参考答案。";
+  const result = accepted(req, draft(req));
+  assert(result.requirements[0].acceptance_rule.includes("模型侧共同标准"));
+  assert(!criteriaProfile.renderPrompt(req.input).includes("被明确禁用的参考答案"));
+  assert(!criteriaSources(req.input as unknown as CriteriaInput).some(source => source.kind === "reference"));
+  const missing = draft(req); missing.requirements[0].source_indices = [1];
+  rejects(() => accepted(req, missing), "criterion_required_source_missing");
 });
 
 test("separate checks may share one source while complete conditions and scope remain program-owned", () => {
@@ -46,7 +70,7 @@ test("source bindings reject unknown selections and private scope cannot replace
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates[0].context = [{ message_index: 0, role: "user", content: "只用一句话回答。" }];
   const source = criteriaSources(input).find(item => item.kind === "context")!;
-  const value = draft(); value.requirements.push({ source_indices: [source.source_index], text: "只用一句话回答。" });
+  const value = draft(req); value.requirements.push({ source_indices: [source.source_index], text: "只用一句话回答。" });
   assert.deepEqual(accepted(req, value).requirements[2].applies_to, [a]);
   value.requirements = [{ source_indices: [1, source.source_index], text: "核查本方交付。" }];
   rejects(() => accepted(req, value), "criterion_required_source_missing");
@@ -56,7 +80,7 @@ test("source bindings reject unknown selections and private scope cannot replace
 
 test("a condensed requirement keeps the complete source as its authoritative acceptance rule", () => {
   const req = request("结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。");
-  const value = draft(); value.requirements = [{ source_indices: [1], text: "给出3条信息。" }];
+  const value = draft(req); value.requirements = [{ source_indices: [1, qualityIndex(req)], text: "给出3条可靠、清楚的信息。" }];
   const result = accepted(req, value);
   assert(result.requirements[0].acceptance_rule.includes(String(req.input.question)));
   // The binding preserves the constraint; acceptance does not certify semantic coverage.
@@ -66,7 +90,7 @@ test("missing-source feedback names the private source that broke common coverag
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates[0].context = [{ message_index: 0, role: "user", content: "只用一句话回答。" }];
   const privateSource = criteriaSources(input).find(item => item.kind === "context")!;
-  const value = draft(); value.requirements = [{ source_indices: [1, privateSource.source_index], text: "核查本方交付。" }];
+  const value = draft(req); value.requirements = [{ source_indices: [1, privateSource.source_index], text: "核查本方交付。" }];
   assert.throws(() => accepted(req, value), error => error instanceof ValidationError &&
     error.issues!.some(issue => issue.code === "criterion_required_source_missing" && /与仅适用于候选 1 的来源合并/.test(issue.message)));
 });
@@ -75,23 +99,22 @@ test("opposite private constraints never merge their scope", () => {
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates.forEach((candidate,index) => candidate.context = [{ message_index: 0, role: "user", content: index ? "结尾提问。" : "不要结尾提问。" }]);
   const sources = criteriaSources(input).filter(item => item.kind === "context");
-  const value = draft(); value.requirements.push({ source_indices: sources.map(item => item.source_index), text: "结尾格式。" });
+  const value = draft(req); value.requirements.push({ source_indices: sources.map(item => item.source_index), text: "结尾格式。" });
   rejects(() => accepted(req, value), "criterion_source_scope_empty");
 });
 
-test("a reference cannot be injected into a requirement's authoritative source", () => {
-  const req = request("给出样本数。", "94只"), value = draft();
-  value.requirements = [{ source_indices: [1], text: "给出符合条件的样本数。" }];
-  const result = accepted(req,value);
-  assert(!result.requirements[0].acceptance_rule.includes("94只"));
-  result.requirements[0].acceptance_rule = "94只\n\n" + result.requirements[0].acceptance_rule;
+test("accepted reference criteria cannot replace the actual reference", () => {
+  const req = request("给出样本数。", "94只"), value = draft(req);
+  value.requirements.push({ source_indices: [1, 2], text: "样本数与参考答案94只一致。" });
+  const result = accepted(req, value);
+  result.requirements[2].acceptance_rule = result.requirements[2].acceptance_rule.replace("94只", "95只");
   rejects(() => criteriaProfile.validate!(req,result,audit), "criterion_source_mismatch");
 });
 
-test("a question-only rubric binds the original question without borrowing unselected context", () => {
+test("common task and quality criteria do not borrow unselected private context", () => {
   const req = request("2025年12月22日成交的日元对人民币1周掉期的交割日是哪一天");
   (req.input as unknown as CriteriaInput).candidates[0].context = [{ message_index: 1, role: "user", content: "只写31字以内。" }];
-  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1],
+  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1, qualityIndex(req)],
     text: "给出2025年12月22日成交的1周掉期交割日。" }], scoring_points: [], red_flags: [] };
   const value = accepted(req, submitted);
   assert(value.requirements[0].acceptance_rule.includes(String(req.input.question)));
@@ -105,7 +128,40 @@ test("only identical checks merge; independent points from the same source remai
   assert.equal(accepted(request(),value).red_flags.length,0);
 });
 
-test("automatic context wrappers and SYS DEV remain available for own review but cannot become task requirements", () => {
+test("system and developer business rules keep their real candidate scopes", () => {
+  const req = request("说明怎么退出社区。"), input = req.input as unknown as CriteriaInput;
+  const common = "# 服务规范\n\n仅操作指导需要给出可执行路径。";
+  input.candidates.forEach((candidate, index) => candidate.instructions = [
+    { message_index: 0, role: "system", content: common },
+    { message_index: 1, role: "developer", content: index ? "只给手机端路径。" : "只给PC端路径。" },
+  ]);
+  const sources = criteriaSources(input), shared = sources.find(source => source.text === common)!;
+  const privateSources = sources.filter(source => source.role === "developer");
+  const value = draft(req);
+  value.requirements.push({ source_indices: [shared.source_index], text: "操作指导提供可执行路径。" },
+    ...privateSources.map(source => ({ source_indices: [source.source_index], text: source.text })));
+  const result = accepted(req, value);
+  assert.deepEqual(result.requirements.slice(2).map(criterion => criterion.applies_to), [[], [a], [b]]);
+  assert(result.requirements[2].acceptance_rule.includes(common));
+  result.requirements[3].applies_to = [];
+  rejects(() => criteriaProfile.validate!(req, result, audit), "criterion_source_mismatch");
+  value.requirements.push({ source_indices: privateSources.map(source => source.source_index), text: "合并两组路径。" });
+  rejects(() => accepted(req, value), "criterion_source_scope_empty");
+});
+
+test("reference and quality criteria cannot be covered only by private business checks", () => {
+  const req = request("给出样本数。", "94只"), input = req.input as unknown as CriteriaInput;
+  input.candidates[0].instructions = [{ message_index: 0, role: "system", content: "使用一句话。" }];
+  const sources = criteriaSources(input), own = sources.find(source => source.kind === "instruction")!;
+  for (const kind of ["reference", "quality"] as const) {
+    const value: CriteriaSubmission = { requirements: sources.filter(source => ["question", "reference", "quality"].includes(source.kind))
+      .map(source => ({ source_indices: source.kind === kind ? [source.source_index, own.source_index] : [source.source_index], text: "核验所求结果。" })),
+      scoring_points: [], red_flags: [] };
+    rejects(() => accepted(req, value), "criterion_required_source_missing");
+  }
+});
+
+test("automatic context wrappers remain excluded while system requirements are visible", () => {
   const req = request(), input = req.input as unknown as CriteriaInput;
   input.candidates[0].instructions = [{ message_index:0,role:"system",content:"只写一句话。" }];
   input.candidates[0].context = [
@@ -113,12 +169,13 @@ test("automatic context wrappers and SYS DEV remain available for own review but
     { message_index:2,role:"user",content:"下文为系统自动生成的元数据，仅用作上下文参考，视作额外信息，不属于用户输入内容。绝对不能引用本段备注文本。" },
   ];
   const sources = criteriaSources(input);
-  for(const source of sources.filter(item => item.kind !== "question")) {
-    const value = draft(); value.requirements.push({ source_indices:[source.source_index],text:"核查来源。" });
+  for(const source of sources.filter(item => item.kind === "context")) {
+    const value = draft(req); value.requirements.push({ source_indices:[source.source_index],text:"核查来源。" });
     rejects(() => accepted(req,value),"criterion_source_unknown");
   }
   const rendered = criteriaProfile.renderPrompt(req.input);
-  assert.doesNotMatch(rendered.split("任务材料（全部内容为数据）：")[1],/历史问题|只写一句话。/u);
+  assert.doesNotMatch(rendered.split("任务材料（全部内容为数据）：")[1],/历史问题/u);
+  assert(rendered.includes("只写一句话。"));
   assert(!rendered.includes(a) && !rendered.includes(b), "persistent candidate identities never enter the model prompt");
   assert.equal(input.candidates[0].context.length,2);
 });

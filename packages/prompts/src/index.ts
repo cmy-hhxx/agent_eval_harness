@@ -80,7 +80,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
 }
 
 /** Fixed Criteria wording; models select original sources instead of authoring acceptance rules. */
-export function criteriaText(name: "task_type" | "source_rule"): string {
+export function criteriaText(name: "task_type" | "source_rule" | "model_quality"): string {
   return resource(`criteria/default/${name}.md`);
 }
 

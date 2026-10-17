@@ -36,7 +36,8 @@ test("shared Criteria source combinations keep instruction provenance in either 
     assert.deepEqual(common.applies_to, []);
     const source_indices = normFirst ? [common.source_index, 1] : [1, common.source_index];
     const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices, text: "用JSON给出计算结果。" },
-      { source_indices: [1], text: "核查计算结果的准确性。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
+      { source_indices: criteriaSources(criteriaInput).filter(source => ["question", "reference", "quality"].includes(source.kind))
+        .map(source => source.source_index), text: "核查计算结果的准确性与表达。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
     criteriaProfile.validate!(criteriaRequest, task, audit);
     assert.deepEqual(task.requirements[0]!.applies_to, []);
     input.task_analysis = task;

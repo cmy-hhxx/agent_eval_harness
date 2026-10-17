@@ -208,9 +208,7 @@ test("incompatible accepted attributions are independently reassessed without ch
    stages.push(options.spec.evaluation.id);
    const output = taskResult(options.spec);
    if (revised && options.spec.evaluation.id === "criteria")
-    (output as CriteriaSubmission).requirements = [
-     { source_indices: [1], text: "完成用户所求结果。" }, { source_indices: [1], text: "核查计算结果的准确性。" },
-    ];
+    (output as CriteriaSubmission).requirements.push({ source_indices: [1], text: "核查计算结果的准确性。" });
    if (revised && options.spec.evaluation.id === "attribution")
     assert.deepEqual((parsedMaterial(options.spec) as { review_context: { reasons: string[] } }).review_context.reasons,
      ["已有归因与本次共享判据、标准答案或当前验证要求不一致，按本次判据独立重新核验。"]);
