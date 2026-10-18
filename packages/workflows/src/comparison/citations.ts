@@ -28,6 +28,28 @@ export interface CitationInventory {
   /** Exact addresses group repeated source fragments; different addresses do not prove independence. */
   document_groups: { url: string; references: { format: CitationFormat; reference: string }[] }[];
 }
+
+/** Present split text results at their real leaf coordinates, without serialized transport wrappers. */
+export function citationSourceParts(raw: { messages: unknown[] }, inputId: string, source: CitationSource): CitationSource[] {
+  const point = parseEvidenceCoordinates(source.evidence_id);
+  if (point?.kind !== "json" || !/^<referencable-result>/u.test(source.quote)) return [source];
+  const locations = evidenceSources(raw.messages[source.message_index]);
+  const container = locations.find(item => item.kind === "json" && item.path === point.path)!;
+  const parts = locations.filter(item => item.kind === "text" && /\/(?:text|content|\d+)$/u.test(item.path)).flatMap(leaf => {
+    const selected = selectEvidenceSource([container], leaf.path);
+    if (!selected) return [];
+    const valueStart = selected.end - JSON.stringify(leaf.text).length + 1;
+    const from = Math.max(point.start, valueStart), to = Math.min(point.end, selected.end - 1);
+    if (from >= to) return [];
+    const decode = (end: number) => (JSON.parse('"' + container.text.slice(valueStart, end) + '"') as string).length;
+    const start = decode(from), end = decode(to), quote = leaf.text.slice(start, end);
+    if (!quote.replace(/<referencable-result>\s*ID:\s*\d+|<\/referencable-result>/gu, "").trim()) return [];
+    return [{ ...source, ...cite(inputId, source.message_index, leaf, start, end),
+      read_request: { message_index: source.message_index, path: leaf.path, offset: start, max_chars: Math.min(16000, end - start) },
+      end_offset: end }];
+  });
+  return parts.length ? parts : [source];
+}
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");

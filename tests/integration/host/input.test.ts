@@ -641,9 +641,8 @@ test("prompt resources reach every judgment stage and the run snapshot", async (
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
         assert(rules.includes("numeric_checks"));
-        assert(rules.includes("evidence_index 选择本方最终回答中原值或缺失范围的证据编号"));
+        assert(/evidence_index.*本方最终回答/u.test(rules));
         assert(rules.includes("basis_index"));
-        assert(instruction.includes("完整原文直接引用"));
         assert(rules.includes("strengths") && rules.includes("problems"));
         assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
@@ -716,10 +715,8 @@ test("initial material discloses only projected content within its budget", asyn
       0,
     );
     assert(disclosed <= config.execution.initialContextChars, `disclosed ${disclosed} characters`);
-    assert(
-      material.answer.initial_material.some((entry) => JSON.stringify(entry.value).includes("简短中间回答")),
-      "the projected message itself is still disclosed",
-    );
+    assert.deepEqual(material.answer.initial_material, [], "attribution uses the tool overview instead of copying intermediate messages");
+    assert(!prompt.includes("简短中间回答"));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

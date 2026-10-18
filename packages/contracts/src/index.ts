@@ -39,6 +39,8 @@ export interface EvaluationSpec {
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
+  /** Reserve file drafting inside the existing exploration/repair allowance, not in addition to it. */
+  draftWriteInCallLimit?: boolean;
   /** Transport the final JSON body as one string to avoid provider object-array coercion. */
   jsonStringSubmission?: boolean;
   /** Model-facing descriptions for exactly the selected and submission tools. */
@@ -47,6 +49,8 @@ export interface EvaluationSpec {
   submissionNudge: string;
   /** Exact material ranges that must be read before this task can be accepted. */
   requiredReads?: TraceRead[];
+  /** Source excerpts already shown in initial material; display reuse only, never mandatory-read proof. */
+  presentedReads?: TraceRead[];
   /** Display-only source rules; evidence always resolves against original inputs. */
   sourcePresentations?: Record<string, import("./source-presentation.js").SourcePresentation>;
 }
@@ -336,6 +340,8 @@ export interface ToolContext {
   inspectMaterial?(value: unknown, signal: AbortSignal): Promise<ToolResult>;
   policy: Policy;
   requiredReads?: TraceRead[];
+  presentedReads?: TraceRead[];
+  draftWriteInCallLimit?: boolean;
   artifacts: {
     put(name: string, data: string | Uint8Array): Promise<Artifact>;
     get(id: string): Promise<Uint8Array>;
@@ -434,6 +440,7 @@ export interface AgentProfile {
   submissionNudge: string;
   toolNames: string[];
   fileSubmission: boolean;
+  draftWriteInCallLimit?: boolean;
   jsonStringSubmission?: boolean;
   toolDescriptions: Record<string, string>;
   /** Task material on its own for inspection; policy and recovery are added per attempt. */
@@ -456,6 +463,8 @@ export interface AgentBinding {
   request: AgentRequest;
   /** Explicit model-facing projection; validation and evidence resolution keep using request. */
   modelInput?: JsonObject;
+  /** Workflow-owned ranges actually displayed in modelInput, excluding undisclosed source suffixes. */
+  presentedReads?: TraceRead[];
   /** Secondary model material, disclosed only after a valid structured inspection. */
   inspectionInput?: JsonObject;
   /** Workflow-owned projection of generated evidence envelopes; exclude all original source values. */

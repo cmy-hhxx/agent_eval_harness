@@ -5,7 +5,7 @@ export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" 
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
-  "read_artifact", "check_table", "inspect_material", ...submissionToolNames(false), ...submissionToolNames(true),
+  "read_artifact", "check_table", "inspect_material", "edit_json", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 
 function resource(path: string): string {
@@ -47,7 +47,8 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
   const systemPrompt = resource(`${stage}/${profile}/system.md`) + "\n\n" + commentary + "\n\n" + instructions + evidenceGuide;
-  const fileSubmission = stage === "comparison" && profile === "verification";
+  const fileSubmission = stage === "attribution" || stage === "comparison" && profile === "verification";
+  const draftWriteInCallLimit = stage === "attribution";
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
@@ -61,13 +62,17 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
     submissionNudge: nudge,
     toolDescriptions,
     fileSubmission,
+    ...(draftWriteInCallLimit ? { draftWriteInCallLimit: true } : {}),
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
       const { task_focus, ...complete } = input;
       const focus = task_focus === undefined ? "" : `${taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
       const limits = policy ? {
         content_call_limit: 1 + policy.repairAttempts,
-        ...(toolNames.some(name => name !== "inspect_material") ? { exploration_call_limit: policy.maxToolCalls } : {}),
+        ...(toolNames.some(name => name !== "inspect_material") ? {
+          exploration_call_limit: Math.max(0, policy.maxToolCalls - Number(draftWriteInCallLimit)),
+          ...(draftWriteInCallLimit ? { reserved_draft_calls: 1 } : {}),
+        } : {}),
         ...(toolNames.includes("execute_code") ? { code_timeout_seconds: policy.codeTimeoutSeconds } : {}),
       } : undefined;
       return focus + `${material}\n` + canonical(task_focus === undefined ? input : complete) +

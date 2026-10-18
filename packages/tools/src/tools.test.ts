@@ -8,7 +8,7 @@ import path from "node:path";
 import { DEFAULT_POLICY, resolveEvidenceSelection, type ToolContext } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
 import { ROOT } from "../../../tests/fixtures/services.js";
-import { createRegistry, resolveEvidence, traceReadCoverage, ToolRuntime } from "@eval/tools";
+import { createRegistry, executeCode, resolveEvidence, traceReadCoverage, ToolRuntime } from "@eval/tools";
 import { emptyAudit, raw } from "../../../tests/fixtures/comparison.js";
 
 async function context() {
@@ -23,6 +23,88 @@ async function context() {
   };
   return ctx;
 }
+test("JSON drafting retains earlier rows and exact literals through investigation and closing", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 4;
+    ctx.draftWriteInCallLimit = true;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["edit_json"]));
+    runtime.reserveDraftWrite();
+    const call = (args: object) => runtime.execute("edit_json", { path: "draft.json", ...args }, new AbortController().signal);
+    const first = { text: "范围尚未标明", reason: "2032-06-04，原值 -37.20%", evidence_indices: [2, 5] };
+    await call({ set_json: JSON.stringify({ review_notes: ["解释是否成立：待核期间"], problems: [first] }) });
+    await call({ append_json: JSON.stringify({ problems: [{ text: "已恢复的过程错误", evidence_indices: [8] }] }) });
+    const before = await readFile(path.join(ctx.workdir, "draft.json"), "utf8");
+    const invalid = await call({ append_json: '{"problems":true}' });
+    assert.equal(invalid.isError, true);
+    assert.equal(await readFile(path.join(ctx.workdir, "draft.json"), "utf8"), before);
+    const closed = await call({ set_json: '{"meets_core":null}', remove_fields: ["review_notes"] });
+    assert(!closed.isError);
+    const saved = JSON.parse(await readFile(path.join(ctx.workdir, "draft.json"), "utf8"));
+    assert.deepEqual(saved.problems, [first, { text: "已恢复的过程错误", evidence_indices: [8] }]);
+    assert.equal(saved.meets_core, null);
+    assert(!("review_notes" in saved));
+    assert.deepEqual((closed.details as any).array_lengths, { problems: 2 });
+    assert.equal(ctx.audit.calls, 4);
+    assert.equal(runtime.budget().exploration.remaining + runtime.budget().draft_writes.remaining, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
+test("JSON drafting rejects paths outside the workspace without editing files", async () => {
+  const ctx = await context();
+  try {
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["edit_json"]));
+    for (const file of ["../outside.json", "/tmp/outside.json"])
+      assert.equal((await runtime.execute("edit_json", { path: file, set_json: "{}" }, new AbortController().signal)).isError, true);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("search distinguishes new source text from reused hits without inviting a redundant read", async () => {
+  const ctx = await context();
+  try {
+    const content = "日期：2031-04-09；数量：-28；分位：6%。";
+    ctx.inputs.set("A", { messages: [{ role: "tool", content }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const args = { candidate: "A", query: "数量", scope: "tool_returns" };
+    const first = (await runtime.execute("search_trace", args, new AbortController().signal)).details as any;
+    assert.equal(first.new_source_chars, content.length);
+    assert.equal(first.matches[0].already_read, false);
+    assert(!first.matches[0].read_request, "a complete source does not need a follow-up read");
+    for (const query of ["数量", "分位"]) {
+      const again = (await runtime.execute("search_trace", { ...args, query }, new AbortController().signal)).details as any;
+      assert.equal(again.new_source_chars, 0);
+      assert.equal(again.matches[0].already_read, true);
+      assert(!again.matches[0].read_request);
+      assert.equal(again.matches[0].evidence.quote, content, "short facts retain their exact sign, date and units");
+    }
+    assert.equal(ctx.audit.calls, 3, "reuse is visible but never grants free exploration calls");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("initially shown excerpts are reused without claiming unread suffixes or mandatory-read proof", async () => {
+  const ctx = await context();
+  try {
+    const prefix = "已显示原文。".repeat(80), tail = "未显示的关键结果。";
+    ctx.inputs.set("A", { messages: [{ role: "tool", content: prefix + tail }] });
+    ctx.presentedReads = [{ candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: prefix.length }];
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace", "search_trace"]));
+    const read = (max_chars: number) => runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content", max_chars }, new AbortController().signal);
+    const reused = (await read(prefix.length)).details as any;
+    assert.equal(reused.already_read, true);
+    assert.equal(ctx.audit.traceReads.length, 0, "presentation reuse never manufactures actual tool-read proof");
+    const expanded = (await read(prefix.length + tail.length)).details as any;
+    assert.equal(expanded.evidence.map((e: any) => e.quote).join(""), prefix + tail);
+    assert.deepEqual(ctx.audit.traceReads, [{ ...ctx.presentedReads[0], start: prefix.length, end: prefix.length + tail.length }]);
+    const found = (await runtime.execute("search_trace", { candidate: "A", query: "已显示原文", message_index: 0 }, new AbortController().signal)).details as any;
+    assert.equal(found.new_source_chars, 0);
+    assert(found.matches.every((match: any) => match.already_read && !match.read_request));
+
+    ctx.audit = emptyAudit();
+    ctx.requiredReads = [{ ...ctx.presentedReads[0], end: prefix.length + tail.length }];
+    const mandatory = new ToolRuntime(ctx, createRegistry().select(["read_trace"]));
+    const result = (await mandatory.execute("read_trace", { candidate: "A", message_index: 0, path: "/content" }, new AbortController().signal)).details as any;
+    assert.equal(result.evidence[0].quote, prefix + tail);
+    assert.equal(ctx.audit.requiredReadCalls, 1);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("trace search finds numeric tool fields and returns an exact structured quote", async () => {
   const ctx = await context();
   try {
@@ -76,11 +158,36 @@ test("tool-return search locates original values before repeated model history a
     assert.deepEqual([...new Set(page.matches.map(match => match.evidence.message_index))], [3, 2, 1]);
     const matched = page.matches.find(match => match.evidence.quote.includes("11228580"))!;
     assert(matched, "search the metric even when the answer rounds and changes units");
-    const read = await runtime.execute("read_trace", matched.read_request, new AbortController().signal);
+    assert.equal(matched.read_request, undefined, "the complete short structured result is already visible");
+    const read = await runtime.execute("read_trace", { candidate: "A", message_index: matched.evidence.message_index }, new AbortController().signal);
     assert(!read.isError, JSON.stringify(read));
     assert((read.details as { evidence: { quote: string }[] }).evidence.some(item => item.quote.includes('"unit": "股"')));
     const all = await runtime.execute("search_trace", { candidate: "A", query: "成交量" }, new AbortController().signal);
     assert((all.details as { total: number }).total > page.total, "all-message search remains available for instructions and history");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("targeted search avoids duplicate histories and JSON mirrors while preserving real field coordinates", async () => {
+  const ctx = await context();
+  try {
+    const source = { messages: [
+      { input_messages: [{ content: "规则：最多搜索2次。" }] },
+      { input_messages: [{ content: "规则：最多搜索2次。" }], output: [{ text: "4" }, { text: "AttributeError: shift" }] },
+    ] };
+    ctx.inputs.set("A", source);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    for (const [path, query] of [["/input_messages/0/content", "最多搜索"], ["/output/1/text", "AttributeError"]]) {
+      const result = await runtime.execute("search_trace", { candidate: "A", message_index: 1, path, query }, new AbortController().signal);
+      assert(!result.isError, JSON.stringify(result));
+      const page = result.details as any;
+      assert.equal(page.total, 1);
+      assert.equal(page.matches[0].evidence.message_index, 1);
+      assert.equal(page.matches[0].path, path);
+      const proof = page.matches[0].evidence;
+      assert.equal(resolveEvidence(source, resolveEvidenceSelection(ctx.audit.evidenceBank!, proof.reference, "/reference"), "A", ctx.audit, "/evidence", INPUT_ID).quote, proof.quote);
+    }
+    const all = await runtime.execute("search_trace", { candidate: "A", message_index: null,
+      path: "/input_messages/0/content", query: "最多搜索" }, new AbortController().signal);
+    assert.equal((all.details as { total: number }).total, 2, "null leaves the message scope unrestricted");
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 test("trace paths select structured objects and scalar fields with program-generated JSON coordinates", async () => {
@@ -105,7 +212,9 @@ test("trace paths select structured objects and scalar fields with program-gener
         assert.equal(resolveEvidence(input, resolveEvidenceSelection(ctx.audit.evidenceBank!, evidence.reference, "/reference"), "A", ctx.audit, "/evidence", INPUT_ID).quote, evidence.quote);
       }
     }
-    assert.equal((await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/output/invented" }, new AbortController().signal)).isError, true);
+    const invalid = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/output/invented" }, new AbortController().signal);
+    assert.equal(invalid.isError, true);
+    assert.match(JSON.stringify(invalid.content), /\/output\/note/u, "a path mistake supplies actual locations without another root read");
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 
@@ -259,11 +368,164 @@ test("search pages preserve complete evidence and paginate without skipping matc
       if (!page.has_more) break;
     } while (offset < total);
     assert.equal(ids.size, total);
-    assert.equal(total, 24);
+    assert.equal(total, 12);
     assert.equal(ctx.audit.artifacts.length, 0);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
-test("trace reads credit only successful returned ranges and do not repeat cached audit entries", async () => {
+test("bounded context rereads retain a complete rule after fragmented exposure without gaining calls", async () => {
+  const ctx = await context();
+  try {
+    const text = "## 交付规范\n" + "常规说明。".repeat(80) + "\n仅限实验组使用，发布时不得列为正式指标。\n";
+    const source = { messages: [{ content: text }] };
+    ctx.inputs.set("A", source);
+    ctx.policy.maxToolCalls = 3;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"])), signal = new AbortController().signal;
+    const read = async (offset: number, max_chars: number) => (await runtime.execute("read_trace", {
+      candidate: "A", message_index: 0, path: "/content", offset, max_chars }, signal)).details as any;
+    await read(0, 260);
+    const partial = await read(220, text.length - 220);
+    assert.equal(partial.evidence[0].quote, text.slice(220), "a short requested context is not split around the prior exposure");
+    const full = await read(0, text.length);
+    assert.equal(full.already_read, true);
+    assert.equal(full.evidence[0].quote, text, "the exception beyond the first 200 characters remains visible");
+    assert.equal(full.evidence[0].quote_preview, undefined);
+    const ref = resolveEvidenceSelection(ctx.audit.evidenceBank!, full.evidence[0].reference, "/reference");
+    assert.equal(resolveEvidence(source, ref, "A", ctx.audit, "/evidence", INPUT_ID).quote, text);
+    assert.equal(ctx.audit.calls, 3);
+    assert.equal(runtime.budget().exploration.remaining, 0);
+    assert.deepEqual(ctx.audit.traceReads.map(({ start, end }) => [start, end]), [[0, 260], [260, text.length]]);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
+test("repeated long reads reuse evidence with a compact preview, while new ranges remain readable", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 4;
+    const text = "已读的原文。".repeat(500) + "新增尾部。".repeat(300), source = { messages: [{ content: text }] };
+    ctx.inputs.set("A", source);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"])), signal = new AbortController().signal;
+    const read = async (offset: number, max_chars: number) => (await runtime.execute("read_trace", {
+      candidate: "A", message_index: 0, path: "/content", offset, max_chars }, signal)).details as any;
+    const first = await read(0, 3000), repeat = await read(0, 3000), subset = await read(500, 2000);
+    assert.equal(first.evidence[0].quote, text.slice(0, 3000));
+    for (const page of [repeat, subset]) {
+      assert.equal(page.already_read, true);
+      assert.equal(page.evidence[0].quote, undefined);
+      assert.equal(page.evidence[0].quote_preview.length, 200);
+      const ref = resolveEvidenceSelection(ctx.audit.evidenceBank!, page.evidence[0].reference, "/reference");
+      assert.equal(resolveEvidence(source, ref, "A", ctx.audit, "/evidence", INPUT_ID).quote, text.slice(page.offset, page.next_offset));
+    }
+    assert.deepEqual(repeat.evidence[0].reference, first.evidence[0].reference);
+    assert.equal(ctx.audit.traceReads.length, 1);
+    const fresh = await read(3000, 500);
+    assert.equal(fresh.already_read, undefined);
+    assert.equal(fresh.evidence[0].quote, text.slice(3000, 3500));
+    assert.equal(ctx.audit.traceReads.length, 2);
+    assert.equal(ctx.audit.calls, 4, "repeat requests never gain extra exploration budget");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("a complete JSON read reuses its text leaf but not matching text at another path or a partial JSON string", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 7;
+    const text = '条件："原值"\n'.repeat(100), input = { messages: [{ output: [{ text }, { text }] }] };
+    ctx.inputs.set("A", input);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"])), signal = new AbortController().signal;
+    const read = async (path: string, max_chars = 16000) => (await runtime.execute("read_trace", {
+      candidate: "A", message_index: 0, path, max_chars }, signal)).details as any;
+    await read("/output/0");
+    const reused = await read("/output/0/text");
+    assert.equal(reused.already_read, true);
+    assert.equal(reused.evidence[0].quote, undefined);
+    assert.equal(ctx.audit.traceReads.length, 1, "reuse does not fabricate a second actual read");
+    assert.equal((await read("/output/1/text")).already_read, undefined, "equal values at distinct locations remain distinct");
+    ctx.audit.traceReads = [];
+    await read("/output/0", 500);
+    assert.equal((await read("/output/0/text")).already_read, undefined, "partial escaped JSON is insufficient");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("expanding a read returns only missing spans with reusable references for the overlap", async () => {
+  const ctx = await context();
+  try {
+    const text = "prefix ".repeat(100) + "middle ".repeat(100) + "suffix ".repeat(100);
+    const input = { messages: [{ output: text }] };
+    ctx.inputs.set("A", input);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"])), signal = new AbortController().signal;
+    const read = async (offset: number, max_chars: number) => (await runtime.execute("read_trace", {
+      candidate: "A", message_index: 0, path: "/output", offset, max_chars }, signal)).details as any;
+    await read(700, 700);
+    const expanded = await read(0, text.length);
+    assert.deepEqual(expanded.evidence.map((item: any) => item.quote), [text.slice(0, 700), text.slice(1400)]);
+    assert.equal(expanded.reused_evidence.length, 1);
+    assert.equal(expanded.next_offset, text.length);
+    for (const item of [...expanded.evidence, ...expanded.reused_evidence]) {
+      const resolved = resolveEvidence(input, resolveEvidenceSelection(ctx.audit.evidenceBank!, item.reference, "/reference"), "A", ctx.audit, "/evidence", INPUT_ID);
+      assert.equal(resolved.quote, item.quote ?? text.slice(700, 1400));
+    }
+    assert.deepEqual(ctx.audit.traceReads.map(({ start, end }) => [start, end]), [[700, 1400], [0, 700], [1400, 2100]]);
+    assert(traceReadCoverage(ctx.audit, { candidate: "A", message_index: 0, kind: "text", path: "/output", start: 0, end: text.length }).covered);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("structured searches prefer real text fields over their serialized mirrors", async () => {
+  const ctx = await context();
+  try {
+    ctx.inputs.set("A", { messages: [{ type: "tool_result", output: [{ text: "fact: target metric = 12" }, { text: "target metric = 15" }], history: "target metric" }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"])), signal = new AbortController().signal;
+    const scoped = (await runtime.execute("search_trace", { candidate: "A", message_index: 0, path: "/output", query: "target metric" }, signal)).details as any;
+    assert.deepEqual(scoped.matches.map((item: any) => item.path), ["/output/0/text", "/output/1/text"]);
+    const all = (await runtime.execute("search_trace", { candidate: "A", scope: "tool_returns", query: "target metric" }, signal)).details as any;
+    assert.equal(all.total, 3, "distinct original fields remain searchable, without the JSON mirror");
+    ctx.inputs.set("A", { messages: [{ type: "tool_result", output: { text: "value 15", amount: 15 } }] });
+    const mixed = (await runtime.execute("search_trace", { candidate: "A", query: "15" }, signal)).details as any;
+    assert.deepEqual(mixed.matches.map((item: any) => item.path), ["/output/text", ""]);
+    assert.equal(mixed.total, 2, "a text hit must not hide a distinct numeric field");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("search supplies bounded source context once without requiring separate metadata reads", async () => {
+  const ctx = await context();
+  try {
+    const input = { messages: [{ type: "tool_result", output: [{ uid: "transport-id", title: "Capacity report", date: "2026-08-12", source: "Public release",
+      text: "Context: period is July.\n" + "detail ".repeat(300) + "target capacity = 90; target use = 45." }] }] };
+    ctx.inputs.set("A", input);
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "target", scope: "tool_returns" }, new AbortController().signal);
+    assert(!result.isError);
+    const matches = (result.details as any).matches;
+    assert.equal(matches.length, 2);
+    assert.deepEqual(matches[0].context.map((item: any) => item.path), ["/output/0/text", "/output/0/title", "/output/0/date", "/output/0/source"]);
+    assert.equal(matches[1].context.length, 0, "one page does not repeat the same metadata for each hit");
+    assert(matches[0].context.reduce((n: number, item: any) => n + item.evidence.quote.length, 0) <= 600);
+    for (const item of matches[0].context) assert.equal(resolveEvidence(input,
+      resolveEvidenceSelection(ctx.audit.evidenceBank!, item.evidence.reference, "/reference"), "A", ctx.audit, "/evidence", INPUT_ID).quote, item.evidence.quote);
+    const again = await runtime.execute("search_trace", { candidate: "A", query: "capacity", scope: "tool_returns" }, new AbortController().signal);
+    assert((again.details as any).matches.every((match: any) => match.context.length === 0), "already displayed metadata is not repeated");
+    ctx.audit.traceReads = [];
+    ctx.policy.maxOutputChars = 1300;
+    const small = await runtime.execute("search_trace", { candidate: "A", query: "target use", scope: "tool_returns" }, new AbortController().signal);
+    assert(!small.isError, "optional source context must not make a valid search fail under a small output allowance");
+    assert((small.details as any).matches[0].evidence.quote.includes("target use"));
+    assert(small.content.filter(item => item.type === "text").reduce((n, item) => n + item.text!.length, 0) <= 1300);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("search follow-up reads center on the hit instead of reopening a long source prefix", async () => {
+  const ctx = await context();
+  try {
+    const text = "unrelated prefix ".repeat(1000) + "target condition; exception: only when enabled." + " tail".repeat(500);
+    ctx.inputs.set("A", { messages: [{ content: text }] });
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace", "read_trace"])), signal = new AbortController().signal;
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "target", message_index: 0, path: "/content" }, signal);
+    const request = (result.details as any).matches[0].read_request;
+    assert(request.offset > 15000);
+    assert(request.max_chars <= 1800);
+    const page = (await runtime.execute("read_trace", request, signal)).details as any;
+    assert((result.details as any).matches[0].evidence.quote.includes("exception: only when enabled"));
+    assert.equal(page.reused_evidence, undefined, "a short context check keeps the condition together with its exception");
+    assert.equal(page.evidence[0].quote, text.slice(request.offset, page.next_offset));
+    assert(page.evidence[0].quote.includes("exception: only when enabled"));
+    assert(page.next_offset - page.offset <= 1800);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("trace reads credit only successful returned ranges and do not repeat prior audit entries", async () => {
   const ctx = await context();
   try {
     ctx.policy.maxToolCalls = 8;
@@ -292,7 +554,7 @@ test("trace reads credit only successful returned ranges and do not repeat cache
     assert.equal(ctx.audit.traceReads.length, 1, "a rejected oversized response must not mark new characters as read");
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
-test("searching a whole trace only credits the visible excerpt of the requested source", async () => {
+test("searching a whole trace only credits the visible hit and source context", async () => {
   const ctx = await context();
   try {
     const text = "左".repeat(500) + "关键词" + "右".repeat(500);
@@ -302,10 +564,12 @@ test("searching a whole trace only credits the visible excerpt of the requested 
     assert(!result.isError);
     assert.deepEqual(ctx.audit.traceReads.filter((read) => read.kind === "text"), [{
       candidate: "A", message_index: 0, kind: "text", path: "/content", start: 400, end: 703,
+    }, {
+      candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: 200,
     }]);
     assert.deepEqual(traceReadCoverage(ctx.audit, {
       candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: text.length,
-    }), { covered: false, missing: [{ start: 0, end: 400 }, { start: 703, end: 1003 }] });
+    }), { covered: false, missing: [{ start: 200, end: 400 }, { start: 703, end: 1003 }] });
     assert.equal(ctx.audit.artifacts.length, 0);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
@@ -403,11 +667,13 @@ test("trace reads accept neutral directory defaults and an empty root path witho
     const plain = await read({ path: "/content" });
     const withDefaults = await read({ path: "/content", source_offset: 0 });
     assert(!withDefaults.isError, JSON.stringify(withDefaults));
-    assert.deepEqual(JSON.parse(withDefaults.content[0].text!), JSON.parse(plain.content[0].text!));
+    const { already_read, ...reused } = JSON.parse(withDefaults.content[0].text!);
+    assert.equal(already_read, true);
+    assert.deepEqual(reused, JSON.parse(plain.content[0].text!));
     const root = await read({ path: "", source_offset: 0 });
     assert(!root.isError, JSON.stringify(root));
     assert.deepEqual(JSON.parse(root.content[0].text!).text_sources, [{ path: "/content", chars: 6 }]);
-    assert.equal(ctx.audit.traceReads.length, 3);
+    assert.equal(ctx.audit.traceReads.length, 2);
     const conflicting = await read({ path: "/content", source_offset: 1 });
     assert.equal(conflicting.isError, true);
     assert.match(JSON.stringify(conflicting), /source_offset/u);
@@ -439,12 +705,12 @@ test("search counts and paginates matches beyond ten thousand without retaining 
   try {
     ctx.inputs.set("A", { messages: [{ content: "目标".repeat(15000) }] });
     const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
-    const result = await runtime.execute("search_trace", { candidate: "A", query: "目标", offset: 29999 }, new AbortController().signal);
+    const result = await runtime.execute("search_trace", { candidate: "A", query: "目标", offset: 14999 }, new AbortController().signal);
     assert(!result.isError);
     const page = JSON.parse(result.content[0].text!);
-    assert.equal(page.total, 30000);
+    assert.equal(page.total, 15000);
     assert.equal(page.matches.length, 1);
-    assert.equal(page.next_offset, 30000);
+    assert.equal(page.next_offset, 15000);
     assert.equal(page.has_more, false);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
@@ -497,6 +763,47 @@ test("budget feedback covers errors and actual mandatory coverage without confus
     assert.equal(searchBudget.required_reads.covered, true, "emitted source text can cover the mandatory range before its paging allowance is used");
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+for (const tailChars of [2000, 18000])
+test(`mandatory pages crossing searched text preserve the final draft call (tail: ${tailChars})`, async () => {
+  const ctx = await context();
+  try {
+    const text = "a".repeat(1000) + "TARGET" + "b".repeat(tailChars);
+    const target = { candidate: "A", message_index: 0, kind: "text" as const, path: "/content", start: 0, end: text.length };
+    ctx.inputs.set("A", { messages: [{ content: text }] });
+    ctx.policy.maxOutputChars = 24000;
+    ctx.requiredReads = [target];
+    ctx.draftWriteInCallLimit = true;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace", "read_trace", "calculate", "edit_json"]));
+    runtime.reserveDraftWrite();
+    const signal = new AbortController().signal;
+    const found = await runtime.execute("search_trace", { candidate: "A", message_index: 0, path: "/content", query: "TARGET" }, signal);
+    assert.equal(found.isError, undefined);
+    assert.equal((await runtime.execute("calculate", { operation: "add", operands: ["1", "1"] }, signal)).isError, undefined);
+    assert.deepEqual(runtime.budget().exploration, { used: 2, remaining: 0 });
+    const missing = traceReadCoverage(ctx.audit, target).missing;
+    assert.equal(missing.length, 2, "the search leaves gaps on both sides of its hit");
+    let offset = missing[0]!.start, pages = 0;
+    while (offset < text.length) {
+      const read = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content", offset }, signal);
+      assert.equal(read.isError, undefined, JSON.stringify(read));
+      const page = read.details as { next_offset: number };
+      assert(page.next_offset > offset);
+      offset = page.next_offset;
+      pages++;
+      assert.equal(ctx.audit.requiredReadCalls, pages, "each new mandatory page uses exactly one required-read call");
+      assert.deepEqual(runtime.budget().exploration, { used: 2, remaining: 0 });
+      assert.equal(runtime.budget().draft_writes.remaining, 1);
+    }
+    assert.equal(runtime.budget().required_reads.covered, true);
+    assert.equal((await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content" }, signal)).isError, true,
+      "a repeated read still cannot spend the reserved writer call");
+    const draft = await runtime.execute("edit_json", { path: "draft.json", set_json: '{"summary":"已核对完整正文"}' }, signal);
+    assert.equal(draft.isError, undefined, JSON.stringify(draft));
+    assert.deepEqual(JSON.parse(await readFile(path.join(ctx.workdir, "draft.json"), "utf8")), { summary: "已核对完整正文" });
+    assert.equal(ctx.audit.calls, pages + 3);
+    assert.equal(runtime.budget().draft_writes.remaining, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("registered writers have nonaccumulating atomic draft allowances bounded by content turns", async () => {
   const ctx = await context();
   try {
@@ -536,6 +843,30 @@ test("registered writers have nonaccumulating atomic draft allowances bounded by
     assert.equal((await runtime.execute("save_fixture", {}, signal)).isError, true, "repeated grants cannot exceed the content-turn cap");
     assert.equal(calls, 3);
     assert.equal(ctx.audit.calls, 4, "ordinary, reserved and invalid writer attempts remain audited");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+test("in-limit drafting cannot renew calls after writer or file-loading failures", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 1; ctx.policy.repairAttempts = 2; ctx.draftWriteInCallLimit = true;
+    let writes = 0;
+    const registry = createRegistry([{ name: "save_fixture", fileWriter: true, inputSchema: { type: "object" },
+      async execute() { writes++; throw new Error("write failed"); } }]);
+    const runtime = new ToolRuntime(ctx, registry.select(["save_fixture", "calculate"])), signal = new AbortController().signal;
+    runtime.reserveDraftWrite();
+    assert.equal(runtime.budget().exploration.remaining, 0);
+    await runtime.execute("save_fixture", {}, signal);
+    runtime.reserveDraftWrite(); // A file-loading failure may request another writer, but cannot create credit.
+    assert.equal(runtime.budget().draft_writes.remaining, 0);
+    await runtime.execute("save_fixture", {}, signal);
+    assert.equal(writes, 1); assert.equal(ctx.audit.calls, 1);
+    assert.equal(runtime.budget(4).exploration.remaining, 2, "a content repair still adds only three calls including drafting");
+    for (let index = 0; index < 2; index++)
+      assert.equal((await runtime.execute("calculate", { operation: "add", operands: ["1", "1"] }, signal, 4)).isError, undefined);
+    await runtime.execute("save_fixture", {}, signal, 4);
+    runtime.reserveDraftWrite();
+    await runtime.execute("save_fixture", {}, signal, 4);
+    assert.equal(writes, 2); assert.equal(ctx.audit.calls, 4);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 test("malformed call accounting uses registered budgets without executing or exempting unread material", async () => {
@@ -609,6 +940,21 @@ test("mandatory long-text pages finish after exploration is exhausted without fr
     assert.equal((await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content" }, new AbortController().signal)).isError, true);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+test("JSON reuse does not suppress a deferred text read required by the submission contract", async () => {
+  const ctx = await context();
+  try {
+    const text = "deferred answer ".repeat(100);
+    ctx.inputs.set("A", { messages: [{ content: text }] });
+    ctx.requiredReads = [{ candidate: "A", message_index: 0, kind: "text", path: "/content", start: 0, end: text.length }];
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace"])), signal = new AbortController().signal;
+    await runtime.execute("read_trace", { candidate: "A", message_index: 0 }, signal);
+    const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content" }, signal);
+    assert(!result.isError, JSON.stringify(result));
+    assert.equal((result.details as any).evidence[0].quote, text);
+    assert(traceReadCoverage(ctx.audit, ctx.requiredReads[0]).covered);
+    assert.equal(ctx.audit.requiredReadCalls, 1);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("code executes with persistent task files and paged artifact output", async () => {
   const ctx = await context();
   try {
@@ -623,15 +969,30 @@ test("code executes with persistent task files and paged artifact output", async
       new AbortController().signal,
     );
     assert(!result.isError, JSON.stringify(result));
-    const details = result.details as { stdout: string; exit_code: number };
+    const details = result.details as { stdout: string; exit_code: number; artifacts: { name: string }[] };
     assert.equal(details.exit_code, 0);
     assert.equal(details.stdout.trim(), "4");
+    assert.deepEqual(details.artifacts.map(artifact => artifact.name), ["answer.txt"], "only declared outputs need navigation when logs are already visible");
+    assert.equal(ctx.audit.artifacts.length, 4, "diagnostic artifacts remain available in the audit");
     const output = ctx.audit.artifacts.find((a) => a.name === "answer.txt")!;
     const read = await runtime.execute("read_artifact", { id: output.id }, new AbortController().signal);
     assert.equal((read.details as { text: string }).text, "4");
   } finally {
     await rm(ctx.workdir, { recursive: true, force: true });
   }
+});
+test("truncated execution logs retain full-text navigation without exposing the script or empty logs", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxOutputChars = 80;
+    const result = await executeCode(ctx, { language: "python", code: "import sys\nprint('x'*120)\nprint('y'*120+' ValueError: tail',file=sys.stderr)" }, new AbortController().signal);
+    const details = result.details as { stdout: string; stderr: string; artifacts: { id: string; name: string }[] };
+    assert.equal(details.stdout.length, 80); assert.equal(details.stderr.length, 80);
+    assert.deepEqual(details.artifacts.map(item => item.name.split('.').at(-1)), ["stdout", "stderr"]);
+    const stderr = details.artifacts.find(item => item.name.endsWith('.stderr'))!;
+    assert(Buffer.from(await ctx.artifacts.get(stderr.id)).toString().includes("ValueError: tail"));
+    assert.equal(ctx.audit.artifacts.length, 3);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 for (const [kind, code, outputs, exitCode] of [
   ["syntax", "items = [\n}", ["draft.json"], 1],

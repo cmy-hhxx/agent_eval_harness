@@ -58,12 +58,53 @@ interface WorkerHarnessOptions {
 }
 
 const fileProfile: Partial<AgentProfile> = {
-  fileSubmission: true, jsonStringSubmission:false,
+  fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
   toolDescriptions: {
     ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
     submit_evaluation_file: "Submit the complete evaluation JSON file.",
   },
 };
+
+test("saved flat findings survive later drafting and repair without extra call allowance", async () => {
+  const problems = [
+    { text: "混用不同期间", reason: "2024-05-07：13.82；2024-05-06：13.40。", evidence_indices: [1, 2] },
+    { text: "比例计算不符", reason: "部分7、总量25，占比28%。", evidence_indices: [2, 3] },
+  ];
+  const fixture = await harness(async options => ({ async run() {
+    const write = (fields: object) => options.execute("edit_json", { path: "evaluation-draft.json", set_json: JSON.stringify(fields) });
+    const first = await write({ problems });
+    assert.equal(first.isError, undefined);
+    assert.equal(object(object(object(first.details).budget).exploration).remaining, 1);
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    const complete = await write({ summary: 7 });
+    assert.equal(complete.isError, undefined);
+    const rejected = await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" });
+    assert.equal(rejected.isError, true);
+    assert.equal(object(object(object(rejected.details).budget).exploration).remaining, 2, "one of the three repair calls is reserved for drafting");
+    for (let index = 0; index < 2; index++)
+      await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
+    const repaired = await write({ summary: "保留两条已确认问题" });
+    assert.equal(repaired.isError, undefined);
+    assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" })).terminate, true);
+  }, async abort() {}, async dispose() {} }), {
+    material: "source", policy: { maxToolCalls: 3, repairAttempts: 1 },
+    profile: { ...fileProfile, draftWriteInCallLimit: attributionAgent.profiles.default.draftWriteInCallLimit,
+      toolNames: ["read_trace", "calculate", "edit_json"], requiredReads: () => [],
+      toolDescriptions: { read_trace: "Read source.", calculate: "Calculate.", edit_json: "Update draft.", submit_evaluation_file: "Submit draft." },
+      submissionSchema: { type: "object", required: ["summary", "problems"], properties: {
+        summary: { type: "string" }, problems: { type: "array", items: { type: "object" } },
+      } },
+    },
+  });
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.deepEqual(object(receipt.submitted).problems, problems);
+    assert.deepEqual(object(receipt.evaluation).problems, problems);
+    assert.equal(receipt.audit.calls, 6, "three initial calls plus three repair calls, including both reserved writes");
+    assert.deepEqual(receipt.submissionStats, { contentSubmissions: 2, fileErrors: 0 });
+  } finally { await fixture.close(); }
+});
 
 test("JSON text submission preserves nested rows, empty arrays and markup without a model-written file", async()=>{
   const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",component:[]}],values:[false,null,0]};
@@ -693,6 +734,13 @@ test("exhausted exploration budget still permits submission and two repairs", as
   const fixture = await harness(
     async (options) => ({
       async run() {
+        const submit = async (value: unknown) => {
+          const written = await options.execute("execute_code", { language: "python",
+            code: `import json\nfrom pathlib import Path\nPath('evaluation.json').write_text(json.dumps(json.loads(${JSON.stringify(JSON.stringify(value))}), ensure_ascii=False))`,
+            outputs: ["evaluation.json"] });
+          assert.equal(written.isError, undefined, JSON.stringify(written));
+          return options.execute("submit_evaluation_file", { path: "evaluation.json" });
+        };
         await options.execute("read_trace", {
           candidate: "answer",
           message_index: 1,
@@ -708,33 +756,35 @@ test("exhausted exploration budget still permits submission and two repairs", as
         );
         const invalid = invalidDraft(options.spec);
         assert.equal(
-          (await submitFor(options, invalid)).isError,
+          (await submit(invalid)).isError,
           true,
         );
         const useRepairCalls = async () => {
-          for (let index = 0; index < 3; index++)
+          for (let index = 0; index < 2; index++)
             assert.equal((await options.execute("calculate", { operation: "add", operands: ["2", "2"] })).isError, undefined);
           const exhausted = await options.execute("calculate", { operation: "add", operands: ["2", "2"] });
           assert.equal(exhausted.isError, true);
           assert.match(exhausted.content[0]!.text!, /探索工具预算已耗尽/);
         };
         await useRepairCalls();
-        assert.equal((await submitFor(options, draftFor(options.spec, {}))).isError, true);
+        assert.equal((await submit(draftFor(options.spec, {}))).isError, true);
         await useRepairCalls();
         assert.equal(
-          (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
+          (await submit(draftFor(options.spec, taskResult(options.spec)))).terminate,
           true,
         );
       },
       async abort() {},
       async dispose() {},
-    }), { policy: { maxToolCalls: 1, repairAttempts: 2 } },
+    }), { policy: { maxToolCalls: 2, repairAttempts: 2 } },
   );
   try {
     await fixture.start();
-    assert.equal((await fixture.done()).state, "succeeded");
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", status.error);
     const receipt = await fixture.store.receipt(fixture.spec.taskId);
-    assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
+    assert.equal(receipt?.audit.calls, 2 + 3 * fixture.spec.policy.repairAttempts,
+      "the initial and repair allowances include all real writer calls");
     assert.deepEqual(receipt?.audit.traceReads, [{
       candidate: "answer", message_index: 1, kind: "json", path: "", start: 0,
       end: JSON.stringify(raw("q", null).messages[1], null, 2).length,
@@ -1007,7 +1057,7 @@ test("a content repair can write its fixed file after all three repair explorati
       assert.notEqual(fixed.isError, true, "the bounded writer allowance survives exhausted repair exploration");
       const budget = JSON.parse(fixed.content.at(-1)!.text!).budget;
       assert.deepEqual(budget.exploration, { used: 4, remaining: 0 });
-      assert.deepEqual(budget.draft_writes, { used: 1, remaining: 0, tools: ["execute_code"] });
+      assert.deepEqual(budget.draft_writes, { used: 1, remaining: 0, tools: ["execute_code", "edit_json"] });
       const extra = await options.execute("execute_code", { language: "python", code: "raise AssertionError('must not run')" });
       assert.equal(extra.isError, true, "one rejection reserves only one writer call");
       const submitted = await options.execute("submit_evaluation_file", { path: feedback.draft_file });

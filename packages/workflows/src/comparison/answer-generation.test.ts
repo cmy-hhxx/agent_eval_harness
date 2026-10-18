@@ -35,7 +35,7 @@ test("strictly equal presentation avoids duplicated original text and retains ex
   assert.equal(generation.matches_captured_final, true);
   const view = answerGenerationPresentation(generation, "A")!;
   assert.equal(Object.hasOwn(view.blocks[0]!, "text"), false);
-  assert.equal(view.blocks[0]!.read_request.candidate, "A");
+  assert.equal(Object.hasOwn(view.blocks[0]!, "read_request"), false);
   assert.deepEqual(view.blocks[0]!.reference, generation.blocks[0]!.reference);
   assert.equal(generation.blocks[0]!.text, "原文\n", "presentation must not mutate full trusted generation");
 });
@@ -131,7 +131,8 @@ test("actual model input directory preserves answer history and nested input pat
   for (const context of view.input_contexts) {
     const range = selectEvidenceSource(evidenceSources(raw.messages[context.message_index]), context.path)!;
     assert.equal(context.total_chars, range.end - range.start);
-    assert.deepEqual(context.read_request, { candidate: "B", message_index: context.message_index, path: context.path, offset: 0, max_chars: 16000 });
+    assert.equal(Object.hasOwn(context, "read_request"), false);
+    assert.deepEqual((context as any).search_scope, { candidate: "B", message_index: context.message_index, path: context.path });
     assert.equal(Object.hasOwn(context, "text"), false);
   }
 });

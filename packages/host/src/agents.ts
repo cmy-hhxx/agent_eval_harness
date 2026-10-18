@@ -136,10 +136,12 @@ export class AgentRegistry {
         ...(profile.inspection ? { inspectionSchema: profile.inspection.modelSchema ?? profile.inspection.schema } : {}),
         toolNames: profile.toolNames,
         fileSubmission: profile.fileSubmission,
+        ...(profile.draftWriteInCallLimit ? { draftWriteInCallLimit: true } : {}),
         ...(profile.jsonStringSubmission ? {jsonStringSubmission:true} : {}),
         toolDescriptions: { ...profile.toolDescriptions },
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
+        ...(binding.presentedReads ? { presentedReads: binding.presentedReads } : {}),
         ...(Object.values(binding.request.sources).some(source => source.presentation) ? { sourcePresentations: Object.fromEntries(
           Object.entries(binding.request.sources).flatMap(([label, source]) => source.presentation ? [[label, structuredClone(source.presentation)]] : [])) } : {}),
       },

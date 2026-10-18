@@ -43,7 +43,8 @@ test("blind tool display after raw pagination keeps numeric selection tied to or
     assert.deepEqual(raw, original); assert.equal(context.audit.traceReads[0].end, text.length);
     const cached = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content", offset: 0, max_chars: text.length }, new AbortController().signal);
     const { budget: _firstBudget, ...firstPage } = result.details as Record<string, unknown>;
-    const { budget: _cachedBudget, ...cachedPage } = cached.details as Record<string, unknown>;
+    const { budget: _cachedBudget, already_read, ...cachedPage } = cached.details as Record<string, unknown>;
+    assert.equal(already_read, true);
     assert.deepEqual(cachedPage, firstPage, "cached pages retain their original numeric selection and display");
   } finally { await rm(workdir, { recursive: true, force: true }); }
 });

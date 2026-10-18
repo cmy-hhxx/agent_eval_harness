@@ -117,7 +117,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
       cite(request.sources.answer.id, item.message_index, output.source, output.start, output.end).evidence_id, item.evidence_id);
   };
   const check = (evidence: Evidence[], normSources: NormativeSource[], path: string, finalOnly: boolean,
-    relatedNorms: Evidence[], completeRelated = false) => {
+    relatedNorms: Evidence[], completeRelated = false, requireNorm = true) => {
     evidence = evidence.filter(ownEvidence);
     const hasNorm = completeRelated && relatedNorms.length
       ? relatedNorms.every(norm => evidence.some(item => isNormEvidence(item, normSources, context.raw, request.sources.answer.id) &&
@@ -125,9 +125,9 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
       : evidence.some(item => isNormEvidence(item, normSources, context.raw, request.sources.answer.id) && (!relatedNorms.length ||
           relatedNorms.some(norm => (evidenceCovers(context.raw, request.sources.answer.id, norm.evidence_id, item.evidence_id) ||
               evidenceCovers(context.raw, request.sources.answer.id, item.evidence_id, norm.evidence_id)))));
-    if (!hasNorm) errors.push({
+    if (requireNorm && !hasNorm) errors.push({
       category: "evidence", code: "instruction_evidence_required", path,
-      message: "已确认的指令判断须有完整原规范及实际回答或执行证据。instruction_following 选择本方 norm_directory 中对应规范的 norm_index；未知规范用 null 且 uncertain。核对原条件是否触发以及实际行为，来源编号本身不证明遵守或违反。",
+      message: "已关联的指令判断须保留所选原规范及实际回答或执行证据。核对原条件是否触发以及实际行为，来源编号本身不证明遵守或违反。",
       expected: { normative_sources: (path.startsWith("/findings/") ? context.sources : normSources).map(source => ({ message_index: source.message_index, path: source.path, role: source.role,
         references: source.evidence.map(item => ({ evidence_id: item.evidence_id })) })) },
     });
@@ -150,8 +150,9 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
     if (!context.sources.length && !independentFinalInstruction(finding)) return;
     const norms = context.forRequirement(finding.assessment.requirement_index);
     if (finding.dimension !== "instruction_following" && !norms.length) return;
-    // Bound norms are required in full; independent explicit rules remain part of the evidence.
-    check([...finding.evidence, ...finding.context_evidence ?? []], context.sources, `/findings/${index}/evidence`, finding.stage === "final_answer", norms, true);
+    // Bound norms retain their full context; unlinked observations do not acquire guessed norms.
+    check([...finding.evidence, ...finding.context_evidence ?? []], context.sources, `/findings/${index}/evidence`, finding.stage === "final_answer", norms, true,
+      norms.length > 0 || !!finding.context_evidence?.length);
   });
   return errors;
 }

@@ -9,11 +9,16 @@ interface FocusMaterial {
 }
 
 /** Only applicable original rules are shown; indices still address the full trusted arrays. */
-export function taskAnalysisPresentation(analysis: TaskAnalysis, candidates: Record<string, string>) {
+export function taskAnalysisPresentation(analysis: TaskAnalysis, candidates: Record<string, string>,
+  deferredSources: Record<string, { quote: string }[]> = {}) {
   const present = (criterion: TaskAnalysis["requirements"][number]) => {
     const applicable_candidates = Object.entries(candidates).flatMap(([label,id]) =>
       !criterion.applies_to.length || criterion.applies_to.includes(id) ? [label] : []);
-    const { applies_to: _ids, acceptance_rule, ...rule } = criterion;
+    const { applies_to: _ids, acceptance_rule: original, ...rule } = criterion;
+    let acceptance_rule = original;
+    for (const [index, source] of (deferredSources[criterion.id] ?? []).entries())
+      if (source.quote.length > 1000) acceptance_rule = acceptance_rule.replaceAll(source.quote,
+        `⟦answer.criterion_instruction_sources.${criterion.id}[${index}]⟧`);
     return { ...rule, ...(acceptance_rule === criterion.text ? {} : { acceptance_rule }), applicable_candidates };
   };
   const visible = (criterion: TaskAnalysis["requirements"][number]) =>

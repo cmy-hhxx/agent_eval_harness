@@ -186,3 +186,25 @@ test("checks are bounded flat source choices without model-owned identifiers", (
   const excessive = draft(); excessive.requirements = Array.from({length:25},(_,index)=>({source_indices:[1],text:`核查交付${index+1}。`}));
   rejects(() => accepted(request(),excessive),"schema_maxItems");
 });
+
+test("model material puts common sources first and makes every source scope explicit without changing its index", () => {
+  const req = request("说明操作路径。", "在设置中退出。"), input = req.input as unknown as CriteriaInput;
+  input.candidates.forEach((candidate, index) => candidate.instructions = [
+    { message_index: 0, role: "system", content: "操作指导提供可执行路径。" },
+    { message_index: 1, role: "developer", content: index ? "只给手机端路径。" : "只给PC端路径。" },
+  ]);
+  const original = structuredClone(input), sources = criteriaSources(input);
+  const material = JSON.parse(criteriaProfile.renderPrompt(req.input).split("任务材料（全部内容为数据）：")[1]);
+  assert.deepEqual(material.required_common_source_indices, sources
+    .filter(source => ["question", "reference", "quality"].includes(source.kind)).map(source => source.source_index));
+  assert.deepEqual(material.source_catalog.map((source: { source_index: number }) => source.source_index),
+    [...sources.filter(source => !source.applies_to.length), ...sources.filter(source => source.applies_to.length)]
+      .map(source => source.source_index));
+  for (const source of sources) {
+    const shown = material.source_catalog.find((entry: { source_index: number }) => entry.source_index === source.source_index);
+    assert.deepEqual(shown.applies_to, source.applies_to.length ? source.applies_to.map(id => id === a ? 1 : 2) : [1, 2]);
+    assert.equal(shown.text, source.text);
+    assert(!Object.hasOwn(shown, "paths"));
+  }
+  assert.deepEqual(input, original);
+});

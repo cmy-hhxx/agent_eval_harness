@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
-import { projectComparisonEvidence } from "./evidence-presentation.js";
+import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
 import type { TaskData, RawInput, ComparisonResult } from "./types.js";
 import { display } from "./results.js";
@@ -14,7 +14,8 @@ import { blindMaterials } from "./blind.js";
 import { attributionNormDirectory, attributionTableChecks, attributionTableReview, type AttributionResult } from "@eval/agents/attribution";
 import { originalAnswerUsage } from "./experience.js";
 import { traceCatalog } from "./catalog.js";
-import { citationInventory, type CitationContext, type CitationInventory } from "./citations.js";
+import { traceOverview } from "./trace-overview.js";
+import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { comparisonScope, comparisonSlotChoices } from "@eval/agents/comparison";
@@ -25,7 +26,8 @@ import { verificationPresentation, verificationInspectionPresentation } from "./
 import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneration } from "./answer-generation.js";
 
 /** Project only generated evidence directories; original message values stay untouched. */
-function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string) {
+function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string, compactChars?: number) {
+  const compact = compactChars !== undefined;
   const { identity: _identity, ...anonymous } = material;
   const shown = <T extends { evidence_id: string }>(value: T) => displayEvidence(value);
   const finalEvidence = material.final_evidence as ReturnType<typeof cite>[];
@@ -37,6 +39,34 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     evidence_id: string; message_index: number; path: string; quote: string;
   }[]> | undefined;
   const norms = material.norm_directory as ReturnType<typeof attributionNormDirectory> | undefined;
+  let outlineChars = 0;
+  const outlined = new Set<string>();
+  const instructionOutline = (quote: string, start: number) => {
+    if (!compact) return {};
+    const headings: { offset: number; title: string }[] = [];
+    let offset = start, fence = "";
+    for (const line of quote.split("\n")) {
+      const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+      if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ""; }
+      else if (!fence && /^(?:#{1,6} +\S|\*\*[^*\n]+\*\*\s*$)/u.test(line))
+        headings.push({ offset, title: line.slice(0, 120) });
+      offset += line.length + 1;
+    }
+    if (!headings.length) return {};
+    const outline: typeof headings = [];
+    for (const heading of headings) {
+      const cost = JSON.stringify(heading).length + 1;
+      if (outlineChars + cost > 2400) break;
+      outline.push(heading); outlineChars += cost;
+    }
+    return { outline, omitted_headings: headings.length - outline.length };
+  };
+  const instructionNavigation = (message_index: number, path: string, start: number, end: number) => ({
+    ...(compact && end - start > 1800
+      ? { search_scope: { candidate, message_index, path }, start_offset: start }
+      : { read_request: { candidate, message_index, path, offset: start, max_chars: Math.min(16000, end - start) } }),
+    end_offset: end,
+  });
   const finalIndex = material.final_message_index as number, imageCount = images(raw.messages[finalIndex]).length;
   const citationRange = (source: CitationContext) => {
     const { quote, ...coordinates } = source;
@@ -45,6 +75,33 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     });
     return { ...displayed, read_request: { ...source.read_request, candidate } };
   };
+  const occurrenceRange = (source: CitationContext) => {
+    const point = parseEvidenceCoordinates(source.evidence_id)!;
+    if (point.kind === "image") return citationRange(source);
+    const visible = compact && finalEvidence.some(item => {
+      const full = parseEvidenceCoordinates(item.evidence_id)!;
+      return full.kind !== "image" && full.kind === point.kind && full.message_index === point.message_index && full.path === point.path &&
+        full.start <= point.start && full.end >= point.end;
+    });
+    if (!visible) return citationRange(source);
+    const { quote: _quote, read_request: _request, ...coordinates } = source;
+    return { ...shown(coordinates), already_shown: true, start_offset: point.start, end_offset: point.end };
+  };
+  // Split only visible original text; headings and their tables stay together. A citation
+  // links to a section for investigation, never certifies any of its individual claims.
+  const reviewSections = compact ? finalEvidence.flatMap(item => {
+    const point = parseEvidenceCoordinates(item.evidence_id)!;
+    if (point.kind !== "text") return [];
+    const source = evidenceSources(raw.messages[point.message_index]).find(source => source.kind === "text" && source.path === point.path)!;
+    return sourceTextBlocks(item.quote).map(block => {
+      const start = point.start + block.start, end = point.start + block.end;
+      return { ...shown(cite(inputId, point.message_index, source, start, end)),
+        citation_indices: citations.references.flatMap((reference, index) => reference.occurrences.some(occurrence => {
+          const location = parseEvidenceCoordinates(occurrence.evidence_id)!;
+          return location.kind !== "image" && location.message_index === point.message_index && location.path === point.path && location.start < end && start < location.end;
+        }) ? [index + 1] : []) };
+    });
+  }).map((section, index) => ({ section_index: index + 1, ...section })) : [];
   return {
     ...anonymous,
     ...(imageCount ? { final_images: { image_count: imageCount,
@@ -61,24 +118,35 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
         if (!source || cite(inputId, point.message_index, source, point.start, point.end).quote !== item.quote)
           throw new Error("规范目录的完整坐标与原文不一致。");
         const { quote, ...coordinates } = item;
+        const outline = outlined.has(item.evidence_id) ? {} : instructionOutline(quote, point.start);
+        outlined.add(item.evidence_id);
         return { ...shown(quote.length <= 200 ? item : { ...coordinates, quote_preview: quote.slice(0, 200), has_more: true }),
-          read_request: { candidate, message_index: point.message_index, path: point.path,
-            offset: point.start, max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
+          ...outline,
+          ...instructionNavigation(point.message_index, point.path, point.start, point.end) };
       }) })) } : {}),
-    final_evidence: finalEvidence.map(shown),
+    final_evidence: finalEvidence.map(item => {
+      const { quote, ...coordinates } = item;
+      const point = parseEvidenceCoordinates(item.evidence_id)!;
+      return shown(compact && point.kind === "text" ? { ...coordinates, path: point.path,
+        start_offset: point.start, end_offset: point.end } : item);
+    }),
     ...(Object.hasOwn(material, "answer_generation") ? { answer_generation: (() => {
       const generation = answerGenerationPresentation(material.answer_generation as AnswerGeneration | null, candidate);
       return generation;
     })() } : {}),
-    initial_material: initial.map((entry) => ({ ...entry, evidence: entry.evidence.map(shown) })),
-    instruction_sources: instructions.map(source => ({ ...source, evidence: source.evidence.map(item => {
+    initial_material: compact ? [] : initial.map((entry) => ({ ...entry, evidence: entry.evidence.map(shown) })),
+    ...(compact ? { trace_overview: traceOverview(raw, candidate, inputId, compactChars) } : {}),
+    ...(compact ? { review_sections: reviewSections } : {}),
+    instruction_sources: instructions.map(({ content, ...source }) => ({ ...source, ...(!compact ? { content } : {}), evidence: source.evidence.map(item => {
       const { quote, ...coordinates } = item;
-      return shown(quote.length <= 200 ? item : { ...coordinates, quote_preview: quote.slice(0, 200), has_more: true });
+      const point = parseEvidenceCoordinates(item.evidence_id)!;
+      return { ...shown(quote.length <= 200 ? item : { ...coordinates, quote_preview: quote.slice(0, 200), has_more: true }),
+        ...(compact && point.kind === "text" ? instructionNavigation(point.message_index, point.path, point.start, point.end) : {}) };
     }) })),
     citation_inventory: { ...citations, references: citations.references.map(item => ({ ...item,
       occurrences: item.occurrences.map(({ context, ...marker }) => ({
-        ...shown(marker), context: citationRange(context),
-      })), sources: item.sources.map(citationRange),
+        ...shown(marker), context: occurrenceRange(context),
+      })), sources: item.sources.flatMap(source => citationSourceParts(raw, inputId, source)).map(citationRange),
     })) },
     ...(normBindings ? { criterion_instruction_sources: Object.fromEntries(Object.entries(normBindings).map(([id, entries]) =>
       [id, entries.map(entry => {
@@ -93,8 +161,7 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
         const { evidence_id: _id, ...display } = coordinates;
         return { ...display, ...(full.quote.length <= 200 ? { quote: full.quote } : {
           quote_preview: full.quote.slice(0, 200), has_more: true }),
-          reference: { evidence_id: full.evidence_id }, read_request: { candidate, message_index: entry.message_index,
-            path: entry.path, offset: location.start, max_chars: Math.min(16000, location.end - location.start) }, end_offset: location.end };
+          reference: { evidence_id: full.evidence_id }, ...instructionNavigation(entry.message_index, entry.path, location.start, location.end) };
       })])) } : {}),
     ...(tables ? { table_check_results: tableChecksPresentation(tables, raw, inputId).map((table) => ({
       ...table,
@@ -425,11 +492,11 @@ function bindSourceTask(
     modelInput: attribution
       ? { ...input,
         ...(reviewContext ? { review_context: { ...reviewContext, kind: "unverified_concerns" } } : {}),
-        task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis, { answer: sources.answer.id }),
+        task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis, { answer: sources.answer.id }, answer!.criterion_instruction_sources),
         task_focus: taskFocus({ answer: materials.answer }, task_analysis as TaskAnalysis, input.ground_truth,
           Object.values((criteriaTask.data as TaskData).candidates).map(candidate => candidate.input_id),
           { answer: inputs[data.candidates.A.input_id] as RawInput }),
-        answer: modelMaterial(answer!, "answer", sources.answer.value as RawInput, sources.answer.id),
+        answer: modelMaterial(answer!, "answer", sources.answer.value as RawInput, sources.answer.id, Math.min(8000, data.initialContextChars ?? 16000)),
         ...(referenceMaterials ? { reference_materials: Object.fromEntries(Object.entries(referenceMaterials).map(([key, material]) => {
           const projected = modelMaterial({ ...material, instruction_sources: [] }, key, sources[key].value as RawInput, sources[key].id);
           const { instruction_sources: _instructions, ...factual } = projected;
@@ -458,6 +525,8 @@ function bindSourceTask(
         candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) =>
         [label, modelMaterial(material, label, sources[label].value as RawInput, sources[label].id)])) },
   };
+  if (attribution && binding.modelInput) binding.presentedReads = presentedMaterialReads(
+    binding.modelInput.answer as Record<string, unknown>, "answer", sources.answer.id);
   if (blind && binding.modelInput) binding.modelInput = presentSource(binding.modelInput, blind.presentation);
   if (data.verificationAudit) {
     binding.inspectionInput = binding.modelInput;

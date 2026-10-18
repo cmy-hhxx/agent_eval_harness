@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { ValidationError, type AgentRequest, type ToolAudit } from "@eval/contracts";
-import { cite, evidenceSources, instructionSources, parseEvidenceCoordinates } from "@eval/tools";
+import { cite, evidenceSources } from "@eval/tools";
 import { attributionAgent, attributionNormDirectory, type AttributionResult } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
@@ -113,16 +113,17 @@ test("independent USER paragraphs keep exact criterion owners and preserve unass
   assert(directory.every(item => item.roles.length === 1 && item.roles[0] === "user"));
 });
 
-test("unknown own SYS never borrows tool output, peer instructions or a separate planner", () => {
+test("an unlinked observation preserves its certainty without inventing a norm from tool or planner text", () => {
   const value = scenario([{ role: "user", content: "计算2+2" }, { role: "tool", content: rule },
     { type: "llm_turn", input_messages: [{ role: "system", content: rule }], output: [{ role: "assistant", content: "内部计划" }] },
     { role: "assistant", content: "2+2=4" }]);
   assert(value.directory.every(item => !item.roles.includes("system")));
   value.finding.norm_index = null as unknown as number;
-  assert.throws(() => resolve(value), issue("finding_norm_unknown"));
-  value.finding.assessment.evidence_status = "uncertain";
   const result = resolve(value);
   assert.deepEqual(result.findings[0]!.evidence.map(item => item.quote), ["2+2=4"]);
+  assert.equal(result.findings[0]!.assessment.evidence_status, "established");
+  assert.equal(result.findings[0]!.assessment.requirement_index, null);
+  assert.equal(result.findings[0]!.context_evidence, undefined);
 });
 
 test("norm selectors reject invalid ownership while topic labels preserve the same selected norm", () => {
@@ -161,37 +162,15 @@ test("non-final instruction findings require concrete execution coordinates and 
   assert.equal(resolve(value).findings[0]!.evidence[0]!.evidence_id, value.ref(1, "/output/0/content").evidence_id);
 });
 
-test("selected long norms retain the full read gate while unselected directory blocks need no reads", () => {
-  const long = "## 长规范\n\n" + "完整条件与例外。".repeat(35);
+test("long norm selection preserves source context without requiring unrelated full-block reads", () => {
+  const long = "## 长规范\n\n" + "完整条件与例外。".repeat(350);
   const value = scenario([{ role: "system", content: rule + "\n\n" + long }, { role: "user", content: "计算2+2" }, { role: "assistant", content: "2+2=4" }]);
-  resolve(value);
   value.finding.norm_index = value.directory.find(item => item.evidence.some(proof => proof.quote === long))!.norm_index;
-  assert.throws(() => resolve(value), issue("finding_norm_not_read"));
-  const norm = value.directory[value.finding.norm_index]!.evidence[0]!, point = parseEvidenceCoordinates(norm.evidence_id)!;
-  if (point.kind !== "text") assert.fail("text norm");
-  value.audit.traceReads.push({ candidate: "answer", message_index: point.message_index, kind: "text", path: point.path, start: point.start, end: point.end });
-  assert.equal(resolve(value).findings[0]!.context_evidence![0]!.quote, long);
-});
-
-test("complete original initial visibility avoids redundant norm reads while truncated or wrong-origin material does not", () => {
-  const long = "## 完整规范\n\n" + "原始触发条件与例外。".repeat(30);
-  const value = scenario([{ role: "system", content: long }, { role: "user", content: "计算2+2" }, { role: "assistant", content: "2+2=4" }]);
-  const answer = value.request.input.answer as Record<string, unknown>;
-  answer.instruction_sources = instructionSources({ messages: value.messages }, value.request.sources.answer.id, value.finalIndex);
-  resolve(value); assert.deepEqual(value.audit.traceReads, [], "initial visibility is not fabricated as a tool read");
-  (answer.instruction_sources as { content: unknown }[])[0]!.content = long.slice(0, 200);
-  assert.throws(() => resolve(value), issue("finding_norm_not_read"));
-  delete answer.instruction_sources;
-  answer.initial_material = [{ message_index: 0, value: structuredClone(value.messages[0]), evidence: value.directory[0]!.evidence }];
-  resolve(value);
-  (answer.initial_material as { message_index: number }[])[0]!.message_index = 1;
-  assert.throws(() => resolve(value), issue("finding_norm_not_read"));
-  delete answer.initial_material;
-  answer.initial_material = [];
-  const task = value.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
-  task.requirements[0]!.text = long; task.requirements[0]!.acceptance_rule = task.requirements[0]!.text;
-  setFixtureNormDirectory(value.request);
-  assert.equal(resolve(value).findings[0]!.assessment.requirement_index, 0, "complete trusted criterion text is already visible");
+  const result = resolve(value);
+  assert.equal(result.findings[0]!.context_evidence![0]!.quote, long);
+  assert.deepEqual(value.audit.traceReads, [], "selection does not fabricate a full-read audit");
+  value.finding.norm_index = 9999;
+  assert.throws(() => resolve(value), issue("finding_norm_index_invalid"));
 });
 
 test("final scope ignores forged request evidence and requires actual image viewing", () => {

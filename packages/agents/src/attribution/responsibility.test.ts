@@ -140,9 +140,40 @@ test("new responsibilities pass the dynamic submission schema and formal validat
   accepted.findings[1].evidence = [final]; assert.throws(() => registry.validate(binding, accepted, audit), missing);
 });
 
-test("responsibility follows verified defects rather than different metrics or a forced failure taxonomy", () => {
+test("recovered execution failures remain flat problems without invalidating a correct final answer", () => {
+  const f = fixture([{ type: "message", role: "user", content: "计算2+2" },
+    { type: "tool_result", name: "Calc", output: { exit_code: 1, error: "计算服务连接异常，本次未执行。" } },
+    { type: "tool_result", name: "Calc", output: { exit_code: 1, error: "计算服务连接仍异常，本次未执行。" } },
+    { type: "tool_result", name: "Calc", output: { exit_code: 0, result: "连接恢复，2+2=4。" } },
+    { type: "final_answer", role: "assistant", content: "2+2=4" }]);
+  const final = f.evidence(4, "/content"), process = [1, 2, 3].map(index => f.evidence(index, "/output"));
+  Object.assign(f.request.input.answer as object, { final_answer: final.quote, final_evidence: [final] });
+  setFixtureNormDirectory(f.request);
+  const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [], evidenceBank: [] };
+  const result = structuredClone(example.result) as AttributionResult;
+  result.correctness_evidence = [final]; result.findings[0].evidence = [final]; result.criterion_assessments.forEach(row => row.evidence = [final]);
+  result.findings.push({ ...structuredClone(result.findings[0]), finding_id: "f1", type: "problem", dimension: "efficiency", stage: "execution", importance: "low",
+    text: "计算服务连续两次连接失败，第三次恢复。", reason: "前两次调用未执行，第三次返回4，最终答案采用正确结果。", evidence: [...process, final],
+    assessment: { requirement_index: null, observation: "两次失败后恢复。", evidence_status: "established", impact: "增加两次失败调用，最终计算结果未受损。" },
+    problem: { component: [environment], label: "计算服务连接异常", definition: "执行时服务连接异常导致两次失败，重试后恢复。" } });
+  const registry = new AgentRegistry([attributionAgent]), binding = { agent: "attribution", profile: "default", request: f.request };
+  const draft = attributionSubmission(f.request, result, audit), accepted = registry.resolve(binding, draft, audit) as AttributionResult;
+  registry.validate(binding, accepted, audit);
+  assert.equal(draft.problems.length, 1);
+  assert(!Object.hasOwn(draft.problems[0], "problem"));
+  assert(!Object.hasOwn(draft.problems[0], "assessment"));
+  assert.equal(accepted.is_correct, true);
+  assert.equal(accepted.core_assessment.meets_core, true);
+  assert(accepted.criterion_assessments.every(row => row.status === "met"));
+  assert.equal(accepted.findings[1].stage, "execution");
+  assert.deepEqual(accepted.findings[1].problem!.component, [environment]);
+  assert.deepEqual(accepted.findings[1].evidence.map(item => item.message_index), [1, 2, 3, 4]);
+  assert.equal(accepted.findings[1].assessment.impact, "增加两次失败调用，最终计算结果未受损。");
+});
+
+test("responsibility guidance distinguishes metrics and independent fault evidence", () => {
   const prompt = agentPrompt("attribution", []).instructions;
-  assert.match(prompt, /均线与期间最低价等不同指标可以同时正确，不能仅因数值不同判前后矛盾/u);
-  assert.match(prompt, /不强套类别或把普通优点、局部缺陷都写成关键步骤失败/u);
-  assert.match(prompt, /每个责任方分别说明自己的失误及如何传到最终结果，不借其他责任方的证据/u);
+  assert.match(prompt, /不同指标的值可同时正确/u);
+  assert.match(prompt, /不强套类别或夸大局部缺陷/u);
+  assert.match(prompt, /每个责任方分别说明自己的失误、恢复情况及对过程或交付的实际影响，不借其他责任方的证据/u);
 });

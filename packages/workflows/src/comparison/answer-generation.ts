@@ -82,10 +82,9 @@ export function getAnswerGeneration(raw: RawInput, inputId: string, finalIndex?:
 /** Strictly equal text is already shown as the captured final; every block remains independently readable. */
 export function answerGenerationPresentation(generation: AnswerGeneration | null, candidate: string) {
   if (!generation) return null;
-  return { ...generation, input_contexts: generation.input_contexts.map(context => ({ ...context,
-    read_request: { ...context.read_request, candidate },
-  })), blocks: generation.blocks.map(({ text, ...block }) => ({ ...block,
-    ...(generation.matches_captured_final === true ? {} : { text }),
-    read_request: { ...block.read_request, candidate },
+  return { ...generation, input_contexts: generation.input_contexts.map(({ read_request: _read, ...context }) => ({ ...context,
+    search_scope: { candidate, message_index: context.message_index, path: context.path },
+  })), blocks: generation.blocks.map(({ text, read_request, ...block }) => ({ ...block,
+    ...(generation.matches_captured_final === true ? {} : { text, read_request: { ...read_request, candidate } }),
   })) };
 }

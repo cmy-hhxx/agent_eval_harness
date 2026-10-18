@@ -303,7 +303,8 @@ test("peer private instructions cannot close this candidate's instruction eviden
   assert.equal(completedNorm.quote, own.messages[0].content, "only the actual complete own SYS is attached");
   const peerOnly = structuredClone(result);
   delete peerOnly.findings[0]!.context_evidence;
-  hasIssue(() => registry.validate(binding, peerOnly, audit()), "instruction_evidence_required", "/findings/0/evidence");
+  registry.validate(binding, peerOnly, audit());
+  assert.equal(peerOnly.findings[0]!.context_evidence, undefined, "an unlinked finding never promotes a peer fact into an own norm");
   assert.deepEqual({ request, draft }, before, "program closure does not rewrite the submitted selection or raw source");
 });
 test("peer image observation requires the peer's actual view audit and keeps source-qualified repair suggestions", () => {

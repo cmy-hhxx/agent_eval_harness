@@ -193,7 +193,7 @@
               "null"
             ],
             "minimum": 0,
-            "description": "仅 instruction_following 必填 findings[i].norm_index，与 dimension 同级，不放进 assessment。选择 answer.norm_directory 的原 norm_index；未知规范用 null 且 assessment.evidence_status=uncertain，不另填 assessment.requirement_index。"
+            "description": "仅 instruction_following 必填 findings[i].norm_index，与 dimension 同级，不放进 assessment。选择 answer.norm_directory 的原 norm_index；没有合适目录关联时用 null，确定性按实际证据填写，不另填 assessment.requirement_index。"
           }
         },
         "allOf": [

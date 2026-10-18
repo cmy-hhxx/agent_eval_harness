@@ -155,6 +155,8 @@ export async function startWorker(
           audit,
           policy: spec.policy,
           requiredReads: spec.evaluation.requiredReads,
+          presentedReads: spec.evaluation.presentedReads,
+          draftWriteInCallLimit: spec.evaluation.fileSubmission && spec.evaluation.draftWriteInCallLimit,
           artifacts,
         },
         definitions,

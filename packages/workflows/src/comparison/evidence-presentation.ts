@@ -1,5 +1,26 @@
-import { projectEvidenceReferences, type EvidenceBank, type JsonObject } from "@eval/contracts";
+import { projectEvidenceReferences, type EvidenceBank, type JsonObject, type TraceRead } from "@eval/contracts";
+import { parseEvidenceCoordinates } from "@eval/tools";
 const object = (value: unknown): JsonObject | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined;
+
+/** Only generated navigation envelopes, never arbitrary business objects or full unseen references. */
+export function presentedMaterialReads(material: JsonObject, candidate: string, inputId: string): TraceRead[] {
+  const reads: TraceRead[] = [];
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const item = value as JsonObject, reference = object(item.reference);
+    const quote = item.quote ?? item.quote_preview;
+    const point = typeof reference?.evidence_id === "string" ? parseEvidenceCoordinates(reference.evidence_id) : null;
+    if (typeof quote === "string" && quote.length && point && point.kind !== "image" && point.input_id === inputId)
+      reads.push({ candidate, message_index: point.message_index, kind: point.kind, path: point.path,
+        start: point.start, end: Math.min(point.end, point.start + quote.length) });
+    for (const child of Object.values(item)) if (child && typeof child === "object") visit(child);
+  };
+  visit(material.trace_overview);
+  visit(object(material.citation_inventory)?.references);
+  for (const field of ["norm_directory", "instruction_sources", "initial_material"])
+    for (const entry of Array.isArray(material[field]) ? material[field] : []) visit(object(entry)?.evidence);
+  return reads;
+}
 
 /** Projection is limited to fields constructed by this Workflow; raw source values never enter the traversal. */
 function materialEvidence(value: unknown, bank: EvidenceBank): unknown {
@@ -7,7 +28,7 @@ function materialEvidence(value: unknown, bank: EvidenceBank): unknown {
   if (!material) return value;
   const project = <T>(value: T) => projectEvidenceReferences(value, bank);
   const array = (value: unknown) => Array.isArray(value) ? value : [];
-  const generated = ["final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources"];
+  const generated = ["final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
   const result = { ...material };
   for (const field of generated) if (Object.hasOwn(material, field)) result[field] = project(material[field]);
   if (Array.isArray(material.norm_directory)) result.norm_directory = material.norm_directory.map(entry => {

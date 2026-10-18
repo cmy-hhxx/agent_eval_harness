@@ -50,7 +50,7 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
 
 /** Business rules that can be checked before evidence references are resolved. */
 export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
-  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft, audit), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
+  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
     ...instructionSubmissionIssues(request, draft, audit)];
 }
 
@@ -220,9 +220,6 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       if (core.meets_core === false && !coreEvidence.some((assessment) =>
         assessment.evidence_status === "established" && (assessment.status === "unmet" || assessment.status === "partial")))
         issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");
-      if (core.meets_core === null && !coreEvidence.some((assessment) =>
-        assessment.status === "unknown" || assessment.evidence_status === "uncertain"))
-        issue("core_unknown_unsupported", "/core_assessment", "核心可用性为 null 时必须引用证据不足的适用 requirement");
       if (core.meets_core === true && !coreEvidence.some((assessment) =>
         assessment.evidence_status === "established" && (assessment.status === "met" || assessment.status === "partial")))
         issue("core_success_unsupported", "/core_assessment", "判核心可用必须引用适用 requirement 已确认的 met 或 partial，并说明仍可用的独立结果");

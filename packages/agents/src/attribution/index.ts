@@ -9,6 +9,7 @@ import { numericReferenceDirectory } from "./units.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
+import { investigationMaterial } from "./investigation-material.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
@@ -18,7 +19,7 @@ export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact",
+  "read_artifact", "edit_json",
 ];
 const prompt = agentPrompt("attribution", toolNames);
 export const attributionProfile: AgentProfile = {
@@ -30,7 +31,6 @@ export const attributionProfile: AgentProfile = {
   modelSubmissionSchema: attributionSubmissionSchema,
   resultSchema,
   ...prompt,
-  jsonStringSubmission: true,
   renderPrompt(input, policy, failure) {
     const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
     const answer = input.answer as Record<string, unknown>;
@@ -50,9 +50,9 @@ export const attributionProfile: AgentProfile = {
     };
     const truth = input.ground_truth as { available: boolean; value: unknown };
     const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
-    return prompt.renderPrompt({ ...shown,
+    return prompt.renderPrompt(investigationMaterial({ ...shown,
       numeric_references: numeric.map(item => ({...item,reference_index:item.reference_index+1})),
-    }, policy, failure);
+    }), policy, failure);
   },
   toolNames,
   requiredReads: (request) => (request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({

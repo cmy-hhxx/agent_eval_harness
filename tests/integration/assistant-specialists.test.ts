@@ -117,9 +117,10 @@ test("three-model specialist runs share one criteria task and return all three r
     assert(!("task_analysis" in material));
     assert.equal(material.candidate_count, 3);
     assert(material.source_catalog!.filter(source => source.kind === "context").every(source => source.role === "user"));
-    assert(material.source_catalog!.every(source => source.role !== "system" && source.role !== "developer"),
-     "own SYS/DEV cannot become common or private task criteria");
-    assert(!material.source_catalog!.some(source => privateRules.includes(source.text)));
+    const own = material.source_catalog!.filter(source => privateRules.includes(source.text));
+    assert.equal(own.length, 3, "each candidate's system constraint remains available for private checks");
+    assert(own.every(source => source.kind === "instruction" && source.role === "system" && source.applies_to.length === 1));
+    assert.equal(new Set(own.flatMap(source => source.applies_to)).size, 3, "private scopes must not merge across candidates");
    } else standards.push({ analysis: material.task_analysis!, owners: stage === "attribution"
     ? { answer: material.candidate_id! } : Object.fromEntries(Object.entries(material.candidates!).map(([label, candidate]) => [label, candidate.candidate_id])) });
    const output = taskResult(options.spec);
@@ -157,7 +158,7 @@ test("three-model specialist runs share one criteria task and return all three r
   const criteriaTasks = state.manifest.tasks.filter(task => task.stage === "criteria");
   assert.equal(criteriaTasks.length, 1);
   const canonical = state.receipts[criteriaTasks[0]!.id]!.evaluation as TaskAnalysis;
-  assert.equal(canonical.scoring_points.length, 0, "own SYS stays outside the common task rubric");
+  assert.equal(canonical.scoring_points.length, 0, "this fixture selects only the common task requirements");
   assert(!canonical.requirements.some(criterion => privateRules.includes(criterion.text)));
   for (const task of state.manifest.tasks.filter(task => ["attribution", "comparison"].includes(task.stage)))
    assert.deepEqual((state.receipts[task.id]!.evaluation as { task_analysis: TaskAnalysis }).task_analysis, canonical,

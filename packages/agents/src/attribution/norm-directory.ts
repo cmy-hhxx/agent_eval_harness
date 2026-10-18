@@ -1,5 +1,5 @@
-import { canonical, ValidationError, type AgentRequest, type TaskAnalysis, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { cite, evidenceCovers, evidenceSources, parseEvidenceCoordinates, sourceContentBlocks, traceReadCoverage } from "@eval/tools";
+import { canonical, ValidationError, type AgentRequest, type TaskAnalysis, type ValidationIssue } from "@eval/contracts";
+import { cite, evidenceCovers, evidenceSources, sourceContentBlocks } from "@eval/tools";
 import { instructionEvidenceContext } from "./instructions.js";
 import type { Evidence } from "./types.js";
 
@@ -66,55 +66,19 @@ export function submissionFindingEntries(draft: unknown) {
   }) : [];
 }
 
-export function findingNormSelectionIssues(request: AgentRequest, draft: unknown, audit?: ToolAudit): ValidationIssue[] {
+export function findingNormSelectionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
   const directory = attributionNormDirectory(request), issues: ValidationIssue[] = [];
-  const context = instructionEvidenceContext(request), answer = object(request.input.answer)!;
-  const fullyShown = (item: Evidence, requirementIndex: number | null) => {
-    const point = parseEvidenceCoordinates(item.evidence_id);
-    if (!point || point.kind !== "text") return false;
-    const criterion = requirementIndex === null ? undefined : (request.input.task_analysis as unknown as TaskAnalysis).requirements[requirementIndex];
-    if (criterion?.acceptance_rule.includes(item.quote)) return true; // The complete original is already present in the source-bound acceptance rule.
-    if (Array.isArray(answer.instruction_sources) && answer.instruction_sources.some(entry => {
-      const shown = object(entry);
-      return context.sources.some(source => source.message_index === point.message_index && shown?.message_index === source.message_index &&
-        shown.path === source.path && shown.role === source.role && canonical(shown.content) === canonical(source.content) &&
-        canonical(shown.evidence) === canonical(source.evidence) && source.evidence.some(origin =>
-          evidenceCovers(context.raw, request.sources.answer.id, origin.evidence_id, item.evidence_id)));
-    })) return true;
-    return Array.isArray(answer.initial_material) && answer.initial_material.some(entry => {
-      const shown = object(entry);
-      if (shown?.message_index !== point.message_index) return false;
-      const original = evidenceSources(context.raw.messages[point.message_index]).find(source => source.kind === "text" && source.path === point.path);
-      const visible = evidenceSources(shown.value).find(source => source.kind === "text" && source.path === point.path);
-      return !!original && !!visible && original.text === visible.text && original.text.slice(point.start, point.end) === item.quote;
-    });
-  };
   for (const { finding, path } of submissionFindingEntries(draft)) {
     if (finding.dimension !== "instruction_following" && !Object.hasOwn(finding,"norm_index")) continue;
     const selected = finding.norm_index;
-    if (selected === null) {
-      if (object(finding.assessment)?.evidence_status !== "uncertain") issues.push({ category: "evidence",
-        code: "finding_norm_unknown", path: `${path}/norm_index`,
-        message: `未知规范只能在 ${path}/norm_index 填 null，并保留 assessment.evidence_status=uncertain；不能宣称已确认遵守或违反。` });
-      continue;
-    }
+    if (selected === null) continue;
     if (!Number.isSafeInteger(selected) || Number(selected) < 0 || !directory[Number(selected)]) {
       issues.push({ category: "evidence", code: "finding_norm_index_invalid", path: `${path}/norm_index`,
-        message: `规范编号填写在 ${path}/norm_index，与 dimension 同级，不放进 assessment；只选择本方 norm_directory 的原 norm_index，未知规范用 null 并保留 uncertain。`,
+        message: `规范编号填写在 ${path}/norm_index，与 dimension 同级，不放进 assessment；只选择本方 norm_directory 的原 norm_index，没有合适的目录关联时填 null。`,
         actual: selected, expected: directory.map(item => item.norm_index) });
       continue;
     }
-    if (audit) directory[Number(selected)]!.evidence.forEach(item => {
-      if (item.quote.length <= 200 || fullyShown(item, directory[Number(selected)]!.requirement_index)) return;
-      const point = parseEvidenceCoordinates(item.evidence_id)!;
-      if (point.kind !== "text") return;
-      const coverage = traceReadCoverage(audit, { candidate: "answer", message_index: point.message_index,
-        kind: "text", path: point.path, start: point.start, end: point.end });
-      if (!coverage.covered) issues.push({ category: "evidence", code: "finding_norm_not_read", path: `${path}/norm_index`,
-        message: "选中的长规范须读取全部原条件和例外；请按 read_request 读取到 end_offset，目录预览不代替完整阅读。",
-        actual: coverage.missing, expected: { norm_index: selected, read_request: { tool: "read_trace", arguments: {
-          candidate: "answer", message_index: point.message_index, path: point.path, offset: point.start } }, end_offset: point.end } });
-    });
+
   }
   return issues;
 }

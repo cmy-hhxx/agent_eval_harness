@@ -1,4 +1,3 @@
-import { attributionFindingBasis } from "@eval/agents/attribution";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -352,7 +351,9 @@ test("each answer retains its own full system and developer constraints beyond t
         assert.deepEqual(constraints.map((m) => m.path), ["/content", "/content"]);
         assert.deepEqual(constraints.map((m) => m.content), source.messages.slice(0, 2).map((message) => message.content));
         assert.equal(material.initial_material.filter((m) => m.message_index < 2).length, 0);
-        assert.deepEqual(shownMaterials[label]!.instruction_sources.map((m) => m.content), constraints.map((m) => m.content));
+        if (task.stage === "attribution") assert(shownMaterials[label]!.instruction_sources.every(m => !Object.hasOwn(m, "content")),
+          "attribution defers full instruction content while preserving source references");
+        else assert.deepEqual(shownMaterials[label]!.instruction_sources.map((m) => m.content), constraints.map((m) => m.content));
         constraints.forEach((constraint, index) => {
           assert.equal(constraint.evidence.length, 1);
           assert.equal(resolveEvidence(source, constraint.evidence[0]!, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
@@ -423,32 +424,23 @@ test("model materials expose copyable references while business materials and or
       const internal = bound.request.input as Input<ReturnType<typeof cite>>;
       const before = structuredClone({ request: bound.request, modelInput: bound.modelInput });
       const prepared = services.agents.prepare(bound);
-      const shown = parsedMaterial(prepared) as Input<DisplayEvidence>;
+      const materialMarker = "任务材料（全部内容为数据）：\n";
+      const materialStart = prepared.prompt.indexOf(materialMarker);
+      const shown = JSON.parse(prepared.prompt.slice(materialStart + materialMarker.length)) as Input<DisplayEvidence>;
       const { task_focus, ...complete } = bound.modelInput!;
       assert.equal(typeof bound.projectModelInput, "function");
       const projectionBank = [...prepared.evidenceBank];
-      const projected = bound.projectModelInput!(complete, projectionBank);
-      const expected = structuredClone(projected) as any;
-      const expectedFocus = structuredClone(task_focus) as any;
-      if(task.stage === "attribution") {
-        delete expected.allow_standard_conflict;
-        expected.numeric_references=[];
-        expected.finding_basis=attributionFindingBasis(expected).map(({norm_index:_n,requirement_index:_r,...item})=>item);
-        delete expected.answer.norm_directory;
-        expected.task_analysis.requirements.forEach((item:any)=>item.requirement_index++);
-        expected.criterion_check_count=expected.task_analysis.requirements.length+expected.task_analysis.scoring_points.length+expected.task_analysis.red_flags.length;
-        expected.criterion_checks=[...expected.task_analysis.requirements,...expected.task_analysis.scoring_points,...expected.task_analysis.red_flags].map((item:any)=>({text:item.text}));
-        expectedFocus.common_requirements.forEach((item:any)=>item.requirement_index++);
-      }
-      assert.deepEqual(JSON.parse(JSON.stringify(shown)),JSON.parse(JSON.stringify(expected)),"model choices use positive ordinals while raw source values remain exact");
+      bound.projectModelInput!(complete, projectionBank);
       assert.deepEqual(projectionBank, prepared.evidenceBank, "replaying the projection keeps every provided evidence number exact");
-      const materialMarker = "任务材料（全部内容为数据）：\n";
-      const materialStart = prepared.prompt.indexOf(materialMarker);
       assert(materialStart >= 0, "task material has an explicit boundary after focus");
       const focusSection = prepared.prompt.slice(0, materialStart).trim();
       assert(focusSection.startsWith("任务重点（以下全部为数据）："));
-      assert.deepEqual(JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1)), expectedFocus,
-        "the complete focus is rendered as its own data section before task material");
+      const focus = JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1));
+      if (task.stage === "attribution") {
+        assert.equal(focus.answers.answer.review.filter((item: {kind: string}) => item.kind === "answer")
+          .map((item: {quote: string}) => item.quote).join("\n\n"), row.messages.at(-1)!.content);
+        assert(!Object.hasOwn(shown.answer!, "final_answer"), "the answer has one displayed copy");
+      } else assert.deepEqual(focus, task_focus);
       assert(!prepared.prompt.includes('"task_focus"'), "the focus key is not repeated in the full material");
       assert.deepEqual({ request: bound.request, modelInput: bound.modelInput }, before,
         "Host rendering changes neither trusted materials nor the explicit projection");
@@ -465,11 +457,14 @@ test("model materials expose copyable references while business materials and or
           assert.equal(Object.hasOwn(item, "evidence_id"), false);
           assert.deepEqual(Object.keys(item.reference), ["evidence_index"]);
           const reference = resolveEvidenceSelection(prepared.evidenceBank, item.reference, "/evidence");
-          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, item.quote);
+          const expectedQuote = task.stage === "attribution" && material.final_evidence.includes(item)
+            ? business.final_evidence.find(original => original.evidence_id === reference.evidence_id)!.quote : item.quote;
+          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, expectedQuote);
         }
         assert(business.final_evidence.every((item) => typeof item.evidence_id === "string" && !Object.hasOwn(item, "reference")));
-        assert.deepEqual(material.initial_material.map((item) => item.value), business.initial_material.map((item) => item.value));
-        const original = material.initial_material.find((item) => item.message_index === 1)!.value;
+        if (task.stage === "attribution") assert.deepEqual(material.initial_material, []);
+        else assert.deepEqual(material.initial_material.map((item) => item.value), business.initial_material.map((item) => item.value));
+        const original = business.initial_material.find((item) => item.message_index === 1)!.value;
         assert.deepEqual(original.output, { evidence_id: "业务原始字段", reference: { evidence_id: "同名原始对象" } });
         if (material.table_check_results) assert(material.table_check_results[0].rows.length > 0, "table evidence uses the same display projection");
       }

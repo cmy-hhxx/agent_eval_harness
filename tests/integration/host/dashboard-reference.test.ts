@@ -113,7 +113,7 @@ test("reference profiles expose independent inspection and the current canonical
     assert.equal(primary.requestBoundSubmission, true);
     assert.equal(verification.requestBoundSubmission, false);
     for (const stage of reference.stages) for (const profile of stage.profiles) {
-      assert.equal(profile.fileSubmission, stage.id === "comparison" && profile.id === "verification");
+      assert.equal(profile.fileSubmission, stage.id === "attribution" || stage.id === "comparison" && profile.id === "verification");
       assert.deepEqual(Object.keys(profile.toolSchemas), Object.keys(profile.toolDescriptions));
       for (const [name, schema] of Object.entries(profile.toolSchemas)) {
         assert.deepEqual(schema, name === "submit_evaluation_file" || name === "inspect_material" && profile.fileSubmission ? SUBMISSION_FILE_SCHEMA

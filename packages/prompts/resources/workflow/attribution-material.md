@@ -1,1 +1,1 @@
-instruction_sources 展示材料中可确认作用于最终回答的 system/developer；未提供的指令保持未知。citation_inventory 只定位来源，不证明整句支持或成品渲染。原始材料保留在 input_file，延后展示的最终回答片段列在 deferred_final_material。
+instruction_sources 定位材料中可确认作用于最终回答的 system/developer；未提供的指令保持未知。验收规则中的 ⟦answer.criterion_instruction_sources…⟧ 引用对应完整原文，长规范的 search_scope 用于定点搜索具体规则，再沿命中附近补齐相关条件与例外；不是从头通读的清单。trace_overview 的原文片段带证据编号，可复用；异常提示只供调查，概览不证明成功或内容正确。citation_inventory 只定位来源，不证明整句支持或成品渲染。原始材料保留在 input_file，延后展示的最终回答片段列在 deferred_final_material。

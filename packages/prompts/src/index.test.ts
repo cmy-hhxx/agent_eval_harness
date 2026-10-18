@@ -20,7 +20,7 @@ test("all stage texts come from one resource tree; tool descriptions are complet
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/default/${key}.md`, resources), "utf8").trim() +
         (key === "system" ? "\n\n" + readFileSync(new URL("shared/commentary.md", resources), "utf8").trim() +
           "\n\n" + prompt.instructions + "\n" + readFileSync(new URL("shared/evidence.md", resources), "utf8").trim() + "\n" : ""));
-    assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== "submit_evaluation_file").sort());
+    assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== (prompt.fileSubmission ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(`tools/${name}.md`, resources), "utf8").trim());
   }
@@ -64,10 +64,14 @@ test("attribution names fixed observation collections and one basis selector", (
   assert.doesNotMatch(prompt.instructions, /requirement_index|norm_index/);
 });
 
-test("ordinary grading submits directly while independent verification retains file inspection", () => {
+test("attribution preserves a file draft within its call allowance while comparison submits directly", () => {
   const prompt = agentPrompt("attribution", ["execute_code"]);
-  assert.equal(prompt.fileSubmission, false);
-  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation"]);
+  assert.equal(prompt.fileSubmission, true);
+  assert.equal(prompt.draftWriteInCallLimit, true);
+  assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
+  const rendered = prompt.renderPrompt({}, { ...DEFAULT_POLICY, maxToolCalls: 24 });
+  assert.match(rendered, /"exploration_call_limit":23/);
+  assert.match(rendered, /"reserved_draft_calls":1/);
   const comparison = agentPrompt("comparison", ["execute_code"]);
   assert.equal(comparison.fileSubmission, false);
   assert.deepEqual(Object.keys(comparison.toolDescriptions), ["execute_code", "submit_evaluation"]);
@@ -241,10 +245,10 @@ test("model budgets expose actionable call limits for the selected tools", () =>
   assert.deepEqual(limits("rewrite", []), { content_call_limit: 5 });
   assert.deepEqual(limits("comparison", ["inspect_material"]), { content_call_limit: 5 });
   assert.deepEqual(limits("attribution", ["read_trace"]), {
-    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls,
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
   });
   assert.deepEqual(limits("attribution", ["read_trace", "execute_code"]), {
-    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls,
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
     code_timeout_seconds: DEFAULT_POLICY.codeTimeoutSeconds,
   });
 });

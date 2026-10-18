@@ -166,6 +166,18 @@ test("core and requirement relations use current positive choices and retain act
   assert.throws(()=>g.registry.resolve(g.binding,g.draft,g.audit),error=>error instanceof ValidationError&&error.issues!.some(issue=>issue.code==="finding_requirement_conflict"));
 });
 
+test("core uncertainty preserves confirmed local findings without a status-alignment retry",()=>{
+  const f=toolFixture();f.draft.meets_core=null;
+  f.draft.core_reason="已确认局部数值问题，但任务整体完成情况仍有未核实范围。";
+  const before=structuredClone(f.draft);
+  const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+  f.registry.validate(f.binding,accepted,f.audit);
+  assert.equal(accepted.core_assessment.meets_core,null);
+  assert.equal(accepted.criterion_assessments[0].evidence_status,"established");
+  assert.equal(accepted.findings[0].assessment.evidence_status,"established");
+  assert.deepEqual(f.draft,before);
+});
+
 test("a minor ancillary defect does not contradict a met task requirement, while material defects still do",()=>{
   const f=fixture();
   (f.request.sources.answer.value as {messages:{content:string}[]}).messages[1].content+="。。";

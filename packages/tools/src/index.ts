@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, open, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -12,6 +12,7 @@ import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from 
 import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
 import { RequiredReadBudget } from "./required-reading.js";
+import { traceReadCoverage } from "./trace-audit.js";
 
 const schema = (properties: JsonSchema, required = Object.keys(properties)): JsonSchema => ({
   type: "object",
@@ -25,6 +26,7 @@ export const textResult = (value: unknown): ToolResult => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
   details: value,
 });
+const presentedAudit = (ctx: ToolContext) => ({ traceReads: [...(ctx.presentedReads ?? []), ...ctx.audit.traceReads] });
 function record(ctx: ToolContext, candidate: string): { messages: unknown[] } {
   const value = ctx.inputs.get(candidate);
   if (!value || !Array.isArray(object(value).messages)) throw new Error("只能访问本任务材料");
@@ -40,6 +42,12 @@ function message(ctx: ToolContext, candidate: string, i: number): unknown {
   const value = record(ctx, candidate).messages[i];
   if (!value) throw new Error("消息索引不存在");
   return value;
+}
+function tracePathHint(sources: ReturnType<typeof evidenceSources>) {
+  const paths = sources.filter(source => source.kind === "text"), shown = paths.slice(0, 8)
+    .map(source => ({ path: source.path, chars: source.text.length }));
+  while (JSON.stringify(shown).length > 1200) shown.pop();
+  return `路径不存在；可用文本路径 ${JSON.stringify(shown)}（共${paths.length}条）。直接按真实路径补读所缺范围，已读内容复用原证据；只在目录未包含目标时读取父路径或根目录。`;
 }
 export function images(value: unknown): ToolContent[] {
   if (typeof value === "string") {
@@ -152,7 +160,7 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
     await stdout.close();
     await stderr.close();
   }
-  const outputArtifacts = [];
+  const outputArtifacts = [], diagnosticArtifacts = [];
   for (const [name, file] of [
     ["script", script],
     ["stdout", outPath],
@@ -162,7 +170,7 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
     if (size > 64 * 1024 * 1024) throw new Error("代码输出超过 64 MiB；请在脚本中生成精简结果");
     const artifact = await ctx.artifacts.put(`${id}.${name}`, await readFile(file));
     ctx.audit.artifacts.push(artifact);
-    outputArtifacts.push(artifact);
+    diagnosticArtifacts.push(artifact);
   }
   const workspace = await realpath(ctx.workdir);
   const errors: ValidationIssue[] = [];
@@ -179,15 +187,18 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
         actual: (error as NodeJS.ErrnoException).code || null, message: errorText(error) });
     }
   }
-  const out = (await readFile(outPath, "utf8")).slice(0, ctx.policy.maxOutputChars),
-    err = (await readFile(errPath, "utf8")).slice(0, ctx.policy.maxOutputChars);
+  const out = await readFile(outPath, "utf8"), err = await readFile(errPath, "utf8");
+  // Complete logs are already visible below. Only truncated logs need a separate read entry.
+  outputArtifacts.push(...diagnosticArtifacts.filter(artifact =>
+    artifact.name.endsWith(".stdout") && out.length > ctx.policy.maxOutputChars ||
+    artifact.name.endsWith(".stderr") && err.length > ctx.policy.maxOutputChars));
   return { ...textResult({
     exit_code: exitCode,
     timed_out: timedOut,
     cancelled: signal.aborted,
     duration_seconds: (Date.now() - started) / 1000,
-    stdout: out,
-    stderr: err,
+    stdout: out.slice(0, ctx.policy.maxOutputChars),
+    stderr: err.slice(0, ctx.policy.maxOutputChars),
     artifacts: outputArtifacts,
     ...(errors.length ? { errors } : {}),
   }), ...(exitCode !== 0 || timedOut || signal.aborted || errors.length > 0 ? { isError: true } : {}) };
@@ -195,6 +206,43 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
 export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
+  {
+    name: "edit_json",
+    fileWriter: true,
+    inputSchema: schema({ path: str, set_json: str, append_json: str,
+      remove_fields: { type: "array", items: str } }, ["path"]),
+    async execute(ctx, value) {
+      const args = value as { path: string; set_json?: string; append_json?: string; remove_fields?: string[] };
+      if (path.basename(args.path) !== args.path || !args.path.endsWith(".json"))
+        throw new Error("JSON 草稿使用工作目录内的单个文件名，不含目录");
+      const workspace = await realpath(ctx.workdir), file = path.join(workspace, args.path);
+      const decode = (text: string) => {
+        const result = JSON.parse(text);
+        if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("JSON 草稿和字段更新必须为对象");
+        return result as Record<string, unknown>;
+      };
+      let draft: Record<string, unknown> = {};
+      try {
+        if (await realpath(file) !== file) throw new Error("JSON 草稿不能使用符号链接");
+        draft = decode(await readFile(file, "utf8"));
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      const set = decode(args.set_json ?? "{}"), append = decode(args.append_json ?? "{}");
+      draft = { ...draft, ...set };
+      for (const [key, rows] of Object.entries(append)) {
+        const prior = Object.hasOwn(draft, key) ? draft[key] : [];
+        if (!Array.isArray(rows) || !Array.isArray(prior)) throw new Error(`append_json 的 ${key} 与原字段均须为数组`);
+        draft = { ...draft, [key]: [...prior, ...rows] };
+      }
+      for (const key of args.remove_fields ?? []) delete draft[key];
+      // Validate all edits before replacing the file; a malformed edit leaves the prior draft intact.
+      const temp = path.join(workspace, `${randomUUID()}.tmp`);
+      await writeFile(temp, JSON.stringify(draft, null, 2));
+      await rename(temp, file);
+      return textResult({ path: args.path, updated_fields: [...new Set([...Object.keys(set), ...Object.keys(append)])],
+        removed_fields: args.remove_fields ?? [],
+        array_lengths: Object.fromEntries(Object.entries(draft).filter(([, value]) => Array.isArray(value)).map(([key, value]) => [key, (value as unknown[]).length])) });
+    },
+  },
   { name: "inspect_material",
     inputSchema: SUBMISSION_FILE_SCHEMA,
     async execute(context, value, signal) {
@@ -310,8 +358,16 @@ export const builtinTools: ExecutableTool[] = [
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
       const path = args.path || undefined;
       const selected = selectEvidenceSource(sources, path);
-      if (!selected) throw new Error("路径不存在；先省略 path 读取该消息，再选择真实字段路径");
+      if (!selected) throw new Error(tracePathHint(sources));
       const { source, start, end: selectionEnd } = selected;
+      // A fully displayed serialized leaf also covers its decoded text. Partial JSON
+      // and equal values at other paths do not establish that physical coverage.
+      const requiredText = ctx.requiredReads?.some(read => read.candidate === args.candidate &&
+        read.message_index === args.message_index && read.kind === "text" && read.path === source.path);
+      const jsonLeaf = source.kind === "text" && !requiredText
+        ? selectEvidenceSource(sources.filter(item => item.kind === "json"), source.path) : undefined;
+      const readInJson = jsonLeaf && traceReadCoverage(presentedAudit(ctx), { candidate: args.candidate, message_index: args.message_index,
+        kind: "json", path: jsonLeaf.source.path, start: jsonLeaf.start, end: jsonLeaf.end }).covered;
       const totalChars = selectionEnd - start;
       if (path !== undefined && (args.source_offset ?? 0) > 0) throw new Error("非零 source_offset 仅用于整条消息的文本路径目录，读取具体路径时使用正文 offset");
       const offset = args.offset ?? 0;
@@ -321,13 +377,37 @@ export const builtinTools: ExecutableTool[] = [
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
       const showDirectory = path === undefined;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
+      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredText ? ctx.audit : presentedAudit(ctx), {
+        candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
+        start: start + offset, end: start + end,
+      });
+      // A deliberately bounded reread is a context check; do not remove its conditions
+      // just because the same characters appeared in separate earlier responses.
+      const wholeContext = path !== undefined && args.max_chars !== undefined && args.max_chars <= 1800;
       const page = (end: number) => {
         const evidence = cite(registeredInputId(ctx, args.candidate), args.message_index, source, start + offset, start + end);
         const quotable = !!evidence.quote && !overlapsImagePlaceholder(source.text, start + offset, start + end);
+        const { covered, missing } = coverage(end);
+        const alreadyRead = quotable && covered;
+        const reused: { start: number; end: number }[] = [];
+        let cursor = start + offset;
+        for (const gap of missing) {
+          if (gap.start > cursor) reused.push({ start: cursor, end: gap.start });
+          cursor = gap.end;
+        }
+        if (cursor < start + end) reused.push({ start: cursor, end: start + end });
+        const { quote, ...coordinates } = evidence;
         return {
           source: { kind: source.kind, path: source.path },
           ...(path !== undefined ? { selection_path: path } : {}),
-          evidence: quotable ? [displayEvidence(evidence)] : [],
+          ...(alreadyRead ? { already_read: true } : {}),
+          evidence: !quotable ? [] : wholeContext ? [displayEvidence(evidence)] : alreadyRead ? [displayEvidence(quote.length > 400
+            ? { ...coordinates, quote_preview: quote.slice(0, 200) } : evidence)] : missing.map(range =>
+              displayEvidence(cite(registeredInputId(ctx, args.candidate), args.message_index, source, range.start, range.end))),
+          ...(quotable && !wholeContext && !alreadyRead && reused.length ? { reused_evidence: reused.map(range => {
+            const { quote: _quote, ...reference } = cite(registeredInputId(ctx, args.candidate), args.message_index, source, range.start, range.end);
+            return { ...displayEvidence(reference), offset: range.start - start, end_offset: range.end - start };
+          }) } : {}),
           // Text is shown once, paired with its ID; image placeholders have no evidence ID.
           ...(!quotable ? { text: evidence.quote } : {}),
           offset, next_offset: end, total_chars: totalChars, has_more: end < totalChars,
@@ -348,10 +428,10 @@ export const builtinTools: ExecutableTool[] = [
         }
       }
       const end = fitted.end, result = textResult(fitted.value);
-      if (end > offset) ctx.audit.traceReads.push({
+      if (end > offset && !fitted.value.already_read) ctx.audit.traceReads.push(...coverage(end).missing.map(range => ({
         candidate: args.candidate, message_index: args.message_index,
-        kind: source.kind, path: source.path, start: start + offset, end: start + end,
-      });
+        kind: source.kind, path: source.path, ...range,
+      })));
       return result;
     },
   },
@@ -362,6 +442,8 @@ export const builtinTools: ExecutableTool[] = [
         candidate: str,
         query: { type: "string", minLength: 1, maxLength: 500 },
         scope: { enum: ["all", "tool_returns"] },
+        message_index: { type: ["integer", "null"], minimum: 0 },
+        path: { type: "string" },
         offset: index,
       },
       ["candidate", "query"],
@@ -371,33 +453,81 @@ export const builtinTools: ExecutableTool[] = [
         candidate: string;
         query: string;
         scope?: "all" | "tool_returns";
+        message_index?: number | null;
+        path?: string;
         offset?: number;
       };
       const offset = args.offset ?? 0;
-      const matches: { path: string; evidence: ReturnType<typeof cite>; read: TraceRead }[] = [];
+      type Excerpt = { path: string; evidence: ReturnType<typeof cite>; read: TraceRead };
+      const matches: (Excerpt & { context: Excerpt[]; has_more: boolean })[] = [];
       let total = 0;
-      const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }));
+      if (args.message_index != null) message(ctx, args.candidate, args.message_index);
+      const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }))
+        .filter(item => args.message_index == null || item.index === args.message_index);
       const selected = args.scope === "tool_returns" ? messages.filter(({ message }) => {
         const value = object(message);
         return value.role === "tool" || ["function_call_output", "tool_result"].includes(String(value.type));
       }).reverse() : messages;
       selected.forEach(({ message: m, index: i }) => {
-        for (const source of evidenceSources(m)) {
+        const sources = evidenceSources(m);
+        const range = args.path === undefined ? undefined : selectEvidenceSource(sources, args.path);
+        if (args.path !== undefined && !range) {
+          if (args.message_index != null) throw new Error(tracePathHint(sources));
+          return;
+        }
+        // A text match has a precise leaf location; suppress only its serialized
+        // value, preserving distinct JSON key/numeric matches in the same message.
+        const leaves = sources.filter(source => source.kind === "text" &&
+          (args.path === undefined || args.path === "" || source.path === args.path || source.path.startsWith(`${args.path}/`)) &&
+          source.text.includes(args.query));
+        const jsonSources = sources.filter(source => source.kind === "json");
+        const mirrors = range?.source.kind === "text" ? [] : leaves.flatMap(leaf => {
+          const location = selectEvidenceSource(jsonSources, leaf.path);
+          return location ? [{ start: location.end - JSON.stringify(leaf.text).length, end: location.end }] : [];
+        });
+        const searchable = range?.source.kind === "text" ? [range.source] : [...leaves, ...(range ? [range.source] : jsonSources)];
+        for (const source of searchable) {
           const { path: location, text } = source;
-          let start = 0,
+          const from = range?.source === source ? range.start : 0, to = range?.source === source ? range.end : text.length;
+          let start = from,
             position: number;
-          while ((position = text.indexOf(args.query, start)) >= 0) {
+          while ((position = text.indexOf(args.query, start)) >= 0 && position + args.query.length <= to) {
+            if (source.kind === "json" && mirrors.some(mirror => position >= mirror.start && position + args.query.length <= mirror.end)) {
+              start = position + args.query.length;
+              continue;
+            }
             const evidence = cite(
               registeredInputId(ctx, args.candidate), i,
               source,
-              Math.max(0, position - 100),
-              Math.min(text.length, position + args.query.length + 200),
+              Math.max(from, position - 100),
+              Math.min(to, position + args.query.length + 200),
             );
-            if (!overlapsImagePlaceholder(text, Math.max(0, position - 100), Math.min(text.length, position + args.query.length + 200))) {
-              if (total >= offset && matches.length < 20) matches.push({ path: location, evidence, read: {
-              candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
-              start: Math.max(0, position - 100), end: Math.min(text.length, position + args.query.length + 200),
-              } });
+            if (!overlapsImagePlaceholder(text, Math.max(from, position - 100), Math.min(to, position + args.query.length + 200))) {
+              if (total >= offset && matches.length < 20) {
+                // Short neighboring metadata and the source opening often carry
+                // the object/date/unit needed to interpret a distant text hit.
+                const context: Excerpt[] = [];
+                let contextChars = 0;
+                const addContext = (item: typeof source, start: number, end: number) => {
+                  const read = { candidate: args.candidate, message_index: i, kind: item.kind, path: item.path, start, end };
+                  if (context.length >= 4 || contextChars + end - start > 600 || end <= start ||
+                    traceReadCoverage(presentedAudit(ctx), read).covered || overlapsImagePlaceholder(item.text, start, end)) return;
+                  context.push({ path: item.path, evidence: cite(registeredInputId(ctx, args.candidate), i, item, start, end), read });
+                  contextChars += end - start;
+                };
+                if (source.kind === "text") {
+                  if (position - 100 > 200) addContext(source, 0, 200);
+                  const parent = source.path.slice(0, source.path.lastIndexOf("/"));
+                  for (const sibling of sources.filter(item => item.kind === "text" && item !== source && item.text.length <= 180 &&
+                    item.path.slice(0, item.path.lastIndexOf("/")) === parent &&
+                    !/\/(?:id|uid|uuid|ref|type|role|call_id|mimeType|mime_type|serial_number)$/u.test(item.path)))
+                    addContext(sibling, 0, sibling.text.length);
+                }
+                matches.push({ path: location, evidence, context, has_more: position - 100 > from || position + args.query.length + 200 < to, read: {
+                  candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
+                  start: Math.max(from, position - 100), end: Math.min(to, position + args.query.length + 200),
+                } });
+              }
               total++;
             }
             start = position + args.query.length;
@@ -406,21 +536,44 @@ export const builtinTools: ExecutableTool[] = [
       });
       if (offset > total) throw new Error("offset 超出检索结果范围");
       const shown = matches;
-      const page = () => textResult({
-        matches: shown.map(({ path, evidence }) => ({ path, evidence: displayEvidence(evidence),
-          read_request: { candidate: args.candidate, message_index: evidence.message_index, path } })),
-        total,
-        next_offset: offset + shown.length,
-        has_more: offset + shown.length < total,
-      });
+      let contextReads: TraceRead[] = [];
+      const page = () => {
+        contextReads = [];
+        const seen = new Set(shown.map(match => match.evidence.evidence_id));
+        const coverage = presentedAudit(ctx);
+        let newChars = 0;
+        const count = (read: TraceRead) => {
+          const missing = traceReadCoverage(coverage, read).missing;
+          newChars += missing.reduce((sum, range) => sum + range.end - range.start, 0);
+          coverage.traceReads.push(read);
+          return missing.length === 0;
+        };
+        const displayed = shown.map(({ path, evidence, read, context, has_more }) => {
+          const alreadyRead = count(read);
+          return { path, evidence: displayEvidence(evidence), already_read: alreadyRead,
+            context: context.filter(item => {
+              if (seen.has(item.evidence.evidence_id)) return false;
+              seen.add(item.evidence.evidence_id); contextReads.push(item.read); count(item.read); return true;
+            }).map(item => ({ path: item.path, evidence: displayEvidence(item.evidence) })),
+            ...(has_more && !alreadyRead ? { read_request: { candidate: args.candidate, message_index: evidence.message_index, path,
+              offset: Math.max(0, read.start - 200), max_chars: 1800 } } : {}) };
+        });
+        return textResult({
+          matches: displayed, new_source_chars: newChars,
+          total, next_offset: offset + shown.length, has_more: offset + shown.length < total,
+        });
+      };
       let result = page();
-      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars && shown.length > 1) {
-        shown.pop();
+      while (result.content[0]!.text!.length > ctx.policy.maxOutputChars) {
+        const contextual = shown.findLast(match => match.context.length);
+        if (contextual) contextual.context.pop();
+        else if (shown.length > 1) shown.pop();
+        else break;
         result = page();
       }
       if (result.content[0]!.text!.length > ctx.policy.maxOutputChars)
         throw new Error("本次工具输出上限无法容纳一条完整检索证据；请用 read_trace 读取已定位的消息");
-      ctx.audit.traceReads.push(...shown.map((match) => match.read));
+      ctx.audit.traceReads.push(...shown.map((match) => match.read), ...contextReads);
       return result;
     },
   },
@@ -604,11 +757,14 @@ export class ToolRuntime {
   }
   budget(maxCalls = this.context.policy.maxToolCalls) {
     const used = this.context.audit.calls - this.context.audit.requiredReadCalls - this.draftWriteCalls;
+    const withinLimit = this.context.draftWriteInCallLimit;
+    const draftRemaining = withinLimit ? Math.min(this.draftWriteRemaining, Math.max(0, maxCalls - used - this.draftWriteCalls)) : this.draftWriteRemaining;
+    const explorationLimit = withinLimit ? maxCalls - this.draftWriteCalls - draftRemaining : maxCalls;
     return {
-      exploration: { used, remaining: Math.max(0, maxCalls - used) },
+      exploration: { used, remaining: Math.max(0, explorationLimit - used) },
       required_reads: { used: this.required.used, remaining: this.required.remaining,
         covered: this.required.covered(this.context.audit) },
-      draft_writes: { used: this.draftWriteCalls, remaining: this.draftWriteRemaining, tools: this.writerNames },
+      draft_writes: { used: this.draftWriteCalls, remaining: draftRemaining, tools: this.writerNames },
     };
   }
   withBudget(result: ToolResult, maxCalls = this.context.policy.maxToolCalls): ToolResult {
@@ -640,9 +796,9 @@ export class ToolRuntime {
   }
   private evidenceQueue: Promise<void> = Promise.resolve();
   execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
-    if (!["read_trace", "search_trace", "view_image", "check_table", "inspect_material"].includes(name))
+    if (!["read_trace", "search_trace", "view_image", "check_table", "inspect_material", "edit_json"].includes(name))
       return this.executeOne(name, args, signal, maxCalls);
-    // Revealing new directories and registering tool choices share one task-local order.
+    // Evidence registration and incremental file edits share one task-local order.
     const pending = this.evidenceQueue.then(() => this.executeOne(name, args, signal, maxCalls));
     this.evidenceQueue = pending.then(() => undefined, () => undefined);
     return pending;
@@ -653,8 +809,8 @@ export class ToolRuntime {
     if (!tool || !validate) throw new Error("Unknown tool");
     const valid = validate(args);
     const mandatory = args !== undefined && valid && name === "read_trace" && this.required.isRequired(args, this.context.audit);
-    const exhausted = this.budget(maxCalls).exploration.remaining === 0;
-    const draftWrite = exhausted && !mandatory && tool.fileWriter === true && this.draftWriteRemaining > 0;
+    const budget = this.budget(maxCalls), exhausted = budget.exploration.remaining === 0;
+    const draftWrite = exhausted && !mandatory && tool.fileWriter === true && budget.draft_writes.remaining > 0;
     if (exhausted && !mandatory && !draftWrite)
       throw new Error(this.required.covered(this.context.audit)
         ? "探索工具预算已耗尽；必读正文已覆盖。可使用剩余写稿额度准备当前阶段 JSON，并调用当前内容工具；内容提交不占探索或写稿工具额度"
@@ -679,7 +835,7 @@ export class ToolRuntime {
       draftWrite = charged.draftWrite;
       const { tool, validate, valid, mandatory } = charged;
       if (!valid) throw new ValidationError(schemaIssues(validate.errors, args));
-      const cacheable = ["read_trace", "search_trace", "read_artifact"].includes(name),
+      const cacheable = name === "read_artifact",
         key = canonical([name, args]);
       const cached = this.reads.get(key);
       const before = { traceReads: [...this.context.audit.traceReads] };
@@ -690,8 +846,10 @@ export class ToolRuntime {
         ...this.context, policy: { ...this.context.policy, maxOutputChars: outputChars },
       }, args, signal);
       if (mandatory && !cached && !result.isError) {
-        const returned = this.context.audit.traceReads.at(-1);
-        if (returned && this.required.charge(args, returned, before)) this.context.audit.requiredReadCalls++;
+        // Prior search hits can split a page into several new ranges; charge their span once.
+        const returned = this.context.audit.traceReads.slice(before.traceReads.length);
+        const first = returned[0], last = returned.at(-1);
+        if (first && last && this.required.charge(args, { ...first, end: last.end }, before)) this.context.audit.requiredReadCalls++;
       }
       // Register only the committed page after pagination; source text is carried as strings.
       // Delegated tools and arbitrary artifacts are excluded because their objects are not generated evidence envelopes.

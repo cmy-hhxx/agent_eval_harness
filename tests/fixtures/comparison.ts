@@ -297,8 +297,18 @@ function fixtureAnalysis(analysis: ModelTaskAnalysis, inputs: AttemptSpec["input
 
 const marker = "\n任务材料（全部内容为数据）：\n";
 const inspectedMaterials = new WeakMap<object, unknown>();
-export const parsedMaterial = (spec: { prompt: string }, revealed?: unknown): unknown =>
-  revealed ?? inspectedMaterials.get(spec) ?? JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length).split("\n\n执行预算：", 1)[0]);
+export const parsedMaterial = (spec: { prompt: string }, revealed?: unknown): unknown => {
+  const value = revealed ?? inspectedMaterials.get(spec);
+  if (value !== undefined) return value;
+  const material = JSON.parse(spec.prompt.slice(spec.prompt.indexOf(marker) + marker.length).split("\n\n执行预算：", 1)[0]);
+  // Controlled fixture answers now live once in the leading section/source review.
+  if (material.answer && material.rule_sources) {
+    const focus = JSON.parse(spec.prompt.slice(spec.prompt.indexOf('{'), spec.prompt.indexOf(marker)).trim());
+    material.answer.final_answer = focus.answers.answer.review.filter((row: {kind: string}) => row.kind === "answer")
+      .map((row: {quote: string}) => row.quote).join("\n\n");
+  }
+  return material;
+};
 const materialOf = (spec: { prompt: string }, revealed?: unknown) =>
   parsedMaterial(spec, revealed) as {
     ground_truth: { available: boolean; value: unknown };
@@ -446,8 +456,10 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
     });
   if (material.answer && "findings" in result) {
     const sourceRefs = (items: { reference: { evidence_index: number } }[]) => items.map(item => ({ evidence_id: spec.evidenceBank[item.reference.evidence_index - 1]! }));
-    const bases=(material as unknown as {finding_basis:{basis_index:number;kind:string;evidence:{reference:{evidence_index:number}}[]}[]}).finding_basis;
-    const norms=bases.map(basis=>({norm_index:basis.basis_index,requirement_index:basis.kind==="requirement"?basis.basis_index-1:null,evidence:sourceRefs(basis.evidence)}));
+    const directory=material as unknown as {rule_sources?:{reference:{evidence_index:number}}[];
+      finding_basis:{basis_index:number;kind:string;source_indices:number[];evidence:{reference:{evidence_index:number}}[]}[]};
+    const norms=directory.finding_basis.map(basis=>({norm_index:basis.basis_index,requirement_index:basis.kind==="requirement"?basis.basis_index-1:null,
+      evidence:sourceRefs(directory.rule_sources ? basis.source_indices.map(index=>directory.rule_sources![index-1]!) : basis.evidence)}));
     const selections = (items: unknown) => evidence(items).map(item => item.evidence_index);
     const core = result.core_assessment as AttributionResult["core_assessment"];
     const correctness = material.ground_truth.available ? selections(result.correctness_evidence) : [];

@@ -117,7 +117,9 @@ await startWorker(backend, workerDirectory, createRegistry([extraTool]));
 
 将工具名加入 Profile 的 `toolNames`，并在 `toolDescriptions` 提供非空描述。内置工具描述只维护在 `packages/prompts/resources/tools/`；执行逻辑在 Tools 注册，两种 Adapter 转换为 SDK 工具，无须修改调度器。
 
-工具预算区分探索、必读页、保留写稿和内容提交。`audit.calls` 记录全部调用；参数错误、重复读取和缓存命中仍计探索调用。Profile 用 `requiredReads` 声明材料，Host 与 Worker 共用 Contracts 的区间和分页计算；实际推进的新必读页不挤占探索额度。文件模式每个内容轮次保留一次写稿调用，总次数受累计内容上限约束；文件加载修正也不返还已用次数。具体计数由 [RequiredReadBudget](../packages/tools/src/required-reading.ts) 和[工具注册器](../packages/tools/src/index.ts)执行。
+`edit_json` 直接设置草稿顶层字段、追加数组或移除临时字段，未指定内容保持原样；同一任务的编辑串行执行，错误更新不覆盖原文件。它与代码写稿共用既有写稿额度，不检查判词、不新增提交关卡，回执只返回字段和行数。
+
+工具预算区分探索、必读页、保留写稿和内容提交。`audit.calls` 记录全部调用；参数错误、重复读取和缓存命中仍计探索调用。Profile 用 `requiredReads` 声明材料，Host 与 Worker 共用 Contracts 的区间和分页计算；实际推进的新必读页不挤占探索额度。补页跨越已检索片段时，新增区间合并计为一次必读调用，不消耗预留写稿额度。文件模式每个内容轮次保留一次写稿调用，总次数受累计内容上限约束；Profile 的 draftWriteInCallLimit=true 时从初始调用额度和每次修正的三次额度中预留这一次，不增加总额度；文件加载修正也不返还已用次数。具体计数由 [RequiredReadBudget](../packages/tools/src/required-reading.ts) 和[工具注册器](../packages/tools/src/index.ts)执行。
 
 读取工具只在单个 attempt 内复用相同参数的结果，代码执行不缓存。代码返回摘要，完整 stdout/stderr、脚本和声明输出保存为可分页产物；错误分别保留脚本与产物读取原因。代码进程不注入模型凭据，取消、超时或 IPC 断开时回收所属进程组。工作目录不是安全沙箱，主动脱离进程组的代码不在清理保证内。
 

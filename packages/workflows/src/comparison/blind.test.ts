@@ -105,7 +105,7 @@ test("criteria and attribution bind the real nested norm even when its identity 
   const shown = attribution.modelInput!.answer as { initial_material: unknown[];
     instruction_sources: { content: string; evidence: { quote_preview?: string; reference: unknown }[] }[];
     criterion_instruction_sources: Record<string, { quote_preview?: string; has_more?: boolean; reference: { evidence_id: string } }[]> };
-  assert.equal(shown.instruction_sources[0]!.content, blindMaterials(candidates).value(norm));
+  assert(!Object.hasOwn(shown.instruction_sources[0]!, "content"), "full originals stay behind their real source coordinates");
   assert.equal(shown.instruction_sources[0]!.evidence[0]!.quote_preview, blindMaterials(candidates).value(norm.slice(0, 200)));
   assert(shown.instruction_sources[0]!.evidence[0]!.reference);
   const boundNorm = shown.criterion_instruction_sources.r2![0]!;

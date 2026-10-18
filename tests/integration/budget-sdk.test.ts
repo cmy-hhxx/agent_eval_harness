@@ -50,7 +50,7 @@ for (const engine of ["pi", "prime"] as const)
         toolNames: ordinaryNames, fileSubmission: true,
         toolDescriptions: { read_trace: "Read original source.", search_trace: "Locate original source.", calculate: "Calculate exactly.",
           execute_code: "Write the JSON file.", submit_evaluation_file: "Submit a JSON file." },
-        renderPrompt: () => "Read the source and submit a score.", requestSchema: { type: "object" },
+        renderPrompt: () => `Already displayed source: ${material}. Read the source and submit a score.`, requestSchema: { type: "object" },
         submissionSchema: { type: "object", additionalProperties: false, required: ["score"], properties: { score: { type: "number" } } },
         requiredReads: () => mandatory ? [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length }] : [],
       };
@@ -66,6 +66,10 @@ for (const engine of ["pi", "prime"] as const)
           if (requests === 3 + Number(mandatory))
             assert.match(JSON.stringify(payload.input), /FileNotFoundError/,
               "the actual failed writer returns its script error before the same SDK gets one correction credit");
+          if (requests === 7 + Number(mandatory)) {
+            const last = (payload.input as Record<string, unknown>[]).findLast(item => item.type === "function_call_output");
+            assert(String(last?.output).includes('"new_source_chars":0'), "initial display ranges reach both SDK tool loops");
+          }
           assert(!tools.some(tool => tool.name === "submit_evaluation"));
           const fileTool = tools.find(tool => tool.name === "submit_evaluation_file")!;
           const description = String(fileTool.description);
@@ -107,7 +111,9 @@ for (const engine of ["pi", "prime"] as const)
           agents: new AgentRegistry([{ id: "budget", profiles: { default: profile } }]), repository,
           taskSource: { id: "budget", bind: (task, inputs) => {
             const id = task.inputIds.answer;
-            return { agent: "budget", profile: "default", request: { input: {}, sources: {
+            return { agent: "budget", profile: "default",
+              presentedReads: [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length }],
+              request: { input: {}, sources: {
               answer: { id, value: inputs[id] },
             } } };
           } },
@@ -153,10 +159,7 @@ for (const engine of ["pi", "prime"] as const)
         const normProof = cite(request.sources.answer.id, 1, normSource, 0, normSource.text.length);
         Object.assign(request.input.answer as object, { final_evidence: [finalProof] });
         const norms = setFixtureNormDirectory(request);
-        const fileProfile={...attributionProfile,fileSubmission:true,jsonStringSubmission:false,toolDescriptions:{
-          ...Object.fromEntries(Object.entries(attributionProfile.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
-          submit_evaluation_file:"Submit the complete evaluation JSON file.",
-        }};
+        const fileProfile={...attributionProfile,draftWriteInCallLimit:false};
         const registry = new AgentRegistry([{ id: "attribution", profiles: { default: fileProfile } }]);
         const analysis = request.input.task_analysis as unknown as TaskAnalysis;
         const modelAnalysis = { task_type: analysis.task_type, goal: analysis.goal,
@@ -201,15 +204,15 @@ for (const engine of ["pi", "prime"] as const)
         assert.deepEqual(valid.findings[findingIndex]!.context_evidence, [normProof],
           "the selected own-rule basis retains its complete norm separately");
         assert.equal(draft.strengths[findingIndex]!.evidence_status, "established");
-        draft.strengths[findingIndex]!.basis_index = null;
+        draft.strengths[findingIndex]!.basis_index = 99999;
         assert.throws(() => registry.resolve(binding, draft, { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] }),
-          (error: unknown) => error instanceof ValidationError && error.issues!.length > 0 && error.issues!.every(issue =>
-            issue.code === "finding_norm_unknown" && issue.path === `/strengths/${findingIndex}/basis_index`),
-          "the schema accepts null, but business validation requires uncertain for an unknown norm");
+          (error: unknown) => error instanceof ValidationError && error.issues!.some(issue =>
+            issue.code === "finding_basis_invalid" && issue.path === `/strengths/${findingIndex}/basis_index`) &&
+            error.issues!.every(issue => issue.path === `/strengths/${findingIndex}/basis_index`),
+          "a nonexistent directory entry is rejected without changing the submitted judgment");
         const submissions = ["submit_evaluation_file"];
         const allTools = [...attributionProfile.toolNames, ...submissions];
-        const writeDraft = (value: unknown) => ({ language: "python",
-          code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(value))}, encoding='utf-8')` });
+        const writeDraft = (value: unknown) => ({ path: "evaluation.json", set_json: JSON.stringify(value) });
         const frames = (payload: Record<string, unknown>) => {
           const outputs = api === "openai-completions"
             ? (payload.messages as Record<string, unknown>[]).filter(item => item.role === "tool").map(item => String(item.content))
@@ -230,7 +233,7 @@ for (const engine of ["pi", "prime"] as const)
             const history = frames(payload), budget = object(history.filter(frame => frame.budget).at(-1)?.budget ?? {});
             const contentFeedback = history.filter(frame => Array.isArray(frame.errors) && frame.budget &&
               Object.hasOwn(object(frame.budget), "content_remaining"));
-            assert.deepEqual(names, current === 7 ? ["execute_code", ...submissions]
+            assert.deepEqual(names, current === 7 ? ["execute_code", "edit_json", ...submissions]
               : current >= 8 ? submissions : allTools,
               `request ${current}: file submission and protected draft writes follow their independent budgets`);
             assert(!names.includes("submit_evaluation"), "built-in attribution never exposes direct nested JSON arguments");
@@ -244,7 +247,7 @@ for (const engine of ["pi", "prime"] as const)
             assert.equal(object(object(object(contentSchema.properties).strengths).items).type, "object");
             if (current === 3) {
               const errors = history.flatMap(frame => Array.isArray(frame.errors) ? frame.errors : []);
-              assert(errors.some(value => object(value).code === "finding_norm_unknown" &&
+              assert(errors.some(value => object(value).code === "finding_basis_invalid" &&
                 object(value).path === `/strengths/${findingIndex}/basis_index`));
               assert.equal(budget.content_remaining, 3, "one rejected file consumes one of the four submissions allowed by three repairs");
               assert.equal(object(budget.exploration).remaining, 4);
@@ -258,7 +261,7 @@ for (const engine of ["pi", "prime"] as const)
               assert.equal(object(budget.exploration).used, 5, "the initial writer and four repair exploration calls are charged");
               assert.equal(object(budget.exploration).remaining, 0);
               assert.deepEqual(budget.draft_writes, { used: current === 7 ? 0 : 1,
-                remaining: current === 7 ? 1 : 0, tools: ["execute_code"] });
+                remaining: current === 7 ? 1 : 0, tools: ["execute_code", "edit_json"] });
               assert.equal(contentFeedback.length, 1, "exploration adds no content rejection or repair");
               assert.equal(object(contentFeedback[0]!.budget).content_remaining, 3,
                 "content feedback retains the cumulative ledger independently of exploration-only budget frames");
@@ -267,7 +270,7 @@ for (const engine of ["pi", "prime"] as const)
               "an exhausted code call is rejected without creating writer credit");
             let name: string, args: Record<string, unknown>;
             if (current === 1) {
-              name = "execute_code"; args = writeDraft(draft);
+              name = "edit_json"; args = writeDraft(draft);
             } else if (current === 2) {
               name = "submit_evaluation_file"; args = { path: "evaluation.json" };
             } else if (current === 3 || current === 5) {
@@ -277,7 +280,7 @@ for (const engine of ["pi", "prime"] as const)
             } else if (current === 6) {
               name = "calculate"; args = { operation: "add", operands: ["2", "2"] };
             } else if (current === 7) {
-              name = "execute_code"; args = writeDraft(validDraft);
+              name = "edit_json"; args = writeDraft(validDraft);
             } else if (current === 8) {
               name = "execute_code"; args = { language: "python", code: "raise RuntimeError('exhausted code call must never execute')" };
             } else {
@@ -335,10 +338,8 @@ for (const engine of ["pi", "prime"] as const)
           assert.equal(receipt?.audit.calls, 6, "two real draft writes, three source reads, and one calculation execute; the exhausted extra writer does not run");
           assert.equal(receipt?.audit.requiredReadCalls, 0);
           const textRead = { candidate: "answer", message_index: 2, kind: "text", path: "/content", start: 0, end: final.text.length };
-          const jsonRead = { candidate: "answer", message_index: 2, kind: "json", path: "", start: 0,
-            end: JSON.stringify(original.messages[2], null, 2).length };
-          assert.deepEqual(receipt?.audit.traceReads, [textRead, jsonRead, textRead, textRead, jsonRead],
-            "both searches and the explicit reader retain the original source ranges");
+          assert.deepEqual(receipt?.audit.traceReads, [textRead, textRead],
+            "searches retain original text coordinates; JSON mirrors and already-read responses add no coverage");
           const accepted = receipt!.evaluation as AttributionResult;
           const acceptedFinding = accepted.findings.find(finding => finding.text === "遵守结论优先与 Markdown 规范。")!;
           assert.deepEqual(acceptedFinding.evidence, [finalProof]);

@@ -9,9 +9,9 @@ import example from "./fixtures/example.json" with {type:"json"};
 function fixture(){const request=structuredClone(example.request);setFixtureNormDirectory(request);const audit:ToolAudit={calls:0,requiredReadCalls:0,viewedImages:[],traceReads:[],calculations:[],artifacts:[],evidenceBank:[]};
  return {request,audit,registry:new AgentRegistry([attributionAgent]),binding:{agent:"attribution",profile:"default",request},
  draft:attributionSubmission(request,example.result as AttributionResult,audit)};}
-test("direct submission keeps a shallow schema with numeric directory selections",()=>{
+test("saved draft submission keeps a shallow schema with numeric directory selections",()=>{
  const f=fixture(),prepared=prepareFixtureEvidence(f.registry,f.binding),schema=prepared.evaluation.outputSchema as any;
- assert.equal(prepared.evaluation.fileSubmission,false);assert(schema.properties.strengths.items.properties.evidence_indices);
+ assert.equal(prepared.evaluation.fileSubmission,true);assert(schema.properties.strengths.items.properties.evidence_indices);
  assert(!schema.properties.strengths.items.properties.assessment);assert(!schema.properties.strengths.items.properties.problem);
 });
 test("missing flat fields receive the exact current writable field shape",()=>{

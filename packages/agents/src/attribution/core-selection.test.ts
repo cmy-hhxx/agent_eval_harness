@@ -64,14 +64,13 @@ test("bad core selections report every real raw path and only applicable numeric
   assert.deepEqual({ request, draft }, before);
 });
 
-test("a numeric core selector never changes unsupported false or unknown conclusions", () => {
+test("core failure still needs confirmed gaps while uncertainty is preserved with its reason", () => {
   const { request, draft } = fixture();
-  for (const meets_core of [false, null] as const) {
-    const value = { ...draft, core_assessment: { ...draft.core_assessment, meets_core } };
-    const code = meets_core === false ? "core_failure_unsupported" : "core_unknown_unsupported";
-    assert(validateJudgment(request, value, audit).some(issue => issue.code === code));
-    assert.throws(() => resolveJudgment(request,value,audit),error=>error instanceof ValidationError&&error.issues!.some(issue=>issue.code===code));
-  }
+  const failed = { ...draft, core_assessment: { ...draft.core_assessment, meets_core: false } };
+  assert(validateJudgment(request, failed, audit).some(issue => issue.code === "core_failure_unsupported"));
+  const pending = { ...draft, core_assessment: { ...draft.core_assessment, meets_core: null,
+    reason: "局部要求已确认，整体完成情况仍缺核实。" } };
+  assert.equal((resolveJudgment(request, pending, audit) as AttributionResult).core_assessment.meets_core, null);
 });
 
 test("candidate-only requirements remain assessable but cannot determine common core usability", () => {

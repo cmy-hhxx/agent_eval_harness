@@ -30,7 +30,7 @@ for (const engine of ["pi", "prime"] as Engine[])
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 4 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 1, verification: 4 };
       const gateway = await listen(async (req, res) => {
         try {
           assert.equal(req.headers.authorization, req.url!.startsWith("/second/") ? "Bearer second-channel-secret" : "Bearer integration-fixture-secret");
@@ -81,8 +81,8 @@ for (const engine of ["pi", "prime"] as Engine[])
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
           const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
           const descriptions = profile.toolDescriptions;
-          assert.equal(fileSubmission, verification, "only independent verification submits a file");
-          assert.equal(Boolean(directSubmit), !verification, "ordinary evaluation submits directly");
+          assert.equal(fileSubmission, profile.fileSubmission, "SDK tools follow the current profile transport");
+          assert.equal(Boolean(directSubmit), !profile.fileSubmission);
           if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
           for (const tool of tools) {
             if (["submit_evaluation_file", "inspect_material"].includes(tool.function.name)) {
@@ -129,6 +129,7 @@ for (const engine of ["pi", "prime"] as Engine[])
             evaluation: { id: verification ? "comparison" : stage, profile: profile.id,
               systemPrompt: profile.systemPrompt, outputSchema: contentSchema,
               toolNames: profile.toolNames, fileSubmission: profile.fileSubmission, toolDescriptions: profile.toolDescriptions,
+              draftWriteInCallLimit: profile.draftWriteInCallLimit,
               submissionNudge: profile.submissionNudge },
           };
           const disclosed = verification ? messages.filter(message => message.role === "tool" && typeof message.content === "string")
@@ -148,10 +149,10 @@ for (const engine of ["pi", "prime"] as Engine[])
           );
           let name: string, args: unknown;
           const previousCall = messages.flatMap(message => message.tool_calls ?? []).at(-1)?.function.name;
-          if (!verification) {
+          if(attribution && engine === "pi" && !rejected)(evaluation as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;
+          if (!fileSubmission) {
             name = "submit_evaluation";
             args = evaluation;
-            if(attribution && engine === "pi" && !rejected)(args as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;
             if(jsonStringSubmission)args={json:JSON.stringify(args)};
           } else if (previousCall === "execute_code") {
             name = verification && !disclosed ? "inspect_material" : "submit_evaluation_file";

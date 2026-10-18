@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
-import { citationInventory } from "./citations.js";
+import { citationInventory, citationSourceParts } from "./citations.js";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -14,6 +14,25 @@ import type { Candidate, RawInput, TaskData } from "./types.js";
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 
 const audit = { viewedImages: [], traceReads: [] };
+test("split source presentation retains dates, signs and escaped content at readable leaf coordinates", () => {
+  const body = '标题: 抽样结果\n发布时间: 2024-02-03\n摘要: 变化率为-7%，标记为"暂定"，路径C:\\数据。';
+  const raw = { messages: [{ type: "tool_result", output: [
+    { text: "无关前文\n<referencable-result>\nID: 8\n" },
+    { text: body },
+    { text: "补充统计期为2024-01。\n</referencable-result>\n无关后文" },
+  ] }, { role: "assistant", content: "引用[^8]" }] };
+  const source = citationInventory(raw, evidenceInputId, 1).references[0].sources[0];
+  const parts = citationSourceParts(raw, evidenceInputId, source);
+  assert.deepEqual(parts.map(part => part.read_request.path), ["/output/1/text", "/output/2/text"]);
+  assert.equal(parts[0].quote, body);
+  assert.doesNotMatch(parts.map(part => part.quote).join(""), /无关|input_text/u);
+  for (const part of parts) {
+    assert.equal(resolveEvidence(raw, part, "answer", audit, "/evidence", evidenceInputId).quote, part.quote);
+    const read = part.read_request, selected = selectEvidenceSource(evidenceSources(raw.messages[0]), read.path)!;
+    assert.equal(selected.source.text.slice(read.offset, part.end_offset), part.quote);
+  }
+});
+
 test("document groups bind repeated footnote fragments to declared exact URLs across typed leaves", () => {
   const annual = "http://issuer.example/annual.pdf", results = "http://issuer.example/results.pdf";
   const raw = { messages: [{ type: "function_call_output", output: [
@@ -129,10 +148,10 @@ test("long occurrence paragraphs retain complete evidence and expose bounded rea
   assert.equal(restored, paragraph);
 });
 
-test("model materials show context previews with copyable references and candidate-specific complete reads", () => {
+test("deferred answer paragraphs retain context previews and candidate-specific complete reads", () => {
   const inputId = randomUUID(), criteriaId = randomUUID();
   const source = "<referencable-result>\nID: 7\n完整来源正文。\n</referencable-result>";
-  const paragraph = "待核对陈述。".repeat(50) + "[^7]，另一分句。";
+  const paragraph = "待核对陈述。".repeat(3000) + "[^7]，另一分句。";
   const raw: RawInput = { messages: [{ role: "user", content: "核对陈述" },
     { type: "function_call_output", output: source }, { role: "assistant", content: paragraph }] };
   const candidate: Candidate = { batch_id: "b1", case_id: "citation-context", version: "a_fast", name: "A组Fast",
