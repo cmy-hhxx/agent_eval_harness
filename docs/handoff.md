@@ -80,4 +80,4 @@ POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来
 
 `status` 为 `running / finished / interrupted`。样本在日期和配对内按 `batch_id + case_id` 去重；`total_cases - skipped_cases` 为可评测数量。只统计 Comparison：失败和超时计失败，取消和依赖阻塞计排队，预检无法配对计跳过；Rewrite 与 Clustering 不进入该分母。跨 run 去重时按运行中、失败、成功、跳过、排队的优先级归类。
 
-自动化从 Host 检查点生成进度，`publishProgress` 控制是否发送。远端拒绝旧上报者时返回的 HTTP 409 会保留为 `reportError`；上报失败不阻断评测。远端看板在未达每档 300 次额度时，会将当前目录行数与上报范围核对，新增输入或仍有缺配对时不显示完成；达额度后的 ✅ 仅表示当日额度已完成。目录行数不能用于推算精确配对或排队数。远端 Comparison 完成数不表示改写已完成，本地完整交付以[自动化完成条件](automations.md)为准。
+自动化从 Host 检查点生成进度，`publishProgress` 控制是否发送。HTTP 409 等上报错误保留为 `reportError`，不阻断评测。配对额度与交付完成条件见[自动化状态](automations.md#调度与状态)；目录行数不能推算精确配对数，远端 Comparison 完成数也不表示本地润色已结束。

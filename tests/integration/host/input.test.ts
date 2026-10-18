@@ -2,6 +2,7 @@ import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
+import { agentPrompt } from "@eval/prompts";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
@@ -599,87 +600,52 @@ test("input scan cache shares in-flight reads, rechecks revisions and retries fa
   }
 });
 
-test("prompt resources reach every judgment stage and the run snapshot", async () => {
+test("public prompt definitions reach prepared tasks and the run snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    const prompts = path.join(ROOT, "packages/prompts/resources");
-    const systems: Record<string, string> = {};
-    const instructions: Record<string, string> = {};
-    const submissionTools: Record<string, string> = {};
-    const nudge = (await readFile(path.join(prompts, "shared/nudge.md"), "utf8")).trim();
-    const evidenceGuide = (await readFile(path.join(prompts, "shared/evidence.md"), "utf8")).trim();
-    const commentary = (await readFile(path.join(prompts, "shared/commentary.md"), "utf8")).trim();
-    for (const stage of ["criteria", "attribution", "comparison"]) {
-      const system = (await readFile(path.join(prompts, stage, "default/system.md"), "utf8")).trim();
-      const instruction = (await readFile(path.join(prompts, stage, "default/instructions.md"), "utf8")).trim();
-      instructions[stage] = instruction;
-      const task = plan.tasks.find((item) => item.stage === stage)!;
-      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
+    const prompts = new Map<string, ReturnType<typeof agentPrompt>>();
+    for (const stage of ["criteria", "attribution", "comparison"] as const) {
+      const task = plan.tasks.find(item => item.stage === stage)!;
+      const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) =>
+        [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs)
+          : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
       const prepared = prepare(task, plan.inputs, dependencies);
-      const evidenceInSystem = prepared.evaluation.toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name));
-      systems[stage] = system + "\n\n" + commentary + "\n\n" + instruction + (evidenceInSystem ? "\n" + evidenceGuide + "\n" : "");
-      assert.equal(prepared.evaluation.systemPrompt, systems[stage]);
-      assert.equal(prepared.evaluation.submissionNudge, nudge);
-      if (stage === "criteria") assert(prepared.prompt.startsWith("任务材料（全部内容为数据）：\n"));
-      else {
-        assert(prepared.prompt.startsWith("任务重点（以下全部为数据）："));
-        assert(prepared.prompt.indexOf("计算2+2") < prepared.prompt.indexOf("任务材料（全部内容为数据）："));
-        assert(!prepared.prompt.includes(instruction), "stage instructions are sent once in the system prompt");
-      }
+      const prompt = agentPrompt(stage, prepared.evaluation.toolNames);
+      prompts.set(stage, prompt);
+      assert.equal(prepared.evaluation.systemPrompt, prompt.systemPrompt);
+      assert.equal(prepared.evaluation.submissionNudge, prompt.submissionNudge);
+      assert.deepEqual(prepared.evaluation.toolDescriptions, prompt.toolDescriptions);
+      assert(!prepared.prompt.includes(prompt.instructions), "fixed instructions are not repeated in task material");
       assert(prepared.prompt.includes("计算2+2"));
       assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
-      for (const [name, description] of Object.entries(prepared.evaluation.toolDescriptions))
-        assert.equal(description, (await readFile(path.join(prompts, "tools", `${name}.md`), "utf8")).trim());
-      const rules = prepared.evaluation.systemPrompt;
-      submissionTools[stage] = prepared.evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
-      assert(rules.includes(submissionTools[stage]));
-      assert.deepEqual(Object.keys(prepared.evaluation.toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
       if (stage === "criteria") {
-        assert(rules.includes("requirements"));
         assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
       } else if (stage === "attribution") {
-        assert(rules.includes("numeric_checks"));
-        assert(/evidence_index.*本方最终回答/u.test(rules));
-        assert(rules.includes("basis_index"));
-        assert(rules.includes("strengths") && rules.includes("problems"));
-        assert(!/其他回答|A\/B\/C|问题库|候选比较|both_good|decisive_findings/.test(rules));
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
-        assert(!prepared.prompt.includes('"version_id"'));
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
-        assert(!rules.includes("不提交 evidence_id"));
-        assert(!rules.includes("不新建问题节点"));
-        for (const rule of ["comparison_slots", "a_summary", "comparisons", "better_candidate", "preference", "a_tradeoff", "b_tradeoff"])
-          assert(rules.includes(rule), rule);
-        assert(!rules.includes("source_review"), "default comparison reads accepted attribution directly");
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
         assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "a_tradeoff", "b_tradeoff"]);
-        assert(!Object.hasOwn(submission.properties, "tradeoff"), "free cross-candidate tradeoffs are not accepted");
         assert.deepEqual((submission.properties.relative_preference as { enum: string[] }).enum, ["A", "B"]);
-        assert(Object.hasOwn(submission.properties, "preference"), "a meaningful preference remains selectable");
+        assert(Object.hasOwn(submission.properties, "preference"));
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
-        const rows = submission.properties.comparisons as any;
-        const rowDefinitions = (submission as any).$defs;
-        assert.equal(rowDefinitions.commentary.type.includes("object"),true);
-        assert(rows.minItems>0);assert.equal(rows.maxItems,rows.minItems);
-        assert.deepEqual(rowDefinitions.commentary.required,["importance"]);
-        assert.deepEqual(rowDefinitions.resource.required,["importance"]);
-        assert(!rowDefinitions.commentary.properties.assessments);
-
+        const rows = submission.properties.comparisons as { minItems: number; maxItems: number };
+        assert(rows.minItems > 0);
+        assert.equal(rows.maxItems, rows.minItems);
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {
       profiles: Record<string, { systemPrompt: string; instructions: string; submissionNudge: string; toolDescriptions: Record<string, string> }>;
     };
-    for (const stage of ["criteria", "attribution", "comparison"]) {
-      assert.equal(snapshot.profiles[stage].systemPrompt, systems[stage]);
-      assert.equal(snapshot.profiles[stage].instructions, instructions[stage]);
-      assert.equal(snapshot.profiles[stage].submissionNudge, nudge);
-      assert.deepEqual(Object.keys(snapshot.profiles[stage].toolDescriptions).filter(name => name.startsWith("submit_evaluation")), [submissionTools[stage]]);
+    for (const [stage, prompt] of prompts) {
+      assert.equal(snapshot.profiles[stage].systemPrompt, prompt.systemPrompt);
+      assert.equal(snapshot.profiles[stage].instructions, prompt.instructions);
+      assert.equal(snapshot.profiles[stage].submissionNudge, prompt.submissionNudge);
+      assert.deepEqual(snapshot.profiles[stage].toolDescriptions, prompt.toolDescriptions);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

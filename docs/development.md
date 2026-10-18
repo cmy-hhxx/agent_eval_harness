@@ -4,65 +4,60 @@
 
 ## 修改路径
 
-先读 README 与 AGENTS.md，再按任务进入下表。行为变化同步实现、当前调用方、测试和文档；删除被替代入口。模块依赖由架构测试检查，评测语义由阶段测试和真实样本复核。
-
-| 修改内容 | 源码入口 | 核对内容 |
-|---|---|---|
-| 提示词、材料文案、工具描述 | [Prompts](../packages/prompts/README.md) | 实际发送文本、工具覆盖、评测器标识 |
-| Agent 业务校验 | `packages/agents/src/<agent>/` | 请求、提交、正式结果及同目录测试 |
-| Schema | [schemas/](../schemas/README.md) | Profile、解析与校验、当前 fixture |
-| 输入、盲测、组合、改写回填、报告 | `packages/workflows/src/comparison/` | 输入映射、依赖、结果与恢复 |
-| 文件、锁、日志 | `packages/data/` | 持久化顺序、重复写入、恢复与竞态 |
-| 调度、Worker、SDK | `packages/host/`、`packages/runtime/` | 提交、预算、断连、回收与双 SDK 回归 |
-| CLI 与本机看板 | `apps/host/`、[PRODUCT.md](../PRODUCT.md) | 配置解析、读取投影、控制及界面 |
-| Eris | [修改 Eris](../agent/README.md#修改-eris) | 会话、工具、网关模型与浏览器回归 |
-| 安装、构建、依赖 | `scripts/`、锁文件 | 独立构建、doctor 与干净安装 |
-| 离线汇报 | [evaluation-report/](../evaluation-report/README.md) | 静态快照、来源与独立构建 |
-
-## 当前契约
-
-不维护旧入口或旧格式。A / B 输入适配、Pi / Prime SDK 适配和同 run 续跑是当前功能，不能当作兼容代码删除。项目版本与冻结统计契约以 [AGENTS.md](../AGENTS.md#当前契约优先) 为准；影响判词的改动同步更新 [`evaluatorVersion`](contract.md#评测器版本标识)。纯文档修正、无行为变化的搬迁或未调用代码清理无需更新判词标识。
+先定位职责，再同步实现、当前调用方、测试与文档。源码入口见模块地图；模型可见文字只改 [Prompts](../packages/prompts/README.md)，字段形状只改 [Schema](../schemas/README.md)，界面约束只写 [PRODUCT](../PRODUCT.md)。
 
 ### 禁止项目哈希与兼容层
 
-遵守 [AGENTS.md 的当前契约](../AGENTS.md#当前契约优先)：使用业务标识、持久化 UUID 和必要的结构、引用及读写竞态检查，不引入项目自有摘要、源码指纹、跨 run 结果缓存或旧格式转换。输入只留在源文件；状态和结果的保存边界见[运行产物](usage.md#运行产物)。
+[AGENTS.md](../AGENTS.md#当前契约优先)维护版本、冻结统计契约及兼容限制。A / B 输入适配、双 SDK 和同 run 续跑是当前功能。纯文档与无行为变化的测试整理不更新 `evaluatorVersion`；影响判词的变更必须更新。
 
 ## 验证
 
-| 时机 | 命令与范围 |
+构建前停止活跃评测任务；构建不是整个应用的原子切换。
+
+| 修改范围 | 检查 |
 |---|---|
-| 开发中 | `npm run typecheck`；`npm test`（包内单元、架构与脚本测试） |
-| 提交前、契约或跨模块收尾 | `npm run test:full`，追加 Eris 单元与 Host 集成回归 |
-| Worker / SDK 变化 | `npm run test:integration`，运行直接 SDK 与 Runtime 集成 |
-| 安装、构建或依赖变化 | `node scripts/test-clean.mjs`；`npm run doctor` 检查本机运行环境 |
-| Eris 上游、浏览器或性能变化 | [Agent 验证命令](../agent/README.md#验证) |
-| 离线汇报变化 | [汇报模块验证](../evaluation-report/README.md#维护与构建) |
+| 开发中 | `npm run typecheck`、`npm test` |
+| 提交前、契约或跨模块收尾 | `npm run test:full`，追加 Eris 单元与 Host 集成 |
+| Worker / SDK | `npm run test:integration` |
+| 安装、构建、依赖 | `node scripts/test-clean.mjs`；本机环境用 `npm run doctor` |
+| Eris 上游、浏览器、性能 | [Eris 验证](../agent/README.md#验证) |
+| 离线汇报 | [汇报验证](../evaluation-report/README.md#维护与构建) |
 
-测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test` 与 `test:full` 的测试文件并行上限为 4，避免 Worker 子进程争抢资源触发既有时限；不通过延长时限或自动重跑测试兜底。`npm test`、`test:full`、`test:integration` 均先重建应用；构建前先确认没有活跃评测任务。`typecheck` 检查未使用的局部变量和参数，未调用导出还需搜索跨包引用、动态加载、回调和测试。
+测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建；前两者限制测试文件并发，避免 Worker 子进程挤占时限。失败应定位原因，不自动重跑或延长时限。
 
-每轮收尾及契约或目录变更后，清理失效用例、旧字段和重复 fixture/helper；保留当前行为需要的测试，不删除真实输入、结果或缓存。模型提交 fixture 使用当前扁平载荷，见[归因提交](../tests/fixtures/attribution-submission.ts)与[对比提交](../tests/fixtures/comparison-submission.ts)；内部判断使用[判定 fixture](../tests/fixtures/attribution-judgment.ts)。SDK 工具 Schema 测试使用当前提交格式，正式结果格式由 Agent 与导出测试覆盖。独立核验 fixture 显式声明首查事实和最终选择，不从上游 met/core/ranking 或复核请求反推。Worker fixture 使用具名选项和有界等待，构造失败释放资源。
+测试只覆盖当前可观察行为：
 
-`test-clean` 只清理自己的临时 checkout。失败排查可加 `--debug` 保留临时目录及 `diagnostic.json`，记录复制、安装与构建阶段的文件状态。
+- 修复确定性错误时，保留最小复现及对应正例；恢复、竞态、数据完整性和冻结契约的用例不能因篇幅长而删除。
+- 删除被替代入口、旧格式、重复断言和未使用 fixture。不要用匹配源码片段或提示词句子代替行为验证。
+- 通用提交样例使用 [tests/fixtures](../tests/fixtures/)；业务边界样例留在所属模块。只在确有重复时共享 helper，不建立通用测试框架。
+- SDK 测试验证实际发出的提交格式；内部 canonical 判断和正式导出分别测试。独立核验显式构造首查与最终选择，不从待核判词反推。
+- 临时资源注册清理，等待有界；不删除真实输入、结果或缓存。
+
+类型检查包含未使用局部变量与参数；删除导出前还须检查公开入口、动态调用和测试引用。`test-clean` 只清理自身临时 checkout，`--debug` 可保留诊断。
 
 ## 构建与依赖
 
-```bash
-npm run bootstrap
-npm run build
-npm run build:pi
-npm run build:prime
-```
+安装和完整构建见 [README](../README.md#最短运行路径)。`build:pi` / `build:prime` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
 
-工具版本以 [mise.toml](../mise.toml) 为准。根 workspace、两套 vendor npm workspace 与 Prime Python runtime 分别使用锁文件和依赖树。公共代码工具使用不含第三方依赖的根 `.venv`；Prime 使用独立 Python 环境。修改 vendor 同步 [upstream.json](../vendor/upstream.json) 的 `local_changes` 并重建，不手改 `dist/`。
+根 workspace、两套 vendor workspace 和 Prime Python runtime 使用独立依赖树。公共代码工具用根 `.venv`。修改 vendor 必须登记 `local_changes` 并重建。
 
-`build:app` 先在 `.runtime/` 编译 TypeScript 和复制资源，成功后逐文件替换 `dist/` 并清理陈旧文件；这一编译阶段失败不改变现有产物。随后单独构建 Eris 的 Runtime 桥接与 Web 资源。整个构建不是原子切换，后续失败可能留下已更新的部分产物，运行中的进程也可能混用新旧模块；应停止活跃任务后构建，再启动服务。实现见 [build-app.mjs](../scripts/build-app.mjs)、[build-agent.mjs](../scripts/build-agent.mjs) 和 [publishTree](../scripts/lib.mjs)。
+`build:app` 先在临时目录编译和复制资源，再逐文件发布到 `dist/`，随后构建 Eris。编译阶段失败不改变旧产物，发布或后续失败可能留下部分更新。实现见 [build-app.mjs](../scripts/build-app.mjs)、[build-agent.mjs](../scripts/build-agent.mjs)和 [publishTree](../scripts/lib.mjs)。
 
-Pi 仅保留应用注册的网关模型。`npm --prefix vendor/pi run check:sources` 按[源码检查配置](../vendor/pi/tsconfig.check-sources.json)验证当前源码和公开示例；上游 `check` 包含依赖已裁剪模型目录的测试，不能作为本项目回归入口。使用根 `test:full` 与 `test:integration` 验证应用行为。Prime 的应用构建不下载模型或 MCP 目录，Worker 和直接 SDK 测试均以 `PI_OFFLINE=1` 禁止自动刷新。
+Pi 源码检查用 `npm --prefix vendor/pi run check:sources`；上游 `check` 依赖已裁剪模型目录，不作为本项目回归入口。Prime 构建不下载模型或 MCP 目录，集成测试使用 `PI_OFFLINE=1`。
 
-Eris 普通构建只使用本仓库的 [Deepseek 源码映射](../vendor/deepseek/sources.json)与[局部补丁](../vendor/deepseek/local.patch)。维护命令 `node scripts/vendor-deepseek.mjs <上游仓库>` 才读取外部源码；同步更新选定包的源码、测试及 `vendor/upstream.json`。不引入上游桌面或独立客户端构建。
+Eris 普通构建只读本仓库 [Deepseek 源码映射](../vendor/deepseek/sources.json)与[补丁](../vendor/deepseek/local.patch)。显式 `node scripts/vendor-deepseek.mjs <上游仓库>` 才同步选定源码与测试，不引入上游桌面构建。
 
 ## 文档维护
 
-README 是唯一导航入口，各页面只维护自己的主题：使用指南写操作，数据契约写语义，架构写接口与生命周期，模块地图定位源码，PRODUCT 写界面规则，质量指南写验收方法。Eris、自动化和离线汇报维护各自使用说明，提示词与 Schema 直接链接唯一来源。
+| 内容 | 唯一维护位置 |
+|---|---|
+| 导航与首次安装 | README |
+| 仓库约束 | AGENTS |
+| 操作、恢复、产物 | 使用指南；Eris、自动化和离线汇报各自的指南 |
+| 字段与语义边界 | Schema、数据契约 |
+| 依赖、接口、生命周期 | 架构、模块地图 |
+| 界面与验收 | PRODUCT、评测质量 |
 
-一件事实只解释一次，其他页面引用；默认值、支持类型和字段优先链接配置、Schema 或类型。行为变更同步检查命令、提示词、错误反馈、测试名称、文档链接和锚点。临时计划与验证日志放 `.artifacts/`，长期文档不记录某次测试数量、完成清单或无法维护的外部实现；历史由 Git 保存。历史展示快照须在所属模块标明来源和适用范围，不作为当前规则。
+修改现有条目，不在文末追加补丁说明。同一事实只解释一次；默认值、字段全集和工具参数链接到配置、类型或 Schema。长期文档不记录完成清单、某次测试数量、个人绝对路径或逐次故障经过；历史交给 Git，临时验证放 `.artifacts/`。
+
+文档链接和锚点由架构测试检查；所有项目自有说明须从 README 可达。提示词资源是运行输入，历史研究快照是报告材料，各自按模块入口维护，不与当前操作规则混写。测试能拦截断链，事实过期仍须在每次行为变更时对照实现审查。

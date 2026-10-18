@@ -64,11 +64,7 @@ GitHub 查询日为 **2026-10-13**。已查询的评测相关仓库中，Langfus
 | 我们的工具 | `read_trace`、`search_trace`、`execute_code`、结果提交等 |
 | 我们的校验与存储 | 结构、业务与证据检查；正式结果与恢复状态 |
 
-主线：共同 Criteria → 分别 Attribution → 匿名 Comparison。比较前按需补查一轮归因；正式评语默认经 Rewrite 润色。独立核验与问题聚类按需执行。Pi 是默认执行底座，仓库也支持 Prime。
-
-现有页面保留 30 题、42 场对局，含 37 场正式判决和 5 场待核。案例来源保留 r151/r152，提示词独立展示 r153 快照。固定六题的比较阶段重复和换位均为 5/6 一致，这不是人工准确率，也不代表完整链路的稳定性。
-
-本地依据：`docs/architecture.md`、`docs/quality.md`、`packages/runtime`、`packages/tools`、`packages/workflows/src/comparison`、`vendor/upstream.json` 与 `evaluation-report/README.md`。本次只改报告内容与呈现。
+当前生产流程由仓库数据契约维护，案例与实验来源由汇报模块维护。本研究只保留外部方案的资料快照，不重复维护生产实现和案例统计。
 
 ## 4. 来源
 

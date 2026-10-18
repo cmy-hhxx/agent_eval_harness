@@ -490,5 +490,4 @@ test('默认进入行业流程，各方案图与来源可离线阅读并支持�
  assert.match(page.document.querySelector('.pi-summary').textContent,/把 Pi 任务串成评测流程/);
  assert.equal(page.document.querySelectorAll('.pi-evidence img').length,2);
  assert.match(page.document.querySelector('.pi-crop-github img').alt,/114.7k Stars/);
- assert.match(page.document.querySelector('.research-document').textContent,/这不是人工准确率/);
 });

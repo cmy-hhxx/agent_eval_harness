@@ -62,19 +62,10 @@ test('60 different questions include 40 recent subjective and 20 objective cases
   for (const pair of allPairs) {
     assert.equal(pair.hasStandardAnswer, pair.groundTruth.available);
     assert.equal(pair.presentation.kind, pair.hasStandardAnswer ? '客观题' : '主观题');
-    if (pair.status === 'needs_review') {
-      assert.equal(pair.outcome, 'needs_review');
-      assert.equal(pair.verdict, null);
-      assert.equal(pair.winnerIndex, null);
-      assert.equal(pair.provenance.comparison, null);
-      assert.ok(pair.provenance.review);
-      assert.ok(pair.reviewRequests.length);
-    } else {
-      assert.ok(pair.provenance.comparison);
-      assert.equal(pair.provenance.review, null);
-      assert.equal(pair.outcome, pair.verdict.result);
-      assert.equal(pair.winnerIndex === null ? null : pair.candidates[pair.winnerIndex].version, pair.verdict.winner_version);
-    }
+    assert.ok(pair.provenance.comparison);
+    assert.equal(pair.provenance.review, null);
+    assert.equal(pair.outcome, pair.verdict.result);
+    assert.equal(pair.winnerIndex === null ? null : pair.candidates[pair.winnerIndex].version, pair.verdict.winner_version);
   }
 });
 
@@ -180,27 +171,43 @@ test('optional source audit verifies all standards, full answers, task-linked at
     catch { t.skip(`Original source is unavailable: ${file}`); return; }
   }
   const needed = new Map();
+  const requireRow = (ref, key, id) => {
+    if (!needed.has(ref.file)) needed.set(ref.file, { key, ids: new Set() });
+    assert.equal(needed.get(ref.file).key, key);
+    needed.get(ref.file).ids.add(id);
+  };
   for (const pair of allPairs) {
-    for (const ref of [pair.provenance.result, pair.provenance.criteria, ...pair.candidates.flatMap(candidate => [candidate.provenance.source, candidate.provenance.attribution])]) {
-      if (!needed.has(ref.file)) needed.set(ref.file, new Set());
-      needed.get(ref.file).add(ref.line);
+    const task = states.get(pair.runId).tasks[pair.provenance.comparisonTask.taskId];
+    requireRow(pair.provenance.result, 'comparison_id', pair.id);
+    requireRow(pair.provenance.criteria, 'task_id', task.dependencies.criteria);
+    for (const candidate of pair.candidates) {
+      requireRow(candidate.provenance.source, 'trace_id', candidate.traceId);
+      requireRow(candidate.provenance.attribution, 'task_id', candidate.provenance.task.taskId);
     }
   }
+  // Coordinates describe the captured snapshot; live JSONL files can be reordered.
+  // Match business identities while still verifying every selected row and its content.
   const sources = new Map();
-  for (const [file, lines] of needed) sources.set(file, new Map((await readJsonLines(resolve(root, file), lines)).map(row => [row.line, row.value])));
-  const rowAt = ref => sources.get(ref.file).get(ref.line);
+  for (const [file, { key, ids }] of needed) {
+    const rows = await readJsonLines(resolve(root, file), undefined, value => ids.has(value[key]));
+    const indexed = new Map(rows.map(row => [row.value[key], row.value]));
+    assert.equal(indexed.size, rows.length, `Duplicate source identities: ${file}`);
+    assert.equal(indexed.size, ids.size, `Missing selected source rows: ${file}`);
+    sources.set(file, indexed);
+  }
+  const rowFor = (ref, id) => sources.get(ref.file).get(id);
   const seenIds = new Set();
   for (const item of report.cases) {
     for (const pair of item.pairs) {
       const state = states.get(pair.runId);
-      const formalRow = rowAt(pair.provenance.result);
-      assert.equal(formalRow.comparison_id, pair.id);
-      assert.equal(formalRow.evaluator_version, pair.evaluatorVersion);
-      const formal = pair.status === 'needs_review' ? formalRow.result : formalRow;
+      const task = state.tasks[pair.provenance.comparisonTask.taskId];
+      const formal = rowFor(pair.provenance.result, pair.id);
+      assert.equal(formal.comparison_id, pair.id);
+      assert.equal(formal.evaluator_version, pair.evaluatorVersion);
       assert.deepEqual(pair.originalDecisionBasis, formal.decision_basis);
       assert.equal(pair.presentation.decision.summary, formal.decision_basis.tradeoff);
       assert.equal(pair.comparisons.length, formal.decision_basis.comparisons.length);
-      const criteria = rowAt(pair.provenance.criteria);
+      const criteria = rowFor(pair.provenance.criteria, task.dependencies.criteria);
       assert.deepEqual(pair.presentation.checklist, criteria.result.requirements.filter(requirement => requirement.applies_to.length === 0).map(requirement => requirement.text));
       const criterionGroups = ['requirements', 'scoring_points', 'red_flags'];
       assert.equal(pair.criteria.length, criterionGroups.reduce((count, group) => count + criteria.result[group].length, 0), 'Snapshot retains all three original criterion groups');
@@ -216,7 +223,7 @@ test('optional source audit verifies all standards, full answers, task-linked at
       for (const candidate of pair.candidates) {
         seenIds.add(candidate.inputId);
         const input = state.inputs[candidate.inputId];
-        const raw = rowAt(candidate.provenance.source);
+        const raw = rowFor(candidate.provenance.source, candidate.traceId);
         assert.equal(raw.trace_id, input.trace_id, 'Reordered source lines must retain the exact original trace');
         assert.equal(candidate.provenance.recordedSource.line, input.line);
         assert.equal(raw.case_id, item.caseId);
@@ -226,8 +233,8 @@ test('optional source audit verifies all standards, full answers, task-linked at
         const content = raw.messages[input.final_index].content;
         const fullText = typeof content === 'string' ? content : content.filter(part => typeof part.text === 'string').map(part => part.text).join('\n\n');
         assert.equal(candidate.finalAnswer, fullText, 'Final answer must not be an excerpt');
-        const attribution = rowAt(candidate.provenance.attribution);
-        const dependency = state.tasks[pair.provenance.comparisonTask.taskId].dependencies[candidate.label];
+        const attribution = rowFor(candidate.provenance.attribution, candidate.provenance.task.taskId);
+        const dependency = task.dependencies[candidate.label];
         assert.equal(attribution.task_id, dependency, 'Use the comparison dependency, including reviewed attribution');
         assert.equal(attribution.input_id, candidate.inputId);
         assert.deepEqual(candidate.core, attribution.evaluation.core_assessment);
@@ -242,11 +249,9 @@ test('optional source audit verifies all standards, full answers, task-linked at
           verifyEvidenceExcerpts(candidate[snapshotKey], attribution.evaluation[originalKey], candidate.provenance.attribution, `/evaluation/${originalKey}`);
         }
       }
-      if (pair.status === 'decided') {
-        assert.deepEqual(pair.groundTruth, formal.ground_truth);
-        assert.equal(pair.hasStandardAnswer, formal.has_standard_answer);
-        assert.deepEqual(pair.verdict, Object.values(formal.verdicts)[0]);
-      }
+      assert.deepEqual(pair.groundTruth, formal.ground_truth);
+      assert.equal(pair.hasStandardAnswer, formal.has_standard_answer);
+      assert.deepEqual(pair.verdict, Object.values(formal.verdicts)[0]);
     }
   }
   assert.equal(seenIds.size, report.meta.inputCount, 'Every selected input is verified');

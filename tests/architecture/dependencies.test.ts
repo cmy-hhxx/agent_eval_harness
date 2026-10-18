@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, readdir, access } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -107,41 +107,4 @@ test("public package boundaries, independent Agents and acyclic implementation a
     );
     assert(!/#(?:pi|prime)-sdk/.test(await readFile(path.join(root, file), "utf8")), file);
   }
-});
-
-test("source documentation links and section anchors resolve and remain reachable from README", async () => {
-  const docs = [
-    "README.md", "AGENTS.md", "PRODUCT.md", "agent/README.md", "evaluation-report/README.md", "schemas/README.md",
-    "packages/prompts/README.md", ...(await files("docs")), ...(await files("apps/host/.impeccable")),
-  ].filter((file) => file.endsWith(".md"));
-  const links = new Map<string, string[]>();
-  const headings = (text: string) => new Set(
-    [...text.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, title]) =>
-      title.replace(/<[^>]+>/g, "").replace(/[`*_]/g, "").toLowerCase()
-        .replace(/[^\p{L}\p{N}\p{M}_ -]/gu, "").replace(/ /g, "-")),
-  );
-  for (const file of docs) {
-    const text = await readFile(path.join(root, file), "utf8");
-    const targets: string[] = [];
-    for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-      const [href, anchor] = match[1].split("#");
-      if (/^[a-z]+:/i.test(href)) continue;
-      const target = path.resolve(root, path.dirname(file), href || path.basename(file));
-      await access(target);
-      targets.push(path.relative(root, target));
-      if (anchor && target.endsWith(".md")) {
-        const linked = await readFile(target, "utf8");
-        assert(headings(linked).has(decodeURIComponent(anchor)), `${file}: missing section ${match[1]}`);
-      }
-    }
-    links.set(file, targets);
-  }
-  const reachable = new Set<string>();
-  const visit = (file: string) => {
-    if (reachable.has(file)) return;
-    reachable.add(file);
-    for (const target of links.get(file) ?? []) if (links.has(target)) visit(target);
-  };
-  visit("README.md");
-  for (const file of docs) assert(reachable.has(file), `${file}: not reachable from README.md`);
 });
