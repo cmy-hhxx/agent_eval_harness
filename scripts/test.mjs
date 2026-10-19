@@ -25,6 +25,7 @@ const files = (
 // Worker tests spawn their own processes; cap file concurrency to avoid starving
 // their existing deadlines without extending timeouts or retrying failed tests.
 const concurrency = Math.min(4, availableParallelism());
+await run("python3", ["-m", "unittest", "discover", "-s", "server_dashboard_ths", "-p", "test_*.py"]);
 await run("node", [
   "--test",
   `--test-concurrency=${concurrency}`,
@@ -34,4 +35,5 @@ await run("node", [
   "scripts/attribution-review.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
+  "server_dashboard_ths/dashboard.test.mjs",
 ]);

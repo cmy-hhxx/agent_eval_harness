@@ -39,6 +39,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |
 | 本机界面规则 | [PRODUCT.md](PRODUCT.md) |
 | 持续取数、评测与交付 | [自动化](docs/automations.md) · [远程接口](docs/handoff.md) |
+| 同花顺远程输入数据看板 | [服务源码与部署](server_dashboard_ths/README.md) |
 | Eris 对话、数据与工具 | [Agent 说明](agent/README.md) |
 | 离线汇报与历史快照 | [汇报模块](evaluation-report/README.md) |
 
