@@ -1,5 +1,5 @@
 import type { AgentRequest, TaskCriterion } from "@eval/contracts";
-import { evidenceCovers, evidenceId, hasSourceTextBlock, normativeSources, sourceContentBlocks } from "@eval/tools";
+import { evidenceCovers, evidenceId, evidenceOverlaps, hasSourceTextBlock, normativeSources, sourceContentBlocks } from "@eval/tools";
 import type { ComparisonInput } from "./types.js";
 
 /** A group-level criterion can be common to this pair without applying to a third candidate. */
@@ -23,14 +23,31 @@ export function findingAppliesToPair(input: ComparisonInput, candidate: string, 
   const trace = raw && typeof raw === "object" && "messages" in raw && Array.isArray(raw.messages)
     ? raw as { messages: unknown[] } : undefined;
   const sources = trace ? normativeSources(trace, input.candidates[candidate].candidate_id, input.candidates[candidate].final_message_index) : [];
-  // A dimension label cannot turn explicitly cited private rules into common evidence.
-  // Require every real leaf origin of the complete block, never a coincident short phrase.
-  const citedNorms = sources.flatMap(source => sourceContentBlocks(source.content, source.path).filter(block =>
-    block.origins.length && block.origins.every(origin => [...finding.evidence, ...finding.context_evidence ?? []].some(evidence =>
-      evidence.source === undefined && evidence.source_input_id === undefined && evidenceCovers(trace!, input.candidates[candidate].candidate_id,
-        evidence.evidence_id, evidenceId(input.candidates[candidate].candidate_id, source.message_index, "text", origin.path, origin.start, origin.end))))));
-  if (citedNorms.some(block => !input.task_analysis.requirements.some(criterion =>
-    criterionAppliesToPair(input, criterion) && hasSourceTextBlock(criterion.acceptance_rule, block.quote)))) return false;
+  const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
+  const norms = sources.flatMap(source => sourceContentBlocks(source.content, source.path).map(block => ({
+    ...block, message_index: source.message_index,
+    privateEligible: source.role !== "user" || source.path === "/content" || criteria.some(criterion =>
+      criterion.applies_to.includes(input.candidates[candidate].candidate_id) && !criterionAppliesToPair(input, criterion) &&
+      hasSourceTextBlock(criterion.acceptance_rule, block.quote)),
+  })));
+  const evidence = [...finding.evidence, ...finding.context_evidence ?? []].filter(item =>
+    item.source === undefined && item.source_input_id === undefined);
+  const commonNorms = norms.filter(block => input.task_analysis.requirements.some(criterion =>
+    criterionAppliesToPair(input, criterion) && hasSourceTextBlock(criterion.acceptance_rule, block.quote)));
+  const coordinate = (block: typeof norms[number], origin: typeof block.origins[number]) =>
+    evidenceId(input.candidates[candidate].candidate_id, block.message_index, "text", origin.path, origin.start, origin.end);
+  // Any actual overlap with a private rule blocks widening; even a fragment or paginated quote has an owner.
+  // A joined USER block may also contain a separately authorized complete common leaf; that leaf stays common.
+  // An unbound runtime USER input can be an execution fact, not an additional private requirement.
+  const privateOrigins = norms.filter(block => block.privateEligible && !commonNorms.includes(block)).flatMap(block => block.origins.filter(origin =>
+    !commonNorms.some(common => common.origins.some(part => evidenceCovers(trace!, input.candidates[candidate].candidate_id,
+      coordinate(common, part), coordinate(block, origin))))).map(origin => coordinate(block, origin)));
+  if (evidence.some(item => privateOrigins.some(origin => evidenceOverlaps(trace!, input.candidates[candidate].candidate_id,
+    item.evidence_id, origin)))) return false;
+  // Authorizing a common instruction still requires its complete original block.
+  const citedNorms = norms.filter(block =>
+    block.origins.length && block.origins.every(origin => evidence.some(item => evidenceCovers(trace!, input.candidates[candidate].candidate_id,
+      item.evidence_id, coordinate(block, origin)))));
   if (finding.assessment.requirement_index === null) return finding.dimension !== "instruction_following";
   const criterion = findingCriterion(input, candidate, findingIndex);
   if (!criterion || !criterionAppliesToPair(input, criterion)) return false;

@@ -12,6 +12,7 @@ import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
 import { taskCase, taskIdentity } from "./input.js";
+import { modelBehavior, modelBehaviorDetails, modelBehaviorOverview } from "./model-behavior.js";
 
 interface HeadToHeadStats {
   evaluated: number;
@@ -463,7 +464,10 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     );
   }
   const results = layout.results;
+  const behavior = modelBehavior(manifest.tasks, state.receipts);
+  markdown.push(...modelBehaviorDetails(behavior.rows));
   await localFiles.mkdir(results, { recursive: true });
+  await writeJsonl(path.join(run, "model-behavior.jsonl"), behavior.rows);
   if (comparisons.length) await writeJsonl(path.join(results, "comparison.jsonl"), comparisons);
   else await localFiles.remove(path.join(results, "comparison.jsonl"), { force: true });
   const exports = internalPath(run, "exports");
@@ -601,6 +605,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     execution_task_statuses: executionStatuses,
     paused_stages: manifest.pausedStages ?? [],
     quality,
+    model_behavior: behavior.summary,
     by_batch: byBatch,
     ...(Object.keys(problemLibrary).length ? { problem_library: problemLibrary } : {}),
     artifacts: {
@@ -608,6 +613,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       results: resultArtifacts,
       report: "report.md",
       summaries: "task_summaries.md",
+      model_behavior: "model-behavior.jsonl",
       state: "state.json",
     },
     tokens: attemptUsage,
@@ -701,6 +707,7 @@ export async function writeOverview(
             `| ${name} | ${v.evaluated} | ${JSON.stringify(v.wins)} | ${v.both_good} | ${v.both_bad} |`,
         )
         .join("\n") +
+      modelBehaviorOverview(summary.model_behavior as ReturnType<typeof modelBehavior>["summary"] | undefined) +
       "\n\n## 批次汇总\n\n" +
       "| 批次 | 样本 | 计划任务 | 有效比较 | 失败 | 依赖阻塞 | 已取消 | 待完成 | 跳过对比组 | 输入异常 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n" +
       batches

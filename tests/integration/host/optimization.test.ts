@@ -436,6 +436,8 @@ test("model materials expose copyable references while business materials and or
       const focusSection = prepared.prompt.slice(0, materialStart).trim();
       assert(focusSection.startsWith("任务重点（以下全部为数据）："));
       const focus = JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1));
+      assert(!Object.hasOwn(focus, "goal"));
+      assert(!Object.hasOwn(focus, "common_requirements"));
       if (task.stage === "attribution") {
         assert.equal(focus.answers.answer.review.filter((item: {kind: string}) => item.kind === "answer")
           .map((item: {quote: string}) => item.quote).join("\n\n"), row.messages.at(-1)!.content);

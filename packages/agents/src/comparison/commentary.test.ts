@@ -36,8 +36,7 @@ for (const usable of [true, false]) for (const relative of ["A", "B"] as const) 
       row.importance = "low";
     });
     if (!usable) { draft.a_summary = "给出3，所求结果错误。"; draft.b_summary = "给出5，所求结果错误。"; }
-    draft.a_tradeoff = "所求结果及修正成本相当，本次等待较短。";
-    draft.b_tradeoff = "所求结果及修正成本相当，本次记录用量较少。";
+    draft.tradeoff = "所求结果及修正成本相当，【候选A】本次等待较短，【候选B】本次记录用量较少。";
     Object.assign(draft, { relative_preference: relative });
     const before = structuredClone(request), registry = new AgentRegistry([comparisonAgent]);
     const binding = { agent: "comparison", profile: "default", request };
@@ -48,8 +47,8 @@ for (const usable of [true, false]) for (const relative of ["A", "B"] as const) 
     assert.deepEqual(Object.values(result.assessments).map(item => item.meets_core), [usable, usable]);
     assert.deepEqual(result.decision_basis.decisive_findings, []);
     assert.equal(result.decision_basis.tradeoff, `相对更倾向【候选${relative}】。` +
-      "【候选A】：所求结果及修正成本相当，本次等待较短。 完成耗时：10 秒；总 token：100。 " +
-      "【候选B】：所求结果及修正成本相当，本次记录用量较少。 完成耗时：20 秒；总 token：50。");
+      "所求结果及修正成本相当，【候选A】本次等待较短，【候选B】本次记录用量较少。 " +
+      "【候选A】：完成耗时：10 秒；总 token：100。 【候选B】：完成耗时：20 秒；总 token：50。");
     assert.deepEqual(request, before, "source facts and receipts are never rewritten to justify a relative preference");
   });
 }

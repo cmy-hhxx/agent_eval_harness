@@ -79,16 +79,16 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
       comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [], assessments: Object.fromEntries(
         labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [0] }]),
       ) }],
-      decisive_findings: labels.map((label) => ({ candidate: label, finding_index: 0 })),
+      decisive_findings: [],
     },
   };
 }
 function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
-  return { requirements: [{ text: "正确、清楚地完成用户所求结果。" + (sources.some(source => source.kind === "reference") ? "所求结果与参考答案一致。" : ""),
-    source_indices: sources.filter((source) => ["question", "reference", "quality"].includes(source.kind)).map((source) => source.source_index) }],
+  return { requirements: [{ text: "正确、清楚地完成用户所求结果。",
+    source_indices: sources.filter((source) => ["question", "quality"].includes(source.kind)).map((source) => source.source_index) }],
     scoring_points: [], red_flags: [] };
 }
-export function criteriaResult(input: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },
+export function criteriaResult(input: CriteriaInput = { question: "计算2+2",
   candidates: [{ candidate_id: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd", instructions: [], context: [] }] }): TaskAnalysis {
   const request = { input: input as unknown as import("@eval/contracts").JsonObject, sources: {} };
   const result = criteriaProfile.resolve!(request, criteriaDraft(criteriaSources(input)), emptyAudit()) as TaskAnalysis;
@@ -150,7 +150,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
     correctness_reason: available ? "与标准答案一致。" : "",
     numeric_checks: [],
     correctness_evidence: available ? [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }] : [],
-    task_analysis: criteriaResult({ question: "计算2+2", ground_truth: { available, value: available ? "4" : null },
+    task_analysis: criteriaResult({ question: "计算2+2",
       candidates: [{ candidate_id: inputId, instructions: [], context: [] }] }),
     criterion_assessments: [{ criterion_id: "r1", status: correct ? "met" : "unmet", evidence_status: "established",
       summary: correct ? "正确给出4。" : "结果错误。", evidence: [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer },

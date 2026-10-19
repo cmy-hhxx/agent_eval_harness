@@ -2,7 +2,8 @@ import type { ModelConfig, PlannedTask } from "@eval/contracts";
 import { createModelResolver, type ModelCatalog } from "./models.js";
 
 /** Share whole tasks by channel weights; ordinary retries keep their route. */
-export function createBalancedModels(catalog: ModelCatalog, channels = Object.keys(catalog.channels), exhausted = new Set<string>()) {
+export function createBalancedModels(catalog: ModelCatalog,
+  channels = Object.keys(catalog.channels).filter(id => catalog.channels[id].api === "openai-responses"), exhausted = new Set<string>()) {
   if (!channels.length || new Set(channels).size !== channels.length)
     throw new Error("负载均衡需要不同的 config.ini 渠道");
   const routes = new Map(channels.map(channel => {

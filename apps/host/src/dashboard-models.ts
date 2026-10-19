@@ -1,4 +1,4 @@
-import type { AssistantModelEntry } from "@eval/contracts";
+import { errorText, redact, type AssistantModelEntry } from "@eval/contracts";
 import { discoverAssistantModels } from "@eval/runtime/assistant";
 import { readSettings, applySettings } from "./config.js";
 
@@ -9,6 +9,7 @@ export interface DashboardModel {
 }
 
 export type DashboardModelLoader = () => Promise<DashboardModel[]>;
+export interface DashboardModelFailure { channel: string; name: string; message: string }
 
 /** Keep only the public model identity; never expose the gateway endpoint or credentials. */
 export function toDashboardModels(models: readonly Pick<AssistantModelEntry, 'id' | 'name' | 'contextWindow' | 'maxTokens'>[], channel: string, name = channel): DashboardModel[] {
@@ -16,11 +17,23 @@ export function toDashboardModels(models: readonly Pick<AssistantModelEntry, 'id
 }
 
 /** Discover each configured channel once, including channels not bound to a stage yet. */
-export async function discoverDashboardModels(): Promise<DashboardModel[]> {
+export async function discoverDashboardModels(onFailures?: (failures: DashboardModelFailure[]) => void): Promise<DashboardModel[]> {
   const configuration = await readSettings();
   applySettings(configuration);
-  return (await Promise.all(Object.values(configuration.channels).map(async channel =>
-    toDashboardModels((await discoverAssistantModels(channel)).filter(model => !channel.models || channel.models.includes(model.id)), channel.provider, channel.name)))).flat();
+  const channels = Object.values(configuration.channels).filter(channel => channel.api === "openai-responses");
+  const groups = await Promise.allSettled(channels.map(async channel => {
+    const rows = channel.models ? channel.models.map(id => ({ id, name: id })) : await discoverAssistantModels(channel);
+    if (!rows.length) throw new Error("渠道未返回可用模型");
+    return toDashboardModels(rows, channel.provider, channel.name);
+  }));
+  const failures: DashboardModelFailure[] = [], models: DashboardModel[] = [];
+  const secrets = Object.values(configuration.channels).map(channel => process.env[channel.apiKeyEnv] ?? "");
+  groups.forEach((group, index) => {
+    if (group.status === "fulfilled") models.push(...group.value);
+    else failures.push({ channel: channels[index].provider, name: channels[index].name, message: redact(errorText(group.reason), secrets) });
+  });
+  onFailures?.(failures);
+  return models;
 }
 
 export function clearUnavailableDashboardModels(

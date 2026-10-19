@@ -25,4 +25,6 @@
 
 [statistics-log.schema.json](workflow/statistics-log.schema.json) 是冻结的外部契约，落盘和续传均须严格校验。结构修改权限见 [AGENTS.md](../AGENTS.md#当前契约优先)。
 
+[workflow/stability.schema.json](workflow/stability.schema.json) 是独立实验报告契约，不用于生产胜负统计。字段用途及本轮保留理由见[字段用途清单](../docs/schema-fields.md)。
+
 修改 Schema 时同步公开 Profile、解析与业务校验、当前调用方、提示词和测试；影响判词时更新 `evaluatorVersion`。验证入口见[开发指南](../docs/development.md#验证)。

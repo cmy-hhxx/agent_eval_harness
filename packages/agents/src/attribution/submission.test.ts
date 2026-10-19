@@ -37,6 +37,54 @@ test("a complete row template does not reject a correct first judgment because o
   }
   assert.deepEqual(f.registry.resolve(f.binding,draft,f.audit),expected);
 });
+
+function captureFixture(marker: string) {
+  const request=structuredClone(example.request) as AgentRequest,id=request.sources.answer.id;
+  const result=structuredClone(example.result) as AttributionResult;
+  (request.sources.answer.value as {messages:{content:unknown}[]}).messages[1].content=[
+    {type:"output_text",text:"2+2=4"},{type:"output_text",text:marker},
+  ];
+  const final=canonicalEvidence(id,1,"2+2=4","/content/0/text");
+  result.correctness_evidence=[final];
+  result.criterion_assessments.forEach(row=>{row.evidence=[final];});
+  result.findings[0].evidence=[final];
+  const f=fixture(request,result),capture=canonicalEvidence(id,1,marker,"/content/1/text");
+  f.draft.problems=[{basis_index:null,dimension:"format",stage:"final_answer",importance:"low",
+    text:"可视交付有缺口。",reason:"所选材料只提供了采集状态。",impact:"图中内容无法交付给用户。",
+    evidence_status:"established",evidence_indices:[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],
+    component:[],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
+  return {...f,capture,final};
+}
+
+test("exact capture markers alone cannot establish a candidate problem through the public resolve path",()=>{
+  for(const marker of ['{"jgy_visual":"skipped","ref":"jgy-test"}','{"visual":"unsupported","ref":"html-test"}']) {
+    const f=captureFixture(marker);
+    const rejected=(error:unknown)=>error instanceof ValidationError&&error.issues!.some(issue=>
+      issue.code==="capture_marker_not_candidate_evidence"&&issue.path==="/problems/0/evidence_indices");
+    assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),rejected);
+    const excerpt=canonicalEvidence(f.request.sources.answer.id,1,marker.slice(2,12),"/content/1/text",2);
+    f.draft.problems[0].evidence_indices=[selectEvidence(f.audit.evidenceBank!,excerpt).evidence_index];
+    assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),rejected,"a substring still belongs to the exact capture leaf");
+    f.draft.problems[0].evidence_status="uncertain";
+    f.registry.validate(f.binding,f.registry.resolve(f.binding,f.draft,f.audit),f.audit);
+    f.draft.problems[0].evidence_status="established";
+    f.draft.problems[0].evidence_indices.push(selectEvidence(f.audit.evidenceBank!,f.final).evidence_index);
+    const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
+    f.registry.validate(f.binding,accepted,f.audit);
+    accepted.findings.find(row=>row.type==="problem")!.evidence=[f.capture];
+    assert.throws(()=>f.registry.validate(f.binding,accepted,f.audit),error=>error instanceof ValidationError&&
+      error.issues!.some(issue=>issue.code==="capture_marker_not_candidate_evidence"),"persisted results use the same evidence boundary");
+  }
+});
+
+test("capture-looking ordinary prose is not classified by finding wording or marker keywords",()=>{
+  for(const text of ['前文说明：{"visual":"unsupported","ref":"html-test"}',
+    '```json\n{"visual":"unsupported","ref":"html-test"}\n```',
+    '{"visual":"unsupported","ref":"html-test","answer":"2+2=4"}']) {
+    const f=captureFixture(text);
+    f.registry.validate(f.binding,f.registry.resolve(f.binding,f.draft,f.audit),f.audit);
+  }
+});
 test("numeric checks select the evidence directory directly even when correctness entries have another order",()=>{
   const f=fixture();
   const final=f.draft.correctness_evidence_indices![0];

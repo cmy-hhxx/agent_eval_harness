@@ -5,11 +5,11 @@ import { sourceTextBlocks } from "@eval/tools";
 /** Positive indices select entries in this request's fixed source catalogue. */
 export interface CriterionSource {
   source_index: number;
-  kind: "question" | "reference" | "instruction" | "context" | "quality";
+  kind: "question" | "instruction" | "context" | "quality";
   text: string;
   applies_to: string[];
   paths: string[];
-  role?: "system" | "developer" | "user";
+  role?: "system" | "developer" | "user" | "tool";
 }
 
 function sourceText(value: unknown, messageContent = false): string {
@@ -30,9 +30,6 @@ function sourceText(value: unknown, messageContent = false): string {
 /** Keep complete original blocks: Markdown headings retain their governing prose and exceptions. */
 export function criteriaSources(input: CriteriaInput): CriterionSource[] {
   const sources: CriterionSource[] = [{ source_index: 1, kind: "question", text: input.question, applies_to: [], paths: ["/question"] }];
-  if (input.ground_truth.available) sources.push({
-    source_index: sources.length + 1, kind: "reference", text: sourceText(input.ground_truth.value), applies_to: [], paths: ["/ground_truth/value"],
-  });
   input.candidates.forEach((candidate, candidateIndex) => {
     for (const field of ["instructions", "context"] as const) candidate[field].forEach((message, messageIndex) => {
       const text = sourceText(message.content, true);
@@ -54,9 +51,9 @@ export function criteriaSources(input: CriteriaInput): CriterionSource[] {
   return sources;
 }
 
-/** Shared task, model quality and any reference must all have common checks. */
+/** Shared task and model quality must both have common checks. */
 export function requiredCriterionSource(source: CriterionSource): boolean {
-  return source.kind === "question" || source.kind === "quality" || source.kind === "reference";
+  return source.kind === "question" || source.kind === "quality";
 }
 
 /** Automatic context wrappers are material, not additional delivery requirements. */

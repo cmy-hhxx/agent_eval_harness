@@ -12,6 +12,7 @@ import {
   discoverDashboardModels,
   type DashboardModel,
   type DashboardModelLoader,
+  type DashboardModelFailure,
 } from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { createDashboardInputs } from "./dashboard-inputs.js";
@@ -212,7 +213,8 @@ export async function startDashboard(options: DashboardOptions) {
     changingRuns.set(runId, undefined);
   };
   const inputs = createDashboardInputs();
-  const loadModels = options.modelCatalog ?? (() => discoverDashboardModels());
+  let modelCatalogFailures: DashboardModelFailure[] = [];
+  const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(failures => { modelCatalogFailures = failures; }));
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
   const readModels = async () => {
     modelCatalogPromise ??= loadModels().catch((error) => {
@@ -272,6 +274,7 @@ export async function startDashboard(options: DashboardOptions) {
         paths: options.configPaths,
         settings,
         model_catalog: modelCatalog,
+        model_catalog_failures: modelCatalogFailures,
         ...(modelCatalogError ? { model_catalog_error: "无法读取 config.ini 渠道模型列表" } : {}),
         environment: modelReadiness(current, configuration),
       });

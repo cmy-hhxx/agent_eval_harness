@@ -99,13 +99,17 @@ const attribution: AttributionResult = {
   findings: [],
 };
 
-test("comparison rewrites only the pair preference using its accepted match facts", () => {
+test("comparison rewrites exactly the accepted tradeoff with the formal premise kept in context", () => {
+  const before = structuredClone(comparison);
   const items = comparisonSlots(comparison);
   assert.deepEqual(
     items.map((item) => item.id).sort(),
     [verdictSlotId("A", "B")],
   );
-  assert.match(items.find((item) => item.id === verdictSlotId("B", "A"))!.text, /【候选A】完成核心要求/);
+  assert.equal(items[0].text, comparison.decision_basis.tradeoff);
+  assert.match(items[0].context!, /已确定的对局结论/);
+  assert.doesNotMatch(items[0].text + items[0].context, /计算结果|正确给出4|未给出结果/);
+  assert.deepEqual(comparison, before);
   const failed = structuredClone(comparison);
   failed.assessments.A!.meets_core = false;
   failed.ranking = [["A", "B"]];
@@ -113,7 +117,7 @@ test("comparison rewrites only the pair preference using its accepted match fact
   const bothMet = structuredClone(comparison);
   bothMet.assessments.B!.meets_core = true;
   assert.equal(comparisonSlots(bothMet)[0]!.preference, "【候选A】更好");
-  assert.match(comparisonSlots(bothMet)[0]!.text, /计算结果.*正确给出4/);
+  assert.equal(comparisonSlots(bothMet)[0]!.text, bothMet.decision_basis.tradeoff);
   bothMet.ranking = [["B", "A"]];
   assert.equal(comparisonSlots(bothMet)[0]!.preference, "双方都好");
 });
@@ -175,20 +179,16 @@ test("tied verdict slots retain low-impact preference facts and counteradvantage
     });
     const before = structuredClone(result), [item] = comparisonSlots(result);
     assert.equal(item.preference, meetsCore ? "双方都好" : "双方都差");
-    assert(item.text.includes(result.decision_basis.tradeoff));
-    assert.match(item.text, /操作数标签：【候选B】：有一处标签笔误.*【候选A】：标签正确/);
-    assert.match(item.text, /完成等待：【候选B】：完成耗时：3\.5 秒.*【候选A】：完成耗时：4\.2 秒/);
-    if (!meetsCore) assert.match(item.text, /计算结果.*把结果写成5/);
+    assert.equal(item.text, result.decision_basis.tradeoff);
+    assert.doesNotMatch(item.text + item.context, /操作数标签：|完成等待：|计算结果：|4\.2 秒|3\.5 秒/);
     const presented = display(item, { A: "B组Fast", B: "A组Fast" });
     assert.match(presented.text, /B组Fast少一处操作数标签笔误，轻微偏好B组Fast；A组Fast完成更快/);
-    assert.match(presented.text, /操作数标签：A组Fast：有一处标签笔误.*B组Fast：标签正确/);
-    assert.match(presented.text, /完成等待：A组Fast：完成耗时：3\.5 秒.*B组Fast：完成耗时：4\.2 秒/);
     assert.deepEqual(result, before);
     result.assessments.A.meets_core = true;
     result.assessments.B.meets_core = false;
     result.ranking = [["A"], ["B"]];
-    assert.doesNotMatch(comparisonSlots(result)[0].text, /操作数标签：|完成等待：/,
-      "formal win slots retain their existing decisive-fact scope");
+    assert.equal(comparisonSlots(result)[0].text, result.decision_basis.tradeoff,
+      "a formal win does not turn individual finding prose into the rewrite's source");
   }
 });
 
@@ -289,14 +289,19 @@ test("presentation view applies already-unblinded rewrites by slot without inter
     } as unknown as TaskData,
   } as unknown as PlannedTask;
   const row: JsonObject = {
+    ranking: [["a"], ["b"]],
+    source_tasks: { a: "attr-b", b: "attr-a" },
     assessments: { a: { meets_core: true, core_failure_refs: [], summary: "原A" }, b: { meets_core: false, core_failure_refs: [], summary: "原B" } },
     evaluations: {
       a: { summary: "原归因A", correctness_reason: "原理由A" },
       b: { summary: "原归因B", correctness_reason: "原理由B", findings: [{ text: "原点评", reason: "原理由",
+        finding_id: "f0", evidence: [{ evidence_id: "source-coordinate", quote: "原始证据" }],
+        problem: { component: ["模型自身推理", "工具返回"], label: "原问题", definition: "原定义" },
         assessment: { observation: "原始观察", impact: "独立的原始影响" } }] },
     },
-    verdicts: { "a__vs__b": { reason: "原判决" } },
-    decision_basis: { tradeoff: "原权衡", comparisons: [{ aspect: "结果", criterion_ids: ["r1"], importance: "high", better_candidates: ["a"], assessments: {
+    verdicts: { "a__vs__b": { result: "win", winner_version: "a", winner_name: "A组", reason: "原判决" } },
+    decision_basis: { tradeoff: "原权衡", decisive_findings: [{ candidate: "b", finding_index: 0 }],
+      comparisons: [{ aspect: "结果", criterion_ids: ["r1"], importance: "high", better_candidates: ["a"], assessments: {
       a: { status: "met", evidence_status: "established", summary: "原表现A", finding_indices: [] }, b: { status: "met", evidence_status: "established", summary: "原表现B", finding_indices: [] },
     } }] },
   };
@@ -312,6 +317,7 @@ test("presentation view applies already-unblinded rewrites by slot without inter
       "findings.0.text": "精简点评", "findings.0.reason": "精简理由" },
   };
   const commentary: CommentaryLookup = { of: (source) => (source ? bySource[source] : undefined) };
+  const before = structuredClone(row);
   const view = polishComparisonRow(row, task, commentary);
   const assessments = view.assessments as Record<string, { meets_core: boolean; summary: string }>;
   const evaluations = view.evaluations as Record<string, { summary: string; correctness_reason: string }>;
@@ -333,6 +339,13 @@ test("presentation view applies already-unblinded rewrites by slot without inter
   assert.equal(finding.text, "精简点评");
   assert.equal(finding.reason, "精简理由");
   assert.deepEqual(finding.assessment, { observation: "原始观察", impact: "独立的原始影响" });
+  assert.deepEqual(finding.evidence, (before.evaluations as unknown as Record<string, AttributionResult>).b.findings[0].evidence);
+  assert.deepEqual(finding.problem, (before.evaluations as unknown as Record<string, AttributionResult>).b.findings[0].problem);
+  assert.deepEqual(view.ranking, before.ranking);
+  assert.deepEqual(view.source_tasks, before.source_tasks);
+  assert.deepEqual((view.decision_basis as JsonObject).decisive_findings, (before.decision_basis as JsonObject).decisive_findings);
+  assert.deepEqual((view.verdicts as JsonObject)["a__vs__b"], { result: "win", winner_version: "a", winner_name: "A组", reason: "精简判决" });
+  assert.deepEqual(row, before);
   assert.equal(
     (row.assessments as Record<string, { summary: string }>).a.summary,
     "原A",

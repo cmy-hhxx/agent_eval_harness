@@ -1,7 +1,15 @@
 import path from "node:path";
 import * as sdk from "#prime-sdk";
+import { setLogSink, stringifyLogEntry } from "#prime-ai";
 import type { AgentBackend, EngineIdentity } from "@eval/contracts";
+import { redact } from "@eval/contracts";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+
+const credentials = new Set<string>();
+setLogSink(entry => {
+  if (entry.level === "warn" || entry.level === "error")
+    console.error(redact(stringifyLogEntry(entry), [...credentials]));
+});
 
 export function primeBackend(identity: EngineIdentity): AgentBackend {
   return {
@@ -14,6 +22,7 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
       let activeNames = activeToolNames({ content: [] }, names, nextTool);
       const secret = process.env[spec.model.apiKeyEnv];
       if (!secret) throw new Error(`Missing ${spec.model.apiKeyEnv}`);
+      credentials.add(secret);
       const auth = sdk.AuthStorage.create(path.join(agentDir, "auth.json"));
       auth.setRuntimeApiKey(spec.model.provider, secret);
       const registry = sdk.ModelRegistry.inMemory(auth);

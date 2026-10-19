@@ -57,6 +57,17 @@ test("Rewrite returns exactly the requested slots and nothing else", () => {
   assert.throws(() => rewriteProfile.validate!(example.request, empty, audit), /minLength|rewrites/);
 });
 
+test("rewrite submissions cannot attach judgments or evidence to accepted text slots", () => {
+  const request = structuredClone(example.request), before = structuredClone(request);
+  for (const field of ["ranking", "meets_core", "evidence", "component"]) {
+    const result = structuredClone(example.result);
+    Object.assign(result.rewrites[0], { [field]: field === "meets_core" ? false : [] });
+    assert.throws(() => rewriteProfile.validate!(request, result, audit), /additional properties/);
+  }
+  rewriteProfile.validate!(request, example.result, audit);
+  assert.deepEqual(request, before);
+});
+
 test("verdict length is a writing goal and does not discard necessary evidence", () => {
   const request = { agent: "rewrite", profile: "default", sources: {}, input: { kind: "comparison", items: [
     { id: "tradeoff", label: "裁决短评", text: "A更好。", preference:"A更好" },

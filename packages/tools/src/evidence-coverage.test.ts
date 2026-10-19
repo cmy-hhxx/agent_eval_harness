@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { evidenceId, evidenceSources, selectEvidenceSource } from "./evidence.js";
-import { evidenceCovers } from "./evidence-coverage.js";
+import { evidenceCovers, evidenceOverlaps } from "./evidence-coverage.js";
 
 const ID = "11111111-1111-4111-8111-111111111111", PEER = "22222222-2222-4222-8222-222222222222";
 const raw = { messages: [{ role: "assistant", content: [{ type: "text", text: '风险先说。\n条件："仅短期"。' },
@@ -34,4 +34,30 @@ test("image placeholders and fabricated text paths never provide physical covera
   const rendered = evidenceSources(material.messages[0]).find(source => source.kind === "json")!;
   assert(!evidenceCovers(material, ID, evidenceId(ID, 0, "json", "", 0, rendered.text.length), evidenceId(ID, 0, "text", "/content", 0, 1)));
   assert(!evidenceCovers(material, ID, evidenceId(ID, 0, "json", "", 0, rendered.text.length), evidenceId(ID, 0, "json", "", 0, rendered.text.length)));
+});
+
+test("physical overlap detects fragments and crossing pages without equating adjacent or foreign coordinates", () => {
+  const part = text("/content/0/text", 2, 8);
+  for (const other of [text("/content/0/text", 0, 3), text("/content/0/text", 4, 5), text("/content/0/text", 7, 9)]) {
+    assert(evidenceOverlaps(raw, ID, part, other)); assert(evidenceOverlaps(raw, ID, other, part));
+  }
+  for (const other of [text("/content/0/text", 0, 2), text("/content/0/text", 8, 9), text("/content/1/text", 2, 8),
+    text("/metadata", 2, 8), text("/content/0/text", 2, 8, 1), text("/content/0/text", 2, 8, 0, PEER),
+    text("/content/0/text", 2, 2000), text("/content/0/text", 2, 2)]) assert(!evidenceOverlaps(raw, ID, part, other));
+});
+
+test("JSON overlap maps only the actual escaped value interval, never keys or another leaf", () => {
+  const value = '前段\n"条件😀"后段', material = { messages: [{ output: value, other: value }] };
+  const rendered = evidenceSources(material.messages[0]).find(source => source.kind === "json")!;
+  const leaf = selectEvidenceSource([rendered], "/output")!;
+  const start = value.indexOf("条件"), end = start + "条件😀".length;
+  const norm = evidenceId(ID, 0, "text", "/output", start, end);
+  const quote = JSON.stringify(value), valueStart = leaf.end - quote.length;
+  const encodedStart = valueStart + 1 + JSON.stringify(value.slice(0, start)).length - 2;
+  const ref = (start: number, end: number) => evidenceId(ID, 0, "json", "", start, end);
+  assert(evidenceOverlaps(material, ID, norm, ref(encodedStart + 1, encodedStart + 3)));
+  assert(!evidenceOverlaps(material, ID, norm, ref(leaf.start, valueStart + 1)));
+  assert(!evidenceOverlaps(material, ID, norm, ref(valueStart + 1, encodedStart)));
+  const other = selectEvidenceSource([rendered], "/other")!;
+  assert(!evidenceOverlaps(material, ID, norm, ref(other.start, other.end)));
 });

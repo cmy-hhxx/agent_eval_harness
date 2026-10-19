@@ -28,11 +28,23 @@ api_key = your-gateway-key
 api = openai-responses
 ```
 
-API 支持 Responses 与 Chat Completions。URL 保留网关要求的路径；模型须存在于该渠道目录。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
+Pi / Prime 评测入口只接受 `openai-responses`，不自动降级协议。URL 保留网关要求的路径；`models = model-a,model-b` 声明静态目录，适合没有 `/models` 的自部署服务。未声明时才发现远程目录；一个渠道发现失败不隐藏其他渠道，错误在看板按渠道呈现。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
 
 `[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。代理配置须让 localhost、127.0.0.1、::1 直连。评测入口不读取 .env，Eris 的补充加载见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
 
 JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，按顺序深度合并；数组整体覆盖，相对路径按各自文件目录解析。共享配置在 [host.json](../configs/host.json)，本机模型填入 `configs/local/models.json`。
+
+渠道是协议与能力的唯一来源：INI 中配置 `api`、`context_window`、`max_output_tokens`、`supports_developer_role`、`supports_explicit_prompt_caching` 与 `efforts`。JSON 模型档案只声明 `channel / model / thinking`，阶段 `bindings` 选择档案或覆盖这三项。更换端点和模型无需修改业务 Agent；不支持 developer 角色时显式配置 false，显式提示词缓存仅在声明 true 时启用。
+
+协议探测默认只检查配置，显式执行才调用模型：
+
+```bash
+npm run eval -- model-probe --engine pi --stage comparison --config configs/local/models.json
+npm run eval -- model-probe --engine pi --stage comparison --config configs/local/models.json --execute
+npm run eval -- model-probe --engine prime --stage comparison --config configs/local/models.json --execute
+```
+
+探测通过实际 SDK 验证流式工具参数、工具结果续轮、最终文本与用量。一次执行计一次阶段尝试，通常包含两次模型请求；60 秒截止，不自动重试。输出 `status / attempts / modelRequests / toolCalls / usage` 和脱敏错误。探测使用所选阶段的思考参数，单次响应最多 512 输出 token；若单独选择低推理配置测协议，应在实验记录中注明，不能据此宣称生产推理条件已通过。
 
 | 配置 | 用途 |
 |---|---|
@@ -59,6 +71,7 @@ JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，
 | data/input-catalog/ | 业务身份及字节位置索引，不存正文 |
 | data/runs/comparison/ | 批量评测运行 |
 | data/runs/attribution/、clustering/ | 独立归因与聚类作业 |
+| data/runs/validation/ | 后置稳定性实验，与生产统计分离 |
 | data/problems/ | 每模型问题库 |
 | log/ | 共用日志与统计交付记录 |
 | .runtime/、.venv/、dist/ | 执行环境与构建产物 |
@@ -206,6 +219,35 @@ bash run.sh
 
 ## 可选复核与后置聚类
 
+### 后置稳定性实验
+
+`validate-stability` 通过同一 Host 注入独立 Workflow，默认预览，`--execute` 才派发。可用显式样本清单从原材料建立新基准，也可用 `--run` 引用符合当前契约的已接受来源结果。清单类型见 [StabilityCase](../packages/workflows/src/comparison/stability.ts)，每项包含完整 batch/case、两个同档回答的模型身份、来源文件和一基行号，以及 rewrite/end_to_end 开关。
+
+```bash
+npm run eval -- validate-stability --cases /path/to/cases.json --run-id stability-001 \
+  --max-attempts 240 --stop-starting-at 2026-10-19T07:00:00+08:00 \
+  --config configs/host.json --config configs/local/models.json
+npm run eval -- validate-stability --cases /path/to/cases.json --run-id stability-001 \
+  --max-attempts 240 --stop-starting-at 2026-10-19T07:00:00+08:00 \
+  --config configs/host.json --config configs/local/models.json --execute
+npm run eval -- validate-stability --run-id stability-001 \
+  --config configs/host.json --config configs/local/models.json --execute
+```
+
+同实验 ID 续跑时省略样本、来源、种子和限额选项，沿用已保存的计划、UUID 与累计额度，不重复接受成功试次。首次引用来源结果及续跑都会按业务身份重读原材料，允许文件行重排；问题、参考答案、最终回答位置或其他评测元数据与计划不一致时明确报错，应使用当前来源结果，或通过 `--cases` 新建实验。每题五次原位与五次真正重新调用的换位交错执行；可选择五次整场改写及三次完整链路。失败、重试也消耗阶段额度，240 次是阶段尝试上限，不是 API 请求数或金额；外部协议探测须先从实验额度中扣除。截止时间阻止新派发，在途调用仍可完成。
+
+产物为 `validation.json`、`validation.md`、`results/stability-results.jsonl` 和 Host 恢复状态。辅助 `model-behavior.jsonl` 只汇总基准归因。实验不更新来源判决，不进入业务胜率或统计上传。解释方式与语义复核见[质量指南](quality.md#后置稳定性实验)。
+
+`validation.json` 的 `execution.tasks` 保留全部原计划任务，包括未派发改写和整链各阶段，列出当前状态、累计尝试、当前原因、等待依赖与执行范围；`execution.paused_stages` 和 `stop_reason` 分别保留阶段熔断与预算/时间停止原因。未完成任务仍在原分母中，预算不足不冒记为内容失败。当前原因最多 500 字符，完整上下文在 `state.json`。这不是历史失败账本：成功恢复会清除当前失败上下文，历史失败按 `run_id`、`task_id`、`attempt_id` 查询仓库根目录 `log/runtime.log`，报告不复制草稿或证据库。
+
+独立审阅结果写入实验根目录 `semantic-review.json` 数组：每项包含 `task_id`、`submission_id`、`reviewer: {kind: "agent" | "human", name}`、`result: "passed" | "failed"` 和 `rationale`。只绑定当前已接受的改写收据；重复、过期或未知引用会报错。未记录的改写保持未审，整链中的改写也进入覆盖分母。重建报告保留已记录的语义失败，不改写原判词。
+
+按[三层验收](quality.md#三层验收)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
+
+停止实验 Host 后，用 `npm run eval -- report --run data/runs/validation/stability-001` 重新生成实验报告，不调用模型。
+
+### 独立核验与聚类
+
 已接受正式对比的独立核验：
 
 ```bash
@@ -281,6 +323,7 @@ npm run eval -- rewrite-comparisons --run data/runs/comparison/pi-001 --scope ve
 | 源结果的 rewritten | 改写文案；独立聚类作业另用 results/rewrite.jsonl |
 | report.md、task_summaries.md | 总览与逐题呈现，优先用已接受改写 |
 | stats.json | 数量、覆盖、冲突、版本、用量及产物清单 |
+| model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |
 
 正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
 

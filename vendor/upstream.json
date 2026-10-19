@@ -18,7 +18,8 @@
     "local_changes": [
       "Application SDK builds skip bundled model/MCP catalog asset download and fixture generation in copy-assets. Official compiled fallbacks remain; the evaluation adapter explicitly registers gateway models and Worker PI_OFFLINE disables runtime catalog refresh.",
       "Responses preserve the terminal status and incomplete reason before strict function-argument decoding. Invalid completed arguments report the actual tool name and call/item identity so Runtime can provide bounded repair feedback; incomplete calls remain undispatched and authoritative JSON parsing/identity validation are unchanged.",
-      "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities and malformed, empty, mismatched or unfinished calls cannot execute, while usage and completed item.done arguments are preserved."
+      "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities and malformed, empty, mismatched or unfinished calls cannot execute, while usage and completed item.done arguments are preserved.",
+      "All Responses providers reject EOF without response.completed or response.incomplete, including plain-text self-hosted streams; a completed output item alone cannot produce a successful assistant message. Actual Pi/Prime adapter regression tests distinguish terminal validation from missing usage."
     ]
   },
   "deepseek": {

@@ -561,7 +561,8 @@ function renderConfig() {
   const env = config.environment || {};
   $("#env-status").innerHTML = [
     ["URL", env.base_url_configured], ["Key", env.api_key_configured],
-  ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("");
+  ].map(([name, ready]) => `<span class="env-item ${ready ? "ready" : "missing"}">${name} ${ready ? "已配置" : "缺失"}</span>`).join("")
+    + (config.model_catalog_failures || []).map(failure => `<span class="env-item missing">${escapeHtml(failure.name)}：${escapeHtml(failure.message)}</span>`).join("");
   const gatewayModels = config.model_catalog || [];
   const modelOptions = (selected) => gatewayModels.length
     ? `<option value="" ${selected ? "" : "selected"}>未选模型</option>${gatewayModels.map((model) => `<option value="${escapeHtml(JSON.stringify([model.channel, model.id]))}" ${JSON.stringify([model.channel, model.id]) === selected ? "selected" : ""}>${escapeHtml(model.name || model.id)}</option>`).join("")}`

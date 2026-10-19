@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ValidationError, type AgentRequest, type CriteriaInput, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
 import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
-import { comparisonAgent, comparisonProfile, comparisonSlots } from "./index.js";
+import { comparisonAgent, comparisonProfile, comparisonScope, comparisonSlots } from "./index.js";
 import { AgentRegistry } from "@eval/host";
 import { requestComparisonSubmission } from "../../../../tests/fixtures/comparison-submission.js";
 import type { ComparisonInput, ComparisonResult } from "./types.js";
@@ -28,7 +28,7 @@ test("shared Criteria source combinations keep instruction provenance in either 
   const norm = "# 输出规范\n\n严格使用JSON。";
   for (const normFirst of [true, false]) {
     const data = pair(), input = data.request.input as unknown as ComparisonInput;
-    const criteriaInput: CriteriaInput = { question: "计算2+2", ground_truth: { available: true, value: "4" },
+    const criteriaInput: CriteriaInput = { question: "计算2+2",
       candidates: Object.values(input.candidates).map(candidate => ({ candidate_id: candidate.candidate_id,
         instructions: [], context: [{ message_index: 0, role: "user", content: norm }] })) };
     const criteriaRequest: AgentRequest = { input: criteriaInput as unknown as AgentRequest["input"], sources: {} };
@@ -36,7 +36,7 @@ test("shared Criteria source combinations keep instruction provenance in either 
     assert.deepEqual(common.applies_to, []);
     const source_indices = normFirst ? [common.source_index, 1] : [1, common.source_index];
     const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices, text: "用JSON给出计算结果。" },
-      { source_indices: criteriaSources(criteriaInput).filter(source => ["question", "reference", "quality"].includes(source.kind))
+      { source_indices: criteriaSources(criteriaInput).filter(source => ["question", "quality"].includes(source.kind))
         .map(source => source.source_index), text: "核查计算结果的准确性与表达。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
     criteriaProfile.validate!(criteriaRequest, task, audit);
     assert.deepEqual(task.requirements[0]!.applies_to, []);
@@ -169,7 +169,7 @@ test("ordinary format evidence and complete common SYSTEM or USER norms remain e
   }
 });
 
-test("private norm detection requires all real content-leaf origins and does not match a short partial quote", () => {
+test("private norm fragments remain source-only while common authorization requires the complete original rule", () => {
   const data = pair(), input = data.request.input as unknown as ComparisonInput;
   const heading = "# 自身输出规约", body = "回答须以风险提示开头。", exception = "事实查询时可以不前置风险提示。";
   const raw = data.request.sources.A.value as { messages: unknown[] };
@@ -184,7 +184,9 @@ test("private norm detection requires all real content-leaf origins and does not
   for (const quotes of [["风险提示"], [body], [heading, body]]) {
     finding.evidence = [...answer, ...quotes.map(quote => canonicalEvidence(data.request.sources.A.id, 0, quote, `/content/${quote === heading ? 0 : 1}/text`, quote === "风险提示" ? 5 : 0))];
     data.result.task_analysis=structuredClone(input.task_analysis);
-    validate(data.request, data.result);
+    assert.equal(comparisonScope(data.request).findings.A![0].scope, "source_only");
+    assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
+      error.issues?.some(issue => issue.code === "comparison_advantage_finding_scope_mismatch") === true);
   }
   finding.evidence.push(canonicalEvidence(data.request.sources.A.id, 0, exception, "/content/2/text"));
   assert.throws(() => validate(data.request, data.result), (error: unknown) => error instanceof ValidationError &&
@@ -193,7 +195,8 @@ test("private norm detection requires all real content-leaf origins and does not
   input.task_analysis.requirements[0]!.acceptance_rule = input.task_analysis.requirements[0]!.text;
   for (const attribution of Object.values(input.attributions)) attribution.task_analysis = structuredClone(input.task_analysis);
   data.result.task_analysis=structuredClone(input.task_analysis);
-    validate(data.request, data.result);
+  assert.equal(comparisonScope(data.request).findings.A![0].scope, "pair");
+  validate(data.request, data.result);
 });
 
 test("a complete shared USER leaf keeps pair scope without absorbing its appended private condition", () => {
@@ -209,6 +212,30 @@ test("a complete shared USER leaf keeps pair scope without absorbing its appende
   validate(data.request, data.result);
   finding.evidence[0] = canonicalEvidence(data.request.sources.A.id, 0, condition, "/content/1/text");
   assert.throws(() => validate(data.request, data.result), /来源规范.*共同 requirement/);
+});
+
+test("actual runtime USER input facts remain pair evidence unless an accepted private rule binds that block", () => {
+  const data = pair(), input = data.request.input as unknown as ComparisonInput;
+  const question = "计算2+2", context = "计算2+2；工具数据：空", final = "缺少输入数据，未能完成计算。";
+  const raw = { messages: [{ role: "user", content: question },
+    { role: "tool", type: "function_call_output", name: "Calc", content: "2+2=4" },
+    { type: "llm_turn", input_messages: [{ role: "user", content: context }], output: [{ role: "assistant", content: final }] },
+    { type: "final_answer", role: "assistant", content: final }] };
+  (data.request.sources.A.value as unknown as { messages: unknown[] }).messages = raw.messages;
+  input.candidates.A.final_message_index = 3;
+  const finding = input.attributions.A.findings[0]!;
+  Object.assign(finding, { type: "problem", dimension: "correctness", stage: "execution", evidence: [
+    canonicalEvidence(data.request.sources.A.id, 3, final), canonicalEvidence(data.request.sources.A.id, 1, "2+2=4"),
+    canonicalEvidence(data.request.sources.A.id, 2, context, "/input_messages/0/content"),
+  ], context_evidence: [] });
+  finding.assessment.requirement_index = 0;
+  assert.equal(comparisonScope(data.request).findings.A![0].scope, "pair");
+  input.task_analysis.requirements.push({ id: "own-runtime-rule", text: "本方执行要求", acceptance_rule: context,
+    applies_to: [input.candidates.A.candidate_id] });
+  assert.equal(comparisonScope(data.request).findings.A![0].scope, "source_only");
+  input.task_analysis.requirements.pop();
+  raw.messages[2].input_messages![0].role = "system";
+  assert.equal(comparisonScope(data.request).findings.A![0].scope, "source_only");
 });
 
 test("a mixed public and private instruction quote cannot establish a shared instruction advantage", () => {
@@ -308,10 +335,10 @@ test("source-review records distinguish a retained unknown from a blocking confl
 test("source blockers are program-owned after a single structural repair", () => {
  const data = pair(), registry = new AgentRegistry([comparisonAgent]);
  Object.assign(data.request.input,{ source_review:{ A:[{ kind:"unverified", reason:"尚缺影响结果的来源行。",requires_review:true }] } });
- const draft = submission(data.result,data.request); draft.a_tradeoff = "";
+ const draft = submission(data.result,data.request); draft.tradeoff = "";
  assert.throws(() => registry.resolve({ agent:"comparison",profile:"default",request:data.request },draft,audit),
   (error:unknown) => error instanceof ValidationError && error.issues!.every(issue => issue.category === "structure"));
- draft.a_tradeoff = "来源尚待核查。";
+ draft.tradeoff = "来源尚待核查。";
  const result = registry.resolve({ agent:"comparison",profile:"default",request:data.request },draft,audit) as ComparisonResult;
  assert.equal(result.status,"needs_review"); assert.equal(result.review_requests[0].candidate,"A");
  registry.validate({ agent:"comparison",profile:"default",request:data.request },result,audit);
@@ -395,7 +422,7 @@ test("Comparison accepts an independently judged pair and mirrors the shared ana
   assert.deepEqual(resolved.assessments, example.result.assessments);
   assert.deepEqual(resolved.decision_basis.comparisons[0].criterion_ids,["sum"]);
   assert.deepEqual(resolved.decision_basis.comparisons[0].assessments.A.finding_indices,[0]);
-  assert.equal(resolved.decision_basis.tradeoff,"相对更倾向【候选A】。【候选A】：正确给出结果。 【候选B】：正确给出结果。");
+  assert.equal(resolved.decision_basis.tradeoff,"相对更倾向【候选A】。" + draft.tradeoff);
   validate(example.request, resolved);
   assert.throws(() => comparisonProfile.resolve!(example.request, example.result, audit), /additional properties/);
   const changed = pair(); changed.result.task_analysis.goal = "新目标";
@@ -525,6 +552,10 @@ test("Comparison requires exact pair candidate keys and complete row and finding
   const missingCandidate = structuredClone(data.result); delete (missingCandidate.decision_basis.comparisons[0].assessments as Record<string, unknown>).B;
   assert.throws(() => validate(data.request, missingCandidate), /同一行包含全部候选/);
   const missingStrength = structuredClone(data.result); missingStrength.decision_basis.comparisons[0].assessments.B.finding_indices = [];
+  missingStrength.ranking = [["B"], ["A"]];
+  missingStrength.decision_basis.comparisons[0].importance = "medium";
+  missingStrength.decision_basis.comparisons[0].better_candidates = ["B"];
+  missingStrength.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
   assert.throws(() => validate(data.request, missingStrength), error => error instanceof ValidationError &&
     error.issues!.some(issue => issue.code === "comparison_finding_uncovered" && issue.candidate === "B" && issue.actual === 0));
   const badRef = structuredClone(data.result); badRef.decision_basis.comparisons[0].assessments.A.finding_indices = [99];
@@ -773,8 +804,7 @@ test("an absent overall preference cannot silently turn a resource advantage int
     const slot = comparisonSlots(data.request).findIndex(item => item.kind === "resource");
     draft.comparisons[slot] = { importance: "medium" };
     draft.preference = preference;
-    draft.a_tradeoff = "结果正确，等待时间的微小差异不足以决定胜负。";
-    draft.b_tradeoff = "结果正确，等待时间的微小差异不足以决定胜负。";
+    draft.tradeoff = "双方结果正确，等待时间的微小差异不足以决定胜负。";
     const result = comparisonProfile.resolve!(data.request, draft, audit) as ComparisonResult;
     assert.deepEqual(result.ranking, [["A", "B"]], "the resolver must preserve the submitted overall preference");
     assert.throws(() => validate(data.request, result), (error: unknown) => error instanceof ValidationError &&
@@ -913,7 +943,7 @@ test("scope differences do not create an advantage and row states cannot strengt
   data.result.decision_basis.comparisons[0].better_candidates = [];
   const repaired = resolve(data);
   validate(data.request, repaired);
-  assert.equal(repaired.decision_basis.tradeoff,`相对更倾向【候选A】。【候选A】：${data.result.assessments.A.summary} 【候选B】：${data.result.assessments.B.summary}`);
+  assert.equal(repaired.decision_basis.tradeoff,`相对更倾向【候选A】。${data.result.decision_basis.tradeoff}`);
   assert.deepEqual(repaired.decision_basis.comparisons[0].criterion_ids,retained.comparisons[0].criterion_ids);
   data.request.input.task_analysis.requirements.push({ id: "own_b", text: "B的专有约束", applies_to: [data.request.input.candidates.B.candidate_id], acceptance_rule: "按B自己的要求完成。" } as never);
   data.request.input.attributions.A.criterion_assessments.push({ criterion_id: "own_b", status: "not_applicable", evidence_status: "established", summary: "不适用。", evidence: [] });
@@ -975,6 +1005,7 @@ test("uncertain findings cannot be decisive and one-sided material advantages ca
   input.attributions.B.criterion_assessments[0].summary = problem.text;
   data.result.decision_basis.comparisons[0].assessments.B.status = "partial";
   data.request.input.attributions.A.findings[0].assessment.evidence_status = "uncertain";
+  data.result.decision_basis.decisive_findings = [{ candidate: "A", finding_index: 0 }];
   assert.throws(() => validate(data.request, data.result), /uncertain finding 不能作为决定性依据/);
   data.result.decision_basis.decisive_findings = [{ candidate: "B", finding_index: 0 }];
   data.result.decision_basis.comparisons[0].better_candidates = ["A"] as never[];

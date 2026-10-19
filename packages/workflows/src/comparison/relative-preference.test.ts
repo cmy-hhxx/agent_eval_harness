@@ -22,16 +22,16 @@ test("swapping candidates restores the same relative preference without changing
     const draft = requestComparisonSubmission(request, example.result as ComparisonResult);
     draft.comparisons.forEach(row => { if (row) row.importance = "low"; });
     draft.relative_preference = swapped ? "B" : "A";
-    draft.a_tradeoff = swapped ? "质量相当，本次等待较久。" : "质量相当，本次等待较短。";
-    draft.b_tradeoff = swapped ? "质量相当，本次等待较短。" : "质量相当，本次等待较久。";
+    draft.tradeoff = `质量相当，【候选${swapped ? "B" : "A"}】本次等待较短，【候选${swapped ? "A" : "B"}】等待较久。`;
     const result = comparisonProfile.resolve!(request, draft, {
       calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [],
     }) as ComparisonResult;
     const names = swapped ? { A: "乙组", B: "甲组" } : { A: "甲组", B: "乙组" };
     const shown = display(result.decision_basis.tradeoff, names);
     assert(shown.startsWith("相对更倾向甲组。"));
-    assert(shown.includes("甲组：质量相当，本次等待较短。 完成耗时：10 秒；总 token：无有效记录。"));
-    assert(shown.includes("乙组：质量相当，本次等待较久。 完成耗时：20 秒；总 token：无有效记录。"));
+    assert(shown.includes("质量相当，甲组本次等待较短，乙组等待较久。"));
+    assert(shown.includes("甲组：完成耗时：10 秒；总 token：无有效记录。"));
+    assert(shown.includes("乙组：完成耗时：20 秒；总 token：无有效记录。"));
     assert.deepEqual(result.ranking, [["A", "B"]]);
     assert.equal(decideVerdict(true, true, 0, 0).outcome, "both_good");
     assert.deepEqual((request.input as unknown as ComparisonInput).attributions, before);
@@ -47,13 +47,12 @@ test("swapped tradeoff binds each defect and measured resources to the same actu
   const draft = requestComparisonSubmission(request, example.result as ComparisonResult);
   draft.comparisons.forEach(row => { if (row) row.importance = "low"; });
   draft.relative_preference = "B";
-  draft.a_tradeoff = "没有席位数据却推断具体买方。";
-  draft.b_tradeoff = "小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。";
+  draft.tradeoff = "【候选A】没有席位数据却推断具体买方。【候选B】的小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。";
   const result = comparisonProfile.resolve!(request, draft, {
     calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [],
   }) as ComparisonResult;
   const shown = display(result.decision_basis.tradeoff, { A: "B组Expert", B: "A组Expert" });
   assert.equal(shown, "相对更倾向A组Expert。" +
-    "B组Expert：没有席位数据却推断具体买方。 完成耗时：233.442 秒；总 token：215260。 " +
-    "A组Expert：小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。 完成耗时：58.071 秒；总 token：58647。");
+    "B组Expert没有席位数据却推断具体买方。A组Expert的小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。 " +
+    "B组Expert：完成耗时：233.442 秒；总 token：215260。 A组Expert：完成耗时：58.071 秒；总 token：58647。");
 });

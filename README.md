@@ -32,7 +32,7 @@ npm run eval -- run --engine pi --run-id pi-001 \
 | 任务 | 文档 |
 |---|---|
 | 配置、输入、运行、恢复、产物 | [使用指南](docs/usage.md) |
-| 输入、阶段结果、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) |
+| 输入、阶段结果、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) · [字段用途](docs/schema-fields.md) |
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |

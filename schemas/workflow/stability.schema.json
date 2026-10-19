@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "status", "experiment", "source_run", "seed", "quality", "semantic_review", "scope", "budget", "execution", "conditions", "material_changes", "samples", "statistics"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["completed", "incomplete"]},
+    "experiment": {"const": "validate-stability"},
+    "source_run": {"type": ["string", "null"]},
+    "seed": {"type": "integer", "minimum": 0},
+    "quality": {"type": "object", "additionalProperties": false,
+      "required": ["accepted_needs_review", "incomplete_comparison_cases", "rewrite_semantic_review"],
+      "properties": {"accepted_needs_review": {"type": "integer", "minimum": 0}, "incomplete_comparison_cases": {"type": "integer", "minimum": 0},
+        "rewrite_semantic_review": {"enum": ["required", "not_selected", "incomplete", "passed", "failed"]}}},
+    "semantic_review": {"type": "object", "additionalProperties": false, "required": ["summary", "records"],
+      "properties": {"summary": {"$ref": "#/$defs/semantic_review_summary"}, "records": {"type": "array", "items": {"type": "object"}}}},
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["selected_cases", "complete_comparison_cases", "selection", "independent_unit", "repetitions_per_orientation", "limits"],
+      "properties": {
+        "selected_cases": {"type": "integer", "minimum": 1, "maximum": 12},
+        "complete_comparison_cases": {"type": "integer", "minimum": 0},
+        "selection": {"enum": ["purposeful_risk_sample", "source_run_order"]}, "independent_unit": {"const": "case"},
+        "repetitions_per_orientation": {"const": 5}, "limits": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["planned_stage_attempts", "attempted", "limit", "remaining", "stop_starting_at", "stop_reason", "statuses", "accepted_needs_review"],
+      "properties": {
+        "planned_stage_attempts": {"type": "integer", "minimum": 0}, "attempted": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 240}, "remaining": {"type": "integer", "minimum": 0},
+        "stop_starting_at": {"type": ["string", "null"]}, "stop_reason": {"enum": ["attempt_limit", "dispatch_deadline", null]},
+        "statuses": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}, "accepted_needs_review": {"type": "integer", "minimum": 0}
+      }
+    },
+    "execution": {"type": "object", "additionalProperties": false,
+      "required": ["status", "stop_reason", "paused_stages", "tasks", "history"], "properties": {
+        "status": {"enum": ["running", "finished", "interrupted"]},
+        "stop_reason": {"enum": ["attempt_limit", "dispatch_deadline", null]},
+        "paused_stages": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["stage", "category", "code", "path", "taskIds", "at"], "properties": {
+            "stage": {"type": "string"}, "category": {"type": "string"}, "code": {"type": "string"}, "path": {"type": "string"},
+            "taskIds": {"type": "array", "items": {"type": "string"}}, "at": {"type": "number"}
+          }}},
+        "tasks": {"type": "array", "items": {"$ref": "#/$defs/task_execution"}},
+        "history": {"type": "object", "additionalProperties": false, "required": ["file", "relative_to", "lookup_keys", "note"], "properties": {
+          "file": {"const": "log/runtime.log"}, "relative_to": {"const": "repository_root"},
+          "lookup_keys": {"const": ["run_id", "task_id", "attempt_id"]}, "note": {"type": "string"}
+        }}
+      }},
+    "conditions": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["evaluator_version", "judge", "stage", "accepted", "parameters"], "properties": {
+        "evaluator_version": {"type": "string"}, "judge": {"type": "string"}, "stage": {"type": "string"}, "accepted": {"type": "integer", "minimum": 1},
+        "parameters": {"type": ["object", "null"]}
+      }}},
+    "material_changes": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["source", "revisions"],
+      "properties": {"source": {"type": "string"}, "revisions": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string"}}}}},
+    "samples": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object",
+      "required": ["batch_id", "case_id", "risks", "source", "baseline", "original", "swapped", "paired", "source_agreements", "semantic_review", "rewrite", "end_to_end", "trials", "complete"],
+      "properties": {
+        "batch_id": {"type": "string"}, "case_id": {"type": "string"}, "complete": {"type": "boolean"},
+        "original": {"$ref": "#/$defs/distribution"}, "swapped": {"$ref": "#/$defs/distribution"}, "semantic_review": {"$ref": "#/$defs/semantic_review_summary"},
+        "baseline": {"type": ["string", "null"]}, "trials": {"type": "array", "maxItems": 10}
+      }
+    }},
+    "statistics": {"type": "object", "additionalProperties": false,
+      "required": ["status", "swap_agreement", "direction_sign_test", "position_definition", "t_test", "decision_rule"],
+      "properties": {
+        "status": {"enum": ["mixed_conditions", "exploratory_pilot"]}, "swap_agreement": {"type": "object"},
+        "direction_sign_test": {"type": "object"}, "t_test": {"type": "object", "required": ["status", "reason"],
+          "properties": {"status": {"const": "not_applicable"}, "reason": {"type": "string"}}},
+        "decision_rule": {"type": "string"}, "position_definition": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "task_execution": {"type": "object", "additionalProperties": false,
+      "required": ["task_id", "case_key", "purpose", "stage", "status", "attempts", "in_execution_scope", "attempt_id", "submission_id", "current_reason", "current_failure_codes", "waiting_for_task_ids"],
+      "properties": {
+        "task_id": {"type": "string"}, "case_key": {"type": "string"},
+        "purpose": {"enum": ["baseline", "comparison", "rewrite", "end_to_end"]}, "stage": {"type": "string"},
+        "status": {"enum": ["pending", "running", "succeeded", "failed", "blocked", "cancelled", "timed_out"]},
+        "attempts": {"type": "integer", "minimum": 0}, "in_execution_scope": {"type": "boolean"},
+        "attempt_id": {"type": ["string", "null"]}, "submission_id": {"type": ["string", "null"]},
+        "current_reason": {"type": ["string", "null"], "maxLength": 500},
+        "current_failure_codes": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+          "required": ["category", "code", "path"], "properties": {
+            "category": {"type": "string"}, "code": {"type": "string"}, "path": {"type": "string"}
+          }}},
+        "waiting_for_task_ids": {"type": "array", "items": {"type": "string"}}
+      }},
+    "semantic_review_summary": {"type": "object", "additionalProperties": false,
+      "required": ["status", "planned", "accepted", "reviewed", "failed", "unreviewed"], "properties": {
+        "status": {"enum": ["not_selected", "required", "incomplete", "passed", "failed"]},
+        "planned": {"type": "integer", "minimum": 0}, "accepted": {"type": "integer", "minimum": 0},
+        "reviewed": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0}, "unreviewed": {"type": "integer", "minimum": 0}
+      }},
+    "distribution": {"type": "object", "additionalProperties": false, "required": ["completed", "unresolved", "counts", "unanimous"],
+      "properties": {"completed": {"type": "integer", "minimum": 0}, "unresolved": {"type": "integer", "minimum": 0},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}, "unanimous": {"type": "boolean"},
+        "unresolved_by_status": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}}}
+  }
+}

@@ -4,13 +4,13 @@ import { cite, evidenceSources } from "./evidence.js";
 export interface NormativeSource {
   message_index: number;
   path: string;
-  role: "system" | "developer" | "user";
+  role: "system" | "developer" | "user" | "tool";
   content: unknown;
   evidence: ReturnType<typeof cite>[];
 }
 
 export interface InstructionSource extends NormativeSource {
-  role: "system" | "developer";
+  role: "system" | "developer" | "tool";
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -76,6 +76,53 @@ export function answerTurnContexts(raw: { messages: unknown[] }, finalMessageInd
     .map(turn => ({ message_index: turn.index, path: turn.context.path }));
 }
 
+/** Only an actual successful skill load supplies tool-origin instructions; ordinary tool data does not. */
+function loadedSkillSources(raw: { messages: unknown[] }, inputId: string, finalIndex: number, answerTurns: Set<number>): NormativeSource[] {
+  const result: NormativeSource[] = [], used = new Set<number>();
+  let unpaired: number[] = [];
+  const callId = (message: Record<string, unknown>, call: boolean) => {
+    const values = [message.call_id, message.tool_call_id, ...(call ? [message.id] : [])].filter(id => id !== undefined);
+    if (values.some(id => typeof id !== "string" || !id)) return null;
+    const ids = values as string[];
+    return new Set(ids).size > 1 ? null : ids[0];
+  };
+  raw.messages.slice(0, finalIndex).forEach((value, index) => {
+    const returned = object(value);
+    if (returned?.type === "tool_call" && returned.name === "view_skill" && callId(returned, true) === undefined)
+      unpaired.push(index);
+    if (returned?.type !== "tool_result" || returned.name !== "view_skill") return;
+    const id = callId(returned, false);
+    if (id === null) return;
+    const candidates = id === undefined ? unpaired : raw.messages.slice(0, index).flatMap((item, i) => {
+      const call = object(item);
+      return call?.type === "tool_call" && call.name === "view_skill" && callId(call, true) === id ? [i] : [];
+    });
+    if (id === undefined) unpaired = [];
+    if (candidates.length !== 1 || candidates[0]! < 0 || used.has(candidates[0]!)) return;
+    if (id === undefined && candidates[0] !== index - 1) return;
+    const callIndex = candidates[0]!, call = object(raw.messages[callIndex]);
+    if (call?.type !== "tool_call" || call.name !== "view_skill" || callId(call, true) !== id) return;
+    used.add(callIndex);
+    if (typeof returned.output !== "string" || returned.isError || returned.is_error || returned.error ||
+        ["failed", "error"].includes(String(returned.status))) return;
+    const input = object(call.input), name = input?.name;
+    if (typeof name !== "string" || !name || Object.keys(input!).some(key => key !== "name")) return;
+    const envelope = /^\s*<skill_content name="([^"<>\r\n]+)">([\s\S]+)<\/skill_content>\s*$/u.exec(returned.output);
+    if (!envelope || envelope[1] !== name || /<\/?skill_content\b/u.test(envelope[2]!)) return;
+    // Known independent planner calls cannot inject their instructions into the answer chain.
+    const parents = typeof call.parent_span === "string" ? raw.messages.slice(0, callIndex).flatMap((item, i) => {
+      const turn = object(item);
+      return turn?.type === "llm_turn" && turn.parent_span === call.parent_span ? [i] : [];
+    }) : [];
+    if (answerTurns.size && parents.length && !parents.some(i => answerTurns.has(i))) return;
+    const source = evidenceSources(value).find(source => source.kind === "text" && source.path === "/output");
+    if (!source) return;
+    result.push({ message_index: index, path: "/output", role: "tool", content: returned.output,
+      evidence: [cite(inputId, index, source, 0, source.text.length)] });
+  });
+  return result;
+}
+
 /** Retain governing messages from the actual answer chain and preceding top-level conversation. */
 export function normativeSources(raw: { messages: unknown[] }, inputId: string, finalMessageIndex?: number): NormativeSource[] {
   const finalIndex = finalIndexOf(raw, finalMessageIndex);
@@ -104,10 +151,11 @@ export function normativeSources(raw: { messages: unknown[] }, inputId: string, 
     const context = contextOf(object(message)!);
     context!.messages.forEach((nested, nestedIndex) => add(index, `${context!.path}/${nestedIndex}/content`, nested));
   });
-  return result;
+  return [...result, ...loadedSkillSources(raw, inputId, finalIndex, answerTurns)]
+    .sort((a, b) => a.message_index - b.message_index);
 }
 
-/** The public instruction catalogue remains limited to system/developer messages. */
+/** Explicit instructions include matched skill loads, never arbitrary tool facts. */
 export function instructionSources(raw: { messages: unknown[] }, inputId: string, finalMessageIndex?: number): InstructionSource[] {
   return normativeSources(raw, inputId, finalMessageIndex).filter((source): source is InstructionSource => source.role !== "user");
 }

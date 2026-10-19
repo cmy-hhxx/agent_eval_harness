@@ -42,8 +42,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
     models: {
       judge: {
         channel: "evaluation-gateway",
-        api: "openai-completions", model: "fixture-model", thinking: "off",
-        contextWindow: 8192, maxOutputTokens: 2048,
+        model: "fixture-model", thinking: "off",
       },
     },
     bindings: {

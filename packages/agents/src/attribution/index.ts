@@ -37,7 +37,6 @@ export const attributionProfile: AgentProfile = {
     const { norm_directory: _norms, ...answerMaterial } = answer;
     const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
-    const focus = input.task_focus as Record<string,unknown> | undefined;
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
@@ -45,8 +44,6 @@ export const attributionProfile: AgentProfile = {
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
       answer: answerMaterial,
       finding_basis: attributionFindingBasis(input).map(({requirement_index:_requirement,norm_index:_norm,...choice})=>choice),
-      ...(focus ? { task_focus: { ...focus, common_requirements: Array.isArray(focus.common_requirements)
-        ? focus.common_requirements.map((item: any) => ({...item,requirement_index:item.requirement_index+1})) : focus.common_requirements } } : {}),
     };
     const truth = input.ground_truth as { available: boolean; value: unknown };
     const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];

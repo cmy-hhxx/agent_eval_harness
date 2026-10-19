@@ -10,6 +10,17 @@ import { createBalancedModels } from "@eval/host-app/config";
 import { draftFor, submitFor, taskResult, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { services } from "../../fixtures/services.js";
 
+test("evaluation balancing selects only Responses channels by default and rejects an explicit Chat channel", async () => {
+  const { directory, models } = await fixtureConfig();
+  models.channels["eris-only"] = { ...models.channels["evaluation-gateway"], provider: "eris-only", api: "openai-completions" };
+  try {
+    const routing = createBalancedModels(models);
+    for (let index = 0; index < 4; index++)
+      assert.equal(routing.modelForTask({ id: `response-${index}`, stage: "comparison" } as PlannedTask).provider, "evaluation-gateway");
+    assert.throws(() => createBalancedModels(models, ["eris-only"]), /requires openai-responses/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("healthy channels dispatch six original and four OpenAI tasks per ten, preserving retry routes", async () => {
   const { directory, models } = await fixtureConfig();
   models.channels["evaluation-gateway"].trafficWeight = 6;

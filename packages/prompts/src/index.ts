@@ -114,3 +114,4 @@ export function erisPrompt(toolNames: string[]) {
   return { systemPrompt: resource("eris/system.md"), predictionPrompt: resource("eris/prediction.md"), recoveryMessage: resource("eris/recovery.md"),
     failureSummaryMessage: resource("eris/tool-failure.md"), toolDescriptions };
 }
+export { modelProbeText } from "./model-probe.js";

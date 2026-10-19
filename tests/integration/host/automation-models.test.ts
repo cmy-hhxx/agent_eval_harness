@@ -96,10 +96,7 @@ test("automation caps OpenAI attempts while other channels use free slots, inclu
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(new Error("Channel-limited tasks must leave slots for other channels"));
-    release();
-  }, 10_000);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
     async run() {
       const spec = options.spec, channel = spec.model.provider;
@@ -117,6 +114,7 @@ test("automation caps OpenAI attempts while other channels use free slots, inclu
           const held = [...active.values()].filter(value => value.stage === "attribution");
           if (held.some(value => value.channel === "openai") && held.filter(value => value.channel === "evaluation-gateway").length >= 2) {
             sharedSlots = true;
+            clearTimeout(timeout);
             release();
           }
           await barrier;
@@ -130,6 +128,10 @@ test("automation caps OpenAI attempts while other channels use free slots, inclu
   try {
     assert.throws(() => createAutomationModels(models, ["openai"], new Set(), { missing: 1 }), /Unknown automation channel limit/);
     for (const index of [0, 1, 2, 3]) workers.push(await startWorker(backend, path.join(directory, `worker-${index}`)));
+    timeout = setTimeout(() => {
+      controller.abort(new Error("Channel-limited tasks must leave slots for other channels"));
+      release();
+    }, 10_000);
     const options = { ...services, ...routing, runId: "limited-channels", output: config.output, config, plan,
       engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, policy: config.execution,
       concurrency: 4, retries: 1, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url), signal: controller.signal };

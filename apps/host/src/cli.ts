@@ -9,11 +9,13 @@ import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
 import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
-import { reportRun } from "@eval/workflows/comparison";
+import { reportRun, reportStability } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
 import { runClusteringCommand } from "./clustering-command.js";
 import { runAttributionCommand } from "./attribution-command.js";
+import { runStabilityCommand } from "./stability-command.js";
+import { runModelProbe } from "./model-probe.js";
 import { createBalancedModels } from "./balanced-models.js";
 import { startDashboard } from "./dashboard.js";
 import { pilotTaskIds, comparisonRewriteReview, readRunState } from "@eval/workflows/comparison";
@@ -49,6 +51,12 @@ async function main(): Promise<void> {
       slot: { type: "string", multiple: true },
       all: { type: "boolean" },
       apply: { type: "boolean" },
+      execute: { type: "boolean" },
+      cases: { type: "string" },
+      stage: { type: "string" },
+      "max-attempts": { type: "string" },
+      "stop-starting-at": { type: "string" },
+      seed: { type: "string" },
       "review-file": { type: "string" },
       "discover-inputs": { type: "boolean" },
       "resume-stage": { type: "string", multiple: true },
@@ -70,7 +78,7 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (selectedRun ? path.basename(path.resolve(selectedRun)) : undefined);
   if (values.help || !command) {
     console.log(
-      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
+      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
 run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
@@ -91,6 +99,9 @@ reattribute: --run-id ID --apply 续跑；验收后 --discover-inputs 释放完�
 reattribute: --run-id ID --pilot-per-model N [--apply] 保留已选回答，按模型配额扩大有限试跑
 channels: run|reattribute|cluster --balance-channels 按 traffic_weight 加权分配完整任务
 verify-comparisons: --run PATH [--result ID ...] [--apply] 独立复核已接受的对局
+validate-stability: --cases FILE|--run PATH --run-id EXPERIMENT [--execute] [--max-attempts N]
+  [--stop-starting-at ISO_DATE_WITH_OFFSET] [--seed N]；默认预览，重复同一实验 ID 续跑
+model-probe: --engine pi|prime [--stage comparison] [--execute]；默认只显示脱敏计划
 recluster: --run PATH [--task ID ...|--all] [--apply] 重新归类已接受的延期观察
 review-problem-occurrences: --review-file FILE [--apply] 默认只读预览，--apply 仅追加明确来源复核事件
 rewrite-comparisons: --run PATH [--scope items|verdicts] [--mode missing|refresh]
@@ -123,10 +134,14 @@ dashboard: --port 4173 在本机启动控制看板`,
   if (values.dataset && !["index", "preflight", "run"].includes(command))
     throw new Error("--dataset 仅用于 index、preflight 和 run");
   if (values.catalog && !values.dataset) throw new Error("--catalog 需要同时指定 --dataset");
-  if (values.debug && !["run", "cluster", "reattribute"].includes(command)) throw new Error("--debug 仅用于运行命令");
+  if (values.debug && !["run", "cluster", "reattribute", "validate-stability"].includes(command)) throw new Error("--debug 仅用于运行命令");
   for (const flag of ["discover-inputs", "resume-stage", "pilot-cases"] as const)
     if (values[flag] && command !== "run" && !(flag !== "pilot-cases" && command === "reattribute") &&
-      !(flag === "resume-stage" && command === "cluster")) throw new Error(`--${flag} 不适用于当前命令`);
+      !(flag === "resume-stage" && ["cluster", "validate-stability"].includes(command))) throw new Error(`--${flag} 不适用于当前命令`);
+  if (values.execute && !["model-probe", "validate-stability"].includes(command)) throw new Error("--execute 仅用于 model-probe 或 validate-stability");
+  if (values.stage && command !== "model-probe") throw new Error("--stage 仅用于 model-probe");
+  for (const flag of ["cases", "max-attempts", "stop-starting-at", "seed"] as const)
+    if (values[flag] !== undefined && command !== "validate-stability") throw new Error(`--${flag} 仅用于 validate-stability`);
   for (const flag of ["pilot-answers", "pilot-per-model", "from-date"] as const)
     if (values[flag] && command !== "reattribute") throw new Error(`--${flag} 仅用于 reattribute`);
   if (values["balance-channels"] && !["run", "reattribute", "cluster"].includes(command))
@@ -211,6 +226,9 @@ dashboard: --port 4173 在本机启动控制看板`,
     const release = command === "status" ? async () => {} : await runLock(run);
     let result;
     try {
+      const isStability = command === "report" && Boolean((await readJson<{
+        manifest?: { config?: { stability?: unknown } };
+      }>(path.join(run, "state.json"))).manifest?.config?.stability);
       result =
         command === "status"
           ? await readJson(path.join(run, "state.json"))
@@ -219,7 +237,7 @@ dashboard: --port 4173 在本机启动控制看板`,
               rewriteScopes: values["require-rewrite"], batchIds: values["require-batch"],
               selectedOnly: values.selected,
             })
-            : await reportRun(run, { details: values.details });
+            : isStability ? await reportStability(run) : await reportRun(run, { details: values.details });
     } finally {
       await release();
     }
@@ -240,6 +258,27 @@ dashboard: --port 4173 在本机启动控制看板`,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
   logger.addSecrets(...configurationSecrets());
+  if (command === "model-probe") {
+    if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
+    const result = await runModelProbe({ configPaths: values.config, engine: values.engine as Engine,
+      stage: values.stage, execute: values.execute });
+    console.log(JSON.stringify(result, null, 2));
+    if (result.status === "failed") process.exitCode = 2;
+    return;
+  }
+  if (command === "validate-stability") {
+    if (values.input || values.batch || values.case || values["limit-cases"])
+      throw new Error("validate-stability 使用 --cases 固定样本清单或 --run 选择已接受来源");
+    const deadline = values["stop-starting-at"];
+    if (deadline && !/(Z|[+-]\d\d:\d\d)$/u.test(deadline)) throw new Error("--stop-starting-at 须包含 Z 或时区偏移");
+    process.exitCode = await runStabilityCommand(host, { cases: values.cases, sourceRun: selectedRun,
+      runId: values["run-id"], output: values.output, apply: values.execute,
+      engine: values.engine, debug: values.debug, workers: values.worker, resumeStages: values["resume-stage"],
+      maxAttempts: values["max-attempts"] === undefined ? undefined : Number(values["max-attempts"]),
+      stopStartingAt: deadline === undefined ? undefined : Date.parse(deadline),
+      seed: values.seed === undefined ? undefined : Number(values.seed) });
+    return;
+  }
   if (command === "reattribute") {
     if (values.input || values.batch || values.case || values["limit-cases"] || values.dataset)
       throw new Error("reattribute 从正式对比结果选择回答，使用 --run、--from-date 和 --pilot-answers");

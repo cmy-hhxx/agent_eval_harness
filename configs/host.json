@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r250",
+  "evaluatorVersion": "r257",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -84,10 +84,7 @@
   },
   "models": {
     "judge": {
-      "api": "openai-responses",
       "thinking": "medium",
-      "contextWindow": 524288,
-      "maxOutputTokens": 32768,
       "channel": "evaluation-gateway"
     }
   },

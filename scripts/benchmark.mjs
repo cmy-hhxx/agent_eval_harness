@@ -80,7 +80,7 @@ async function loadFixtures(file) {
 
 function evaluate(fixture) {
   try {
-    const binding = services.workflow.bind(fixture.task, fixture.inputs, fixture.dependencies, { tasks: [fixture.task, ...fixture.dependencyTasks] });
+    const binding = services.taskSource.bind(fixture.task, fixture.inputs, fixture.dependencies, { tasks: [fixture.task, ...fixture.dependencyTasks] });
     const result = agents.resolve(binding, structuredClone(fixture.draft), fixture.audit);
     agents.validate(binding, result, fixture.audit);
     return { accepted: true, codes: [] };
@@ -363,6 +363,7 @@ if (command === "collect") {
           runId: values["run-id"],
           output: config.output,
           engine: values.engine,
+          evaluatorVersion: host.evaluatorVersion,
           config,
           ...services,
           plan,

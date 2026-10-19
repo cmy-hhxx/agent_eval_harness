@@ -13,6 +13,7 @@ export * from "./dashboard-view.js";
 export * from "./codec.js";
 export type { Checkpoint } from "./checkpoint.js";
 export * from "./report.js";
+export * from "./model-behavior.js";
 export * from "./results.js";
 export * from "./commentary.js";
 export * from "./annotations.js";
@@ -34,3 +35,6 @@ export * from "./attribution-targeted-review.js";
 export * from "./clustering-presentation.js";
 
 export { prepareComparisonVerification } from "./verification-preparation.js";
+export * from "./stability.js";
+export * from "./stability-statistics.js";
+export * from "./stability-report.js";

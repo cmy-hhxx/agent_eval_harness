@@ -15,13 +15,12 @@ export interface TaskAnalysis {
   red_flags: TaskCriterion[];
 }
 
-/** Only the task, reference and candidate-specific instructions are supplied to criteria preparation. */
+/** Only the task, user context and candidate-specific instructions define delivery requirements. */
 export interface CriteriaInput {
   question: string;
-  ground_truth: { available: boolean; value: unknown };
   candidates: {
     candidate_id: string;
-    instructions: { message_index: number; role: "system" | "developer"; content: unknown }[];
+    instructions: { message_index: number; role: "system" | "developer" | "tool"; content: unknown }[];
     context: { message_index: number; role: "user"; content: unknown }[];
   }[];
 }

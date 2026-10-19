@@ -612,8 +612,8 @@ export async function processResponsesStream<TApi extends Api>(
 	if (functionCalls.size && !sawTerminalResponse) {
 		throw new StreamFailureError("Responses stream ended before function calls were finalized", { kind: "unknown" });
 	}
-	if (model.provider === "xai" && !sawTerminalResponse) {
-		throw new StreamFailureError("xAI Responses stream ended before a terminal response event", { kind: "unknown" });
+	if (!sawTerminalResponse) {
+		throw new StreamFailureError("Responses stream ended before a terminal response event", { kind: "unknown" });
 	}
 }
 

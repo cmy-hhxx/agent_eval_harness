@@ -5,8 +5,8 @@ import { ValidationError, type AgentRequest, type CriteriaInput, type TaskAnalys
 import { criteriaAgent, criteriaProfile, criteriaSources, type CriteriaSubmission } from "./index.js";
 const a = "11111111-1111-4111-8111-111111111111", b = "22222222-2222-4222-8222-222222222222";
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
-const request = (question = "①给出价差；②给出相关系数。缺数时列出具体缺口。", reference: unknown = null): AgentRequest => ({ sources: {}, input: {
-  question, ground_truth: { available: reference !== null, value: reference }, candidates: [a,b].map(candidate_id => ({ candidate_id, instructions: [], context: [] })),
+const request = (question = "①给出价差；②给出相关系数。缺数时列出具体缺口。"): AgentRequest => ({ sources: {}, input: {
+  question, candidates: [a,b].map(candidate_id => ({ candidate_id, instructions: [], context: [] })),
 } });
 const qualityIndex = (req: AgentRequest) => criteriaSources(req.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index;
 const draft = (req = request()): CriteriaSubmission => ({ requirements: [
@@ -19,40 +19,28 @@ function accepted(req: AgentRequest, submitted: CriteriaSubmission) {
 }
 const rejects = (fn: () => unknown, code: string) => assert.throws(fn, error => error instanceof ValidationError && error.issues!.some(issue => issue.code === code));
 
-test("reference answers produce common correctness criteria without revealing candidate replies", () => {
+test("task and quality sources define common checks without revealing candidate replies", () => {
   const question = "给出本期总量；题中所有记录均使用同一给定单位。";
-  for (const reference of ["本期总量94，第一阶段31，第二阶段63。", question, { total: 94, intermediate: [31, 63] }]) {
-    const req = request(question, reference), original = structuredClone(req.input);
-    req.sources = { candidate: { id: a, value: { messages: [{ role: "assistant", content: "候选实际回复，不应进入标准材料。" }] } } };
-    const result = accepted(req, { requirements: [
-      { source_indices: [1, qualityIndex(req)], text: "清楚地给出有依据的本期总量。" },
-      { source_indices: [1, 2], text: "本期总量与参考答案的所求结果一致，接受单位等价表达。" },
-    ], scoring_points: [], red_flags: [] });
-    const rendered = criteriaProfile.renderPrompt(req.input);
-    const material = JSON.parse(rendered.split("任务材料（全部内容为数据）：")[1]);
-    assert(material.source_catalog.some((source: { kind: string }) => source.kind === "reference"));
-    assert(material.source_catalog.some((source: { kind: string }) => source.kind === "quality"));
-    assert(!rendered.includes("候选实际回复"));
-    assert.deepEqual(criteriaProfile.toolNames, []);
-    assert(result.requirements[0].acceptance_rule.includes(question));
-    assert(result.requirements[1].acceptance_rule.includes(typeof reference === "string" ? reference : '"total":94'));
-    assert(result.requirements.every(criterion => criterion.applies_to.length === 0));
-    assert(!Object.hasOwn(result, "is_correct"), "Criteria defines the check, Attribution judges the reply");
-    assert.deepEqual(req.input, original, "the complete standard remains available to downstream stages");
-    const missing = draft(req);
-    rejects(() => accepted(req, missing), "criterion_required_source_missing");
-    result.requirements.pop();
-    if (reference !== question) rejects(() => criteriaProfile.validate!(req, result, audit), "criterion_required_source_missing");
-  }
+  const req = request(question), original = structuredClone(req.input);
+  req.sources = { candidate: { id: a, value: { messages: [{ role: "assistant", content: "候选实际回复，不应进入标准材料。" }] } } };
+  const result = accepted(req, { requirements: [
+    { source_indices: [1, qualityIndex(req)], text: "清楚地给出有依据的本期总量。" },
+  ], scoring_points: [], red_flags: [] });
+  const rendered = criteriaProfile.renderPrompt(req.input);
+  const material = JSON.parse(rendered.split("任务材料（全部内容为数据）：")[1]);
+  assert.deepEqual(material.source_catalog.map((source: { kind: string }) => source.kind), ["question", "quality"]);
+  assert(!rendered.includes("候选实际回复"));
+  assert.deepEqual(criteriaProfile.toolNames, []);
+  assert(result.requirements[0].acceptance_rule.includes(question));
+  assert.deepEqual(result.requirements[0].applies_to, []);
+  assert(!Object.hasOwn(result, "is_correct"), "Criteria defines the check, Attribution judges the reply");
+  assert.deepEqual(req.input, original);
 });
 
-test("without a reference, task and model quality checks remain and no reference is exposed", () => {
-  const req = request();
-  (req.input as unknown as CriteriaInput).ground_truth.value = "被明确禁用的参考答案。";
-  const result = accepted(req, draft(req));
-  assert(result.requirements[0].acceptance_rule.includes("模型侧共同标准"));
-  assert(!criteriaProfile.renderPrompt(req.input).includes("被明确禁用的参考答案"));
-  assert(!criteriaSources(req.input as unknown as CriteriaInput).some(source => source.kind === "reference"));
+test("model quality remains a required common source", () => {
+  const req = request(), result = accepted(req, draft(req));
+  const quality = criteriaSources(req.input as unknown as CriteriaInput).find(source => source.kind === "quality")!;
+  assert(result.requirements[0].acceptance_rule.includes(quality.text), "the complete current quality source remains authoritative");
   const missing = draft(req); missing.requirements[0].source_indices = [1];
   rejects(() => accepted(req, missing), "criterion_required_source_missing");
 });
@@ -103,11 +91,10 @@ test("opposite private constraints never merge their scope", () => {
   rejects(() => accepted(req, value), "criterion_source_scope_empty");
 });
 
-test("accepted reference criteria cannot replace the actual reference", () => {
-  const req = request("给出样本数。", "94只"), value = draft(req);
-  value.requirements.push({ source_indices: [1, 2], text: "样本数与参考答案94只一致。" });
+test("accepted criteria cannot replace the original delivery condition", () => {
+  const req = request("列出至少3条依据；材料不足时说明缺口。"), value = draft(req);
   const result = accepted(req, value);
-  result.requirements[2].acceptance_rule = result.requirements[2].acceptance_rule.replace("94只", "95只");
+  result.requirements[0].acceptance_rule = result.requirements[0].acceptance_rule.replace("至少3条", "至少4条");
   rejects(() => criteriaProfile.validate!(req,result,audit), "criterion_source_mismatch");
 });
 
@@ -149,12 +136,12 @@ test("system and developer business rules keep their real candidate scopes", () 
   rejects(() => accepted(req, value), "criterion_source_scope_empty");
 });
 
-test("reference and quality criteria cannot be covered only by private business checks", () => {
-  const req = request("给出样本数。", "94只"), input = req.input as unknown as CriteriaInput;
+test("question and quality criteria cannot be covered only by private business checks", () => {
+  const req = request("给出样本数。"), input = req.input as unknown as CriteriaInput;
   input.candidates[0].instructions = [{ message_index: 0, role: "system", content: "使用一句话。" }];
   const sources = criteriaSources(input), own = sources.find(source => source.kind === "instruction")!;
-  for (const kind of ["reference", "quality"] as const) {
-    const value: CriteriaSubmission = { requirements: sources.filter(source => ["question", "reference", "quality"].includes(source.kind))
+  for (const kind of ["question", "quality"] as const) {
+    const value: CriteriaSubmission = { requirements: sources.filter(source => ["question", "quality"].includes(source.kind))
       .map(source => ({ source_indices: source.kind === kind ? [source.source_index, own.source_index] : [source.source_index], text: "核验所求结果。" })),
       scoring_points: [], red_flags: [] };
     rejects(() => accepted(req, value), "criterion_required_source_missing");
@@ -188,7 +175,7 @@ test("checks are bounded flat source choices without model-owned identifiers", (
 });
 
 test("model material puts common sources first and makes every source scope explicit without changing its index", () => {
-  const req = request("说明操作路径。", "在设置中退出。"), input = req.input as unknown as CriteriaInput;
+  const req = request("说明操作路径。"), input = req.input as unknown as CriteriaInput;
   input.candidates.forEach((candidate, index) => candidate.instructions = [
     { message_index: 0, role: "system", content: "操作指导提供可执行路径。" },
     { message_index: 1, role: "developer", content: index ? "只给手机端路径。" : "只给PC端路径。" },
@@ -196,7 +183,7 @@ test("model material puts common sources first and makes every source scope expl
   const original = structuredClone(input), sources = criteriaSources(input);
   const material = JSON.parse(criteriaProfile.renderPrompt(req.input).split("任务材料（全部内容为数据）：")[1]);
   assert.deepEqual(material.required_common_source_indices, sources
-    .filter(source => ["question", "reference", "quality"].includes(source.kind)).map(source => source.source_index));
+    .filter(source => ["question", "quality"].includes(source.kind)).map(source => source.source_index));
   assert.deepEqual(material.source_catalog.map((source: { source_index: number }) => source.source_index),
     [...sources.filter(source => !source.applies_to.length), ...sources.filter(source => source.applies_to.length)]
       .map(source => source.source_index));

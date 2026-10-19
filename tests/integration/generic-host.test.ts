@@ -95,6 +95,115 @@ const repository = createRunRepository(codec, (task, state) => ({
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
 
+test("attempt admission is cumulative, durable and bounded across concurrent workers and resume", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-attempt-limit-"));
+  let calls = 0;
+  const backend: AgentBackend = { identity, async createSession(options) {
+    return { async run() {
+      calls++;
+      const saved = await repository.readRun(path.join(directory, "bounded"));
+      assert.equal(saved.manifest.states[options.spec.taskId].attempts, 1);
+      assert.equal(saved.manifest.cumulativeAttempts, calls);
+      const result = await options.execute("submit_evaluation", { score: 1 });
+      assert(!result.isError);
+    }, async abort() {}, async dispose() {} };
+  } };
+  const workers = await Promise.all([0, 1].map(index => startWorker(backend, path.join(directory, `worker-${index}`))));
+  const options = {
+    agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+    runtime: { root: directory, workerEntry: "unused" }, runId: "bounded",
+    output: { kind: "directory" as const, path: directory }, engine: "pi" as const, identity,
+    evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+    modelForStage: () => model, concurrency: 2, retries: 0, retryDelaySeconds: 0,
+    workerUrls: workers.map(worker => worker.url),
+  };
+  try {
+    const first = await runEvaluation({ ...options, maxAttempts: 1 });
+    assert.equal(calls, 1);
+    assert.equal(first.execution_stop_reason, "attempt_limit");
+    assert.deepEqual(first.execution_task_statuses, { succeeded: 1, pending: 1 });
+    const resumed = await runEvaluation(options);
+    assert.equal(calls, 1);
+    assert.equal(resumed.execution_stop_reason, "attempt_limit");
+    const state = await repository.readRun(path.join(directory, "bounded"));
+    assert.equal(state.manifest.executionLimits?.maxAttempts, 1);
+    assert.equal(Object.values(state.manifest.states).reduce((sum, item) => sum + item.attempts, 0), 1);
+    const finished = await runEvaluation({ ...options, maxAttempts: 2 });
+    assert.equal(calls, 2);
+    assert.deepEqual(finished.execution_task_statuses, { succeeded: 2 });
+    assert.equal(finished.execution_stop_reason, undefined);
+    const afterRetirement = await runEvaluation({ ...options, taskSource: { ...workflow,
+      async reconcile(_run, state) {
+        state.manifest.tasks = state.manifest.tasks.filter(task => task.id !== "task-1");
+        delete state.manifest.states["task-1"];
+        delete state.receipts["task-1"];
+        state.manifest.tasks.push({ ...plan.tasks[0], id: "task-3" });
+        state.manifest.states["task-3"] = { status: "pending", attempts: 0 };
+        return { tasks: state.manifest.tasks, inputs: plan.inputs, summary: {} };
+      },
+    } });
+    assert.equal(calls, 2, "retiring a paid task cannot refund the cumulative budget");
+    assert.equal(afterRetirement.execution_stop_reason, "attempt_limit");
+    assert.equal((await repository.readRun(path.join(directory, "bounded"))).manifest.cumulativeAttempts, 2);
+  } finally {
+    await Promise.all(workers.map(worker => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an expired dispatch deadline preserves pending work without calling a model", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-dispatch-deadline-"));
+  const worker = await startWorker({ identity, async createSession() {
+    throw new Error("No session may be started after the deadline");
+  } }, path.join(directory, "worker"));
+  try {
+    const result = await runEvaluation({
+      agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "expired",
+      output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+      workerUrls: [worker.url], stopStartingAt: Date.now() - 1,
+    });
+    assert.equal(result.execution_stop_reason, "dispatch_deadline");
+    assert.deepEqual(result.execution_task_statuses, { pending: 2 });
+    const state = await repository.readRun(path.join(directory, "expired"));
+    assert.equal(Object.values(state.manifest.states).reduce((sum, item) => sum + item.attempts, 0), 0);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a dispatch deadline lets the admitted attempt finish and preserves its successor", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-inflight-deadline-"));
+  const deadline = Date.now() + 2000;
+  let calls = 0;
+  const worker = await startWorker({ identity, async createSession(options) {
+    return { async run() {
+      calls++;
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now() + 20)));
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    const result = await runEvaluation({
+      agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "inflight",
+      output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+      workerUrls: [worker.url], stopStartingAt: deadline,
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.execution_stop_reason, "dispatch_deadline");
+    assert.deepEqual(result.execution_task_statuses, { succeeded: 1, pending: 1 });
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Host accepts generic JSON and profiles replace prompt and schema together", async () => {
   const registry = new AgentRegistry([
     agent,

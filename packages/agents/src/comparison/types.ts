@@ -151,11 +151,12 @@ export interface SubmittedComparison {
 export interface ComparisonSubmission {
   a_summary: string;
   b_summary: string;
+  /** Same common requirement assessed under incompatible scopes; source associations remain program-owned. */
+  scope_conflicts?: { slot_index: number; reason: string }[];
   comparisons: (SubmittedComparison | null)[];
   preference?: string | null;
-  /** Relative inclination within a both-good/both-bad result; never changes its ranking. */
-  relative_preference: "A" | "B";
-  /** Candidate-owned reasons; the program supplies identity and measured resources. */
-  a_tradeoff: string;
-  b_tradeoff: string;
+  /** Ties normally retain an inclination; null is reserved for equivalent confirmed facts. */
+  relative_preference: "A" | "B" | null;
+  /** Explain the decisive difference and relevant counterevidence together. */
+  tradeoff: string;
 }

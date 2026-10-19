@@ -11,8 +11,7 @@ import { fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 
 for (const engine of ["pi", "prime"] as const)
-  for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
+    test(`${engine}: Responses falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
       const invalid = { count: "7", enabled: "true", text: 9, note: null, satisfies: false };
       const valid = { count: 7, enabled: true, text: "nine", note: null, satisfies: true };
@@ -48,7 +47,7 @@ for (const engine of ["pi", "prime"] as const)
           const payload = object(await body(req));
           assert(++requests <= 3, "invalid parameters and one content repair need only three model requests");
           const tools = payload.tools as Record<string, unknown>[];
-          const definitions = tools.map((tool) => api === "openai-completions" ? object(tool.function) : tool);
+          const definitions = tools;
           const schema = object(definitions.find((tool) => tool.name === "submit_evaluation")!.parameters);
           assert.equal(schema.additionalProperties, false);
           assert.deepEqual(schema.required, ["count", "enabled", "text", "note", "satisfies"]);
@@ -56,9 +55,7 @@ for (const engine of ["pi", "prime"] as const)
           assert(!/"(?:\$ref|\$defs)"\s*:/.test(JSON.stringify(schema)), "the model receives the full inlined submission schema");
           assert.deepEqual(object(object(definitions.find((tool) => tool.name === "calculate")!.parameters).properties).operation,
             { enum: ["add", "subtract", "multiply", "divide"] });
-          const outputs = api === "openai-completions"
-            ? (payload.messages as Record<string, unknown>[]).filter((message) => message.role === "tool").map((message) => String(message.content))
-            : (payload.input as Record<string, unknown>[]).filter((item) => item.type === "function_call_output").map((item) => String(item.output));
+          const outputs = (payload.input as Record<string, unknown>[]).filter((item) => item.type === "function_call_output").map((item) => String(item.output));
           if (requests === 2) assert(outputs.some((output) => /Validation failed for tool "calculate"/.test(output)),
             "ordinary tool arguments still fail at the SDK parameter boundary");
           if (requests === 3) {
@@ -80,24 +77,14 @@ for (const engine of ["pi", "prime"] as const)
           const args = requests === 1 ? { operation: "invalid", operands: ["2", "2"] } : requests === 2 ? invalid : valid;
           const id = `fixture-${requests}`;
           res.writeHead(200, { "content-type": "text/event-stream" });
-          if (api === "openai-completions") {
-            const event = { id, object: "chat.completion.chunk", created: 1, model: "fixture" };
-            res.end([
-              { ...event, choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${id}`,
-                type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: null }] },
-              { ...event, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-                usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
-            ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
-          } else {
-            const call = { type: "function_call", id: `fc_${id}`, call_id: `call_${id}`, name, arguments: JSON.stringify(args) };
-            res.end([
-              { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
-              { type: "response.output_item.done", output_index: 0, item: call },
-              { type: "response.completed", response: { id: `resp_${id}`, status: "completed", output: [call],
-                usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
-            ].map((event, sequence_number) =>
-              `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
-          }
+          const call = { type: "function_call", id: `fc_${id}`, call_id: `call_${id}`, name, arguments: JSON.stringify(args) };
+          res.end([
+            { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
+            { type: "response.output_item.done", output_index: 0, item: call },
+            { type: "response.completed", response: { id: `resp_${id}`, status: "completed", output: [call],
+              usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+          ].map((event, sequence_number) =>
+            `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
         } catch (error) {
           gatewayErrors.push(String(error));
           res.writeHead(500);
@@ -112,11 +99,10 @@ for (const engine of ["pi", "prime"] as const)
       process.env.SDK_QUOTA_TEST_KEY = "preferred-fixture-secret";
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
-        models.models.judge!.api = api;
         models.models.judge!.thinking = "off";
         models.channels.openai = { ...models.models.judge, provider: "openai", baseUrl: gateway.url + "/preferred",
           apiKeyEnv: "SDK_QUOTA_TEST_KEY" };
-        const runId = `submission-${engine}-${api}`;
+        const runId = `submission-${engine}`;
         const routing = createAutomationModels(models, ["openai", "evaluation-gateway"]);
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },

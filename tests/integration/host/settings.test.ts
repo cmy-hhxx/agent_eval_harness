@@ -115,14 +115,16 @@ no_proxy=localhost,127.0.0.1,::1
 });
 
 test("each evaluation stage can route an identical model ID to a different channel without exposing keys", async () => {
-  const settings = parseSettings(ini);
+  const settings = parseSettings(ini.replace("api = openai-completions", "api = openai-responses\ncontext_window = 8192\nmax_output_tokens = 2048"));
   const config = await loadConfig(path.join(ROOT, "configs/host.json"), settings, {
     bindings: { comparison: { channel: "openai", model: "shared-model" } },
   });
   const resolve = createModelResolver(config.models);
   assert.equal(resolve("attribution").baseUrl, "https://first.example/v1");
   assert.equal(resolve("comparison").baseUrl, "https://second.example/v1");
-  assert.equal(resolve("comparison").api, "openai-completions");
+  assert.equal(resolve("comparison").api, "openai-responses");
+  assert.equal(resolve("comparison").contextWindow, 8192);
+  assert.equal(resolve("comparison").maxOutputTokens, 2048);
   assert.equal(resolve("comparison").supportsDeveloperRole, false);
   assert.equal(resolve("attribution").supportsExplicitPromptCaching, true);
   assert.equal(resolve("comparison").supportsExplicitPromptCaching, undefined, "channel overrides must not inherit proprietary cache controls");
@@ -132,6 +134,36 @@ test("each evaluation stage can route an identical model ID to a different chann
   await assert.rejects(loadConfig(path.join(ROOT, "configs/host.json"), settings, {
     bindings: { comparison: { channel: "missing" } },
   }), /Unknown bindings.comparison.channel/);
+});
+
+test("evaluation profiles cannot override channel protocol or capabilities", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "model-profile-fields-"));
+  try {
+    const file = path.join(directory, "models.json"), base = path.join(ROOT, "configs/host.json");
+    for (const [field, value] of Object.entries({ api: "openai-responses", baseUrl: "https://other.example", supportsDeveloperRole: false,
+      contextWindow: 1000, maxOutputTokens: 500 })) {
+      await writeFile(file, JSON.stringify({ models: { judge: { [field]: value } } }));
+      await assert.rejects(loadConfig([base, file], parseSettings(ini)), new RegExp(`Invalid models.judge.${field}`));
+    }
+    await writeFile(file, JSON.stringify({ bindings: { comparison: { maxOutputTokens: 100 } } }));
+    await assert.rejects(loadConfig([base, file], parseSettings(ini)), /Invalid bindings.comparison.maxOutputTokens/);
+    await assert.rejects(loadConfig(base, parseSettings(ini), { bindings: { comparison: { channel: "openai" } } }), /requires openai-responses/);
+    const host = await loadConfig(base, parseSettings(ini));
+    host.models.models.judge.api = "openai-completions";
+    assert.throws(() => createModelResolver(host.models)("comparison"), /requires openai-responses/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("evaluation routing enforces explicit model and effort catalogs before inference", async () => {
+  const settings = parseSettings(ini.replace("model = shared-model", "model = shared-model\nmodels = shared-model\nefforts = off, medium, high"));
+  const host = await loadConfig(path.join(ROOT, "configs/host.json"), settings);
+  const resolve = createModelResolver(host.models);
+  assert.equal(resolve("comparison").model, "shared-model");
+  host.models.bindings.comparison.model = "missing-model";
+  assert.throws(() => resolve("comparison"), /not declared/);
+  host.models.bindings.comparison.model = "shared-model";
+  host.models.bindings.comparison.thinking = "max";
+  assert.throws(() => resolve("comparison"), /not supported/);
 });
 
 test("settings come only from the selected INI file; missing files and missing channels fail explicitly", async () => {

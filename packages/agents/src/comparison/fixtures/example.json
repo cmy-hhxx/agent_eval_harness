@@ -304,16 +304,7 @@
     },
     "decision_basis": {
       "tradeoff": "A与B并列：都正确给出4，没有实质差异。",
-      "decisive_findings": [
-        {
-          "candidate": "A",
-          "finding_index": 0
-        },
-        {
-          "candidate": "B",
-          "finding_index": 0
-        }
-      ],
+      "decisive_findings": [],
       "comparisons": [
         {
           "aspect": "计算结果",

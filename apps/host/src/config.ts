@@ -17,7 +17,6 @@ export * from "./settings.js";
 export { createBalancedModels } from "./balanced-models.js";
 import { readSettings, applySettings, type ApplicationSettings } from "./settings.js";
 
-const API_KINDS: ModelProfile["api"][] = ["openai-completions", "openai-responses"];
 const EXECUTION_DEFAULTS = {
   ...DEFAULT_POLICY,
   concurrency: 8,
@@ -276,37 +275,34 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   for (const [name, value] of Object.entries(rawModels)) {
     if (!isObject(value)) throw new Error(`Invalid models.${name}`);
     for (const field of Object.keys(value))
-      if (!["channel", "api", "model", "thinking", "contextWindow", "maxOutputTokens", "supportsDeveloperRole"].includes(field))
-        throw new Error(`Invalid models.${name}.${field}; configure the endpoint in config.ini`);
+      if (!["channel", "model", "thinking"].includes(field))
+        throw new Error(`Invalid models.${name}.${field}; configure channel protocol and capabilities in config.ini`);
     const channelId = optionalString(value.channel, `models.${name}.channel`);
     const channel = channelId ? configuration.channels[channelId] : undefined;
     if (!channel) throw new Error(`Unknown models.${name}.channel in config.ini`);
-    const api = value.api ?? channel.api;
-    if (!API_KINDS.includes(api as ModelProfile["api"])) throw new Error(`Invalid models.${name}.api`);
-    const supportsDeveloperRole = optionalBoolean(value.supportsDeveloperRole, `models.${name}.supportsDeveloperRole`);
+    if (channel.api !== "openai-responses") throw new Error(`Evaluation channel "${channelId}" requires openai-responses`);
     models[name] = {
       ...channel,
-      api: api as ModelProfile["api"],
       model: optionalString(value.model, `models.${name}.model`) ?? channel.model,
       thinking: optionalThinking(value.thinking, `models.${name}.thinking`) ?? channel.thinking,
-      ...(supportsDeveloperRole !== undefined ? { supportsDeveloperRole } : {}),
-      contextWindow: optionalPositiveInteger(value.contextWindow, `models.${name}.contextWindow`) ?? channel.contextWindow,
-      maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `models.${name}.maxOutputTokens`) ?? channel.maxOutputTokens,
     };
   }
   const bindings: Record<string, StageBinding> = {};
   for (const [stage, value] of Object.entries(rawBindings)) {
     if (!isObject(value) || typeof value.profile !== "string" || !models[value.profile])
       throw new Error(`Invalid bindings.${stage}; it must reference a defined model profile`);
+    for (const field of Object.keys(value))
+      if (!["profile", "channel", "model", "thinking"].includes(field))
+        throw new Error(`Invalid bindings.${stage}.${field}; configure channel capabilities in config.ini`);
     const channel = optionalString(value.channel, `bindings.${stage}.channel`);
     if (channel && !configuration.channels[channel]) throw new Error(`Unknown bindings.${stage}.channel in config.ini`);
+    if (channel && configuration.channels[channel].api !== "openai-responses")
+      throw new Error(`Evaluation channel "${channel}" requires openai-responses`);
     bindings[stage] = {
       ...(channel ? { channel } : {}),
       profile: value.profile,
       model: optionalString(value.model, `bindings.${stage}.model`),
       thinking: optionalThinking(value.thinking, `bindings.${stage}.thinking`),
-      contextWindow: optionalPositiveInteger(value.contextWindow, `bindings.${stage}.contextWindow`),
-      maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens, `bindings.${stage}.maxOutputTokens`),
     };
   }
   return { models, bindings, channels: configuration.channels };

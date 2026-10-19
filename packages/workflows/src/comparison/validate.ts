@@ -18,6 +18,7 @@ import { acceptedAttributionView } from "./accepted-attribution.js";
 import { bindAcceptedAttribution } from "./binding.js";
 import { taskObservations } from "./observations.js";
 import { deliveryCoverage, type DeliveryRequirements } from "./delivery.js";
+import { modelBehavior } from "./model-behavior.js";
 
 export async function validateRun(
   run: string,
@@ -221,6 +222,14 @@ export async function validateRun(
     } catch (error) {
       errors.push(`${name}: ${errorText(error)}`);
     }
+  }
+  const behaviorFile = path.join(run, "model-behavior.jsonl");
+  if (await exists(behaviorFile)) {
+    try {
+      const actual = (await localFiles.read(behaviorFile, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line));
+      if (canonical(actual) !== canonical(modelBehavior(manifest.tasks, state.receipts).rows))
+        throw new Error("模型行为归因报告与已接受来源不一致");
+    } catch (error) { errors.push(`model-behavior.jsonl: ${errorText(error)}`); }
   }
   const validation = {
     valid: errors.length === 0 && evidenceErrors.length === 0 && rewriteErrors.length === 0 && delivery.valid,

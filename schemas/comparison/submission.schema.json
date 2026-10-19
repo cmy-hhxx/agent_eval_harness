@@ -7,10 +7,21 @@
     "b_summary",
     "comparisons",
     "relative_preference",
-    "a_tradeoff",
-    "b_tradeoff"
+    "tradeoff"
   ],
   "properties": {
+    "scope_conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot_index", "reason"],
+        "properties": {
+          "slot_index": { "type": "integer", "minimum": 0 },
+          "reason": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        }
+      }
+    },
     "comparisons": {
       "type": "array",
       "items": {
@@ -31,18 +42,16 @@
         null
       ]
     },
-    "a_tradeoff": {
+    "tradeoff": {
       "type": "string",
-      "minLength": 1
-    },
-    "b_tradeoff": {
-      "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "relative_preference": {
       "enum": [
         "A",
-        "B"
+        "B",
+        null
       ]
     },
     "a_summary": {

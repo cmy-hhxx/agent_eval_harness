@@ -104,13 +104,37 @@ test(`pi: only debug records original malformed arguments in ${status} Responses
 });
 
 for (const engine of ["pi", "prime"] as const) {
+for (const completed of [false, true]) {
+test(`${engine}: plain text Responses ${completed ? "accept a completed terminal without usage" : "reject EOF without a terminal event"}`, async () => {
+  const message = { type: "message", id: "msg_text", role: "assistant", status: "completed",
+    content: [{ type: "output_text", text: "complete-looking text", annotations: [] }] };
+  const events: Record<string, unknown>[] = [
+    itemEvent("added", 0, { ...message, content: [] }), itemEvent("done", 0, message),
+  ];
+  // Both variants lack usage; only an authoritative terminal event makes the SDK successful.
+  if (completed) events.push({ type: "response.completed", response: { id: "resp_text", status: "completed", output: [message] } });
+  const result = await replay(engine, events);
+  assert.equal(result.requests.length, 1);
+  assert.deepEqual(result.executed, []);
+  assert.deepEqual(result.ended, []);
+  assert.equal(result.messages.length, 1);
+  assert.equal(result.messages[0].stopReason, completed ? "stop" : "error");
+  assert.equal(object((result.messages[0].content as unknown[])[0]).text, "complete-looking text");
+  if (completed) assert.deepEqual(result.errors, []);
+  else {
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0], /stream ended before a terminal response event/);
+  }
+});
+}
+
 for (const streamed of [false, true]) {
 test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve current flat comparison arrays and escaped text`, async () => {
   const draft = {
     a_summary: '原文含 "引号"、\\ 路径和\n换行',
     b_summary: "B 给出了不同结果。",
     comparisons: [{importance:"high",better_candidate:"A"},null],
-    preference:"A",relative_preference:"A",a_tradeoff:"给出正确结果4。",b_tradeoff:"给出错误结果5。",
+    preference:"A",relative_preference:"A",tradeoff:"【候选A】给出正确结果4，【候选B】给出错误结果5。",
   };
   const args = JSON.stringify(draft);
   const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",

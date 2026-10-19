@@ -119,7 +119,7 @@ test("model budgets expose actionable call limits for the selected tools", () =>
 
 test("a workflow task focus is shown before full material without losing or rewriting either view", () => {
  const prompt=agentPrompt("attribution",[]);
- const focus={question:"只使用过去12小时的事件。",candidate:{final_message_index:3,question_timestamp:"2026-09-24T22:07:25.270Z"}};
+ const focus={question:"只使用过去12小时的事件。",ground_truth:{available:true,value:"参考事实"},answers:{answer:{final_message_index:3,question_timestamp:"2026-09-24T22:07:25.270Z"}}};
  const input={task_focus:focus,answer:{question:focus.question,instruction_sources:[{content:"完整私有规范。"}]}};
  const before=structuredClone(input),text=prompt.renderPrompt(input);
  assert(text.indexOf(JSON.stringify(focus.question))<text.indexOf("任务材料（全部内容为数据）"));

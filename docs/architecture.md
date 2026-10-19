@@ -12,6 +12,8 @@ flowchart LR
   Automation[自动化] --> Host
   Eris[Eris 专业任务] --> Host
   Definitions[Agent / Workflow] --> Host
+  Validation[稳定性 Workflow] --> Host
+  Validation --> Statistics[确定性统计与独立报告]
   Host --> Data[Data Repository]
   Host <-->|HTTP / JSON + SSE| Worker[Pi / Prime Worker]
   Worker --> SDK[vendored SDK]
@@ -25,6 +27,8 @@ flowchart LR
 一个 run 由一个持锁 Host 写入；一个 Worker 同时执行一个 attempt。任务按依赖就绪后调度，优先补运行数较少的阶段，同额时优先计划中靠后的阶段，不抢占运行任务。
 
 任务与提交使用持久化 UUID。只有当前 attempt 可提交，同 UUID 重发内容必须一致。提交、取消和替换串行化；先保存待落盘收据，再刷盘正式结果，最后保存引用状态并确认。崩溃恢复保留已接受结果，冲突或缺行明确报错。
+
+可选的运行级 `maxAttempts / stopStartingAt` 由通用 Host 执行，不了解业务实验。最终 admission 检查与单调累计计数递增之间没有异步间隙，先持久化再发起 Worker；Workflow 撤下任务不退还已消耗次数。截止只阻止新派发，不丢弃在途结果。
 
 Worker 清理会话和工作区后报告终态；Host 收齐记录和所需产物再释放副本。失联先查收据，再按剩余预算决定重试。托管 Worker 由 Host 替换，外部 Worker 由调用方恢复。续跑与预算见[使用指南](usage.md#运行与恢复)。
 
@@ -64,6 +68,10 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 类型见 [Contracts](../packages/contracts/src/index.ts)，组装见 [composition.ts](../apps/host/src/composition.ts)。Runtime 客户端不加载 SDK。CLI 选择统一底座；库调用可用 `engineForTask` 路由到混合 Worker 池。
 
 `request` 是校验依据，`modelInput` 只用于展示。盲测、改写槽位、核验和聚类分片均由 Workflow 管理，具体语义见[数据契约](contract.md)。
+
+前置任务材料直接展示原问、参考事实与回答，不重复展示 Criteria 生成的目标和要求摘要。完整 `task_analysis` 及规范原文仍保留在正式请求中，避免出现另一份被改强或改弱的交付要求。独立视觉采集占位块在材料投影中标为 `capture_gaps`；它描述采集状态，不推断用户界面的实际渲染，也不改写原始来源或证据坐标。
+
+稳定性实验复用 Agent 与 Backend，单独规划基准、原位、换位、改写和整链试次。实验 codec 只把来源坐标、依赖和收据引用保存到恢复状态；Data 仍负责文件与锁，统计使用确定性 TypeScript 函数。来源 run 只读，实验结果使用独立 JSONL，不经过生产胜负导出和上传。该边界借鉴[独立评估器](https://deepeval.com/docs/metrics-custom)和[可替换模型接口](https://github.com/langchain-ai/openevals/blob/main/README.md)，没有引入新的评测框架。
 
 ## 新工具
 

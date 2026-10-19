@@ -134,7 +134,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     for (const row of [...comparisons, ...attributions]) {
       const rewritten = stageResult(row.evaluation_type === "attribution" ? "attribution" : "comparison", row).rewritten as { rewrites: { id: string; text: string }[] };
       assert(rewritten, "source result must contain rewritten");
-      assert(rewritten.rewrites.every((item) => item.id.startsWith("verdict.") ? /^(双方都好|双方都差|.+更好)：/.test(item.text) : item.text.startsWith("精简：")));
+      assert(rewritten.rewrites.every((item) => item.id.startsWith("verdict.") ? /^(?:(?:双方都好|双方都差)(?:；相对更倾向[^：]+)?|.+更好)：/.test(item.text) : item.text.startsWith("精简：")));
       assert(!rewritten.rewrites.some((item) => /候选[A-Z]|(?<![A-Za-z])[AB](?![A-Za-z]|组)/u.test(item.text)));
     }
     if (clustering) {

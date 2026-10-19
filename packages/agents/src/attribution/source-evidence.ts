@@ -1,5 +1,5 @@
 import { ValidationError, type AgentRequest, type EvidenceReference, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { evidenceSources, originalUserTimestamp, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource, validateTraceEvidence } from "@eval/tools";
+import { evidenceSources, originalUserTimestamp, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource, validateTraceEvidence, visualCaptureMarkers } from "@eval/tools";
 import type { Evidence } from "./types.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -10,6 +10,29 @@ const materialMap = (request: AgentRequest) => object(request.input.reference_ma
 const fail = (path: string, message: string, actual?: unknown): ValidationIssue => ({
   category: "evidence", code: "evidence_source_invalid", path, message, actual,
 });
+
+/** Capture metadata records our visibility, not a defect in the original candidate's delivery. */
+export function captureMarkerProblemIssues(request: AgentRequest, value: unknown): ValidationIssue[] {
+  const findings = object(value)?.findings;
+  if (!Array.isArray(findings)) return [];
+  return findings.flatMap((entry, index) => {
+    const finding = object(entry), evidence = finding?.evidence;
+    if (finding?.type !== "problem" || object(finding.assessment)?.evidence_status !== "established" ||
+      !Array.isArray(evidence) || !evidence.length) return [];
+    const onlyCapture = evidence.every(item => {
+      const id = object(item)?.evidence_id;
+      const point = typeof id === "string" ? parseEvidenceCoordinates(id) : undefined;
+      if (!point || point.kind !== "text") return false;
+      const source = Object.values(request.sources).find(source => source.id === point.input_id);
+      const messages = object(source?.value)?.messages;
+      if (!Array.isArray(messages)) return false;
+      return visualCaptureMarkers(messages[point.message_index]).some(marker => marker.kind === point.kind &&
+        marker.path === point.path && point.start >= 0 && point.end > point.start && point.end <= marker.text.length);
+    });
+    return onlyCapture ? [{ category: "evidence", code: "capture_marker_not_candidate_evidence", path: `/findings/${index}/evidence`,
+      message: "所选证据全部是独立的可视材料采集占位符，只能证明本次采集未呈现内容，不能确认候选交付有缺陷。请补充真实正文、已查看图像或执行证据；无法确认时保留 uncertain 或删除该问题，不推导用户损害。" } as ValidationIssue] : [];
+  });
+}
 
 /** Peer registration belongs to the trusted review binding; every descriptor must still match its real source. */
 export function referenceMaterialIssues(request: AgentRequest): ValidationIssue[] {

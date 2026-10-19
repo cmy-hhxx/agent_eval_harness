@@ -14,7 +14,7 @@ import { attributionResult, comparisonResult, criteriaResult, emptyAudit, option
 import { comparisonWorkflow } from "./workflow.js";
 import type { Candidate, RawInput, TaskData } from "./types.js";
 
-function fixture(mode: "attribution" | "comparison" | "verification") {
+function fixture(mode: "attribution" | "comparison" | "verification", captureText?: string) {
   const candidates: Record<string, Candidate> = Object.fromEntries(["A", "B"].map(label => [label, {
     batch_id: "batch", case_id: "case", input_id: randomUUID(), version: `version-${label}`,
     name: `model-${label}`, llm: null, trace_id: null, source: "fixture", line: 1,
@@ -28,6 +28,11 @@ function fixture(mode: "attribution" | "comparison" | "verification") {
       ...(label === "A" ? { attachments: [{ type: "image", mimeType: "image/png", data: "AQ==" }] } : {}),
     }],
   }]));
+  if (captureText) for (const raw of Object.values(inputs)) {
+    const final = raw.messages[1]!;
+    final.content = [...(Array.isArray(final.content) ? final.content : [{ type: "output_text", text: final.content }]),
+      { type: "output_text", text: captureText }];
+  }
   const analysis = criteriaResult(), criteria: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
     inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.input_id])),
     data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
@@ -95,4 +100,33 @@ for (const mode of ["attribution", "comparison", "verification"] as const)
     assert.equal(result.content.filter(item => item.type === "image").length, 2);
     assert.deepEqual(audit.viewedImages, [`${candidate}:1`]);
     assert(!issues(audit).some(issue => issue.code === "final_image_not_viewed"));
+  });
+
+for (const mode of ["attribution", "comparison", "verification"] as const)
+  test(`${mode} distinguishes captured visual gaps from user-facing rendering and keeps real image checks`, () => {
+    for (const [captureText, status] of [
+      ['{"jgy_visual":"skipped","ref":"jgy-example"}', "skipped"],
+      ['{"visual":"unsupported","ref":"html-example"}', "unsupported"],
+    ]) {
+      const { binding, prepared } = fixture(mode, captureText);
+      const shown = binding.modelInput!;
+      const materials: Record<string, unknown>[] = mode === "verification"
+        ? (shown.sections as { materials?: Record<string, unknown>[] }[])[0]!.materials!
+          .filter(material => material.kind === "answer")
+        : Object.values(mode === "attribution" ? { answer: shown.answer } : shown.candidates as Record<string, unknown>) as Record<string, unknown>[];
+      for (const material of materials) {
+        const gaps = material.capture_gaps as { status: string; path: string; user_visible_rendering: string }[];
+        assert.equal(gaps.length, 1);
+        assert.equal(gaps[0]!.status, status);
+        assert.equal(gaps[0]!.user_visible_rendering, "unknown");
+        assert.match(gaps[0]!.path, /^\/content\/\d+\/text$/u);
+        assert((material.final_answer as string).includes(captureText!), "source prose and coordinates stay intact");
+      }
+      assert.match(prepared.prompt, /"capture_gaps"/);
+      assert.match(prepared.prompt, /"final_images"/, "a capture gap cannot suppress a different real image");
+      assert.match(prepared.evaluation.systemPrompt, /capture_gaps/);
+    }
+    const ordinary = fixture(mode, '{"value":4,"description":"normal JSON result"}').binding.modelInput!;
+    const json = JSON.stringify(ordinary);
+    assert(!json.includes('"capture_gaps"'), "ordinary result JSON is not classified as a capture gap");
   });

@@ -109,6 +109,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
           }
           for (const assessment of Object.values((result as ComparisonResult).assessments))
             assessment.summary = "按实际计算交付比较。";
+          (result as ComparisonResult).decision_basis.tradeoff = "双方实际计算交付均满足所求结果。";
         }
         const submitted = await submitFor(options, draftFor(options.spec, result));
         assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
@@ -142,11 +143,9 @@ test("answer-only and short third-party traces survive independent pairs, formal
       const resource = (object(row.decision_basis).comparisons as JsonObject[]).find(item =>
         !(item.criterion_ids as string[]).length && Object.values(object(item.assessments))
           .every(cell => !(object(cell).finding_indices as number[]).length));
-      const rationale = Object.entries(data.candidates).map(([, candidate]) => {
-        const usage = resource ? " " + object(object(resource.assessments)[candidate.version]).summary : "";
-        return `${candidate.name}：按实际计算交付比较。${usage}`;
-      }).join(" ");
-      assert.equal(object(row.decision_basis).tradeoff, relative + rationale);
+      const resources = resource ? " " + Object.values(data.candidates).map(candidate =>
+        `${candidate.name}：${object(object(resource.assessments)[candidate.version]).summary}`).join(" ") : "";
+      assert.equal(object(row.decision_basis).tradeoff, relative + "双方实际计算交付均满足所求结果。" + resources);
       const verdict = Object.values(object(row.verdicts))[0] as JsonObject;
       for (const version of versions) {
         const evaluation = object(object(row.evaluations)[version]);

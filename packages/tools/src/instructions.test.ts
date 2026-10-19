@@ -110,3 +110,57 @@ test("a collected answer still links its actual context when visual resource tag
   ] };
   assert.deepEqual(instructionSources(raw, INPUT_ID).map(source => source.message_index), [1]);
 });
+
+const skill = '<skill_content name="stock-analysis">\n# 用户适配\n持仓未知时分别说明未持有与已持有；只查询数据时无需行动建议。\n</skill_content>';
+const skillCall = () => ({ type: "tool_call", name: "view_skill", input: { name: "stock-analysis" } });
+const skillResult = () => ({ type: "tool_result", name: "view_skill", output: skill });
+const skillTrace = (messages: unknown[]) => ({ messages: [...messages, { role: "assistant", content: "实际回答" }] });
+
+test("loaded skills retain actual tool identity, complete conditions and physical output coordinates", () => {
+  for (const messages of [[skillCall(), skillResult()], [
+    { ...skillCall(), call_id: "load-1" }, { role: "assistant", content: "等待" }, { ...skillResult(), tool_call_id: "load-1" },
+  ]]) {
+    const raw = skillTrace(messages), before = structuredClone(raw), sources = instructionSources(raw, INPUT_ID);
+    assert.equal(sources.length, 1);
+    assert.equal(sources[0]!.role, "tool"); assert.equal(sources[0]!.content, skill);
+    assert.equal(sources[0]!.path, "/output"); assert.equal(sources[0]!.message_index, messages.length - 1);
+    for (const evidence of sources[0]!.evidence) assert.equal(resolveEvidence(raw, evidence, "answer", emptyAudit(), "/evidence", INPUT_ID).quote, skill);
+    assert.deepEqual(raw, before);
+  }
+});
+
+test("ordinary tools, unbound or failed skill returns and ambiguous identities never become instructions", () => {
+  const invalid: unknown[][] = [
+    [skillResult()],
+    [{ ...skillCall(), name: "query" }, { ...skillResult(), name: "query" }],
+    [skillCall(), { ...skillResult(), name: "query" }],
+    [skillCall(), { role: "assistant", content: "无关联号不能跨消息猜配对" }, skillResult()],
+    [skillCall(), skillCall(), skillResult()],
+    [{ ...skillCall(), input: { name: "other" } }, skillResult()],
+    [{ ...skillCall(), input: { name: "stock-analysis", path: "examples.md" } }, skillResult()],
+    [skillCall(), { ...skillResult(), output: "示例：" + skill }],
+    [skillCall(), { ...skillResult(), output: '```xml\n' + skill + '\n```' }],
+    [skillCall(), { ...skillResult(), isError: true }],
+    [{ ...skillCall(), call_id: "a" }, { ...skillResult(), call_id: "b" }],
+    [{ ...skillCall(), call_id: "a" }, skillResult()],
+    [{ ...skillCall(), call_id: "a" }, { ...skillCall(), call_id: "a" }, { ...skillResult(), call_id: "a" }],
+    [{ ...skillCall(), call_id: "a" }, { ...skillResult(), call_id: "a", tool_call_id: "b" }],
+    [{ ...skillCall(), call_id: 1 }, { ...skillResult(), call_id: 1 }],
+  ];
+  for (const messages of invalid) assert.deepEqual(instructionSources(skillTrace(messages), INPUT_ID), []);
+  const recovered = skillTrace([skillCall(), { ...skillResult(), isError: true }, skillCall(), skillResult()]);
+  assert.deepEqual(instructionSources(recovered, INPUT_ID).map(source => source.message_index), [3]);
+});
+
+test("nested planner material, known independent parent calls and later skill loads are excluded", () => {
+  const raw = skillTrace([
+    { type: "llm_turn", parent_span: "planner", input_messages: [skillCall(), skillResult()],
+      output: [{ role: "assistant", content: "独立计划" }] },
+    { ...skillCall(), parent_span: "planner" }, skillResult(),
+    { type: "llm_turn", parent_span: "answer", input_messages: [{ role: "user", content: "原问题" }],
+      output: [{ role: "assistant", content: "实际回答" }] },
+  ]);
+  assert.deepEqual(instructionSources(raw, INPUT_ID), []);
+  raw.messages.push(skillCall(), skillResult());
+  assert.deepEqual(instructionSources(raw, INPUT_ID, 4), []);
+});

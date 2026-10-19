@@ -14,7 +14,7 @@ import { attributionTableReview } from "./table-review.js";
 import schema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
 import { instructionEvidenceIssues, instructionSubmissionIssues } from "./instructions.js";
 import { submissionEvidenceIssues } from "./submission-evidence.js";
-import { correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
+import { captureMarkerProblemIssues, correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
 import { responsibilityChoices, responsibilityIssues } from "./responsibility.js";
@@ -51,7 +51,7 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
 /** Business rules that can be checked before evidence references are resolved. */
 export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
   return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
-    ...instructionSubmissionIssues(request, draft, audit)];
+    ...instructionSubmissionIssues(request, draft, audit), ...captureMarkerProblemIssues(request, draft)];
 }
 
 /** Native actuals may use JSON numbers; uncertain precision still requires an exact string. */
@@ -308,7 +308,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as Input;
   const value = result as AttributionResult;
-  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result")];
+  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...captureMarkerProblemIssues(request, result)];
   repairErrors.push(...attributionTableReview(request, value).errors);
   repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>

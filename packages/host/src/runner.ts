@@ -31,6 +31,7 @@ import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
 import { scheduleTasks } from "./scheduling.js";
 import { FailureGuard } from "./failure-guard.js";
+import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
 
 export interface RunOptions extends EvaluationServices {
@@ -52,6 +53,10 @@ export interface RunOptions extends EvaluationServices {
   concurrency: number;
   /** Limit active task attempts per model channel within the total concurrency. */
   channelConcurrency?: Record<string, number>;
+  /** Cumulative stage attempts, including failures and retries, persisted on the run. */
+  maxAttempts?: number;
+  /** Absolute time in milliseconds after which no new attempts are admitted. */
+  stopStartingAt?: number;
   retries: number;
   skipFailed?: boolean;
   discoverInputs?: boolean;
@@ -76,6 +81,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     throw new Error("evaluatorVersion must be a non-empty string");
   if (Object.values(options.channelConcurrency ?? {}).some(limit => !Number.isSafeInteger(limit) || limit <= 0))
     throw new Error("channelConcurrency requires positive integer limits");
+  if (options.maxAttempts !== undefined && (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 0))
+    throw new Error("maxAttempts must be a non-negative integer");
+  if (options.stopStartingAt !== undefined && (!Number.isFinite(options.stopStartingAt) || options.stopStartingAt <= 0))
+    throw new Error("stopStartingAt must be an absolute timestamp in milliseconds");
   const layout = runLayout(options.output, options.runId),
     run = layout.directory,
     unlock = await runLock(run);
@@ -124,6 +133,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (await exists(layout.stateFile)) {
       if (options.taskIds) throw new Error("Use a prepared repair scope to select tasks in an existing run");
       saved = await options.repository.readRun(run);
+      cumulativeAttempts(saved.manifest);
       if (options.discoverInputs) delete saved.manifest.executionScope;
       if (options.taskSource.reconcile)
         inputs = (await options.taskSource.reconcile(run, saved, options.config)).inputs;
@@ -158,6 +168,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       };
     }
     const manifest = saved.manifest;
+    cumulativeAttempts(manifest);
+    if (options.maxAttempts !== undefined || options.stopStartingAt !== undefined)
+      manifest.executionLimits = { ...manifest.executionLimits,
+        ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
+        ...(options.stopStartingAt === undefined ? {} : { stopStartingAt: options.stopStartingAt }) };
+    delete manifest.executionStopReason;
     const contentRemaining = (task: PlannedTask) => 1 + (options.policy.stageRepairAttempts?.[task.stage] ?? options.policy.repairAttempts) -
       (manifest.states[task.id].failure?.contentSubmissions ?? 0);
     if (options.taskIds) {
@@ -260,7 +276,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       10000,
     );
     let workerUrls = options.workerUrls || [];
-    const runnable = (task: PlannedTask) => dispatchable(task) && manifest.states[task.id].status === "pending" &&
+    const runnable = (task: PlannedTask) => !executionStopReason(manifest) && dispatchable(task) && manifest.states[task.id].status === "pending" &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
       Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
     const pending = manifest.tasks.filter(runnable);
@@ -408,9 +424,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       attemptSources.set(spec.attemptId, bound);
       try {
-      state.startedAt = state.lastProgressAt = Date.now();
       let lastSeq = -1;
-      await current.activate(spec);
+      if (!await current.activate(spec)) return;
       const attemptDir = internalPath(
         run,
         "tasks",
@@ -760,6 +775,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const runningChannels = new Map<string, string>();
     while (true) {
       if (controller.signal.aborted) break;
+      if (executionStopReason(manifest) && running.size === 0) break;
       changed = new Promise<void>((resolve) => {
         wake = resolve;
       });
@@ -796,7 +812,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       let scheduled = false, blocked = false;
       for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states)) {
-        if (controller.signal.aborted) break;
+        if (controller.signal.aborted || executionStopReason(manifest)) break;
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
@@ -865,11 +881,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         running.set(task.id, promise);
       }
       if (blocked) await current.save();
-      const retryDeadlines = manifest.tasks.filter(task => dispatchable(task) &&
+      const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())
         .map(task => manifest.states[task.id].nextRetryAt!);
       if (running.size || retryDeadlines.length) {
-        const waitMs = Math.min(unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
+        const dispatchWait = !executionStopReason(manifest) && manifest.executionLimits?.stopStartingAt !== undefined
+          ? Math.max(0, manifest.executionLimits.stopStartingAt - Date.now()) : Infinity;
+        const waitMs = Math.min(dispatchWait, unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { await Promise.race([...running.values(), changed,
           ...(Number.isFinite(waitMs) ? [new Promise(resolve => { timer = setTimeout(resolve, waitMs); })] : [])]); }
@@ -887,7 +905,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (controller.signal.aborted)
       for (const task of manifest.tasks)
         if (inScope(task) && manifest.states[task.id].status === "pending") manifest.states[task.id].status = "cancelled";
-    manifest.status = controller.signal.aborted || manifest.pausedStages.length ? "interrupted" : "finished";
+    if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id].status === "pending"))
+      manifest.executionStopReason = executionStopReason(manifest);
+    manifest.status = controller.signal.aborted || manifest.pausedStages.length || manifest.executionStopReason ? "interrupted" : "finished";
     manifest.finishedAt = Date.now();
     await current.save();
     const executionTaskStatuses: Record<string, number> = {};
@@ -896,7 +916,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       executionTaskStatuses[status] = (executionTaskStatuses[status] ?? 0) + 1;
     }
     return { ...(options.report ? await options.report(run) : { run_id: manifest.runId, status: manifest.status }),
-      execution_task_statuses: executionTaskStatuses, paused_stages: manifest.pausedStages };
+      execution_task_statuses: executionTaskStatuses, paused_stages: manifest.pausedStages,
+      ...(manifest.executionStopReason ? { execution_stop_reason: manifest.executionStopReason } : {}) };
   } finally {
     if (progressTimer) clearInterval(progressTimer);
     controller.abort();

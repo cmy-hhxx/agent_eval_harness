@@ -13,7 +13,7 @@ const source = "| 代码 | 名称 |\n|---|---|\n| 111111 | 冲突标的 |\n| 222
 const failedAnswer = "| 代码 | 名称 |\n|---|---|\n| 999999 | 冲突标的 |\n| 222222 | 已匹配 |\n| 333333 | 未展示标的 |";
 function fixture() {
   const candidateIds = { A: "c52a0828-766a-41af-ac62-3cf9e3e680a1", B: "38ae1a74-38cd-43b9-9d32-b1100d03f5e4" };
-  const analysis = criteriaResult({ question, ground_truth: { available: false, value: null },
+  const analysis = criteriaResult({ question,
     candidates: Object.values(candidateIds).map(candidate_id => ({ candidate_id, instructions: [], context: [] })) } satisfies CriteriaInput);
   const raw = (answer: string) => ({ messages: [{ role: "user", content: question },
     { role: "tool", name: "lookup", type: "tool_result", content: source }, { role: "assistant", content: answer }] });

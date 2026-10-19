@@ -36,8 +36,13 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
    return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
   relative_preference: result.ranking?.[0]?.[0] === 'B' ? 'B' : 'A',
-  a_tradeoff: result.assessments.A.summary, b_tradeoff: result.assessments.B.summary };
+  tradeoff: result.decision_basis.tradeoff };
 }
 export function requestComparisonSubmission(request: AgentRequest, result: ComparisonResult) {
- return comparisonSubmission(result, comparisonSlots(request));
+ const draft = comparisonSubmission(result, comparisonSlots(request));
+ const attributions = (request.input as unknown as import('@eval/agents/comparison').ComparisonInput).attributions;
+ const passed = Object.keys(attributions).filter(label => attributions[label].core_assessment.meets_core === true);
+ if (passed.length === 1 && Object.values(attributions).some(item => item.core_assessment.meets_core === false))
+  draft.relative_preference = passed[0] as 'A' | 'B';
+ return draft;
 }

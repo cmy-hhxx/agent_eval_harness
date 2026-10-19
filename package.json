@@ -14,7 +14,8 @@
   ],
   "imports": {
     "#pi-sdk": "./vendor/pi/packages/coding-agent/dist/index.js",
-    "#prime-sdk": "./vendor/prime-agent/packages/coding-agent/dist/index.js"
+    "#prime-sdk": "./vendor/prime-agent/packages/coding-agent/dist/index.js",
+    "#prime-ai": "./vendor/prime-agent/packages/ai/dist/index.js"
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",

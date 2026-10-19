@@ -5,7 +5,7 @@ import type { Evidence } from "./types.js";
 
 export interface AttributionNorm {
   norm_index: number;
-  roles: ("user" | "system" | "developer")[];
+  roles: ("user" | "system" | "developer" | "tool")[];
   requirement_index: number | null;
   evidence: Evidence[];
 }

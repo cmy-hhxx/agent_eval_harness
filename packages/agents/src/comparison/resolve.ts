@@ -3,7 +3,8 @@ import { schemaIssues, ValidationError, type AgentRequest, type ValidationIssue 
 import { comparisonText, comparisonResourceText } from "@eval/prompts";
 import schema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
-import { criterionAppliesToPair } from "./pair-scope.js";
+import { criterionAppliesToPair, findingAppliesToPair } from "./pair-scope.js";
+import { comparisonDecisiveFindings } from "./result-checks.js";
 import { comparisonSlots, comparisonSlotCellState, comparisonSlotSummary, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
 /** Model-facing and local validation share the same program-owned row identities. */
@@ -11,6 +12,9 @@ export function comparisonSubmissionSchema(request: AgentRequest) {
   const result = structuredClone(schema), slots = comparisonSlots(request);
   Object.assign(result.properties.comparisons, { minItems: slots.length, maxItems: slots.length,
     prefixItems: slots.map(slot => ({ $ref: `#/$defs/${slot.kind === "resource" ? "resource" : "commentary"}` })) });
+  const scopeSlots = slots.flatMap((slot, index) => slot.kind === "criterion" && slot.shared && slot.criterion_ids.length ? [index] : []);
+  if (scopeSlots.length) Object.assign(result.properties.scope_conflicts.items.properties.slot_index, { enum: scopeSlots });
+  else Object.assign(result.properties.scope_conflicts, { maxItems: 0 });
   return result;
 }
 
@@ -47,6 +51,19 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   const preference = value.preference ?? null;
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
   const reviews = requiredSourceReviews(request);
+  const conflicts = value.scope_conflicts ?? [], conflictIssues: ValidationIssue[] = [], selected = new Set<number>();
+  if (conflicts.length && (preference !== null || value.relative_preference !== null))
+    conflictIssues.push({ category: "decision", code: "scope_conflict_preference", path: "/scope_conflicts",
+      message: "共同口径尚未统一时不能同时给出正式或相对偏好；preference 省略或填 null，relative_preference=null。" });
+  conflicts.forEach((conflict, index) => {
+    if (selected.has(conflict.slot_index)) conflictIssues.push({ category: "decision", code: "scope_conflict_duplicate",
+      path: `/scope_conflicts/${index}/slot_index`, message: "同一共同槽位只提交一次口径冲突，合并说明双方采用的不同口径。" });
+    selected.add(conflict.slot_index);
+    const slot = slots[conflict.slot_index]; // The request-specific schema permits only existing shared criterion slots.
+    reviews.push(...labels.map(candidate => ({ candidate, criterion_ids: [...slot.criterion_ids],
+      finding_indices: [...slot.finding_indices[candidate]], reason: conflict.reason.trim() })));
+  });
+  if (conflictIssues.length) throw new ValidationError(conflictIssues);
   if (reviews.length) return pendingComparison(request, Object.fromEntries(labels.map(label => [label, { summary: label === "A" ? value.a_summary : value.b_summary }])), reviews);
   const rowIssues: ValidationIssue[] = [];
   const comparisons = value.comparisons.flatMap((row,index) => {
@@ -89,18 +106,34 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   else if (preference) throw new ValidationError([{ category: "decision", code: "preference_unproven", path: "/preference",
     message: "偏好须有该候选已确认的中高重要性共同优势支持；没有实质优势时 preference=null。" }]);
   else ranking = [labels];
-  const decisive_findings = comparisons.flatMap(row => row.importance === "low" || !row.better_candidates.length ? [] : labels.flatMap(candidate =>
-    row.assessments[candidate].finding_indices.flatMap(finding_index => {
-      const finding = input.attributions[candidate].findings[finding_index];
-      return finding.assessment.evidence_status === "established" ? [{ candidate, finding_index }] : [];
-    }))).filter((ref,index,all) => all.findIndex(item => item.candidate === ref.candidate && item.finding_index === ref.finding_index) === index).slice(0,24);
+  const winner = ranking.length > 1 ? ranking[0][0] : null;
+  if (winner && value.relative_preference !== winner) throw new ValidationError([{ category: "decision", code: "relative_preference_winner_mismatch",
+    path: "/relative_preference", message: "正式胜者已确定，relative_preference 必须与胜者一致。", expected: winner, actual: value.relative_preference }]);
+  if (value.relative_preference === null) {
+    // Matching codes are necessary for equivalence, not proof of equivalent meaning.
+    const commonIds = new Set(slots.filter(slot => slot.shared).flatMap(slot => slot.criterion_ids));
+    const metrics = labels.map(candidate => comparisonResourceMetrics(input, candidate));
+    const resourceDifference = (["finish_seconds", "total_tokens"] as const).some(key =>
+      metrics.every(metric => metric[key] !== null) && metrics.some(metric => metric[key] !== metrics[0][key]));
+    const sharedDifference = comparisons.some(row => row.better_candidates.length ||
+      row.criterion_ids.some(id => commonIds.has(id)) && Object.values(row.assessments).some(cell =>
+        cell.evidence_status !== "established" || cell.status !== row.assessments[labels[0]].status));
+    // Unmapped facts have no paired equivalence check, even when they cannot change a both-bad verdict.
+    const unpairedObservation = labels.some(candidate => input.attributions[candidate].findings.some((finding, index) =>
+      finding.assessment.evidence_status === "established" &&
+      findingAppliesToPair(input, candidate, index, request.sources[candidate]?.value) &&
+      !comparisons.some(row => row.assessments[candidate].finding_indices.includes(index))));
+    if (sharedDifference || resourceDifference || unpairedObservation) throw new ValidationError([{ category: "decision", code: "relative_preference_required",
+      path: "/relative_preference", message: "只有共同交付已确认等价、没有已确认差异时才可不表达相对偏好；当前仍有优势、状态差异、待核事实、资源差异或未进入对比格的已确认共同观察。请依据实际取舍选择 A 或 B。" }]);
+  }
   const resources = comparisons.find(row => !row.criterion_ids.length &&
     Object.values(row.assessments).every(cell => !cell.finding_indices.length));
-  const tradeoff = labels.map(candidate => comparisonText("tradeoff_candidate")
-    .replace("{candidate}", candidate).replace("{reason}", () => candidate === "A" ? value.a_tradeoff : value.b_tradeoff) +
-    (resources ? " " + resources.assessments[candidate].summary : "")).join(" ");
-  return { status: "decided", review_requests: [], task_analysis: structuredClone(input.task_analysis), assessments, ranking,
-    decision_basis: { tradeoff: (ranking.length === 1
-      ? comparisonText("relative_preference").replace("{candidate}", value.relative_preference) : "") + tradeoff,
-      comparisons, decisive_findings } };
+  const resourceText = resources ? " " + labels.map(candidate => comparisonText("tradeoff_candidate")
+    .replace("{candidate}", candidate).replace("{reason}", () => resources.assessments[candidate].summary)).join(" ") : "";
+  const result: ComparisonResult = { status: "decided", review_requests: [], task_analysis: structuredClone(input.task_analysis), assessments, ranking,
+    decision_basis: { tradeoff: (ranking.length === 1 && value.relative_preference
+      ? comparisonText("relative_preference").replace("{candidate}", value.relative_preference) : "") + value.tradeoff.trim() + resourceText,
+      comparisons, decisive_findings: [] } };
+  result.decision_basis.decisive_findings = comparisonDecisiveFindings(input, result);
+  return result;
 }

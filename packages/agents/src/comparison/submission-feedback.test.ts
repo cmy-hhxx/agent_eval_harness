@@ -52,7 +52,7 @@ test("non-object submissions receive the root container instead of a candidate c
     const issue = error.issues!.find(issue => issue.path === "/" && issue.code === "schema_type")!;
     const expected = issue.expected as Record<string, any>;
     assert.equal(expected.target.path, "/");
-    assert.deepEqual(expected.submission_shape.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "a_tradeoff", "b_tradeoff"]);
+    assert.deepEqual(expected.submission_shape.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "tradeoff"]);
     return true;
   });
 });

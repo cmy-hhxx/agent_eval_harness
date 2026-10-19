@@ -207,10 +207,15 @@ for (const change of ["rubric", "reference"] as const)
       const newCriteria = expanded.manifest.tasks.find((task) => task.stage === "criteria" && !acceptedIds.has(task.id))!;
       const criteria = expanded.receipts[newCriteria.id].evaluation;
       const originalCriteria = original.receipts[originalRows[0].criteria_task_id].evaluation;
-      assert.notDeepEqual(criteria, originalCriteria, "changed rubric or reference criteria require fresh assessments");
-      if (change === "reference") assert((criteria as TaskAnalysis).requirements.some(item =>
-        item.acceptance_rule.includes("4（整数）")), "correctness criteria cite the updated reference");
+      if (change === "rubric") assert.notDeepEqual(criteria, originalCriteria,
+        "changed requirements require fresh assessments");
+      else assert.deepEqual(criteria, originalCriteria,
+        "a changed reference must not introduce new Criteria obligations");
       const inputs = await loadRunInputs(expanded.manifest);
+      const criteriaBinding = services.taskSource.bind(newCriteria, inputs, {}, { tasks: expanded.manifest.tasks });
+      assert(!Object.hasOwn(criteriaBinding.request.input, "ground_truth"));
+      const criteriaMaterial = experiment.entered.find((item) => item.taskId === newCriteria.id)!.material;
+      assert(!JSON.stringify(criteriaMaterial).includes("4（整数）"), "Criteria never sees the changed reference");
       for (const review of reviews) {
         const data = review.data as TaskData;
         assert.equal(data.reviewOf!.round, 1);
@@ -227,7 +232,7 @@ for (const change of ["rubric", "reference"] as const)
           "the unverified marker belongs to model presentation, not the trusted request");
         assert.equal(binding.request.sources.answer.id, review.inputIds.answer);
         if (change === "reference") assert.deepEqual(binding.request.input.ground_truth,
-          { available: true, value: "4（整数）" }, "independent reassessment receives the changed reference and correctness criteria");
+          { available: true, value: "4（整数）" }, "independent Attribution reassessment receives the changed reference");
       }
       for (const row of rows.filter((item) => item.comparison_id !== originalRows[0].comparison_id)) {
         assert.equal(row.criteria_task_id, newCriteria.id);

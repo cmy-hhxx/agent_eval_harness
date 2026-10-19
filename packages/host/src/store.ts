@@ -18,6 +18,7 @@ import type {
 
 import { AgentRegistry } from "./agents.js";
 import { checkpointSnapshot } from "./checkpoint.js";
+import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 
 /** Mandatory calls must be backed by distinct pages advancing declared material. */
 function availableRequiredReadCalls(reads: TraceRead[], required: { target: TraceRead; text: string }[]): number {
@@ -201,7 +202,7 @@ export class RunStore {
     }
     throw new HttpError(404, "Submission not accepted");
   }
-  async activate(spec: AttemptSpec): Promise<void> {
+  async activate(spec: AttemptSpec): Promise<boolean> {
     return this.exclusive(spec.taskId, () => this.activateExclusive(spec));
   }
   private exclusive<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
@@ -213,7 +214,7 @@ export class RunStore {
     });
     return result;
   }
-  private async activateExclusive(spec: AttemptSpec): Promise<void> {
+  private async activateExclusive(spec: AttemptSpec): Promise<boolean> {
     const state = this.manifest.states[spec.taskId];
     if (!state || (await this.receipt(spec.taskId))) throw new Error("Task already completed or unknown");
     if (spec.inputRevision !== (state.revision || 1)) throw new HttpError(409, "Input revision superseded");
@@ -225,9 +226,12 @@ export class RunStore {
       return [input.id, source.value] as const;
     }));
     this.validateBank(spec, spec.evidenceBank, state.failure?.evidenceBank ?? [], sources);
+    if (executionStopReason(this.manifest)) return false;
     if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); }
+    state.startedAt = state.lastProgressAt = Date.now();
     state.status = "running";
     state.attemptId = spec.attemptId;
+    this.manifest.cumulativeAttempts = cumulativeAttempts(this.manifest) + 1;
     state.attempts++;
     state.reason = undefined;
     state.failure = { errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false,
@@ -246,6 +250,7 @@ export class RunStore {
         { spec },
       );
     await this.save();
+    return true;
   }
   async endAttempt(
     spec: AttemptSpec,

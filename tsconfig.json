@@ -22,6 +22,9 @@
       "#prime-sdk": [
         "./vendor/prime-agent/packages/coding-agent/dist/index.d.ts"
       ],
+      "#prime-ai": [
+        "./vendor/prime-agent/packages/ai/dist/index.d.ts"
+      ],
       "@eval/contracts": [
         "./packages/contracts/src/index.ts"
       ],

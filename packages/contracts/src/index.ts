@@ -564,6 +564,11 @@ export interface RunManifest {
   startedAt: number;
   finishedAt?: number;
   concurrency?: number;
+  /** Optional dispatch bounds; attempts already spent remain counted across resume. */
+  executionLimits?: { maxAttempts?: number; stopStartingAt?: number };
+  /** Monotone admissions count, independent of tasks retained by workflow reconciliation. */
+  cumulativeAttempts?: number;
+  executionStopReason?: "attempt_limit" | "dispatch_deadline";
   /** Explicit repair scope; input discovery resumes only when the operator releases it. */
   executionScope?: string[];
   /** Circuit breaks survive restart; only explicit stage recovery clears them. */

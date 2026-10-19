@@ -17,6 +17,8 @@ export interface ModelProfile {
   supportsExplicitPromptCaching?: boolean;
   /** Relative share of newly dispatched evaluation tasks for this channel. */
   trafficWeight?: number;
+  models?: string[];
+  efforts?: Thinking[];
   contextWindow?: number;
   maxOutputTokens?: number;
 }
@@ -27,8 +29,6 @@ export interface StageBinding {
   channel?: string;
   model?: string;
   thinking?: Thinking;
-  contextWindow?: number;
-  maxOutputTokens?: number;
 }
 
 export interface ModelCatalog {
@@ -45,7 +45,9 @@ function routedProfile(catalog: ModelCatalog, binding: StageBinding): ModelProfi
   if (!channel) throw new Error(`Unknown channel "${binding.channel}"`);
   return { ...profile, provider: channel.provider, baseUrl: channel.baseUrl, apiKeyEnv: channel.apiKeyEnv,
     api: channel.api, supportsDeveloperRole: channel.supportsDeveloperRole,
-    supportsExplicitPromptCaching: channel.supportsExplicitPromptCaching };
+    supportsExplicitPromptCaching: channel.supportsExplicitPromptCaching,
+    contextWindow: channel.contextWindow, maxOutputTokens: channel.maxOutputTokens,
+    models: channel.models, efforts: channel.efforts };
 }
 
 export function boundProfiles(catalog: ModelCatalog): ModelProfile[] {
@@ -57,6 +59,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
     const binding = catalog.bindings[stage];
     if (!binding) throw new Error(`No model binding configured for stage "${stage}"`);
     const profile = routedProfile(catalog, binding);
+    if (profile.api !== "openai-responses") throw new Error(`Evaluation channel "${profile.provider}" requires openai-responses`);
     const model = binding.model ?? profile.model;
     if (!model)
       throw new Error(
@@ -64,10 +67,14 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       );
     const thinking = binding.thinking ?? profile.thinking ?? DEFAULT_THINKING;
     if (!THINKING_LEVELS.includes(thinking)) throw new Error(`Invalid thinking for stage "${stage}"`);
-    const contextWindow = binding.contextWindow ?? profile.contextWindow;
+    if (profile.models && !profile.models.includes(model))
+      throw new Error(`Model "${model}" is not declared in channel "${profile.provider}"`);
+    if (profile.efforts && !profile.efforts.includes(thinking))
+      throw new Error(`Thinking "${thinking}" is not supported by channel "${profile.provider}"`);
+    const contextWindow = profile.contextWindow ?? 524288;
     if (contextWindow === undefined || !Number.isInteger(contextWindow) || contextWindow <= 0)
       throw new Error(`Invalid contextWindow for stage "${stage}"`);
-    const maxOutputTokens = binding.maxOutputTokens ?? profile.maxOutputTokens;
+    const maxOutputTokens = profile.maxOutputTokens ?? 32768;
     if (maxOutputTokens === undefined || !Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0)
       throw new Error(`Invalid maxOutputTokens for stage "${stage}"`);
     return {

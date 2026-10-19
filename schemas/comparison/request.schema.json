@@ -577,7 +577,8 @@
         "role": {
           "enum": [
             "system",
-            "developer"
+            "developer",
+            "tool"
           ]
         },
         "content": {},

@@ -10,9 +10,10 @@ import { bindTask } from "./workflow.js";
 import type { TaskData } from "./types.js";
 
 function bindRewrite(stage: "attribution" | "comparison" | "clustering", evaluation: unknown,
-  names: Record<string, string> = { A: "A组Fast", B: "B组Fast" }) {
+  names: Record<string, string> = { A: "A组Fast", B: "B组Fast" }, relativePreference: "A" | "B" | null = null) {
   const source: SubmissionReceipt = { taskId: "source", attemptId: "attempt", submissionId: "submission",
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation,
+    ...(stage === "comparison" ? { submitted: { relative_preference: relativePreference } } : {}),
     audit: emptyAudit(), usage: emptyUsage() };
   const task: PlannedTask = { id: "rewrite", stage: "rewrite", inputIds: {}, dependencies: { source: source.taskId },
     data: { stage: "rewrite", candidates: {}, reference: null, case: { batch_id: "batch", case_id: "case", question: "" },
@@ -35,6 +36,43 @@ test("Rewrite submission carries fixed semantic identities and rejects missing o
   assert(!valid({ rewrites: draft.rewrites.slice(1) }));
   assert(!valid({ rewrites: [...draft.rewrites].reverse() }));
   assert(!valid({ rewrites: draft.rewrites.map(item => ({ ...item, id: "findings.99.text" })) }));
+});
+
+test("tied Rewrite prefixes retain accepted relative identity and reject its omission or reversal", () => {
+  const registry = new AgentRegistry([rewriteAgent]);
+  const names = { A: "B组Fast", B: "A组Fast" };
+  for (const meetsCore of [true, false]) for (const relative of ["A", "B"] as const) {
+    const result = comparisonResult();
+    for (const assessment of Object.values(result.assessments)) assessment.meets_core = meetsCore;
+    result.decision_basis.tradeoff = "双方主要结果相同，具体取舍已在结构字段中确认。";
+    const before = structuredClone(result), binding = bindRewrite("comparison", result, names, relative);
+    const items = binding.request.input.items as RewriteItem[], formal = meetsCore ? "双方都好" : "双方都差";
+    const prefix = `${formal}；相对更倾向${names[relative]}`;
+    assert.equal(items[0].preference, prefix);
+    assert.equal((binding.modelInput!.items as RewriteItem[])[0].preference, prefix);
+    assert(items.slice(1).every(item => item.preference === undefined));
+    const draft = { rewrites: items.map(item => ({ id: item.id, text: item.preference ? `${item.preference}：具体差异影响有限。` : item.text })) };
+    registry.validate(binding, draft, emptyAudit());
+    for (const changed of [formal, `${formal}；相对更倾向${names[relative === "A" ? "B" : "A"]}`]) {
+      const invalid = structuredClone(draft);
+      invalid.rewrites[0].text = `${changed}：具体差异影响有限。`;
+      assert.throws(() => registry.validate(binding, invalid, emptyAudit()), /已确定偏好/);
+    }
+    assert.deepEqual(result, before);
+  }
+});
+
+test("equivalent ties do not gain a relative preference and formal wins do not repeat one", () => {
+  const tied = comparisonResult();
+  tied.decision_basis.tradeoff = "正文出现候选B，但没有结构化相对偏好。";
+  const tie = bindRewrite("comparison", tied, { A: "B组Fast", B: "A组Fast" }, null);
+  assert.equal((tie.request.input.items as RewriteItem[])[0].preference, "双方都好");
+  for (const assessment of Object.values(tied.assessments)) assessment.meets_core = false;
+  assert.equal((bindRewrite("comparison", tied, undefined, null).request.input.items as RewriteItem[])[0].preference, "双方都差");
+  const winner = comparisonResult();
+  winner.ranking = [["B"], ["A"]];
+  const win = bindRewrite("comparison", winner, { A: "B组Fast", B: "A组Fast" }, "B");
+  assert.equal((win.request.input.items as RewriteItem[])[0].preference, "A组Fast更好");
 });
 
 test("core rewrite preserves a method's feasibility as its acceptance object in the actual model material", () => {
@@ -82,7 +120,8 @@ test("comparison rewrite preserves the blind identity map beside unmodified cand
   const binding = bindRewrite("comparison", result, { A: "B组Fast", B: "A组Fast" });
   const items = binding.request.input.items as RewriteItem[];
   const mapping = JSON.stringify({ 候选A: "B组Fast", 候选B: "A组Fast" });
-  assert(items[0].text.includes(result.decision_basis.tradeoff));
+  assert.equal(items[0].text, result.decision_basis.tradeoff);
+  assert.match(items[0].context!, /已确定的对局结论/);
   assert.equal(items[0].label, "B组Fast与A组Fast的偏好及理由");
   assert(items.every(item => item.context?.split("\n")[0] === mapping));
   assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
@@ -94,7 +133,7 @@ test("comparison rewrite preserves the blind identity map beside unmodified cand
   assert(shown.every(item => item.context?.split("\n")[0] === mapping));
 });
 
-test("Rewrite projects protocol seeds in verdict facts and overall prose without changing exact slot metadata", () => {
+test("Rewrite projects each selected text slot without injecting other slots into the verdict", () => {
   const result = comparisonResult();
   result.ranking = [["A"], ["B"]];
   result.decision_basis.tradeoff = "漏插<visual>属小瑕疵；27.98%与27.18%-27.80%的口径不变。";
@@ -106,16 +145,17 @@ test("Rewrite projects protocol seeds in verdict facts and overall prose without
   result.assessments.A!.summary = row.assessments.A!.summary;
   result.assessments.B!.summary = row.assessments.B!.summary;
   const before = structuredClone(result);
-  const binding = bindRewrite("comparison", result, { A: "A组<Fast>", B: "B组<Fast>" });
+  const binding = bindRewrite("comparison", result, { A: "A组<Fast>", B: "B组<Fast>" }, "A");
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
   assert.equal(shown.length, 6);
-  assert(shown[0]!.text.includes("漏插＜visual＞属小瑕疵；27.98%与27.18%-27.80%的口径不变。"));
+  assert.equal(shown[0]!.text, "漏插＜visual＞属小瑕疵；27.98%与27.18%-27.80%的口径不变。");
   assert.equal(shown[1]!.label, "A组＜Fast＞的整体总评");
   assert.equal(shown[1]!.text, "使用＜visual＞展示27.98%。");
   assert.equal(shown[2]!.text, "来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。");
-  assert(shown[0]!.text.includes("展示＜visual＞协议与x＜0条件"));
-  assert(shown[0]!.text.includes("来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。"));
+  assert(!shown[0]!.text.includes("展示＜visual＞协议与x＜0条件"));
+  assert(!shown[0]!.text.includes("来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。"));
+  assert.equal(shown.find(item => item.id === "comparison.0.B.summary")!.text, "来源＜trace ref=Ab12Cd3 /＞；模板[^＜int＞]。");
   assert.equal(shown[0]!.preference, "A组<Fast>更好");
   assert.deepEqual(shown.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })),
     original.map(({ preference, forbiddenPrefixes }) => ({ preference, forbiddenPrefixes })));

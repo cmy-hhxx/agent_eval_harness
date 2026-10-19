@@ -144,8 +144,7 @@ for (const engine of ["pi", "prime"] as const)
 // A schema-valid unknown norm cannot establish compliance; final delivery is explicitly selected.
 // File submission and its reserved writer remain available after repair exploration is exhausted.
 for (const engine of ["pi", "prime"] as const)
-  for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} file profile repairs an unknown basis selector after exploration is exhausted`,
+    test(`${engine}: Responses file profile repairs an unknown basis selector after exploration is exhausted`,
       { timeout: 60000 }, async () => {
         const { directory, config, models } = await fixtureConfig();
         const norm = "结论优先：正文第一句明确判断，随后使用 Markdown 解释依据。";
@@ -214,9 +213,7 @@ for (const engine of ["pi", "prime"] as const)
         const allTools = [...attributionProfile.toolNames, ...submissions];
         const writeDraft = (value: unknown) => ({ path: "evaluation.json", set_json: JSON.stringify(value) });
         const frames = (payload: Record<string, unknown>) => {
-          const outputs = api === "openai-completions"
-            ? (payload.messages as Record<string, unknown>[]).filter(item => item.role === "tool").map(item => String(item.content))
-            : (payload.input as Record<string, unknown>[]).filter(item => item.type === "function_call_output").map(item => String(item.output));
+          const outputs = (payload.input as Record<string, unknown>[]).filter(item => item.type === "function_call_output").map(item => String(item.output));
           return outputs.flatMap(output => output.split("\n").flatMap(line => {
             try { return [object(JSON.parse(line))]; } catch { return []; }
           }));
@@ -227,8 +224,7 @@ for (const engine of ["pi", "prime"] as const)
           try {
             const payload = object(await body(req)), current = ++requests;
             assert(current <= 9, "two real file writes, two content submissions, and four exploration calls terminate the loop");
-            const definitions = (payload.tools as Record<string, unknown>[]).map(tool =>
-              api === "openai-completions" ? object(tool.function) : tool);
+            const definitions = payload.tools as Record<string, unknown>[];
             const names = definitions.map(tool => tool.name);
             const history = frames(payload), budget = object(history.filter(frame => frame.budget).at(-1)?.budget ?? {});
             const contentFeedback = history.filter(frame => Array.isArray(frame.errors) && frame.budget &&
@@ -288,23 +284,13 @@ for (const engine of ["pi", "prime"] as const)
             }
             const id = `file-${current}`;
             res.writeHead(200, { "content-type": "text/event-stream" });
-            if (api === "openai-completions") {
-              const event = { id, object: "chat.completion.chunk", created: 1, model: "fixture" };
-              res.end([
-                { ...event, choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call-${id}`,
-                  type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: null }] },
-                { ...event, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-                  usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
-              ].map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
-            } else {
-              const call = { type: "function_call", id: `fc_${id}`, call_id: `call_${id}`, name, arguments: JSON.stringify(args) };
-              res.end([
-                { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
-                { type: "response.output_item.done", output_index: 0, item: call },
-                { type: "response.completed", response: { id: `resp_${id}`, status: "completed", output: [call],
-                  usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
-              ].map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
-            }
+            const call = { type: "function_call", id: `fc_${id}`, call_id: `call_${id}`, name, arguments: JSON.stringify(args) };
+            res.end([
+              { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
+              { type: "response.output_item.done", output_index: 0, item: call },
+              { type: "response.completed", response: { id: `resp_${id}`, status: "completed", output: [call],
+                usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+            ].map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
           } catch (error) {
             gatewayErrors.push(String(error)); res.writeHead(500); res.end(String(error));
           }
@@ -318,8 +304,7 @@ for (const engine of ["pi", "prime"] as const)
         const worker = await startWorker(backend, path.join(directory, "worker"));
         try {
           models.models.judge!.baseUrl = gateway.url + "/v1";
-          models.models.judge!.api = api;
-          const modelForStage = createModelResolver(models), runId = `evidence-repair-${engine}-${api}`;
+          const modelForStage = createModelResolver(models), runId = `evidence-repair-${engine}`;
           await runEvaluation({
             runId, output: config.output, config, plan: { tasks: [{ id: "final-evidence-repair", stage: "attribution",
               inputIds: { answer: request.sources.answer.id }, dependencies: {}, data: {} }],

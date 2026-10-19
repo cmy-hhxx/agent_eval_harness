@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
@@ -68,6 +68,9 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     end_offset: end,
   });
   const finalIndex = material.final_message_index as number, imageCount = images(raw.messages[finalIndex]).length;
+  const captureGaps = visualCaptureMarkers(raw.messages[finalIndex]).map(({ path, status, resource_ref }) => ({
+    message_index: finalIndex, path, status, resource_ref, user_visible_rendering: "unknown",
+  }));
   const citationRange = (source: CitationContext) => {
     const { quote, ...coordinates } = source;
     const displayed = shown(quote.length <= 200 ? source : {
@@ -104,6 +107,7 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   }).map((section, index) => ({ section_index: index + 1, ...section })) : [];
   return {
     ...anonymous,
+    ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
     deferred_final_material: (material.deferred_final_material as { message_index: number; path: string; total_chars: number }[])
@@ -208,7 +212,6 @@ function bindSourceTask(
     }]));
     return { agent: "criteria", profile: "default", request: { sources, input: {
       question: first.question,
-      ground_truth: { available: data.reference !== null, value: structuredClone(data.reference) },
       candidates: Object.values(data.candidates).map((candidate) => {
         const raw = inputs[candidate.input_id] as RawInput;
         return {
@@ -262,6 +265,13 @@ function bindSourceTask(
     if (!source || !data.rewriteOf)
       throw new Error("改写任务缺少已接受的源结果：" + data.rewriteOf?.taskId);
     const slots = sourceSlots(data.rewriteOf.stage, source.evaluation, data.comparisonRewriteScope);
+    if (data.rewriteOf.stage === "comparison") {
+      const relative = (source.submitted as { relative_preference?: unknown } | undefined)?.relative_preference;
+      // Formal preferences come from comparisonSlots; relative identity comes only from the accepted submission.
+      if (relative === "A" || relative === "B") for (const item of slots)
+        if (item.preference === "双方都好" || item.preference === "双方都差")
+          item.preference += `；相对更倾向【候选${relative}】`;
+    }
     const identityContext = data.rewriteOf.stage === "comparison"
       ? JSON.stringify(Object.fromEntries(Object.entries(data.rewriteNames!).map(([label, name]) => [`候选${label}`, name])))
       : undefined;
@@ -493,8 +503,7 @@ function bindSourceTask(
       ? { ...input,
         ...(reviewContext ? { review_context: { ...reviewContext, kind: "unverified_concerns" } } : {}),
         task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis, { answer: sources.answer.id }, answer!.criterion_instruction_sources),
-        task_focus: taskFocus({ answer: materials.answer }, task_analysis as TaskAnalysis, input.ground_truth,
-          Object.values((criteriaTask.data as TaskData).candidates).map(candidate => candidate.input_id),
+        task_focus: taskFocus({ answer: materials.answer }, input.ground_truth,
           { answer: inputs[data.candidates.A.input_id] as RawInput }),
         answer: modelMaterial(answer!, "answer", sources.answer.value as RawInput, sources.answer.id, Math.min(8000, data.initialContextChars ?? 16000)),
         ...(referenceMaterials ? { reference_materials: Object.fromEntries(Object.entries(referenceMaterials).map(([key, material]) => {
@@ -510,8 +519,7 @@ function bindSourceTask(
         })) }, sources, task_analysis as TaskAnalysis)
       : { ...input, task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
           Object.fromEntries(Object.entries(sources).map(([label,source]) => [label,source.id]))),
-        task_focus: taskFocus(materials, task_analysis as TaskAnalysis, input.ground_truth,
-          Object.values((criteriaTask.data as TaskData).candidates).map(candidate => candidate.input_id),
+        task_focus: taskFocus(materials, input.ground_truth,
           Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) =>
             [label, inputs[candidate.input_id] as RawInput]))),
         comparison_scope: comparisonScope({ input, sources }),

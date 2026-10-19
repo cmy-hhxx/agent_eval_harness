@@ -17,7 +17,7 @@
 | Comparison | 确认既有归因与两两判决 | [公开入口](../../packages/agents/src/comparison/index.ts) |
 | Clustering | 归类、建类、合并与纯问题库规则 | [公开入口](../../packages/agents/src/clustering/index.ts) |
 | Rewrite | 文本槽位校验 | [公开入口](../../packages/agents/src/rewrite/index.ts) |
-| Comparison Workflow | 输入、盲测、阶段绑定、改写回填、作业与报告 | [index.ts](../../packages/workflows/src/comparison/index.ts) |
+| Comparison Workflow | 输入、盲测、阶段绑定、改写回填、责任摘要、稳定性实验与报告 | [index.ts](../../packages/workflows/src/comparison/index.ts) |
 | Data | 文件、锁、日志、存储与 IO | [index.ts](../../packages/data/src/index.ts) |
 | Runtime | Worker、HTTP/SSE、会话及双 SDK | [客户端](../../packages/runtime/src/client-entry.ts)、[Worker](../../packages/runtime/src/server.ts)、[助手](../../packages/runtime/src/assistant.ts) |
 | Tools | 证据、分页、图片、计算、代码与搜索 | [index.ts](../../packages/tools/src/index.ts) |

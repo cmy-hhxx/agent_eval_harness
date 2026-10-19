@@ -22,8 +22,6 @@ for (const engine of ["pi", "prime"] as Engine[])
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
-      // This mock implements Chat Completions, independently of the production gateway protocol.
-      models.models.judge!.api = "openai-completions";
       const plan = await buildPlan(config);
       const attributionSpecs = new Map(plan.tasks.filter(task => task.stage === "attribution")
         .map(task => [task.inputIds.answer, prepare(task, plan.inputs, {})]));
@@ -37,29 +35,24 @@ for (const engine of ["pi", "prime"] as Engine[])
           const payload = object(await body(req));
           requests.push(payload);
           const tools = payload.tools as {
-            function: { name: string; description: string; parameters: { properties: object } };
+            name: string; description: string; parameters: { properties: object };
           }[];
-          const directSubmit = tools.find((t) => t.function.name === "submit_evaluation");
-          const fileSubmit = tools.find((t) => t.function.name === "submit_evaluation_file");
+          const directSubmit = tools.find((t) => t.name === "submit_evaluation");
+          const fileSubmit = tools.find((t) => t.name === "submit_evaluation_file");
           const submit = fileSubmit ?? directSubmit;
-          const inspect = tools.find(t => t.function.name === "inspect_material");
+          const inspect = tools.find(t => t.name === "inspect_material");
           const contentTool = (submit ?? inspect)!;
           const fileSubmission = !!fileSubmit || !!inspect;
-          const jsonStringSubmission = Boolean(directSubmit && object(directSubmit.function.parameters.properties).json);
+          const jsonStringSubmission = Boolean(directSubmit && object(directSubmit.parameters.properties).json);
           const contentSchema = jsonStringSubmission
-            ? object(JSON.parse(contentTool.function.description.split("\n").at(-1)!)).json_content_schema as { properties: object }
+            ? object(JSON.parse(contentTool.description.split("\n").at(-1)!)).json_content_schema as { properties: object }
             : fileSubmission
-            ? object(JSON.parse(contentTool.function.description.split("\n").at(-1)!)).file_content_schema as { properties: object }
-            : contentTool.function.parameters;
+            ? object(JSON.parse(contentTool.description.split("\n").at(-1)!)).file_content_schema as { properties: object }
+            : contentTool.parameters;
           const schemaProperties = object(contentSchema.properties);
-          assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(tools.map(tool => tool.function.parameters))), "model-visible parameters must contain inline schemas");
-          assert(!tools.some((t) => t.function.name === "set_task_contract"));
-          const messages = payload.messages as {
-            role: string;
-            name?: string;
-            content: unknown;
-            tool_calls?: { function: { name: string } }[];
-          }[];
+          assert(!/"(?:\$ref|\$defs|definitions)"\s*:/.test(JSON.stringify(tools.map(tool => tool.parameters))), "model-visible parameters must contain inline schemas");
+          assert(!tools.some((t) => t.name === "set_task_contract"));
+          const messages = payload.input as { type?: string; role?: string; content?: unknown; output?: string; name?: string }[];
           const attribution = "criterion_assessments" in schemaProperties;
           const criteria = "requirements" in schemaProperties;
           const verification = !!inspect || "concern_matches" in schemaProperties;
@@ -83,18 +76,18 @@ for (const engine of ["pi", "prime"] as Engine[])
           const descriptions = profile.toolDescriptions;
           assert.equal(fileSubmission, profile.fileSubmission, "SDK tools follow the current profile transport");
           assert.equal(Boolean(directSubmit), !profile.fileSubmission);
-          if (criteria) assert.deepEqual(tools.map((tool) => tool.function.name), ["submit_evaluation"]);
+          if (criteria) assert.deepEqual(tools.map((tool) => tool.name), ["submit_evaluation"]);
           for (const tool of tools) {
-            if (["submit_evaluation_file", "inspect_material"].includes(tool.function.name)) {
-              assert(tool.function.description.startsWith(descriptions[tool.function.name]! + "\n"), tool.function.name);
-              assert.deepEqual(tool.function.parameters, SUBMISSION_FILE_SCHEMA);
-              assert(object(JSON.parse(tool.function.description.split("\n").at(-1)!)).file_content_schema,
+            if (["submit_evaluation_file", "inspect_material"].includes(tool.name)) {
+              assert(tool.description.startsWith(descriptions[tool.name]! + "\n"), tool.name);
+              assert.deepEqual(tool.parameters, SUBMISSION_FILE_SCHEMA);
+              assert(object(JSON.parse(tool.description.split("\n").at(-1)!)).file_content_schema,
                 "the complete content schema remains model-visible while the native tool envelope stays scalar");
-            } else if (jsonStringSubmission && tool.function.name === "submit_evaluation") {
-              assert(tool.function.description.startsWith(descriptions[tool.function.name]! + "\n"));
-              assert(object(JSON.parse(tool.function.description.split("\n").at(-1)!)).json_content_schema);
-              assert.deepEqual(Object.keys(object(tool.function.parameters.properties)),["json"]);
-            } else assert.equal(tool.function.description, descriptions[tool.function.name], tool.function.name);
+            } else if (jsonStringSubmission && tool.name === "submit_evaluation") {
+              assert(tool.description.startsWith(descriptions[tool.name]! + "\n"));
+              assert(object(JSON.parse(tool.description.split("\n").at(-1)!)).json_content_schema);
+              assert.deepEqual(Object.keys(object(tool.parameters.properties)),["json"]);
+            } else assert.equal(tool.description, descriptions[tool.name], tool.name);
           }
           const prompt = messages
             .flatMap((m) =>
@@ -132,8 +125,8 @@ for (const engine of ["pi", "prime"] as Engine[])
               draftWriteInCallLimit: profile.draftWriteInCallLimit,
               submissionNudge: profile.submissionNudge },
           };
-          const disclosed = verification ? messages.filter(message => message.role === "tool" && typeof message.content === "string")
-            .flatMap(message => (message.content as string).split("\n").flatMap(text => {
+          const disclosed = verification ? messages.filter(message => message.type === "function_call_output")
+            .flatMap(message => message.output!.split("\n").flatMap(text => {
               try { const reply = JSON.parse(text) as { accepted?: boolean; material?: unknown };
                 return reply.accepted && reply.material ? [reply.material] : []; } catch { return []; }
             })).at(-1) : undefined;
@@ -145,10 +138,10 @@ for (const engine of ["pi", "prime"] as Engine[])
           }
           const evaluation = verification && !disclosed ? undefined : draftFor(spec, taskResult(spec, disclosed), disclosed);
           const rejected = messages.some(
-            (m) => m.role === "tool" && String(m.content).includes("evidence_selection_invalid"),
+            (m) => m.type === "function_call_output" && String(m.output).includes("evidence_selection_invalid"),
           );
           let name: string, args: unknown;
-          const previousCall = messages.flatMap(message => message.tool_calls ?? []).at(-1)?.function.name;
+          const previousCall = messages.filter(message => message.type === "function_call").at(-1)?.name;
           if(attribution && engine === "pi" && !rejected)(evaluation as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;
           if (!fileSubmission) {
             name = "submit_evaluation";
@@ -163,47 +156,15 @@ for (const engine of ["pi", "prime"] as Engine[])
             args = { language: "python", code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(content))}, encoding='utf-8')`,
               outputs: ["evaluation.json"] };
           }
-          const event = {
-            id: "fixture-" + requests.length,
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "fixture",
-          };
-          const chunks = [
-            {
-              ...event,
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    role: "assistant",
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "call-" + requests.length,
-                        type: "function",
-                        function: { name, arguments: JSON.stringify(args) },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            },
-            {
-              ...event,
-              choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-              usage: {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
-              },
-            },
-          ];
+          const id = String(requests.length), call = { type: "function_call", id: "fc_" + id,
+            call_id: "call_" + id, name, arguments: JSON.stringify(args) };
           res.writeHead(200, { "content-type": "text/event-stream" });
-          res.end(
-            chunks.map((chunk) => "data: " + JSON.stringify(chunk) + "\n\n").join("") + "data: [DONE]\n\n",
-          );
+          res.end([
+            { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
+            { type: "response.output_item.done", output_index: 0, item: call },
+            { type: "response.completed", response: { id: "resp_" + id, status: "completed", output: [call],
+              usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+          ].map((event, sequence_number) => "event: " + event.type + "\ndata: " + JSON.stringify({ ...event, sequence_number }) + "\n\n").join(""));
         } catch (error) {
           serverErrors.push(String(error));
           res.writeHead(500);
@@ -218,7 +179,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         const channels = parseSettings(`[channel.second]
 base_url=${gateway.url}/second
 api_key=second-channel-secret
-api=openai-completions
+api=openai-responses
 `);
         applySettings(channels);
         models.channels = { ...models.channels, ...channels.channels };
@@ -299,8 +260,8 @@ api=openai-completions
         assert.equal(requests.length, acceptedRequestCount, "resume must not issue a request for any accepted task");
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
-          assert.equal(payload.reasoning_effort, "xhigh");
-          assert.equal(String(payload.max_completion_tokens), "32768");
+          assert.equal(object(payload.reasoning).effort, "xhigh");
+          assert.equal(String(payload.max_output_tokens), "32768");
         }
       } finally {
         if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;

@@ -32,22 +32,12 @@ export function taskAnalysisPresentation(analysis: TaskAnalysis, candidates: Rec
 /** Repeat complete, bounded task facts before the full view; never summarize source text. */
 export function taskFocus(
   materials: Record<string, FocusMaterial>,
-  analysis: TaskAnalysis,
   groundTruth: { available: boolean; value: unknown },
-  scopeCandidateIds: string[],
   originals: Record<string, RawInput>,
 ) {
   return {
     question: Object.values(materials)[0]!.question,
-    goal: analysis.goal,
     ground_truth: groundTruth,
-    common_requirements: analysis.requirements.flatMap((requirement, requirement_index) => {
-      const common = !requirement.applies_to.length || (scopeCandidateIds.length > 1 &&
-        scopeCandidateIds.every(id => requirement.applies_to.includes(id)));
-      return common ? [{ id: requirement.id, requirement_index,
-        ...(requirement.text.length <= 1000 ? { text: requirement.text } : {}),
-      }] : [];
-    }),
     answers: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
       const lastUser = originals[label]!.messages.findLast(message => message.role === "user" || message.role === undefined && message.type === "user_question");
       return [label, {

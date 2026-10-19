@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["task_id", "submission_id", "reviewer", "result", "rationale"],
+    "properties": {
+      "task_id": {"type": "string", "pattern": "\\S"},
+      "submission_id": {"type": "string", "pattern": "\\S"},
+      "reviewer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "name"],
+        "properties": {
+          "kind": {"enum": ["agent", "human"]},
+          "name": {"type": "string", "pattern": "\\S"}
+        }
+      },
+      "result": {"enum": ["passed", "failed"]},
+      "rationale": {"type": "string", "pattern": "\\S"}
+      }
+    }
+}

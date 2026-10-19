@@ -44,7 +44,7 @@ test("an unverified required execution leaves the source core pending and the co
     attribution.core_assessment.reason = "题目要求的实际执行没有可核查记录。";
   }
   const draft = { a_summary: "结果为4，实际执行未知。", b_summary: "结果为4，实际执行未知。",
-    a_tradeoff: "实际执行尚未确认。", b_tradeoff: "实际执行尚未确认。", relative_preference: "A", comparisons: comparisonSlots(request).map(() => ({ importance: "low" })) };
+    tradeoff: "双方实际执行尚未确认。", relative_preference: "A", comparisons: comparisonSlots(request).map(() => ({ importance: "low" })) };
   const result = resolveComparison(request, draft);
   comparisonProfile.validate!(request, result, audit);
   assert.equal(result.status, "needs_review");

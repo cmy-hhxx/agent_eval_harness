@@ -259,7 +259,7 @@ test("a conflict can be accepted when both original rows support an explicit pro
   const data = fixture();
   const requirement = data.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
   requirement.requirements[0]!.text = "按查询结果列出股票代码与名称。";
-  requirement.requirements[0]!.acceptance_rule = "逐项保持原查询中的代码与名称对应。";
+  requirement.requirements[0]!.acceptance_rule = requirement.requirements[0]!.text + "\n\n逐项保持原查询中的代码与名称对应。";
   data.result.task_analysis = structuredClone(requirement);
   data.result.criterion_assessments[0]!.status = "unmet";
   data.result.criterion_assessments[0]!.summary = "两行代码均与原查询同名标的不一致。";

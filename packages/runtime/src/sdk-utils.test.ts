@@ -103,7 +103,7 @@ const submissions = {
   } satisfies AttributionSubmission,
   comparison: {
     a_summary: "已完成。", b_summary: "已完成。", preference: null, relative_preference: "A",
-    a_tradeoff: "完成核心要求。", b_tradeoff: "完成核心要求。",
+    tradeoff: "双方均完成核心要求。",
     comparisons: [{ importance: "high", better_candidate: null },
       { importance: "low" }],
   } satisfies ComparisonSubmission,

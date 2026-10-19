@@ -23,3 +23,33 @@ export function evidenceCovers(raw: { messages: unknown[] }, inputId: string, co
   const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), covered.path);
   return !!leaf && covering.path === leaf.source.path && covering.start <= leaf.start && covering.end >= leaf.end;
 }
+
+/** Nonempty intersection of real physical ranges, including an escaped JSON representation of a text leaf. */
+export function evidenceOverlaps(raw: { messages: unknown[] }, inputId: string, firstId: string, secondId: string): boolean {
+  const first = parseEvidenceCoordinates(firstId), second = parseEvidenceCoordinates(secondId);
+  if (!first || !second || first.kind === "image" || second.kind === "image" ||
+      first.input_id !== inputId || second.input_id !== inputId || first.message_index !== second.message_index) return false;
+  const message = raw.messages[first.message_index];
+  if (message === undefined) return false;
+  const sources = evidenceSources(message);
+  for (const point of [first, second]) {
+    const source = sources.find(source => source.kind === point.kind && source.path === point.path);
+    if (!source || point.start >= point.end || point.end > source.text.length ||
+        overlapsImagePlaceholder(source.text, point.start, point.end)) return false;
+  }
+  const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
+    Math.max(a.start, b.start) < Math.min(a.end, b.end);
+  if (first.kind === second.kind) return first.path === second.path && overlaps(first, second);
+  const text = first.kind === "text" ? first : second, json = first.kind === "json" ? first : second;
+  const source = sources.find(source => source.kind === "text" && source.path === text.path)!;
+  const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), text.path);
+  if (!leaf || leaf.source.path !== json.path) return false;
+  const encoded = JSON.stringify(source.text), valueStart = leaf.end - encoded.length;
+  // Walk the encoded literal so escapes and surrogate pairs retain exact UTF-16 coordinates.
+  const offsets = [valueStart + 1];
+  for (let i = 1; i < encoded.length - 1;) {
+    i += encoded[i] === "\\" ? encoded[i + 1] === "u" ? 6 : 2 : 1;
+    offsets.push(valueStart + i);
+  }
+  return overlaps(json, { start: offsets[text.start]!, end: offsets[text.end]! });
+}

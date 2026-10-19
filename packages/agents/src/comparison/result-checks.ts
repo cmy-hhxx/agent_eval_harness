@@ -1,6 +1,22 @@
 import type { AgentRequest, ValidationIssue } from "@eval/contracts";
 import { criterionAppliesToPair, findingAppliesToPair } from "./pair-scope.js";
-import type { ComparisonInput, ComparisonResult } from "./types.js";
+import type { ComparisonInput, ComparisonResult, FindingRef } from "./types.js";
+
+/** Winner strengths and opposing problems support a decision; counterevidence stays in the rows. */
+export function comparisonDecisiveFindings(input: ComparisonInput, result: Pick<ComparisonResult, "ranking" | "assessments" | "decision_basis">): FindingRef[] {
+  const winner = result.ranking.length === 2 && result.ranking[0].length === 1 ? result.ranking[0][0] : undefined;
+  if (!winner) return [];
+  const failed = Object.entries(result.assessments).filter(([, assessment]) => assessment.meets_core === false);
+  return result.decision_basis.comparisons.flatMap(row => {
+    const coreFailure = failed.some(([, assessment]) => row.criterion_ids.some(id => assessment.core_failure_refs.includes(id)));
+    if (!coreFailure && (row.importance === "low" || !row.better_candidates.includes(winner))) return [];
+    return Object.entries(row.assessments).flatMap(([candidate, cell]) => cell.finding_indices.flatMap(finding_index => {
+      const finding = input.attributions[candidate]?.findings[finding_index];
+      return finding?.assessment.evidence_status === "established" && finding.type === (candidate === winner ? "strength" : "problem")
+        ? [{ candidate, finding_index }] : [];
+    }));
+  }).filter((ref, index, all) => all.findIndex(item => item.candidate === ref.candidate && item.finding_index === ref.finding_index) === index).slice(0, 24);
+}
 
 /** Check source ownership and coverage on the program-bound formal result. */
 export function comparisonResultIssues(request: AgentRequest, value: ComparisonResult): ValidationIssue[] {
@@ -10,6 +26,7 @@ export function comparisonResultIssues(request: AgentRequest, value: ComparisonR
   const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
   const byId = new Map(criteria.map(criterion => [criterion.id, criterion]));
   const { comparisons: rows, decisive_findings: decisive } = value.decision_basis;
+  const supporting = comparisonDecisiveFindings(input, value);
   const errors: ValidationIssue[] = [];
   const issue = (code: string, path: string, message: string, candidate?: string, actual?: unknown) =>
     errors.push({ category: "decision", code, path, message, candidate, actual });
@@ -59,6 +76,9 @@ export function comparisonResultIssues(request: AgentRequest, value: ComparisonR
     if (!findingAppliesToPair(input, ref.candidate, ref.finding_index, request.sources[ref.candidate]?.value))
       issue("decisive_finding_scope_mismatch", `/decision_basis/decisive_findings/${index}`,
         "专有 requirement 的 finding 只能保留本方合规点评，不能作为跨候选决定性依据；requirement_index=null 的 instruction_following finding 不能作为决定性依据，Comparison 不能用比较行 criterion_ids 为来源补充适用范围。显式引用的来源规范须属于该共同 requirement；错误索引不能扩展自身系统协议的作用域。", ref.candidate, ref.finding_index);
+    if (!supporting.some(item => item.candidate === ref.candidate && item.finding_index === ref.finding_index))
+      issue("decisive_finding_not_supporting_winner", `/decision_basis/decisive_findings/${index}`,
+        "决定性发现只引用正式赢家优势格或共同核心失败格中的赢家优点、对方问题；反向事实保留在逐项点评和取舍中，平局不列决定性发现。", ref.candidate, ref.finding_index);
   });
   return errors;
 }

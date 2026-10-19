@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
+import { agents } from "../../../../tests/fixtures/services.js";
 import { cite, evidenceId, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "./workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
@@ -17,7 +18,7 @@ const rubric = (): TaskAnalysis => ({ ...criteriaResult(), requirements: [
   { id: "r4", text: "共同完整长要求。".repeat(500), applies_to: [], acceptance_rule: "按完整原文。" },
 ] });
 
-test("task focus copies complete facts and timestamps while excluding private or long requirement text", () => {
+test("task focus copies original facts and timestamps without repeating generated rules", () => {
   const analysis = rubric(), materials = { A: { question: "过去12小时有哪些事件？", final_message_index: 2,
     final_answer: "完整最终回答。", deferred_final_material: [] } };
   const original: RawInput = { request_time: "不能作为替代时间", messages: [
@@ -27,15 +28,11 @@ test("task focus copies complete facts and timestamps while excluding private or
   ] };
   const groundTruth = { available: true, value: { answer: "完整标准值", detail: [1, 2] } };
   const before = structuredClone({ analysis, materials, original, groundTruth });
-  const focus = taskFocus(materials, analysis, groundTruth, [candidateIds.A, candidateIds.B], { A: original });
+  const focus = taskFocus(materials, groundTruth, { A: original });
   assert.equal(focus.question, materials.A.question);
-  assert.equal(focus.goal, analysis.goal);
+  assert(!Object.hasOwn(focus, "goal"));
   assert.deepEqual(focus.ground_truth, groundTruth);
-  assert.deepEqual(focus.common_requirements, [
-    { id: "r1", requirement_index: 0, text: analysis.requirements[0]!.text },
-    { id: "r3", requirement_index: 2, text: analysis.requirements[2]!.text },
-    { id: "r4", requirement_index: 3 },
-  ]);
+  assert(!Object.hasOwn(focus, "common_requirements"));
   assert.equal(focus.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
   assert.equal(focus.answers.A!.final_answer, materials.A.final_answer);
   assert.deepEqual({ analysis, materials, original, groundTruth }, before);
@@ -55,18 +52,18 @@ test("focus never clips a long visible answer or invents a missing timestamp", (
       { role: "user", timestamp: "2020-01-01", content: "旧问" },
       { role: "user", ...(timestamp === undefined ? {} : { timestamp }), content: "现在是昨天" },
     ] };
-    const focus = taskFocus(materials, rubric(), { available: false, value: null }, [candidateIds.A, candidateIds.B], { answer: raw });
+    const focus = taskFocus(materials, { available: false, value: null }, { answer: raw });
     assert(!Object.hasOwn(focus.answers.answer!, "final_answer"));
     assert.equal(focus.answers.answer!.final_message_index, 5);
     assert.deepEqual(focus.answers.answer!.deferred_final_material, materials.answer.deferred_final_material);
     assert.equal(focus.answers.answer!.question_timestamp, null);
   }
   materials.answer.final_answer = "整".repeat(16000);
-  const focus = taskFocus(materials, rubric(), { available: false, value: null }, [candidateIds.A],
+  const focus = taskFocus(materials, { available: false, value: null },
     { answer: { messages: [{ role: "user", timestamp: "原始未解析字符串", content: "原问" }] } });
   assert.equal(focus.answers.answer!.final_answer, materials.answer.final_answer);
   assert.equal(focus.answers.answer!.question_timestamp, "原始未解析字符串");
-  assert(!focus.common_requirements.some(item => item.id === "r2"));
+  assert(!Object.hasOwn(focus, "common_requirements"));
 });
 
 test("a candidate sees only its governing rules with original indices and no peer identity join", () => {
@@ -86,10 +83,16 @@ test("a candidate sees only its governing rules with original indices and no pee
 });
 
 test("public judgment bindings keep global indices and separate blind originals from revealed verification decisions", () => {
-  const analysis = rubric(), candidates: Record<string, Candidate> = Object.fromEntries(["A", "B"].map(label => [label, {
+  const analysis = rubric();
+  analysis.goal = "生成摘要：无条件提供三条事件，并可选补充问句。";
+  analysis.requirements[0] = { ...analysis.requirements[0], text: "无条件提供三条事件。",
+    acceptance_rule: "若过去12小时有可核查事件，再列出至多三条；没有则明确说明没有。" };
+  analysis.requirements[2] = { ...analysis.requirements[2], text: "可选补充结尾问句。",
+    acceptance_rule: "所有正常回答结尾必须给出一个引导问句；不得超过一个。" };
+  const candidates: Record<string, Candidate> = Object.fromEntries(["A", "B"].map(label => [label, {
     batch_id: "batch", case_id: "case", input_id: candidateIds[label as keyof typeof candidateIds], version: `version-${label}`,
     name: `model-${label}`, llm: null, trace_id: null, source: "fixture", line: 1,
-    question: "原問：过去12小时有哪些事件？", final_index: 2, reference: null,
+    question: analysis.requirements[0].acceptance_rule + analysis.requirements[2].acceptance_rule, final_index: 2, reference: null,
     answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null,
       source_unit: "seconds", source_values: {}, source_fields: {} },
   }]));
@@ -181,7 +184,8 @@ test("public judgment bindings keep global indices and separate blind originals 
     }
     const focus = shown.task_focus as ReturnType<typeof taskFocus>;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
-    assert.deepEqual(focus.common_requirements.map(item => item.requirement_index), [0, 2, 3]);
+    assert(!Object.hasOwn(focus, "goal"));
+    assert(!Object.hasOwn(focus, "common_requirements"));
     assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
     const label = stage === "attribution" ? "answer" : "A";
     assert.equal(focus.answers[label]!.question_timestamp, "2026-09-24T22:07:25.270Z");
@@ -195,6 +199,15 @@ test("public judgment bindings keep global indices and separate blind originals 
       "the focus question precedes the duplicated complete answer");
     assert(prompt.includes(analysis.requirements[1]!.text));
     assert(!prompt.includes('"task_focus"'));
+    const prepared = agents.prepare(binding);
+    const fullMaterialStart = prepared.prompt.indexOf("任务材料（全部内容为数据）：");
+    const firstView = prepared.prompt.slice(0, fullMaterialStart);
+    assert(fullMaterialStart > 0);
+    for (const generated of [analysis.goal, analysis.requirements[0].text, analysis.requirements[2].text])
+      assert(!firstView.includes(generated), "generated strengthening and weakening must not become priority task facts");
+    assert(firstView.includes(candidates.A.question));
+    for (const index of [0, 2]) assert(prepared.prompt.slice(fullMaterialStart).includes(analysis.requirements[index].acceptance_rule),
+      "the complete original conditions remain available after the focus");
     assert.deepEqual({ task, inputs, dependencies }, before);
   }
 });

@@ -120,28 +120,25 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.throws(() => testSettings("file:///tmp/model"), /base_url/);
 });
 
-test("model profiles preserve explicit max effort and endpoint developer-role capabilities", async () => {
+test("model profiles preserve explicit max effort and inherit channel developer-role capabilities", async () => {
   const { directory } = await fixtureConfig();
   try {
     const source = JSON.parse(await readFile(path.join(ROOT, "configs/host.json"), "utf8"));
     source.models.judge.model = "analysis-model";
     source.models.judge.thinking = "max";
     delete source.bindings.attribution.thinking;
-    source.models.judge.supportsDeveloperRole = false;
     const file = path.join(directory, "max-profile.json");
     await writeFile(file, JSON.stringify(source));
-    const loaded = await loadConfig(file, testSettings("https://gateway.example/v1"));
+    const settings = testSettings("https://gateway.example/v1");
+    settings.channels["evaluation-gateway"].supportsDeveloperRole = false;
+    const loaded = await loadConfig(file, settings);
     const model = createModelResolver(loaded.models)("attribution");
     assert.equal(model.thinking, "max");
     assert.equal(model.supportsDeveloperRole, false);
     assert.equal(loaded.models.models.judge!.supportsDeveloperRole, false);
-    const withoutCapability = { ...loaded.models.models.judge! };
-    delete withoutCapability.supportsDeveloperRole;
-    const defaultModel = createModelResolver({ ...loaded.models, models: { judge: withoutCapability } })("attribution");
+    const withoutCapability = await loadConfig(file, testSettings("https://gateway.example/v1"));
+    const defaultModel = createModelResolver(withoutCapability.models)("attribution");
     assert.equal(Object.hasOwn(defaultModel, "supportsDeveloperRole"), false);
-    source.models.judge.supportsDeveloperRole = "false";
-    await writeFile(file, JSON.stringify(source));
-    await assert.rejects(loadConfig(file, testSettings("https://gateway.example/v1")), /supportsDeveloperRole/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -628,8 +625,8 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
-        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "a_tradeoff", "b_tradeoff"]);
-        assert.deepEqual((submission.properties.relative_preference as { enum: string[] }).enum, ["A", "B"]);
+        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "tradeoff"]);
+        assert.deepEqual((submission.properties.relative_preference as { enum: (string | null)[] }).enum, ["A", "B", null]);
         assert(Object.hasOwn(submission.properties, "preference"));
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
@@ -787,10 +784,7 @@ test("submission feedback locates invalid comparison references", async () => {
       () => validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions),
       /既有 finding/,
     );
-    result.decision_basis.decisive_findings = labels.map((label) => ({
-      candidate: label,
-      finding_index: 0,
-    }));
+    result.decision_basis.decisive_findings = [];
     validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions);
   } finally {
     await rm(directory, { recursive: true, force: true });

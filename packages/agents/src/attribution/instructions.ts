@@ -1,5 +1,5 @@
 import { ValidationError, type AgentRequest, type TaskAnalysis, type TaskCriterion, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { cite, evidenceCovers, evidenceSources, hasSourceTextBlock, normativeSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource, sourceContentBlocks, sourceTextBlocks, type NormativeSource } from "@eval/tools";
+import { cite, evidenceCovers, evidenceId, evidenceOverlaps, evidenceSources, hasSourceTextBlock, normativeSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource, sourceContentBlocks, sourceTextBlocks, type NormativeSource } from "@eval/tools";
 import type { AttributionResult, Evidence } from "./types.js";
 import { ownEvidence } from "./source-evidence.js";
 
@@ -96,6 +96,20 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
   const task = request.input.task_analysis as unknown as TaskAnalysis;
   const criteria = new Map([...task.requirements, ...task.scoring_points, ...task.red_flags].map(criterion => [criterion.id, criterion]));
   const errors: ValidationIssue[] = [...context.bindingIssues];
+  const shared = (rule: TaskCriterion) => !rule.applies_to.length ||
+    rule.applies_to.includes(String(request.input.candidate_id)) && rule.applies_to.some(id => id !== request.input.candidate_id);
+  const blocks = context.sources.flatMap(source => sourceContentBlocks(source.content, source.path).map(block => ({
+    ...block, message_index: source.message_index,
+    privateEligible: source.role !== "user" || source.path === "/content" || [...criteria.values()].some(rule =>
+      rule.applies_to.includes(String(request.input.candidate_id)) && !shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)),
+  })));
+  const commonBlocks = blocks.filter(block => task.requirements.some(rule => shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)));
+  const coordinate = (block: typeof blocks[number], origin: typeof block.origins[number]) =>
+    evidenceId(request.sources.answer.id, block.message_index, "text", origin.path, origin.start, origin.end);
+  // Runtime USER inputs may carry execution facts; only an accepted private rule makes those blocks normative.
+  const privateOrigins = blocks.filter(block => block.privateEligible && !commonBlocks.includes(block)).flatMap(block => block.origins.filter(origin =>
+    !commonBlocks.some(common => common.origins.some(part => evidenceCovers(context.raw, request.sources.answer.id,
+      coordinate(common, part), coordinate(block, origin))))).map(origin => coordinate(block, origin)));
   for (const field of ["findings", "criterion_assessments"] as const) result[field].forEach((item, index) => {
     item.context_evidence?.forEach((evidence, i) => {
       if (!ownEvidence(evidence) || !isNormEvidence(evidence, context.sources, context.raw, request.sources.answer.id))
@@ -148,6 +162,14 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
   result.findings.forEach((finding, index) => {
     if (finding.assessment.evidence_status !== "established") return;
     if (!context.sources.length && !independentFinalInstruction(finding)) return;
+    const criterion = finding.assessment.requirement_index === null ? undefined : task.requirements[finding.assessment.requirement_index];
+    if (criterion && shared(criterion) &&
+        finding.evidence.filter(ownEvidence).some(item => privateOrigins.some(origin =>
+          evidenceOverlaps(context.raw, request.sources.answer.id, item.evidence_id, origin)))) {
+      errors.push({ category: "evidence", code: "instruction_private_basis",
+        path: `/findings/${index}/assessment/requirement_index`,
+        message: "本条发现实际引用了未属于共同要求的本方规范，维度标签不能改变其作用域。保留真实观察、条件与例外，改选对应 own_rule；若已有本方专有 requirement，选择该项。不能借共同原问改成共同缺口。" });
+    }
     const norms = context.forRequirement(finding.assessment.requirement_index);
     if (finding.dimension !== "instruction_following" && !norms.length) return;
     // Bound norms retain their full context; unlinked observations do not acquire guessed norms.
