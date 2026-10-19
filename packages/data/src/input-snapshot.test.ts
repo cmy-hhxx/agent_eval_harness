@@ -39,6 +39,26 @@ test("snapshots validate UTF-8, row counts and length before replacing any commi
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("six-model snapshots install numeric and dotted IDs and reject unsafe or duplicate names", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-six-source-")), signal = AbortSignal.timeout(3000);
+  const names = ["a_fast", "b_fast", "6_luna", "a_expert", "b_expert", "6.1sol"].map(id => id + ".jsonl");
+  async function* namedFiles(entries: string[]): AsyncGenerator<InputDownload> {
+    for (const name of entries) {
+      const text = Buffer.from('{"case_id":"one"}\n');
+      yield { name, rows: 1, size: text.length,
+        chunks: (async function* () { yield text; })(), close: async () => {} };
+    }
+  }
+  try {
+    assert.equal((await replaceInputSnapshot(directory, namedFiles(names), signal, async () => {})).changed, true);
+    for (const name of names) assert.equal(await readFile(path.join(directory, name), "utf8"), '{"case_id":"one"}\n');
+    assert.equal((await replaceInputSnapshot(directory, namedFiles(names), signal, async () => {})).changed, false);
+    for (const entries of [["../escape.jsonl"], ["/absolute.jsonl"], ["a..b.jsonl"], [".jsonl"], ["6.1sol.txt"], [names[0], names[0]]])
+      await assert.rejects(replaceInputSnapshot(directory, namedFiles(entries), signal,
+        async () => assert.fail("invalid filenames cannot begin replacement")));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("aborted transfer retains the previous source and closes the response", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "automation-abort-")), controller = new AbortController();
   let closed = false;

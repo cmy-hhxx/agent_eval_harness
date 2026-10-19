@@ -157,7 +157,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
       Object.values(task.dependencies).some((id) =>
         previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
   }
-  const dependencies = new Set([...tasks.values()].flatMap((task) => Object.values(task.dependencies)));
+  // Pending polish alone must not keep an obsolete, unaccepted attribution alive after expansion.
+  const dependencies = new Set([...tasks.values()].filter(task => task.stage !== "rewrite")
+    .flatMap((task) => Object.values(task.dependencies)));
   // Pending standard reviews still need their original task and paid progress if the opt-in is disabled.
   for (const task of tasks.values()) {
     const data = task.data as TaskData;
@@ -195,6 +197,9 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     if (task.stage !== "clustering" || state.receipts[id]) continue;
     if (Object.values(task.dependencies).some((taskId) => !tasks.has(taskId))) tasks.delete(id);
   }
+  const requiredCriteria = new Set([...tasks.values()].flatMap(task => Object.values(task.dependencies)));
+  for (const [id, task] of tasks)
+    if (task.stage === "criteria" && !state.receipts[id] && !requiredCriteria.has(id)) tasks.delete(id);
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;

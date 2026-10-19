@@ -1,19 +1,34 @@
 {
-  "id": "remote-evaluation",
-  "sourceUrl": "http://117.50.195.94:2256",
-  "fromDate": "2026-10-13",
+  "id": "remote-six-model-evaluation",
+  "sourceUrl": "http://117.50.195.94:2256/gpt",
+  "remoteModels": [
+    "a_fast",
+    "b_fast",
+    "6_luna",
+    "a_expert",
+    "b_expert",
+    "6.1sol"
+  ],
+  "fromDate": "2026-10-16",
   "completedDates": [],
-  "hostConfigs": ["host.json", "local/models.json", "automations-host.json"],
-  "stateDirectory": "../data/automations/remote-evaluation",
-  "sourceDirectory": "../data/sources/automations/remote-evaluation",
-  "runPrefix": "daily-",
+  "hostConfigs": [
+    "host.json",
+    "six-models.json",
+    "local/models.json",
+    "automations-host.json"
+  ],
+  "stateDirectory": "../data/automations/remote-six-model-evaluation",
+  "sourceDirectory": "../data/sources/automations/remote-six-model-evaluation",
+  "runPrefix": "daily-six-",
   "engine": "pi",
   "pollMs": 15000,
   "refreshMs": 1800000,
   "retryMs": 30000,
   "maxEvaluationAttempts": 3,
   "dailyComparisonLimitPerTier": 300,
-  "channelConcurrency": { "openai": 1 },
+  "channelConcurrency": {
+    "evaluation-gateway": 16
+  },
   "requestTimeoutMs": 600000,
   "publishProgress": true,
   "publication": {
@@ -23,5 +38,6 @@
     "mongoDatabase": "query_quality_new",
     "mongoCollection": "agent_eval_bench_version_comparisons_new",
     "mongoTlsCAFileEnv": "AUTOMATIONS_MONGODB_TLS_CA_FILE"
-  }
+  },
+  "publishStatisticsLog": false
 }

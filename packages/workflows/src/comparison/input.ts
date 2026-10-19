@@ -159,6 +159,7 @@ export function adapt(
     case_id: String(id),
     version: item.id,
     name: item.display_name || item.name,
+    ...(item.display_name && item.display_name !== item.name ? { identity_names: [item.name] } : {}),
     input_id: randomUUID(),
     trace_id: raw.trace_id || meta.trace_id ? String(raw.trace_id || meta.trace_id) : null,
     source,
@@ -735,6 +736,7 @@ export async function buildPlan(
           Number(
             !!oldCheck &&
               (!isDeepStrictEqual(oldCheck.reference, reference) ||
+                old!.dependencies.criteria !== criteria.id ||
                 !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
@@ -769,6 +771,7 @@ export async function buildPlan(
           Number(
             !!oldData &&
               (!isDeepStrictEqual(oldData.reference, reference) ||
+                oldGroup!.dependencies.criteria !== criteria.id ||
                 Object.entries(candidates).some(
                   ([label, c]) => c.input_id !== oldData.candidates[label]!.input_id,
                 )),

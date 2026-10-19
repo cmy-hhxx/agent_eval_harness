@@ -2,17 +2,116 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 
 const html = await readFile(new URL("dashboard.html", import.meta.url), "utf8");
 const source = await readFile(new URL("dashboard.js", import.meta.url), "utf8");
+const recordsSource = (await build({ entryPoints: [fileURLToPath(new URL("records.js", import.meta.url))], bundle: true, write: false, format: "iife", platform: "browser" })).outputFiles[0].text;
 const done = { total_cases: 90, completed_cases: 90, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0 };
+const processing = {
+  received_at: Date.parse("2026-10-19T05:47:00Z"), published_at: Date.parse("2026-10-19T05:48:00Z"),
+  pending: 2, failed: [{ name: "broken.7z", error: "invalid header data" }], error: null,
+  archive: { packages: 667, bytes: 3.38 * 1024 ** 3, partitions: 30, checked_at: Date.parse("2026-10-19T01:00:00Z"), oversized: [] },
+};
+
+async function renderGpt(missing = null, empty = false) {
+  const dom = new JSDOM(html.replaceAll("__BASE__", "/gpt"), { url: "http://localhost/gpt/", runScripts: "outside-only" });
+  const groups = [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
+  const pairs = Object.fromEntries(groups.flatMap(group => group.flatMap((left, index) => group.slice(index + 1).map(right => [
+    [left, right].sort().join("__vs__"), { ...done },
+  ]))));
+  if (missing) for (const pair of Object.keys(pairs)) if (pair.split("__vs__").includes(missing)) delete pairs[pair];
+  const requests = [];
+  dom.window.fetch = async url => {
+    requests.push(url);
+    if (url.endsWith("/processing-status")) return { ok: true, json: async () => processing };
+    return { ok: true, json: async () => ({
+      dates: empty ? [] : [{ date: "2026-10-19", ready: true, models: Object.fromEntries(groups.flat().map(id => [
+        id, { ready: id !== missing, row_count: id === missing ? 0 : 90 },
+      ])) }],
+      evaluation: { status: "finished", stale: false, dates: [{ date: "2026-10-19", pairs }] },
+    }) };
+  };
+  dom.window.setInterval = () => 0;
+  vm.runInContext(source, dom.getInternalVMContext());
+  await new Promise(setImmediate);
+  return { dom, requests };
+}
+
+test("GPT dashboard loads its namespace, links six models and presents six separate battles", async () => {
+  const { dom, requests } = await renderGpt();
+  try {
+    const document = dom.window.document;
+    assert.deepEqual(requests, ["/gpt/dashboard-data", "/gpt/processing-status"]);
+    assert.equal(document.querySelector(".dataset-range-models").textContent, "6 个模型");
+    assert.equal(document.querySelector('[data-dataset="gpt"]').getAttribute("aria-current"), "page");
+    assert.equal(document.querySelector('[data-dataset="root"]').getAttribute("href"), "/");
+    assert.equal(document.querySelectorAll(".gpt-pair-progress").length, 6);
+    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 6);
+    const links = [...document.querySelectorAll(".model-link")];
+    assert.equal(links.length, 6);
+    assert.ok(links.every(link => link.getAttribute("href").startsWith("/gpt/records?")));
+    assert.ok(links.some(link => link.getAttribute("href").endsWith("model=6.1sol")));
+    assert.equal(document.querySelector(".date-count").textContent, "540 条");
+    assert.match(document.querySelector(".gpt-group-cell").textContent, /A Fast 对 6_luna/);
+  } finally { dom.window.close(); }
+});
+
+test("missing GPT input waits for data without hiding the other four ready battles", async () => {
+  const { dom } = await renderGpt("6_luna");
+  try {
+    const document = dom.window.document;
+    assert.equal(document.querySelectorAll(".model-link").length, 5);
+    assert.equal(document.querySelector(".model-link-pending").textContent, "6_luna —");
+    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 4);
+    assert.equal([...document.querySelectorAll(".pair-empty")].filter(el => el.textContent === "等待数据").length, 2);
+    assert.equal(document.querySelector(".date-count").textContent, "450 条");
+  } finally { dom.window.close(); }
+});
+
+test("empty GPT source remains online and does not manufacture dates or counts", async () => {
+  const { dom } = await renderGpt(null, true);
+  try {
+    const document = dom.window.document;
+    assert.equal(document.querySelector("#dataset-range-dates").textContent, "暂无数据");
+    assert.equal(document.querySelector("#ready-count").textContent, "0 / 0");
+    assert.equal(document.querySelector("#total-rows").textContent, "0");
+    assert.equal(document.querySelector("#service-state").dataset.state, "online");
+    assert.equal(document.querySelectorAll(".model-link").length, 0);
+  } finally { dom.window.close(); }
+});
+
+test("GPT sample viewer keeps pagination and return navigation inside its namespace", async () => {
+  const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/gpt"), {
+    url: "http://localhost/gpt/records?date=2026-10-19&model=6.1sol", runScripts: "outside-only",
+  });
+  const requests = [];
+  dom.window.fetch = async url => {
+    requests.push(url);
+    return { ok: true, json: async () => ({ total: 25, items: [{ question: "Question", answer: "Answer" }] }) };
+  };
+  dom.window.scrollTo = () => {};
+  try {
+    vm.runInContext(recordsSource, dom.getInternalVMContext());
+    await new Promise(setImmediate);
+    dom.window.document.querySelector("#next-page").click();
+    await new Promise(setImmediate);
+    assert.deepEqual(requests, [1, 2].map(page => `/gpt/records/2026-10-19/6.1sol?page=${page}&page_size=20`));
+    assert.equal(dom.window.document.querySelector(".back-link").getAttribute("href"), "/gpt/");
+    assert.equal(dom.window.location.pathname, "/gpt/records");
+    assert.equal(dom.window.document.querySelector("#records-title").textContent, "2026-10-19 · 6.1sol");
+  } finally { dom.window.close(); }
+});
 
 async function render(status, stale = false, counts = done, catalogDates = null, sourceRows = counts.total_cases) {
   const dom = new JSDOM(html, { url: "http://localhost/", runScripts: "outside-only" });
   const dates = catalogDates || ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-30", "2026-10-08"];
   const active = { ...done, completed_cases: 10, running_cases: 1, queued_cases: 79 };
-  dom.window.fetch = async () => ({ ok: true, json: async () => ({
+  dom.window.fetch = async url => url.endsWith("/processing-status")
+    ? { ok: true, json: async () => processing } : ({ ok: true, json: async () => ({
     dates: dates.map(date => ({ date, ready: true, models: Object.fromEntries(["a_fast", "b_fast", "a_expert", "b_expert"].map(id => [id, { ready: true, row_count: sourceRows }])) })),
     evaluation: { status, stale, dates: dates.map(date => ({ date, pairs: {
       fast: date === "2026-09-30" ? active : counts,
@@ -33,6 +132,28 @@ test("header date range follows the catalog as new daily data arrives", async ()
     assert.equal(dom.window.document.querySelector(".dataset-range-separator").textContent, "·");
     assert.equal(dom.window.document.querySelector(".dataset-range-models").textContent,
       "4 个模型");
+  } finally { dom.window.close(); }
+});
+
+test("processing panel shows timestamps in Shanghai, distinct failures and archive volume", async () => {
+  const dom = await render("running");
+  try {
+    const document = dom.window.document;
+    assert.match(document.querySelector("#last-received").textContent, /10.19.*13:47/);
+    assert.equal(document.querySelector("#pending-archives").textContent, "2");
+    assert.equal(document.querySelector("#failed-archives").textContent, "1");
+    assert.equal(document.querySelector("#processing-failures").hidden, false);
+    assert.match(document.querySelector("#archive-errors").textContent, /broken.7z：invalid header data/);
+    assert.equal(document.querySelector("#archive-summary").textContent, "归档 667 包 · 3.38 GiB · 30 卷");
+    dom.window.fetch = async url => {
+      if (url.endsWith("/processing-status")) throw new Error("offline status");
+      return { ok: true, json: async () => ({ dates: [], evaluation: null }) };
+    };
+    document.querySelector("#refresh").click();
+    await new Promise(setImmediate);
+    assert.equal(document.querySelector("#processing-error").hidden, false);
+    assert.equal(document.querySelector("#service-state").dataset.state, "online");
+    assert.equal(document.querySelector("#failed-archives").textContent, "1");
   } finally { dom.window.close(); }
 });
 
@@ -156,5 +277,231 @@ test("a fulfilled daily quota stays complete when more source rows arrive", asyn
     const status = dom.window.document.querySelector(".pair-status");
     assert.equal(status.textContent, "✅");
     assert.equal(status.title, "当日评测额度已完成");
+  } finally { dom.window.close(); }
+});
+
+
+for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifind", ["ifind_normal_agent", "ifind_deep_research"]]]) {
+  test(`${provider} presents separate modes and real stage progress without battle rules`, async () => {
+    const dom = new JSDOM(html.replaceAll("__BASE__", `/${provider}`), { url: `http://localhost/${provider}/`, runScripts: "outside-only" });
+    const requests = [];
+    dom.window.fetch = async url => {
+      requests.push(url);
+      if (url.endsWith("/processing-status")) return { ok: true, json: async () => processing };
+      return { ok: true, json: async () => ({
+        dates: [{ date: "2026-10-14", ready: true, models: { [models[0]]: { ready: true, row_count: 800 }, [models[1]]: { ready: false, row_count: 0 } } }],
+        evaluation: { status: "running", stale: true, dates: [{ date: "2026-10-14", models: { [models[0]]: {
+          criteria: { total: 800, completed: 799, pending: 0, running: 1, failed: 0, blocked: 0, cancelled: 0 },
+          attribution: { total: 780, completed: 780, pending: 0, running: 0, failed: 0, blocked: 0, cancelled: 0 },
+          clustering: { total: 8, completed: 6, pending: 1, running: 0, failed: 1, blocked: 0, cancelled: 0 },
+        } } }] },
+      }) };
+    };
+    dom.window.setInterval = () => 0;
+    try {
+      vm.runInContext(source, dom.getInternalVMContext());
+      await new Promise(setImmediate);
+      const doc = dom.window.document;
+      assert.deepEqual(requests, [`/${provider}/dashboard-data`, `/${provider}/processing-status`]);
+      assert.deepEqual([...doc.querySelectorAll("thead th")].map(el => el.textContent.trim()), ["日期", "Fast", "Expert"]);
+      assert.equal(doc.querySelector(`[data-dataset="${provider}"]`).getAttribute("aria-current"), "page");
+      assert.equal(doc.querySelectorAll(".stage-progress").length, 6);
+      assert.equal(doc.querySelectorAll(".pair-quota,.gpt-pair-progress,.pair-status").length, 0);
+      assert.equal(doc.querySelectorAll(".model-link").length, 1);
+      assert.equal(doc.querySelector(".model-link").getAttribute("href"), `/${provider}/records?date=2026-10-14&model=${models[0]}`);
+      assert.match(doc.querySelector(".input-cell").textContent, /归因 · 已完成 780 \/ 780 任务 · 进度停更/);
+      assert.match(doc.querySelector(".input-cell").textContent, /聚类 · 已完成 6 \/ 8 任务 · 排队 1 · 失败 1/);
+      assert.doesNotMatch(doc.querySelector(".results-table").textContent, /对战|300|配对/);
+      assert.match(doc.querySelectorAll(".input-cell")[1].textContent, /标准制定 · 暂无进度/);
+    } finally { dom.window.close(); }
+  });
+}
+
+
+test("session sample viewer keeps all rounds and scoped pagination", async () => {
+  const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/aime"), {
+    url: "http://localhost/aime/records?date=2026-10-18&model=aime_fast", runScripts: "outside-only",
+  });
+  const requests = [];
+  dom.window.fetch = async url => {
+    requests.push(url);
+    return { ok: true, json: async () => ({ total: 21, items: [{ format: "session", session_id: "session-id", turns: [
+      { question: "First question", answer: "First answer" },
+      { question: "Second question", answer: "" },
+      { question: "Third question", answer: "Third answer" },
+    ] }] }) };
+  };
+  dom.window.scrollTo = () => {};
+  try {
+    vm.runInContext(recordsSource, dom.getInternalVMContext());
+    await new Promise(setImmediate);
+    const doc = dom.window.document;
+    assert.equal(doc.querySelector(".session-title").textContent, "Session · 3 轮");
+    assert.equal(doc.querySelectorAll(".session-turn").length, 3);
+    assert.equal(doc.querySelectorAll(".answer-details[open]").length, 0);
+    assert.deepEqual([...doc.querySelectorAll(".question-text")].map(el => el.textContent), ["First question", "Second question", "Third question"]);
+    assert.match(doc.querySelector("#records-title").textContent, /aime Fast/);
+    doc.querySelector("#next-page").click();
+    await new Promise(setImmediate);
+    assert.ok(requests.every(url => url.startsWith("/aime/records/2026-10-18/aime_fast?")));
+    assert.match(requests[1], /page=2/);
+  } finally { dom.window.close(); }
+});
+
+
+async function samplePage(items, clipboard, questionHeight = () => 18) {
+  const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/ifind"), {
+    url: "http://example.test/ifind/records?date=2026-10-14&model=ifind_normal_agent", runScripts: "outside-only",
+  });
+  dom.window.fetch = async () => ({ ok: true, json: async () => ({ total: items.length, items }) });
+  if (clipboard) Object.defineProperty(dom.window.navigator, "clipboard", { value: clipboard });
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    clientHeight: { get() { return this.classList.contains("question-text") ? 18 : 0; } },
+    scrollHeight: { get() { return this.classList.contains("question-text") ? questionHeight(this) : 0; } },
+  });
+  vm.runInContext(recordsSource, dom.getInternalVMContext());
+  await new Promise(setImmediate);
+  return dom;
+}
+
+const traceSample = { format: "trace", trace_id: "trace-123456789012345678901234567890", session_id: null, question: "Question", answer: "**Answer**" };
+
+test("sample table separates formats and groups session rounds with full, copyable trace IDs", async () => {
+  const copied = [];
+  const dom = await samplePage([{ ...traceSample, session_id: "trace-session" }, { format: "session", session_id: "session-2", turns: [
+    { ...traceSample, trace_id: "round-one", question: "First" },
+    { ...traceSample, trace_id: "round-two", question: "Second" },
+  ] }], { writeText: async value => copied.push(value) });
+  try {
+    const doc = dom.window.document;
+    assert.deepEqual([...doc.querySelectorAll(".records-table > thead th")].map(el => el.textContent), ["序号", "格式 / 会话", "Trace ID", "问句", "回答"]);
+    assert.equal(doc.querySelectorAll(".records-table > tbody").length, 2);
+    assert.equal(doc.querySelector(".format-badge").textContent, "单 trace");
+    assert.equal(doc.querySelector(".record-format").querySelector(".record-identifier"), null);
+    assert.equal(doc.querySelector(".session-title").textContent, "Session · 2 轮");
+    assert.equal(doc.querySelectorAll(".record-format")[1].rowSpan, 2);
+    assert.equal(doc.querySelectorAll(".record-trace code")[0].textContent, traceSample.trace_id);
+    assert.equal(doc.querySelectorAll(".record-trace code")[0].title, traceSample.trace_id);
+    const button = doc.querySelector(".record-trace .copy-id");
+    button.click(); await new Promise(setImmediate);
+    assert.deepEqual(copied, [traceSample.trace_id]);
+    assert.equal(button.textContent, "已复制");
+    assert.equal(doc.querySelectorAll("details[open]").length, 0);
+    assert.equal(doc.querySelectorAll(".answer-markdown").length, 0, "closed answers are not parsed eagerly");
+  } finally { dom.window.close(); }
+});
+
+test("HTTP sample viewer copies through a selected textarea and reports denied copies accurately", async () => {
+  for (const [success, useApi] of [[true, false], [true, true], [false, false]]) {
+    const clipboard = useApi ? { writeText: async () => { throw new Error("permission denied"); } } : undefined;
+    const dom = await samplePage([traceSample], clipboard);
+    try {
+      const doc = dom.window.document, button = doc.querySelector(".record-trace .copy-id");
+      let copied;
+      doc.execCommand = command => {
+        assert.equal(command, "copy");
+        copied = doc.activeElement.value;
+        return success;
+      };
+      button.focus(); button.click(); await new Promise(setImmediate);
+      assert.equal(copied, traceSample.trace_id);
+      assert.equal(button.textContent, success ? "已复制" : "复制失败");
+      assert.equal(doc.activeElement, button);
+      assert.equal(doc.querySelectorAll(".clipboard-field").length, 0);
+    } finally { dom.window.close(); }
+  }
+});
+
+test("questions that fit the preview have no visible expand control", async () => {
+  let height = 18;
+  const question = "Leveraged ETF that has holding of AMAT";
+  const dom = await samplePage([{ ...traceSample, question }], undefined, node => height + (node.parentElement.querySelector(".question-action").hidden ? 0 : 18));
+  try {
+    const doc = dom.window.document, action = doc.querySelector(".question-action");
+    assert.equal(action.hidden, true);
+    assert.equal(doc.querySelector(".question-text").textContent, question);
+    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(action.hidden, true, "a question fitting one line stays plain");
+    height = 36; dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(action.hidden, false, "narrower columns expose the full-text control when needed");
+    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(action.hidden, true, "wider columns reclaim the control's width before checking overflow");
+  } finally { dom.window.close(); }
+});
+
+test("overflowing questions expand without changing stored text and recheck clipping after resize", async () => {
+  const question = "First line\n\n" + "Long question ".repeat(50) + "<script>plain text</script>";
+  let height = 120;
+  const dom = await samplePage([{ ...traceSample, question }], undefined, () => height);
+  try {
+    const doc = dom.window.document, content = doc.querySelector(".question-content");
+    const text = content.querySelector(".question-text"), action = content.querySelector(".question-action");
+    assert.equal(action.hidden, false);
+    assert.equal(action.getAttribute("aria-expanded"), "false");
+    assert.equal(text.textContent, question);
+    action.click();
+    assert.equal(text.classList.contains("question-preview"), false);
+    assert.equal(action.getAttribute("aria-expanded"), "true");
+    assert.equal(action.textContent, "收起问句");
+    assert.equal(doc.querySelector(".answer-details").open, false);
+    assert.equal(content.querySelector("script"), null);
+    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(action.getAttribute("aria-expanded"), "true", "resize preserves an opened question");
+    action.click();
+    assert.equal(text.classList.contains("question-preview"), true);
+    assert.equal(action.hidden, true);
+    assert.equal(action.textContent, "展开问句");
+  } finally { dom.window.close(); }
+});
+
+test("a bounded answer overview never truncates the expanded answer", async () => {
+  const answer = "# Overview\n\n" + "Full answer content. ".repeat(300) + "\n\nFinal paragraph.";
+  const dom = await samplePage([{ ...traceSample, answer }]);
+  try {
+    const doc = dom.window.document, details = doc.querySelector(".answer-details");
+    assert.match(details.querySelector(".answer-preview").textContent, /^Overview Full answer content\./);
+    assert.doesNotMatch(details.querySelector(".answer-preview").textContent, /Final paragraph/);
+    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
+    assert.match(doc.querySelector(".answer-markdown").textContent, /Final paragraph\.$/);
+    assert.equal(doc.querySelectorAll(".answer-markdown p")[0].textContent, "Full answer content. ".repeat(300).trim());
+  } finally { dom.window.close(); }
+});
+
+test("expanded answers render GFM tables, lists and code while blocking raw HTML and unsafe URLs", async () => {
+  const answer = ["# Heading", "", "**Bold** and *italic* and ~~deleted~~. [Safe](https://example.com)", "",
+    "| Stock | Score |", "| :--- | ---: |", "| A | 9 |", "", "> Quote", "", "1. First", "2. Second", "", "~~~js", "const x = '<script>';", "~~~", "",
+    "<script>window.injected = true</script>", "", "<img src=x onerror=alert(1)>", "",
+    "[Unsafe](javascript:alert%281%29) ![Blocked](data:text/html,script)"].join("\n");
+  const dom = await samplePage([{ ...traceSample, answer, standard_answer: "**Reference**" }]);
+  try {
+    const doc = dom.window.document, details = doc.querySelector(".answer-details");
+    const preview = details.querySelector(".answer-preview");
+    assert.match(preview.textContent, /^Heading Bold and italic and deleted\. Safe Stock Score A 9/);
+    assert.doesNotMatch(preview.textContent, /\*\*|https:\/\/example\.com/);
+    assert.equal(details.open, false);
+    assert.equal(doc.querySelector(".answer-markdown"), null);
+    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
+    assert.equal(preview.hidden, true);
+    assert.equal(details.querySelector(".answer-action").textContent, "收起回答");
+    const content = doc.querySelector(".answer-markdown");
+    assert.equal(content.querySelector("h1").textContent, "Heading");
+    assert.equal(content.querySelector("strong").textContent, "Bold");
+    assert.equal(content.querySelector("em").textContent, "italic");
+    assert.equal(content.querySelector("del").textContent, "deleted");
+    assert.equal(content.querySelectorAll("table > tbody > tr").length, 1);
+    assert.equal(content.querySelectorAll("ol > li").length, 2);
+    assert.match(content.querySelector("pre code").textContent, /<script>/);
+    assert.equal(content.querySelectorAll("script,img,iframe,[onerror]").length, 0);
+    assert.equal(content.querySelectorAll("a").length, 1);
+    assert.equal(content.querySelector("a").rel, "noopener noreferrer");
+    assert.equal(dom.window.injected, undefined);
+    assert.equal(doc.querySelectorAll(".answer-markdown")[1].querySelector("strong").textContent, "Reference");
+    details.open = false; details.dispatchEvent(new dom.window.Event("toggle"));
+    assert.equal(preview.hidden, false);
+    assert.equal(details.querySelector(".answer-action").textContent, "展开回答");
+    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
+    assert.equal(doc.querySelectorAll(".answer-markdown").length, 2);
   } finally { dom.window.close(); }
 });

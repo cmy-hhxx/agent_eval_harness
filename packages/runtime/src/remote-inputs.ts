@@ -1,4 +1,4 @@
-import { REMOTE_MODELS, RemoteInputNotReadyError, type InputDownload, type RemoteDay, type RemoteModel } from "@eval/contracts";
+import { safeId, RemoteInputNotReadyError, type InputDownload, type RemoteDay } from "@eval/contracts";
 
 export function validInputDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -7,7 +7,10 @@ export function validInputDate(value: string): boolean {
 
 /** The source exposes neither HEAD nor a revision/ETag. Never infer one from row counts. */
 export class RemoteInputs {
-  constructor(readonly url: string, private readonly timeoutMs: number) {}
+  constructor(readonly url: string, private readonly timeoutMs: number, readonly models: readonly string[]) {
+    if (!models.length || new Set(models).size !== models.length) throw new Error("Remote models must be nonempty and unique");
+    models.forEach(safeId);
+  }
 
   private async request(route: string, signal: AbortSignal, init?: RequestInit, timeoutMs: number | null = this.timeoutMs): Promise<Response> {
     const response = await fetch(this.url + route, {
@@ -50,17 +53,18 @@ export class RemoteInputs {
         throw new Error("Invalid or duplicate remote date");
       seen.add(day.date);
       if (!day.ready) continue;
-      if (!day.models || REMOTE_MODELS.some((model) => !day.models[model]?.ready)) continue;
-      if (REMOTE_MODELS.some((model) => !Number.isSafeInteger(day.models[model].row_count) || day.models[model].row_count < 0))
+      if (!day.models || this.models.some((model) => !day.models[model]?.ready)) continue;
+      if (this.models.some((model) => !Number.isSafeInteger(day.models[model].row_count) || day.models[model].row_count < 0))
         throw new Error(`Invalid remote row count: ${day.date}`);
-      result.push({ date: day.date, rows: Object.fromEntries(REMOTE_MODELS.map((model) =>
+      result.push({ date: day.date, rows: Object.fromEntries(this.models.map((model) =>
         [model, day.models[model].row_count])) as RemoteDay["rows"] });
     }
     return result.sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  async download(day: RemoteDay, model: RemoteModel, signal: AbortSignal): Promise<InputDownload> {
-    if (!validInputDate(day.date) || !REMOTE_MODELS.includes(model)) throw new Error("Invalid remote input location");
+  async download(day: RemoteDay, model: string, signal: AbortSignal): Promise<InputDownload> {
+    if (!validInputDate(day.date) || !this.models.includes(model) || !Number.isSafeInteger(day.rows[model]) || day.rows[model] < 0)
+      throw new Error("Invalid remote input location or row count");
     const controller = new AbortController();
     const route = `/data/${day.date}/${model}.jsonl`, timeoutMs = this.timeoutMs;
     let timer: ReturnType<typeof setTimeout> | undefined;

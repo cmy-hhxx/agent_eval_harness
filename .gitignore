@@ -18,3 +18,4 @@ vendor/**/.venv/
 vendor/**/build/
 .servers.conf
 tmp/
+server_dashboard_ths/records.bundle.js

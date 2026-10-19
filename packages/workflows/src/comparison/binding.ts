@@ -1,3 +1,4 @@
+import { isToolSpan } from "./adapters.js";
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
@@ -368,7 +369,7 @@ function bindSourceTask(
       for (const { evidence_id, message_index, quote } of cited.values())
         addInitial(message_index, quote, [{ evidence_id, message_index, quote }]);
       const priority = raw.messages
-        .map((message, index) => ({ index, returned: message.role === "tool" ||
+        .map((message, index) => ({ index, returned: isToolSpan(message) || message.role === "tool" ||
           ["function_call_output", "tool_result"].includes(message.type || "") }))
         .sort((a, b) => Number(b.returned) - Number(a.returned) || b.index - a.index)
         .map(item => item.index);

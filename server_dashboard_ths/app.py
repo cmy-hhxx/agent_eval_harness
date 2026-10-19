@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Process root-level 7z archives by request date and stream ready JSONL over HTTP."""
+"""Process independent input sources and stream ready JSONL from one HTTP service."""
 
 from __future__ import annotations
 
 import json
+import fcntl
 import math
 import os
 import re
+import sqlite3
 import sys
 import tempfile
 import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import NamedTuple, Protocol, cast
 from urllib.parse import parse_qs, urlsplit
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -24,23 +27,24 @@ sys.path.insert(0, str(CODE_DIR / ".packages"))
 from py7zr import SevenZipFile  # noqa: E402
 
 ROOT = Path(os.environ.get("DATA_ROOT", "/mnt/fin_bench/A_AA_comparision_data"))
-ARCHIVE_DIR = ROOT
-OUTPUT_DIR = ROOT / "2_eval_data_input"
-STATE_DIR = CODE_DIR / "state"
-PROGRESS_FILE = STATE_DIR / "evaluation-progress.json"
-ROOT_ARCHIVE_STATE_FILE = STATE_DIR / "root-archives.json"
-PROGRESS_LOCK = threading.Lock()
 PORT = int(os.environ.get("PORT", "8081"))
 POLL_SECONDS = 5
 STABLE_SECONDS = 30
+ARCHIVE_PART_FILES = 50
+ARCHIVE_PART_BYTES = 2 * 1024 ** 3
 SHANGHAI = timezone(timedelta(hours=8))
 TOP_LEVEL_FIELD_ORDER = ("request_time", "has_standard_answer", "versions")
-MODELS = ("a_fast", "b_fast", "a_expert", "b_expert")
+ROOT_MODELS = ("a_fast", "b_fast", "a_expert", "b_expert")
+MODELS = ("a_fast", "b_fast", "a_expert", "b_expert", "6_luna", "6.1sol")
+STAGES = ("criteria", "attribution", "clustering")
+TASK_COUNTS = {"total", "completed", "running", "pending", "failed", "blocked", "cancelled"}
 VERSION_NAMES = {
     "a_fast": "A Fast",
     "b_fast": "B Fast",
     "a_expert": "A Expert",
     "b_expert": "B Expert",
+    "6_luna": "6_luna",
+    "6.1sol": "6.1sol",
 }
 MEMBER_MODEL = re.compile(r"(?:^|[_-])(aa|b|a)-(fast|expert)(?:\.incr\d+)?\.jsonl$", re.IGNORECASE)
 MEMBER_INCREMENT = re.compile(r"\.incr(\d+)\.jsonl$", re.IGNORECASE)
@@ -55,24 +59,6 @@ def archive_signature(folder: Path) -> list[dict[str, object]]:
     return result
 
 
-def ready_path(day: str) -> Path:
-    return STATE_DIR / f"{day}.ready.json"
-
-
-def record_index_path(day: str, model: str) -> Path:
-    return STATE_DIR / "records" / model / f"{day}.json"
-
-
-def write_record_index(file_path: Path, offsets: list[list[int]], metadata: os.stat_result | None = None) -> dict[str, int]:
-    stat = metadata or file_path.stat()
-    index_path = record_index_path(file_path.stem, file_path.parent.name)
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = index_path.with_suffix(".tmp")
-    temp_path.write_text(json.dumps({"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns, "offsets": offsets}, separators=(",", ":")))
-    os.replace(temp_path, index_path)
-    return {"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
-
-
 def valid_iso_day(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -82,86 +68,13 @@ def valid_iso_day(value: object) -> bool:
         return False
 
 
-def known_days() -> list[str]:
-    days = set()
-    for path in STATE_DIR.glob("*.ready.json"):
-        day = path.name.removesuffix(".ready.json")
-        if valid_iso_day(day):
-            days.add(day)
-    for model in MODELS:
-        for path in (OUTPUT_DIR / model).glob("*.jsonl"):
-            if valid_iso_day(path.stem):
-                days.add(path.stem)
-    progress = evaluation_progress()
-    progress_dates = progress.get("dates") if isinstance(progress, dict) else None
-    if isinstance(progress_dates, list):
-        for entry in progress_dates:
-            day = entry.get("date") if isinstance(entry, dict) else None
-            if valid_iso_day(day):
-                days.add(day)
-    return sorted(days)
-
-
-def ready_state(day: str) -> dict[str, object] | None:
-    try:
-        state = json.loads(ready_path(day).read_text())
-        if not isinstance(state, dict):
-            return None
-        if state.get("source") not in ("root_archives", "local_import"):
-            return None
-        rows = state.get("rows")
-        files = state.get("files")
-        if not isinstance(rows, dict) or any(type(rows.get(model)) is not int or rows[model] < 0 for model in MODELS):
-            return None
-        if not isinstance(files, dict):
-            return None
-        for model in MODELS:
-            file_path = OUTPUT_DIR / model / f"{day}.jsonl"
-            metadata = files.get(model)
-            if not file_path.is_file() or not isinstance(metadata, dict):
-                return None
-            stat = file_path.stat()
-            if metadata.get("size_bytes") != stat.st_size or metadata.get("mtime_ns") != stat.st_mtime_ns:
-                return None
-            if not record_index_path(day, model).is_file():
-                return None
-        return state
-    except (OSError, ValueError):
-        return None
-
-
-def is_ready(day: str) -> bool:
-    return ready_state(day) is not None
-
-
-def evaluation_progress() -> dict[str, object] | None:
-    with PROGRESS_LOCK:
-        try:
-            progress = json.loads(PROGRESS_FILE.read_text())
-        except (OSError, ValueError):
-            return None
-    if not isinstance(progress, dict):
-        return None
-    progress["stale"] = progress["status"] == "running" and time.time() * 1000 - progress["updated_at"] > 60_000
-    return progress
-
-
-def available_dates() -> list[dict[str, object]]:
-    return [{"date": day, "models": list(MODELS)} for day in known_days() if is_ready(day)]
-
-
-def dashboard_data() -> dict[str, object]:
-    dates = []
-    for day in reversed(known_days()):
-        state = ready_state(day)
-        ready = state is not None
-        rows = cast(dict[str, int], state["rows"]) if state else {}
-        models = {model: {"ready": ready, "row_count": rows.get(model, 0)} for model in MODELS}
-        dates.append({"date": day, "ready": ready, "models": models})
-    return {"dates": dates, "evaluation": evaluation_progress()}
-
-
 def model_for_member(member: str) -> str | None:
+    explicit = re.search(r"(?:^|[_-])(a_fast|b_fast|a_expert|b_expert|6_luna|6\.1sol)(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE)
+    if explicit:
+        return explicit.group(1).lower()
+    gpt = re.search(r"(?:^|[_-])gpt-(luna|sol)(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE)
+    if gpt:
+        return {"luna": "6_luna", "sol": "6.1sol"}[gpt.group(1).lower()]
     match = MEMBER_MODEL.search(PurePosixPath(member).name)
     if not match:
         return None
@@ -244,7 +157,7 @@ def top_level_fields(request_time: str, has_standard_answer: bool, day: str, mod
     return fields
 
 
-def normalize_row(value: object, model: str, archive_name: str, member: str, line_number: int) -> tuple[str, dict[str, object]]:
+def normalize_row(value: object, model: str, archive_name: str, member: str, line_number: int, *, testset_dates: bool = False) -> tuple[str, dict[str, object]]:
     if not isinstance(value, dict):
         raise InvalidRecord("record_not_object")
     row = value
@@ -275,6 +188,7 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
         })
 
     batch_id = row.get("batch_id") or meta.get("batch_id")
+    testset = meta.get("testset_name") if testset_dates else None
     case_id = row.get("case_id") or meta.get("case_id") or meta.get("item_id")
     if row.get("case_id") and meta.get("case_id") and row["case_id"] != meta["case_id"]:
         raise InvalidRecord("case_id_conflict")
@@ -297,7 +211,9 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
         if model.startswith("a_")
         else {"user_question", "llm_turn", "tool_call", "tool_result", "final_answer"}
     )
-    fallback_type = "message" if model.startswith("a_") else None
+    if model in ("6_luna", "6.1sol"):
+        accepted_types |= {"message", "reasoning", "function_call", "function_call_output", "span"}
+    fallback_type = "message" if not model.startswith("b_") else None
     if any(str(message.get("type") or fallback_type) not in accepted_types for message in messages):
         raise InvalidRecord("message_type_unsupported")
     last_user = max((index for index, message in enumerate(messages) if message.get("role") == "user"), default=-1)
@@ -316,22 +232,30 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
 
     has_standard_answer = standard_answer_flag(row, meta)
     day, request_time = request_day_and_value(row, meta)
+    if isinstance(testset, str):
+        dates = re.findall(r"(?<!\d)(\d{4})-?(\d{2})-?(\d{2})(?!\d)", testset)
+        if len(dates) > 1:
+            raise InvalidRecord("testset_date_ambiguous")
+        if dates:
+            try:
+                day = date(*map(int, dates[0])).isoformat()
+            except ValueError as exc:
+                raise InvalidRecord("testset_date_invalid") from exc
     header = top_level_fields(request_time, has_standard_answer, day, model)
     normalized = {**header, **{key: item for key, item in row.items() if key not in header}}
     normalized["batch_id"] = batch_id or day
     normalized["case_id"] = case_id.strip()
     normalized["version"] = VERSION_NAMES[model]
     normalized["trace_id"] = row.get("trace_id") or meta.get("trace_id")
-    if not normalized.get("_source"):
-        normalized["_source"] = {
-            "original_file": f"{archive_name}/{PurePosixPath(member).name}",
-            "original_line": line_number,
-        }
+    normalized["_source"] = {
+        "original_file": f"{archive_name}/{PurePosixPath(member).name}",
+        "original_line": line_number,
+    }
     return day, normalized
 
 
-def members_by_model(archive: SevenZipFile, archive_path: Path) -> dict[str, list[str]]:
-    grouped = {model: [] for model in MODELS}
+def members_by_model(archive: SevenZipFile, archive_path: Path, models: tuple[str, ...]) -> dict[str, list[str]]:
+    grouped = {model: [] for model in models}
     for member in archive.getnames():
         if not member.lower().endswith(".jsonl"):
             continue
@@ -339,7 +263,7 @@ def members_by_model(archive: SevenZipFile, archive_path: Path) -> dict[str, lis
         if safe_member.is_absolute() or ".." in safe_member.parts:
             raise ValueError(f"unsafe archive path: {member}")
         model = model_for_member(member)
-        if model is None:
+        if model not in grouped:
             raise ValueError(f"unrecognized model JSONL in {archive_path.name}: {member}")
         grouped[model].append(member)
     if not any(grouped.values()):
@@ -349,179 +273,70 @@ def members_by_model(archive: SevenZipFile, archive_path: Path) -> dict[str, lis
     return grouped
 
 
-def process_archives(signature: list[dict[str, object]]) -> None:
-    stage_paths: dict[tuple[str, str], Path] = {}
-    stage_streams = {}
-    row_counts: dict[str, dict[str, int]] = {}
-    row_offsets: dict[tuple[str, str], list[list[int]]] = {}
-    skipped = Counter()
-    deduplicated = Counter()
-    seen_source_cases = set()
-    failed_archives = []
-    days = set()
-    local_import_days = set()
-    for state_path in STATE_DIR.glob("*.ready.json"):
-        try:
-            previous_state = json.loads(state_path.read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(previous_state, dict) and previous_state.get("source") == "local_import":
-            local_import_days.add(state_path.name.removesuffix(".ready.json"))
+RecordKey = tuple[str, str, str, str]
 
-    def stage(day: str, model: str):
-        key = (day, model)
-        if key not in stage_streams:
-            output_folder = OUTPUT_DIR / model
-            output_folder.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(prefix=f".{day}.", suffix=".tmp", dir=output_folder)
-            stage_paths[key] = Path(name)
-            stage_streams[key] = os.fdopen(fd, "wb")
-            row_offsets[key] = []
-            row_counts.setdefault(day, {item: 0 for item in MODELS})
-        return stage_streams[key]
 
+class ArchiveRecord(NamedTuple):
+    day: str
+    row: dict[str, object]
+    archive: str
+    member: str
+
+
+class IncomingRecord(Protocol):
+    @property
+    def day(self) -> str: ...
+    @property
+    def row(self) -> dict[str, object]: ...
+    @property
+    def archive(self) -> str: ...
+    @property
+    def member(self) -> str: ...
+
+
+class ArchiveReadError(ValueError):
+    pass
+
+
+def file_signature(path: Path) -> dict[str, object] | None:
     try:
-        for archive_info in reversed(signature):
-            archive_path = ARCHIVE_DIR / str(archive_info["name"])
-            source_id = archive_source_id(archive_path.name)
-            with tempfile.TemporaryDirectory(prefix="extract-", dir=CODE_DIR) as temp_name:
-                temp_dir = Path(temp_name)
-                try:
-                    with SevenZipFile(archive_path, mode="r") as archive:
-                        grouped = members_by_model(archive, archive_path)
-                        archive.extract(path=temp_dir, targets=[name for names in grouped.values() for name in names])
-                    sources = {
-                        (model, member): temp_dir.joinpath(*PurePosixPath(member.replace("\\", "/")).parts)
-                        for model, members in grouped.items() for member in members
-                    }
-                    missing = [member for (_, member), source in sources.items() if not source.is_file()]
-                    if missing:
-                        raise ValueError(f"extracted members not found: {', '.join(missing)}")
-                except Exception as exc:
-                    failed_archives.append({"name": archive_path.name, "error": str(exc)})
-                    print(f"archive {archive_path.name} skipped: {exc}", flush=True)
-                    continue
-
-                for model, members in grouped.items():
-                    for member in reversed(members):
-                        source = sources[(model, member)]
-                        with source.open("rb") as stream:
-                            for line_number, raw_line in enumerate(stream, 1):
-                                if not raw_line.strip():
-                                    continue
-                                try:
-                                    line = raw_line.decode("utf-8-sig")
-                                    value = json.loads(line)
-                                except (UnicodeDecodeError, ValueError):
-                                    skipped[(model, "invalid_json")] += 1
-                                    continue
-                                try:
-                                    day, row = normalize_row(value, model, archive_path.name, member, line_number)
-                                except InvalidRecord as exc:
-                                    skipped[(model, exc.reason)] += 1
-                                    continue
-                                if day in local_import_days:
-                                    skipped[(model, "local_import_overlap")] += 1
-                                    continue
-                                source_case = (source_id, model, row["batch_id"], row["case_id"])
-                                if source_case in seen_source_cases:
-                                    deduplicated[model] += 1
-                                    continue
-                                seen_source_cases.add(source_case)
-                                output = stage(day, model)
-                                payload = (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-                                row_offsets[(day, model)].append([output.tell(), len(payload)])
-                                output.write(payload)
-                                row_counts[day][model] += 1
-                                days.add(day)
-
-        for day in days:
-            for model in MODELS:
-                stage(day, model)
-        for stream in stage_streams.values():
-            stream.flush()
-            os.fsync(stream.fileno())
-            stream.close()
-        stage_streams.clear()
-
-        if archive_signature(ARCHIVE_DIR) != signature:
-            raise RuntimeError("root .7z set changed while processing; discard snapshot")
-        for day in days:
-            try:
-                previous_state = json.loads(ready_path(day).read_text())
-            except (OSError, ValueError):
-                previous_state = None
-            if isinstance(previous_state, dict) and previous_state.get("source") == "local_import":
-                raise ValueError(f"cannot merge root archive records into {day}: local_import data has no archive source")
-
-        for day in days:
-            ready_path(day).unlink(missing_ok=True)
-            files = {}
-            for model in MODELS:
-                key = (day, model)
-                output_path = OUTPUT_DIR / model / f"{day}.jsonl"
-                os.replace(stage_paths[key], output_path)
-                files[model] = write_record_index(output_path, row_offsets[key])
-            state_tmp = ready_path(day).with_suffix(".tmp")
-            state_tmp.write_text(json.dumps({
-                "source": "root_archives", "archives": signature,
-                "rows": row_counts[day], "files": files,
-            }, separators=(",", ":")))
-            os.replace(state_tmp, ready_path(day))
-
-        state_tmp = ROOT_ARCHIVE_STATE_FILE.with_suffix(".tmp")
-        state_tmp.write_text(json.dumps({
-            "archives": signature, "dates": sorted(days), "failed_archives": failed_archives,
-        }, separators=(",", ":")))
-        os.replace(state_tmp, ROOT_ARCHIVE_STATE_FILE)
-        skipped_summary = ", ".join(f"{model}/{reason}={count}" for (model, reason), count in sorted(skipped.items())) or "none"
-        deduplicated_summary = ", ".join(f"{model}={count}" for model, count in sorted(deduplicated.items())) or "none"
-        print(f"processed {len(signature)} root archive(s), {sum(sum(counts.values()) for counts in row_counts.values())} valid rows; deduplicated rows: {deduplicated_summary}; skipped rows: {skipped_summary}; incomplete archives: {len(failed_archives)}", flush=True)
-    finally:
-        for stream in stage_streams.values():
-            stream.close()
-        for path in stage_paths.values():
-            path.unlink(missing_ok=True)
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return {"name": path.name, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
-def register_local_import(day: str) -> None:
-    date.fromisoformat(day)
-    try:
-        root_state = json.loads(ROOT_ARCHIVE_STATE_FILE.read_text())
-    except (OSError, ValueError):
-        root_state = None
-    if isinstance(root_state, dict) and day in root_state.get("dates", []):
-        raise ValueError(f"{day} has root archive data; use the normal processor")
-    ready_path(day).unlink(missing_ok=True)
-    rows = {}
-    files = {}
-    for model in MODELS:
-        file_path = OUTPUT_DIR / model / f"{day}.jsonl"
-        before = file_path.stat()
-        offsets = []
-        count = 0
-        with file_path.open("rb") as stream:
-            offset = 0
-            for line_number, line in enumerate(stream, 1):
-                if line.strip():
-                    try:
-                        value = json.loads(line.decode("utf-8-sig"))
-                    except (ValueError, UnicodeDecodeError) as exc:
-                        raise ValueError(f"{file_path.name}:{line_number}: invalid JSON") from exc
-                    if not isinstance(value, dict):
-                        raise ValueError(f"{file_path.name}:{line_number}: JSON record must be an object")
-                    offsets.append([offset, len(line)])
-                    count += 1
-                offset += len(line)
-        after = file_path.stat()
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-            raise RuntimeError(f"{file_path.name} changed while indexing")
-        files[model] = write_record_index(file_path, offsets, after)
-        rows[model] = count
-    state_tmp = ready_path(day).with_suffix(".tmp")
-    state_tmp.write_text(json.dumps({"source": "local_import", "rows": rows, "files": files}, separators=(",", ":")))
-    os.replace(state_tmp, ready_path(day))
-    print(f"registered local import {day}: {sum(rows.values())} records", flush=True)
+def record_origin(row: dict) -> tuple[str, str]:
+    source = row.get("_source")
+    original = source.get("original_file") if isinstance(source, dict) else None
+    if not isinstance(original, str):
+        raise ValueError("published archive record has no original_file")
+    archive, separator, member = original.partition("/")
+    if not separator or not archive.endswith(".7z") or not member:
+        raise ValueError("published archive record has an invalid archive origin")
+    return archive, member
+
+
+def record_key(row: dict, model: str) -> RecordKey:
+    archive, _ = record_origin(row)
+    batch, case = row.get("batch_id"), row.get("case_id")
+    if not isinstance(batch, str) or not batch or not isinstance(case, str) or not case:
+        raise ValueError("published archive record has no business identity")
+    return archive_source_id(archive), model, batch, case
+
+
+def record_priority(archive: str, member: str) -> tuple[str, int, str]:
+    return archive, member_increment(member), PurePosixPath(member).name.casefold()
+
+
+def write_json_atomic(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w") as stream:
+        json.dump(value, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
 
 def content_text(value: object) -> str:
@@ -536,6 +351,18 @@ def content_text(value: object) -> str:
 
 def visible_record(row: dict[str, object]) -> dict[str, object]:
     meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    meta = cast(dict, meta)
+    def identifier(value: object) -> str | None:
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return str(value).strip() or None
+        return None
+    session_id = identifier(meta.get("session_id") or row.get("session_id"))
+    traces = row.get("traces")
+    if isinstance(traces, list):
+        turns = [visible_record({"meta": trace.get("meta", {}), "messages": trace.get("messages", []),
+                                 "has_standard_answer": row.get("has_standard_answer")})
+                 for trace in traces if isinstance(trace, dict)]
+        return {"format": "session", "session_id": session_id, "turns": turns}
     messages = row.get("messages")
     question = ""
     answer = ""
@@ -551,7 +378,8 @@ def visible_record(row: dict[str, object]) -> dict[str, object]:
                         answer = text
     if not question and isinstance(meta, dict):
         question = str(meta.get("question") or "").strip()
-    record: dict[str, object] = {"question": question, "answer": answer}
+    record: dict[str, object] = {"format": "trace", "trace_id": identifier(row.get("trace_id") or meta.get("trace_id")),
+                                 "session_id": session_id, "question": question, "answer": answer}
     if row.get("has_standard_answer") is not False and isinstance(meta, dict):
         reference = next((meta.get(key) for key in ("ground_truth", "std_answer") if meta.get(key) not in (None, "")), None)
         if reference is None:
@@ -561,52 +389,618 @@ def visible_record(row: dict[str, object]) -> dict[str, object]:
     return record
 
 
-def root_archive_import_is_current(signature: list[dict[str, object]]) -> bool:
-    try:
-        state = json.loads(ROOT_ARCHIVE_STATE_FILE.read_text())
-    except (OSError, ValueError):
-        return False
-    if not isinstance(state, dict) or state.get("archives") != signature or not isinstance(state.get("dates"), list):
-        return False
-    if not isinstance(state.get("failed_archives"), list) or state["failed_archives"]:
-        return False
-    return all(
-        isinstance(day, str)
-        and (day_state := ready_state(day)) is not None
-        and day_state.get("source") == "root_archives"
-        for day in state["dates"]
-    )
+class Dataset:
+    def __init__(self, root: Path, state_dir: Path, models: tuple[str, ...], prefix: str = ""):
+        self.root = root
+        self.archive_dir = root
+        self.archived_dir = root / "3_processed_archives"
+        self.output_dir = root / "2_eval_data_input"
+        self.state_dir = state_dir
+        self.progress_file = state_dir / "evaluation-progress.json"
+        self.root_archive_state_file = state_dir / "root-archives.json"
+        self.progress_lock = threading.Lock()
+        self.models = models
+        self.prefix = prefix
+        self.archive_part_files = ARCHIVE_PART_FILES
+        self.daily_archive_check = False
+        self.independent = False
+        self.pairs = ({"fast": ("a_fast", "b_fast"), "expert": ("a_expert", "b_expert")}
+                      if not prefix else {
+                          "__vs__".join(sorted((left, right))): (left, right)
+                          for group in (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol"))
+                          for index, left in enumerate(group) for right in group[index + 1:]
+                      })
+
+    def ready_path(self, day: str) -> Path:
+        return self.state_dir / f"{day}.ready.json"
 
 
-def processing_loop() -> None:
-    stable_signature = None
-    stable_since = 0.0
-    failed_signature = None
-    while True:
+    def record_identity(self, row: dict, model: str) -> RecordKey:
+        return record_key(row, model)
+
+    def recover(self) -> None:
+        self.process_archives([])
+
+
+    def record_index_path(self, day: str, model: str) -> Path:
+        return self.state_dir / "records" / model / f"{day}.json"
+
+
+    def write_record_index(self, file_path: Path, offsets: list[list[int]], metadata: os.stat_result | None = None) -> dict[str, int]:
+        stat = metadata or file_path.stat()
+        index_path = self.record_index_path(file_path.stem, file_path.parent.name)
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = index_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps({"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns, "offsets": offsets}, separators=(",", ":")))
+        os.replace(temp_path, index_path)
+        return {"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+    def known_days(self) -> list[str]:
+        days = set()
+        for path in self.state_dir.glob("*.ready.json"):
+            day = path.name.removesuffix(".ready.json")
+            if valid_iso_day(day):
+                days.add(day)
+        for model in self.models:
+            for path in (self.output_dir / model).glob("*.jsonl"):
+                if valid_iso_day(path.stem):
+                    days.add(path.stem)
+        progress = self.evaluation_progress()
+        progress_dates = progress.get("dates") if isinstance(progress, dict) else None
+        if isinstance(progress_dates, list):
+            for entry in progress_dates:
+                day = entry.get("date") if isinstance(entry, dict) else None
+                if valid_iso_day(day):
+                    days.add(day)
+        return sorted(days)
+
+
+    def ready_state(self, day: str) -> dict[str, object] | None:
         try:
-            signature = archive_signature(ARCHIVE_DIR)
-            if signature != stable_signature:
-                stable_signature = signature
-                stable_since = time.monotonic()
-                failed_signature = None
-            if not signature or time.monotonic() - stable_since < STABLE_SECONDS:
-                time.sleep(POLL_SECONDS)
-                continue
-            if root_archive_import_is_current(signature) or failed_signature == signature:
-                time.sleep(POLL_SECONDS)
-                continue
+            state = json.loads(self.ready_path(day).read_text())
+            if not isinstance(state, dict):
+                return None
+            if state.get("source") not in ("root_archives", "local_import"):
+                return None
+            rows = state.get("rows")
+            files = state.get("files")
+            if not isinstance(rows, dict) or not rows or any(model not in self.models or type(count) is not int or count < 0 for model, count in rows.items()):
+                return None
+            if not isinstance(files, dict):
+                return None
+            for model in rows:
+                file_path = self.output_dir / model / f"{day}.jsonl"
+                metadata = files.get(model)
+                if not file_path.is_file() or not isinstance(metadata, dict):
+                    return None
+                stat = file_path.stat()
+                if metadata.get("size_bytes") != stat.st_size or metadata.get("mtime_ns") != stat.st_mtime_ns:
+                    return None
+                if not self.record_index_path(day, model).is_file():
+                    return None
+            return state
+        except (OSError, ValueError):
+            return None
+
+
+    def is_ready(self, day: str) -> bool:
+        return self.ready_state(day) is not None
+
+
+    def evaluation_progress(self) -> dict[str, object] | None:
+        with self.progress_lock:
             try:
-                process_archives(signature)
-                failed_signature = None if root_archive_import_is_current(signature) else signature
+                progress = json.loads(self.progress_file.read_text())
+            except (OSError, ValueError):
+                return None
+        if not isinstance(progress, dict):
+            return None
+        progress["stale"] = progress["status"] == "running" and time.time() * 1000 - progress["updated_at"] > 60_000
+        return progress
+
+
+    def available_dates(self) -> list[dict[str, object]]:
+        return [{"date": day, "models": list(cast(dict, state["rows"]))} for day in self.known_days() if (state := self.ready_state(day)) is not None]
+
+
+    def dashboard_data(self) -> dict[str, object]:
+        dates = []
+        for day in reversed(self.known_days()):
+            state = self.ready_state(day)
+            ready = state is not None
+            rows = cast(dict[str, int], state["rows"]) if state else {}
+            models = {model: {"ready": ready and model in rows, "row_count": rows.get(model, 0)} for model in self.models}
+            dates.append({"date": day, "ready": ready, "models": models})
+        return {"dates": dates, "evaluation": self.evaluation_progress()}
+
+
+    def load_archive_state(self) -> dict:
+        if not self.root_archive_state_file.exists():
+            if any(json.loads(marker.read_text()).get("source") == "root_archives" for marker in self.state_dir.glob("*.ready.json")):
+                raise ValueError("archive receipts missing; refusing to replay published data")
+            return {"archives": [], "dates": [], "failed_archives": []}
+        value = json.loads(self.root_archive_state_file.read_text())
+        if not isinstance(value, dict) or any(not isinstance(value.get(key), list) for key in ("archives", "dates", "failed_archives")):
+            raise ValueError("invalid root archive receipts")
+        return value
+
+
+    def pending_archives(self, signature: list[dict[str, object]]) -> list[dict[str, object]]:
+        recorded = {item["name"]: item for item in self.load_archive_state()["archives"]}
+        return [item for item in signature if recorded.get(item["name"]) != item]
+
+
+    def open_archive_writers(self) -> set[str]:
+        writers = set()
+        for fd in Path("/proc").glob("[0-9]*/fd/*"):
+            try:
+                target = fd.readlink()
+                if target.parent != self.archive_dir or target.suffix != ".7z":
+                    continue
+                info = (fd.parent.parent / "fdinfo" / fd.name).read_text()
+                flags = next(line.split(":", 1)[1].strip() for line in info.splitlines() if line.startswith("flags:"))
+                if int(flags, 8) & 3:
+                    writers.add(target.name)
+            except (OSError, StopIteration):
+                continue
+        return writers
+
+
+    @contextmanager
+    def archive_lock(self):
+        with (self.state_dir / "archive.lock").open("a") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            yield
+
+
+    def archive_target(self, day: str, source: Path, slots: dict[str, tuple[Path, int, int]]) -> Path:
+        folder = self.archived_dir / day
+        if day not in slots:
+            parts = sorted((p for p in folder.glob("part-*") if p.is_dir() and re.fullmatch(r"part-\d{4,}", p.name)),
+                           key=lambda p: int(p.name[5:]))
+            part = parts[-1] if parts else folder / "part-0001"
+            files = list(part.glob("*.7z"))
+            slots[day] = (part, len(files), sum(p.stat().st_size for p in files))
+        part, count, size = slots[day]
+        incoming = source.stat().st_size
+        if count >= self.archive_part_files or (count and size + incoming > ARCHIVE_PART_BYTES) or (part / source.name).exists():
+            part = folder / f"part-{int(part.name[5:]) + 1:04d}"
+            count, size = 0, 0
+        part.mkdir(parents=True, exist_ok=True)
+        slots[day] = (part, count + 1, size + incoming)
+        return part / source.name
+
+
+    def organize_archives(self) -> dict[str, object]:
+        with self.archive_lock():
+            slots: dict[str, tuple[Path, int, int]] = {}
+            moved = 0
+            for folder in sorted(self.archived_dir.glob("*")):
+                if not folder.is_dir() or not valid_iso_day(folder.name):
+                    continue
+                retained: dict[Path, tuple[int, int]] = {}
+                for source in sorted(folder.rglob("*.7z")):
+                    part = source.parent
+                    count, size = retained.get(part, (0, 0))
+                    incoming = source.stat().st_size
+                    partitioned = part.parent == folder and re.fullmatch(r"part-\d{4,}", part.name)
+                    if partitioned and count < self.archive_part_files and (not count or size + incoming <= ARCHIVE_PART_BYTES):
+                        retained[part] = (count + 1, size + incoming)
+                        continue
+                    target = self.archive_target(folder.name, source, slots)
+                    source.rename(target)
+                    moved += 1
+            files = list(self.archived_dir.glob("*/part-*/*.7z"))
+            report = {
+                "checked_at": int(time.time() * 1000), "packages": len(files),
+                "bytes": sum(p.stat().st_size for p in files),
+                "partitions": len({p.parent for p in files}),
+                "oversized": [str(p.relative_to(self.archived_dir)) for p in files if p.stat().st_size > ARCHIVE_PART_BYTES],
+            }
+            write_json_atomic(self.state_dir / "archive-maintenance.json", report)
+            print(f"archive inspection {self.archived_dir}: {len(files)} packages, {report['partitions']} parts, {moved} moved", flush=True)
+            return report
+
+
+    def processing_status(self) -> dict[str, object]:
+        try:
+            state = self.load_archive_state()
+            signature = archive_signature(self.archive_dir)
+            recorded = {item["name"]: item for item in state["archives"]}
+            stamps = [int(item["mtime_ns"]) // 1_000_000 for item in [*state["archives"], *signature]]
+            published = [int(p.stat().st_mtime * 1000) for p in self.state_dir.glob("*.ready.json")]
+            try:
+                archive = json.loads((self.state_dir / "archive-maintenance.json").read_text())
+            except FileNotFoundError:
+                archive = None
+            return {"received_at": max(stamps, default=None), "published_at": max(published, default=None),
+                    "pending": sum(recorded.get(item["name"]) != item for item in signature),
+                    "failed": state["failed_archives"], "archive": archive, "error": None}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {"error": str(exc)}
+
+
+    def archive_processed(self, signature: list[dict[str, object]]) -> None:
+        with self.archive_lock():
+            self.move_processed_archives(signature)
+
+
+    def move_processed_archives(self, signature: list[dict[str, object]]) -> None:
+        state = self.load_archive_state()
+        processed = {item["name"]: item for item in state["archives"]}
+        failed = {item["name"] for item in state["failed_archives"]}
+        candidates = [item for item in signature if item["name"] not in failed and processed.get(item["name"]) == item]
+        if not candidates:
+            return
+        writers = self.open_archive_writers()
+        moved = 0
+        slots: dict[str, tuple[Path, int, int]] = {}
+        for item in candidates:
+            name = str(item["name"])
+            source = self.archive_dir / name
+            if name in writers or file_signature(source) != item:
+                continue
+            match = re.search(r"_(\d{8})_\d{6}\.7z$", name)
+            day = datetime.fromtimestamp(cast(int, item["mtime_ns"]) / 1_000_000_000, SHANGHAI).date()
+            if match:
+                try:
+                    day = datetime.strptime(match.group(1), "%Y%m%d").date()
+                except ValueError:
+                    pass
+            target = self.archive_target(day.isoformat(), source, slots)
+            if file_signature(source) != item:
+                continue
+            source.rename(target)
+            moved += 1
+        if moved:
+            print(f"archived {moved} processed packages under {self.archived_dir}", flush=True)
+
+
+    def open_archive_index(self) -> sqlite3.Connection:
+        path = self.state_dir / "archive-records.sqlite"
+        if not path.exists():
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix=".archive-records-", suffix=".sqlite", dir=self.state_dir)
+            os.close(fd)
+            temporary = Path(name)
+            db = sqlite3.connect(temporary)
+            try:
+                db.executescript("""
+                    CREATE TABLE records (
+                        source TEXT NOT NULL, model TEXT NOT NULL, batch_id TEXT NOT NULL,
+                        case_id TEXT NOT NULL, day TEXT NOT NULL, archive TEXT NOT NULL, member TEXT NOT NULL,
+                        PRIMARY KEY (source, model, batch_id, case_id)
+                    );
+                    CREATE TABLE pending (id INTEGER PRIMARY KEY CHECK (id = 1), plan TEXT NOT NULL);
+                """)
+                count = 0
+                with db:
+                    for marker in sorted(self.state_dir.glob("*.ready.json")):
+                        day = marker.name.removesuffix(".ready.json")
+                        state = json.loads(marker.read_text())
+                        if state.get("source") != "root_archives":
+                            continue
+                        if self.ready_state(day) is None:
+                            raise ValueError(f"cannot index incomplete published day: {day}")
+                        for model in state["rows"]:
+                            file_path = self.output_dir / model / f"{day}.jsonl"
+                            rows = 0
+                            with file_path.open("rb") as stream:
+                                for raw in stream:
+                                    if not raw.strip():
+                                        continue
+                                    row = json.loads(raw)
+                                    key = self.record_identity(row, model)
+                                    archive, member = record_origin(row)
+                                    db.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, day, archive, member))
+                                    rows += 1
+                            if rows != state["rows"][model] or self.ready_state(day) != state:
+                                raise ValueError(f"published data changed while indexing {day}/{model}")
+                            count += rows
+                db.close()
+                os.replace(temporary, path)
+                print(f"indexed {count} published archive identities; existing JSONL files unchanged", flush=True)
+            finally:
+                db.close()
+                temporary.unlink(missing_ok=True)
+        return sqlite3.connect(path)
+
+
+    def publish_pending(self, db: sqlite3.Connection) -> None:
+        saved = db.execute("SELECT plan FROM pending WHERE id = 1").fetchone()
+        if saved is None:
+            return
+        plan = json.loads(saved[0])
+        for day in plan["ready"]:
+            self.ready_path(day).unlink(missing_ok=True)
+        for artifact in plan["files"]:
+            stage, target = Path(artifact["stage"]), Path(artifact["target"])
+            file_path = stage if stage.exists() else target
+            stat = file_path.stat()
+            if (stat.st_size, stat.st_mtime_ns) != (artifact["size_bytes"], artifact["mtime_ns"]):
+                raise ValueError(f"pending publication file changed: {file_path}")
+            if file_path == stage:
+                os.replace(stage, target)
+        for day, state in plan["ready"].items():
+            write_json_atomic(self.ready_path(day), state)
+        write_json_atomic(self.root_archive_state_file, plan["root"])
+        with db:
+            db.execute("DELETE FROM pending WHERE id = 1")
+
+
+    def read_archive_records(self, info: dict[str, object]) -> tuple[dict[RecordKey, IncomingRecord], Counter]:
+        path = self.archive_dir / str(info["name"])
+        records: dict[RecordKey, IncomingRecord] = {}
+        skipped = Counter()
+        with tempfile.TemporaryDirectory(prefix="extract-", dir=CODE_DIR) as name:
+            folder = Path(name)
+            try:
+                with SevenZipFile(path, mode="r") as archive:
+                    grouped = members_by_model(archive, path, self.models)
+                    archive.extract(path=folder, targets=[member for members in grouped.values() for member in members])
+                missing = [member for members in grouped.values() for member in members
+                           if not folder.joinpath(*PurePosixPath(member.replace("\\", "/")).parts).is_file()]
+                if missing:
+                    raise ValueError(f"extracted members not found: {', '.join(missing)}")
             except Exception as exc:
-                failed_signature = signature
-                print(f"processing root archives failed: {exc}", flush=True)
-        except Exception as exc:
-            print(f"scanner error: {exc}", flush=True)
-        time.sleep(POLL_SECONDS)
+                raise ArchiveReadError(str(exc)) from exc
+            for model, members in grouped.items():
+                for member in reversed(members):
+                    source = folder.joinpath(*PurePosixPath(member.replace("\\", "/")).parts)
+                    with source.open("rb") as stream:
+                        for number, raw in enumerate(stream, 1):
+                            if not raw.strip():
+                                continue
+                            try:
+                                value = json.loads(raw.decode("utf-8-sig"))
+                            except (UnicodeDecodeError, ValueError):
+                                skipped[(model, "invalid_json")] += 1
+                                continue
+                            try:
+                                day, row = normalize_row(value, model, path.name, member, number, testset_dates=self.prefix == "/gpt")
+                            except InvalidRecord as exc:
+                                skipped[(model, exc.reason)] += 1
+                                continue
+                            key = self.record_identity(row, model)
+                            if key in records:
+                                skipped[(model, "duplicate_case")] += 1
+                                continue
+                            records[key] = ArchiveRecord(day, row, path.name, PurePosixPath(member).name)
+        return records, skipped
+
+
+    def prepare_archive_files(self, changes: dict[RecordKey, IncomingRecord], previous_days: dict[RecordKey, str]) -> tuple[dict, list[dict]]:
+        affected = {(record.day, key[1]) for key, record in changes.items()}
+        affected.update((day, key[1]) for key, day in previous_days.items())
+        ready = {}
+        artifacts = []
+        temporary_paths = []
+        try:
+            for day in sorted({day for day, _ in affected}):
+                state = self.ready_state(day)
+                if state is None:
+                    if self.ready_path(day).exists() or any((self.output_dir / model / f"{day}.jsonl").exists() for model in self.models):
+                        raise ValueError(f"cannot merge incomplete published day: {day}")
+                    initial_models = self.models if not self.prefix else ()
+                    state = {"source": "root_archives", "rows": dict.fromkeys(initial_models, 0), "files": {}}
+                    affected.update((day, model) for model in initial_models)
+                if state["source"] != "root_archives":
+                    raise ValueError(f"cannot merge into local-import day: {day}")
+                ready[day] = {"source": "root_archives", "rows": dict(cast(dict, state["rows"])), "files": dict(cast(dict, state["files"]))}
+            for day, model in sorted(affected):
+                target = self.output_dir / model / f"{day}.jsonl"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(prefix=f".{day}.", suffix=".tmp", dir=target.parent)
+                stage = Path(name)
+                temporary_paths.append(stage)
+                offsets = []
+                with os.fdopen(fd, "wb") as output:
+                    if target.exists():
+                        before = target.stat()
+                        with target.open("rb") as source:
+                            for raw in source:
+                                if raw.strip() and self.record_identity(json.loads(raw), model) not in changes:
+                                    offsets.append([output.tell(), len(raw)])
+                                    output.write(raw)
+                        after = target.stat()
+                        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                            raise ValueError(f"published file changed while merging: {target}")
+                    for key, record in changes.items():
+                        if (record.day, key[1]) == (day, model):
+                            raw = (json.dumps(record.row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                            offsets.append([output.tell(), len(raw)])
+                            output.write(raw)
+                    output.flush()
+                    os.fsync(output.fileno())
+                stat = stage.stat()
+                metadata = {"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+                artifacts.append({"stage": str(stage), "target": str(target), **metadata})
+                ready[day]["rows"][model] = len(offsets)
+                ready[day]["files"][model] = metadata
+                index_target = self.record_index_path(day, model)
+                index_target.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(prefix=f".{day}.", suffix=".tmp", dir=index_target.parent)
+                index_stage = Path(name)
+                temporary_paths.append(index_stage)
+                with os.fdopen(fd, "w") as output:
+                    json.dump({**metadata, "offsets": offsets}, output, separators=(",", ":"))
+                    output.flush()
+                    os.fsync(output.fileno())
+                stat = index_stage.stat()
+                artifacts.append({"stage": str(index_stage), "target": str(index_target), "size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns})
+            return ready, artifacts
+        except BaseException:
+            for path in temporary_paths:
+                path.unlink(missing_ok=True)
+            raise
+
+
+    def process_archives(self, signature: list[dict[str, object]]) -> None:
+        db = self.open_archive_index()
+        try:
+            self.publish_pending(db)
+            for info in reversed(self.pending_archives(signature)):
+                archive_path = self.archive_dir / str(info["name"])
+                if file_signature(archive_path) != info:
+                    continue
+                error = None
+                try:
+                    records, skipped = self.read_archive_records(info)
+                except ArchiveReadError as exc:
+                    records, skipped = {}, Counter()
+                    error = str(exc)
+                if file_signature(archive_path) != info:
+                    print(f"archive {archive_path.name} changed while reading; deferred", flush=True)
+                    continue
+                changes = {}
+                previous_days = {}
+                local_days = {
+                    marker.name.removesuffix(".ready.json") for marker in self.state_dir.glob("*.ready.json")
+                    if json.loads(marker.read_text()).get("source") == "local_import"
+                }
+                for key, record in records.items():
+                    if record.day in local_days:
+                        skipped[(key[1], "local_import_overlap")] += 1
+                        continue
+                    old = db.execute("SELECT day, archive, member FROM records WHERE source = ? AND model = ? AND batch_id = ? AND case_id = ?", key).fetchone()
+                    if old and record_priority(record.archive, record.member) < record_priority(old[1], old[2]):
+                        continue
+                    changes[key] = record
+                    if old:
+                        previous_days[key] = old[0]
+                ready, artifacts = self.prepare_archive_files(changes, previous_days)
+                durable = False
+                try:
+                    if file_signature(archive_path) != info:
+                        print(f"archive {archive_path.name} changed before publication; deferred", flush=True)
+                        continue
+                    root = self.load_archive_state()
+                    receipts = {item["name"]: item for item in root["archives"]}
+                    receipts[info["name"]] = info
+                    failures = {item["name"]: item for item in root["failed_archives"]}
+                    failures.pop(info["name"], None)
+                    if error is not None:
+                        failures[info["name"]] = {"name": info["name"], "error": error}
+                    root = {"archives": sorted(receipts.values(), key=lambda item: item["name"]),
+                            "dates": sorted(set(root["dates"]) | set(ready)),
+                            "failed_archives": sorted(failures.values(), key=lambda item: item["name"])}
+                    plan = {"files": artifacts, "ready": ready, "root": root}
+                    with db:
+                        for key, record in changes.items():
+                            db.execute("INSERT OR REPLACE INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, record.day, record.archive, record.member))
+                        db.execute("INSERT INTO pending VALUES (1, ?)", (json.dumps(plan, separators=(",", ":")),))
+                    durable = True
+                    self.publish_pending(db)
+                finally:
+                    if not durable:
+                        for artifact in artifacts:
+                            Path(artifact["stage"]).unlink(missing_ok=True)
+                skipped_summary = ", ".join(f"{model}/{reason}={count}" for (model, reason), count in sorted(skipped.items())) or "none"
+                print(f"processed archive {archive_path}: {len(changes)} merged rows, {len(artifacts) // 2} output files; skipped: {skipped_summary}; error: {error or 'none'}", flush=True)
+        finally:
+            db.close()
+
+
+    def register_local_import(self, day: str) -> None:
+        date.fromisoformat(day)
+        try:
+            root_state = json.loads(self.root_archive_state_file.read_text())
+        except (OSError, ValueError):
+            root_state = None
+        if isinstance(root_state, dict) and day in root_state.get("dates", []):
+            raise ValueError(f"{day} has root archive data; use the normal processor")
+        self.ready_path(day).unlink(missing_ok=True)
+        rows = {}
+        files = {}
+        for model in self.models:
+            file_path = self.output_dir / model / f"{day}.jsonl"
+            before = file_path.stat()
+            offsets = []
+            count = 0
+            with file_path.open("rb") as stream:
+                offset = 0
+                for line_number, line in enumerate(stream, 1):
+                    if line.strip():
+                        try:
+                            value = json.loads(line.decode("utf-8-sig"))
+                        except (ValueError, UnicodeDecodeError) as exc:
+                            raise ValueError(f"{file_path.name}:{line_number}: invalid JSON") from exc
+                        if not isinstance(value, dict):
+                            raise ValueError(f"{file_path.name}:{line_number}: JSON record must be an object")
+                        offsets.append([offset, len(line)])
+                        count += 1
+                    offset += len(line)
+            after = file_path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise RuntimeError(f"{file_path.name} changed while indexing")
+            files[model] = self.write_record_index(file_path, offsets, after)
+            rows[model] = count
+        state_tmp = self.ready_path(day).with_suffix(".tmp")
+        state_tmp.write_text(json.dumps({"source": "local_import", "rows": rows, "files": files}, separators=(",", ":")))
+        os.replace(state_tmp, self.ready_path(day))
+        print(f"registered local import {day}: {sum(rows.values())} records", flush=True)
+
+
+    def processing_loop(self) -> None:
+        observed: dict[str, tuple[dict[str, object], float]] = {}
+        initialized = False
+        next_inspection = 0
+        while True:
+            eligible = []
+            try:
+                if not initialized:
+                    self.recover()
+                    initialized = True
+                if self.daily_archive_check and time.time() >= next_inspection:
+                    report = self.state_dir / "archive-maintenance.json"
+                    checked_at = json.loads(report.read_text())["checked_at"] / 1000 if report.exists() else 0
+                    next_inspection = checked_at + 86400
+                    if time.time() >= next_inspection:
+                        self.organize_archives()
+                        next_inspection = time.time() + 86400
+                signature = archive_signature(self.archive_dir)
+                now = time.monotonic()
+                current_names = {str(item["name"]) for item in signature}
+                observed = {name: value for name, value in observed.items() if name in current_names}
+                for item in signature:
+                    name = str(item["name"])
+                    if name not in observed or observed[name][0] != item:
+                        observed[name] = (item, now)
+                stable = [item for item in signature if now - observed[str(item["name"])][1] >= STABLE_SECONDS]
+                eligible = self.pending_archives(stable)
+                if eligible:
+                    self.process_archives(eligible)
+                self.archive_processed(stable)
+            except Exception as exc:
+                for item in eligible:
+                    observed[str(item["name"])] = (item, time.monotonic())
+                print(f"archive processor error in {self.archive_dir}: {exc}", flush=True)
+            time.sleep(POLL_SECONDS)
+
+
+class DashboardServer(ThreadingHTTPServer):
+    def __init__(self, address: tuple[str, int], datasets: dict[str, Dataset]):
+        self.datasets = datasets
+        super().__init__(address, Handler)
 
 
 class Handler(BaseHTTPRequestHandler):
+    def dataset_path(self) -> tuple[Dataset | None, str]:
+        path = urlsplit(self.path).path
+        datasets = cast(DashboardServer, self.server).datasets
+        for prefix in datasets:
+            if not prefix:
+                continue
+            if path == prefix:
+                self.send_response(308)
+                self.send_header("Location", prefix + "/")
+                self.end_headers()
+                return None, path
+            if path.startswith(prefix + "/"):
+                return datasets[prefix], path[len(prefix):]
+        return datasets[""], path
+
     def send_json(self, status: int, value: object) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
@@ -615,9 +1009,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_static(self, file_path: Path, content_type: str) -> None:
+    def send_static(self, file_path: Path, content_type: str, prefix: str) -> None:
         try:
             body = file_path.read_bytes()
+            if content_type.startswith("text/html"):
+                body = body.replace(b"__BASE__", prefix.encode())
         except OSError:
             self.send_json(404, {"error": "not found"})
             return
@@ -630,33 +1026,38 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
-        path = urlsplit(self.path).path
+        dataset, path = self.dataset_path()
+        if dataset is None:
+            return
         static_files = {
             "/": ("dashboard.html", "text/html; charset=utf-8"),
             "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
             "/dashboard.js": ("dashboard.js", "application/javascript; charset=utf-8"),
             "/records": ("records.html", "text/html; charset=utf-8"),
             "/records/": ("records.html", "text/html; charset=utf-8"),
-            "/records.js": ("records.js", "application/javascript; charset=utf-8"),
+            "/records.bundle.js": ("records.bundle.js", "application/javascript; charset=utf-8"),
             "/docs": ("docs.html", "text/html; charset=utf-8"),
             "/docs/": ("docs.html", "text/html; charset=utf-8"),
             "/docs/handoff.md": ("docs/handoff.md", "text/markdown; charset=utf-8"),
         }
         if path in static_files:
             filename, content_type = static_files[path]
-            self.send_static(CODE_DIR / filename, content_type)
+            self.send_static(CODE_DIR / filename, content_type, dataset.prefix)
             return
         if path == "/health":
             self.send_json(200, {"ok": True})
             return
         if path == "/dashboard-data":
-            self.send_json(200, dashboard_data())
+            self.send_json(200, dataset.dashboard_data())
+            return
+        if path == "/processing-status":
+            self.send_json(200, dataset.processing_status())
             return
         if path == "/dates":
-            self.send_json(200, {"dates": available_dates()})
+            self.send_json(200, {"dates": dataset.available_dates()})
             return
 
-        records_match = re.fullmatch(r"/records/(\d{4}-\d{2}-\d{2})/([a-z_]+)", path)
+        records_match = re.fullmatch(r"/records/(\d{4}-\d{2}-\d{2})/([a-z0-9_.-]+)", path)
         if records_match:
             day, model = records_match.groups()
             try:
@@ -664,11 +1065,11 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json(404, {"error": "not found"})
                 return
-            if model not in MODELS:
+            if model not in dataset.models:
                 self.send_json(404, {"error": "not found"})
                 return
-            state = ready_state(day)
-            if state is None:
+            state = dataset.ready_state(day)
+            if state is None or model not in cast(dict, state["rows"]):
                 self.send_json(404, {"error": "data not ready"})
                 return
             query = parse_qs(urlsplit(self.path).query)
@@ -681,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
             if page < 1 or not 1 <= page_size <= 50:
                 self.send_json(400, {"error": "page must be positive and page_size between 1 and 50"})
                 return
-            index_path = record_index_path(day, model)
+            index_path = dataset.record_index_path(day, model)
             try:
                 index = json.loads(index_path.read_text())
                 offsets = index["offsets"]
@@ -693,7 +1094,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("invalid index")
                 start = (page - 1) * page_size
                 items = []
-                file_path = OUTPUT_DIR / model / f"{day}.jsonl"
+                file_path = dataset.output_dir / model / f"{day}.jsonl"
                 with file_path.open("rb") as stream:
                     for entry in offsets[start:start + page_size]:
                         if (not isinstance(entry, list) or len(entry) != 2 or
@@ -710,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"date": day, "model": model, "page": page, "page_size": page_size, "total": total, "items": items})
             return
 
-        match = re.fullmatch(r"/data/(\d{4}-\d{2}-\d{2})/([a-z_]+)\.jsonl", path)
+        match = re.fullmatch(r"/data/(\d{4}-\d{2}-\d{2})/([a-z0-9_.-]+)\.jsonl", path)
         if not match:
             self.send_json(404, {"error": "not found"})
             return
@@ -720,11 +1121,12 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_json(404, {"error": "not found"})
             return
-        if model not in MODELS or not is_ready(day):
+        state = dataset.ready_state(day)
+        if model not in dataset.models or state is None or model not in cast(dict, state["rows"]):
             self.send_json(404, {"error": "data not ready"})
             return
 
-        file_path = OUTPUT_DIR / model / f"{day}.jsonl"
+        file_path = dataset.output_dir / model / f"{day}.jsonl"
         try:
             size = file_path.stat().st_size
             stream = file_path.open("rb")
@@ -744,7 +1146,10 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self) -> None:
-        if urlsplit(self.path).path != "/evaluation-progress":
+        dataset, path = self.dataset_path()
+        if dataset is None:
+            return
+        if path != "/evaluation-progress":
             self.send_json(404, {"error": "not found"})
             return
         if not self.headers.get("Content-Type", "").startswith("application/json"):
@@ -754,8 +1159,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length < 1 or length > 8192:
-            self.send_json(413 if length > 8192 else 400, {"error": "invalid request size"})
+        max_length = 1024 * 1024 if dataset.prefix else 8192
+        if length < 1 or length > max_length:
+            self.send_json(413 if length > max_length else 400, {"error": "invalid request size"})
             return
         try:
             value = json.loads(self.rfile.read(length))
@@ -777,7 +1183,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         seen_dates = set()
         for entry in value["dates"]:
-            if not isinstance(entry, dict) or set(entry) != {"date", "pairs"}:
+            scope = "models" if dataset.independent else "pairs"
+            if not isinstance(entry, dict) or set(entry) != {"date", scope}:
                 self.send_json(400, {"error": "invalid date progress"})
                 return
             day = entry["date"]
@@ -785,8 +1192,22 @@ class Handler(BaseHTTPRequestHandler):
                 valid_day = isinstance(day, str) and date.fromisoformat(day).isoformat() == day
             except ValueError:
                 valid_day = False
-            pairs = entry["pairs"]
-            if not valid_day or day in seen_dates or not isinstance(pairs, dict) or set(pairs) != {"fast", "expert"}:
+            pairs = entry[scope]
+            if dataset.independent:
+                valid = (isinstance(pairs, dict) and set(pairs) <= set(dataset.models) and
+                         all(isinstance(stages, dict) and set(stages) == set(STAGES) and
+                             all(isinstance(count, dict) and set(count) == TASK_COUNTS and
+                                 all(type(n) is int and n >= 0 for n in count.values()) and
+                                 sum(n for key, n in count.items() if key != "total") == count["total"]
+                                 for count in stages.values()) for stages in pairs.values()))
+                if not valid_day or day in seen_dates or not valid:
+                    self.send_json(400, {"error": "invalid date or independent stage counts"})
+                    return
+                seen_dates.add(day)
+                continue
+            valid_pairs = (isinstance(pairs, dict) and
+                           (set(pairs) == set(dataset.pairs) if not dataset.prefix else set(pairs) <= set(dataset.pairs)))
+            if not valid_day or day in seen_dates or not valid_pairs:
                 self.send_json(400, {"error": "invalid date or comparison pairs"})
                 return
             seen_dates.add(day)
@@ -807,9 +1228,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         progress = {**value, "received_at": int(time.time() * 1000)}
-        with PROGRESS_LOCK:
+        with dataset.progress_lock:
             try:
-                current = json.loads(PROGRESS_FILE.read_text())
+                current = json.loads(dataset.progress_file.read_text())
             except (OSError, ValueError):
                 current = None
             if isinstance(current, dict):
@@ -819,31 +1240,54 @@ class Handler(BaseHTTPRequestHandler):
                 if older_run or older_update:
                     self.send_json(409, {"error": "stale progress update"})
                     return
-            progress_tmp = PROGRESS_FILE.with_suffix(".tmp")
+            progress_tmp = dataset.progress_file.with_suffix(".tmp")
             progress_tmp.write_text(json.dumps(progress, separators=(",", ":")))
-            os.replace(progress_tmp, PROGRESS_FILE)
+            os.replace(progress_tmp, dataset.progress_file)
         self.send_json(200, {"saved": True})
 
     def log_message(self, format: str, *args) -> None:
         print(f"http {self.address_string()} {format % args}", flush=True)
 
 
+def make_datasets(root: Path = ROOT, state_dir: Path = CODE_DIR / "state", multi_root: Path | None = None) -> dict[str, Dataset]:
+    datasets = {
+        "": Dataset(root, state_dir, ROOT_MODELS),
+        "/gpt": Dataset(root / "gpt", state_dir / "gpt", MODELS, "/gpt"),
+    }
+    if multi_root is not None:
+        from multi_agent_inputs import AgentDataset, SOURCES
+        datasets.update({"/" + provider: AgentDataset(multi_root, provider) for provider in SOURCES})
+    return datasets
+
+
 def main() -> None:
+    multi_default = Path(os.environ["DATA_ROOT"]) / "multi_agent_eval" if "DATA_ROOT" in os.environ else Path("/mnt/fin_bench/multi_agent_eval")
+    datasets = make_datasets(multi_root=Path(os.environ.get("MULTI_AGENT_ROOT", str(multi_default))))
+    if sys.argv[1:] == ["--organize-archives"]:
+        for dataset in datasets.values():
+            dataset.state_dir.mkdir(parents=True, exist_ok=True)
+            dataset.organize_archives()
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--register-local-import":
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        register_local_import(sys.argv[2])
+        datasets[""].state_dir.mkdir(parents=True, exist_ok=True)
+        datasets[""].register_local_import(sys.argv[2])
         return
     if len(sys.argv) != 1:
-        raise SystemExit("usage: app.py [--register-local-import YYYY-MM-DD]")
-    for model in MODELS:
-        (OUTPUT_DIR / model).mkdir(parents=True, exist_ok=True)
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-    threading.Thread(target=processing_loop, name="archive-processor", daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        raise SystemExit("usage: app.py [--register-local-import YYYY-MM-DD | --organize-archives]")
+    server = DashboardServer(("0.0.0.0", PORT), datasets)
+    for dataset in datasets.values():
+        dataset.archive_dir.mkdir(parents=True, exist_ok=True)
+        dataset.state_dir.mkdir(parents=True, exist_ok=True)
+        if dataset.prefix:
+            for model in dataset.models:
+                (dataset.output_dir / model).mkdir(parents=True, exist_ok=True)
+        print(f"watching {dataset.archive_dir}/*.7z; output: {dataset.output_dir}; state: {dataset.state_dir}", flush=True)
+        threading.Thread(target=dataset.processing_loop, name=f"archive-processor{dataset.prefix or '-root'}", daemon=True).start()
     print(f"serving on 0.0.0.0:{PORT}; data root: {ROOT}", flush=True)
     server.serve_forever()
 
 
 if __name__ == "__main__":
+    # Source adapters import the same engine when this file is the script entry point.
+    sys.modules["app"] = sys.modules[__name__]
     main()

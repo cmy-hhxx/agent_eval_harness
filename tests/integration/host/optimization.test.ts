@@ -151,12 +151,15 @@ test("attribution and comparison workers receive blind prompts and tool views wh
           } else if (stage === "attribution") {
             assert.doesNotMatch(options.spec.prompt, /version_id|display_name|answer_model/);
             assert.equal(options.spec.inputs[0]!.name, "answer");
-            assert.deepEqual(input, plan.inputs[options.spec.inputs[0]!.id]);
+            const code = await options.execute("execute_code", { language: "python", code: 'print(open("inputs/answer.json").read())' });
+            assert.equal(code.isError, undefined, JSON.stringify(code));
             const read = await options.execute("read_trace", { candidate: "answer", message_index: 1 });
             assert.equal(read.isError, undefined, JSON.stringify(read));
             for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"]) {
               assert(!options.spec.prompt.includes(identity), `attribution prompt leaks ${identity}`);
               assert(!JSON.stringify(read).includes(identity), `attribution trace leaks ${identity}`);
+              assert(!JSON.stringify(input).includes(identity), `attribution file leaks ${identity}`);
+              assert(!JSON.stringify(code).includes(identity), `code tool leaks ${identity}`);
             }
             const result = taskResult(options.spec) as { summary: string };
             result.summary = "a_fast 或 b_fast 的有效计算";
@@ -166,10 +169,9 @@ test("attribution and comparison workers receive blind prompts and tool views wh
             assert.equal(options.spec.inputs.length, 2);
             const unbound = await fetch(`${options.spec.hostUrl}/api/inputs/${options.spec.inputs[0]!.id}`);
             assert.equal(unbound.status, 404, "the worker cannot bypass its bound blind view");
-            const original = plan.inputs[options.spec.inputs[0]!.id] as RawInput;
-            assert.deepEqual(input, original, "Worker-owned source files retain the exact original evidence material");
             for (const identity of ["a_fast", "b_fast", "secret-model", "other-model", "A组Fast", "B组Fast"]) {
               assert(!options.spec.prompt.includes(identity), `prompt leaks ${identity}`);
+              assert(!JSON.stringify(input).includes(identity), `comparison file leaks ${identity}`);
             }
             for (const source of options.spec.inputs) {
               const read = await options.execute("read_trace", { candidate: source.name, message_index: 1 });

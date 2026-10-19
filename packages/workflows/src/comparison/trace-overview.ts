@@ -1,3 +1,4 @@
+import { isToolSpan } from "./adapters.js";
 import { cite, displayEvidence, evidenceSources } from "@eval/tools";
 import type { RawInput } from "./types.js";
 import { traceCatalog } from "./catalog.js";
@@ -6,7 +7,7 @@ import { traceCatalog } from "./catalog.js";
 export function traceOverview(raw: RawInput, candidate: string, inputId: string, maxChars = 8000) {
   const catalog = traceCatalog(raw);
   const entries = raw.messages.flatMap((message, message_index) => {
-    const returned = message.role === "tool" || ["function_call_output", "tool_result"].includes(message.type ?? "");
+    const returned = isToolSpan(message) || message.role === "tool" || ["function_call_output", "tool_result"].includes(message.type ?? "");
     const called = ["function_call", "tool_call"].includes(message.type ?? "");
     if (!returned && !called) return [];
     const fields = returned ? ["output", "content", "error", "errors", "status", "isError", "success"] : ["arguments", "input", "parameters"];

@@ -12,7 +12,7 @@ const provenance = new Set([
 
 export function blindMaterials(candidates: Record<string, Candidate>) {
   const identities = [...new Set(Object.values(candidates).flatMap((candidate) => [
-    candidate.version, candidate.name, candidate.llm,
+    candidate.version, candidate.name, candidate.llm, ...(candidate.identity_names ?? []),
   ]).filter((value): value is string => !!value && (
     value.length >= 3 || (value.length === 2 && /\p{L}/u.test(value) && /\p{N}/u.test(value))
   )))]

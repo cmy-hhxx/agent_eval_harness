@@ -1,3 +1,4 @@
+import { isToolSpan } from "./adapters.js";
 import { answerTurnContexts, citationMarkers, cite, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource, type CitationFormat } from "@eval/tools";
 
 type Evidence = ReturnType<typeof cite>;
@@ -53,7 +54,7 @@ export function citationSourceParts(raw: { messages: unknown[] }, inputId: strin
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const pointer = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
-const isReturn = (message: Record<string, unknown>) => message.role === "tool" ||
+const isReturn = (message: Record<string, unknown>) => isToolSpan(message) || message.role === "tool" ||
   ["function_call_output", "tool_result"].includes(String(message.type));
 const sourceFields = new Set(["output", "content", "result"]);
 const documentUrl = (value: unknown): string | undefined => {

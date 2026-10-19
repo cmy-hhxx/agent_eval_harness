@@ -604,6 +604,20 @@ test("latest Mongo difficulty replaces old labels across models without losing b
   }
 });
 
+test("disabled statistics publication never reads or uploads a pending or recovered log", async () => {
+  const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  assert.equal(config.publishStatisticsLog, false);
+  for (const status of ["pending", "retry", "uncertain"] as const) {
+    const state = { publication: { status, traceId: "gpt-disabled", attempts: 1, nextAt: 0 } } as AutomationState;
+    const before = structuredClone(state);
+    await assert.rejects(publishSnapshot(config, state, async () => assert.fail("must not save"), AbortSignal.timeout(1000), {
+      snapshot: async () => assert.fail("must not read statistics"),
+      upload: async () => assert.fail("must not upload"),
+    }), /Statistics log publication is disabled/);
+    assert.deepEqual(state, before);
+  }
+});
+
 test("daily statistics use a paired request date or the batch date when all request timestamps are absent", () => {
   const stats = new PublicationStatistics(configuredGroups);
   for (const input of inputs) stats.addInput(input);
@@ -650,6 +664,7 @@ test("dashboard log snapshots use the complete inventory and resume without a du
   const { directory } = await fixtureConfig();
   try {
     const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    config.publishStatisticsLog = true;
     config.publication = { ...config.publication, logFile: path.join(directory, "statistics.jsonl"), mongoUriEnv: "PATH" };
     const state = { publication: { traceId: "trace-window", status: "running", attempts: 1, nextAt: 0 } } as AutomationState;
     let uploads = 0, persisted = "";
@@ -692,6 +707,7 @@ test("publication blocks structural drift before appending or uploading a recove
   const { directory } = await fixtureConfig();
   try {
     const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    config.publishStatisticsLog = true;
     const stats = new PublicationStatistics(configuredGroups);
     inputs.forEach((row) => stats.addInput(row));
     stats.addResult(result);

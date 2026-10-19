@@ -1,5 +1,5 @@
 import path from "node:path";
-import { object, REMOTE_MODELS, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
+import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, fileSourceReader, readJsonl, readStatisticsLog } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
 import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
@@ -21,7 +21,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       const registered = [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
         .filter((input) => input.version === id && input.batch_id === job.date).map((input) => input.source)))];
       const files = job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
-        .filter((input) => input.version === id).map((input) => input.source)))] : (REMOTE_MODELS as readonly string[]).includes(id)
+        .filter((input) => input.version === id).map((input) => input.source)))] : config.remoteModels.includes(id)
           ? [path.join(config.sourceDirectory, job.date, id + ".jsonl")] : registered;
       for (const file of files) {
         const revision = revisions.get(file) ?? await fileSourceReader.revision(file);
@@ -162,6 +162,7 @@ export async function publishSnapshot(
   config: AutomationConfig, state: AutomationState, save: () => Promise<void>, signal: AbortSignal,
   dependencies = { snapshot: statisticsSnapshot, upload: uploadStatisticsLog },
 ): Promise<void> {
+  if (!config.publishStatisticsLog) throw new Error("Statistics log publication is disabled for this automation");
   const delivery = state.publication!, settings = config.publication;
   if (!delivery.traceId) throw new Error("Publication traceId missing");
   if (delivery.log?.status === "uploaded") return;

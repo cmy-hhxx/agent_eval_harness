@@ -7,12 +7,12 @@ const protectedKeys = new Set(["evidence_id", "evidence_index", "input_id", "sou
 
 export function presentSource<T>(value: T, presentation: SourcePresentation): T {
   const rules = [...presentation.redactions].sort((a, b) => b.text.length - a.text.length);
-  const replacements = new Map(rules.map(rule => [rule.text, rule.replacement]));
+  const replacements = new Map(rules.map(rule => [rule.text.toLowerCase(), rule.replacement]));
   const matcher = rules.length ? new RegExp(rules.map(({ text }) => {
     const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return text.length < 3 ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped;
-  }).join("|"), "gu") : null;
-  const redact = (text: string) => matcher ? text.replace(matcher, text => replacements.get(text)!) : text;
+  }).join("|"), "giu") : null;
+  const redact = (text: string) => matcher ? text.replace(matcher, text => replacements.get(text.toLowerCase())!) : text;
   const visit = (value: unknown, key?: string): unknown => {
     if (key && protectedKeys.has(key)) return value;
     if (typeof value === "string") {

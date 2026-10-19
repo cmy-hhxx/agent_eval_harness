@@ -25,11 +25,18 @@ const metadataModel = (raw: RawInput): string | null => {
   return usage && typeof usage === "object" ? ((object(usage).type as string | undefined) ?? null) : null;
 };
 
+/** Collected GPT spans retain their original output and message coordinates. */
+export const isToolSpan = (message: Record<string, unknown>): boolean =>
+  message.type === "span" && typeof message.name === "string" && message.name.startsWith("tool-") &&
+  Object.hasOwn(message, "output");
+
 export const inputAdapters: Record<string, InputAdapter> = {
   /** OpenAI-style `messages` trace: reasoning and function calls, no explicit turns. */
   a: {
     id: "a",
-    accepts: accepts(["message", "reasoning", "function_call", "function_call_output"], "message"),
+    accepts: (message) => accepts(["message", "reasoning", "function_call", "function_call_output"], "message")(message) ||
+      isToolSpan(message) || message.type === "span" && (message.name === "reasoning" ||
+        message.name === "thinking" && Object.hasOwn(message, "output")),
     answerModel: (raw) => metadataModel(raw),
   },
   /** Agent-turns trace: explicit user/llm/tool/final_answer markers. */

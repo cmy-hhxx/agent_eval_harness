@@ -1,5 +1,5 @@
 import path from "node:path";
-import { REMOTE_MODELS, type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition, type Policy } from "@eval/contracts";
+import { type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition, type Policy } from "@eval/contracts";
 import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
@@ -241,7 +241,7 @@ export async function recoverEvaluation(config: AutomationConfig, output: string
   }
   const selection = saved.config as EvalConfig;
   if (["completed", "waiting_inputs"].includes(job.evaluation) &&
-      REMOTE_MODELS.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
+      config.remoteModels.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
   const review = terminalReviewReason([saved]);
   if (review) {
     job.evaluation = "blocked"; job.nextEvaluationAt = 0;
@@ -275,10 +275,11 @@ export async function evaluationTargets(config: AutomationConfig, output: string
     if (!saved || saved.status !== "finished" ||
         Object.values(saved.tasks).some((task) => task.status !== "succeeded" || !task.receipt))
       throw new Error(`Historical run is not complete: ${primary}`);
-    const counts = Object.fromEntries(REMOTE_MODELS.map((model) =>
+    const counts = Object.fromEntries(Object.keys(day.rows).map((model) =>
       [model, Object.values(saved.inputs).filter((input) => input.version === model).length]));
     // Do not hide newly arrived rows behind a historical completion marker.
-    const matched = REMOTE_MODELS.every((model) => counts[model] === day.rows[model]);
+    const matched = Object.keys(day.rows).every((model) => counts[model] === day.rows[model] &&
+      previousConfig!.inputs.versions.some(version => version.id === model));
     return { runIds, adopted: matched, summary: summarize([saved]) };
   }
   return { runIds, adopted: false };
@@ -297,7 +298,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
     signal.throwIfAborted();
     const previous = await checkpoint(output, runId);
     const resumable = previous && limitedCheckpoint(previous, config.dailyComparisonLimitPerTier);
-    const evaluation = automationEvaluationConfig(host.evaluation, config.sourceDirectory, job.date);
+    const evaluation = automationEvaluationConfig(host.evaluation, config.sourceDirectory, job.date, config.remoteModels);
     if (await hasLiveRunOwner(path.join(output, runId))) throw new Error(`${runId} is owned by another live Host`);
     const plan = previous ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(evaluation);
     if (!previous && !plan.tasks.length && !plan.summary.valid_inputs) {
@@ -366,11 +367,12 @@ export function remoteDateProgress(date: string, runs: Checkpoint[], limit: numb
 }
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], dates: ReturnType<typeof remoteDateProgress>[]) {
+  const sixModels = new URL(state.sourceUrl).pathname.replace(/\/+$/, "") === "/gpt";
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||
     ["pending", "evaluating", "retry"].includes(job.evaluation));
   return {
     run_id: `automation-${state.id}`, engine, started_at: state.startedAt, updated_at: Date.now(),
-    dates: dates.map(({ date, pairs }) => ({ date, pairs: {
+    dates: dates.map(({ date, pairs }) => ({ date, pairs: sixModels ? { ...pairs } : {
       fast: pairs.a_fast__vs__b_fast ?? emptyPairCounts(),
       expert: pairs.a_expert__vs__b_expert ?? emptyPairCounts(),
     } })),

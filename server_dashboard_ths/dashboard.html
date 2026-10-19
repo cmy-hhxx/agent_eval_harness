@@ -5,12 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f6f9">
   <title>评测数据</title>
-  <link rel="stylesheet" href="/dashboard.css">
-  <script src="/dashboard.js" defer></script>
+  <link rel="stylesheet" href="__BASE__/dashboard.css">
+  <script src="__BASE__/dashboard.js" defer></script>
 </head>
 <body>
   <main class="page-shell">
     <header class="dashboard-top">
+      <nav class="dataset-nav" aria-label="数据集">
+        <a href="/" data-dataset="root">原四路</a>
+        <a href="/gpt/" data-dataset="gpt">GPT 六路</a>
+        <a href="/aime/" data-dataset="aime">aime</a>
+        <a href="/ifind/" data-dataset="ifind">ifind</a>
+      </nav>
       <div class="dataset-range" id="dataset-range" aria-live="polite">
         <span class="dataset-range-dates" id="dataset-range-dates">读取中</span>
         <span class="dataset-range-separator" aria-hidden="true">·</span>
@@ -21,9 +27,23 @@
           <span class="state-dot" aria-hidden="true"></span>
           <span class="state-label">连接中</span>
         </div>
-        <a class="docs-link" href="/docs">文档</a>
+        <a class="docs-link" href="__BASE__/docs">文档</a>
       </div>
     </header>
+
+    <section class="processing-panel" aria-label="数据处理与归档状态">
+      <dl class="processing-metrics">
+        <div><dt>最近收包</dt><dd id="last-received">—</dd></div>
+        <div><dt>最近入库</dt><dd id="last-published">—</dd></div>
+        <div><dt>待处理包</dt><dd id="pending-archives">—</dd></div>
+        <div><dt>异常包</dt><dd id="failed-archives">—</dd></div>
+      </dl>
+      <div class="archive-summary"><span id="archive-summary">归档未巡检</span><time id="archive-checked"></time></div>
+      <details class="processing-failures" id="processing-failures" hidden>
+        <summary>查看异常</summary><ul id="archive-errors"></ul>
+      </details>
+      <p class="processing-error" id="processing-error" role="status" hidden>处理状态暂不可用</p>
+    </section>
 
     <section class="catalog" aria-label="日期数据与评测进度">
       <div class="catalog-toolbar">

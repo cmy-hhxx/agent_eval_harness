@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_POLICY, REMOTE_MODELS, emptyUsage, type AgentBackend, type RemoteDay, type RunState } from "@eval/contracts";
+import { DEFAULT_POLICY, emptyUsage, type AgentBackend, type RemoteDay, type RunState } from "@eval/contracts";
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { RemoteInputs } from "@eval/runtime/client";
@@ -17,12 +17,60 @@ import { automaticResumeStages, createAutomationWorkflow, checkpointRecovery, ev
 import { submitFor, inspectFor, attributionResult, comparisonResult, draftFor, fixtureConfig, raw, sessionRaw, fakeIdentity, fakeEvaluatorVersion, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
+const REMOTE_MODELS = ["a_fast", "b_fast", "a_expert", "b_expert"];
+
 const automationWorkflow = createAutomationWorkflow(300);
+
+test("GPT automation disables scheduled statistics and refuses manual log publication", async () => {
+  const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  assert.equal(settings.publishStatisticsLog, false);
+  assert.equal(settings.publishProgress, true);
+  for (const command of ["publish-log", "resolve-log"])
+    await assert.rejects(automationCommand([command]), /Statistics log publication is disabled/);
+});
+
+async function fourModelSettings() {
+  return { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")),
+    remoteModels: REMOTE_MODELS, runPrefix: "daily-" };
+}
+
+test("six-model automation configuration validates remote identities and reserves each pair independently", async () => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    assert.equal(new URL(settings.sourceUrl).pathname, "/gpt");
+    assert(settings.fromDate <= "2026-10-16", "default date range must include the available GPT batch");
+    assert.equal(settings.runPrefix, "daily-six-");
+    assert.equal(settings.sourceDirectory, path.join(ROOT, "data/sources/automations/remote-six-model-evaluation"));
+    assert.equal(settings.stateDirectory, path.join(ROOT, "data/automations/remote-six-model-evaluation"));
+    assert(settings.hostConfigs.includes(path.join(ROOT, "configs/six-models.json")));
+    assert.deepEqual(new Set(settings.remoteModels), new Set(["a_fast", "b_fast", "6_luna", "a_expert", "b_expert", "6.1sol"]));
+    const source = path.join(directory, "source"), date = "2026-10-19";
+    const overlay = await readJson<Pick<typeof config, "inputs" | "comparisons">>(path.join(ROOT, "configs/six-models.json"));
+    config.inputs.versions = overlay.inputs.versions;
+    config.comparisons = overlay.comparisons;
+    for (const model of settings.remoteModels)
+      await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("one"), raw("two")].map(row => ({ ...row, batch_id: date,
+        messages: row.messages.map(message => ({ ...message, type: model.startsWith("b_")
+          ? message.role === "user" ? "user_question" : "final_answer" : message.type })) })));
+    const evaluation = automationEvaluationConfig(config, source, date, settings.remoteModels);
+    const plan = await createAutomationWorkflow(1).plan(evaluation);
+    assert.equal(plan.summary.comparison_tasks, 6);
+    assert.equal(plan.summary.attribution_tasks, 6);
+    assert.deepEqual(Object.values(plan.summary.group_counts as Record<string, number>), [1, 1, 1, 1, 1, 1]);
+    assert.throws(() => automationEvaluationConfig(config, source, date, ["unknown"]), /Missing automation model/);
+    for (const remoteModels of [[], ["6_luna", "6_luna"], ["../escape"], undefined]) {
+      const file = path.join(directory, "automation.json");
+      await writeJson(file, { ...settings, remoteModels });
+      await assert.rejects(loadAutomationConfig(file));
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test("automation refuses an explicit retry outside its configured date range", async () => {
   const { directory } = await fixtureConfig();
   try {
-    const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const config = await fourModelSettings();
     const file = path.join(directory, "automations.json");
     await writeJson(file, { ...config, fromDate: "2026-10-08", stateDirectory: path.join(directory, "state") });
     await assert.rejects(automationCommand(["retry", "--config", file, "--date", "2026-10-07"]),
@@ -59,7 +107,7 @@ test("completed quota stays completed despite unpaired inputs, including after r
     rewrite.status = "pending";
     assert.equal(evaluationOutcome([saved], summarize([saved]), DEFAULT_POLICY, 300).status, "retry", "active polish still gets its chance to finish");
     rewrite.status = "succeeded";
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const job = { date: "2026-09-29", runIds: [saved.runId], evaluation: "waiting_inputs" } as AutomationJob;
     await writeJson(path.join(directory, saved.runId, "state.json"), saved);
     await recoverEvaluation(settings, directory, job, DEFAULT_POLICY);
@@ -132,7 +180,7 @@ test("quota changes preserve completed battles and stop excess queued work witho
     queued.manifest.states[excluded.id].status = "failed";
     queued.manifest.pausedStages = [{ stage: "attribution", category: "structure", code: "invalid", path: "/", at: 1, taskIds: [excluded.id] }];
     await services.repository.writeRun(run, queued);
-    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), dailyComparisonLimitPerTier: 2 };
+    const settings = { ...await fourModelSettings(), dailyComparisonLimitPerTier: 2 };
     const job = { date, runIds: [runId], evaluation: "blocked" } as AutomationJob;
     assert.equal(await recoverEvaluation(settings, config.output.path, job, DEFAULT_POLICY), "interrupted", "excluded errors must not block remaining quota");
     const workflow = createAutomationWorkflow(settings.dailyComparisonLimitPerTier);
@@ -173,7 +221,7 @@ test("automation channel concurrency accepts only positive integer limits", asyn
   try {
     const source = path.join(ROOT, "configs/automations.json"), file = path.join(directory, "automation.json");
     const settings = await readJson<Record<string, unknown>>(source);
-    assert.deepEqual((await loadAutomationConfig(source)).channelConcurrency, { openai: 1 });
+    assert.deepEqual((await loadAutomationConfig(source)).channelConcurrency, { "evaluation-gateway": 16 });
     for (const value of [null, [], 1, { openai: 0 }, { openai: -1 }, { openai: 1.5 }, { openai: "1" }, { "": 1 }]) {
       await writeJson(file, { ...settings, channelConcurrency: value });
       await assert.rejects(loadAutomationConfig(file), /Invalid automations.channelConcurrency/);
@@ -188,7 +236,7 @@ test("automation plans attribution, comparison and both rewrites while deferring
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw()].map((record) => ({ ...record, batch_id: date })));
-    const evaluation = automationEvaluationConfig(config, source, date);
+    const evaluation = automationEvaluationConfig(config, source, date, REMOTE_MODELS);
     const plan = await automationWorkflow.plan(evaluation);
     assert.deepEqual(new Set(plan.tasks.map((task) => task.stage)), new Set(["criteria", "attribution", "comparison", "rewrite"]));
     assert.equal(evaluation.clustering.enabled, false);
@@ -227,7 +275,7 @@ test("automation keeps an explicitly same-tier local baseline without requesting
     await writeJsonl(local, [{ ...raw(), batch_id: date }, { ...raw("other-date"), batch_id: "2026-09-28" }]);
     config.inputs.versions.push({ id: "baseline", name: "Baseline", adapter: "a", comparison_tier: "Fast", sources: [{ kind: "file", path: local }] });
     config.comparisons = [["a_fast", "b_fast", "baseline"]];
-    const evaluation = automationEvaluationConfig(config, source, date);
+    const evaluation = automationEvaluationConfig(config, source, date, REMOTE_MODELS);
     assert.deepEqual(evaluation.inputs.versions.find((version) => version.id === "baseline")!.sources, [{ kind: "file", path: local }]);
     assert.deepEqual(evaluation.comparisons, config.comparisons);
     const plan = await buildPlan(evaluation);
@@ -242,7 +290,7 @@ test("automation defers unfinished clustering and later classifies attributions 
   try {
     const date = "2026-09-29", source = path.join(directory, "source");
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw("old")].map((record) => ({ ...record, batch_id: date })));
-    const evaluation = automationEvaluationConfig(config, source, date);
+    const evaluation = automationEvaluationConfig(config, source, date, REMOTE_MODELS);
     const clustered = { ...evaluation, clustering: { ...evaluation.clustering, enabled: true }, rewrite: { ...evaluation.rewrite, clustering: true } };
     const plan = await buildPlan(clustered);
     const state: RunState = { usage: emptyUsage(), recordedAttempts: 0,
@@ -296,20 +344,28 @@ test("automation defers unfinished clustering and later classifies attributions 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("automation resumes mixed flat and session inputs across evaluator changes and delivers complete Mongo and statistics rows", { timeout: 60_000 }, async (t) => {
+for (const sixModels of [false, true]) test(`automation resumes mixed flat and session inputs and delivers complete Mongo and statistics rows (${sixModels ? "six" : "four"} models)`, { timeout: 90_000 }, async (t) => {
   t.after(() => {
   });
   const { directory, config, modelForStage } = await fixtureConfig();
   let controller = new AbortController();
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
   const date = "2026-10-08", source = path.join(directory, "source");
+  const remoteModels = sixModels ? [...REMOTE_MODELS, "6_luna", "6.1sol"] : REMOTE_MODELS;
+  if (sixModels) {
+    for (const [id, tier] of [["6_luna", "Fast"], ["6.1sol", "Expert"]])
+      config.inputs.versions.push({ id, name: id, comparison_tier: tier, adapter: "a", sources: [] });
+    config.comparisons = [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
+  }
   const sessionModels = new Set(["a_fast", "b_expert"]);
-  for (const model of REMOTE_MODELS)
+  for (const model of remoteModels)
     await writeJsonl(path.join(source, date, model + ".jsonl"), sessionModels.has(model)
       ? [sessionRaw("q1", "4", "2+2=5")]
       : [{ ...raw("q1", "4", "2+2=5"), batch_id: date }]);
-  const evaluation = automationEvaluationConfig(config, source, date);
+  const evaluation = automationEvaluationConfig(config, source, date, remoteModels);
   const plan = await buildPlan(evaluation);
+  assert.equal(plan.summary.attribution_tasks, sixModels ? 6 : 2);
+  assert.equal(plan.summary.comparison_tasks, sixModels ? 6 : 1);
   const backend: AgentBackend = {
     identity: fakeIdentity,
     async createSession(options) {
@@ -379,8 +435,8 @@ test("automation resumes mixed flat and session inputs across evaluator changes 
       new Set([fakeEvaluatorVersion, "fixture-next"]));
     const hostFile = path.join(directory, "host.json");
     await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...evaluation });
-    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")),
-      hostConfigs: [hostFile], sourceDirectory: source };
+    const settings = { ...await fourModelSettings(),
+      hostConfigs: [hostFile], sourceDirectory: source, remoteModels };
     settings.publication = { ...settings.publication, mongoUriEnv: "PATH" };
     const job = { date, runIds: [runId], adopted: false, download: "ready" } as AutomationJob;
     const stats = new PublicationStatistics(evaluation.comparisons);
@@ -424,8 +480,21 @@ test("automation resumes mixed flat and session inputs across evaluator changes 
       },
     });
     assert.equal(delivered.comparisons, counts.readyComparisons);
-    assert(delivered.comparisons > 0);
-    assertStatisticsLog(stats.record("current-automation-output", Date.now()));
+    assert.equal(delivered.comparisons, sixModels ? 6 : 1);
+    assert.equal(delivered.inputs, remoteModels.length);
+    const record = stats.record("current-automation-output", Date.now());
+    assertStatisticsLog(record);
+    if (sixModels) {
+      const data = record.data as { progress: { expectedBattleCount: number; completedBattleCount: number; completedCaseCount: number };
+        stats: { evaluated: number; accuracy: { count: number }; total: { count: number } }[] };
+      assert.deepEqual(data.progress, { expectedBattleCount: 6, completedBattleCount: 6, completedCaseCount: 1 });
+      assert.equal(data.stats.length, 6);
+      for (const row of data.stats) {
+        assert.equal(row.evaluated, 2);
+        assert.equal(row.accuracy.count, 1);
+        assert.equal(row.total.count, 1);
+      }
+    }
     // Accepted presentation scopes stay usable both inside and outside the current date range.
     const checkpoint = comparisonCodec.encode(saved);
     (checkpoint.config as typeof config).rewrite.comparisonItems = false;
@@ -452,7 +521,7 @@ test("automatic recovery distinguishes shutdown, temporary outages and persisten
     }, pausedStages: [{ stage: "attribution", category: "interruption", code: "attempt_interrupted", path: "/", taskIds: ["stopped"], at: 1 }],
     } as unknown as Checkpoint;
     assert.deepEqual(automaticResumeStages(state, DEFAULT_POLICY), ["attribution"]);
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const date = "2026-09-29", job = { date, runIds: [] } as unknown as AutomationJob;
     await writeJson(path.join(directory, `daily-${date}`, "state.json"), state);
     assert.equal(await recoverEvaluation(settings, directory, job, DEFAULT_POLICY), "interrupted");
@@ -470,7 +539,7 @@ test("automatic recovery distinguishes shutdown, temporary outages and persisten
 test("automation stops confirmed cumulative content exhaustion and resumes only when the current cap allows it", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    const date = "2026-09-29", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const date = "2026-09-29", settings = await fourModelSettings();
     const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
       spent: { stage: "attribution", status: "failed", dependencies: {}, data: {}, failure: {
         contentSubmissions: 3, fileErrors: 2, errors: [{ category: "transport", code: "offline", path: "/", message: "offline" }],
@@ -509,7 +578,7 @@ test("automation stops confirmed cumulative content exhaustion and resumes only 
 test("automation and restart honor the current stage repair cap without refunding prior submissions", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
       answer: { stage: "attribution", status: "failed", dependencies: {}, data: {}, failure: {
         contentSubmissions: 1, fileErrors: 0, errors: [{ category: "transport", code: "offline", path: "/", message: "offline" }],
@@ -541,7 +610,7 @@ test("automation and restart honor the current stage repair cap without refundin
 test("automation retries an unavailable final submission ledger without inventing or refunding costs", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    const date = "2026-09-29", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const date = "2026-09-29", settings = await fourModelSettings();
     const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
       unknown: { stage: "attribution", status: "failed", data: {}, dependencies: {}, failure: {
         contentSubmissions: 1, fileErrors: 2,
@@ -582,7 +651,7 @@ test("automation retries an unavailable final submission ledger without inventin
 test("the pipeline reopens a blocked ledger checkpoint and retries until recovery without a retry command", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    const date = "2026-10-08", settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const date = "2026-10-08", settings = await fourModelSettings();
     settings.fromDate = date;
     const saved = { status: "interrupted", config, preflight: { skipped: [], issues: [] }, tasks: {
       unknown: { stage: "attribution", status: "failed", data: {}, dependencies: {}, failure: {
@@ -641,7 +710,7 @@ test("accepted unresolved comparison is terminal for its blocked dependency clos
           data: { rewriteOf: { taskId: "review", stage: "comparison" }, comparisonRewriteScope: "all" } },
         descendant: { stage: "rewrite", status: "blocked", dependencies: { source: "polish" }, data: {} },
       } } as unknown as Checkpoint;
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const date = "2026-09-29", file = path.join(directory, `daily-${date}`, "state.json");
     const recover = async (state: Checkpoint) => {
       await writeJson(file, state);
@@ -717,7 +786,7 @@ test("optional verification never blocks or replaces a delivered formal comparis
         polish: { stage: "rewrite", status: "succeeded", dependencies: { source: "comparison" }, receipt,
           data: { rewriteOf: { taskId: "comparison", stage: "comparison" }, comparisonRewriteScope: "all" } },
       } } as unknown as Checkpoint;
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const date = "2026-09-29", job = { date, runIds: [], evaluation: "retry" } as unknown as AutomationJob;
     await writeJson(path.join(directory, `daily-${date}`, "state.json"), saved);
     assert.equal(await recoverEvaluation(settings, directory, job, DEFAULT_POLICY), undefined);
@@ -758,7 +827,7 @@ test("deferred clustering failures and pauses cannot block completed evaluation 
     assert.equal(summary.stages.rewrite.blocked, 0);
     assert.equal(checkpointRecovery([saved], DEFAULT_POLICY), undefined);
     assert.deepEqual(automaticResumeStages(saved, DEFAULT_POLICY), []);
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const date = "2026-09-29", current = { date, runIds: [], evaluation: "retry", evaluationError: "cluster: invalid" } as unknown as AutomationJob;
     await writeJson(path.join(directory, `daily-${date}`, "state.json"), saved);
     await recoverEvaluation(settings, directory, current, DEFAULT_POLICY);
@@ -817,7 +886,7 @@ test("a daily run adds new capped battles without changing accepted results or t
     assert.equal(summarize([comparisonCodec.encode(after)]).readyComparisons, 4);
     const hostFile = path.join(directory, "host.json");
     await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...complete });
-    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")),
+    const settings = { ...await fourModelSettings(),
       hostConfigs: [hostFile], sourceDirectory: directory };
     const job = { date, runIds: [runId], adopted: false, download: "ready" } as AutomationJob;
     const snapshot = await publicationSnapshot(settings, job, t.signal), published = [];
@@ -839,7 +908,7 @@ test("an existing Fast run retains its date identity while Expert is added; hist
   const record = { ...raw(), batch_id: "2026-09-29" };
   const { directory, config } = await fixtureConfig([[record], [record], [record], [record]]);
   try {
-    const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+    const settings = await fourModelSettings();
     const day: RemoteDay = { date: "2026-09-29", rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, 1])) as RemoteDay["rows"] };
     config.inputs.versions = config.inputs.versions.filter((version) => ["a_fast", "b_fast"].includes(version.id));
     const plan = await buildPlan(config);
@@ -875,7 +944,7 @@ test("failed and paused polish can finish delivery while their errors and submis
   delete interrupted.tasks.comparison.receipt;
   assert.equal(checkpointRecovery([interrupted], { repairAttempts: 3 }), "interrupted",
     "failed polish does not change recovery of interrupted evaluation work");
-  const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  const settings = await fourModelSettings();
   await writeJson(path.join(fixture.directory, saved.runId, "state.json"), saved);
   const job = { date: "2026-10-15", runIds: [], evaluation: "retry", evaluationAttempts: 1, nextEvaluationAt: 1 } as unknown as AutomationJob;
   await recoverEvaluation(settings, fixture.directory, job, { repairAttempts: 3 });
@@ -902,7 +971,7 @@ test("local evaluation counts preserve rewrite failure while the remote projecti
       observed: { a_fast: 1, b_fast: 1, a_expert: 0, b_expert: 0 }, adopted: false, download: "ready", checkedAt: 1,
       downloadAttempts: 0, evaluationAttempts: 3, nextDownloadAt: 0, nextEvaluationAt: 0 } } }, "pi", [remoteDateProgress("2026-09-29", [state], 300)]);
   assert.equal(progress.status, "interrupted");
-  assert.equal(progress.dates[0].pairs.fast.completed_cases, 1);
+  assert.equal(progress.dates[0].pairs.fast!.completed_cases, 1);
 });
 
 test("interrupted and dependency-blocked tasks are not reported as evaluation failures", () => {
@@ -945,7 +1014,7 @@ test("remote progress satisfies the required six-count contract and separates sk
     json(res, { saved: true });
   });
   try {
-    await new RemoteInputs(server.url, 1000).publish(progress, AbortSignal.timeout(3000));
+    await new RemoteInputs(server.url, 1000, REMOTE_MODELS).publish(progress, AbortSignal.timeout(3000));
     assert.deepEqual(progress.dates[0].pairs.fast, {
       total_cases: 7, completed_cases: 1, running_cases: 1, queued_cases: 3, failed_cases: 1, skipped_cases: 1,
     });
@@ -973,7 +1042,7 @@ test("remote progress excludes excess queued battles before the daily run is rec
     preflight: { skipped: [{ versions: ["a_fast", "b_fast"], batch_id: date, case_id: "unpaired" }], issues: [] },
   } as unknown as Checkpoint;
   const before = structuredClone(run);
-  const state = { id: "test", status: "running", startedAt: 1,
+  const state = { id: "test", sourceUrl: "http://test", status: "running", startedAt: 1,
     jobs: { [date]: { date, evaluation: "pending", download: "ready" } },
   } as unknown as AutomationState;
   const progress = remoteProgress(state, "pi", [remoteDateProgress(date, [run], 2)]);
@@ -991,14 +1060,39 @@ test("local progress retains baseline pairs while the remote boundary reports on
   const run = { config: { comparisons: [ids] }, tasks: {
     one: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
-  const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
+  const state = { id: "test", sourceUrl: "http://test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
   const local = remoteDateProgress(date, [run], 300), before = structuredClone(local);
   assert.deepEqual(Object.keys(local.pairs).sort(), ["a_fast__vs__b_fast", "a_fast__vs__baseline", "b_fast__vs__baseline"].sort());
   assert.equal(local.pairs.a_fast__vs__baseline.completed_cases, 1);
   const progress = remoteProgress(state, "pi", [local]);
   assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), ["expert", "fast"]);
-  assert.equal(progress.dates[0].pairs.fast.completed_cases, 0, "baseline battles cannot inflate the A/B pair");
+  assert.equal(progress.dates[0].pairs.fast!.completed_cases, 0, "baseline battles cannot inflate the A/B pair");
   assert.deepEqual(local, before);
+});
+
+test("GPT remote progress publishes all six pairs without changing root pair names", () => {
+  const date = "2026-10-19";
+  const groups = [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
+  const tasks = Object.fromEntries(groups.flatMap(group => group.flatMap((left, index) => group.slice(index + 1).map(right => [
+    [left, right].sort().join("__vs__"), { stage: "comparison", status: "succeeded", receipt: {},
+      dependencies: {}, data: { group: [left, right] }, inputIds: { A: left, B: right } },
+  ]))));
+  const run = { config: { comparisons: groups }, tasks,
+    inputs: Object.fromEntries(groups.flat().map(id => [id, { version: id, batch_id: date, case_id: "same-case" }])),
+    preflight: { skipped: [], issues: [] },
+  } as unknown as Checkpoint;
+  const state = { id: "six", sourceUrl: "http://test/gpt/", status: "running", startedAt: 1,
+    jobs: { [date]: { date, evaluation: "done", download: "ready" } },
+  } as unknown as AutomationState;
+  const local = remoteDateProgress(date, [run], 300), before = structuredClone(local);
+  const progress = remoteProgress(state, "pi", [local]);
+  assert.deepEqual(Object.keys(progress.dates[0].pairs).sort(), Object.keys(tasks).sort());
+  assert.equal(Object.keys(progress.dates[0].pairs).length, 6);
+  assert.ok(Object.values(progress.dates[0].pairs).every(counts => counts.completed_cases === 1));
+  assert.deepEqual(local, before);
+  const root = remoteProgress({ ...state, sourceUrl: "http://test" }, "pi", [local]);
+  assert.deepEqual(Object.keys(root.dates[0].pairs).sort(), ["expert", "fast"]);
+  assert.equal(root.dates[0].pairs.fast!.completed_cases, 1);
 });
 
 test("remote progress retains accepted pairs after selection changes and keeps review requests queued", () => {
@@ -1007,10 +1101,10 @@ test("remote progress retains accepted pairs after selection changes and keeps r
     accepted: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "b_fast"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison.jsonl" } } },
     review: { stage: "comparison", status: "succeeded", data: { group: ["a_fast", "baseline"] }, inputIds: { A: "a" }, receipt: { exported: { file: "comparison-review.jsonl" } } },
   }, inputs: { a: { batch_id: date, case_id: "case" } }, preflight: { skipped: [], issues: [] } } as unknown as Checkpoint;
-  const state = { id: "test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
+  const state = { id: "test", sourceUrl: "http://test", status: "running", jobs: { [date]: { date, evaluation: "evaluating" } } } as unknown as Parameters<typeof remoteProgress>[0];
   const local = remoteDateProgress(date, [run], 300);
   const progress = remoteProgress(state, "pi", [local]).dates[0].pairs;
-  assert.equal(progress.fast.completed_cases, 1);
+  assert.equal(progress.fast!.completed_cases, 1);
   assert.equal(local.pairs.a_fast__vs__baseline.completed_cases, 0);
   assert.equal(local.pairs.a_fast__vs__baseline.queued_cases, 1);
 });

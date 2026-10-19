@@ -1,8 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { REMOTE_MODELS, RemoteInputNotReadyError, type RemoteDay } from "@eval/contracts";
-import { runPipeline, nextPublicationAt, PUBLICATION_INTERVAL_MS, type AutomationState, type PipelineServices, type EvaluationSummary } from "./index.js";
+import { RemoteInputNotReadyError, type RemoteDay } from "@eval/contracts";
+import { runPipeline, sameRows, nextPublicationAt, PUBLICATION_INTERVAL_MS, type AutomationState, type PipelineServices, type EvaluationSummary } from "./index.js";
+
+test("input refresh compares every configured model and detects additions and removals", () => {
+  const four = { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 };
+  const six = { ...four, "6_luna": 1, "6.1sol": 1 };
+  assert.equal(sameRows(four, six), false);
+  assert.equal(sameRows(six, four), false);
+  const changed = { ...six, "6.1sol": 2 };
+  assert.equal(sameRows(six, changed), false);
+  assert.equal(sameRows(six, { ...six }), true);
+});
+
+const REMOTE_MODELS = ["a_fast", "b_fast", "a_expert", "b_expert"];
 
 const day = (date: string, rows = 1): RemoteDay => ({ date, rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, rows])) as RemoteDay["rows"] });
 const fresh = (): AutomationState => ({ id: "test", sourceUrl: "http://test", status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} });

@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { errorText, REMOTE_MODELS, RemoteInputNotReadyError, type PublicationCounts, type RemoteDay } from "@eval/contracts";
+import { errorText, RemoteInputNotReadyError, type PublicationCounts, type RemoteDay } from "@eval/contracts";
 import { nextPublicationAt, PUBLICATION_INTERVAL_MS, type MongoPublicationState, type MongoReceipt, type PublicationState } from "./publication.js";
 export * from "./publication.js";
 
@@ -79,7 +79,7 @@ export interface PipelineServices {
   syncMongo?(job: AutomationJob, signal: AbortSignal): Promise<PublicationCounts>;
 }
 export const sameRows = (a: RemoteDay["rows"] | undefined, b: RemoteDay["rows"]) =>
-  !!a && REMOTE_MODELS.every((model) => a[model] === b[model]);
+  !!a && Object.keys(a).length === Object.keys(b).length && Object.keys(b).every((model) => a[model] === b[model]);
 
 export const automationDateSelected = (options: Pick<PipelineOptions, "fromDate" | "throughDate">, date: string) =>
   date >= options.fromDate && (!options.throughDate || date <= options.throughDate);

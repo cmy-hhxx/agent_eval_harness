@@ -94,6 +94,31 @@ test("Mongo publication reuses business identity, preserves B/source fields and 
   assert.equal(db.docs.size, 3);
 });
 
+test("Mongo publication preserves all six model IDs and resumes every same-tier pair without duplicate writes", async () => {
+  const groups = [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
+  const sixInputs = groups.flat().map(versionId => ({ ...inputs[0], versionId,
+    trace: { ...inputs[0].trace, version: versionId } }));
+  const pairs = groups.flatMap(group => group.flatMap((left, index) => group.slice(index + 1).map(right => [left, right])));
+  const results = pairs.map(pair => ({ ...result, row: { ...result.row,
+    models: Object.fromEntries(pair.map(id => [id, { version: id }])),
+    assessments: Object.fromEntries(pair.map(id => [id, { meets_core: true }])),
+    verdicts: { [pair.join("__vs__")]: { result: "win", winner_version: pair[0] } },
+  } }));
+  const db = fakeCollection();
+  const send = () => writeMongoPublication(db.collection, date, rows(sixInputs), rows(results), AbortSignal.timeout(5000));
+  const counts = await send();
+  assert.equal(counts.inputs, 6);
+  assert.equal(counts.comparisons, 6);
+  assert.equal(db.docs.size, 12);
+  assert.deepEqual(new Set([...db.docs.values()].filter(doc => doc.kind === "input").map(doc => doc.versionId)), new Set(groups.flat()));
+  assert.equal(new Set([...db.docs.values()].map(doc => doc.caseId)).size, 1);
+  const writes = db.writes();
+  await send();
+  assert.equal(db.writes(), writes);
+  for (const versionId of ["../escape", "a..b", "", "bad/id"])
+    await assert.rejects(writeMongoPublication(db.collection, date, rows([{ ...inputs[0], versionId }]), rows([]), AbortSignal.timeout(5000)));
+});
+
 test("Mongo publication accepts original prose, rejects malformed rewrites and conflicting case identities", async () => {
   const db = fakeCollection();
   const incomplete = structuredClone(result); delete incomplete.row.rewritten;

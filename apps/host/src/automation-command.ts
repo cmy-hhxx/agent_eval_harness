@@ -1,13 +1,13 @@
 import { configurationSecrets } from "./settings.js";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { errorText, redact, REMOTE_MODELS, type InputDownload } from "@eval/contracts";
+import { errorText, redact, type InputDownload } from "@eval/contracts";
 import { hasLiveRunOwner, readJson, replaceInputSnapshot, runLock, writeJson } from "@eval/data";
 import { RemoteInputs } from "@eval/runtime/client";
 import { automationDateSelected, runPipeline, sameRows, nextPublicationAt, type AutomationState } from "@eval/automations";
 import { publishSnapshot, syncMongoDay } from "./automation-publication.js";
 import { startAutomationDashboard } from "./automation-dashboard.js";
-import { loadAutomationConfig } from "./automation-config.js";
+import { automationEvaluationConfig, loadAutomationConfig } from "./automation-config.js";
 import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
 import { createAutomationMonitor } from "./automation-monitor.js";
 import { loadConfig } from "./config.js";
@@ -42,6 +42,8 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (values.date && command !== "retry") throw new Error("--date only applies to retry");
   if ((values.outcome || values["request-id"]) && command !== "resolve-log") throw new Error("Log resolution flags only apply to resolve-log");
   const config = await loadAutomationConfig(values.config), file = path.join(config.stateDirectory, "state.json");
+  if (["publish-log", "resolve-log"].includes(command) && !config.publishStatisticsLog)
+    throw new Error("Statistics log publication is disabled for this automation");
   if (command === "status") {
     const state = await readJson<AutomationState>(file);
     console.log(JSON.stringify({ ...state, ownerAlive: await hasLiveRunOwner(config.stateDirectory) }, null, 2));
@@ -52,14 +54,15 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
     throw new Error("Cannot retry a date outside the configured automation range: " + values.date);
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
   logger.addSecrets(...configurationSecrets());
-  const remote = new RemoteInputs(config.sourceUrl, config.requestTimeoutMs);
+  automationEvaluationConfig(host.evaluation, config.sourceDirectory, config.fromDate, config.remoteModels);
+  const remote = new RemoteInputs(config.sourceUrl, config.requestTimeoutMs, config.remoteModels);
   if (command === "check") {
     const days = (await remote.discover(AbortSignal.timeout(config.requestTimeoutMs))).filter((day) => selected(day.date));
     const entries = [];
     for (const day of days) entries.push({ ...day, ...await evaluationTargets(config, output, day) });
     console.log(JSON.stringify({ source: config.sourceUrl, stages: ["criteria", "attribution", "comparison", "rewrite"],
       rewrite: ["attribution", "comparison"], dates: entries,
-      publication: { logIntervalHours: 4, mongo: "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
+      publication: { logEnabled: config.publishStatisticsLog, logIntervalHours: 4, mongo: "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
     }, null, 2));
     return;
   }
@@ -179,7 +182,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         try {
           for (const runId of job.runIds) locks.push(await runLock(path.join(output, runId)));
           async function* files(): AsyncGenerator<InputDownload> {
-            for (const model of REMOTE_MODELS) yield await remote.download(day, model, signal);
+            for (const model of config.remoteModels) yield await remote.download(day, model, signal);
             const after = (await remote.discover(signal)).find((entry) => entry.date === day.date);
             if (!after || !sameRows(after.rows, day.rows)) throw new Error("Remote inputs changed during download; retrying a fresh snapshot");
           }
@@ -187,7 +190,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         } finally { for (const unlock of locks.reverse()) await unlock(); }
       },
       evaluate: (job, signal) => evaluateDay(config, job, signal, exhaustedChannels), observe,
-      publish: (current, save, signal) => publishSnapshot(config, current, save, signal),
+      publish: config.publishStatisticsLog ? (current, save, signal) => publishSnapshot(config, current, save, signal) : undefined,
       syncMongo: (job, signal) => syncMongoDay(config, job, signal),
     }, controller.signal);
     try { await observe(state, AbortSignal.timeout(10_000)); }
@@ -196,7 +199,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       await logger.error(error, { component: "automations", event: "progress_failed" });
     }
     await writeJson(file, state);
-    process.exitCode = controller.signal.aborted ? 130 : state.pollError || ["retry", "uncertain"].includes(state.publication?.status ?? "") || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
+    process.exitCode = controller.signal.aborted ? 130 : state.pollError || config.publishStatisticsLog && ["retry", "uncertain"].includes(state.publication?.status ?? "") || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
       job.download !== "ready" || ["retry", "blocked", "pending"].includes(job.evaluation) ||
       job.mongo?.status === "retry") ? 2 : 0;
   } finally {

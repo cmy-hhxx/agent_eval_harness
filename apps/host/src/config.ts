@@ -192,7 +192,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   const versions = config.inputs?.versions;
   if (!Array.isArray(versions) || versions.length < 2) throw new Error("至少配置两个输入版本");
   for (const item of versions) {
-    if (!/^[a-z][a-z0-9_]*$/.test(item.id) || !inputAdapterIds.includes(item.adapter))
+    if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
     if (!Array.isArray(item.sources) || !item.sources.length) throw new Error("Missing input sources");
     if (item.comparison_tier !== undefined &&

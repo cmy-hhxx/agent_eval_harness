@@ -1,6 +1,6 @@
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import type { InputDownload } from "@eval/contracts";
+import { safeId, type InputDownload } from "@eval/contracts";
 import { atomicWrite } from "./files.js";
 
 async function equalFiles(left: string, right: string): Promise<boolean> {
@@ -62,7 +62,8 @@ export async function replaceInputSnapshot(
     // The producer validates the remote catalog again before ending this iterator.
     for await (const file of files) {
       try {
-        if (!/^[a-z_]+\.jsonl$/.test(file.name) || names.includes(file.name)) throw new Error("Invalid snapshot file name");
+        if (!file.name.endsWith(".jsonl") || names.includes(file.name)) throw new Error("Invalid snapshot file name");
+        safeId(file.name.slice(0, -".jsonl".length));
         await atomicWrite(path.join(staging, file.name), checked(file, signal));
         bytes += file.size;
         names.push(file.name);

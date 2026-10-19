@@ -5,6 +5,25 @@ import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import { traceOverview } from "./trace-overview.js";
 
 const id = "296439d0-d228-45fc-8c5e-35f42990547e";
+test("GPT tool spans retain output coordinates without promoting reasoning metadata or thinking to tool evidence", () => {
+  const raw = { messages: [
+    { type: "span", name: "reasoning", duration: 165200 },
+    { type: "span", name: "thinking", output: "内部思考" },
+    { type: "span", name: "tool-web-search", output: "搜索来源原文", start: 100, end: 200 },
+  ] };
+  const before = structuredClone(raw), overview = traceOverview(raw, "answer", id);
+  assert.equal(overview.entries.length, 1);
+  const entry = overview.entries[0];
+  assert.equal(entry.message_index, 2);
+  assert.equal(entry.kind, "return");
+  assert.equal(entry.name, "tool-web-search");
+  assert.equal(entry.call_message_index, undefined);
+  const highlight = entry.highlights[0];
+  assert.equal(highlight.path, "/output");
+  assert.equal(resolveEvidence(raw, highlight.reference, "answer", emptyAudit(), "/evidence", id).quote, "搜索来源原文");
+  assert.deepEqual(raw, before);
+});
+
 test("overview completes compact results before spending space on long call prefixes", () => {
   const result = "计算参数与结果\n" + "背景说明。".repeat(40) + "\n下期阈值：27.42；本期阈值：26.18。";
   const raw = { messages: [

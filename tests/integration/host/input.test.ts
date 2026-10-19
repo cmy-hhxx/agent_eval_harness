@@ -19,6 +19,72 @@ import { canonical, evidenceId, emptyUsage, type RunState, type SubmissionReceip
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
+import { blindMaterials } from "../../../packages/workflows/src/comparison/blind.js";
+
+test("GPT reasoning metadata and null roles remain paired and pass the attribution request contract", async () => {
+  const row = raw();
+  row.messages.splice(1, 0,
+    { type: "span", name: "reasoning", duration: 165200 },
+    JSON.parse('{"type":"span","name":"tool-web-search","role":null,"output":"搜索结果"}'));
+  const original = structuredClone(row);
+  const { directory, config } = await fixtureConfig([[row], [], [row], []]);
+  try {
+    const plan = await buildPlan(config);
+    assert.equal(plan.tasks.filter(task => task.stage === "comparison").length, 1);
+    const task = plan.tasks.find(task => task.stage === "attribution")!;
+    assert(task);
+    assert.doesNotThrow(() => prepare(task, plan.inputs, {}));
+    assert.deepEqual(row, original);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("GPT collected spans preserve source messages while accepting thinking and tool outputs", () => {
+  const trace = raw();
+  trace.messages.splice(1, 0,
+    { type: "span", name: "reasoning", duration: 165200 },
+    { type: "span", name: "thinking", output: "思考过程" },
+    { type: "span", name: "tool-web-search", output: "检索结果", start: 100, end: 200, latency: 100 });
+  const before = structuredClone(trace);
+  const version = { id: "6_luna", name: "6_luna", adapter: "a", sources: [] };
+  const candidate = adapt(trace, version, "6_luna.jsonl", 1);
+  assert.equal(candidate.final_index, trace.messages.length - 1);
+  assert.deepEqual(trace, before);
+  for (const message of [{ type: "span", name: "unknown", output: "x" }, { type: "span", name: "tool-web-search" }]) {
+    const invalid = structuredClone(trace);
+    invalid.messages.splice(1, 0, message);
+    assert.throws(() => adapt(invalid, version, "6_luna.jsonl", 1), /未支持的消息类型/);
+  }
+});
+
+test("blind identity includes source names when display names differ, including case variants", () => {
+  const trace = raw();
+  trace.version = "SourceModelName";
+  const candidate = adapt(trace, { id: "6_luna", name: "SourceModelName", display_name: "显示名称", adapter: "a", sources: [] }, "input.jsonl", 1);
+  const blind = blindMaterials({ A: candidate });
+  assert.doesNotMatch(blind.value("SourceModelName / sourcemodelname / 6_LUNA / 显示名称"), /sourcemodelname|6_luna|显示名称/i);
+});
+
+test("expanding an unfinished run removes its orphaned pending rubric", async () => {
+  const { directory, config } = await fixtureConfig(undefined, true);
+  try {
+    const plan = await buildPlan(config);
+    const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+      format: "evaluation-run", debug: false, runId: "expand", status: "interrupted", evaluatorVersion: fakeEvaluatorVersion,
+      engine: fakeIdentity, config: structuredClone(config), tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+      states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+      preflight: plan.summary, startedAt: 1,
+    } };
+    const file = path.join(directory, "6_luna.jsonl");
+    await writeJsonl(file, [raw()]);
+    config.inputs.versions.push({ id: "6_luna", name: "6_luna", adapter: "a", comparison_tier: "Fast", sources: [{ kind: "file", path: file }] });
+    config.comparisons = [["a_fast", "b_fast", "6_luna"]];
+    const after = await reconcileRun(directory, state, config, { extendVersions: true });
+    assert.equal(after.tasks.filter(task => task.stage === "criteria").length, 1);
+    assert.equal(after.tasks.filter(task => task.stage === "attribution").length, 3);
+    const ids = new Set(after.tasks.map(task => task.id));
+    for (const task of after.tasks) for (const id of Object.values(task.dependencies)) assert(ids.has(id));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 function fixtureReceipt(taskId: string, evaluation: unknown): SubmissionReceipt {
   return { taskId, attemptId: "fixture", submissionId: taskId, evaluation, evaluatorVersion: fakeEvaluatorVersion,

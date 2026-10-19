@@ -1,5 +1,5 @@
 import path from "node:path";
-import { REMOTE_MODELS, safeId, type Engine } from "@eval/contracts";
+import { safeId, type Engine } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import { validInputDate } from "@eval/runtime/client";
 import type { PipelineOptions } from "@eval/automations";
@@ -8,6 +8,7 @@ import type { EvalConfig } from "@eval/workflows/comparison";
 export interface AutomationConfig extends PipelineOptions {
   id: string;
   sourceUrl: string;
+  remoteModels: string[];
   completedDates: string[];
   hostConfigs: string[];
   stateDirectory: string;
@@ -18,6 +19,7 @@ export interface AutomationConfig extends PipelineOptions {
   dailyComparisonLimitPerTier: number;
   channelConcurrency?: Record<string, number>;
   publishProgress: boolean;
+  publishStatisticsLog: boolean;
   publication: {
     logFile: string;
     logUrl: string;
@@ -30,9 +32,9 @@ export interface AutomationConfig extends PipelineOptions {
 
 export async function loadAutomationConfig(file: string): Promise<AutomationConfig> {
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
-  const keys = ["id", "sourceUrl", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
+  const keys = ["id", "sourceUrl", "remoteModels", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
-    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publication"];
+    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishStatisticsLog", "publication"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
     if (typeof raw[key] !== "string" || !raw[key]) throw new Error(`Invalid automations.${key}`);
@@ -58,8 +60,11 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const engine = string("engine");
   if (engine !== "pi" && engine !== "prime") throw new Error("Invalid automation engine");
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
+  if (typeof raw.publishStatisticsLog !== "boolean") throw new Error("Invalid automations.publishStatisticsLog");
   const hostConfigs = strings("hostConfigs").map((entry) => path.resolve(directory, entry));
   if (!hostConfigs.length) throw new Error("hostConfigs must not be empty");
+  const remoteModels = strings("remoteModels").map(safeId);
+  if (!remoteModels.length) throw new Error("remoteModels must not be empty");
   const channelConcurrency = raw.channelConcurrency as AutomationConfig["channelConcurrency"];
   if (channelConcurrency !== undefined && (!channelConcurrency || typeof channelConcurrency !== "object" ||
       Array.isArray(channelConcurrency) || Object.entries(channelConcurrency).some(([channel, limit]) =>
@@ -77,7 +82,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   for (const key of [publication.mongoUriEnv, publication.mongoTlsCAFileEnv])
     if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error("Invalid publication environment variable name");
   return {
-    id: safeId(string("id")), sourceUrl: source.href.replace(/\/$/, ""), fromDate, throughDate, completedDates,
+    id: safeId(string("id")), sourceUrl: source.href.replace(/\/$/, ""), remoteModels, fromDate, throughDate, completedDates,
     hostConfigs, engine, stateDirectory: path.resolve(directory, string("stateDirectory")),
     sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix: safeId(string("runPrefix")),
     pollMs: number("pollMs"), refreshMs: number("refreshMs"), retryMs: number("retryMs"),
@@ -85,20 +90,21 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     dailyComparisonLimitPerTier: number("dailyComparisonLimitPerTier"),
     channelConcurrency,
     publishProgress: raw.publishProgress,
+    publishStatisticsLog: raw.publishStatisticsLog,
     publication: { ...publication, logFile: path.resolve(directory, publication.logFile), logUrl: logUrl.href },
   };
 }
 
 /** Finish evaluations and their rewrites continuously; build the problem library separately. */
-export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: string, date: string): EvalConfig {
-  for (const id of REMOTE_MODELS)
+export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: string, date: string, remoteModels: readonly string[]): EvalConfig {
+  for (const id of remoteModels)
     if (!base.inputs.versions.some((version) => version.id === id)) throw new Error(`Missing automation model: ${id}`);
   return {
     ...base,
     inputs: {
       timing_unit: base.inputs.timing_unit, default_batch_id: date,
       versions: base.inputs.versions.map((version) => ({
-        ...version, sources: (REMOTE_MODELS as readonly string[]).includes(version.id)
+        ...version, sources: remoteModels.includes(version.id)
           ? [{ kind: "file", path: path.join(sourceDirectory, date, version.id + ".jsonl") }] : version.sources,
       })),
       batches: [date],

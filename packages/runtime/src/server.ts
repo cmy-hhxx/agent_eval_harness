@@ -6,6 +6,7 @@ import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
+  presentSource,
   SUBMISSION_FILE_SCHEMA,
   SUBMISSION_JSON_SCHEMA,
   submissionToolNames,
@@ -137,7 +138,9 @@ export async function startWorker(
           controller.signal,
         );
         inputs.set(ref.name, value);
-        await writeJson(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`), value);
+        const presentation = spec.evaluation.sourcePresentations?.[ref.name];
+        await writeJson(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`),
+          presentation ? presentSource(value, presentation) : value);
       }
       const artifacts = new ArtifactStore(path.join(attempt.directory, "artifacts"));
       const definitions = registry.select(spec.evaluation.toolNames).map(tool =>

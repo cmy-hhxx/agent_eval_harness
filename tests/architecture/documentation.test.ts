@@ -35,7 +35,8 @@ function references(markdown: string) {
   const plainText = (node: MarkdownNode): string => node.type === "html" ? "" : node.value ?? (node.children ?? []).map(plainText).join("");
   function visit(node: MarkdownNode) {
     if (node.type === "heading") {
-      const base = plainText(node).toLowerCase().replace(/[^\p{L}\p{N}\p{M}_ -]/gu, "").replace(/ /g, "-");
+      const title = plainText(node), explicit = title.match(/\s+\{#([\w-]+)\}$/u);
+      const base = explicit?.[1] ?? title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}_ -]/gu, "").replace(/ /g, "-");
       let anchor = base, suffix = 0;
       while (anchors.has(anchor)) anchor = `${base}-${++suffix}`;
       anchors.add(anchor);
@@ -55,11 +56,11 @@ function references(markdown: string) {
 
 test("documentation parsing ignores code examples and resolves formatted headings and reference links", () => {
   const parsed = references([
-    "# A `tool` 与 **结果**", "# A `tool` 与 <span>结果</span>",
+    "# A `tool` 与 **结果**", "# A `tool` 与 <span>结果</span>", "# Remote paths {#remote-paths}",
     "[guide][doc]", "[doc]: <guide.md#标题> \"Guide\"", "![image](image.png)",
     "`[not a link](missing.md)`", "```md", "# Not a heading", "[example](missing.md)", "```",
   ].join("\n\n"));
-  assert.deepEqual([...parsed.anchors], ["a-tool-与-结果", "a-tool-与-结果-1"]);
+  assert.deepEqual([...parsed.anchors], ["a-tool-与-结果", "a-tool-与-结果-1", "remote-paths"]);
   assert.deepEqual(parsed.links, ["image.png", "guide.md#标题"]);
 });
 

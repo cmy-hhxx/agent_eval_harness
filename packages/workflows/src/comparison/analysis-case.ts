@@ -1,4 +1,5 @@
 import type { AnalysisReference } from "@eval/contracts";
+import { isToolSpan } from "./adapters.js";
 import { traceCatalog } from "./catalog.js";
 import { locateAnalysisInput } from "./dashboard-view.js";
 import { contentText, locateRecordStream } from "./input.js";
@@ -26,7 +27,7 @@ export function analysisTraceMap(raw: RawInput, reference: AnalysisReference, fi
   const nodes = catalog.map((entry) => {
     const message = raw.messages[entry.message_index];
     const call = ["function_call", "tool_call"].includes(entry.type);
-    const result = ["function_call_output", "tool_result"].includes(entry.type) || entry.role === "tool";
+    const result = isToolSpan(message) || ["function_call_output", "tool_result"].includes(entry.type) || entry.role === "tool";
     const span = spans.get(spanKey(message) ?? "");
     const callIndex = entry.call_message_index ?? (result && withoutId(message) && span?.calls.length === 1 && span.results.length === 1 &&
       span.calls[0] < entry.message_index && withoutId(raw.messages[span.calls[0]]) ? span.calls[0] : undefined);

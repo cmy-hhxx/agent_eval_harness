@@ -67,7 +67,7 @@ export interface EvalConfig {
 }
 export interface Message extends JsonObject {
   type?: string;
-  role?: string;
+  role?: string | null;
   name?: string;
   content?: unknown;
   model?: string;
@@ -94,6 +94,8 @@ export interface Candidate {
   case_id: string;
   version: string;
   name: string;
+  /** Source/configuration names that differ from the display name. */
+  identity_names?: string[];
   input_id: string;
   trace_id: string | null;
   source: string;

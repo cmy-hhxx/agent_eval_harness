@@ -8,15 +8,17 @@
 
 | 请求 | 本地用途 |
 |---|---|
-| `GET /dashboard-data` | 发现已就绪日期及四模型行数 |
+| `GET /dashboard-data` | 发现已就绪日期及各模型行数 |
 | `GET /data/{date}/{model}.jsonl` | 流式下载模型输入 |
 | `POST /evaluation-progress` | 上报已登记运行的 Comparison 进度 |
 
-模型 ID 固定为 `a_fast`、`b_fast`、`a_expert`、`b_expert`；日期为有效的 `YYYY-MM-DD`。本地未配置远端鉴权。目录读取和进度上报最多等待 10 秒；下载采用配置中的无数据进展超时。
+模型 ID 由自动化 remoteModels 指定；当前支持 `a_fast`、`b_fast`、`6_luna`、`a_expert`、`b_expert`、`6.1sol`；日期为有效的 `YYYY-MM-DD`。本地未配置远端鉴权。目录读取和进度上报最多等待 10 秒；下载采用配置中的无数据进展超时。
+
+默认 sourceUrl 为 `http://117.50.195.94:2256/gpt`，上述路由均追加到 sourceUrl，因此默认访问 `/gpt/dashboard-data`、`/gpt/data/{date}/{model}.jsonl` 和 `/gpt/evaluation-progress`。
 
 ## 日期目录
 
-`/dashboard-data` 返回带 `dates` 数组的 JSON。每个日期包含 `date`、`ready` 和 `models`；只有日期及四个模型均为 ready 才进入下载候选。四模型的 `row_count` 必须是非负安全整数，日期不得重复。
+`/dashboard-data` 返回带 `dates` 数组的 JSON。每个日期包含 `date`、`ready` 和 `models`；只有日期及 remoteModels 指定的全部模型均为 ready 才进入下载候选。各配置模型的 `row_count` 必须是非负安全整数，日期不得重复。
 
 ```json
 {
@@ -27,7 +29,9 @@
       "a_fast": { "ready": true, "row_count": 100 },
       "b_fast": { "ready": true, "row_count": 100 },
       "a_expert": { "ready": true, "row_count": 100 },
-      "b_expert": { "ready": true, "row_count": 100 }
+      "b_expert": { "ready": true, "row_count": 100 },
+      "6_luna": { "ready": true, "row_count": 100 },
+      "6.1sol": { "ready": true, "row_count": 100 }
     }
   }]
 }
@@ -39,11 +43,13 @@
 
 响应必须包含正文及非负整数 `Content-Length`。本地核对实际字节数、JSONL 结构和目录行数，下载结束再核对目录，完整日期校验通过后才替换本地源文件。响应 `404` 且 JSON `error` 为 `data not ready` 时按远端准备中处理；其他 HTTP 错误保留状态码和可解析原因。
 
-接口不提供可供本地使用的修订号或不可变快照 ID。行数相同不代表内容相同，也不能保证四文件来自同一生成时刻；同量内容修正通过定期逐块比较发现。已有正式结果仍遵守[同 run 续跑规则](usage.md#运行与恢复)。源文件提升和失败恢复见[自动化状态](automations.md#调度与状态)。
+接口不提供可供本地使用的修订号或不可变快照 ID。行数相同不代表内容相同，也不能保证各模型文件来自同一生成时刻；同量内容修正通过定期逐块比较发现。已有正式结果仍遵守[同 run 续跑规则](usage.md#运行与恢复)。源文件提升和失败恢复见[自动化状态](automations.md#调度与状态)。
 
 JSONL 每行必须满足[输入契约](contract.md#输入)。远端日期用于文件组织和下载选择，记录身份仍是 `batch_id + case_id + version`；本地不根据请求时间重新分批。
 
 ## 进度上报
+
+GPT 六路的 `/gpt/evaluation-progress` 使用六个同档模型对的独立键（模型 ID 按字典序排序，以 `__vs__` 连接），各对计数字段与下例一致。以下 `fast / expert` 示例仅适用于原四路服务根路径。
 
 POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来源日期分组，`pairs` 固定且仅包含 `fast` 与 `expert`，分别对应 A/B Fast 与 A/B Expert；不可直接发送内部模型组合键或额外 baseline 配对。刚发现、尚无 Host 检查点的日期也提供这两组零计数。每组包含以下六个非负整数，零值也保留：
 

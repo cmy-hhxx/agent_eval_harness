@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { BSON, MongoClient, type Collection, type Document, type AnyBulkWriteOperation } from "mongodb";
-import { errorText, redact, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
+import { errorText, redact, safeId, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
 
 export interface MongoPublicationConfig { uri: string; database: string; collection: string; tlsCAFile?: string; inputsUnchanged?: boolean }
 type Stored = Document & { _id: string };
@@ -137,9 +137,10 @@ export async function writeMongoPublication(
   }
   const inputTasks = new Map<string, unknown>();
   for await (const { versionId, trace } of inputs) {
-    if (!/^[a-z][a-z0-9_]*$/.test(versionId) || trace.batch_id !== date ||
+    safeId(versionId);
+    if (trace.batch_id !== date ||
         typeof trace.case_id !== "string" || !trace.case_id || !Array.isArray(trace.messages) || !trace.messages.length)
-      throw new Error("Invalid publication input");
+      throw new Error("Invalid publication input: " + versionId);
     const caseId = cases.get(trace.case_id) ?? randomUUID();
     cases.set(trace.case_id, caseId);
     inputTasks.set(JSON.stringify([trace.case_id, versionId]), trace.task);

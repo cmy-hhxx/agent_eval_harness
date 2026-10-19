@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f6f9">
   <title>服务文档</title>
-  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="__BASE__/dashboard.css">
 </head>
 <body>
   <main class="docs-shell">
     <div class="docs-heading">
       <h1>服务文档</h1>
-      <a class="back-link" href="/">返回数据目录</a>
+      <a class="back-link" href="__BASE__/">返回数据目录</a>
     </div>
     <div class="docs-layout">
       <nav class="docs-toc" aria-label="文档目录">
@@ -78,7 +78,7 @@
       return output.join("\n");
     }
 
-    fetch("/docs/handoff.md", { cache: "no-store" })
+    fetch("__BASE__/docs/handoff.md", { cache: "no-store" })
       .then((response) => { if (!response.ok) throw new Error(); return response.text(); })
       .then((markdown) => {
         document.querySelector("#document").innerHTML = renderMarkdown(markdown);

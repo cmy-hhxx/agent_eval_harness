@@ -1,3 +1,4 @@
+import { isToolSpan } from "./adapters.js";
 import type { JsonObject } from "@eval/contracts";
 import { citationMarkers, type CitationMarker } from "@eval/tools";
 import type { Finding, RawInput } from "./types.js";
@@ -31,7 +32,7 @@ function annotateLocalFindings(raw: RawInput, inputId: string, findings: Finding
     const name =
       m.type === "function_call_output"
         ? calls.get(String(m.call_id))
-        : ["function_call", "tool_call", "tool_result"].includes(m.type || "")
+        : isToolSpan(m) || ["function_call", "tool_call", "tool_result"].includes(m.type || "")
           ? toolName(m.name)
           : undefined;
     if (name) direct.set(i, name);
