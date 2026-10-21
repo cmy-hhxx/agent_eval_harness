@@ -1,6 +1,6 @@
 import path from "node:path";
 import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { appendStatisticsLog, fileSourceReader, readJsonl, readStatisticsLog } from "@eval/data";
+import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLog, writeJson } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
 import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
@@ -8,36 +8,59 @@ import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./composition.js";
+import { automationMongoTarget } from "./automation-sources.js";
+import { predictionOrigin } from "./automation-prediction.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
 export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
   const host = await loadConfig(config.hostConfigs);
+  const metadata = await readCaseMetadata(path.join(config.sourceDirectory, "case-meta.jsonl"));
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
   const revisions = new Map<string, string>();
+  const coordinates = new Map<string, { byteOffset: number; byteLength: number }[]>();
   const inputKey = (caseId: unknown, versionId: string) => JSON.stringify([caseId, versionId]);
+  async function* sourceLines(file: string, revision: string, key: string) {
+    const selected = coordinates.get(key);
+    if (!selected) { yield* fileSourceReader.lines(file, revision); return; }
+    if (await fileSourceReader.revision(file) !== revision) throw new Error("读取期间输入文件发生变化，请重试：" + file);
+    for (const record of selected) {
+      signal.throwIfAborted();
+      yield { ...record, line: fileSourceReader.record(file, record.byteOffset, record.byteLength, revision) };
+      // Coordinate reads are synchronous; allow active Hosts to handle tools and permits.
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    if (await fileSourceReader.revision(file) !== revision) throw new Error("读取期间输入文件发生变化，请重试：" + file);
+  }
   async function* sourceInputs(): AsyncGenerator<PublicationInput> {
     for (const version of host.evaluation.inputs.versions) {
       const id = version.id;
       const registered = [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
         .filter((input) => input.version === id && input.batch_id === job.date).map((input) => input.source)))];
-      const files = job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
+      const files = config.prediction ? registered : job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
         .filter((input) => input.version === id).map((input) => input.source)))] : config.remoteModels.includes(id)
           ? [path.join(config.sourceDirectory, job.date, id + ".jsonl")] : registered;
       for (const file of files) {
         const revision = revisions.get(file) ?? await fileSourceReader.revision(file);
         revisions.set(file, revision);
-        for await (const { line } of fileSourceReader.lines(file, revision)) {
+        const coordinateKey = JSON.stringify([file, id]);
+        const selected = coordinates.get(coordinateKey) ?? [];
+        const discovering = !coordinates.has(coordinateKey);
+        for await (const { line, byteOffset, byteLength } of sourceLines(file, revision, coordinateKey)) {
           signal.throwIfAborted();
           if (!line.trim()) continue;
-          const raw = normalizeInput(JSON.parse(line)), meta = object(raw.meta ?? {});
+          const raw = completeCaseMetadata(normalizeInput(JSON.parse(line)), metadata), meta = object(raw.meta ?? {});
           if (!Array.isArray(raw.messages)) throw new Error("Publication input messages must be an array");
           if (!raw.messages.length) continue;
           const batch = raw.batch_id ?? meta.batch_id ?? job.date, caseId = raw.case_id ?? meta.case_id;
           if (batch !== job.date) continue;
+          if (config.prediction && !runs.some(({ state }) => Object.values(state?.inputs ?? {}).some(input =>
+            input.version === id && input.batch_id === batch && input.case_id === caseId))) continue;
           if (typeof caseId !== "string" || !caseId ||
               (raw.version !== undefined && raw.version !== version.name)) throw new Error("Publication input identity differs from source");
+          if (discovering) selected.push({ byteOffset, byteLength });
           yield { versionId: id, trace: { ...raw, batch_id: batch, case_id: caseId, version: version.name } };
         }
+        coordinates.set(coordinateKey, selected);
       }
     }
   }
@@ -75,20 +98,30 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (!version) throw new Error("Accepted publication input version is not registered: " + candidate.version);
         const { raw } = await locateRecordStream(candidate.source, { ...candidate, input_id: inputId }, version, job.date);
         seen.add(key);
-        yield { versionId: candidate.version, trace: { ...raw, batch_id: candidate.batch_id, case_id: candidate.case_id, version: version.name } };
+        yield { versionId: candidate.version, trace: { ...completeCaseMetadata(raw, metadata), batch_id: candidate.batch_id, case_id: candidate.case_id, version: version.name } };
       }
     }
   }
-  async function* results(): AsyncGenerator<PublicationResult> {
-    for (const { id, state } of runs) {
+  async function* runResults(selectedRuns = runs, acknowledged?: ReadonlySet<string>): AsyncGenerator<PublicationResult> {
+    for (const { id, state } of selectedRuns) {
       if (!state) continue;
-      const ready = publishableComparisons(state);
+      const ready = acknowledged ? new Map<string, number>() : publishableComparisons(state);
+      // Statistics retain confirmed decisions even if a later resume schedules more text polish.
+      // Only the published IDs may bypass polish readiness; new Mongo writes use the normal gate.
+      if (acknowledged) for (const task of Object.values(state.tasks)) {
+        if (task.stage !== "comparison" || task.data.verificationAudit || !task.data.comparisonId ||
+            !acknowledged.has(task.data.comparisonId) || task.receipt?.exported?.file === "comparison-review.jsonl") continue;
+        const sources = [task, ...Object.values(task.dependencies).map(taskId => state.tasks[taskId])];
+        if (sources.some(source => !source || source.status !== "succeeded" || !source.receipt?.exported)) continue;
+        const at = Math.max(...sources.map(source => source.receipt!.acceptedAt));
+        if (Number.isFinite(at)) ready.set(task.data.comparisonId, at);
+      }
       if (!ready.size) continue;
       const comparisonInputs = new Map(Object.values(state.tasks)
         .filter(task => task.stage === "comparison" && !task.data.verificationAudit)
         .map(task => [task.data.comparisonId, task.inputIds]));
       const rewriteIds = new Map<string, string[]>();
-      for (const task of Object.values(state.tasks)) {
+      for (const task of acknowledged ? [] : Object.values(state.tasks)) {
         const source = task.data.rewriteOf;
         if (source?.stage !== "comparison" || !task.receipt) continue;
         const comparisonId = state.tasks[source.taskId]?.data.comparisonId;
@@ -110,6 +143,38 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);
     }
   }
+  async function* results(purpose: "publication" | "statistics" = "publication"): AsyncGenerator<PublicationResult> {
+    const replacements = new Map<string, PublicationResult>();
+    if (config.predictionResults) {
+      let published: { runId: string; comparisonIds: string[] } | undefined;
+      try { published = await readJson(path.join(config.predictionResults, job.date, "published.json")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      if (published) {
+        const state = await checkpoint(host.evaluation.output.path, published.runId);
+        if (!state) throw new Error("Published prediction run is missing: " + published.runId);
+        const pending = new Set(published.comparisonIds);
+        for await (const result of runResults([{ id: published.runId, state }], purpose === "statistics" ? new Set(pending) : undefined)) {
+          if (!pending.delete(String(result.row.comparison_id))) continue;
+          const metadata = object(result.row.prediction);
+          if (result.row.evaluation_purpose !== "prediction" || metadata.source_evaluation_task_id !== config.id)
+            throw new Error("Prediction replacement belongs to another task");
+          const id = String(metadata.source_comparison_id);
+          if (replacements.has(id)) throw new Error("Duplicate prediction replacement: " + id);
+          replacements.set(id, result);
+        }
+        if (pending.size) throw new Error("Published prediction result is unavailable");
+      }
+    }
+    for await (const result of runResults()) {
+      const replacement = replacements.get(String(result.row.comparison_id));
+      if (replacement && (JSON.stringify(replacement.row.case) !== JSON.stringify(result.row.case) ||
+          JSON.stringify(Object.keys(object(replacement.row.models)).sort()) !== JSON.stringify(Object.keys(object(result.row.models)).sort())))
+        throw new Error("Prediction replacement business identity mismatch");
+      yield replacement ?? result;
+    }
+    for (const [file, revision] of revisions)
+      if (await fileSourceReader.revision(file) !== revision) throw new Error("读取期间输入文件发生变化，请重试：" + file);
+  }
   const comparisons = runs.flatMap(({ state }) => state ? [
     ...(state.config as EvalConfig).comparisons,
     ...Object.values(state.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
@@ -127,10 +192,46 @@ export async function syncMongoDay(
   // Validate the complete result set before any external writes, including cross-pair core consistency.
   const validation = new PublicationStatistics(snapshot.comparisons);
   for await (const input of snapshot.inputs()) validation.addInput(input);
-  for await (const result of snapshot.results()) validation.addResult(result);
-  return dependencies.mongo({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection,
-    inputsUnchanged: job.mongo?.synced?.inputsUpdatedAt === (job.inputsUpdatedAt ?? 0),
+  const comparisonIds: string[] = [];
+  for await (const result of snapshot.results()) {
+    validation.addResult(result);
+    comparisonIds.push(String(result.row.comparison_id));
+  }
+  if (config.prediction && !comparisonIds.length) return { inputs: 0, comparisons: 0, inserted: 0, updated: 0 };
+  const origin = config.prediction ? await predictionOrigin(config) : config;
+  const publishedFile = path.join(config.sourceDirectory, job.date, "published.json");
+  const confirmed = new Set<string>();
+  if (config.prediction) {
+    try {
+      const previous = await readJson<{ runId: string; comparisonIds: string[] }>(publishedFile);
+      if (previous.runId !== job.runIds[0]) throw new Error("Published prediction run differs from the current run");
+      for (const id of previous.comparisonIds) confirmed.add(id);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  let filesPublished = !config.prediction && !job.adopted;
+  for (const model of filesPublished ? config.remoteModels : []) {
+    try {
+      const receipt = await readJson<{ revision: string }>(path.join(config.stateDirectory, "input-publications", job.date, model + ".json"));
+      if (receipt.revision !== await fileSourceReader.revision(path.join(config.sourceDirectory, job.date, model + ".jsonl")))
+        filesPublished = false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      filesPublished = false;
+    }
+  }
+  const counts = await dependencies.mongo({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection, evaluationTaskId: origin.id,
+    ...(settings.topic ? { topic: settings.topic } : {}),
+    ...(config.prediction ? { resultsOnly: true } : {}),
+    inputsUnchanged: filesPublished || job.mongo?.target === automationMongoTarget(config) &&
+      job.mongo.synced?.inputsUpdatedAt === (job.inputsUpdatedAt ?? 0),
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, job.date, snapshot.inputs(), snapshot.results(), signal);
+  if (config.prediction) {
+    for (const id of comparisonIds) confirmed.add(id);
+    await writeJson(publishedFile, { runId: job.runIds[0], comparisonIds: [...confirmed] });
+  }
+  return counts;
 }
 
 /** One cumulative daily-dashboard inventory across every registered date, including adopted history. */
@@ -139,20 +240,20 @@ export async function statisticsSnapshot(
   dependencies = { snapshot: publicationSnapshot, labels: readMongoLabels },
 ) {
   const jobs = Object.values(state.jobs).sort((a, b) => a.date.localeCompare(b.date));
+  const installed = (job: AutomationJob) => job.download === "ready" || (job.download === "downloading" && job.downloaded !== undefined);
+  const unavailable = jobs.find(job => job.downloaded && !installed(job));
+  if (unavailable) throw new Error("Statistics input snapshot is not ready: " + unavailable.date);
   const settings = config.publication, uri = process.env[settings.mongoUriEnv];
   if (!uri) throw new Error("Missing " + settings.mongoUriEnv);
-  const labels = await dependencies.labels({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection,
+  const labels = await dependencies.labels({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection, evaluationTaskId: config.id,
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, jobs.map((job) => job.date), signal);
   const statistics = new PublicationStatistics([]);
   for (const job of jobs) {
-    if (job.download !== "ready") {
-      if (job.downloaded) throw new Error("Statistics input snapshot is not ready: " + job.date);
-      continue;
-    }
+    if (!installed(job)) continue;
     const snapshot = await dependencies.snapshot(config, job, signal);
     statistics.addGroups(snapshot.comparisons, job.date);
     for await (const input of snapshot.inputs()) statistics.addInput(input);
-    for await (const result of snapshot.results()) statistics.addResult(result);
+    for await (const result of snapshot.results("statistics")) statistics.addResult(result);
   }
   for (const label of labels) statistics.addLabels(label);
   return statistics;

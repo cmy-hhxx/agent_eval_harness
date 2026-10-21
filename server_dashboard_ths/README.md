@@ -20,7 +20,7 @@
 
 ## 文件与依赖
 
-- `app.py`：同一进程监听原四路、GPT、aime、ifind，隔离各自的增量状态与输出，通过同一 HTTP 端口提供看板与取数接口。
+- `app.py`：同一进程监听原四路、GPT、后训练、aime、ifind，隔离各自的增量状态与输出，通过同一 HTTP 端口提供看板与取数接口。
 - `dashboard.*`、`records.*`、`docs.html`：日期表、样本浏览页和文档页。`records-markdown.js` 通过仓库已有的 Markdown/GFM 解析器生成 DOM，`build.mjs` 将页面源码打包为忽略入库的 `records.bundle.js`。
 - `progress_bridge.py`：在本地读取 Host 的 `state.json`，按日期和实际模型对上报进度；服务端不运行此工具。
 - `deploy.py`：从 `.servers.conf` 的 `eval_input_data_server` 读取 SSH 连接参数，同步程序和重启远端服务。
@@ -35,7 +35,7 @@
 uv pip install --python .venv/bin/python -r server_dashboard_ths/requirements.txt
 ```
 
-本地启动时用 `DATA_ROOT` 指定独立数据目录。原四路与 GPT 的运行状态和记录索引写在程序旁的 `state/`；aime/ifind 的输入、产物和状态默认放在 `DATA_ROOT/multi_agent_eval/`，可用 `MULTI_AGENT_ROOT` 单独指定。未设置 `DATA_ROOT` 时沿用服务器的 `/mnt/fin_bench/multi_agent_eval/`：
+本地启动时用 `DATA_ROOT` 指定独立数据目录。原四路、GPT 与后训练的运行状态和记录索引写在程序旁的 `state/`；aime/ifind 的输入、产物和状态默认放在 `DATA_ROOT/multi_agent_eval/`，可用 `MULTI_AGENT_ROOT` 单独指定。未设置 `DATA_ROOT` 时沿用服务器的 `/mnt/fin_bench/multi_agent_eval/`：
 
 ```bash
 node server_dashboard_ths/build.mjs
@@ -64,13 +64,13 @@ python3 -m pip install --target .packages -r requirements.txt
 python3 server_dashboard_ths/deploy.py
 ```
 
-部署先在本机打包样本页，再同步明确列出的程序、静态资源、依赖清单与文档，检查远端依赖后重启 `app.py`，再验证原四路、GPT、aime、ifind 的 `/health`。不删除远端文件，不上传原始数据，也不重新登记历史导入。需要使用其他本机连接文件时可传 `--config /path/to/.servers.conf`，服务器节名仍为 `eval_input_data_server`。
+部署先在本机打包样本页，再同步明确列出的程序、静态资源、依赖清单与文档，检查远端依赖后重启 `app.py`，再验证原四路、GPT、后训练、aime、ifind 的 `/health`。不删除远端文件，不上传原始数据，也不重新登记历史导入。需要使用其他本机连接文件时可传 `--config /path/to/.servers.conf`，服务器节名仍为 `eval_input_data_server`。
 
 远端服务通过 `nohup` 等价的独立进程常驻，PID 在 `service.pid`，输出在 `service.log`。归档监听随服务启动；每 5 秒检查一次，每个新增或变化的包独立稳定 30 秒后处理，不再重放无变化的包。每包成功发布后立即登记文件元数据；坏包记录失败，文件未变化时不会反复尝试。其他包继续上传不会丢弃已经处理的包。
 
 已成功登记、文件元数据未变化且没有进程持有写入句柄的原包，会自动移动到 `3_processed_archives/YYYY-MM-DD/part-NNNN/`；日期取包文件名中的日期，无该日期时使用文件修改时间的北京时间日期。每卷最多 50 个原包、累计 2 GiB；单个原包超过 2 GiB 时独占一卷并在巡检中报告。只在同文件系统移动，保留原文件名和内容；同名补传进入下一卷，不覆盖旧包。未处理、继续变化或处理失败的包留在输入目录。归档不改写分日 JSONL、记录索引或处理登记；同名包再次上传时仍按元数据变化增量处理。
 
-手动归档整理使用 `python3 app.py --organize-archives`，检查四个来源，整理未分卷或超限的目录；已符合规则的包不移动、不解压。与实时归档共用各自的 `state/archive.lock`，避免同时分卷越界或覆盖。结果写到各自 `state/archive-maintenance.json`，包括检查时间、包数、字节数、分卷数和超大原包。aime/ifind 的归档全量巡检由处理循环每 24 小时执行一次；新数据仍按原频率自动处理。分卷控制目录和单卷体量，不降低历史数据总字节数，不自动删除原包或评测输入。
+手动归档整理使用 `python3 app.py --organize-archives`，检查五个来源，整理未分卷或超限的目录；已符合规则的包不移动、不解压。与实时归档共用各自的 `state/archive.lock`，避免同时分卷越界或覆盖。结果写到各自 `state/archive-maintenance.json`，包括检查时间、包数、字节数、分卷数和超大原包。aime/ifind 的归档全量巡检由处理循环每 24 小时执行一次；新数据仍按原频率自动处理。分卷控制目录和单卷体量，不降低历史数据总字节数，不自动删除原包或评测输入。
 
 首次建立 `state/archive-records.sqlite` 时，只读登记已发布 JSONL 的业务标识、日期和归档来源，不重解压旧包、不改写既有文件。后续只合并新包影响的日期和模型；无关 JSONL 与索引保持原样。SQLite 不保存回答正文，仅保存去重索引及待完成发布的文件清单；重启先恢复中断发布，再继续增量处理。`state/` 必须随服务保留，已有数据但归档登记缺失时会明确报错，避免误触发全量重放。
 
@@ -100,6 +100,20 @@ python3 server_dashboard_ths/progress_bridge.py data/runs/comparison/<run-id>/st
 python3 server_dashboard_ths/progress_bridge.py data/runs/comparison/<run-id>/state.json \
   --endpoint http://117.50.195.94:2256/gpt/evaluation-progress --once
 ```
+
+## 后训练模型评测
+
+入口为 `/post_training_model/`，三路为 `a_fast / b_fast / b_post_train_fast`，都属于 Fast。每题独立显示 A/B、A/后训练、B/后训练三场进度；样本浏览、下载、日期与处理状态接口均使用 `/post_training_model` 前缀。
+
+上传 `.7z` 到 `/mnt/fin_bench/A_AA_comparision_data/post_training_model/` 直接子级。包内支持 `A-fast.jsonl`、`AA-fast.jsonl`、`AA-post_train_fast.jsonl`、`AA-post_train_fast_V1.jsonl`（AA 也接受 B 前缀），或 `a_fast.jsonl`、`b_fast.jsonl`、`b_post_train_fast.jsonl`；支持来源 ID 或 `run_` 前缀、包内子目录与 `.incr数字` 后缀。当前后训练模型接收无后缀及 `_V1` 文件，不将其他训练版本自动合并到同一模型。A 使用现有 A 消息格式，B 与后训练使用现有 B 消息格式。后训练输出的 `version` 为 `B post_train_fast`，输入也接受 `AA post_train_fast`。没有 version 字段时按文件名补齐。
+
+日期和 GPT 一样优先取 `meta.testset_name` 中唯一测试集日期，缺失时使用北京时间请求日期；三路相同题目须有相同 case_id 和 batch_id。允许分批上传，只有实际发布的模型才 ready；自动评测等待三路就绪，模型行数可以不同。
+
+分日输出在 `post_training_model/2_eval_data_input/<model>/<date>.jsonl`，原包成功处理后归档至 `post_training_model/3_processed_archives/<包日期>/part-NNNN/`，状态位于 `0_process_code/state/post_training_model/`。复用增量去重、发布恢复与归档机制，同名包及同题只在本来源内去重，不重放原四路或 GPT 历史数据。
+
+`/post_training_model/evaluation-progress` 接收三个模型对的独立键：`a_fast__vs__b_fast`、`a_fast__vs__b_post_train_fast`、`b_fast__vs__b_post_train_fast`。自动上报与手动 `progress_bridge.py --endpoint http://117.50.195.94:2256/post_training_model/evaluation-progress` 均按实际两名候选计数。
+
+评测端使用[后训练自动化配置](../configs/automations-post-training.json)，默认随其他来源启动。独立 Mongo 集合和运行状态防止同题 A/B 结果串写；不发布统计交付日志。数据服务本身只处理输入和展示进度，不启动评测模型。
 
 ## aime / ifind 数据源
 
@@ -134,7 +148,7 @@ aime / ifind 的新 `meta + traces` 格式按 **session** 处理：一行保留�
 
 使用同一个 `python3 server_dashboard_ths/deploy.py` 部署并重启 2256；程序、PID 和 `service.log` 仍在原来的 `/mnt/fin_bench/A_AA_comparision_data/0_process_code`。不启动第二个服务，不需要定时任务。
 
-看板入口为 `/aime/`、`/ifind/`，顶部四个数据源可直接切换。两个新来源分别显示 Fast 和 Expert 的输入条数、问句/回答，以及标准制定、归因、聚类三个阶段的真实上报进度。ifind 的 `normal_agent` 显示为 Fast，`deep_research` 显示为 Expert；模型 ID 保留原始模式语义。三个阶段均按实际任务计数，不用输入记录数充当任务分母，不显示对战额度或配对逻辑。没有上报数据时显示“暂无进度”；数据入库不等于评测完成。原四路和 GPT 的对战显示不变。
+看板入口为 `/aime/`、`/ifind/`，顶部五个数据源可直接切换。两个新来源分别显示 Fast 和 Expert 的输入条数、问句/回答，以及标准制定、归因、聚类三个阶段的真实上报进度。ifind 的 `normal_agent` 显示为 Fast，`deep_research` 显示为 Expert；模型 ID 保留原始模式语义。三个阶段均按实际任务计数，不用输入记录数充当任务分母，不显示对战额度或配对逻辑。没有上报数据时显示“暂无进度”；数据入库不等于评测完成。原四路和 GPT 的对战显示不变。
 
 取数接口与原服务同形，分别加 `/aime`、`/ifind` 前缀；支持 `/dashboard-data`、`/dates`、`/data/{date}/{model}.jsonl`、`/records`、`/processing-status`。进度接口及上报示例见 [服务文档](docs/handoff.md#aime-ifind)。
 

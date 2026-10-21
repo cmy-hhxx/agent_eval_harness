@@ -2151,6 +2151,38 @@ const inspectionProfile: Partial<AgentProfile> = {
     } },
 };
 
+for (const method of ["accept", "inspect"] as const)
+  for (const deadline of [false, true])
+    test(`Host ${method} acknowledgement waits use the task deadline, not model idle time (${deadline})`, async () => {
+      let entered = false, release = () => {};
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const fixture = await harness(async options => ({ async run() {
+        await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+        if (method === "inspect") await inspectMaterials(options, { actual: "original facts" });
+        await submitFor(options, { ok: true });
+      }, async abort() {}, async dispose() {} }), {
+        material: "original facts", policy: { idleTimeoutSeconds: 1 },
+        ...(method === "inspect" ? { profile: inspectionProfile } : {}),
+      });
+      const accept = fixture.store.accept.bind(fixture.store), inspect = fixture.store.inspect.bind(fixture.store);
+      if (method === "accept") fixture.store.accept = async value => { entered = true; await gate; return accept(value); };
+      else fixture.store.inspect = async value => { entered = true; await gate; return inspect(value); };
+      try {
+        fixture.spec.deadline = Date.now() + 5000;
+        await fixture.start();
+        await waitForTestState(async () => entered, Boolean, "submission reaches the Host");
+        await new Promise(resolve => setTimeout(resolve, 1100));
+        const waiting = await request<AttemptStatus>(fixture.worker.url + "/api/attempts/attempt");
+        assert.equal(waiting.state, "running", "Host acknowledgement is active submission work, not model idleness");
+        if (!deadline) release();
+        const status = await fixture.done();
+        assert.equal(status.state, deadline ? "timed_out" : "succeeded");
+        if (deadline) assert.equal(status.error, "Task deadline exceeded");
+        else assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions,
+          method === "inspect" ? 2 : 1);
+      } finally { release(); await fixture.close(); }
+    });
+
 for (const inspect of [false, true])
   test(`failed first drafting and the revealed phase share a bounded writer allowance (${inspect})`, async () => {
     const write = (value: unknown) => ({ language: "python", code:

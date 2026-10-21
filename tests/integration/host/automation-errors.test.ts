@@ -46,7 +46,7 @@ test("automation errors retain every raw record without grouping, page full deta
 test("error page keeps expanded details and pagination during refresh, escapes content, and retains the last page offline", async () => {
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automation-errors.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automation-errors.js"), "utf8");
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/errors" });
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/errors?source=remote-six-model-evaluation" });
   let poll = async () => {}, failed = false;
   const requests: URLSearchParams[] = [];
   dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
@@ -54,7 +54,8 @@ test("error page keeps expanded details and pagination during refresh, escapes c
   dom.window.fetch = async (url: string) => {
     if (failed) throw new Error("offline");
     const query = new URL(url, "http://fixture").searchParams; requests.push(query);
-    return { ok: true, json: async () => ({ sampledAt: Date.now(), dates: ["2026-09-30"], pageSize: 10,
+    return { ok: true, json: async () => ({ sourceId: "remote-six-model-evaluation", sourceName: "GPT 六路",
+      sampledAt: Date.now(), dates: ["2026-09-30"], pageSize: 10,
       page: Number(query.get("page")), total: 12,
       records: [{ id: 3, date: "2026-09-30", record: { message: '<img src=x onerror="alert(1)">', errors: [{ code: "evidence_id_invalid", actual: "invented" }] } }],
     }) };
@@ -63,6 +64,9 @@ test("error page keeps expanded details and pagination during refresh, escapes c
   try {
     dom.window.eval(script); await settle();
     const doc = dom.window.document;
+    assert.equal(requests[0].get("source"), "remote-six-model-evaluation");
+    assert.equal(doc.title, "自动化错误日志 · GPT 六路");
+    assert.equal(new URL(doc.getElementById("monitor-link").href).searchParams.get("source"), "remote-six-model-evaluation");
     assert.equal(doc.getElementById("error-records").hidden, false);
     assert.equal(doc.querySelector("[data-group]"), null);
     assert.equal(doc.querySelector("img"), null);
@@ -78,6 +82,7 @@ test("error page keeps expanded details and pagination during refresh, escapes c
     doc.getElementById("date-filter").dispatchEvent(new dom.window.Event("change")); await settle();
     assert.equal(requests.at(-1)!.get("page"), "1");
     assert.equal(requests.at(-1)!.get("date"), "2026-09-30");
+    assert.equal(requests.at(-1)!.get("source"), "remote-six-model-evaluation");
     assert.equal(requests.at(-1)!.has("group"), false);
   } finally { dom.window.close(); }
 });

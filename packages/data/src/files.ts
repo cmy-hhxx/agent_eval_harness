@@ -101,19 +101,23 @@ export async function* readJsonlText(file: string, keepFinalLine = false): Async
   const stream = file.endsWith(".gz") ? source.pipe(createGunzip()) : source;
   source.on("error", (error) => stream.destroy(error));
   const decoder = new TextDecoder();
-  let buffer = "";
+  let pending: string[] = [];
   try {
     for await (const chunk of stream) {
-      buffer += decoder.decode(chunk, { stream: true });
-      let end: number;
-      while ((end = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, end);
-        buffer = buffer.slice(end + 1);
+      const text = decoder.decode(chunk, { stream: true });
+      let start = 0, end: number;
+      while ((end = text.indexOf("\n", start)) >= 0) {
+        const part = text.slice(start, end);
+        const line = pending.length ? pending.join("") + part : part;
+        pending = [];
+        start = end + 1;
         if (line.trim()) yield line;
       }
+      if (start < text.length) pending.push(text.slice(start));
     }
-    buffer += decoder.decode();
+    pending.push(decoder.decode());
     // An interrupted append can leave an incomplete trailing line; callers that need it opt in.
+    const buffer = pending.join("");
     if (keepFinalLine && buffer.trim()) yield buffer;
   } finally {
     source.destroy();

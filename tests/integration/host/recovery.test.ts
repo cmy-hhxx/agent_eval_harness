@@ -621,6 +621,25 @@ test("an export failure withholds acknowledgement but the saved receipt can reco
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("restoring committed receipts shares immutable bodies and isolates receipt wrappers", async () => {
+  const { directory, store } = await fixture();
+  try {
+    const saved = await readRunState(store.run);
+    const [id, original] = Object.entries(saved.receipts)[0];
+    const restored = new RunStore(store.run, saved, store.inputs, store.services);
+    const committed = (await restored.receipt(id))!;
+    assert.notEqual(committed, original);
+    assert.equal(committed.evaluation, original.evaluation, "resume must not duplicate accepted result bodies");
+    assert.equal(committed.audit, original.audit, "resume must not duplicate accepted evidence bodies");
+    const priorExport = committed.exported;
+    original.exported = undefined;
+    assert.equal(committed.exported, priorExport, "uncommitted export changes must stay isolated");
+    delete saved.receipts[id];
+    assert.equal(await restored.receipt(id), committed, "uncommitted receipt-map changes must stay isolated");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test("recovery removes duplicate and partial trailing rows without losing committed results", async () => {
   const { directory, store, spec, value } = await fixture();
   try {

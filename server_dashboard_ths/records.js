@@ -3,6 +3,7 @@ import { markdownPreview, renderMarkdown } from "./records-markdown.js";
 const MODEL_LABELS = {
   a_fast: "A Fast",
   b_fast: "B组 Fast",
+  b_post_train_fast: "B post_train_fast",
   a_expert: "A Expert",
   b_expert: "B组 Expert",
   "6_luna": "6_luna",
@@ -14,7 +15,7 @@ const MODEL_LABELS = {
 };
 const PAGE_SIZE = 20;
 const DATASET = location.pathname.split("/")[1];
-const BASE_PATH = ["gpt", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
+const BASE_PATH = ["gpt", "post_training_model", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
 const params = new URLSearchParams(location.search);
 const date = params.get("date") || "";
 const model = params.get("model") || "";

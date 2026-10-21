@@ -129,11 +129,13 @@ export class RunStore {
   private committedReceipts: Record<string, SubmissionReceipt>;
   private readonly writeResults: (state: RunState) => Promise<void>;
   private readonly logged = new Set<string>();
-  constructor(run: string, state: RunState, inputs: Record<string, unknown>, services: EvaluationServices) {
+  constructor(run: string, state: RunState, inputs: Record<string, unknown>, services: EvaluationServices,
+    private readonly deadline: (spec: AttemptSpec) => number = spec => spec.deadline) {
     this.run = run;
     this.state = state;
     this.manifest = state.manifest;
-    this.committedReceipts = structuredClone(state.receipts);
+    // Accepted bodies are immutable; isolate mutable receipt wrappers without duplicating the full run's results.
+    this.committedReceipts = Object.fromEntries(Object.entries(state.receipts).map(([id, receipt]) => [id, { ...receipt }]));
     this.inputs = inputs;
     this.services = services;
     this.writeResults = services.repository.createResultWriter(run, inputs);
@@ -283,7 +285,7 @@ export class RunStore {
   registerEvidenceBank(value: EvidenceBankUpdate): Promise<{ evidenceBank: EvidenceBank }> {
     return this.exclusive(value.taskId, async () => {
       const state = this.manifest.states[value.taskId], spec = this.attempts.get(value.attemptId);
-      if (!state || state.status !== "running" || state.attemptId !== value.attemptId || !spec || spec.deadline < Date.now())
+      if (!state || state.status !== "running" || state.attemptId !== value.attemptId || !spec || this.deadline(spec) < Date.now())
         throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
       this.validateBank(spec, value.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
       if (canonical(state.failure?.evidenceBank) !== canonical(value.evidenceBank)) {
@@ -317,7 +319,7 @@ export class RunStore {
       const state = this.manifest.states[value.taskId], spec = this.attempts.get(value.attemptId);
       safeId(value.inspectionId);
       if (!task || !state || state.status !== "running" || state.attemptId !== value.attemptId || !spec ||
-        spec.inputRevision !== (state.revision || 1) || spec.deadline < Date.now())
+        spec.inputRevision !== (state.revision || 1) || this.deadline(spec) < Date.now())
         throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
       if (!Number.isSafeInteger(value.contentSubmissions) || value.contentSubmissions <= (spec.recovery?.contentSubmissions ?? 0) ||
         value.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts)
@@ -396,7 +398,7 @@ export class RunStore {
       state.attemptId !== value.attemptId ||
       !spec ||
       spec.inputRevision !== (state.revision || 1) ||
-      spec.deadline < Date.now()
+      this.deadline(spec) < Date.now()
     )
       throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
     this.validateAudit(spec, value.audit);

@@ -1,0 +1,58 @@
+{
+  "inputs": {
+    "versions": [
+      {
+        "id": "a_fast",
+        "name": "A Fast",
+        "comparison_tier": "Fast",
+        "display_name": "A组Fast",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/a_fast"
+          }
+        ]
+      },
+      {
+        "id": "b_fast",
+        "name": "B Fast",
+        "comparison_tier": "Fast",
+        "display_name": "B组Fast",
+        "adapter": "b",
+        "sources": [
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/b_fast"
+          }
+        ]
+      },
+      {
+        "id": "b_post_train_fast",
+        "name": "B post_train_fast",
+        "display_name": "B post_train_fast",
+        "comparison_tier": "Fast",
+        "adapter": "b",
+        "sources": [
+          {
+            "kind": "directory",
+            "path": "../data/sources/model-answers/b_post_train_fast"
+          }
+        ]
+      }
+    ]
+  },
+  "execution": {
+    "concurrency": 40,
+    "idleTimeoutSeconds": 300,
+    "stageRepairAttempts": {
+      "attribution": 5
+    }
+  },
+  "comparisons": [
+    [
+      "b_fast",
+      "b_post_train_fast"
+    ]
+  ]
+}

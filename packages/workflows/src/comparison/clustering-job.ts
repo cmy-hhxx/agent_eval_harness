@@ -89,7 +89,7 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig): Prom
 }
 
 /** Freeze the latest accepted answer per model/date/case across the explicit source selection. */
-export async function prepareClusteringJob(runs: string[], base: EvalConfig, options: { inputIds?: string[]; assignmentOnly?: boolean } = {}): Promise<{ config: ClusteringJobConfig; plan: TaskPlan }> {
+export async function prepareClusteringJob(runs: string[], base: EvalConfig, options: { inputIds?: string[]; assignmentOnly?: boolean; acceptedOnly?: boolean } = {}): Promise<{ config: ClusteringJobConfig; plan: TaskPlan }> {
   const requested = options.inputIds && new Set(options.inputIds);
   if (requested && (!requested.size || options.inputIds!.some(id => !id.trim()))) throw new Error("聚类输入选择不能为空");
   if (requested && requested.size !== options.inputIds!.length) throw new Error("聚类输入选择包含重复 input_id");
@@ -103,11 +103,11 @@ export async function prepareClusteringJob(runs: string[], base: EvalConfig, opt
     const pending = tasks.filter(task => task.stage === "attribution" &&
       selected.has(task.id) &&
       ["pending", "running"].includes(state.manifest.states[task.id].status));
-    if (pending.length) throw new Error("来源 run 的归因尚未全部结束：" + run);
+    if (pending.length && !options.acceptedOnly) throw new Error("来源 run 的归因尚未全部结束：" + run);
     const proposals = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
       .map(task => (task.data as TaskData).reviewOf!.taskId));
     for (const task of tasks) {
-      if (task.stage !== "attribution" || (!requested && proposals.has(task.id))) continue;
+      if (task.stage !== "attribution" || (!requested && !options.acceptedOnly && proposals.has(task.id))) continue;
       if (!selected.has(task.id)) { outsideScope++; continue; }
       const receipt = state.receipts[task.id], candidate = (task.data as TaskData).candidates.A;
       if (!receipt || state.manifest.states[task.id].status !== "succeeded") { excluded++; continue; }

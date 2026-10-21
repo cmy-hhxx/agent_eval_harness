@@ -1,8 +1,14 @@
-import { safeId, RemoteInputNotReadyError, type InputDownload, type RemoteDay } from "@eval/contracts";
+import { errorText, HttpError, safeId, RemoteInputNotReadyError, RetryableInputDownloadError, type InputDownload, type RemoteDay } from "@eval/contracts";
+import { setTimeout as delay } from "node:timers/promises";
 
 export function validInputDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+
+function retryableRequest(error: unknown): boolean {
+  if (error instanceof HttpError) return error.status === 408 || error.status === 429 || error.status >= 500;
+  return error instanceof TypeError || error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name);
 }
 
 /** The source exposes neither HEAD nor a revision/ETag. Never infer one from row counts. */
@@ -37,15 +43,26 @@ export class RemoteInputs {
       finally { await reader?.cancel().catch(() => {}); }
       const message = `Remote ${route}: HTTP ${response.status}${detail ? ": " + detail : ""}`;
       if (response.status === 404 && detail === "data not ready") throw new RemoteInputNotReadyError(message);
-      throw new Error(message);
+      throw new HttpError(response.status, message);
     }
     return response;
   }
 
   async discover(signal: AbortSignal): Promise<RemoteDay[]> {
-    const value = await (await this.request("/dashboard-data", signal, undefined, Math.min(this.timeoutMs, 10_000))).json() as {
+    let value: {
       dates?: { date: string; ready: boolean; models: Record<string, { ready: boolean; row_count: number }> }[];
     };
+    for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
+      try {
+        value = await (await this.request("/dashboard-data", signal, undefined, Math.min(this.timeoutMs, 10_000))).json() as typeof value;
+        break;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!retryableRequest(error) || attempt === 3) throw error;
+        await delay(1000 * 2 ** (attempt - 1), undefined, { signal });
+      }
+    }
     if (!Array.isArray(value.dates)) throw new Error("Invalid remote catalog: dates required");
     const seen = new Set<string>(), result: RemoteDay[] = [];
     for (const day of value.dates) {
@@ -67,6 +84,13 @@ export class RemoteInputs {
       throw new Error("Invalid remote input location or row count");
     const controller = new AbortController();
     const route = `/data/${day.date}/${model}.jsonl`, timeoutMs = this.timeoutMs;
+    let received = 0, size: number | undefined;
+    const interrupted = (error: unknown) => {
+      signal.throwIfAborted();
+      const cause = error instanceof Error ? error.cause as { code?: unknown } | undefined : undefined;
+      const detail = errorText(controller.signal.aborted ? controller.signal.reason : error);
+      return new RetryableInputDownloadError(`Remote ${route}: ${detail}${typeof cause?.code === "string" ? ` (${cause.code})` : ""}; received ${received}/${size ?? "unknown"} bytes`, { cause: error });
+    };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const touch = () => {
       clearTimeout(timer);
@@ -75,8 +99,14 @@ export class RemoteInputs {
     touch();
     let response: Response;
     try { response = await this.request(route, AbortSignal.any([signal, controller.signal]), undefined, null); }
-    catch (error) { clearTimeout(timer); throw error; }
-    const length = response.headers.get("content-length"), size = Number(length);
+    catch (error) {
+      clearTimeout(timer);
+      signal.throwIfAborted();
+      if (!controller.signal.aborted && !retryableRequest(error)) throw error;
+      throw interrupted(error);
+    }
+    const length = response.headers.get("content-length");
+    size = Number(length);
     if (!response.body || length === null || !Number.isSafeInteger(size) || size < 0) {
       clearTimeout(timer);
       await response.body?.cancel();
@@ -87,7 +117,10 @@ export class RemoteInputs {
     return {
       name: model + ".jsonl", rows: day.rows[model], size,
       chunks: (async function* () {
-        try { for await (const chunk of body) { touch(); yield chunk; } }
+        try {
+          for await (const chunk of body) { received += chunk.length; touch(); yield chunk; }
+          if (received !== size) throw new Error("Incomplete response body");
+        } catch (error) { throw interrupted(error); }
         finally { clearTimeout(timer); }
       })(),
       close: async () => { clearTimeout(timer); controller.abort(); },

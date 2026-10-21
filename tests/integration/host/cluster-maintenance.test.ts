@@ -386,6 +386,26 @@ test("explicit input selection guards only its pending families and rejects miss
   await assert.rejects(prepareClusteringJob([run], f.config, { inputIds: [inputIds[0], inputIds[0]] }), /重复 input_id/);
 });
 
+test("an accepted-only clustering snapshot retains accepted answers while their review is pending", async t => {
+  const f = await fixture(); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const run = f.runs[0], state = await readRunState(run);
+  const answer = state.manifest.tasks.find(task => task.stage === "attribution")!;
+  const review = { ...answer, id: randomUUID(), data: { ...(answer.data as TaskData),
+    reviewOf: { taskId: answer.id, round: 1, reasons: ["待复核"] } } };
+  state.manifest.tasks.push(review);
+  state.manifest.states[review.id] = { status: "pending", attempts: 0 };
+  state.manifest.status = "running";
+  await writeRunState(run, state);
+  const before = await contents(sourceFiles([run]));
+  const options = { inputIds: [answer.inputIds.answer], acceptedOnly: true };
+  const prepared = await prepareClusteringJob([run], f.config, options);
+  assert.deepEqual(prepared.config.clusteringJob.sources.map(source => [source.task_id, source.submission_id]),
+    [[answer.id, state.receipts[answer.id].submissionId]]);
+  assert.equal(prepared.plan.summary.excluded_attributions, 1);
+  assert.deepEqual(await contents(sourceFiles([run])), before);
+  await assert.rejects(prepareClusteringJob([run], f.config, { inputIds: options.inputIds }), /归因尚未全部结束/);
+});
+
 test("a frozen attribution plan clusters only its 30 selected answers", async () => {
   const f = await fixture(20);
   try {

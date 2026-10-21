@@ -23,11 +23,13 @@ export interface PublicationState {
 }
 
 export interface MongoReceipt {
+  target?: string;
   startedAt: number;
   completedAt: number;
   counts: PublicationCounts;
 }
 export interface MongoPublicationState {
+  target?: string;
   status: "pending" | "running" | "completed" | "retry";
   nextAt: number;
   attempts: number;

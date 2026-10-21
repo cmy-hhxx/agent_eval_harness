@@ -73,6 +73,55 @@ def trace_row(model="b_fast"):
     return row
 
 
+class PostTrainingArchiveTest(unittest.TestCase):
+    def test_v1_members_map_to_post_training_without_accepting_other_variants(self):
+        for member in (
+            "629d3a74073c434f_AA-post_train_fast_V1.incr00001.jsonl",
+            "629d3a74073c434f_AA-post_train_fast_V1.incr00002.jsonl",
+            "sub/run_B-post_train_fast_V1.jsonl",
+            "AA-post_train_fast_v1.INCR00003.JSONL",
+        ):
+            with self.subTest(member=member):
+                self.assertEqual(app.model_for_member(member), "b_post_train_fast")
+        for member in ("AA-post_train_fast_V2.jsonl", "AA-post_train_fast_V10.jsonl",
+                       "AA-post_train_fast_V1_extra.jsonl", "A-post_train_fast_V1.jsonl"):
+            with self.subTest(member=member):
+                self.assertIsNone(app.model_for_member(member))
+
+    def test_v1_incremental_archives_publish_all_three_models(self):
+        with tempfile.TemporaryDirectory(prefix="post-training-test-") as folder:
+            root = Path(folder)
+            post = app.Dataset(root / "archives", root / "state", app.POST_TRAINING_MODELS,
+                               "/post_training_model")
+            post.archive_dir.mkdir()
+            post.state_dir.mkdir()
+            names = ("629d3a74073c434f_20261020_141107.7z", "629d3a74073c434f_20261020_163255.7z")
+            for increment, name in enumerate(names, 1):
+                members = {}
+                for model, label in zip(post.models, ("A-fast", "AA-fast", "AA-post_train_fast_V1")):
+                    member = f"629d3a74073c434f_{label}.incr{increment:05}.jsonl"
+                    rows = [archive_row(model, case, request_time="2026-10-20 14:00:00",
+                                        answer=f"answer-{increment}", meta_fields={"testset_name": "post-20261019"})
+                            for case in ("shared", f"increment-{increment}")]
+                    members[member] = "".join(json.dumps(row) + "\n" for row in rows)
+                (post.archive_dir / name).write_text(json.dumps(members), encoding="utf-8")
+            signature = app.archive_signature(post.archive_dir)
+            with patch.object(app, "SevenZipFile", FakeArchive):
+                post.process_archives(signature)
+            state = post.load_archive_state()
+            self.assertEqual(state["failed_archives"], [])
+            self.assertEqual(state["dates"], ["2026-10-19"])
+            self.assertEqual(post.pending_archives(signature), [])
+            for model in post.models:
+                rows = [json.loads(line) for line in
+                        (post.output_dir / model / "2026-10-19.jsonl").read_text().splitlines()]
+                self.assertEqual({row["case_id"] for row in rows}, {"shared", "increment-1", "increment-2"})
+                shared = next(row for row in rows if row["case_id"] == "shared")
+                self.assertEqual(shared["messages"][-1]["content"], "answer-2")
+                self.assertEqual(shared["version"], app.VERSION_NAMES[model])
+                self.assertTrue(shared["_source"]["original_file"].startswith(names[1] + "/"))
+
+
 class TraceFormatTest(unittest.TestCase):
     def test_sample_projection_exposes_stored_format_and_real_trace_ids(self):
         flat = archive_row("a_fast", "case")
@@ -207,6 +256,67 @@ class DashboardTest(unittest.TestCase):
         with urlopen(self.base + path, timeout=3) as response:
             return json.loads(response.read())
 
+    def test_post_training_archive_routes_progress_and_recovery_are_isolated(self):
+        datasets = app.make_datasets(self.data.root, self.data.state_dir)
+        post = datasets["/post_training_model"]
+        self.server.datasets[post.prefix] = post
+        post.archive_dir.mkdir()
+        post.state_dir.mkdir()
+        self.assertEqual(self.get_json(post.prefix + "/dashboard-data")["dates"], [])
+        root_before = (self.data.output_dir / "a_fast" / f"{self.day}.jsonl").read_bytes()
+        members = {}
+        for model, member in zip(post.models, ("run_A-fast.jsonl", "run_AA-fast.incr00001.jsonl", "sub/run_AA-post_train_fast.jsonl")):
+            self.assertEqual(app.model_for_member(member), model)
+            self.assertEqual(app.model_for_member(f"run_{model}.incr00002.jsonl"), model)
+            row = archive_row(model, "shared", request_time="2026-10-21 01:00:00",
+                              meta_fields={"testset_name": "post-20261020"})
+            if model == "b_post_train_fast":
+                row["version"] = "AA post_train_fast"
+            members[member] = json.dumps(row) + "\n"
+        archive = post.archive_dir / "post_20261020_010000.7z"
+        archive.write_text(json.dumps(members))
+        signature = app.archive_signature(post.archive_dir)
+        with patch.object(app, "SevenZipFile", FakeArchive):
+            post.process_archives(signature)
+        day = "2026-10-20"
+        models = self.get_json(post.prefix + "/dashboard-data")["dates"][0]["models"]
+        self.assertEqual(set(models), set(post.models))
+        self.assertTrue(all(item == {"ready": True, "row_count": 1} for item in models.values()))
+        for model in post.models:
+            with urlopen(f"{self.base}{post.prefix}/data/{day}/{model}.jsonl") as response:
+                row = json.loads(response.read())
+                self.assertEqual(row["version"], app.VERSION_NAMES[model])
+                self.assertEqual(row["batch_id"], day)
+            self.assertEqual(self.get_json(f"{post.prefix}/records/{day}/{model}")["total"], 1)
+        recovered = app.make_datasets(self.data.root, self.data.state_dir)[post.prefix]
+        with patch.object(app, "SevenZipFile", side_effect=AssertionError("accepted archives must not replay")):
+            recovered.process_archives(signature)
+        recovered.archive_processed(signature)
+        self.assertFalse(archive.exists())
+        self.assertEqual(len(list(post.archived_dir.rglob("*.7z"))), 1)
+        self.assertEqual((self.data.output_dir / "a_fast" / f"{self.day}.jsonl").read_bytes(), root_before)
+        self.assertEqual(self.get_json("/gpt/dashboard-data")["dates"], [])
+        tasks = {pair: {"stage": "comparison", "status": "succeeded", "data": {"group": list(post.models)},
+                        "inputIds": {"A": left, "B": right}} for pair, (left, right) in post.pairs.items()}
+        state = {"status": "finished", "engine": {"engine": "pi"}, "runId": "post", "startedAt": 1,
+                 "tasks": tasks, "inputs": {model: {"version": model, "batch_id": day, "case_id": "shared"} for model in post.models},
+                 "preflight": {"skipped": []}}
+        progress = bridge.progress_from_states([state], updated_at=2, dataset="post_training_model")
+        self.assertEqual(set(progress["dates"][0]["pairs"]), set(post.pairs))
+        self.assertTrue(all(item["completed_cases"] == 1 for item in progress["dates"][0]["pairs"].values()))
+        request = Request(self.base + post.prefix + "/evaluation-progress", data=json.dumps(progress).encode(),
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+        self.assertIsNone(self.get_json("/dashboard-data")["evaluation"])
+        self.assertIsNone(self.get_json("/gpt/dashboard-data")["evaluation"])
+        self.assertEqual(self.get_json(post.prefix + "/dashboard-data")["evaluation"]["dates"], progress["dates"])
+        progress["dates"][0]["pairs"] = {"fast": dict.fromkeys(bridge.PAIR_FIELDS, 0)}
+        request.data = json.dumps(progress).encode()
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request)
+        self.assertEqual(error.exception.code, 400)
+
     def test_six_model_files_are_discoverable_and_downloadable(self):
         for model in self.gpt.models:
             self.assertEqual(app.model_for_member(f"run_{model}.incr00002.jsonl"), model)
@@ -306,11 +416,34 @@ class DashboardTest(unittest.TestCase):
         self.assertIsNone(self.get_json("/dashboard-data")["evaluation"])
         with self.assertRaises(HTTPError) as error:
             post("", payload)
-        self.assertEqual(error.exception.code, 413)
+        self.assertEqual(error.exception.code, 400)
         payload["dates"] = [{"date": self.day, "pairs": {"fast": counts}}]
         with self.assertRaises(HTTPError) as error:
             post("/gpt", payload)
         self.assertEqual(error.exception.code, 400)
+
+    def test_root_progress_accepts_all_dates_with_a_bounded_request(self):
+        counts = dict.fromkeys(bridge.PAIR_FIELDS, 0)
+        counts.update({"total_cases": 3, "completed_cases": 3})
+        payload = {"run_id": "daily-all-dates", "engine": "pi", "status": "running",
+                   "started_at": 100, "updated_at": 200, "dates": [
+                       {"date": f"2026-10-{day:02d}", "pairs": {pair: counts for pair in self.data.pairs}}
+                       for day in range(1, 32)
+                   ]}
+        body = json.dumps(payload).encode()
+        self.assertGreater(len(body), 8192)
+        request = Request(self.base + "/evaluation-progress", data=body,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.get_json("/dashboard-data")["evaluation"]["dates"], payload["dates"])
+        self.assertIsNone(self.get_json("/gpt/dashboard-data")["evaluation"])
+        request = Request(self.base + "/evaluation-progress", data=b"{}",
+                          headers={"Content-Type": "application/json", "Content-Length": str(1024 * 1024 + 1)}, method="POST")
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request, timeout=3)
+        self.assertEqual(error.exception.code, 413)
+        self.assertEqual(self.get_json("/dashboard-data")["evaluation"]["dates"], payload["dates"])
 
     @unittest.skipUnless(HAS_PY7ZR, "real 7z integration requires requirements.txt")
     def test_real_gpt_7z_extracts_six_models_and_single_trace_messages(self):
@@ -381,7 +514,7 @@ class DashboardTest(unittest.TestCase):
                  for pair in ["__vs__".join(sorted((left, right)))]}
         state = {"status": "finished", "engine": {"engine": "pi"}, "runId": "six", "startedAt": 1,
                  "tasks": tasks, "inputs": inputs, "preflight": {"skipped": []}}
-        progress = bridge.progress_from_states([state], updated_at=2, gpt=True)
+        progress = bridge.progress_from_states([state], updated_at=2, dataset="gpt")
         pairs = progress["dates"][0]["pairs"]
         self.assertEqual(set(pairs), set(self.gpt.pairs))
         self.assertTrue(all(counts["completed_cases"] == 1 for counts in pairs.values()))

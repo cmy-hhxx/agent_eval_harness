@@ -32,7 +32,7 @@ button { font: inherit; }
 .service-state[data-state="offline"] { color: #8a3030; }
 .docs-link, .back-link { color: #405b83; font-size: 12px; text-decoration: none; }
 .docs-link:hover, .back-link:hover { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
-.dataset-nav { grid-column: 1; grid-row: 1; justify-self: start; display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 6px; gap: 3px; }
+.dataset-nav { grid-column: 1; grid-row: 1; justify-self: start; display: flex; flex-wrap: wrap; max-width: 100%; padding: 3px; border: 1px solid var(--line); border-radius: 6px; gap: 3px; }
 .dataset-nav a { padding: 6px 9px; color: var(--muted); font-size: 12px; text-decoration: none; white-space: nowrap; }
 .dataset-nav a[aria-current="page"] { color: #174f9d; background: #fff; border-radius: 4px; font-weight: 650; box-shadow: 0 1px 3px #18294014; }
 .processing-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-top: 10px; padding: 0 2px; }
@@ -198,7 +198,7 @@ tbody tr:hover th.date-value { background: #f3f7fc; }
 .doc-content pre code { padding: 0; border: 0; background: transparent; color: inherit; }
 .doc-error { color: #8a3030 !important; }
 
-@media (max-width: 1000px) {
+@media (max-width: 1200px) {
   .dashboard-top { grid-template-columns: 1fr auto 1fr; row-gap: 12px; }
   .dataset-nav { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
 }

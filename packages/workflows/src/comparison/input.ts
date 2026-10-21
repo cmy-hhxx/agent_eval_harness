@@ -7,6 +7,7 @@ import { emptyLibrary, projectLibrary } from "@eval/agents/clustering";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./input-record.js";
 import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js";
+import { predictionKey, predictionMaterial, readPredictionAnswers } from "./prediction.js";
 import type {
   BatchPreflight,
   Candidate,
@@ -365,6 +366,8 @@ export async function buildPlan(
   const accepted = options.acceptedTaskIds ?? new Set<string>();
   assertComparableGroups(config);
   const comparisonPairs = expandComparisonPairs(config.comparisons);
+  const predictionAnswers = config.prediction ? await readPredictionAnswers(config.prediction.answersFile) : undefined;
+  const predictionSelections = config.prediction?.selections ?? [];
   // Accepted formal pairs are immutable. Unfinished standalone tasks are replanned with their current UUIDs.
   const retainedPairs = new Set((previous?.tasks ?? []).filter(task => task.stage === "comparison" &&
     !(task.data as TaskData).verificationAudit &&
@@ -444,6 +447,8 @@ export async function buildPlan(
               (caseId && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(caseId))
             )
               continue;
+            if (config.prediction && !predictionSelections.some(selection =>
+              selection.batchId === batchId && selection.caseId === caseId && selection.versions.includes(version.id))) continue;
             if (batchId && caseId) {
               key = canonical([batchId, caseId, version.id]);
               cases.set(canonical([batchId, caseId]), [batchId, caseId]);
@@ -465,6 +470,13 @@ export async function buildPlan(
             }
             if (row.error) throw row.error;
             const record = row.record!;
+            if (config.prediction) {
+              const selection = predictionSelections.find(item => item.batchId === record.batch_id && item.caseId === record.case_id)!;
+              const answer = predictionAnswers!.get(predictionKey(selection.batchId, selection.questionId));
+              if (!answer || answer.text !== record.question)
+                throw new Error("Prediction question does not match original input: " + selection.questionId);
+              record.reference = predictionMaterial(config.prediction, selection, answer).reference;
+            }
             const old = oldRecords.get(candidateKey(record));
             let unchanged = old?.source === record.source && old?.line === record.line;
             if (old && Object.hasOwn(previous!.inputs, old.input_id)) {
@@ -635,6 +647,11 @@ export async function buildPlan(
       return { question: normalize(record.question), reference: refs.size === 1 ? refs.values().next().value : record.reference };
     };
     for (const group of comparisonPairs) {
+      const predictionSelection = predictionSelections.find(item => item.batchId === batch && item.caseId === id &&
+        item.versions.length === group.length && item.versions.every(version => group.includes(version)));
+      if (config.prediction && !predictionSelection) continue;
+      const prediction = config.prediction && predictionSelection ? predictionMaterial(config.prediction, predictionSelection,
+        predictionAnswers!.get(predictionKey(batch, predictionSelection.questionId))!).metadata : undefined;
       if (!group.every((v) => config.inputs.versions.some((item) => item.id === v))) continue;
       if (retainedPairs.has(canonical([batch, id, [...group].sort()]))) continue;
       const values = group.map((v) => records.get(canonical([batch, id, v])));
@@ -724,6 +741,7 @@ export async function buildPlan(
           candidates: { A: record },
           standardAnswerReview: config.standardAnswerReview === true,
           reference,
+          ...(prediction ? { prediction } : {}),
           criteriaScope,
           initialContextChars: config.execution.initialContextChars,
           ...(reviewQuestions ? { reviewQuestions: [...reviewQuestions] } : {}),
@@ -762,6 +780,7 @@ export async function buildPlan(
         stage: "comparison",
         candidates,
         reference,
+        ...(prediction ? { prediction } : {}),
         criteriaScope,
         group,
         initialContextChars: config.execution.initialContextChars,

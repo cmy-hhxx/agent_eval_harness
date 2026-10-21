@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { emptyUsage, type ResultReference, type RunState } from "@eval/contracts";
@@ -24,6 +24,9 @@ test("repository checkpoint saves refresh the overview through running, finished
   const repository = createRunRepository(codec, () => { throw new Error("No results"); });
   for (const status of ["running", "finished", "running", "interrupted"] as const) {
     await repository.writeRun(run, { ...state, manifest: { ...state.manifest, status } });
+    assert.deepEqual(await repository.readRun(run), { ...state, manifest: { ...state.manifest, status } });
+    assert.equal((await readFile(path.join(run, "state.json"), "utf8")).trim().split("\n").length, 1,
+      "frequent checkpoint writes must not duplicate their size with indentation");
     assert.deepEqual(await readRunOverviews(directory), [{ runId: "run", value: { status } }]);
   }
 });

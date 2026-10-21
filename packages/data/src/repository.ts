@@ -9,7 +9,8 @@ import {
   type RunRepository,
   type RunState,
 } from "@eval/contracts";
-import { appendJsonl, exists, readJson, readJsonlText, writeJson, writeJsonl } from "./files.js";
+import { atomicWrite, exists, readJson, readJsonlText, writeJsonl } from "./files.js";
+import { createResultFileWriter } from "./result-file.js";
 import { locateRun } from "./run-layout.js";
 import { writeRunOverview } from "./run-overview.js";
 
@@ -68,7 +69,7 @@ export function createRunRepository<Checkpoint>(
   return {
     async writeRun(run, state) {
       const checkpoint = codec.encode(state), overview = codec.overview?.(checkpoint);
-      await writeJson(locateRun(run).stateFile, checkpoint);
+      await atomicWrite(locateRun(run).stateFile, JSON.stringify(checkpoint) + "\n");
       if (codec.overview) await writeRunOverview(run, overview);
     },
     readRun: (run) => readState(run),
@@ -76,6 +77,7 @@ export function createRunRepository<Checkpoint>(
     createResultWriter(run, inputs) {
       const written = new Map<string, ResultReference & { row: JsonObject; auxiliary?: boolean }>();
       const directory = locateRun(run).results;
+      const files = new Map<string, ReturnType<typeof createResultFileWriter>>();
       let initialized = false;
       return async (state) => {
         const { manifest, receipts } = state;
@@ -104,12 +106,14 @@ export function createRunRepository<Checkpoint>(
               if (file.endsWith(".jsonl") && !groups[file]) await writeJsonl(path.join(directory, file), []);
           }
           for (const [file, rows] of Object.entries(groups)) {
+            let writer = files.get(file);
+            if (!writer) files.set(file, writer = createResultFileWriter(path.join(directory, file)));
             if (!initialized || updates.has(file)) {
               const all = new Map<string, JsonObject>();
               for (const result of exports.values())
                 if (result.file === file) all.set(result.id, result.row);
-              await writeJsonl(path.join(directory, file), [...all.values()]);
-            } else await appendJsonl(path.join(directory, file), [...rows.values()]);
+              await writer.replace(all.values());
+            } else await writer.append(rows.values());
           }
           for (const [id, exported] of exports) {
             receipts[id].exported = exported;
@@ -118,6 +122,7 @@ export function createRunRepository<Checkpoint>(
           initialized = true;
         } catch (error) {
           written.clear();
+          files.clear();
           initialized = false;
           throw error;
         }

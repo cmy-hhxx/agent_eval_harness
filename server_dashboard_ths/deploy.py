@@ -66,11 +66,11 @@ for _ in range(30):
         raise SystemExit("dashboard exited; inspect service.log")
     try:
         checks = []
-        for prefix in ("", "/gpt", "/aime", "/ifind"):
+        for prefix in ("", "/gpt", "/post_training_model", "/aime", "/ifind"):
             with urlopen(f"http://127.0.0.1:8081{prefix}/health", timeout=2) as response:
                 checks.append(json.load(response).get("ok") is True)
         if all(checks):
-            print("Dashboard restarted; all four source health checks passed.")
+            print("Dashboard restarted; all five source health checks passed.")
             break
     except OSError:
         pass

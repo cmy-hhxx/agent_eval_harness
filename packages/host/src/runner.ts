@@ -29,10 +29,12 @@ import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
-import { scheduleTasks } from "./scheduling.js";
+import { createScopeMembership, scheduleTasks } from "./scheduling.js";
 import { FailureGuard } from "./failure-guard.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
+import { createModelRequests, type ModelRequestControl } from "./model-requests.js";
+export type { ModelRequestControl, ModelRequestContext } from "./model-requests.js";
 
 export interface RunOptions extends EvaluationServices {
   runtime: { root: string; workerEntry: string };
@@ -53,6 +55,7 @@ export interface RunOptions extends EvaluationServices {
   concurrency: number;
   /** Limit active task attempts per model channel within the total concurrency. */
   channelConcurrency?: Record<string, number>;
+  modelRequests?: ModelRequestControl;
   /** Cumulative stage attempts, including failures and retries, persisted on the run. */
   maxAttempts?: number;
   /** Absolute time in milliseconds after which no new attempts are admitted. */
@@ -181,13 +184,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       manifest.executionScope = [...new Set(options.taskIds)];
     }
     const selected = manifest.executionScope && new Set(manifest.executionScope);
+    const taskIds = new Set(manifest.tasks.map(task => task.id));
     for (const id of selected ?? [])
-      if (!manifest.tasks.some((task) => task.id === id)) throw new Error("Unknown task in execution scope: " + id);
+      if (!taskIds.has(id)) throw new Error("Unknown task in execution scope: " + id);
     for (const stage of options.resumeStages ?? [])
       if (!manifest.pausedStages?.some((pause) => pause.stage === stage)) throw new Error("Stage is not paused: " + stage);
     manifest.pausedStages = (manifest.pausedStages ?? []).filter((pause) => !options.resumeStages?.includes(pause.stage));
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
-    const inScope = (task: PlannedTask) => !manifest.executionScope || manifest.executionScope.includes(task.id);
+    const includesTask = createScopeMembership(manifest);
+    const inScope = (task: PlannedTask) => includesTask(task.id);
     const observesFailures = (task: PlannedTask) => options.taskSource.observesFailures?.(task) !== false;
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
@@ -200,7 +205,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       for (const [name, value] of Object.entries(options.snapshots || {}))
         await writeJson(internalPath(run, safeId(name)), value);
     }
-    store = new RunStore(run, saved, inputs, options);
+    const modelRequests = createModelRequests(options.modelRequests);
+    store = new RunStore(run, saved, inputs, options, modelRequests.deadline);
     manifest.status = "running";
     delete manifest.finishedAt;
     await localFiles.remove(layout.stats, { force: true });
@@ -230,6 +236,23 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
+      if (parts[0] === "api" && parts[1] === "model-requests" && parts.length === 4) {
+        const attemptId = safeId(parts[2]), callId = safeId(parts[3]);
+        if (req.method === "DELETE") {
+          modelRequests.release(attemptId, callId);
+          return json(res, { released: true });
+        }
+        if (req.method === "POST") {
+          const disconnected = new AbortController();
+          const close = () => { if (!res.writableEnded) disconnected.abort(new Error("Model permit connection closed")); };
+          res.once("close", close);
+          try {
+            await modelRequests.acquire(attemptId, callId, AbortSignal.any([controller.signal, disconnected.signal]));
+            return json(res, { admitted: true });
+          } finally { res.off("close", close); }
+        }
+        throw new HttpError(405, "Method not allowed");
+      }
       if (url.pathname === "/api/control/concurrency" && req.method === "POST") {
         if (req.headers["x-run-token"] !== lock.token) throw new HttpError(403, "Invalid run control token");
         const value = ((await body(req)) as { concurrency?: unknown }).concurrency;
@@ -276,11 +299,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       10000,
     );
     let workerUrls = options.workerUrls || [];
-    const runnable = (task: PlannedTask) => !executionStopReason(manifest) && dispatchable(task) && manifest.states[task.id].status === "pending" &&
+    const running = new Map<string, Promise<void>>();
+    const taskConcurrency = () => options.modelRequests?.concurrency() ?? desiredConcurrency;
+    const runnable = (task: PlannedTask) => (running.size === 0 || running.size < taskConcurrency()) &&
+      manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
       Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
     const pending = manifest.tasks.filter(runnable);
-    if (!workerUrls.length && pending.length) {
+    if (!workerUrls.length && pending.length && taskConcurrency() > 0) {
       // Start incrementally so every successful child remains owned if a later launch fails.
       const engines = [...new Set(pending.map(engineForTask))];
       for (const engine of engines)
@@ -288,7 +314,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           let i = 0;
           i <
           Math.min(
-            Math.max(1, Math.floor(options.concurrency / engines.length)),
+            Math.max(1, Math.floor(taskConcurrency() / engines.length)),
             pending.filter((t) => engineForTask(t) === engine).length,
           );
           i++
@@ -311,7 +337,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       (w) =>
         canonical(w.health.identity) === canonical(identities[w.health.identity.engine]),
     );
-    if (pending.length && !eligible.length) throw new Error("No worker matches the selected build");
+    if (pending.length && !eligible.length && taskConcurrency() > 0) throw new Error("No worker matches the selected build");
     const unavailable = new Map<(typeof workers)[number], { since: number; checkAt: number }>();
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
@@ -415,6 +441,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         })),
         hostUrl,
         deadline: Date.now() + options.policy.timeoutSeconds * 1000,
+        ...(options.modelRequests ? { controlModelRequests: true } : {}),
       };
       const bound = new Map<string, unknown>();
       for (const ref of spec.inputs) {
@@ -423,6 +450,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         bound.set(ref.id, source.value);
       }
       attemptSources.set(spec.attemptId, bound);
+      modelRequests.register(spec, task);
       try {
       let lastSeq = -1;
       if (!await current.activate(spec)) return;
@@ -481,7 +509,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         // keeps the documented one-request-per-second cadence.
         let pollMs = 25;
         while (true) {
-          if (controller.signal.aborted || Date.now() > spec.deadline) {
+          if (controller.signal.aborted || Date.now() > modelRequests.deadline(spec)) {
             const receipt = await current.receipt(task.id);
             if (!receipt)
               await current.endAttempt(
@@ -530,7 +558,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           retryable: true,
         };
       }
-      const receipt = await current.receipt(task.id);
+      let receipt = await current.receipt(task.id);
       // A failed connection does not imply the old session has stopped. Settle it before reuse.
       if (!status || status.state === "running" || status.retryable) {
         if (!receipt)
@@ -597,6 +625,22 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       const eventsFile = path.join(attemptDir, "events.jsonl");
       if (manifest.debug && eventsSaved && (await exists(eventsFile))) await compressFile(eventsFile);
+      // A submission can commit while terminal records/events are being collected.
+      // Serialize termination with acceptance, then use the durable receipt for
+      // artifacts, failure accounting and retries rather than the earlier poll.
+      if (!receipt && state.status === "running")
+        await current.endAttempt(
+          spec,
+          controller.signal.aborted
+            ? "cancelled"
+            : status?.state === "timed_out"
+              ? "timed_out"
+              : status?.state === "cancelled"
+                ? "cancelled"
+                : "failed",
+          status?.error || "No committed receipt",
+        );
+      receipt = await current.receipt(task.id);
       const finalFailure = (record.status && record.status.state !== "running"
         ? record.failure ?? record.status.failure : undefined) ??
         (status && status.state !== "running" ? status.failure : undefined);
@@ -647,18 +691,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (receipt) {
         state.status = "succeeded";
         await current.save();
-      } else if (state.status === "running")
-        await current.endAttempt(
-          spec,
-          controller.signal.aborted
-            ? "cancelled"
-            : status?.state === "timed_out"
-            ? "timed_out"
-            : status?.state === "cancelled"
-              ? "cancelled"
-              : "failed",
-          status?.error || "No committed receipt",
-        );
+      }
       if (!receipt) {
         record.error = state.reason;
         if (finalFailure || record.failure || status?.failure) {
@@ -768,10 +801,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       await current.save();
       // Return the worker and concurrency slot while this task backs off.
       } finally {
+        modelRequests.remove(spec.attemptId);
         attemptSources.delete(spec.attemptId);
       }
     }
-    const running = new Map<string, Promise<void>>();
     const runningChannels = new Map<string, string>();
     while (true) {
       if (controller.signal.aborted) break;
@@ -790,9 +823,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         } catch { /* Retry capacity observation without spending a task attempt. */ }
         deferWorker(worker);
       }));
-      if (!options.workerUrls?.length) {
+      if (!options.workerUrls?.length && running.size < taskConcurrency()) {
         const waiting = manifest.tasks.filter(runnable);
-        let slots = Math.max(0, desiredConcurrency - running.size);
+        let slots = Math.max(0, taskConcurrency() - running.size);
         for (const engine of new Set(waiting.map(engineForTask))) {
           const target = Math.min(slots, waiting.filter((task) => engineForTask(task) === engine).length);
           const idle = eligible.filter(
@@ -826,7 +859,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         }
         if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
-        if (running.size >= desiredConcurrency || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
+        if (running.size >= taskConcurrency() || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const acceptedDependencies = await current.dependencies(task);
         const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
         if (reason) {
@@ -887,11 +920,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (running.size || retryDeadlines.length) {
         const dispatchWait = !executionStopReason(manifest) && manifest.executionLimits?.stopStartingAt !== undefined
           ? Math.max(0, manifest.executionLimits.stopStartingAt - Date.now()) : Infinity;
-        const waitMs = Math.min(dispatchWait, unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
+        const waitMs = Math.min(options.modelRequests ? 100 : Infinity, dispatchWait, unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { await Promise.race([...running.values(), changed,
           ...(Number.isFinite(waitMs) ? [new Promise(resolve => { timer = setTimeout(resolve, waitMs); })] : [])]); }
         finally { clearTimeout(timer); }
+      }
+      else if (taskConcurrency() === 0 && manifest.tasks.some(runnable)) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
       else if (unavailable.size && manifest.tasks.some(runnable)) {
         if ([...unavailable.values()].every(({ since }) => Date.now() - since >= options.policy.timeoutSeconds * 1000))

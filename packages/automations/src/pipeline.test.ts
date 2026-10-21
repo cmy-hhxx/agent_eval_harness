@@ -19,7 +19,31 @@ const REMOTE_MODELS = ["a_fast", "b_fast", "a_expert", "b_expert"];
 const day = (date: string, rows = 1): RemoteDay => ({ date, rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, rows])) as RemoteDay["rows"] });
 const fresh = (): AutomationState => ({ id: "test", sourceUrl: "http://test", status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} });
 const summary: EvaluationSummary = { stages: { rewrite: { total: 2, completed: 2, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 } }, skipped: 0, issues: 0, readyComparisons: 1 };
-const options = { fromDate: "2026-09-01", pollMs: 100, refreshMs: 100_000, retryMs: 10, maxEvaluationAttempts: 2 };
+const options = { fromDate: "2026-09-01", pollMs: 100, refreshMs: 100_000, retryMs: 10, maxEvaluationAttempts: 2,
+  mongoTarget: "test-collection" };
+
+test("disabled refresh keeps collected inputs while evaluation continues and still downloads missing rows", async t => {
+  const state = fresh(), date = "2026-10-19";
+  await runPipeline(state, { ...options, once: true }, services({ discover: async () => [day(date)] }), t.signal);
+  const job = state.jobs[date]; job.checkedAt = 0; job.downloadError = "previous redundant refresh failed";
+  job.evaluation = "pending";
+  let downloads = 0, evaluations = 0;
+  const deps = services({ discover: async () => [day(date)],
+    sync: async job => { downloads++; return { changed: true, bytes: 20, rows: job.observed }; },
+    evaluate: async () => { evaluations++; return { status: "completed", summary }; },
+  });
+  const controller = new AbortController();
+  await runPipeline(state, { ...options, refreshMs: Infinity }, { ...deps,
+    event: async name => { if (name === "evaluation_completed") controller.abort(); },
+  }, AbortSignal.any([t.signal, controller.signal]));
+  assert.equal(downloads, 0); assert.equal(evaluations, 1);
+  delete job.downloadError;
+  await runPipeline(state, { ...options, refreshMs: Infinity, once: true }, {
+    ...deps, discover: async () => [day(date, 2)],
+  }, t.signal);
+  assert.equal(downloads, 1);
+  assert.equal(job.downloaded?.b_fast, 2);
+});
 
 test("date boundaries preserve saved history across recovery, polling and every delivery lane", async (t) => {
   const state = fresh(), historical = "2026-10-07", current = "2026-10-08", future = "2026-10-09";
@@ -41,7 +65,7 @@ test("date boundaries preserve saved history across recovery, polling and every 
   await runPipeline(state, { ...options, fromDate: current, throughDate: current, once: true }, services({
     discover: async () => [day("2026-10-06"), day(historical, 2), day(current, 2), day(future, 2)],
     recover: async job => { recovered.push(job.date); return "interrupted"; },
-    sync: async job => { downloaded.push(job.date); return { changed: true, bytes: 10 }; },
+    sync: async job => { downloaded.push(job.date); return { changed: true, bytes: 10, rows: job.observed }; },
     evaluate: async job => { evaluated.push(job.date); return { status: "completed", summary }; },
     syncMongo: async job => { uploaded.push(job.date); return { inputs: 8, comparisons: 1, inserted: 1, updated: 0 }; },
     publish: async snapshot => {
@@ -62,7 +86,7 @@ test("settled historical dates refresh daily while recent dates and changed coun
   const dates = ["2026-10-06", "2026-10-07", "2026-10-08"];
   const state = fresh(), downloads: string[] = [];
   const deps = services({ discover: async () => dates.map(date => day(date)),
-    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 10 }; } });
+    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 10, rows: job.observed }; } });
   await runPipeline(state, { ...options, once: true }, deps, t.signal);
   for (const job of Object.values(state.jobs)) job.checkedAt = now - 60 * 60_000;
   state.jobs[dates[0]].evaluation = "waiting_inputs";
@@ -86,7 +110,7 @@ test("a due statistics publication runs before the next queued download", async 
   const state = fresh(), order: string[] = [];
   const deps = services({ discover: async () => [day("2026-10-01"), day("2026-10-02")],
     publish: async () => { order.push("publish"); },
-    sync: async (job) => { order.push(job.date); return { changed: false, bytes: 10 }; },
+    sync: async (job) => { order.push(job.date); return { changed: false, bytes: 10, rows: job.observed }; },
   });
   await runPipeline(state, { ...options, once: true }, deps, t.signal);
   state.publication!.nextAt = 0;
@@ -110,6 +134,80 @@ test("a progressing retry resets the consecutive failure budget", async () => {
   }), controller.signal);
   assert.equal(job.evaluationAttempts, 1);
   assert(job.nextEvaluationAt - Date.now() < 1000, "newly accepted work must not trigger the outage cooldown");
+});
+
+test("statistics publish during a refresh without waiting for the running evaluation", async () => {
+  const state = fresh(), date = "2026-09-29", controller = new AbortController();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.jobs[date].evaluation = "pending";
+  state.publication = { status: "pending", attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS };
+  let release!: () => void, publishedDuringRefresh = false;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const work = runPipeline(state, options, services({
+    discover: async () => [day(date, 2)],
+    sync: async (_job, remote, _signal, beforeReplace) => {
+      state.publication!.nextAt = 0;
+      await held;
+      await beforeReplace();
+      return { changed: true, bytes: 10, rows: remote.rows };
+    },
+    evaluate: async () => { await held; return { status: "completed", summary }; },
+    publish: async current => {
+      if (current.jobs[date].download === "downloading") publishedDuringRefresh = true;
+    },
+  }), controller.signal);
+  try { await until(() => publishedDuringRefresh); }
+  finally { release(); controller.abort(); await work; }
+  assert(publishedDuringRefresh);
+});
+
+test("restart publishes current statistics without waiting for the next four-hour deadline", async () => {
+  const state = fresh();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.publication = { status: "completed", attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
+    traceId: "previous-snapshot", window: 1, log: { status: "uploaded", requestId: "previous-receipt" } };
+  let publications = 0;
+  await runPipeline(state, { ...options, once: true }, services({ publish: async current => {
+    publications++;
+    assert.notEqual(current.publication!.traceId, "previous-snapshot");
+  } }), AbortSignal.timeout(3000));
+  assert.equal(publications, 1);
+  assert.equal(state.publicationHistory![0].log!.requestId, "previous-receipt");
+});
+
+test("startup completes a saved log before immediately publishing the latest statistics", async () => {
+  const state = fresh();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.publication = { status: "retry", attempts: 1, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
+    traceId: "saved-log", window: 1, log: { status: "pending", writtenAt: 1 } };
+  const calls: string[] = [];
+  await runPipeline(state, { ...options, once: true }, services({ publish: async current => {
+    calls.push(current.publication!.traceId!);
+    current.publication!.log = { status: "uploaded", requestId: "receipt-" + calls.length };
+  } }), AbortSignal.timeout(3000));
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0], "saved-log");
+  assert.notEqual(calls[1], calls[0]);
+  assert.equal(state.publicationHistory![0].log!.requestId, "receipt-1");
+  assert(state.publication.nextAt > Date.now());
+});
+
+test("a saved log retry retains the startup refresh after a transient upload failure", async () => {
+  const state = fresh(), controller = new AbortController();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.publication = { status: "retry", attempts: 1, nextAt: 0,
+    traceId: "saved-log", window: 1, log: { status: "pending", writtenAt: 1 } };
+  const calls: string[] = [];
+  const work = runPipeline(state, options, services({ publish: async current => {
+    calls.push(current.publication!.traceId!);
+    if (calls.length === 1) throw new Error("Connection refused before upload");
+    current.publication!.log = { status: "uploaded", requestId: "receipt-" + calls.length };
+  } }), controller.signal);
+  try {
+    await until(() => calls.length === 3 && state.publication?.status === "completed");
+    assert.deepEqual(calls.slice(0, 2), ["saved-log", "saved-log"]);
+    assert.notEqual(calls[2], "saved-log");
+  } finally { controller.abort(); await work; }
 });
 
 test("a corrected input snapshot retries a paused date, while unchanged input preserves the pause", async () => {
@@ -145,8 +243,22 @@ test("a recoverable Host startup exception stays retryable after the ordinary at
 });
 const services = (overrides: Partial<PipelineServices> = {}): PipelineServices => ({
   discover: async () => [day("2026-09-29")], initialize: async (day) => ({ runIds: ["daily-" + day.date], adopted: false }),
-  sync: async () => ({ changed: true, bytes: 10 }), evaluate: async () => ({ status: "completed", summary }),
+  sync: async (job) => ({ changed: true, bytes: 10, rows: job.observed }), evaluate: async () => ({ status: "completed", summary }),
   save: async () => {}, event: async () => {}, ...overrides,
+});
+
+test("once mode records a newer complete response without repeatedly downloading the old catalog observation", async () => {
+  const state = fresh();
+  let downloads = 0;
+  await runPipeline(state, { ...options, once: true }, services({
+    sync: async (_job, current) => {
+      downloads++;
+      return { changed: true, bytes: 20, rows: day(current.date, 2).rows };
+    },
+  }), AbortSignal.timeout(3000));
+  assert.equal(downloads, 1);
+  assert.deepEqual(state.jobs["2026-09-29"].downloaded, day("2026-09-29", 2).rows);
+  assert.deepEqual(state.jobs["2026-09-29"].observed, day("2026-09-29", 2).rows);
 });
 
 test("publication rollover preserves receipts and resets current timestamps, including across restart", async () => {
@@ -166,10 +278,12 @@ test("publication rollover preserves receipts and resets current timestamps, inc
   } });
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
   assert.deepEqual(state.publicationHistory, [previous]);
+  const firstPublication = structuredClone(state.publication!);
   const restored = JSON.parse(JSON.stringify(state)) as AutomationState;
   await runPipeline(restored, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(publications, 1);
-  assert.deepEqual(restored.publicationHistory, [previous]);
+  assert.equal(publications, 2);
+  assert.deepEqual(restored.publicationHistory, [previous, firstPublication]);
+  assert.notEqual(restored.publication!.traceId, firstPublication.traceId);
   assert.equal(restored.publication!.log!.requestId, "new-receipt");
 });
 async function until(predicate: () => boolean) {
@@ -185,10 +299,11 @@ test("polling and next-date download continue during evaluation; active inputs c
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const work = runPipeline(state, options, services({
     discover: async () => { polls++; return [day(first, rows), day(second)]; },
-    sync: async (job) => {
+    sync: async (job, downloadedDay, _signal, beforeReplace) => {
+      await beforeReplace();
       if (job.date === first) assert(!runningFirst);
       else secondDownloaded = true;
-      return { changed: true, bytes: 10 };
+      return { changed: true, bytes: 10, rows: downloadedDay.rows };
     },
     evaluate: async (job) => {
       if (job.date === first && firstRuns++ === 0) { runningFirst = true; await gate; runningFirst = false; }
@@ -218,17 +333,127 @@ test("explicit historical adoption skips downloads and evaluations across restar
   assert.equal(state.jobs["2026-09-29"].evaluation, "completed");
 });
 
+test("multiple dates evaluate concurrently while a failed date retries and completed dates stay accepted", async () => {
+  const state = fresh(), controller = new AbortController();
+  const first = "2026-09-27", retry = "2026-09-28", other = "2026-09-29";
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const calls: Record<string, number> = {};
+  const work = runPipeline(state, options, services({
+    discover: async () => [day(first), day(retry), day(other)],
+    evaluationConcurrency: () => 3,
+    evaluate: async current => {
+      calls[current.date] = (calls[current.date] ?? 0) + 1;
+      if (current.date === first) await gate;
+      if (current.date === retry && calls[retry] === 1) return { status: "retry", summary, transient: true };
+      return { status: "completed", summary };
+    },
+  }), AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]));
+  try {
+    await until(() => state.jobs[retry]?.evaluation === "completed" && state.jobs[other]?.evaluation === "completed");
+    assert.equal(state.jobs[first].evaluation, "evaluating");
+    assert.deepEqual(calls, { [first]: 1, [retry]: 2, [other]: 1 });
+  } finally { release(); controller.abort(); await work; }
+});
+
 test("recovery resynchronizes interrupted promotion and resumes the same run ID", async () => {
   const state = fresh();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   const job = state.jobs["2026-09-29"];
-  job.download = "downloading"; job.evaluation = "evaluating";
+  job.download = "installing"; job.evaluation = "evaluating";
   const order: string[] = [];
   await runPipeline(state, { ...options, once: true }, services({
-    sync: async () => { order.push("sync"); return { changed: false, bytes: 10 }; },
+    sync: async (job) => { order.push("sync"); return { changed: false, bytes: 10, rows: job.observed }; },
     evaluate: async (job) => { order.push(job.runIds[0]); return { status: "completed", summary }; },
   }), AbortSignal.timeout(3000));
   assert.deepEqual(order, ["sync", "daily-2026-09-29"]);
+});
+
+test("interrupted installed inputs recover before routine refreshes can delay statistics", async () => {
+  const state = fresh(), dates = ["2026-09-28", "2026-09-29"], order: string[] = [];
+  const deps = services({ discover: async () => dates.map(date => day(date)) });
+  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
+  state.jobs[dates[1]].download = "pending";
+  for (const job of Object.values(state.jobs)) job.checkedAt = 0;
+  await runPipeline(state, { ...options, once: true }, { ...deps,
+    sync: async job => { order.push(job.date); return { changed: false, bytes: 10, rows: job.observed }; },
+  }, AbortSignal.timeout(3000));
+  assert.deepEqual(order, [...dates].reverse());
+});
+
+test("interrupted refresh retains the installed snapshot for startup statistics", async () => {
+  const state = fresh();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  const job = state.jobs["2026-09-29"];
+  job.download = "downloading";
+  let published = false;
+  await runPipeline(state, { ...options, once: true }, services({
+    sync: async () => { throw new Error("Unchanged installed inputs should remain usable"); },
+    publish: async () => { assert.equal(job.download, "ready"); published = true; },
+  }), AbortSignal.timeout(3000));
+  assert(published);
+});
+
+test("statistics retry immediately after input recovery without reading the interrupted installation", async () => {
+  const state = fresh(), date = "2026-09-29", controller = new AbortController();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.jobs[date].download = "pending";
+  state.publication = { status: "retry", attempts: 5, nextAt: Date.now() + PUBLICATION_INTERVAL_MS };
+  let finishDownload!: () => void;
+  const held = new Promise<void>(resolve => { finishDownload = resolve; });
+  let transferring = false, recovered = false, publications = 0;
+  const work = runPipeline(state, { ...options, retryMs: 60_000 }, services({
+    evaluationConcurrency: () => 0,
+    sync: async (job, _day, _signal, beforeReplace) => {
+      transferring = true; await held; await beforeReplace(); recovered = true;
+      return { changed: false, bytes: 10, rows: job.observed };
+    },
+    publish: async current => {
+      publications++;
+      if (!recovered) throw new Error("Installed input snapshot requires recovery");
+      assert.equal(current.jobs[date].download, "ready");
+    },
+  }), controller.signal);
+  try {
+    await until(() => transferring);
+    assert.equal(state.jobs[date].download, "installing");
+    const before = publications;
+    await delay(250);
+    assert.equal(publications, before, "do not read old files during recovery transfer");
+    finishDownload();
+    await until(() => state.publication?.status === "completed");
+    assert.equal(publications, before + 1);
+  } finally { finishDownload(); controller.abort(); await work; }
+});
+
+test("input promotion waits for an already-running statistics snapshot", async () => {
+  const state = fresh(), date = "2026-09-29", controller = new AbortController();
+  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  let downloadReady!: () => void, finishLog!: () => void;
+  const downloadGate = new Promise<void>(resolve => { downloadReady = resolve; });
+  const logGate = new Promise<void>(resolve => { finishLog = resolve; });
+  let logRunning = false, promotionAttempted = false, promoted = false;
+  const work = runPipeline(state, options, services({
+    discover: async () => [day(date, 2)],
+    evaluationConcurrency: () => 0,
+    sync: async (_job, remote, _signal, beforeReplace) => {
+      state.publication!.nextAt = 0;
+      await downloadGate;
+      promotionAttempted = true;
+      await beforeReplace(); promoted = true;
+      return { changed: true, bytes: 20, rows: remote.rows };
+    },
+    publish: async current => {
+      if (current.jobs[date].download !== "downloading") return;
+      logRunning = true; await logGate;
+    },
+  }), controller.signal);
+  try {
+    await until(() => logRunning); downloadReady();
+    await until(() => promotionAttempted); await delay(150);
+    assert.equal(promoted, false);
+    finishLog(); await until(() => promoted);
+  } finally { finishLog(); downloadReady(); controller.abort(); await work; }
 });
 
 test("failed evaluation is bounded and does not block later dates; rewrite failure is not completion", async () => {
@@ -260,7 +485,7 @@ test("periodic content refresh schedules work even when row counts stay unchange
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
   assert.equal(evaluations, 2);
   state.jobs["2026-09-29"].checkedAt = 0;
-  await runPipeline(state, { ...options, once: true }, { ...deps, sync: async () => ({ changed: false, bytes: 10 }) }, AbortSignal.timeout(3000));
+  await runPipeline(state, { ...options, once: true }, { ...deps, sync: async (job) => ({ changed: false, bytes: 10, rows: job.observed }) }, AbortSignal.timeout(3000));
   assert.equal(evaluations, 2);
 });
 
@@ -269,10 +494,10 @@ test("cancelling a refresh keeps the previously installed inputs ready", async (
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   const job = state.jobs["2026-09-29"], controller = new AbortController();
   job.checkedAt = 0;
-  await runPipeline(state, options, services({ sync: async () => {
+  await runPipeline(state, options, services({ sync: async (job) => {
     controller.abort(new Error("Automation stopped"));
     controller.signal.throwIfAborted();
-    return { changed: false, bytes: 0 };
+    return { changed: false, bytes: 0, rows: job.observed };
   } }), controller.signal);
   assert.equal(job.download, "ready");
   assert.equal(job.downloadError, undefined);
@@ -306,7 +531,7 @@ test("downloads require a fresh ready catalog and clear obsolete retry state whe
     downloads++;
     assert.equal(active.downloadError, undefined);
     assert.equal(active.nextDownloadAt, 0);
-    return { changed: false, bytes: 10 };
+    return { changed: false, bytes: 10, rows: active.observed };
   } });
   await runPipeline(state, { ...options, once: true }, { ...deps, discover: async () => [] }, AbortSignal.timeout(3000));
   assert.equal(downloads, 0, "an unready date must not download using yesterday's catalog state");
@@ -329,7 +554,7 @@ test("changed input dates download before routine checks, while other local back
   const downloads: string[] = [];
   await runPipeline(state, { ...options, once: true }, services({
     discover: async () => [day(first), day(second, 2)],
-    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 20 }; },
+    sync: async (job) => { downloads.push(job.date); return { changed: true, bytes: 20, rows: job.observed }; },
   }), AbortSignal.timeout(3000));
   assert.equal(downloads[0], second, "new input must not wait behind a same-count routine check");
 
@@ -339,9 +564,11 @@ test("changed input dates download before routine checks, while other local back
   const controller = new AbortController();
   const work = runPipeline(state, options, services({
     discover: async () => [day(first, 3), day(second, 3)],
-    sync: async (job) => { assert.equal(job.date, first); downloading = true; await gate; return { changed: true, bytes: 30 }; },
+    sync: async (job) => { assert.equal(job.date, first); downloading = true; await gate; return { changed: true, bytes: 30, rows: job.observed }; },
     evaluate: async (job) => {
-      assert.equal(job.date, second); assert(downloading);
+      // Both lanes start independently; let the download enter its held request before checking overlap.
+      await until(() => downloading);
+      assert.equal(job.date, second);
       assert.equal(job.downloaded!.a_fast, 2);
       assert.equal(job.observed.a_fast, 3);
       evaluated = true; controller.abort();
@@ -360,9 +587,9 @@ test("a ready-to-unready source race waits for the next catalog and resumes with
   let downloads = 0, waiting = false;
   const controller = new AbortController();
   await runPipeline(state, options, services({
-    sync: async () => {
+    sync: async (job) => {
       if (downloads++ === 0) throw new RemoteInputNotReadyError("data not ready");
-      return { changed: false, bytes: 10 };
+      return { changed: false, bytes: 10, rows: job.observed };
     },
     save: async (snapshot) => {
       const saved = snapshot.jobs[job.date];
@@ -518,7 +745,7 @@ test("one broken historical registration does not prevent discovery of later dat
   assert.equal(state.jobs["2026-09-29"].evaluation, "completed");
 });
 
-test("one global four-hour publication includes historical dates and waits for its persisted deadline across restarts", async () => {
+test("startup publishes history immediately and schedules the next four-hour snapshot", async () => {
   const state = fresh(); let publications = 0, evaluations = 0;
   const deps = services({
     discover: async () => [day("2026-09-22"), day("2026-09-30")],
@@ -529,14 +756,15 @@ test("one global four-hour publication includes historical dates and waits for i
   assert.equal(nextPublicationAt(0), PUBLICATION_INTERVAL_MS);
   assert.equal(nextPublicationAt(PUBLICATION_INTERVAL_MS), PUBLICATION_INTERVAL_MS * 2);
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(publications, 0); assert.equal(state.jobs["2026-09-22"].evaluation, "completed");
+  assert.equal(publications, 1); assert.equal(state.jobs["2026-09-22"].evaluation, "completed");
   const delivery = state.publication!;
   const deadline = delivery.nextAt;
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(delivery.nextAt, deadline);
-  delivery.nextAt = 0;
+  assert.equal(state.publication!.nextAt, deadline);
+  assert.equal(publications, 2);
+  state.publication!.nextAt = 0;
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(publications, 1); assert.equal(evaluations, 1);
+  assert.equal(publications, 3); assert.equal(evaluations, 1);
   const completed = state.publication!;
   assert.equal(completed.status, "completed"); assert(completed.nextAt > Date.now());
 });
@@ -566,7 +794,7 @@ test("Mongo delivers inputs and newly settled outputs during evaluation without 
     await until(() => job.mongo?.counts?.comparisons === 1 && job.mongo.status === "completed");
     await delay(options.pollMs * 3);
     assert.equal(mongoCalls, 2);
-    assert.equal(logs, 0);
+    assert.equal(logs, 1);
     assert.equal(job.evaluation, "evaluating");
     assert.equal(job.mongoHistory!.length, 1);
     release();
@@ -577,6 +805,59 @@ test("Mongo delivers inputs and newly settled outputs during evaluation without 
   assert.equal(mongoCalls, 2);
   assert.equal(restored.jobs[date].mongoHistory!.length, 1);
   assert.equal(restored.jobs["2026-09-22"].mongo, undefined);
+});
+
+test("Mongo publishes settled results while the next input snapshot is downloading", async () => {
+  const state = fresh(), controller = new AbortController(), date = "2026-09-29";
+  let rows = 1, release!: () => void, uploading = false, finishUpload!: () => void;
+  const transfer = new Promise<void>(resolve => { release = resolve; });
+  const upload = new Promise<void>(resolve => { finishUpload = resolve; });
+  const deps = services({
+    discover: async () => [day(date, rows)],
+    sync: async (_job, current, _signal, beforeReplace) => {
+      if (current.rows.a_fast === 2) await transfer;
+      await beforeReplace();
+      return { changed: true, bytes: 10, rows: current.rows };
+    },
+    syncMongo: async job => {
+      if (job.summary?.readyComparisons === 2) { uploading = true; await upload; }
+      return { inputs: 4, comparisons: job.summary?.readyComparisons ?? 0, inserted: 0, updated: 0 };
+    },
+  });
+  const work = runPipeline(state, options, deps, controller.signal);
+  try {
+    await until(() => state.jobs[date]?.mongo?.counts?.comparisons === 1);
+    rows = 2;
+    await until(() => state.jobs[date]?.download === "downloading");
+    const job = state.jobs[date];
+    job.summary = { ...summary, readyComparisons: 2 };
+    await until(() => uploading);
+    release();
+    await delay(150);
+    assert.equal(job.downloaded!.a_fast, 1, "Mongo pins the previous snapshot until its upload completes");
+    finishUpload();
+    await until(() => job.downloaded?.a_fast === 2);
+  } finally { release(); finishUpload(); controller.abort(); await work; }
+});
+
+test("a slow Mongo date does not block settled results on another date or duplicate an active upload", async () => {
+  const state = fresh(), controller = new AbortController(), dates = ["2026-09-28", "2026-09-29"];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; }), calls: string[] = [];
+  const work = runPipeline(state, options, services({
+    discover: async () => dates.map(date => day(date)),
+    syncMongo: async job => {
+      calls.push(job.date);
+      if (job.date === dates[0]) await held;
+      return { inputs: 4, comparisons: job.summary?.readyComparisons ?? 0, inserted: 0, updated: 0 };
+    },
+  }), controller.signal);
+  try {
+    await until(() => state.jobs[dates[1]]?.mongo?.status === "completed");
+    assert.equal(state.jobs[dates[0]].mongo?.status, "running");
+    await delay(200);
+    assert.equal(calls.filter(date => date === dates[0]).length, 1);
+  } finally { release(); controller.abort(); await work; }
 });
 
 test("Mongo failures do not delay scheduled logs and uncertain logs do not block Mongo retry", async () => {
@@ -609,13 +890,42 @@ test("Mongo failures do not delay scheduled logs and uncertain logs do not block
   assert.equal(logs, 1);
 });
 
+for (const previousTarget of [undefined, "another-task"] as const)
+test(`Mongo receipts for ${previousTarget ?? "an unconfirmed task"} do not suppress delivery or cause reevaluation`, async t => {
+  const state = fresh(), date = "2026-09-29";
+  let evaluations = 0, uploads = 0;
+  const deps = services({
+    evaluate: async () => { evaluations++; return { status: "completed", summary }; },
+    syncMongo: async () => { uploads++; return { inputs: 4, comparisons: 1, inserted: 5, updated: 0 }; },
+  });
+  await runPipeline(state, { ...options, once: true }, { ...deps, syncMongo: undefined }, t.signal);
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  const job = state.jobs[date], accepted = structuredClone(job.summary);
+  job.mongo!.target = previousTarget;
+  job.mongo!.nextAt = Date.now() + 60_000;
+  await runPipeline(state, { ...options, once: true }, {
+    ...deps, syncMongo: async current => {
+      assert.equal(current.mongo?.synced, undefined);
+      assert.equal(current.mongo?.counts, undefined);
+      return deps.syncMongo!(current, t.signal);
+    },
+  }, t.signal);
+  assert.equal(uploads, 2);
+  assert.equal(evaluations, 1);
+  assert.deepEqual(job.summary, accepted);
+  assert.equal(job.mongo?.status, "completed");
+  assert.equal(job.mongoHistory?.length, 1, "retain the previous target's receipt");
+  await runPipeline(state, { ...options, once: true }, deps, t.signal);
+  assert.equal(uploads, 2, "the current target's receipt remains resumable");
+});
+
 test("Mongo pins inputs during delivery and an interrupted upload resumes immediately", async () => {
   const state = fresh(), date = "2026-09-29", controller = new AbortController();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   const job = state.jobs[date]; let count = 1, downloads = 0, started = false;
   const work = runPipeline(state, options, services({
     discover: async () => [day(date, count)],
-    sync: async () => { downloads++; return { changed: true, bytes: 20 }; },
+    sync: async (_job, currentDay, _signal, beforeReplace) => { downloads++; await beforeReplace(); return { changed: true, bytes: 20, rows: currentDay.rows }; },
     syncMongo: async (_job, signal) => {
       started = true;
       await delay(10_000, undefined, { signal });
@@ -627,7 +937,8 @@ test("Mongo pins inputs during delivery and an interrupted upload resumes immedi
     count = 2;
     await until(() => job.observed.a_fast === 2);
     assert.equal(job.downloaded!.a_fast, 1);
-    assert.equal(downloads, 0);
+    await until(() => downloads === 1);
+    assert.equal(job.downloaded!.a_fast, 1, "transfer can start but Mongo still pins installed inputs");
   } finally { controller.abort(); await work; }
   assert.equal(job.mongo!.status, "pending");
   assert.equal(job.mongo!.error, undefined);
@@ -674,14 +985,13 @@ test("global log publication pins all inputs while catalog polling keeps advanci
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const deps = services({
     discover: async () => [day(first, count), day(second, count)],
-    sync: async () => {
+    sync: async (job) => {
       if (count === 2) nextDateAdvanced = true;
-      return { changed: true, bytes: count };
+      return { changed: true, bytes: count, rows: job.observed };
     },
     publish: async () => { publishing = true; await gate; publishing = false; },
   });
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  state.publication!.nextAt = 0;
+  await runPipeline(state, { ...options, once: true }, { ...deps, publish: undefined }, AbortSignal.timeout(3000));
   const work = runPipeline(state, options, deps, AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]));
   try {
     await until(() => publishing);

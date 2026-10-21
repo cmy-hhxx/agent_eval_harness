@@ -5,9 +5,34 @@ import filesystem from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { exists, hasLiveRunOwner, runLock, writeJson } from "./files.js";
+import { gzipSync } from "node:zlib";
+import { exists, hasLiveRunOwner, readJsonl, readJsonlText, runLock, writeJson } from "./files.js";
 
 const deadOwner = { pid: 2147483647, token: "dead-owner" };
+
+test("JSONL preserves long records, split UTF-8, blank lines and the trailing-line policy", async (t) => {
+  async function collect<T>(source: AsyncIterable<T>) {
+    const values: T[] = [];
+    for await (const value of source) values.push(value);
+    return values;
+  }
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-jsonl-chunks-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const value = { text: "x".repeat(65525) + "汉字😀".repeat(20000) };
+  const first = JSON.stringify(value), last = JSON.stringify({ end: "尾行" });
+  const text = " \r\n" + first + "\r\n\n{}\n" + last;
+  for (const suffix of ["jsonl", "jsonl.gz"]) {
+    const file = path.join(directory, "records." + suffix);
+    await writeFile(file, suffix.endsWith("gz") ? gzipSync(text) : text);
+    assert.deepEqual(await collect(readJsonlText(file)), [first + "\r", "{}"]);
+    assert.deepEqual(await collect(readJsonlText(file, true)), [first + "\r", "{}", last]);
+    assert.deepEqual(await collect(readJsonl(file)), [value, {}, { end: "尾行" }]);
+  }
+  const file = path.join(directory, "incomplete.jsonl");
+  await writeFile(file, '{}\n{"partial":');
+  assert.deepEqual(await collect(readJsonlText(file)), ["{}"]);
+  await assert.rejects(collect(readJsonl(file)), SyntaxError);
+});
 
 test("run lock publishes a complete owner before concurrent callers can observe it", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-lock-publish-"));

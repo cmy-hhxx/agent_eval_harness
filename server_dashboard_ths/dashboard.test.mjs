@@ -16,9 +16,11 @@ const processing = {
   archive: { packages: 667, bytes: 3.38 * 1024 ** 3, partitions: 30, checked_at: Date.parse("2026-10-19T01:00:00Z"), oversized: [] },
 };
 
-async function renderGpt(missing = null, empty = false) {
-  const dom = new JSDOM(html.replaceAll("__BASE__", "/gpt"), { url: "http://localhost/gpt/", runScripts: "outside-only" });
-  const groups = [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
+async function renderGpt(missing = null, empty = false, postTraining = false) {
+  const prefix = postTraining ? "/post_training_model" : "/gpt";
+  const dom = new JSDOM(html.replaceAll("__BASE__", prefix), { url: `http://localhost${prefix}/`, runScripts: "outside-only" });
+  const groups = postTraining ? [["a_fast", "b_fast", "b_post_train_fast"]]
+    : [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
   const pairs = Object.fromEntries(groups.flatMap(group => group.flatMap((left, index) => group.slice(index + 1).map(right => [
     [left, right].sort().join("__vs__"), { ...done },
   ]))));
@@ -39,6 +41,32 @@ async function renderGpt(missing = null, empty = false) {
   await new Promise(setImmediate);
   return { dom, requests };
 }
+
+test("post-training dashboard shows three inputs and battles in its own namespace", async () => {
+  const { dom, requests } = await renderGpt(null, false, true);
+  try {
+    const document = dom.window.document;
+    assert.deepEqual(requests, ["/post_training_model/dashboard-data", "/post_training_model/processing-status"]);
+    assert.equal(document.title, "后训练模型评测");
+    assert.equal(document.querySelector('[data-dataset="post_training_model"]').getAttribute("aria-current"), "page");
+    assert.equal(document.querySelector(".dataset-range-models").textContent, "3 个模型");
+    assert.equal(document.querySelectorAll(".results-table thead th").length, 2);
+    assert.equal(document.querySelectorAll(".gpt-pair-progress").length, 3);
+    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 3);
+    const links = [...document.querySelectorAll(".model-link")];
+    assert.equal(links.length, 3);
+    assert(links.every(link => link.getAttribute("href").startsWith("/post_training_model/records?")));
+    assert.match(document.querySelector(".gpt-group-cell").textContent, /B post_train_fast/);
+  } finally { dom.window.close(); }
+});
+
+test("missing post-trained input keeps the A/B battle visible and waits on two others", async () => {
+  const { dom } = await renderGpt("b_post_train_fast", false, true);
+  try {
+    assert.equal(dom.window.document.querySelectorAll('.pair-status[data-status="finished"]').length, 1);
+    assert.equal([...dom.window.document.querySelectorAll(".pair-empty")].filter(el => el.textContent === "等待数据").length, 2);
+  } finally { dom.window.close(); }
+});
 
 test("GPT dashboard loads its namespace, links six models and presents six separate battles", async () => {
   const { dom, requests } = await renderGpt();
@@ -83,10 +111,11 @@ test("empty GPT source remains online and does not manufacture dates or counts",
   } finally { dom.window.close(); }
 });
 
-test("GPT sample viewer keeps pagination and return navigation inside its namespace", async () => {
+for (const [prefix, model, label] of [["/gpt", "6.1sol", "6.1sol"], ["/post_training_model", "b_post_train_fast", "B post_train_fast"]])
+test(`${prefix} sample viewer keeps pagination and return navigation inside its namespace`, async () => {
   const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
-  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/gpt"), {
-    url: "http://localhost/gpt/records?date=2026-10-19&model=6.1sol", runScripts: "outside-only",
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", prefix), {
+    url: `http://localhost${prefix}/records?date=2026-10-19&model=${model}`, runScripts: "outside-only",
   });
   const requests = [];
   dom.window.fetch = async url => {
@@ -99,10 +128,10 @@ test("GPT sample viewer keeps pagination and return navigation inside its namesp
     await new Promise(setImmediate);
     dom.window.document.querySelector("#next-page").click();
     await new Promise(setImmediate);
-    assert.deepEqual(requests, [1, 2].map(page => `/gpt/records/2026-10-19/6.1sol?page=${page}&page_size=20`));
-    assert.equal(dom.window.document.querySelector(".back-link").getAttribute("href"), "/gpt/");
-    assert.equal(dom.window.location.pathname, "/gpt/records");
-    assert.equal(dom.window.document.querySelector("#records-title").textContent, "2026-10-19 · 6.1sol");
+    assert.deepEqual(requests, [1, 2].map(page => `${prefix}/records/2026-10-19/${model}?page=${page}&page_size=20`));
+    assert.equal(dom.window.document.querySelector(".back-link").getAttribute("href"), prefix + "/");
+    assert.equal(dom.window.location.pathname, prefix + "/records");
+    assert.equal(dom.window.document.querySelector("#records-title").textContent, `2026-10-19 · ${label}`);
   } finally { dom.window.close(); }
 });
 

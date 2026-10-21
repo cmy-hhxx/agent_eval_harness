@@ -1,6 +1,7 @@
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { safeId, type InputDownload } from "@eval/contracts";
+import { setTimeout as delay } from "node:timers/promises";
+import { safeId, RetryableInputDownloadError, type InputDownload } from "@eval/contracts";
 import { atomicWrite } from "./files.js";
 
 async function equalFiles(left: string, right: string): Promise<boolean> {
@@ -23,7 +24,7 @@ async function equalFiles(left: string, right: string): Promise<boolean> {
   } finally { await a.close(); await b?.close(); }
 }
 
-async function* checked(file: InputDownload, signal: AbortSignal): AsyncGenerator<Uint8Array> {
+async function* checked(file: InputDownload, signal: AbortSignal, complete: (rows: number) => void): AsyncGenerator<Uint8Array> {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let pending = "", bytes = 0, rows = 0;
   const parse = (line: string) => {
@@ -45,31 +46,53 @@ async function* checked(file: InputDownload, signal: AbortSignal): AsyncGenerato
     yield chunk;
   }
   parse(pending + decoder.decode());
-  if (bytes !== file.size || rows !== file.rows)
+  if (bytes !== file.size || rows < file.rows)
     throw new Error(`Incomplete ${file.name}: bytes ${bytes}/${file.size}, rows ${rows}/${file.rows}`);
+  complete(rows);
 }
 
-/** Caller owns the date lock and must journal syncing before entry. No evaluation may read
- * this date until every rename completes and the caller durably records readiness. */
+/** Caller journals syncing before entry and acquires the date lock in beforeReplace.
+ * No consumer may read this date during promotion until readiness is durably recorded. */
 export async function replaceInputSnapshot(
-  directory: string, files: AsyncIterable<InputDownload>, signal: AbortSignal, beforeReplace: () => Promise<void>,
-): Promise<{ changed: boolean; bytes: number }> {
+  directory: string, files: AsyncIterable<() => Promise<InputDownload>>, signal: AbortSignal, beforeReplace: () => Promise<void>,
+  onFileReady?: (file: string, model: string, rows: number) => Promise<void>,
+): Promise<{ changed: boolean; bytes: number; rows: Record<string, number> }> {
   const staging = path.join(directory, ".incoming");
   await mkdir(staging, { recursive: true });
   const names: string[] = [];
+  const rows: Record<string, number> = {};
   let bytes = 0;
+  const publications: Promise<void>[] = [];
+  let publicationFailure: unknown;
   try {
-    // The producer validates the remote catalog again before ending this iterator.
-    for await (const file of files) {
-      try {
-        if (!file.name.endsWith(".jsonl") || names.includes(file.name)) throw new Error("Invalid snapshot file name");
-        safeId(file.name.slice(0, -".jsonl".length));
-        await atomicWrite(path.join(staging, file.name), checked(file, signal));
-        bytes += file.size;
-        names.push(file.name);
-      } finally { await file.close(); }
+    // Each response is complete even if the catalog grows between files.
+    for await (const download of files) {
+      for (let attempt = 1; ; attempt++) {
+        signal.throwIfAborted();
+        let file: InputDownload | undefined;
+        try {
+          file = await download();
+          if (!file.name.endsWith(".jsonl") || names.includes(file.name)) throw new Error("Invalid snapshot file name");
+          safeId(file.name.slice(0, -".jsonl".length));
+          const model = file.name.slice(0, -".jsonl".length);
+          await atomicWrite(path.join(staging, file.name), checked(file, signal, count => { rows[model] = count; }));
+          bytes += file.size;
+          names.push(file.name);
+          if (onFileReady) publications.push(onFileReady(path.join(staging, file.name), model, rows[model])
+            .catch(error => { publicationFailure ??= error; }));
+          break;
+        } catch (error) {
+          signal.throwIfAborted();
+          if (!(error instanceof RetryableInputDownloadError)) throw error;
+          if (attempt === 3) throw new Error(`Download failed after ${attempt} attempts: ${error.message}`, { cause: error });
+        } finally { await file?.close(); }
+        // Retry the interrupted file, retaining validated siblings in this snapshot.
+        await delay(1000 * 2 ** (attempt - 1), undefined, { signal });
+      }
     }
     if (!names.length) throw new Error("Empty input snapshot");
+    await Promise.all(publications);
+    if (publicationFailure) throw publicationFailure;
     const changed: string[] = [];
     for (const name of names)
       if (!await equalFiles(path.join(staging, name), path.join(directory, name))) changed.push(name);
@@ -78,8 +101,9 @@ export async function replaceInputSnapshot(
     for (const name of changed) await rename(path.join(staging, name), path.join(directory, name));
     const handle = await open(directory, "r");
     try { await handle.sync(); } finally { await handle.close(); }
-    return { changed: changed.length > 0, bytes };
+    return { changed: changed.length > 0, bytes, rows };
   } finally {
+    await Promise.all(publications);
     // Only our transient download files; committed sources and run outputs are retained.
     await rm(staging, { recursive: true, force: true });
   }

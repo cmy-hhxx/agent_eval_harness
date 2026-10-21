@@ -6,6 +6,7 @@ import path from "node:path";
 import { AgentRegistry, runEvaluation } from "@eval/host";
 import { createRunRepository, type RunCodec } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
+import { body, json, listen, request } from "@eval/runtime/http";
 import {
   DEFAULT_POLICY,
   type AgentBackend,
@@ -94,6 +95,139 @@ const repository = createRunRepository(codec, (task, state) => ({
   file: "scores.jsonl",
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
+
+test("a receipt committed during terminal collection wins over an earlier failed observation", { timeout: 10000 }, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-late-receipt-"));
+  let release!: () => void, submitted!: () => void;
+  const readyToSubmit = new Promise<void>(resolve => { release = resolve; });
+  const submissionAccepted = new Promise<void>(resolve => { submitted = resolve; });
+  let attemptId = "", calls = 0, observedFailure = false;
+  const worker = await startWorker({ identity, async createSession(options) {
+    attemptId = options.spec.attemptId;
+    return { async run() {
+      calls++;
+      await readyToSubmit;
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+      submitted();
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const request = new URL(String(url));
+    if (attemptId && request.origin === worker.url && (!init?.method || init.method === "GET")) {
+      if (!observedFailure && request.pathname === `/api/attempts/${attemptId}`) {
+        observedFailure = true;
+        return Response.json({ state: "failed", lastSeq: 0, error: "Stale terminal observation", failure: {
+          attemptId, errors: [{ category: "structure", code: "schema_required", path: "/", message: "Stale failure" }],
+          contentSubmissions: 0, fileErrors: 0, repeatedErrors: 1, stopped: false, evidenceBank: [], draft: { score: 0 },
+        } });
+      }
+      if (observedFailure && request.pathname === `/api/attempts/${attemptId}/record`) {
+        release();
+        await submissionAccepted;
+      }
+    }
+    return fetch(url, init);
+  });
+  try {
+    const result = await runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "late-receipt", output: { kind: "directory", path: directory },
+      engine: "pi", identity, evaluatorVersion: "test", config: {}, plan: { ...plan, tasks: plan.tasks.slice(0, 1) },
+      policy: { ...DEFAULT_POLICY, timeoutSeconds: 5 }, modelForStage: () => model,
+      concurrency: 1, retries: 1, retryDelaySeconds: 0, workerUrls: [worker.url],
+      failureGuard: { windowSize: 2, threshold: 2 }, signal: AbortSignal.timeout(2000),
+    });
+    const saved = await repository.readRun(path.join(directory, "late-receipt"));
+    assert(observedFailure, "the failed observation must precede the committed receipt");
+    assert(saved!.receipts["task-1"], "the late submission is durable");
+    assert.equal(result.status, "finished");
+    assert.deepEqual(result.paused_stages, [], "accepted work cannot trip the failure guard");
+    assert.equal(saved!.manifest.states["task-1"].status, "succeeded");
+    assert.equal(saved!.manifest.states["task-1"].attempts, 1);
+    assert.equal(calls, 1, "accepted work never calls the model again");
+  } finally { release(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a delayed permit-release acknowledgement preserves a completed model turn and its submission", { timeout: 25000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-permit-release-"));
+  let originalHost = "", active = 0, releases = 0;
+  const proxy = await listen(async (req, res, url) => {
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/model-requests/")) {
+      releases++;
+      await new Promise(resolve => setTimeout(resolve, 6000));
+    }
+    const value = await request(originalHost + url.pathname + url.search, req.method!,
+      req.method === "POST" ? await body(req) : undefined);
+    return json(res, value);
+  });
+  const worker = await startWorker({ identity, async createSession(options) {
+    originalHost = options.spec.hostUrl;
+    options.spec.hostUrl = proxy.url;
+    return { async run() {
+      const release = await options.modelRequest!();
+      await release();
+      assert.equal(active, 0);
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    const result = await runEvaluation({
+      agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "release",
+      output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan: { ...plan, tasks: plan.tasks.slice(0, 1) },
+      policy: { ...DEFAULT_POLICY, timeoutSeconds: 20, idleTimeoutSeconds: 15 },
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+      workerUrls: [worker.url], modelRequests: { concurrency: () => 1,
+        acquire: async () => { active++; return () => { active--; }; } },
+    });
+    assert.deepEqual(result.execution_task_statuses, { succeeded: 1 });
+    assert.equal(releases, 1); assert.equal(active, 0);
+  } finally { await worker.close(); await proxy.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("LLM allocation pauses admission and queued permits do not consume worker or Host timeouts", { timeout: 15000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-model-permits-"));
+  let limit = 0, sessions = 0, active = 0, grants = 0;
+  const worker = await startWorker({ identity, async createSession(options) {
+    sessions++;
+    return { async run() {
+      assert(options.modelRequest);
+      const release = await options.modelRequest();
+      assert.equal(active, 1);
+      await release();
+      assert.equal(active, 0, "local tools run after the LLM slot is released");
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  try {
+    const pending = runEvaluation({
+      agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "controlled",
+      output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan,
+      policy: { ...DEFAULT_POLICY, timeoutSeconds: 2, idleTimeoutSeconds: 1 },
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+      workerUrls: [worker.url],
+      modelRequests: { concurrency: () => limit, acquire: async () => {
+        await new Promise(resolve => setTimeout(resolve, 2200));
+        grants++; active++;
+        return () => { active--; };
+      } },
+    });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(sessions, 0, "zero allocation must not start paid task attempts");
+    limit = 1;
+    const result = await pending;
+    assert.deepEqual(result.execution_task_statuses, { succeeded: 2 },
+      JSON.stringify((await repository.readRun(path.join(directory, "controlled"))).manifest.states));
+    assert.equal(grants, 2);
+    assert.equal(active, 0);
+  } finally {
+    await worker.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("attempt admission is cumulative, durable and bounded across concurrent workers and resume", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-attempt-limit-"));

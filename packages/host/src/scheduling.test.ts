@@ -1,7 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { PlannedTask, RunManifest } from "@eval/contracts";
-import { scheduleTasks } from "./scheduling.js";
+import { createScopeMembership, scheduleTasks } from "./scheduling.js";
+
+test("large execution scopes are indexed once and track follow-ups and rollback", () => {
+  let reads = 0;
+  const original = Array.from({ length: 20000 }, (_, index) => `task-${index}`);
+  const scope = new Proxy(original, { get(target, key, receiver) {
+    if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  const manifest: Pick<RunManifest, "executionScope"> = { executionScope: scope };
+  const includes = createScopeMembership(manifest);
+  for (const id of original) assert(includes(id));
+  assert(!includes("retired"));
+  assert.equal(reads, original.length, "dispatch must not rescan the full scope for every task");
+  scope.push("follow-up");
+  assert(includes("follow-up"));
+  manifest.executionScope = ["replacement"];
+  assert(includes("replacement"));
+  assert(!includes("task-0"));
+  manifest.executionScope = ["rollback"];
+  assert(!includes("replacement"));
+  assert(includes("rollback"));
+  delete manifest.executionScope;
+  assert(includes("unrestricted"));
+});
 
 test("ready downstream stages share slots with an unfinished attribution backlog", () => {
   const tasks = [

@@ -1,5 +1,20 @@
 import type { PlannedTask, RunManifest } from "@eval/contracts";
 
+/** Scopes are replaced or extended by accepted follow-up tasks. Index each revision once. */
+export function createScopeMembership(manifest: Pick<RunManifest, "executionScope">): (id: string) => boolean {
+  let scope: string[] | undefined, length = -1, selected = new Set<string>();
+  return id => {
+    const current = manifest.executionScope;
+    if (!current) return true;
+    if (current !== scope || current.length !== length) {
+      scope = current;
+      length = current.length;
+      selected = new Set(current);
+    }
+    return selected.has(id);
+  };
+}
+
 // Share free slots between ready stages; a large upstream backlog must not
 // prevent work with already accepted dependencies from reaching its next stage.
 export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"]): PlannedTask[] {

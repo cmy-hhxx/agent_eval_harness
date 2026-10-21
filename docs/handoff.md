@@ -12,9 +12,9 @@
 | `GET /data/{date}/{model}.jsonl` | 流式下载模型输入 |
 | `POST /evaluation-progress` | 上报已登记运行的 Comparison 进度 |
 
-模型 ID 由自动化 remoteModels 指定；当前支持 `a_fast`、`b_fast`、`6_luna`、`a_expert`、`b_expert`、`6.1sol`；日期为有效的 `YYYY-MM-DD`。本地未配置远端鉴权。目录读取和进度上报最多等待 10 秒；下载采用配置中的无数据进展超时。
+模型 ID 由自动化 remoteModels 指定；当前支持 `a_fast`、`b_fast`、`6_luna`、`a_expert`、`b_expert`、`6.1sol`；日期为有效的 `YYYY-MM-DD`。本地未配置远端鉴权。目录读取每次最多等待 10 秒，临时网络或 HTTP 错误最多尝试三次，间隔 1、2 秒；进度上报单次最多等待 10 秒。下载采用配置中的无数据进展超时。
 
-默认 sourceUrl 为 `http://117.50.195.94:2256/gpt`，上述路由均追加到 sourceUrl，因此默认访问 `/gpt/dashboard-data`、`/gpt/data/{date}/{model}.jsonl` 和 `/gpt/evaluation-progress`。
+默认自动化分别监听服务根路径、`/gpt` 和 `/post_training_model`。上述路由均追加到各自的 sourceUrl，例如 GPT 访问 `/gpt/dashboard-data`、`/gpt/data/{date}/{model}.jsonl` 和 `/gpt/evaluation-progress`。
 
 ## 日期目录
 
@@ -41,7 +41,9 @@
 
 ## 输入下载
 
-响应必须包含正文及非负整数 `Content-Length`。本地核对实际字节数、JSONL 结构和目录行数，下载结束再核对目录，完整日期校验通过后才替换本地源文件。响应 `404` 且 JSON `error` 为 `data not ready` 时按远端准备中处理；其他 HTTP 错误保留状态码和可解析原因。
+响应必须包含正文及非负整数 `Content-Length`。本地核对实际字节数与 JSONL 结构，并要求实际行数不少于请求前的目录观察值。目录在下载期间继续增长不使完整文件失效；安装后按文件实际行数记录已下载数量。全日文件通过校验且旧输入的评测、Mongo 交付结束后，才取得 run 锁并替换本地源文件。响应 `404` 且 JSON `error` 为 `data not ready` 时按远端准备中处理；其他 HTTP 错误保留状态码和可解析原因。
+
+连接中断、无进展超时及 HTTP 408 / 429 / 5xx 在当前文件内最多尝试三次，间隔 1、2 秒。同一轮已校验的其他文件保留在暂存目录，失败文件从头重新请求。错误包含日期、模型、底层连接错误码和已收到的字节数。用户停止立即取消等待；鉴权、JSONL、行数等非暂态错误直接交回整日调度，保留已有正式输入。每个响应独立校验，后续轮询发现新增数据时再做增量同步；不等待整个远端日期停止增长。
 
 接口不提供可供本地使用的修订号或不可变快照 ID。行数相同不代表内容相同，也不能保证各模型文件来自同一生成时刻；同量内容修正通过定期逐块比较发现。已有正式结果仍遵守[同 run 续跑规则](usage.md#运行与恢复)。源文件提升和失败恢复见[自动化状态](automations.md#调度与状态)。
 
@@ -49,7 +51,7 @@ JSONL 每行必须满足[输入契约](contract.md#输入)。远端日期用于�
 
 ## 进度上报
 
-GPT 六路的 `/gpt/evaluation-progress` 使用六个同档模型对的独立键（模型 ID 按字典序排序，以 `__vs__` 连接），各对计数字段与下例一致。以下 `fast / expert` 示例仅适用于原四路服务根路径。
+GPT 六路的 `/gpt/evaluation-progress` 使用六个同档模型对的独立键（模型 ID 按字典序排序，以 `__vs__` 连接），各对计数字段与下例一致。后训练 `/post_training_model/evaluation-progress` 同样使用独立模型对键，三路及目录见[后训练说明](../server_dashboard_ths/README.md#后训练模型评测)。以下 `fast / expert` 示例仅适用于原四路服务根路径。
 
 POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来源日期分组，`pairs` 固定且仅包含 `fast` 与 `expert`，分别对应 A/B Fast 与 A/B Expert；不可直接发送内部模型组合键或额外 baseline 配对。刚发现、尚无 Host 检查点的日期也提供这两组零计数。每组包含以下六个非负整数，零值也保留：
 

@@ -94,6 +94,8 @@ export interface AttemptSpec {
   inputs: InputRef[];
   hostUrl: string;
   deadline: number;
+  /** Worker must acquire a Host permit before each provider request. */
+  controlModelRequests?: boolean;
   recovery?: FailureContext;
 }
 export type AttemptState = "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
@@ -368,6 +370,7 @@ export interface AgentBackend {
     tools: ToolDefinition[];
     execute: (name: string, args: unknown, signal?: AbortSignal) => Promise<ToolResult>;
     onEvent: (value: unknown) => void;
+    modelRequest?: (signal?: AbortSignal) => Promise<() => Promise<void>>;
   }): Promise<AgentSession>;
 }
 export interface WorkerStatus {

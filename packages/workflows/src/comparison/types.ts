@@ -8,6 +8,7 @@ import type {
   FailureGuardPolicy,
 } from "@eval/contracts";
 import type { ClusteringBudget } from "@eval/agents/clustering";
+import type { PredictionConfig, PredictionMetadata } from "./prediction.js";
 
 export interface VersionConfig {
   id: string;
@@ -45,6 +46,7 @@ export interface EvalConfig {
   standardAnswerReview?: boolean;
   /** Explicit audit questions for selected cases; never accepted facts or requested verdicts. */
   reviewQuestions?: { batch_id: string; case_id: string; questions: string[] }[];
+  prediction?: PredictionConfig;
   /** Language polish targets. Every accepted source result gets one rewrite task. */
   rewrite: {
     comparison: boolean;
@@ -166,6 +168,7 @@ export interface TaskData {
   standardAnswerReview?: boolean;
   /** User-selected semantic checks, applied equally to the case's candidate answers. */
   reviewQuestions?: string[];
+  prediction?: PredictionMetadata;
   /** Present on rewrite tasks; the rewrite owns no input and only edits text slots. */
   rewriteOf?: RewriteSource;
   rewriteNames?: Record<string, string>;

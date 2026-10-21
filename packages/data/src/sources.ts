@@ -1,4 +1,5 @@
-import { stat, readFile, readdir } from "node:fs/promises";
+import { stat, readFile, readdir, link, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createReadStream, openSync, closeSync, readSync, fstatSync, statSync, type BigIntStats } from "node:fs";
 import path from "node:path";
 import type { InputSource } from "@eval/contracts";
@@ -14,6 +15,14 @@ export interface SourceReader {
 async function fileRevision(source: string): Promise<string> {
   const info = await stat(source, { bigint: true });
   return [info.dev, info.ino, info.size, info.mtimeNs].join(":");
+}
+
+/** Keep validated bytes readable while the downloader promotes or removes its staging directory. */
+export async function withPinnedInputSource<T>(source: string, operation: (file: string) => Promise<T>): Promise<T> {
+  const pinned = path.join(path.dirname(path.dirname(source)), `.publication-${randomUUID()}.jsonl`);
+  await link(source, pinned);
+  try { return await operation(pinned); }
+  finally { await unlink(pinned); }
 }
 
 /** Read a file once, rejecting a read that raced a concurrent write. */

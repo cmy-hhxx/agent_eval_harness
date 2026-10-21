@@ -28,6 +28,11 @@ GPT_PAIRS = {
     for group in (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol"))
     for pair in combinations(group, 2)
 }
+POST_TRAINING_PAIRS = {
+    tuple(sorted(pair)): "__vs__".join(sorted(pair))
+    for pair in combinations(("a_fast", "b_fast", "b_post_train_fast"), 2)
+}
+DATASET_PAIRS = {"": PAIR_BY_GROUP, "gpt": GPT_PAIRS, "post_training_model": POST_TRAINING_PAIRS}
 DATE_PATTERN = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
 PAIR_FIELDS = ("total_cases", "completed_cases", "running_cases", "queued_cases", "failed_cases", "skipped_cases")
 SOURCE_MODELS = {
@@ -113,16 +118,19 @@ def task_day(candidates: list[dict[str, object]]) -> str | None:
     return next(iter(identity_days)) if len(identity_days) == 1 else None
 
 
-def task_pairs(group: object, gpt: bool) -> list[str]:
+def task_pairs(group: object, dataset: str) -> list[str]:
     if not isinstance(group, list) or not all(isinstance(version, str) for version in group):
         return []
-    if gpt:
-        return [GPT_PAIRS[pair] for pair in combinations(sorted(set(group)), 2) if pair in GPT_PAIRS]
-    pair = PAIR_BY_GROUP.get(tuple(sorted(group)))
-    return [pair] if pair else []
+    pairs = DATASET_PAIRS[dataset]
+    if not dataset:
+        pair = pairs.get(tuple(sorted(group)))
+        return [pair] if pair else []
+    return [pairs[pair] for pair in combinations(sorted(set(group)), 2) if pair in pairs]
 
 
-def progress_from_states(states: list[dict[str, object]], updated_at: int | None = None, *, gpt: bool = False) -> dict[str, object]:
+def progress_from_states(states: list[dict[str, object]], updated_at: int | None = None, *, dataset: str = "") -> dict[str, object]:
+    if dataset not in DATASET_PAIRS:
+        raise ValueError("unknown comparison dataset")
     if not states:
         raise ValueError("at least one state.json is required")
     engines = set()
@@ -154,8 +162,8 @@ def progress_from_states(states: list[dict[str, object]], updated_at: int | None
                 continue
             candidates = [inputs.get(input_id) for input_id in input_ids.values()]
             candidates = [candidate for candidate in candidates if isinstance(candidate, dict)]
-            group = [candidate.get("version") for candidate in candidates] if gpt else data.get("group")
-            pairs = task_pairs(group, gpt)
+            group = [candidate.get("version") for candidate in candidates] if dataset else data.get("group")
+            pairs = task_pairs(group, dataset)
             day = task_day(candidates)
             if len(pairs) != 1 or day is None or not candidates:
                 continue
@@ -172,7 +180,7 @@ def progress_from_states(states: list[dict[str, object]], updated_at: int | None
             for entry in skipped:
                 if not isinstance(entry, dict):
                     continue
-                pairs = task_pairs(entry.get("versions"), gpt)
+                pairs = task_pairs(entry.get("versions"), dataset)
                 sources = entry.get("sources")
                 source_candidates = [source for source in sources if isinstance(source, dict)] if isinstance(sources, list) else []
                 batch_id, case_id = entry.get("batch_id"), entry.get("case_id")
@@ -185,7 +193,7 @@ def progress_from_states(states: list[dict[str, object]], updated_at: int | None
     if len(engines) != 1:
         raise ValueError("state files must use the same engine")
     by_day: dict[str, dict[str, dict[str, int]]] = defaultdict(
-        lambda: {pair: {field: 0 for field in PAIR_FIELDS} for pair in (GPT_PAIRS.values() if gpt else PAIR_BY_GROUP.values())}
+        lambda: {pair: {field: 0 for field in PAIR_FIELDS} for pair in DATASET_PAIRS[dataset].values()}
     )
     for (day, pair, _, _), statuses in case_statuses.items():
         counts = by_day[day][pair]
@@ -256,7 +264,7 @@ def main() -> int:
                 updated_at = max(int(stat.st_mtime_ns / 1_000_000) for stat in stats)
                 states = [read_state(path) for path in args.states]
                 prefix = urlsplit(args.endpoint).path.rstrip("/").removesuffix("/evaluation-progress").lstrip("/")
-                progress = independent_progress(states, prefix, updated_at) if prefix in SOURCE_MODELS else progress_from_states(states, updated_at, gpt=prefix == "gpt")
+                progress = independent_progress(states, prefix, updated_at) if prefix in SOURCE_MODELS else progress_from_states(states, updated_at, dataset=prefix)
                 progress["updated_at"] = max(updated_at, cast(int, progress["started_at"]))
                 last_signature = signature
             if progress is None:

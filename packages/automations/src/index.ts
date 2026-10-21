@@ -1,7 +1,10 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { randomUUID } from "node:crypto";
 import { errorText, RemoteInputNotReadyError, type PublicationCounts, type RemoteDay } from "@eval/contracts";
 import { nextPublicationAt, PUBLICATION_INTERVAL_MS, type MongoPublicationState, type MongoReceipt, type PublicationState } from "./publication.js";
+import { createEvaluationScheduler } from "./evaluation-scheduler.js";
 export * from "./publication.js";
+export { createEvaluationScheduler } from "./evaluation-scheduler.js";
 
 export interface StageCounts {
   total: number; completed: number; failed: number; pending: number; running: number; cancelled: number; blocked: number;
@@ -65,12 +68,15 @@ export interface PipelineOptions {
   retryMs: number;
   maxEvaluationAttempts: number;
   once?: boolean;
+  /** Destination identity required when a Mongo delivery service is supplied. */
+  mongoTarget?: string;
 }
 export interface PipelineServices {
   discover(signal: AbortSignal): Promise<RemoteDay[]>;
   initialize(day: RemoteDay): Promise<Pick<AutomationJob, "runIds" | "adopted" | "summary">>;
-  sync(job: AutomationJob, day: RemoteDay, signal: AbortSignal, beforeReplace: () => Promise<void>): Promise<{ changed: boolean; bytes: number }>;
+  sync(job: AutomationJob, day: RemoteDay, signal: AbortSignal, beforeReplace: () => Promise<void>): Promise<{ changed: boolean; bytes: number; rows: RemoteDay["rows"] }>;
   evaluate(job: AutomationJob, signal: AbortSignal): Promise<EvaluationOutcome>;
+  evaluationConcurrency?(): number;
   recover?(job: AutomationJob): Promise<"interrupted" | "transient" | undefined>;
   save(state: AutomationState): Promise<void>;
   event(name: string, job?: AutomationJob, detail?: string): Promise<void>;
@@ -97,6 +103,7 @@ function refreshInterval(job: AutomationJob, now: number, recentInterval: number
 export async function runPipeline(
   state: AutomationState, options: PipelineOptions, services: PipelineServices, signal: AbortSignal,
 ): Promise<void> {
+  if (services.syncMongo && !options.mongoTarget) throw new Error("Mongo delivery requires a target identity");
   const controller = new AbortController(), activeSignal = AbortSignal.any([signal, controller.signal]);
   let writes = Promise.resolve();
   const save = () => {
@@ -108,7 +115,17 @@ export async function runPipeline(
   };
   const backoff = (attempt: number) => Math.min(options.retryMs * 2 ** Math.min(attempt - 1, 10), 30 * 60_000);
   const activeJobs = () => Object.values(state.jobs).filter(job => automationDateSelected(options, job.date));
+  const retainMongoReceipt = (job: AutomationJob) => {
+    const previous = job.mongo;
+    if (previous?.status === "completed" && previous.counts && (previous.counts.inserted || previous.counts.updated))
+      (job.mongoHistory ??= []).push({ target: previous.target, startedAt: previous.startedAt!,
+        completedAt: previous.completedAt!, counts: previous.counts });
+  };
   for (const job of activeJobs()) {
+    if (services.syncMongo && job.mongo && job.mongo.target !== options.mongoTarget) {
+      retainMongoReceipt(job);
+      job.mongo = { target: options.mongoTarget, status: "pending", attempts: 0, nextAt: 0 };
+    }
     delete job.sourceReady;
     if (!job.adopted && services.recover) {
       try {
@@ -125,8 +142,8 @@ export async function runPipeline(
       }
     }
     if (job.download === "downloading" || job.download === "installing") {
-      // A crash may have interrupted the multi-file promotion; force resync and reconciliation.
-      job.download = "pending";
+      // Downloading has not touched installed files; interrupted promotion still requires reconciliation.
+      job.download = job.download === "downloading" && job.downloaded ? "ready" : "pending";
       if (job.evaluation !== "blocked") job.evaluation = "pending";
     }
     if (job.evaluation === "evaluating" || job.evaluation === "pending") {
@@ -147,17 +164,25 @@ export async function runPipeline(
     state.publication.status = "uncertain";
     state.publication.error = "Interrupted log upload: verify the server receipt before resolving";
   } else if (state.publication?.status === "running") state.publication.status = "retry";
+  let publishOnStartup = Boolean(services.publish);
+  let refreshAfterReplay = state.publication?.status !== "completed" && state.publication?.log !== undefined;
+  if (services.publish) state.publication ??= { status: "pending", attempts: 0, nextAt: 0 };
   state.status = "running";
   state.startedAt = Date.now();
   await save();
   await services.event("pipeline_started");
   let nextPoll = 0, nextObserve = 0, polls = 0, pollFailures = 0;
   let polling: Promise<void> | undefined, downloading: Promise<void> | undefined;
-  let evaluating: Promise<void> | undefined, observing: Promise<void> | undefined;
-  let publishing: Promise<void> | undefined, syncingMongo: Promise<void> | undefined;
+  let observing: Promise<void> | undefined;
+  let publishing: Promise<void> | undefined;
+  const syncingMongo = new Map<string, Promise<void>>();
   let fatal: unknown;
   const guarded = (operation: Promise<void>, done: () => void) =>
     operation.catch((error) => { fatal = error; controller.abort(error); }).finally(done);
+  const evaluations = createEvaluationScheduler(
+    () => services.evaluationConcurrency?.() ?? 1, evaluate,
+    error => { fatal = error; controller.abort(error); }, options.once,
+  );
 
   async function poll() {
     try {
@@ -210,7 +235,8 @@ export async function runPipeline(
     const day: RemoteDay = { date: job.date, rows: { ...job.observed } };
     const hadReadySnapshot = job.download === "ready";
     let replacing = false;
-    job.download = "downloading";
+    // A prior interrupted promotion must remain unreadable throughout its recovery transfer.
+    job.download = job.downloaded && !hadReadySnapshot ? "installing" : "downloading";
     job.downloadAttempts++;
     delete job.downloadError;
     job.nextDownloadAt = 0;
@@ -218,11 +244,15 @@ export async function runPipeline(
     await services.event("download_started", job);
     try {
       const result = await services.sync(job, day, activeSignal, async () => {
+        while (job.evaluation === "evaluating" || job.mongo?.status === "running" || publishing)
+          await delay(100, undefined, { signal: activeSignal });
         replacing = true;
         job.download = "installing";
         await save();
       });
-      job.downloaded = day.rows;
+      job.downloaded = result.rows;
+      for (const [model, rows] of Object.entries(result.rows))
+        job.observed[model] = Math.max(job.observed[model] ?? 0, rows);
       job.download = "ready";
       job.checkedAt = Date.now();
       job.bytes = result.bytes;
@@ -238,6 +268,8 @@ export async function runPipeline(
         job.nextEvaluationAt = 0;
         delete job.evaluationError;
       }
+      if (state.publication?.status === "retry" && !state.publication.log)
+        state.publication.nextAt = Date.now();
       await save();
       await services.event(result.changed ? "input_updated" : "input_unchanged", job);
     } catch (error) {
@@ -318,7 +350,7 @@ export async function runPipeline(
       if (delivery.status === "completed") (state.publicationHistory ??= []).push(structuredClone(delivery));
       delivery = state.publication = { status: "pending", attempts: 0, nextAt: delivery.nextAt, startedAt: Date.now() };
       delivery.window = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS;
-      delivery.traceId = `comparison-snapshot-${state.id}-${delivery.window}`;
+      delivery.traceId = `comparison-snapshot-${state.id}-${delivery.window}-${randomUUID()}`;
     }
     delivery.status = "running";
     delivery.attempts++;
@@ -328,7 +360,8 @@ export async function runPipeline(
       await services.publish!(state, save, activeSignal);
       delivery.status = "completed";
       delivery.completedAt = Date.now();
-      delivery.nextAt = nextPublicationAt(Date.now());
+      delivery.nextAt = refreshAfterReplay ? Date.now() : nextPublicationAt(Date.now());
+      refreshAfterReplay = false;
       delivery.attempts = 0;
       delete delivery.error;
     } catch (error) {
@@ -350,10 +383,9 @@ export async function runPipeline(
   });
   async function syncMongo(job: AutomationJob) {
     const previous = job.mongo;
-    if (previous?.status === "completed" && previous.counts && (previous.counts.inserted || previous.counts.updated))
-      (job.mongoHistory ??= []).push({ startedAt: previous.startedAt!, completedAt: previous.completedAt!, counts: previous.counts });
+    retainMongoReceipt(job);
     const source = mongoSource(job);
-    const delivery: MongoPublicationState = job.mongo = { status: "running", attempts: (previous?.attempts ?? 0) + 1, nextAt: 0,
+    const delivery: MongoPublicationState = job.mongo = { target: options.mongoTarget, status: "running", attempts: (previous?.attempts ?? 0) + 1, nextAt: 0,
       synced: previous?.synced, verified: previous?.verified, startedAt: Date.now() };
     await save();
     await services.event("mongo_started", job);
@@ -385,47 +417,51 @@ export async function runPipeline(
       // Let the first catalog check settle before an upload can pin stale inputs.
       if (polls === 0) { await polling; continue; }
       const jobs = activeJobs().sort((a, b) => a.date.localeCompare(b.date));
-      if (services.publish && !state.publication) {
-        state.publication = { status: "pending", attempts: 0, nextAt: nextPublicationAt(now) };
-        await save();
-      }
-      // Once due, reserve the next idle download slot for the cumulative snapshot.
-      if (!publishing && !downloading && services.publish && state.publication && state.publication.status !== "uncertain" &&
-          now >= state.publication.nextAt && (!options.once || state.publication.status !== "retry"))
+      // Refresh downloads retain installed inputs. Only their promotion conflicts with a log snapshot.
+      if (!publishing && services.publish && state.publication && state.publication.status !== "uncertain" &&
+          Object.values(state.jobs).some(job => job.downloaded !== undefined) && !jobs.some(job => job.download === "installing") &&
+          (publishOnStartup || now >= state.publication.nextAt) &&
+          (publishOnStartup || !options.once || state.publication.status !== "retry")) {
+        publishOnStartup = false;
         publishing = guarded(publish(), () => { publishing = undefined; });
+      }
       if (!downloading && !publishing) {
-        const job = [...jobs].sort((a, b) => Number(sameRows(a.downloaded, a.observed)) - Number(sameRows(b.downloaded, b.observed)) || a.checkedAt - b.checkedAt)
-          .find((job) => job.sourceReady === true && job.mongo?.status !== "running" && job.evaluation !== "evaluating" && now >= job.nextDownloadAt &&
+        const busy = (job: AutomationJob) => job.evaluation === "evaluating" || job.mongo?.status === "running";
+        const recovering = (job: AutomationJob) => job.downloaded !== undefined && job.download !== "ready";
+        const job = [...jobs].sort((a, b) => Number(recovering(b)) - Number(recovering(a)) || Number(busy(a)) - Number(busy(b)) ||
+          Number(sameRows(a.downloaded, a.observed)) - Number(sameRows(b.downloaded, b.observed)) || a.checkedAt - b.checkedAt)
+          .find((job) => job.sourceReady === true && now >= job.nextDownloadAt &&
           ((!sameRows(job.downloaded, job.observed)) || job.download !== "ready" ||
-            (!job.adopted && (job.downloadError || now - job.checkedAt >= refreshInterval(job, now, options.refreshMs)))) &&
+            (!job.adopted && Number.isFinite(options.refreshMs) &&
+              (job.downloadError || now - job.checkedAt >= refreshInterval(job, now, options.refreshMs)))) &&
           (!options.once || (job.download !== "retry" && !job.downloadError)));
         if (job) downloading = guarded(sync(job), () => { downloading = undefined; });
       }
-      if (!evaluating) {
-        const job = jobs.find((job) => job.download === "ready" &&
-          (job.evaluation === "pending" || (!options.once && job.evaluation === "retry")) && now >= job.nextEvaluationAt);
-        if (job) evaluating = guarded(evaluate(job), () => { evaluating = undefined; });
-      }
+      evaluations.tick(jobs);
       if (!observing && services.observe && now >= nextObserve) {
         nextObserve = now + 10_000;
         observing = guarded(observe(), () => { observing = undefined; });
       }
-      if (!syncingMongo && services.syncMongo) {
-        const job = jobs.find((job) => {
-          if (job.adopted || job.download !== "ready" || now < (job.mongo?.nextAt ?? 0) ||
+      if (services.syncMongo) {
+        const ready = jobs.filter((job) => {
+          const installed = job.download === "ready" || (job.download === "downloading" && job.downloaded !== undefined);
+          if (syncingMongo.has(job.date) || (job.adopted && job.mongo?.target !== options.mongoTarget) || !installed || now < (job.mongo?.nextAt ?? 0) ||
               (options.once && job.mongo?.status === "retry")) return false;
           const source = mongoSource(job), synced = job.mongo?.synced;
           return job.mongo?.status !== "completed" || !synced || source.inputsUpdatedAt !== synced.inputsUpdatedAt ||
             source.comparisons !== synced.comparisons;
         });
-        if (job) syncingMongo = guarded(syncMongo(job), () => { syncingMongo = undefined; });
+        for (const job of ready) {
+          if (syncingMongo.size >= 2) break;
+          syncingMongo.set(job.date, guarded(syncMongo(job), () => { syncingMongo.delete(job.date); }));
+        }
       }
-      if (options.once && polls > 0 && !polling && !downloading && !evaluating && !publishing && !syncingMongo) break;
+      if (options.once && polls > 0 && !polling && !downloading && !evaluations.size && !publishing && !syncingMongo.size) break;
       await delay(100, undefined, { signal: activeSignal }).catch(() => {});
     }
   } finally {
     controller.abort();
-    await Promise.all([polling, downloading, evaluating, observing, publishing, syncingMongo]);
+    await Promise.all([polling, downloading, evaluations.settled(), observing, publishing, ...syncingMongo.values()]);
     state.status = "stopped";
     await save();
     await services.event("pipeline_stopped");

@@ -110,15 +110,17 @@ export async function startWorker(
       jsonRepairs = 0,
       modelError: string | undefined,
       malformedCompletedResponse = false;
-    const deadline = setTimeout(
-      () => {
-        void stop(attempt, "timed_out", "Task deadline exceeded");
-      },
-      Math.max(1, spec.deadline - Date.now()),
-    );
-    let idle: NodeJS.Timeout;
+    let deadlineAt = spec.deadline, deadline: NodeJS.Timeout | undefined;
+    const armDeadline = () => {
+      clearTimeout(deadline);
+      deadline = setTimeout(() => { void stop(attempt, "timed_out", "Task deadline exceeded"); },
+        Math.max(1, deadlineAt - Date.now()));
+    };
+    armDeadline();
+    let idle: NodeJS.Timeout, pendingSubmissions = 0;
     const activity = () => {
       clearTimeout(idle);
+      if (pendingSubmissions) return;
       idle = setTimeout(() => {
         void stop(attempt, "timed_out", "Model/tool idle timeout");
       }, spec.policy.idleTimeoutSeconds * 1000);
@@ -563,6 +565,34 @@ export async function startWorker(
         spec,
         workdir: runtime.context.workdir,
         tools: modelTools,
+        ...(spec.controlModelRequests ? { modelRequest: async (signal?: AbortSignal) => {
+          const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+          const callId = randomUUID(), waitingAt = Date.now();
+          clearTimeout(idle); clearTimeout(deadline);
+          try {
+            await request(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "POST", {}, combined);
+          } catch (error) {
+            // Fail closed: a missing permit must never fall through to the provider.
+            controller.abort(error);
+            throw error;
+          } finally {
+            deadlineAt += Date.now() - waitingAt;
+            if (!controller.signal.aborted) { armDeadline(); activity(); }
+          }
+          let released = false;
+          return async () => {
+            if (released) return;
+            released = true;
+            try {
+              // A busy Host may acknowledge after serializing its checkpoint. A short
+              // control timeout must not discard a successfully completed model turn.
+              await request(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "DELETE", undefined, AbortSignal.timeout(60_000));
+            } catch (error) {
+              await stop(attempt, "cancelled", "LLM permit release failed: " + errorText(error));
+              throw error;
+            }
+          };
+        } } : {}),
         async execute(name, args, signal) {
           activity();
           if (accepted) return runtime.withBudget({ ...textResult({ accepted: true }), terminate: true }, explorationLimit());
@@ -570,6 +600,9 @@ export async function startWorker(
           emit(attempt, "tool_start", { name, args });
           const submissionTool = submissionTools.find((tool) => tool.name === name) ??
             (name === "inspect_material" ? definitions.find(tool => tool.name === name) : undefined);
+          // Host validation/commit queues are active work. Keep the overall
+          // deadline while excluding these waits from model inactivity.
+          if (submissionTool) { pendingSubmissions++; activity(); }
           let result;
           try {
             result = submissionTool
@@ -585,6 +618,8 @@ export async function startWorker(
               content: [{ type: "text" as const, text: errorText(error) }],
               isError: true,
             };
+          } finally {
+            if (submissionTool) pendingSubmissions--;
           }
           if (submissionTool && !accepted && submissions >= 1 + spec.policy.repairAttempts) {
             controller.abort(new Error("Submission repair budget exhausted"));
@@ -833,6 +868,8 @@ export async function startWorker(
         throw new HttpError(400, "Invalid evaluation tool descriptions");
       if (!Number.isFinite(spec.deadline) || spec.deadline <= Date.now())
         throw new HttpError(409, "Attempt already expired");
+      if (spec.controlModelRequests !== undefined && typeof spec.controlModelRequests !== "boolean")
+        throw new HttpError(400, "Invalid model request control");
       for (const key of [
         "timeoutSeconds",
         "idleTimeoutSeconds",

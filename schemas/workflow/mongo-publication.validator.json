@@ -1,0 +1,92 @@
+{
+  "$and": [
+    {
+      "$jsonSchema": {
+        "oneOf": [
+          {
+            "bsonType": "object",
+            "additionalProperties": false,
+            "required": ["_id", "kind", "evaluationTaskId", "batchId", "caseId", "createdAt", "versionId", "trace"],
+            "properties": {
+              "_id": { "bsonType": "string" },
+              "kind": { "enum": ["input"] },
+              "evaluationTaskId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "batchId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "caseId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "createdAt": { "bsonType": "date" },
+              "versionId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "trace": { "bsonType": "object" }
+            }
+          },
+          {
+            "bsonType": "object",
+            "additionalProperties": false,
+            "required": ["_id", "kind", "evaluationTaskId", "batchId", "caseId", "createdAt", "versionA", "versionB", "result", "evaluatedAt"],
+            "properties": {
+              "_id": { "bsonType": "string" },
+              "kind": { "enum": ["comparison"] },
+              "evaluationTaskId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "batchId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "caseId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "createdAt": { "bsonType": "date" },
+              "task": { "bsonType": "string" },
+              "versionA": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "versionB": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "result": { "bsonType": ["object", "null"] },
+              "evaluatedAt": { "bsonType": ["date", "null"] }
+            },
+            "oneOf": [
+              { "properties": { "result": { "bsonType": "null" }, "evaluatedAt": { "bsonType": "null" } } },
+              { "properties": { "result": { "bsonType": "object" }, "evaluatedAt": { "bsonType": "date" } } }
+            ]
+          },
+          {
+            "bsonType": "object",
+            "additionalProperties": false,
+            "required": ["_id", "kind", "evaluationTaskId", "batchId", "versionId", "runId", "evaluation_topic", "createdAt", "result"],
+            "properties": {
+              "_id": { "bsonType": "string" },
+              "kind": { "enum": ["attribution_tree"] },
+              "evaluationTaskId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "batchId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "versionId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "runId": { "bsonType": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "evaluation_topic": { "bsonType": "string", "minLength": 1 },
+              "createdAt": { "bsonType": "date" },
+              "result": {
+                "bsonType": "object",
+                "additionalProperties": false,
+                "required": ["attribution_tree", "sources", "clustering"],
+                "properties": {
+                  "attribution_tree": { "bsonType": "object" },
+                  "sources": { "bsonType": "array", "minItems": 1, "items": { "bsonType": "object" } },
+                  "clustering": { "bsonType": "object" }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "$expr": {
+        "$cond": [
+          { "$eq": ["$kind", "input"] },
+          { "$eq": ["$_id", { "$concat": ["input:", "$evaluationTaskId", ":", "$batchId", ":", "$caseId", ":", "$versionId"] }] },
+          {
+            "$cond": [
+              { "$eq": ["$kind", "attribution_tree"] },
+              { "$eq": ["$_id", { "$concat": ["attribution_tree:", "$evaluationTaskId", ":", "$batchId", ":", "$versionId", ":", "$runId"] }] },
+              {
+                "$and": [
+                  { "$lt": ["$versionA", "$versionB"] },
+                  { "$eq": ["$_id", { "$concat": ["comparison:", "$evaluationTaskId", ":", "$batchId", ":", "$caseId", ":", "$versionA", ":", "$versionB"] }] }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

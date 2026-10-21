@@ -44,7 +44,7 @@ export function publicationComparison(row: JsonObject, inputIds: Record<string, 
   return { ...row, rewritten: { ...rewritten, rewrites } };
 }
 
-/** Wait for text work to settle; failed polishing never blocks an accepted comparison. */
+/** Publish each comparison when its own text rewrite has an accepted result. */
 export function publishableComparisons(state: Checkpoint): Map<string, number> {
   const ready = new Map<string, number>();
   const entries = Object.entries(state.tasks);
@@ -58,10 +58,10 @@ export function publishableComparisons(state: Checkpoint): Map<string, number> {
     const required = new Set([id, ...Object.values(task.dependencies)]);
     const tasks = [...required].map((taskId) => state.tasks[taskId]);
     if (tasks.some((item) => !item || item.status !== "succeeded" || !item.receipt?.exported)) continue;
-    const polishing = [...required].flatMap(sourceId => (rewrites.get(sourceId) ?? []).map(rewrite => state.tasks[rewrite]));
-    const paused = state.pausedStages?.some(pause => pause.stage === "rewrite");
-    if (polishing.some(item => item.status === "running" || item.status === "pending" && !paused)) continue;
-    if (polishing.some(item => item.status === "succeeded" && !item.receipt?.exported)) continue;
+    const polishing = (rewrites.get(id) ?? []).map(rewrite => state.tasks[rewrite]);
+    const enabled = (state.config as { rewrite?: { comparison?: boolean } })?.rewrite?.comparison;
+    if (enabled && !polishing.length) continue;
+    if (polishing.some(item => item.status !== "succeeded" || !item.receipt?.exported)) continue;
     const at = Math.max(...[...tasks, ...polishing].flatMap(item => item.receipt ? [item.receipt.acceptedAt] : []));
     if (Number.isFinite(at) && task.data.comparisonId) ready.set(task.data.comparisonId, at);
   }

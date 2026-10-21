@@ -6,11 +6,11 @@ import path from "node:path";
 import type { InputDownload } from "@eval/contracts";
 import { replaceInputSnapshot } from "./input-snapshot.js";
 
-async function* files(texts: string[], rows = 1, wrongSize = false): AsyncGenerator<InputDownload> {
+async function* files(texts: string[], rows = 1, wrongSize = false): AsyncGenerator<() => Promise<InputDownload>> {
   for (const [index, text] of texts.entries()) {
     const bytes = Buffer.from(text);
-    yield { name: ["a_fast.jsonl", "b_fast.jsonl"][index], rows, size: bytes.length + Number(wrongSize),
-      chunks: (async function* () { for (let i = 0; i < bytes.length; i += 3) yield bytes.subarray(i, i + 3); })(), close: async () => {} };
+    yield async () => ({ name: ["a_fast.jsonl", "b_fast.jsonl"][index], rows, size: bytes.length + Number(wrongSize),
+      chunks: (async function* () { for (let i = 0; i < bytes.length; i += 3) yield bytes.subarray(i, i + 3); })(), close: async () => {} });
   }
 }
 
@@ -42,11 +42,11 @@ test("snapshots validate UTF-8, row counts and length before replacing any commi
 test("six-model snapshots install numeric and dotted IDs and reject unsafe or duplicate names", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "automation-six-source-")), signal = AbortSignal.timeout(3000);
   const names = ["a_fast", "b_fast", "6_luna", "a_expert", "b_expert", "6.1sol"].map(id => id + ".jsonl");
-  async function* namedFiles(entries: string[]): AsyncGenerator<InputDownload> {
+  async function* namedFiles(entries: string[]): AsyncGenerator<() => Promise<InputDownload>> {
     for (const name of entries) {
       const text = Buffer.from('{"case_id":"one"}\n');
-      yield { name, rows: 1, size: text.length,
-        chunks: (async function* () { yield text; })(), close: async () => {} };
+      yield async () => ({ name, rows: 1, size: text.length,
+        chunks: (async function* () { yield text; })(), close: async () => {} });
     }
   }
   try {
@@ -65,12 +65,53 @@ test("aborted transfer retains the previous source and closes the response", asy
   try {
     await replaceInputSnapshot(directory, files(['{"old":true}\n']), controller.signal, async () => {});
     async function* interrupted() {
-      yield { name: "a_fast.jsonl", rows: 1, size: 10,
+      yield async () => ({ name: "a_fast.jsonl", rows: 1, size: 10,
         chunks: (async function* () { yield Buffer.from('{"new":'); controller.abort(); yield Buffer.from('1}\n'); })(),
-        close: async () => { closed = true; } };
+        close: async () => { closed = true; } });
     }
     await assert.rejects(replaceInputSnapshot(directory, interrupted(), controller.signal, async () => assert.fail("aborted downloads cannot begin replacement")));
     assert.equal(closed, true);
     assert.equal(await readFile(path.join(directory, "a_fast.jsonl"), "utf8"), '{"old":true}\n');
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("growing catalog counts do not discard complete files; installed counts come from their content", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-growing-"));
+  try {
+    const result = await replaceInputSnapshot(directory,
+      files(['{"id":"one"}\n{"id":"two"}\n', '{"id":"one"}\n'], 1),
+      AbortSignal.timeout(3000), async () => {});
+    assert.deepEqual(result.rows, { a_fast: 2, b_fast: 1 });
+    await assert.rejects(replaceInputSnapshot(directory, files(['{"id":"one"}\n'], 2),
+      AbortSignal.timeout(3000), async () => assert.fail("a regressed snapshot cannot replace inputs")), /rows 1\/2/);
+    assert.equal(await readFile(path.join(directory, "a_fast.jsonl"), "utf8"), '{"id":"one"}\n{"id":"two"}\n');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("complete files publish while later files download, before snapshot promotion", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-publish-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const events: string[] = [];
+  let release!: () => void;
+  const publishing = new Promise<void>(resolve => { release = resolve; });
+  async function* downloads() {
+    for await (const download of files(['{"id":1}\n', '{"id":2}\n'])) {
+      yield async () => {
+        const file = await download();
+        events.push("download:" + file.name);
+        if (file.name === "b_fast.jsonl") release();
+        return file;
+      };
+    }
+  }
+  await replaceInputSnapshot(directory, downloads(), t.signal, async () => { events.push("promote"); },
+    async (file, model, rows) => {
+      assert.equal(rows, 1);
+      JSON.parse(await readFile(file, "utf8"));
+      events.push("publish:" + model);
+      await publishing;
+    });
+  assert(events.indexOf("download:b_fast.jsonl") < events.indexOf("promote"));
+  assert(events.indexOf("publish:a_fast") < events.indexOf("promote"));
+  assert(events.indexOf("publish:b_fast") < events.indexOf("promote"));
 });

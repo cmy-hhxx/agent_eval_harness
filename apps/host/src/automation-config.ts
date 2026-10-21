@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { safeId, type Engine } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import { validInputDate } from "@eval/runtime/client";
@@ -6,6 +7,7 @@ import type { PipelineOptions } from "@eval/automations";
 import type { EvalConfig } from "@eval/workflows/comparison";
 
 export interface AutomationConfig extends PipelineOptions {
+  /** Persistent evaluation task identity; independent experiments require distinct IDs and local paths. */
   id: string;
   sourceUrl: string;
   remoteModels: string[];
@@ -20,7 +22,12 @@ export interface AutomationConfig extends PipelineOptions {
   channelConcurrency?: Record<string, number>;
   publishProgress: boolean;
   publishStatisticsLog: boolean;
+  prediction?: { answersFile: string; sourceConfig: string };
+  /** Accepted prediction replacements applied to this source's publication and statistics. */
+  predictionResults?: string;
   publication: {
+    /** Human-readable experiment label stored on both Mongo inputs and results. */
+    topic?: string;
     logFile: string;
     logUrl: string;
     mongoUriEnv: string;
@@ -34,7 +41,8 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
   const keys = ["id", "sourceUrl", "remoteModels", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
-    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishStatisticsLog", "publication"];
+    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishStatisticsLog", "publication",
+    "prediction", "predictionResults"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
     if (typeof raw[key] !== "string" || !raw[key]) throw new Error(`Invalid automations.${key}`);
@@ -50,8 +58,17 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
       throw new Error(`Invalid automations.${key}`);
     return value;
   };
-  const source = new URL(string("sourceUrl"));
-  if (!["http:", "https:"].includes(source.protocol) || source.username || source.password || source.search || source.hash)
+  let prediction: AutomationConfig["prediction"];
+  if (raw.prediction !== undefined) {
+    const value = raw.prediction as Record<string, unknown>;
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).some(key => !["answersFile", "sourceConfig"].includes(key)) ||
+        ["answersFile", "sourceConfig"].some(key => typeof value[key] !== "string" || !value[key]))
+      throw new Error("Invalid automations.prediction");
+    prediction = { answersFile: path.resolve(directory, String(value.answersFile)), sourceConfig: path.resolve(directory, String(value.sourceConfig)) };
+  }
+  const source = prediction ? pathToFileURL(prediction.answersFile) : new URL(string("sourceUrl"));
+  if (!prediction && (!["http:", "https:"].includes(source.protocol) || source.username || source.password || source.search || source.hash))
     throw new Error("sourceUrl must be an HTTP(S) service URL without credentials/query/fragment");
   const fromDate = string("fromDate"), throughDate = raw.throughDate === undefined ? undefined : string("throughDate");
   const completedDates = strings("completedDates");
@@ -61,6 +78,9 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   if (engine !== "pi" && engine !== "prime") throw new Error("Invalid automation engine");
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
   if (typeof raw.publishStatisticsLog !== "boolean") throw new Error("Invalid automations.publishStatisticsLog");
+  if (prediction && (raw.publishProgress || raw.publishStatisticsLog))
+    throw new Error("Prediction source publishes results through its original task, without separate progress/statistics uploads");
+  const predictionResults = raw.predictionResults === undefined ? undefined : path.resolve(directory, string("predictionResults"));
   const hostConfigs = strings("hostConfigs").map((entry) => path.resolve(directory, entry));
   if (!hostConfigs.length) throw new Error("hostConfigs must not be empty");
   const remoteModels = strings("remoteModels").map(safeId);
@@ -73,7 +93,8 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const publication = raw.publication as AutomationConfig["publication"];
   const publicationKeys = ["logFile", "logUrl", "mongoUriEnv", "mongoDatabase", "mongoCollection", "mongoTlsCAFileEnv"];
   if (!publication || typeof publication !== "object" || Array.isArray(publication) ||
-      Object.keys(publication).some((key) => !publicationKeys.includes(key)) ||
+      Object.keys(publication).some((key) => key !== "topic" && !publicationKeys.includes(key)) ||
+      (publication.topic !== undefined && (typeof publication.topic !== "string" || !publication.topic.trim())) ||
       publicationKeys.some((key) => typeof (publication as Record<string, unknown>)[key] !== "string" || !(publication as Record<string, unknown>)[key]))
     throw new Error("Invalid automations.publication");
   const logUrl = new URL(publication.logUrl);
@@ -85,12 +106,14 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     id: safeId(string("id")), sourceUrl: source.href.replace(/\/$/, ""), remoteModels, fromDate, throughDate, completedDates,
     hostConfigs, engine, stateDirectory: path.resolve(directory, string("stateDirectory")),
     sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix: safeId(string("runPrefix")),
-    pollMs: number("pollMs"), refreshMs: number("refreshMs"), retryMs: number("retryMs"),
+    pollMs: number("pollMs"), refreshMs: raw.refreshMs === null ? Infinity : number("refreshMs"), retryMs: number("retryMs"),
     maxEvaluationAttempts: number("maxEvaluationAttempts"), requestTimeoutMs: number("requestTimeoutMs"),
-    dailyComparisonLimitPerTier: number("dailyComparisonLimitPerTier"),
+    dailyComparisonLimitPerTier: raw.dailyComparisonLimitPerTier === null ? Infinity : number("dailyComparisonLimitPerTier"),
     channelConcurrency,
     publishProgress: raw.publishProgress,
     publishStatisticsLog: raw.publishStatisticsLog,
+    ...(prediction ? { prediction } : {}),
+    ...(predictionResults ? { predictionResults } : {}),
     publication: { ...publication, logFile: path.resolve(directory, publication.logFile), logUrl: logUrl.href },
   };
 }

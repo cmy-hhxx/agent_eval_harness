@@ -534,6 +534,8 @@ function bindSourceTask(
         candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) =>
         [label, modelMaterial(material, label, sources[label].value as RawInput, sources[label].id)])) },
   };
+  if (data.prediction && binding.modelInput)
+    binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
   if (attribution && binding.modelInput) binding.presentedReads = presentedMaterialReads(
     binding.modelInput.answer as Record<string, unknown>, "answer", sources.answer.id);
   if (blind && binding.modelInput) binding.modelInput = presentSource(binding.modelInput, blind.presentation);

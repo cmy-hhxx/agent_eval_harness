@@ -295,6 +295,12 @@ node scripts/attribution-review.mjs --run data/runs/attribution/attribution-pilo
 
 审阅脚本生成 review.html 与每模型 JSONL；默认读取 data/problems，可用 --library / --samples 指定问题库和摘要。不修改正式结果、问题库或执行范围。
 
+专题仅导出一个模型时，增加 `--model b_post_train_fast`；`--json PATH` 同时保存归因树 JSON。只导出所选模型的节点、待观察池、样本及模型 JSONL，其他模型不会生成文件。独立聚类的来源由作业冻结引用确定，可把 `--run` 指向单独的交付目录，将审阅产物与来源 run 分开保存。
+
+同一问题库的原聚类与增量聚类可重复传入 `--clustering`，合并各作业冻结的归因来源及待观察原因，按当前问题库投影已归类样本。作业目录或来源输入重复时拒绝导出；来源收据与正文保持原样，不重新调用模型。
+
+专题最终归因树须等源评测及完整输入安装结束；覆盖范围使用 `full-evaluation`，列出目标、已接受和最终排除的归因数量。原聚类与增量聚类的来源及成功收据分别保存在 `clustering.jobs`，全部作业须完成聚类和改写，合并后严格对应源评测的最新成功归因，不能把中途快照当成完整交付。
+
 ### 重新改写对比文案
 
 停止该 run 的 Host，预览后加 apply，再同 ID 续跑：

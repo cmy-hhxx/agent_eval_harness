@@ -10,10 +10,12 @@ import { emptyUsage, type RunState } from "@eval/contracts";
 import { fileSourceReader, runLock, writeJson } from "@eval/data";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { comparisonCodec, buildPlan, type Checkpoint } from "@eval/workflows/comparison";
-import { automationSnapshot, startAutomationDashboard } from "../../../apps/host/src/automation-dashboard.js";
+import { automationSnapshot, startAutomationDashboard, type AutomationDashboardSource } from "../../../apps/host/src/automation-dashboard.js";
 import { completionTimeline, createAutomationMonitor } from "../../../apps/host/src/automation-monitor.js";
 import { checkpoint } from "../../../apps/host/src/automation-evaluation.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
+import { automationMongoTarget } from "../../../apps/host/src/automation-sources.js";
+import { createAutomationLlm } from "../../../apps/host/src/automation-llm.js";
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
@@ -24,9 +26,32 @@ const execution = () => ({ ...settings, runningTasks: 0, runningCases: 0,
   stages: { criteria: 0, attribution: 0, comparison: 0, rewrite: 0 }, retryingStages: { attribution: 0, comparison: 0, rewrite: 0 },
   readyTasks: 0, waitingDependencies: 0, retryingTasks: 0, nextRetryAt: undefined as number | undefined });
 const state = (): AutomationState => ({ id: "fixture", sourceUrl: "http://fixture", status: "stopped", startedAt: at, updatedAt: at, jobs: {} });
+const scheduling = (ids = ["fixture"]) => createAutomationLlm(ids,
+  { sources: Object.fromEntries(ids.map(id => [id, { concurrency: 32 }])) }, async () => {});
+const dashboard = () => ({ ...state(), sourceName: "fixture", publishStatisticsLog: true,
+  llm: scheduling().snapshot(),
+  sources: [{ id: "fixture", name: "fixture", status: "stopped", dateCount: 0 }] });
 const job = (date: string): AutomationJob => ({ date, runIds: ["fixture"], observed: { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 },
   adopted: false, download: "ready", evaluation: "completed", checkedAt: at, downloadAttempts: 0,
   evaluationAttempts: 0, nextDownloadAt: 0, nextEvaluationAt: 0 });
+
+test("dashboard delivery counts exclude receipts from another Mongo destination without deleting them", async () => {
+  const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  const target = automationMongoTarget(config), current = state(), date = "2026-10-16";
+  const receipt = { startedAt: at, completedAt: at + 1000,
+    counts: { inputs: 4, comparisons: 2, inserted: 6, updated: 0 } };
+  current.jobs[date] = { ...job(date), runIds: [],
+    mongo: { ...receipt, target: "another-target", status: "completed", nextAt: 0, attempts: 0 },
+    mongoHistory: [{ ...receipt, target: "another-target" }, { ...receipt, target }],
+  };
+  const before = structuredClone(current);
+  const snapshot = await automationSnapshot(config, ROOT, current, settings);
+  assert.equal(snapshot.jobs[0].mongo, undefined);
+  assert.deepEqual(snapshot.jobs[0].mongoHistory, [{ ...receipt, target }]);
+  assert.deepEqual(current, before);
+  current.jobs[date].mongo!.target = target;
+  assert.equal((await automationSnapshot(config, ROOT, current, settings)).jobs[0].mongo?.counts?.comparisons, 2);
+});
 
 test("monitor counts accepted evaluations and rewrites without waiting for deferred clustering", async () => {
   const { directory, config } = await fixtureConfig(undefined, true, true);
@@ -74,7 +99,8 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     assert.equal(first.jobs[0].summary!.stages.rewrite.completed, plan.tasks.filter((task) => task.stage === "rewrite" && (task.data as { rewriteOf: { stage: string } }).rewriteOf.stage !== "clustering").length);
     assert.equal(first.jobs[0].summary!.stages.clustering, undefined);
     assert.equal(current.jobs["2026-09-30"].summary, undefined, "read-only projection cannot mutate scheduler state");
-    const server = await startAutomationDashboard({ config: automation, output: directory, state: () => current, port: 0, settings, monitor });
+    const source = { config: automation, output: directory, state: () => current, settings, monitor };
+    const server = await startAutomationDashboard({ sources: () => [source], llm: scheduling(), port: 0 });
     try {
       const response = await fetch(server.url + "/api/status");
       assert.equal(response.headers.get("cache-control"), "no-store");
@@ -152,11 +178,122 @@ test("a checkpoint replaced during projection is reread on the next observation"
   assert.equal(reads, 2, "a raced projection is not retained under either file identity");
 });
 
+test("one dashboard isolates source snapshots, publication settings and error logs on one port", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-dashboard-sources-"));
+  const template = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  const ids = ["remote-evaluation", "remote-six-model-evaluation", "remote-post-training-evaluation", "prediction-evaluation"];
+  const calls = ids.map(() => 0), date = "2026-10-16", runtimeLogFile = path.join(directory, "runtime.log");
+  const sources: AutomationDashboardSource[] = ids.map((id, index) => {
+    const current: AutomationState = { ...state(), id, jobs: index < 2 ? { [date]: { ...job(date), runIds: [], evaluation: "pending" } } : {} };
+    const monitor = createAutomationMonitor(directory, 300);
+    return { config: { ...template, id, publishStatisticsLog: index === 0,
+      publication: { ...template.publication, mongoCollection: `collection-${index}` } },
+      output: directory, settings, state: () => current,
+      monitor: async job => { calls[index]++; return monitor(job); } };
+  });
+  await writeFile(runtimeLogFile, ids.map(id => JSON.stringify({
+    time: new Date().toISOString(), level: "error", component: "automations", automation_id: id, date, message: `${id} error`,
+  })).join("\n") + "\n");
+  let available: AutomationDashboardSource[] = [];
+  const scheduler = scheduling(ids);
+  const server = await startAutomationDashboard({ sources: () => available, llm: scheduler, runtimeLogFile, port: 0 });
+  try {
+    assert.equal((await fetch(server.url + "/api/status")).status, 503);
+    available = sources;
+    const get = async (route: string) => (await fetch(server.url + route)).json() as Promise<any>;
+    const [four, gpt, post, prediction] = await Promise.all(ids.map(id => get(`/api/status?source=${id}`)));
+    assert.deepEqual([four.id, gpt.id, post.id, prediction.id], ids);
+    assert.deepEqual(four.sources.map((source: any) => [source.name, source.dateCount]),
+      [["普通四路", 1], ["GPT 六路", 1], ["后训练三路", 0], ["预测类自动评测", 0]]);
+    assert.deepEqual([four.publishStatisticsLog, gpt.publishStatisticsLog, post.publishStatisticsLog, prediction.publishStatisticsLog], [true, false, false, false]);
+    assert.deepEqual([four.mongoCollection, gpt.mongoCollection], ["collection-0", "collection-1"]);
+    assert.deepEqual(post.jobs, []);
+    assert.equal((await get("/api/status")).id, ids[0]);
+    assert.deepEqual(calls, [1, 1, 0, 0], "each source has an independent snapshot cache");
+    for (const id of ids) {
+      const errors = await get(`/api/errors?source=${id}`);
+      assert.equal(errors.sourceId, id);
+      assert.deepEqual(errors.records.map((entry: any) => entry.record.message), [`${id} error`]);
+    }
+    assert.equal((await fetch(server.url + "/api/status?source=unknown")).status, 404);
+    assert.equal((await fetch(server.url + "/api/errors?source=unknown")).status, 404);
+    const allocate = (sourceId: unknown, concurrency: unknown, origin = server.url) => fetch(server.url + "/api/llm-concurrency", {
+      method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ sourceId, concurrency }),
+    });
+    assert.equal((await allocate(ids[3], 16, "https://other.example")).status, 403);
+    assert.equal((await allocate("unknown", 16)).status, 404);
+    for (const value of [-1, 1.5, "16", null]) assert.equal((await allocate(ids[3], value)).status, 400);
+    assert.equal((await allocate(123, 16)).status, 400);
+    assert.equal((await allocate(ids[3], 16)).status, 200);
+    assert.equal((await get("/api/status")).llm.sources[3].concurrency, 16);
+    assert.equal((await get(`/api/status?source=${ids[1]}`)).llm.sources[3].concurrency, 16);
+    assert.equal((await allocate(ids[0], 0)).status, 200);
+    assert.equal(scheduler.concurrency(ids[0]), 0);
+    available = [sources[1]];
+    assert.equal((await get("/api/status")).id, ids[1], "a single explicitly configured source is the default");
+  } finally { await server.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("LLM allocations preserve drafts, control each source and show actual provider calls", async () => {
+  const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
+  const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/?source=fixture" });
+  const controller = scheduling(["fixture", "prediction-evaluation"]);
+  await controller.setConcurrency("fixture", 0);
+  await controller.setConcurrency("prediction-evaluation", 16);
+  const release = await controller.acquire("prediction-evaluation", "2026-10-01", {
+    callId: "call", runId: "prediction-date", taskId: "task<one>", stage: "attribution",
+    model: { provider: "fixture", model: "judge" },
+  } as any, new AbortController().signal);
+  const payload = { ...dashboard(), execution: execution(), sampledAt: at, jobs: [],
+    sources: [...dashboard().sources, { id: "prediction-evaluation", name: "预测类自动评测", status: "running", dateCount: 13 }] };
+  let poll = async () => {}, failWrite = false, offline = false;
+  const writes: unknown[] = [];
+  dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
+  dom.window.clearTimeout = () => {};
+  dom.window.fetch = async (url: string, options: RequestInit) => {
+    if (offline) throw new Error("offline");
+    if (url === "/api/llm-concurrency") {
+      assert.equal(options.method, "POST");
+      const { sourceId, concurrency } = JSON.parse(String(options.body));
+      writes.push([sourceId, concurrency]);
+      if (failWrite) return { ok: false, json: async () => ({ error: "allocation write failed" }) };
+      await controller.setConcurrency(sourceId, concurrency);
+      return { ok: true, json: async () => controller.snapshot() };
+    }
+    return { ok: true, json: async () => ({ ...payload, llm: controller.snapshot() }) };
+  };
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  try {
+    dom.window.eval(script); await flush();
+    const doc = dom.window.document, input = doc.getElementById("llm-limit-fixture"), form = input.closest("form");
+    const submit = (value: string) => { input.value = value; input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); };
+    assert.equal(input.value, "0");
+    assert.match(form.textContent, /LLM 已暂停/);
+    assert.match(doc.getElementById("llm-requests").textContent, /预测类自动评测.*归因任务.*judge.*task<one>/);
+    assert.equal(doc.querySelector("#llm-requests one"), null);
+    input.value = "7"; input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    await poll(); assert.equal(input.value, "7", "polls preserve unsaved allocation drafts");
+    submit("4"); assert.equal(input.disabled, true); await flush();
+    assert.deepEqual(writes, [["fixture", 4]]);
+    assert.equal(input.disabled, false); assert.equal(input.value, "4");
+    assert.equal(new URL(dom.window.location.href).searchParams.get("source"), "fixture");
+    submit("0"); await flush(); assert.equal(controller.concurrency("fixture"), 0);
+    failWrite = true; submit("8"); await flush();
+    assert.equal(controller.concurrency("fixture"), 0);
+    assert.equal(input.value, "8");
+    assert.match(doc.getElementById("llm-error").textContent, /allocation write failed/);
+    assert.equal(doc.getElementById("llm-error").hidden, false);
+    offline = true; await poll(); assert.equal(input.disabled, true);
+  } finally { release(); dom.window.close(); }
+});
+
 test("monitor renders receipts, preserves filters on polling and marks stale data after disconnect", async () => {
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
-  const payload = { ...state(), execution: execution(), publication: {
+  const payload = { ...dashboard(), execution: execution(), publication: {
       status: "completed", traceId: "trace", window: at, startedAt: at, completedAt: at + 5000,
       counts: { cases: 4, comparisons: 4 },
       log: { status: "uploaded", writtenAt: at + 3000, uploadedAt: at + 5000, requestId: "receipt<one>" },
@@ -212,7 +349,7 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
     assert.match(document.getElementById("mongo-rows").textContent, /暂无 MongoDB 同步记录/);
     await next();
     assert.equal(document.getElementById("date-filter").value, "2026-09-29");
-    assert.equal(document.querySelectorAll("#date-rows tr").length, 1);
+    assert.equal(document.querySelectorAll("#date-rows .date-row").length, 1);
     payload.jobs[1].evaluation = "waiting_inputs";
     payload.jobs[1].evaluationError = "Input gaps or invalid records remain; waiting for source updates";
     await next();
@@ -221,7 +358,7 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
     failed = true; await next();
     assert.equal(document.getElementById("pipeline-status").textContent, "连接中断");
     assert.match(document.getElementById("connection-error").textContent, /保留/);
-    assert.equal(document.querySelectorAll("#date-rows tr").length, 1);
+    assert.equal(document.querySelectorAll("#date-rows .date-row").length, 1);
     for (const [id, value] of [["date-filter", "2026-09-30"], ["time-filter", "all"]]) {
       document.getElementById(id).value = value;
       document.getElementById(id).dispatchEvent(new dom.window.Event("change"));
@@ -233,6 +370,97 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
   } finally { dom.window.close(); }
 });
 
+test("monitor identifies its source and retains all dates across pagination, filtering and refresh", async () => {
+  const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
+  const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
+  const sources = [
+    { id: "remote-evaluation", name: "普通四路", sourceUrl: "http://fixture", dates: Array.from({ length: 19 }, (_, i) => `2026-10-${String(19 - i).padStart(2, "0")}`) },
+    { id: "remote-six-model-evaluation", name: "GPT 六路", sourceUrl: "http://fixture/gpt", dates: ["2026-10-16"] },
+    { id: "remote-post-training-evaluation", name: "后训练三路", sourceUrl: "http://fixture/post_training_model", dates: [] },
+  ];
+  for (const source of sources) {
+    const dom = new JSDOM(html, { runScripts: "outside-only", url: `http://fixture/?source=${source.id}` });
+    const payload = { ...dashboard(), ...source, sourceName: source.name, execution: execution(), sampledAt: at,
+      sources: sources.map(source => ({ id: source.id, name: source.name, status: "running", dateCount: source.dates.length })),
+      publishStatisticsLog: source === sources[0],
+      publication: { status: "pending", traceId: "old-pending", window: at },
+      jobs: source.dates.map(date => ({ ...job(date), hours: [] })) };
+    let poll = async () => {};
+    dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
+    dom.window.clearTimeout = () => {};
+    dom.window.fetch = async (url: string) => {
+      assert.equal(new URL(url, dom.window.location.href).searchParams.get("source"), source.id);
+      return { ok: true, json: async () => payload };
+    };
+    try {
+      dom.window.eval(script); await new Promise(resolve => setImmediate(resolve));
+      const doc = dom.window.document;
+      assert.equal(doc.getElementById("source-url")?.textContent, source.sourceUrl);
+      assert.equal(doc.title, `自动化评测 · ${source.name}`);
+      assert.equal(doc.querySelector('#source-nav [aria-current="page"]').dataset.source, source.id);
+      assert.deepEqual([...doc.querySelectorAll("#source-nav a")].map((link: any) => new URL(link.href).searchParams.get("source")), sources.map(source => source.id));
+      assert.match(doc.querySelector('#source-nav a:last-child').textContent, /后训练三路等待数据 · 0 个日期/);
+      assert.equal(new URL(doc.getElementById("errors-link").href).searchParams.get("source"), source.id);
+      if (!payload.publishStatisticsLog) {
+        assert.equal(doc.getElementById("lane-log").textContent, "已关闭");
+        assert.equal(doc.getElementById("delivery-rows").textContent, "统计日志已关闭");
+      }
+      assert.deepEqual([...doc.querySelectorAll("#date-filter option")].map((option: any) => option.value), ["", ...source.dates]);
+      const visible = () => [...doc.querySelectorAll("#date-rows strong")].map((cell: any) => cell.textContent);
+      const rendered = [...visible()];
+      const next = doc.querySelector('#date-pagination [data-step="1"]');
+      while (!next.disabled) { next.click(); rendered.push(...visible()); }
+      assert.deepEqual(rendered, source.dates);
+      if (source.dates.length) {
+        doc.getElementById("date-filter").value = "2026-10-16";
+        doc.getElementById("date-filter").dispatchEvent(new dom.window.Event("change"));
+        await poll();
+        assert.deepEqual(visible(), ["2026-10-16"]);
+        doc.getElementById("reset-filters").click();
+        assert.deepEqual(visible(), source.dates.slice(0, 10));
+        assert.equal(doc.getElementById("date-total").textContent, `${source.dates.length} 个日期`);
+      }
+    } finally { dom.window.close(); }
+  }
+});
+
+test("long review errors collapse to a count and preserve full task IDs, expansion and scroll on polling", async () => {
+  const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
+  const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
+  const ids = Array.from({ length: 21 }, (_, i) => `d6092ecc-cec5-4dfd-9ec9-${String(i).padStart(12, "0")}`);
+  const payload = { ...dashboard(), execution: execution(), sampledAt: at, jobs: [{
+    ...job("2026-10-16"), hours: [], evaluation: "blocked", evaluationError: `Comparison remains unresolved: ${ids.join(", ")}`,
+    downloadError: "<img src=x onerror=alert(1)>" + "timeout ".repeat(100), nextDownloadAt: at,
+  }] };
+  let poll = async () => {};
+  dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
+  dom.window.clearTimeout = () => {};
+  dom.window.fetch = async () => ({ ok: true, json: async () => payload });
+  try {
+    dom.window.eval(script); await new Promise(resolve => setImmediate(resolve));
+    const doc = dom.window.document, review = () => doc.querySelector('[data-error-key="evaluation:2026-10-16"]');
+    assert.equal(review().open, false);
+    assert.equal(review().querySelector("summary").textContent, "对比待复核 · 21 项");
+    assert.deepEqual(review().querySelector("pre").textContent.split("\n").slice(1), ids);
+    assert.equal(doc.querySelector(".row-error img"), null);
+    const download = doc.querySelector('[data-error-key="download:2026-10-16"]');
+    assert.equal(download.querySelector("summary").textContent, "查看下载错误");
+    assert.equal(download.querySelector("pre").textContent, payload.jobs[0].downloadError);
+    review().open = true;
+    review().querySelector("pre").scrollTop = 72;
+    review().querySelector("pre").scrollLeft = 50;
+    review().querySelector("pre").focus();
+    await poll();
+    assert.equal(review().open, true);
+    assert.equal(review().querySelector("pre").scrollTop, 72);
+    assert.equal(review().querySelector("pre").scrollLeft, 50);
+    assert.equal(doc.activeElement, review().querySelector("pre"));
+    review().open = false; await poll();
+    assert.equal(review().open, false);
+  } finally { dom.window.close(); }
+});
+
 test("date table separates remote/local input rows, refresh state, completed comparisons and retryable task counts", async () => {
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
@@ -240,7 +468,7 @@ test("date table separates remote/local input rows, refresh state, completed com
   const observed = { a_fast: 239, b_fast: 218, a_expert: 237, b_expert: 196 };
   const stage = (total: number, completed: number, pending: number, failed = 0, blocked = 0) =>
     ({ total, completed, pending, failed, blocked, cancelled: 0, running: 0 });
-  const payload = { ...state(), execution: execution(), status: "running", sampledAt: at, jobs: [{ ...job("2026-09-28"), observed, downloaded: observed,
+  const payload = { ...dashboard(), execution: execution(), status: "running", sampledAt: at, jobs: [{ ...job("2026-09-28"), observed, downloaded: observed,
     download: "downloading", evaluation: "retry", nextEvaluationAt: at + 1000, hours: [],
     summary: { readyComparisons: 139, skipped: 83, stages: {
       attribution: stage(810, 290, 505, 15), comparison: stage(405, 280, 111, 0, 14),
@@ -248,7 +476,9 @@ test("date table separates remote/local input rows, refresh state, completed com
     } },
     mongo: { status: "completed", completedAt: at, counts: { inputs: 890, comparisons: 138 } },
   }] };
-  dom.window.setTimeout = () => 1;
+  let poll = async () => {};
+  dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
+  dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => ({ ok: true, json: async () => payload });
   try {
     dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
@@ -258,11 +488,29 @@ test("date table separates remote/local input rows, refresh state, completed com
     assert.match(document.getElementById("date-rows").textContent, /核对更新中/);
     assert.equal(document.querySelector(".completed-comparisons").textContent, "139", "publishable result count is independent of comparison task totals and accepted receipts");
     assert.match(document.querySelector('.stage-tasks[data-stage="comparison"]').textContent, /^280 \/ 405待执行 111依赖阻塞 14$/);
-    assert.equal(document.querySelector(".date-table th:nth-child(6)").textContent, "完成对比 · 份 · 含改写");
-    assert.equal(document.querySelector(".date-table th:nth-child(10)").textContent, "对比任务");
+    assert.equal(document.querySelector(".date-table th:nth-child(6)").textContent, "完成对比（含改写）");
+    assert.equal(document.querySelectorAll(".date-table th").length, 7);
     assert.match(document.querySelector(".task-pool").textContent, /待执行 1,379待重试 15依赖阻塞 47/);
     assert.match(document.querySelector(".mongo-outputs").textContent, /^138待上传 1$/);
     assert.match(document.getElementById("mongo-progress-rows").textContent, /等待同步新输出/);
+    const toggle = () => document.querySelector('[data-date-details="2026-09-28"]');
+    const detail = () => document.getElementById(toggle().getAttribute("aria-controls"));
+    assert.equal(detail().hidden, true);
+    assert.equal(toggle().getAttribute("aria-expanded"), "false");
+    toggle().focus(); toggle().click();
+    assert.equal(detail().hidden, false);
+    assert.equal(toggle().getAttribute("aria-expanded"), "true");
+    document.querySelector(".runtime-details").open = true;
+    await poll();
+    assert.equal(detail().hidden, false, "polling preserves expanded task details");
+    assert.equal(document.activeElement, toggle(), "polling preserves the detail toggle focus");
+    assert.equal(document.querySelector(".runtime-details").open, true);
+    document.getElementById("tab-activity").click();
+    document.getElementById("tab-dates").click();
+    assert.equal(detail().hidden, false, "switching panels preserves expanded dates");
+    toggle().click(); await poll();
+    assert.equal(detail().hidden, true);
+    assert.equal(toggle().getAttribute("aria-expanded"), "false");
   } finally { dom.window.close(); }
 });
 
@@ -270,7 +518,7 @@ test("monitor paginates each record list, preserves pages during polling and res
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/#mongo-deliveries" });
-  const payload = { ...state(), execution: execution(), sampledAt: at + hour, jobs: Array.from({ length: 23 }, (_, index) => ({
+  const payload = { ...dashboard(), execution: execution(), sampledAt: at + hour, jobs: Array.from({ length: 23 }, (_, index) => ({
     ...job(`2026-09-${String(23 - index).padStart(2, "0")}`),
     hours: [{ start: at - index * hour, completed: 1, stages: { comparison: 1 } }],
     mongoHistory: index ? [] : Array.from({ length: 25 }, (_, i) => ({ startedAt: at - i * 1000,
@@ -288,7 +536,7 @@ test("monitor paginates each record list, preserves pages during polling and res
     const document = dom.window.document, el = (id: string) => document.getElementById(id);
     assert.deepEqual([...document.querySelectorAll('section:not([hidden])')].map((item: any) => item.id), ["mongo-deliveries"]);
     for (const id of ["date", "activity", "mongo-progress", "mongo", "delivery"])
-      assert.equal(document.querySelectorAll(`#${id}-rows tr`).length, 10);
+      assert.equal(document.querySelectorAll(`#${id}-rows tr:not(.date-detail-row)`).length, 10);
     assert.match(el("mongo-total").textContent, /输入 25 条/);
     document.querySelector('#mongo-pagination [data-step="1"]').click();
     document.querySelector('#mongo-progress-pagination [data-step="1"]').click();
@@ -343,7 +591,7 @@ test("download status distinguishes stale counts, active attempts, source readin
   const current: any = { ...job("2026-09-29"), sourceReady: true, hours: [],
     observed: { a_fast: 188, b_fast: 172, a_expert: 191, b_expert: 186 },
     downloaded: { a_fast: 135, b_fast: 119, a_expert: 136, b_expert: 132 } };
-  const payload = { ...state(), execution: execution(), status: "running", sampledAt: at, jobs: [current],
+  const payload = { ...dashboard(), execution: execution(), status: "running", sampledAt: at, jobs: [current],
     cache: { readTokens: 75, inputTokens: 100, hitRate: .75 } };
   let poll = async () => {};
   dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
@@ -376,7 +624,7 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
-  const payload = { ...state(), status: "running", sampledAt: at, execution: { ...execution(), runningTasks: 5,
+  const payload = { ...dashboard(), status: "running", sampledAt: at, execution: { ...execution(), runningTasks: 5,
     runningCases: 2, stages: { attribution: 2, comparison: 1, rewrite: 2 }, readyTasks: 12, waitingDependencies: 7,
     retryingTasks: 2, nextRetryAt: at + 45_000 }, jobs: [
     { ...job("2026-09-30"), evaluation: "evaluating", hours: [],
@@ -394,11 +642,12 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => { if (failed) throw new Error("offline"); return { ok: true, json: async () => payload }; };
   try {
+    payload.llm.sources[0].active = 2;
     dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
     const doc = dom.window.document, text = (id: string) => doc.getElementById(id).textContent;
     assert.equal(text("evaluator-version"), settings.evaluatorVersion);
-    assert.equal(text("live-concurrency"), "5 / 32 任务");
-    assert.equal(text("slot-utilization"), "槽位利用率 15.6% · 空闲 27");
+    assert.equal(text("live-concurrency"), "2 / 32 请求");
+    assert.equal(text("slot-utilization"), "LLM 2 · 运行任务 5");
     assert.equal(text("lane-evaluation"), "2026-09-30 · 评测中");
     assert.equal(text("lane-evaluation-queue"), "可执行 12 · 等依赖 7");
     assert.equal(text("lane-mongo"), "等待重试");
@@ -414,15 +663,15 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
     now += 10_000; tick(); assert.equal(text("next-retry"), "35 秒后");
     doc.getElementById("date-filter").value = "2026-09-28";
     doc.getElementById("date-filter").dispatchEvent(new dom.window.Event("change"));
-    assert.equal(text("live-concurrency"), "5 / 32 任务", "global live totals do not change with table filters");
+    assert.equal(text("live-concurrency"), "2 / 32 请求", "global live totals do not change with table filters");
     failed = true; await poll();
-    assert.equal(text("concurrency-label"), "并发快照");
+    assert.equal(text("concurrency-label"), "LLM 并发快照");
     assert.equal(text("lane-evaluation"), "连接中断");
     now += 100_000; tick(); assert.equal(text("next-retry"), "待恢复连接");
     failed = false; await poll(); assert.equal(text("next-retry"), "等待调度");
-    payload.status = "stopped"; payload.execution.runningTasks = 0; await poll();
+    payload.status = "stopped"; payload.execution.runningTasks = 0; payload.llm.sources[0].active = 0; await poll();
     assert.equal(text("next-retry"), "启动后重试");
-    assert.equal(text("live-concurrency"), "0 / 32 任务");
+    assert.equal(text("live-concurrency"), "0 / 32 请求");
     assert.equal(text("lane-evaluation"), "已停止");
   } finally { dom.window.close(); }
 });

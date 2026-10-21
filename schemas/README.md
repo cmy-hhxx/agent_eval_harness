@@ -25,6 +25,10 @@
 
 [statistics-log.schema.json](workflow/statistics-log.schema.json) 是冻结的外部契约，落盘和续传均须严格校验。结构修改权限见 [AGENTS.md](../AGENTS.md#当前契约优先)。
 
+[workflow/mongo-publication.validator.json](workflow/mongo-publication.validator.json) 是共享交付集合的 MongoDB 校验规则，包含 BSON 类型与文档 ID 约束；部署方式见[自动化](../docs/automations.md#mongodb)。
+
+[workflow/mongo-problems.validator.json](workflow/mongo-problems.validator.json) 用于问题库集合的类与样本记录；后训练专题记录必须携带专题标签和已验收快照范围，样本沿用持久输入 UUID，并绑定原归因收据。手动交付保留现有类与样本的校验，新增专题模型分支，不修改统计日志契约。
+
 [workflow/stability.schema.json](workflow/stability.schema.json) 是独立实验报告契约，不用于生产胜负统计。字段用途及本轮保留理由见[字段用途清单](../docs/schema-fields.md)。
 
 修改 Schema 时同步公开 Profile、解析与业务校验、当前调用方、提示词和测试；影响判词时更新 `evaluatorVersion`。验证入口见[开发指南](../docs/development.md#验证)。

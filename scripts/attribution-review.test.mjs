@@ -4,10 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { attributionPilotFixture } from "../dist/tests/fixtures/attribution-pilot.js";
 import { attributionResult } from "../dist/tests/fixtures/comparison.js";
-import { clusteringJobRepository, createResultWriter, loadAttributionJobInputs, prepareAttributionTargetedReviews, readRunState, writeRunState } from "@eval/workflows/comparison";
+import { clusteringJobRepository, createResultWriter, loadAttributionJobInputs, prepareAttributionTargetedReviews, prepareClusteringJob, readRunState, writeRunState } from "@eval/workflows/comparison";
 import { pinnedAttributionEntries } from "./attribution-review-tree.mjs";
 
 test("the check-page command selects latest review rows, reuses input titles and copies native model JSONL lines exactly", async t => {
@@ -92,4 +92,70 @@ test("the check-page command selects latest review rows, reuses input titles and
   for (const source of sources) assert.equal(await readFile(path.join(fixture.run, "models", source.model + ".jsonl"), "utf8"), native.find(line => JSON.parse(line).task_id === source.task_id) + "\n");
   assert.deepEqual(await Promise.all(sourceFiles.map(file => readFile(file))), before, "the check page does not write either source run");
   for (const forbidden of ["不得泄漏", "计算2+2", "2+2=4", "<nav", "<a ", "download="]) assert(!clusteredHtml.includes(forbidden), forbidden);
+
+  const deltaRun = path.join(fixture.directory, "clustering-delta"), deltaState = structuredClone(clusterState);
+  clusterState.manifest.config.clusteringJob.sources = [sources[0]];
+  deltaState.manifest.runId = "clustering-delta";
+  deltaState.manifest.config.clusteringJob.sources = [sources[1]];
+  await clusteringJobRepository.writeRun(clusterRun, clusterState);
+  await clusteringJobRepository.writeRun(deltaRun, deltaState);
+  await mkdir(path.join(deltaRun, "results"), { recursive: true });
+  const finding = result.findings[0];
+  await writeFile(path.join(deltaRun, "results", "clustering.jsonl"), JSON.stringify({
+    items: [{ id: "delta-item", component: finding.problem.component[0], refs: [{
+      input_id: sources[1].input_id, finding_id: finding.finding_id, attribution: sources[1],
+    }] }], result: { assignments: [{ item_id: "delta-item", deferred_reason: "等待更多同类样本" }] },
+  }) + "\n");
+  const multiArgs = ["scripts/attribution-review.mjs", "--run", fixture.run,
+    "--clustering", clusterRun, "--clustering", deltaRun, "--library", path.join(fixture.directory, "empty-library")];
+  const union = JSON.parse((await promisify(execFile)(process.execPath, multiArgs)).stdout);
+  assert.equal(union.answers, 2);
+  const unionHtml = await readFile(path.join(fixture.run, "review.html"), "utf8");
+  const unionTree = JSON.parse(unionHtml.match(/<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/u)[1]).attributionTree;
+  assert.deepEqual(unionTree.samples.map(sample => sample.taskId), sources.map(source => source.task_id));
+  assert.equal(unionTree.totals.deferred, 1, "the delta job's deferred assignments are retained");
+  assert.deepEqual(await Promise.all(sourceFiles.map(file => readFile(file))), before);
+  await assert.rejects(promisify(execFile)(process.execPath, [...multiArgs, "--clustering", clusterRun]), /聚类作业目录重复/);
+  deltaState.manifest.config.clusteringJob.sources = [sources[0]];
+  await clusteringJobRepository.writeRun(deltaRun, deltaState);
+  await assert.rejects(promisify(execFile)(process.execPath, multiArgs), /聚类审阅输入重复/);
+  deltaState.manifest.config.problemLibrary.path = path.join(fixture.directory, "different-library");
+  await clusteringJobRepository.writeRun(deltaRun, deltaState);
+  await assert.rejects(promisify(execFile)(process.execPath, multiArgs), /聚类作业的问题库不一致/);
+});
+
+test("a post-training tree exports only its selected model and preserves the source run", async t => {
+  const fixture = await attributionPilotFixture(); t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const task = fixture.chosen[0], candidate = task.data.candidates.A;
+  candidate.version = "b_post_train_fast"; candidate.name = "B post_train_fast";
+  fixture.state.manifest.config.inputs.versions.push({
+    ...fixture.config.inputs.versions[0], id: candidate.version, name: candidate.name,
+  });
+  fixture.state.manifest.preflight.selected_answers[0].version = candidate.version;
+  delete fixture.state.receipts[task.id].exported;
+  await createResultWriter(fixture.run, fixture.inputs)(fixture.state);
+  await writeRunState(fixture.run, fixture.state);
+  const { config } = await prepareClusteringJob([fixture.run], fixture.config, { inputIds: [candidate.input_id] });
+  const cluster = path.join(fixture.directory, "post-cluster"), state = structuredClone(fixture.state);
+  state.manifest.runId = "post-cluster"; state.manifest.config = config;
+  state.manifest.tasks = []; state.manifest.states = {}; state.manifest.executionScope = []; state.receipts = {};
+  await clusteringJobRepository.writeRun(cluster, state);
+  await mkdir(path.join(cluster, "results"), { recursive: true });
+  await writeFile(path.join(cluster, "results/clustering.jsonl"), "");
+  const delivery = path.join(fixture.directory, "delivery"); await mkdir(delivery);
+  const summaries = path.join(delivery, "summaries.json"), json = path.join(delivery, "tree.json");
+  await writeFile(summaries, JSON.stringify({ samples: [{ inputId: candidate.input_id, taskSummary: "专题样本摘要" }] }));
+  const files = [path.join(fixture.run, "state.json"), path.join(fixture.run, "results/attribution.jsonl")];
+  const before = await Promise.all(files.map(file => readFile(file)));
+  const args = ["scripts/attribution-review.mjs", "--run", delivery, "--clustering", cluster,
+    "--library", fixture.config.problemLibrary.path, "--model", candidate.version, "--samples", summaries, "--json", json];
+  const { stdout } = await promisify(execFile)(process.execPath, args);
+  assert.equal(JSON.parse(stdout).files, 1);
+  const tree = JSON.parse(await readFile(json, "utf8"));
+  assert.deepEqual(tree.models.map(model => model.id), ["b_post_train_fast"]);
+  assert.deepEqual(tree.samples.map(sample => sample.inputId), [candidate.input_id]);
+  assert.deepEqual(await readdir(path.join(delivery, "models")), ["b_post_train_fast.jsonl"]);
+  assert.deepEqual(await Promise.all(files.map(file => readFile(file))), before);
+  args[args.indexOf("--model") + 1] = "missing-model";
+  await assert.rejects(promisify(execFile)(process.execPath, args), /所选模型没有归因来源/);
 });

@@ -44,7 +44,7 @@ gpt/3_processed_archives/<包日期>/part-NNNN/  GPT 已处理原包
 
 ## 看板 {#dashboard}
 
-访问 <http://117.50.195.94:2256/>，用顶部“原四路 / GPT 六路 / aime / ifind”切换数据集。状态栏显示最近收包、入库时间（北京时间）、待处理和异常包，可展开原始错误；归档体量和分卷数取最近一次每日巡检报告，不在刷新页面时扫描全部原包。日期表每页展示最新 14 天，可翻页查看更早日期。原四路每行分别列出 Fast、Expert 两对；GPT 在每档展示三对。点击模型条数进入样本表格；单 trace / Session、会话轮数、Trace ID、问句和回答分列展示，Trace ID 与 Session ID 可复制。每轮回答与可用标准答案默认折叠，展开后按 Markdown/GFM 渲染，不返回或渲染中间消息。样本 API 增加 `format`（`trace` 或 `session`）、`session_id`，单条和各轮带 `trace_id`；缺失的标识返回 null，不用 Session ID 替代 Trace ID。Session 的 `turns` 仍按原顺序返回。页面每 15 秒刷新，也可手动刷新；处理状态查询失败不会把可用的数据目录标成离线。
+访问 <http://117.50.195.94:2256/>，用顶部“原四路 / GPT 六路 / 后训练模型评测 / aime / ifind”切换数据集。状态栏显示最近收包、入库时间（北京时间）、待处理和异常包，可展开原始错误；归档体量和分卷数取最近一次每日巡检报告，不在刷新页面时扫描全部原包。日期表每页展示最新 14 天，可翻页查看更早日期。原四路每行分别列出 Fast、Expert 两对；GPT 在每档展示三对。点击模型条数进入样本表格；单 trace / Session、会话轮数、Trace ID、问句和回答分列展示，Trace ID 与 Session ID 可复制。每轮回答与可用标准答案默认折叠，展开后按 Markdown/GFM 渲染，不返回或渲染中间消息。样本 API 增加 `format`（`trace` 或 `session`）、`session_id`，单条和各轮带 `trace_id`；缺失的标识返回 null，不用 Session ID 替代 Trace ID。Session 的 `turns` 仍按原顺序返回。页面每 15 秒刷新，也可手动刷新；处理状态查询失败不会把可用的数据目录标成离线。
 
 评测进度由独立脚本 `progress_bridge.py` 读取一个或多个本地运行的 `state.json` 并上报，不修改当前评测器流程。可传入不同日期的多个 run 文件以合并显示。每条日期/对战组显示已完成数、未配对数和真实评测失败数；全成功时用 ✅ 标记，不显示成功比例分母。成功的 Comparison 任务计完成，失败、超时、取消、阻塞计真实失败，预检跳过单独计数。样本按 `batch_id + case_id` 在日期和对战组内去重；统计整个 run 的 Comparison 状态，不受 `executionScope` 子集限制；Rewrite 与 clustering 不计入。默认每 10 秒检查，运行状态文件超过 60 秒未更新时显示“进度停更”。
 
@@ -68,7 +68,7 @@ Fast、Expert 两列均标明“每天最多评测 300 次对战”和“超过�
 - `POST /evaluation-progress`：更新当前/最近一次评测标记。
 - `GET /docs`：浏览器版文档；`GET /docs/handoff.md`：原始 Markdown。
 
-进度 POST 使用 `application/json`，时间戳为毫秒。`dates` 按输入源文件名中的日期分组；每个日期包含 `fast`（A Fast 对 B组 Fast）和 `expert`（A Expert 对 B组 Expert）两组计数。样本在日期和对战组内按 `batch_id + case_id` 去重；计数只基于 Comparison 任务。`skipped_cases` 单独记录预检未能配对的样本，不算作评测失败；`total_cases - skipped_cases` 是可评测总数。
+进度 POST 使用 `application/json`，请求上限为 1 MiB，时间戳为毫秒。`dates` 按输入源文件名中的日期分组；每个日期包含 `fast`（A Fast 对 B组 Fast）和 `expert`（A Expert 对 B组 Expert）两组计数。样本在日期和对战组内按 `batch_id + case_id` 去重；计数只基于 Comparison 任务。`skipped_cases` 单独记录预检未能配对的样本，不算作评测失败；`total_cases - skipped_cases` 是可评测总数。
 
 ```json
 {
@@ -154,7 +154,7 @@ GPT 六路按同档两两对战：Fast 为 `a_fast / b_fast / 6_luna`，Expert �
 - `GET /gpt/health`、`GET /gpt/dashboard-data`、`GET /gpt/dates`、`GET /gpt/processing-status`。
 - `GET /gpt/data/{date}/{model}.jsonl`：仅下载 GPT 数据。
 - `GET /gpt/records?date=...&model=...` 和 `GET /gpt/records/{date}/{model}?page=1&page_size=20`。
-- `POST /gpt/evaluation-progress`：相同六个计数字段，`pairs` 使用独立模型对键，可只上报已配置的对；未知模型对拒绝。此接口请求上限 1 MiB，原四路接口不变。
+- `POST /gpt/evaluation-progress`：相同六个计数字段，`pairs` 使用独立模型对键，可只上报已配置的对；未知模型对拒绝。所有来源的进度接口请求上限统一为 1 MiB，可容纳原四路的累计多日期快照；字段校验与来源隔离保持不变。
 
 六个键为 `a_fast__vs__b_fast`、`6_luna__vs__a_fast`、`6_luna__vs__b_fast`、`a_expert__vs__b_expert`、`6.1sol__vs__a_expert`、`6.1sol__vs__b_expert`。均按模型 ID 字典序连接，不将三对累计到原 `fast / expert`。页面每对独立显示 300 次每日对战额度及其完成状态；统计上传日志结构保持不变。
 
@@ -185,3 +185,11 @@ python3 server_dashboard_ths/progress_bridge.py data/runs/comparison/<run-id>/st
 ```
 
 ifind 使用 `/ifind/evaluation-progress`。只统计运行执行范围内的三个阶段，去重相同任务 ID；成功状态且存在接受回执才计完成。无进度上报时显示“暂无进度”，入库不伪造评测结果。
+
+## 后训练模型评测
+
+服务器目录 `post_training_model/` 与原四路、GPT 隔离；输入为 `a_fast / b_fast / b_post_train_fast`，看板和全部接口使用 `/post_training_model` 前缀。上传 `.7z` 到该目录直接子级；成员文件名及当前后训练版本映射见[后训练输入说明](../README.md#后训练模型评测)。A 沿用 A 格式，后两路沿用 B 格式。后训练输出 version 为 `B post_train_fast`。
+
+日期优先取 `meta.testset_name` 的唯一测试集日期，缺失时使用北京时间请求日期；三路同题须有相同 case_id 和 batch_id。各模型分批到达时独立就绪，自动评测等待三路齐备。分日输出在 `post_training_model/2_eval_data_input/<model>/<date>.jsonl`，原包在成功处理后移动到本来源的 `3_processed_archives/<包日期>/part-NNNN/`，状态在 `0_process_code/state/post_training_model/`；重启沿登记恢复，不重放历史包。
+
+进度字段与六路一致，模型对仅为 `a_fast__vs__b_fast`、`a_fast__vs__b_post_train_fast`、`b_fast__vs__b_post_train_fast`；拒绝其他对战键，不将三对合并成 `fast`。处理与进度状态均独立保存，默认随统一数据服务监听。

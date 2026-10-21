@@ -3,21 +3,25 @@ const PAIRS = [
   { id: "expert", label: "A Expert 对 B组 Expert", a: "a_expert", b: "b_expert" },
 ];
 const DATASET = location.pathname.split("/")[1];
-const BASE_PATH = ["gpt", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
-const IS_GPT = BASE_PATH === "/gpt";
+const BASE_PATH = ["gpt", "post_training_model", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
+const IS_POST_TRAINING = DATASET === "post_training_model";
+const GROUPED_BATTLES = DATASET === "gpt" || IS_POST_TRAINING;
 const SINGLE_MODELS = {
   aime: ["aime_fast", "aime_expert"],
   ifind: ["ifind_normal_agent", "ifind_deep_research"],
 }[DATASET];
-const GROUPS = [
+const GROUPS = (IS_POST_TRAINING ? [
+  { label: "Fast", models: ["a_fast", "b_fast", "b_post_train_fast"] },
+] : [
   { label: "Fast", models: ["a_fast", "b_fast", "6_luna"] },
   { label: "Expert", models: ["a_expert", "b_expert", "6.1sol"] },
-].map(group => ({ ...group, pairs: group.models.flatMap((a, index) => group.models.slice(index + 1).map(b => ({
+]).map(group => ({ ...group, pairs: group.models.flatMap((a, index) => group.models.slice(index + 1).map(b => ({
   id: [a, b].sort().join("__vs__"), a, b,
 }))) }));
 const MODEL_LABELS = {
   a_fast: "A Fast",
   b_fast: "B组 Fast",
+  b_post_train_fast: "B post_train_fast",
   a_expert: "A Expert",
   b_expert: "B组 Expert",
   "6_luna": "6_luna",
@@ -46,12 +50,13 @@ let hasLoadedCatalog = false;
 let currentPage = 0;
 let currentCatalog = null;
 
-if (IS_GPT) {
+if (GROUPED_BATTLES) {
   document.body.classList.add("gpt-dataset");
-  document.title = "GPT 六路评测数据";
-  document.querySelector(".dataset-range-models").textContent = "6 个模型";
-  document.querySelector(".results-table caption").textContent = "每日 GPT 六路模型数据及同档两两对战进度";
+  document.title = IS_POST_TRAINING ? "后训练模型评测" : "GPT 六路评测数据";
+  document.querySelector(".dataset-range-models").textContent = `${GROUPS.flatMap(group => group.models).length} 个模型`;
+  document.querySelector(".results-table caption").textContent = `${document.title}输入及两两对战进度`;
   const headings = document.querySelectorAll(".results-table thead th");
+  if (IS_POST_TRAINING) headings[2].remove();
   GROUPS.forEach((group, index) => {
     headings[index + 1].replaceChildren(document.createTextNode(group.models.map(id => MODEL_LABELS[id]).join(" · ")));
     const quota = document.createElement("span");
@@ -106,7 +111,7 @@ function renderProcessing(info) {
   document.querySelector("#archive-checked").textContent = archive ? `巡检 ${dateTime.format(new Date(archive.checked_at))}` : "";
 }
 for (const label of document.querySelectorAll(".pair-quota"))
-  label.textContent = `${IS_GPT ? "每对模型" : ""}每天最多评测 ${formatCount(DAILY_BATTLE_LIMIT)} 次对战`;
+  label.textContent = `${GROUPED_BATTLES ? "每对模型" : ""}每天最多评测 ${formatCount(DAILY_BATTLE_LIMIT)} 次对战`;
 
 function quotaProgress(counts) {
   if (!counts) return counts;
@@ -284,7 +289,7 @@ function makeDateRow(entry, evaluation) {
       }
       row.append(cell);
     }
-  } else if (IS_GPT) {
+  } else if (GROUPED_BATTLES) {
     for (const group of GROUPS) {
       const cell = document.createElement("td");
       cell.className = "pair-cell gpt-group-cell";
@@ -328,7 +333,7 @@ function renderCatalog(data) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.className = "loading-cell";
-    cell.colSpan = 3;
+    cell.colSpan = IS_POST_TRAINING ? 2 : 3;
     cell.textContent = "暂无数据";
     row.append(cell);
     rows.append(row);
@@ -366,7 +371,7 @@ async function loadCatalog() {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
       cell.className = "loading-cell";
-      cell.colSpan = 3;
+      cell.colSpan = IS_POST_TRAINING ? 2 : 3;
       cell.textContent = "无法读取数据";
       row.replaceChildren(cell);
       rows.replaceChildren(row);

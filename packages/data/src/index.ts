@@ -9,5 +9,6 @@ export * from "./logging.js";
 export * from "./runtime-log-reader.js";
 export * from "./assistant-store.js";
 export * from "./input-snapshot.js";
+export * from "./case-metadata.js";
 export * from "./statistics-log.js";
 export * from "./run-deletion.js";

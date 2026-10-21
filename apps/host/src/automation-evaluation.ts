@@ -1,19 +1,22 @@
 import path from "node:path";
 import { type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition, type Policy } from "@eval/contracts";
 import { hasLiveRunOwner, readJson } from "@eval/data";
-import { runEvaluation } from "@eval/host";
+import { runEvaluation, type ModelRequestControl } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
 import { comparisonWorkflow, expandComparisonPairs, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { configurationSecrets, loadConfig } from "./config.js";
 import { createAutomationModels } from "./automation-models.js";
 import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
+import { predictionEvaluationConfig } from "./automation-prediction.js";
 
 /** A daily run reserves battles separately for each pair; accepted work always survives the cap. */
 function automationSelection(
   tasks: Pick<PlannedTask, "id" | "stage" | "dependencies" | "data">[], accepted: ReadonlySet<string>, limit: number,
+  groups: readonly (readonly string[])[],
 ): Set<string> {
   const selected = new Set(accepted), counts = new Map<string, number>();
+  const allowed = new Set(expandComparisonPairs(groups).map(pair => pair.slice().sort().join("+")));
   const comparisons = tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit);
   const group = (task: typeof tasks[number]) => (task.data as TaskData).group!.slice().sort().join("+");
   for (const task of comparisons.filter((task) => accepted.has(task.id)))
@@ -21,6 +24,7 @@ function automationSelection(
   for (const task of comparisons) {
     if (accepted.has(task.id)) continue;
     const key = group(task), count = counts.get(key) ?? 0;
+    if (!allowed.has(key)) continue;
     if (count >= limit) continue;
     selected.add(task.id); counts.set(key, count + 1);
   }
@@ -35,14 +39,27 @@ function automationSelection(
   return selected;
 }
 
-function limitAutomationPlan(plan: TaskPlan, limit: number, accepted = new Set<string>(), previous: PlannedTask[] = []) {
+function executionSelection(tasks: Pick<PlannedTask, "id" | "stage" | "dependencies" | "data">[], accepted: ReadonlySet<string>,
+  limit: number, groups: readonly (readonly string[])[]) {
+  const allowed = new Set(expandComparisonPairs(groups).map(pair => pair.slice().sort().join("+")));
+  const retained = new Set(tasks.filter(task => task.stage === "comparison" && accepted.has(task.id) &&
+    allowed.has(((task.data as TaskData).group ?? []).slice().sort().join("+"))).map(task => task.id));
+  const selected = automationSelection(tasks, retained, limit, groups);
+  for (const id of accepted) selected.add(id);
+  return selected;
+}
+
+function limitAutomationPlan(plan: TaskPlan, limit: number, allowedGroups: readonly (readonly string[])[],
+  accepted = new Set<string>(), previous: PlannedTask[] = []) {
   const current = new Map(plan.tasks.map((task) => [task.id, task]));
   const previousIds = new Set(previous.map((task) => task.id));
   // Keep reserved battles ahead of newly discovered cases, even when source order changes.
   const ordered = [...previous.flatMap((task) => current.has(task.id) ? [current.get(task.id)!] : []),
     ...plan.tasks.filter((task) => !previousIds.has(task.id))];
-  const selected = automationSelection(ordered, accepted, limit);
-  plan.tasks = plan.tasks.filter((task) => selected.has(task.id));
+  const selected = automationSelection(ordered, accepted, limit, allowedGroups);
+  plan.tasks = plan.tasks.filter((task) => selected.has(task.id)).sort((a, b) =>
+    Number((b.data as TaskData).rewriteOf?.stage === "comparison") -
+    Number((a.data as TaskData).rewriteOf?.stage === "comparison"));
   for (const stage of ["attribution", "comparison", "rewrite", "clustering"])
     plan.summary[stage + "_tasks"] = plan.tasks.filter((task) => task.stage === stage).length;
   const groups: Record<string, number> = {};
@@ -62,13 +79,18 @@ function limitAutomationPlan(plan: TaskPlan, limit: number, accepted = new Set<s
 export function createAutomationWorkflow(limit: number): WorkflowDefinition {
   return {
     ...comparisonWorkflow,
-    plan: async (config) => limitAutomationPlan(await comparisonWorkflow.plan(config), limit),
+    plan: async (config) => limitAutomationPlan(await comparisonWorkflow.plan(config), limit, (config as EvalConfig).comparisons),
     reconcile: async (run, state, current) => {
+      delete state.manifest.executionScope;
       const previous = state.manifest.tasks;
       const plan = limitAutomationPlan(await reconcileRun(run, state, current, { extendVersions: true, preserveCompletedResults: true }),
-        limit, new Set(Object.keys(state.receipts)), previous);
+        limit, (current as EvalConfig).comparisons, new Set(Object.keys(state.receipts)), previous);
       state.manifest.tasks = plan.tasks;
-      const active = new Set(plan.tasks.filter(isAutomationTask).map((task) => task.id));
+      // Retain old receipts and unfinished polish declarations for publication validation,
+      // while dispatching new work only for the currently requested model pairs.
+      const executable = executionSelection(plan.tasks, new Set(Object.keys(state.receipts)), limit, (current as EvalConfig).comparisons);
+      state.manifest.executionScope = plan.tasks.filter(task => executable.has(task.id)).map(task => task.id);
+      const active = new Set(plan.tasks.filter(task => executable.has(task.id) && isAutomationTask(task)).map((task) => task.id));
       state.manifest.pausedStages = (state.manifest.pausedStages ?? []).map((pause) => ({
         ...pause, taskIds: pause.taskIds.filter((id) => active.has(id)),
       })).filter((pause) => pause.taskIds.length);
@@ -77,9 +99,9 @@ export function createAutomationWorkflow(limit: number): WorkflowDefinition {
   };
 }
 
-function limitedCheckpoint(state: Checkpoint, limit: number): Checkpoint {
+function limitedCheckpoint(state: Checkpoint, limit: number, groups = (state.config as EvalConfig).comparisons): Checkpoint {
   const tasks = Object.entries(state.tasks).map(([id, task]) => ({ ...task, id }));
-  const selected = automationSelection(tasks, new Set(tasks.filter((task) => task.receipt).map((task) => task.id)), limit);
+  const selected = executionSelection(tasks, new Set(tasks.filter(task => task.receipt).map(task => task.id)), limit, groups);
   return { ...state, tasks: Object.fromEntries(Object.entries(state.tasks).filter(([id]) => selected.has(id))),
     pausedStages: (state.pausedStages ?? []).map((pause) => ({ ...pause, taskIds: pause.taskIds.filter((id) => selected.has(id)) }))
       .filter((pause) => pause.taskIds.length),
@@ -93,7 +115,8 @@ export function isAutomationTask(task: { stage: string; data: unknown }): boolea
 
 function automationPauses(state: Checkpoint) {
   return (state.pausedStages ?? []).map((pause) => ({ ...pause,
-    taskIds: pause.taskIds.filter((id) => state.tasks[id] && isAutomationTask(state.tasks[id]) && state.tasks[id].stage !== "rewrite"),
+    taskIds: pause.taskIds.filter((id) => state.tasks[id] && isAutomationTask(state.tasks[id]) &&
+      (state.tasks[id].stage !== "rewrite" || state.tasks[id].data.rewriteOf?.stage === "comparison" || temporary(pause.category))),
   })).filter((pause) => pause.taskIds.length);
 }
 
@@ -108,7 +131,8 @@ export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
     summary.readyComparisons += publishableComparisons(state).size;
     summary.skipped += (state.preflight.skipped as unknown[]).length;
     summary.issues += (state.preflight.issues as unknown[]).length;
-    for (const task of Object.values(state.tasks)) {
+    for (const [id, task] of Object.entries(state.tasks)) {
+      if (state.executionScope && !state.executionScope.includes(id)) continue;
       if (!isAutomationTask(task)) continue;
       const stage = summary.stages[task.stage] ??= { total: 0, completed: 0, failed: 0, pending: 0, running: 0, cancelled: 0, blocked: 0 };
       stage.total++;
@@ -130,7 +154,8 @@ function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): str
   const exhausted = states.flatMap(state => Object.entries(state.tasks).flatMap(([id, task]) => {
     const count = task.failure?.contentSubmissions;
     const cap = 1 + (policy.stageRepairAttempts?.[task.stage] ?? policy.repairAttempts);
-    return isAutomationTask(task) && task.stage !== "rewrite" && !task.receipt && Number.isSafeInteger(count) && count! >= cap
+    return isAutomationTask(task) && (task.stage !== "rewrite" || task.data.rewriteOf?.stage === "comparison") &&
+      !task.receipt && Number.isSafeInteger(count) && count! >= cap
       ? [`${state.runId ?? "run"}/${id}: content submissions ${count}/${cap}`] : [];
   }));
   return exhausted.length ? `Content submission budget exhausted: ${exhausted.join("; ")}. Adjust the cumulative cap or resolve the unfinished work.` : undefined;
@@ -145,7 +170,8 @@ export function checkpointRecovery(states: Checkpoint[], policy: RepairPolicy): 
   if (exhaustedContentReason(states, policy)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
   const tasks = states.flatMap((state) => Object.values(state.tasks).filter(task => isAutomationTask(task) &&
-    (task.stage !== "rewrite" || task.status === "pending" || task.status === "running")));
+    (task.stage !== "rewrite" || task.status === "pending" || task.status === "running" ||
+      task.failure?.errors.length && task.failure.errors.every(issue => temporary(issue.category)))));
   const failures = tasks.filter((task) => task.status === "failed" || task.status === "timed_out");
   if (!failures.length && tasks.some((task) => ["cancelled", "running", "pending"].includes(task.status))) return "interrupted";
   if (failures.length && failures.every((task) => task.failure?.errors.length
@@ -202,7 +228,9 @@ function waitingForInputs(states: Checkpoint[], summary: EvaluationSummary, limi
 function evaluationComplete(states: Checkpoint[], summary: EvaluationSummary): boolean {
   return Object.entries(summary.stages).every(([name, stage]) => name === "rewrite"
     ? states.every(state => !Object.values(state.tasks).some(task => isAutomationTask(task) && task.stage === "rewrite" &&
-      (task.status === "running" || task.status === "pending" && !state.pausedStages?.some(pause => pause.stage === "rewrite"))))
+      (task.data.rewriteOf?.stage === "comparison" && task.status !== "succeeded" ||
+        task.status === "running" || task.status === "pending" && !state.pausedStages?.some(pause => pause.stage === "rewrite") ||
+        task.status === "failed" && task.failure?.errors.length && task.failure.errors.every(issue => temporary(issue.category)))))
     : stage.completed === stage.total);
 }
 
@@ -225,48 +253,53 @@ export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSumma
   return { status: "completed", summary };
 }
 
-export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob, policy: RepairPolicy) {
+export async function recoverEvaluation(config: AutomationConfig, output: string, job: AutomationJob, policy: RepairPolicy,
+  groups?: EvalConfig["comparisons"],
+) {
   job.runIds = [`${config.runPrefix}${job.date}`];
   const saved = await checkpoint(output, job.runIds[0]);
   if (!saved) return;
-  const limited = limitedCheckpoint(saved, config.dailyComparisonLimitPerTier);
+  const limited = limitedCheckpoint(saved, config.dailyComparisonLimitPerTier, groups);
   if (Object.entries(saved.tasks).some(([id, task]) => task.stage === "comparison" && !task.data.verificationAudit && !limited.tasks[id]) &&
       !automationPauses(limited).some((pause) => !temporary(pause.category))) return "interrupted";
-  job.summary = summarize([saved]);
-  const exhausted = exhaustedContentReason([saved], policy);
+  const visible = groups || saved.executionScope ? limited : saved;
+  job.summary = summarize([{ ...saved, executionScope: Object.keys(visible.tasks) }]);
+  const exhausted = exhaustedContentReason([visible], policy);
   if (exhausted) {
     job.evaluation = "blocked"; job.nextEvaluationAt = 0;
     job.evaluationError = exhausted;
     return;
   }
   const selection = saved.config as EvalConfig;
-  if (["completed", "waiting_inputs"].includes(job.evaluation) &&
+  if (!config.prediction && ["completed", "waiting_inputs"].includes(job.evaluation) &&
       config.remoteModels.some((id) => !selection.inputs.versions.some((version) => version.id === id))) return "interrupted";
-  const review = terminalReviewReason([saved]);
+  const review = terminalReviewReason([visible]);
   if (review) {
     job.evaluation = "blocked"; job.nextEvaluationAt = 0;
     job.evaluationError = review;
     return;
   }
   const complete = publishableComparisons(saved);
-  const finalComparisons = Object.values(saved.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit);
-  if (finalComparisons.length > complete.size &&
-      evaluationComplete([saved], job.summary)) return "interrupted";
-  if (evaluationComplete([saved], job.summary) && !automationPauses(saved).length) {
-    job.evaluation = waitingForInputs([saved], job.summary, config.dailyComparisonLimitPerTier) ? "waiting_inputs" : "completed";
+  const allowed = new Set(expandComparisonPairs(groups ?? (saved.config as EvalConfig).comparisons).map(pair => pair.slice().sort().join("+")));
+  const finalComparisons = Object.values(limited.tasks).filter((task) => task.stage === "comparison" && !task.data.verificationAudit &&
+    allowed.has(task.data.group!.slice().sort().join("+")));
+  if (finalComparisons.some(task => !complete.has(task.data.comparisonId!)) &&
+      evaluationComplete([visible], job.summary)) return "interrupted";
+  if (evaluationComplete([visible], job.summary) && !automationPauses(visible).length) {
+    job.evaluation = waitingForInputs([visible], job.summary, config.dailyComparisonLimitPerTier) ? "waiting_inputs" : "completed";
     job.evaluationAttempts = 0; job.nextEvaluationAt = 0;
     delete job.evaluationError;
     return;
   }
-  const recovery = checkpointRecovery([saved], policy);
-  if (recovery === "transient" || automationPauses(saved).length) job.evaluationError = incompleteReason([saved], job.summary);
+  const recovery = checkpointRecovery([visible], policy);
+  if (recovery === "transient" || automationPauses(visible).length) job.evaluationError = incompleteReason([visible], job.summary);
   return recovery;
 }
 
 export async function evaluationTargets(config: AutomationConfig, output: string, day: RemoteDay) {
   const primary = `${config.runPrefix}${day.date}`, saved = await checkpoint(output, primary);
   const previousConfig = saved?.config as EvalConfig | undefined;
-  if (previousConfig && (previousConfig.inputs.limit || previousConfig.inputs.case_ids?.length ||
+  if (!config.prediction && previousConfig && (previousConfig.inputs.limit || previousConfig.inputs.case_ids?.length ||
     previousConfig.inputs.batches?.some((batch) => batch !== day.date)))
     throw new Error(`${primary} has a restricted input selection; choose an unrestricted daily run`);
   const runIds = [primary];
@@ -285,7 +318,9 @@ export async function evaluationTargets(config: AutomationConfig, output: string
   return { runIds, adopted: false };
 }
 
-export async function evaluateDay(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, exhaustedChannels: Set<string>): Promise<EvaluationOutcome> {
+export async function evaluateDay(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, exhaustedChannels: Set<string>,
+  modelRequests?: ModelRequestControl,
+): Promise<EvaluationOutcome> {
   const resumePaused = job.resumePaused;
   delete job.resumePaused;
   const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
@@ -297,8 +332,9 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   for (const runId of job.runIds) {
     signal.throwIfAborted();
     const previous = await checkpoint(output, runId);
-    const resumable = previous && limitedCheckpoint(previous, config.dailyComparisonLimitPerTier);
-    const evaluation = automationEvaluationConfig(host.evaluation, config.sourceDirectory, job.date, config.remoteModels);
+    const evaluation = config.prediction ? await predictionEvaluationConfig(config, output, host.evaluation, job.date)
+      : automationEvaluationConfig(host.evaluation, config.sourceDirectory, job.date, config.remoteModels);
+    const resumable = previous && limitedCheckpoint(previous, config.dailyComparisonLimitPerTier, evaluation.comparisons);
     if (await hasLiveRunOwner(path.join(output, runId))) throw new Error(`${runId} is owned by another live Host`);
     const plan = previous ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(evaluation);
     if (!previous && !plan.tasks.length && !plan.summary.valid_inputs) {
@@ -311,7 +347,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       ...services, runId, output: evaluation.output, engine: config.engine, evaluatorVersion: host.evaluatorVersion,
       taskSource: workflow,
       config: evaluation, plan, policy: evaluation.execution, ...routing,
-      concurrency: evaluation.execution.concurrency, retries: evaluation.execution.retries,
+      concurrency: modelRequests?.concurrency() || evaluation.execution.concurrency, modelRequests, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
       discoverInputs: true, signal,
       resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable, evaluation.execution)) : [],
@@ -321,7 +357,8 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
   }
   const summary = summarize(checkpoints);
   summary.skipped += skipped; summary.issues += issues;
-  return evaluationOutcome(checkpoints, summary, host.evaluation.execution, config.dailyComparisonLimitPerTier, empty);
+  return evaluationOutcome(checkpoints.map(state => limitedCheckpoint(state, config.dailyComparisonLimitPerTier)),
+    summary, host.evaluation.execution, config.dailyComparisonLimitPerTier, empty);
 }
 
 const emptyPairCounts = () => ({
@@ -367,12 +404,12 @@ export function remoteDateProgress(date: string, runs: Checkpoint[], limit: numb
 }
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], dates: ReturnType<typeof remoteDateProgress>[]) {
-  const sixModels = new URL(state.sourceUrl).pathname.replace(/\/+$/, "") === "/gpt";
+  const namedPairs = ["/gpt", "/post_training_model"].includes(new URL(state.sourceUrl).pathname.replace(/\/+$/, ""));
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||
     ["pending", "evaluating", "retry"].includes(job.evaluation));
   return {
     run_id: `automation-${state.id}`, engine, started_at: state.startedAt, updated_at: Date.now(),
-    dates: dates.map(({ date, pairs }) => ({ date, pairs: sixModels ? { ...pairs } : {
+    dates: dates.map(({ date, pairs }) => ({ date, pairs: namedPairs ? { ...pairs } : {
       fast: pairs.a_fast__vs__b_fast ?? emptyPairCounts(),
       expert: pairs.a_expert__vs__b_expert ?? emptyPairCounts(),
     } })),

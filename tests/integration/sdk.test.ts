@@ -27,10 +27,12 @@ for (const engine of ["pi", "prime"] as Engine[])
         .map(task => [task.inputIds.answer, prepare(task, plan.inputs, {})]));
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
+      let permits = 0, activePermits = 0;
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
       const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 1, verification: 4 };
       const gateway = await listen(async (req, res) => {
         try {
+          assert(activePermits > 0, "every real SDK HTTP request must hold a model permit");
           assert.equal(req.headers.authorization, req.url!.startsWith("/second/") ? "Bearer second-channel-secret" : "Bearer integration-fixture-secret");
           const payload = object(await body(req));
           requests.push(payload);
@@ -199,6 +201,7 @@ api=openai-responses
           policy: config.execution,
           modelForStage,
           concurrency: 2,
+          modelRequests: { concurrency: () => 2, acquire: async () => { permits++; activePermits++; return () => { activePermits--; }; } },
           retries: 0,
           retryDelaySeconds: 0,
         };
@@ -230,6 +233,8 @@ api=openai-responses
         assert.equal(state.receipts[verificationTask.id].submissionStats!.contentSubmissions, 2,
           "the actual inspection and final submission both consume content budget");
         assert(state.receipts[verificationTask.id].audit.inspection);
+        assert.equal(activePermits, 0, "completed streams release all LLM permits");
+        assert.equal(permits, requests.length, "each SDK turn acquires a separate permit");
         const acceptedRequestCount = requests.length;
         if (engine === "pi") {
           const task = options.plan.tasks.find((task) => task.stage === "attribution")!;

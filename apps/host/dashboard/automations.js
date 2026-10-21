@@ -5,16 +5,71 @@ const percent = (value) => value == null ? "暂无用量" : value.toLocaleString
 const dateFormat = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
 const time = (value) => value ? dateFormat.format(value) : "—";
 const stages = ["criteria", "attribution", "comparison", "rewrite"];
+const stageLabels = { criteria: "标准任务", attribution: "归因任务", comparison: "对比任务", rewrite: "改写任务" };
 const labels = { running: "运行中", stopped: "已停止", pending: "等待中", downloading: "下载中", ready: "已就绪", retry: "等待重试", evaluating: "评测中", completed: "已完成", waiting_inputs: "已完成，等待新增输入", blocked: "已暂停", uncertain: "待核实", sending: "上传中", uploaded: "已上传" };
 const tones = { running: "active", evaluating: "active", downloading: "active", completed: "success", uploaded: "success", ready: "success", retry: "warning", uncertain: "warning", blocked: "error" };
 const status = (value, label = labels[value] ?? value) => `<span class="status-label tone-${tones[value] ?? "neutral"}">${escape(label)}</span>`;
 const sub = (value, className = "") => `<span class="table-sub ${className}">${escape(value)}</span>`;
 const empty = (columns, text) => `<tr><td colspan="${columns}" class="empty">${text}</td></tr>`;
-let data, busy = false, connected = false, timer;
+let data, busy = false, connected = false, timer, allocationRevision = 0;
+const savingAllocations = new Set();
 const pageSize = 10;
 const pages = Object.fromEntries(["date", "activity", "mongo-progress", "mongo", "delivery"].map((id) => [id, 0]));
 const tabs = [...document.querySelectorAll('[role="tab"]')];
+const expandedDates = new Set();
 let panel = "dates";
+
+function errorDetails(value, key, label) {
+  if (!value) return "";
+  const review = /^Comparison remains unresolved: ([\w.-]+(?:, [\w.-]+)*)$/.exec(value);
+  const ids = review?.[1].split(", ");
+  const title = ids ? `对比待复核 · ${number(ids.length)} 项` : `查看${label}`;
+  const detail = ids ? `Comparison remains unresolved:\n${ids.join("\n")}` : value;
+  return `<details class="row-error" data-error-key="${escape(key)}"><summary>${escape(title)}</summary><pre tabindex="0" aria-label="${escape(label)}完整详情">${escape(detail)}</pre></details>`;
+}
+
+function renderSources() {
+  const nav = $("source-nav");
+  for (const source of data.sources) {
+    let link = [...nav.children].find(node => node.dataset.source === source.id);
+    if (!link) {
+      link = document.createElement("a");
+      link.dataset.source = source.id;
+      link.innerHTML = "<strong></strong><span></span>";
+      nav.append(link);
+    }
+    link.href = `/?source=${encodeURIComponent(source.id)}`;
+    link.querySelector("strong").textContent = source.name;
+    link.querySelector("span").textContent = `${source.status === "running" && !source.dateCount ? "等待数据" : labels[source.status] ?? source.status} · ${number(source.dateCount)} 个日期`;
+    if (source.id === data.id) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  for (const link of [...nav.children]) if (!data.sources.some(source => source.id === link.dataset.source)) link.remove();
+  $("errors-link").href = `/errors?source=${encodeURIComponent(data.id)}`;
+}
+
+function renderLlm() {
+  const container = $("llm-allocations"), name = id => data.sources.find(source => source.id === id)?.name ?? id;
+  for (const source of data.llm.sources) {
+    let form = [...container.children].find(node => node.dataset.source === source.sourceId);
+    if (!form) {
+      form = document.createElement("form");
+      form.className = "llm-allocation"; form.dataset.source = source.sourceId;
+      const id = `llm-limit-${source.sourceId}`;
+      form.innerHTML = `<label for="${escape(id)}">${escape(name(source.sourceId))}</label><div class="llm-allocation-controls"><span>LLM 并发</span><input id="${escape(id)}" type="number" min="0" step="1" required><button class="button" type="submit">应用</button></div><output aria-live="polite"></output>`;
+      container.append(form);
+    }
+    const input = form.querySelector("input"), saving = savingAllocations.has(source.sourceId);
+    if (!input.dataset.dirty && document.activeElement !== input) input.value = source.concurrency;
+    input.disabled = !connected || saving;
+    form.querySelector("button").disabled = !connected || saving;
+    form.querySelector("output").textContent = !connected ? "连接中断" : saving ? "正在保存" :
+      `${source.concurrency === 0 ? source.active ? "暂停中 · " : "LLM 已暂停 · " : ""}调用 ${number(source.active)} · 等待 ${number(source.waiting)}`;
+  }
+  for (const form of [...container.children]) if (!data.llm.sources.some(source => source.sourceId === form.dataset.source)) form.remove();
+  $("llm-total").textContent = `· ${number(data.llm.active.length)} 个请求`;
+  $("llm-requests").innerHTML = data.llm.active.map(call => `<tr><td>${escape(name(call.sourceId))}</td><td>${escape(call.date)}</td><td>${escape(stageLabels[call.stage] ?? call.stage)}</td><td>${escape(call.model)}${sub(call.channel)}</td><td>${time(call.startedAt)}</td><td title="${escape(call.taskId)}">${escape(call.taskId)}</td></tr>`).join("") || empty(6, "暂无 LLM 调用");
+}
 
 function retryText(at) {
   if (!connected) return "待恢复连接";
@@ -34,9 +89,10 @@ function renderExecution() {
   if (!execution) return;
   $("execution-overview").hidden = false;
   $("evaluator-version").textContent = execution.evaluatorVersion;
-  $("concurrency-label").textContent = connected ? "实时并发" : "并发快照";
-  $("live-concurrency").textContent = `${number(execution.runningTasks)} / ${number(execution.concurrency)} 任务`;
-  $("slot-utilization").textContent = `槽位利用率 ${percent(execution.concurrency ? execution.runningTasks / execution.concurrency : null)} · 空闲 ${number(Math.max(0, execution.concurrency - execution.runningTasks))}`;
+  const llm = data.llm.sources.find(source => source.sourceId === data.id);
+  $("concurrency-label").textContent = connected ? "当前来源 LLM 并发" : "LLM 并发快照";
+  $("live-concurrency").textContent = `${number(llm?.active)} / ${number(llm?.concurrency)} 请求`;
+  $("slot-utilization").textContent = `LLM ${number(llm?.active)} · 运行任务 ${number(execution.runningTasks)}`;
   $("live-stages").textContent = `${number(execution.runningCases)} 题 · 标准 ${number(execution.stages.criteria)} · 归因 ${number(execution.stages.attribution)} · 对比 ${number(execution.stages.comparison)} · 改写 ${number(execution.stages.rewrite)}`;
   const retryJobs = data.jobs.filter((job) => job.evaluation === "retry");
   const retries = retryJobs.reduce((sum, job) => sum + stages.reduce((n, stage) => n + (job.summary?.stages[stage]?.failed ?? 0) +
@@ -89,6 +145,8 @@ function selectPanel(id) {
   }
   $("date-filter-label").hidden = panel === "deliveries";
   $("time-filter-label").hidden = panel === "dates";
+  $("date-total").hidden = panel !== "dates";
+  $("activity-total").hidden = panel !== "activity";
   render();
 }
 
@@ -121,7 +179,8 @@ function renderFlow() {
   $("lane-download-queue").textContent = `待更新 ${number(updates.length)} 日期`;
   const evaluating = data.jobs.find(job => job.evaluation === "evaluating");
   const queued = data.jobs.filter(job => ["pending", "retry"].includes(job.evaluation));
-  $("lane-evaluation").textContent = stopped || (evaluating ? `${evaluating.date} · 评测中` : queued.length ? "等待调度" : "等待新增输入");
+  $("lane-evaluation").textContent = stopped || (data.llm.sources.find(source => source.sourceId === data.id)?.concurrency === 0 ? "LLM 已暂停" :
+    evaluating ? `${evaluating.date} · 评测中` : queued.length ? "等待调度" : "等待新增输入");
   $("lane-evaluation-queue").textContent = evaluating && !stopped ? `可执行 ${number(data.execution.readyTasks)} · 等依赖 ${number(data.execution.waitingDependencies)}` : `排队 ${number(queued.length)} 日期`;
   const uploading = data.jobs.find(job => job.mongo?.status === "running");
   const unconfirmed = data.jobs.filter(job => !confirmedMongo(job));
@@ -129,7 +188,7 @@ function renderFlow() {
   $("lane-mongo").textContent = stopped || (uploading ? `${uploading.date} · 上传中` : data.jobs.some(job => job.mongo?.status === "retry") ? "等待重试" : "等待增量交付");
   $("lane-mongo-queue").textContent = unconfirmed.length ? `${number(unconfirmed.length)} 日期未登记` : `待传输出 ${number(pendingOutputs)} 条`;
   const publication = data.publication;
-  $("lane-log").textContent = stopped || (publication?.status === "running" ? "落盘 / 上传中" : publication?.status === "uncertain" ? "待核实回执" :
+  $("lane-log").textContent = !data.publishStatisticsLog ? "已关闭" : stopped || (publication?.status === "running" ? "落盘 / 上传中" : publication?.status === "uncertain" ? "待核实回执" :
     publication?.status === "retry" ? "等待重试" : publication?.nextAt ? `下次 ${time(publication.nextAt)}` : "等待调度");
   const receipts = [...(data.publicationHistory ?? []), ...(publication ? [publication] : [])]
     .map(item => item.log?.uploadedAt ?? item.log?.confirmedAt).filter(Boolean);
@@ -142,7 +201,7 @@ function downloadState(job) {
   if (job.download === "downloading") return status("downloading", job.downloaded ? (matched ? "核对更新中" : "下载更新中") : "首次下载中") + gap;
   if (job.download === "installing") return status("downloading", "更新本地输入");
   if (job.sourceReady === false) return status("pending", "远端准备中") + gap;
-  if (job.downloadError) return status("retry", job.downloaded ? "更新输入待重试" : "下载待重试") + gap + retrySchedule(job.nextDownloadAt) + sub(job.downloadError, "row-error");
+  if (job.downloadError) return status("retry", job.downloaded ? "更新输入待重试" : "下载待重试") + gap + retrySchedule(job.nextDownloadAt) + errorDetails(job.downloadError, `download:${job.date}`, "下载错误");
   if (job.download === "ready" && matched) return status("ready", "本地已就绪");
   const waiting = data.status === "stopped" ? "启动后更新" : job.evaluation === "evaluating" ? "等待当前评测结束" :
     job.mongo?.status === "running" ? "等待 MongoDB 交付" : data.publication?.status === "running" ? "等待日志快照" :
@@ -153,6 +212,13 @@ function downloadState(job) {
 
 function render() {
   if (!data) return;
+  const focusedDate = document.activeElement?.dataset?.dateDetails;
+  const disclosures = new Map([...document.querySelectorAll(".row-error")].map(node => [node.dataset.errorKey, {
+    open: node.open, top: node.querySelector("pre").scrollTop, left: node.querySelector("pre").scrollLeft,
+    focused: node.contains(document.activeElement) ? document.activeElement.tagName.toLowerCase() : undefined,
+  }]));
+  renderSources();
+  renderLlm();
   renderExecution();
   const selected = $("date-filter").value;
   const jobs = data.jobs.filter((job) => !selected || job.date === selected);
@@ -160,9 +226,11 @@ function render() {
   $("reset-filters").disabled = (panel === "deliveries" || !selected) && (panel === "dates" || range === "24");
   // Bucket-aligned ranges are explicit below; a partial hour is never presented as an exact rolling count.
   const cutoff = range === "all" ? 0 : Math.floor(data.sampledAt / 3600000) * 3600000 - (Number(range) - 1) * 3600000;
+  document.title = `自动化评测 · ${data.sourceName}`;
+  $("source-url").textContent = data.sourceUrl;
   $("pipeline-status").innerHTML = connected ? status(data.status) : "连接中断";
   $("sample-time").textContent = `更新 ${time(data.sampledAt)}`;
-  $("poll-time").textContent = `远端检查 ${time(data.lastPollAt)}`;
+  $("poll-time").textContent = time(data.lastPollAt);
   $("log-path").textContent = data.logFile;
   $("mongo-collection").textContent = data.mongoCollection;
   const errors = [data.pollError, data.reportError].filter(Boolean);
@@ -170,24 +238,27 @@ function render() {
   $("pipeline-errors").textContent = errors.join("\n");
   $("date-total").textContent = `${number(jobs.length)} 个日期`;
   $("date-rows").innerHTML = pageRows("date", jobs).map((job) => {
-    const error = [["retry", "blocked"].includes(job.evaluation) ? job.evaluationError : undefined, job.monitorError].filter(Boolean).join("\n");
+    const error = (["retry", "blocked"].includes(job.evaluation) ? errorDetails(job.evaluationError, `evaluation:${job.date}`, "评测错误") : "") +
+      errorDetails(job.monitorError, `monitor:${job.date}`, "状态读取错误");
     const cells = stages.map((name) => {
       const stage = job.summary?.stages[name];
-      if (!stage) return "<td>—</td>";
+      if (!stage) return `<div><dt>${stageLabels[name]}</dt><dd>—</dd></div>`;
       const retrying = job.execution?.retryingStages?.[name] ?? 0, pending = Math.max(0, (stage.pending ?? 0) - retrying);
-      return `<td class="stage-tasks" data-stage="${name}">${number(stage.completed)} / ${number(stage.total)}${stage.running ? sub(`进行中 ${number(stage.running)}`, "tone-active") : ""}${pending ? sub(`待执行 ${number(pending)}`) : ""}${retrying ? sub(`待重试 ${number(retrying)}`, "tone-warning") : ""}${stage.cancelled ? sub(`已中断 ${number(stage.cancelled)}`, "tone-warning") : ""}${stage.blocked ? sub(`依赖阻塞 ${number(stage.blocked)}`, "tone-warning") : ""}${stage.failed ? sub(`失败 ${number(stage.failed)}`, "tone-error") : ""}</td>`;
+      return `<div><dt>${stageLabels[name]}</dt><dd class="stage-tasks" data-stage="${name}">${number(stage.completed)} / ${number(stage.total)}${stage.running ? sub(`进行中 ${number(stage.running)}`, "tone-active") : ""}${pending ? sub(`待执行 ${number(pending)}`) : ""}${retrying ? sub(`待重试 ${number(retrying)}`, "tone-warning") : ""}${stage.cancelled ? sub(`已中断 ${number(stage.cancelled)}`, "tone-warning") : ""}${stage.blocked ? sub(`依赖阻塞 ${number(stage.blocked)}`, "tone-warning") : ""}${stage.failed ? sub(`失败 ${number(stage.failed)}`, "tone-error") : ""}</dd></div>`;
     }).join("");
     const counts = (key) => stages.reduce((n, name) => n + (job.summary?.stages[name]?.[key] ?? 0), 0);
     const local = inputCount(job.downloaded);
     const retrying = job.execution?.retryingTasks ?? 0, retries = counts("failed") + counts("cancelled") + retrying;
-    const pool = job.summary ? `待执行 ${number(Math.max(0, counts("pending") - retrying))}${sub(`${job.evaluation === "blocked" ? "已暂停" : "待重试"} ${number(retries)}`, retries ? "tone-warning" : "")}${sub(`依赖阻塞 ${number(counts("blocked"))}`)}${counts("running") ? sub(`进行中 ${number(counts("running"))}`, "tone-active") : ""}` : "—";
-    return `<tr><td><strong>${escape(job.date)}</strong>${job.adopted ? sub("历史已完成") : ""}</td>
-      <td class="remote-inputs">${number(inputCount(job.observed))}</td><td class="local-inputs">${local === undefined ? "—" : number(local)}${job.summary?.skipped ? sub(`预检跳过 ${number(job.summary.skipped)}`) : ""}${job.summary?.issues ? sub(`输入异常 ${number(job.summary.issues)}`, "tone-error") : ""}</td>
+    const pool = job.summary ? `待执行 ${number(Math.max(0, counts("pending") - retrying))}${retries ? sub(`${job.evaluation === "blocked" ? "已暂停" : "待重试"} ${number(retries)}`, "tone-warning") : ""}${counts("blocked") ? sub(`依赖阻塞 ${number(counts("blocked"))}`) : ""}${counts("running") ? sub(`进行中 ${number(counts("running"))}`, "tone-active") : ""}` : "—";
+    const open = expandedDates.has(job.date), detailId = `tasks-${job.date}`;
+    return `<tr class="date-row"><td><strong>${escape(job.date)}</strong>${job.adopted ? sub("历史已完成") : ""}</td>
+      <td class="remote-inputs">${number(inputCount(job.observed))}</td><td class="local-inputs">${local === undefined ? "—" : number(local)}${job.summary?.issues ? sub(`输入异常 ${number(job.summary.issues)}`, "tone-error") : ""}</td>
       <td>${downloadState(job)}</td>
-      <td>${status(job.evaluation)}${job.evaluation === "retry" ? retrySchedule(job.nextEvaluationAt) + sub(`连续失败 ${number(job.evaluationAttempts)} 轮`) : ""}${job.execution?.retryingTasks ? sub(`任务重试 ${number(job.execution.retryingTasks)} 个`, "tone-warning") + retrySchedule(job.execution.nextRetryAt) : ""}${error ? sub(error, "row-error") : ""}</td>
+      <td>${job.evaluation === "evaluating" && data.llm.sources.find(source => source.sourceId === data.id)?.concurrency === 0 ? status("pending", "LLM 已暂停") : status(job.evaluation)}${job.evaluation === "retry" ? retrySchedule(job.nextEvaluationAt) : ""}${job.execution?.retryingTasks ? sub(`任务重试 ${number(job.execution.retryingTasks)} 个`, "tone-warning") + retrySchedule(job.execution.nextRetryAt) : ""}${error}</td>
       <td class="completed-comparisons">${job.summary ? number(job.summary.readyComparisons) : "—"}</td>
-      <td class="task-pool">${pool}</td>${cells}<td class="cache-rate">${percent(job.cache?.hitRate)}</td></tr>`;
-  }).join("") || empty(12, "暂无日期");
+      <td><button class="details-toggle" type="button" data-date-details="${escape(job.date)}" aria-label="${escape(job.date)} 任务明细" aria-expanded="${open}" aria-controls="${escape(detailId)}">${open ? "收起" : "展开"}</button></td></tr>
+      <tr class="date-detail-row" id="${escape(detailId)}"${open ? "" : " hidden"}><td colspan="7"><dl class="task-facts" aria-label="${escape(job.date)} 任务明细"><div><dt>任务池</dt><dd class="task-pool">${pool}</dd></div>${cells}<div><dt>缓存命中率</dt><dd class="cache-rate">${percent(job.cache?.hitRate)}</dd></div></dl>${job.summary?.skipped || job.evaluation === "retry" ? `<div class="task-detail-meta">${job.summary?.skipped ? `<span>预检跳过 ${number(job.summary.skipped)}</span>` : ""}${job.evaluation === "retry" ? `<span>连续失败 ${number(job.evaluationAttempts)} 轮</span>` : ""}</div>` : ""}</td></tr>`;
+  }).join("") || empty(7, "暂无日期");
 
   const hours = new Map();
   for (const job of jobs) for (const hour of job.hours) {
@@ -204,17 +275,17 @@ function render() {
     <td class="volume-cell"><div class="volume"><strong>${number(hour.completed)}</strong><span class="volume-track" aria-hidden="true"><span style="width:${hour.completed / maximum * 100}%"></span></span></div></td>
     ${stages.map((name) => `<td>${number(hour.stages[name])}</td>`).join("")}</tr>`).join("") || empty(6, "此时段暂无完成记录");
 
-  const deliveries = [...(data.publicationHistory ?? []), ...(data.publication?.traceId ? [data.publication] : [])];
+  const deliveries = data.publishStatisticsLog ? [...(data.publicationHistory ?? []), ...(data.publication?.traceId ? [data.publication] : [])] : [];
   const visible = deliveries.filter((delivery) => Math.max(delivery.startedAt ?? 0, delivery.completedAt ?? 0, delivery.log?.uploadedAt ?? 0, delivery.log?.confirmedAt ?? 0, delivery.window ?? 0) >= cutoff || ["running", "retry", "uncertain"].includes(delivery.status)).sort((a, b) => (b.window ?? 0) - (a.window ?? 0));
-  $("delivery-total").textContent = `${number(visible.length)} 次日志交付`;
+  $("delivery-total").textContent = data.publishStatisticsLog ? `${number(visible.length)} 次日志交付` : "统计日志已关闭";
   $("delivery-rows").innerHTML = pageRows("delivery", visible).map((delivery) => {
     const log = delivery.log, counts = delivery.counts;
     return `<tr><td>全看板${sub(time(delivery.window))}</td>
-      <td>${status(delivery.status)}${delivery.status === "retry" ? retrySchedule(delivery.nextAt) : ""}${delivery.error ? sub(delivery.error, "row-error") : ""}</td>
+      <td>${status(delivery.status)}${delivery.status === "retry" ? retrySchedule(delivery.nextAt) : ""}${errorDetails(delivery.error, `log:${delivery.traceId}`, "日志交付错误")}</td>
       <td>${counts ? `${number(counts.cases)} / ${number(counts.comparisons)}` : "—"}</td>
       <td>${time(log?.writtenAt)}</td>
       <td>${log ? status(log.status) : "—"}${log?.uploadedAt ? sub(time(log.uploadedAt)) : log?.confirmedAt ? sub(`人工确认 ${time(log.confirmedAt)}`) : log?.startedAt ? sub(`尝试 ${time(log.startedAt)}`) : ""}${log?.requestId ? sub(log.requestId, "receipt") : ""}</td></tr>`;
-  }).join("") || empty(5, "此时段暂无日志记录");
+  }).join("") || empty(5, data.publishStatisticsLog ? "此时段暂无日志记录" : "统计日志已关闭");
 
   const mongo = jobs.flatMap((job) => [
     ...(job.mongoHistory ?? []).map((receipt) => ({ ...receipt, status: "completed" })),
@@ -227,25 +298,54 @@ function render() {
   $("mongo-progress-rows").innerHTML = pageRows("mongo-progress", jobs).map((job) => {
     const receipt = confirmedMongo(job), counts = receipt?.counts;
     const pending = counts && job.summary ? Math.max(0, job.summary.readyComparisons - counts.comparisons) : 0;
-    return `<tr><td>${escape(job.date)}</td><td>${job.mongo ? pending && job.mongo.status === "completed" ? status("pending", "等待同步新输出") : status(job.mongo.status) : job.adopted ? "历史已交付" : "未同步"}${job.mongo?.status === "retry" ? retrySchedule(job.mongo.nextAt) : ""}${job.mongo?.error ? sub(job.mongo.error, "row-error") : ""}</td>
+    return `<tr><td>${escape(job.date)}</td><td>${job.mongo ? pending && job.mongo.status === "completed" ? status("pending", "等待同步新输出") : status(job.mongo.status) : job.adopted ? "历史已交付" : "未同步"}${job.mongo?.status === "retry" ? retrySchedule(job.mongo.nextAt) : ""}${errorDetails(job.mongo?.error, `mongo-progress:${job.date}`, "MongoDB 错误")}</td>
       <td class="mongo-inputs">${counts ? number(counts.inputs) : "未登记"}</td><td class="mongo-outputs">${counts ? number(counts.comparisons) : "未登记"}${pending ? sub(`待上传 ${number(pending)}`) : ""}</td><td>${receipt?.verified ? "核验 " : ""}${time(receipt?.completedAt)}</td></tr>`;
   }).join("") || empty(5, "暂无日期");
   $("mongo-history-total").textContent = `${number(mongoVisible.length)} 次同步`;
   $("mongo-rows").innerHTML = pageRows("mongo", mongoVisible).map((delivery) => `<tr><td>${escape(delivery.date)}</td>
-    <td>${status(delivery.status)}${delivery.status === "retry" ? retrySchedule(delivery.nextAt) : ""}${delivery.error ? sub(delivery.error, "row-error") : ""}</td>
+    <td>${status(delivery.status)}${delivery.status === "retry" ? retrySchedule(delivery.nextAt) : ""}${errorDetails(delivery.error, `mongo:${delivery.date}:${delivery.startedAt}`, "MongoDB 错误")}</td>
     <td>${time(delivery.startedAt)}</td><td>${time(delivery.completedAt)}</td>
     <td>${delivery.counts ? number(delivery.counts.inputs) : "—"}</td><td>${delivery.counts ? number(delivery.counts.comparisons) : "—"}</td>
     <td>${delivery.counts ? `新增 ${number(delivery.counts.inserted)}${sub(`更新 ${number(delivery.counts.updated)}`)}` : "—"}</td></tr>`).join("") || empty(7, "此时段暂无 MongoDB 同步记录");
+  for (const node of document.querySelectorAll(".row-error")) {
+    const previous = disclosures.get(node.dataset.errorKey);
+    if (!previous) continue;
+    node.open = previous.open;
+    node.querySelector("pre").scrollTop = previous.top;
+    node.querySelector("pre").scrollLeft = previous.left;
+    if (previous.focused) node.querySelector(previous.focused)?.focus({ preventScroll: true });
+  }
+  if (focusedDate) [...document.querySelectorAll("[data-date-details]")].find(node => node.dataset.dateDetails === focusedDate)?.focus({ preventScroll: true });
 }
 
+$("date-rows").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-date-details]");
+  if (!button) return;
+  const date = button.dataset.dateDetails, open = !expandedDates.has(date);
+  if (open) expandedDates.add(date);
+  else expandedDates.delete(date);
+  button.setAttribute("aria-expanded", String(open));
+  button.textContent = open ? "收起" : "展开";
+  $(button.getAttribute("aria-controls")).hidden = !open;
+});
+
 async function refresh() {
-  if (busy) return;
+  if (busy || savingAllocations.size) return;
   clearTimeout(timer);
   busy = true; $("refresh").disabled = true;
   try {
-    const response = await fetch("/api/status", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+    const query = new URLSearchParams();
+    const source = new URL(location.href).searchParams.get("source");
+    if (source) query.set("source", source);
+    const revision = allocationRevision;
+    const response = await fetch("/api/status?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`读取状态失败（HTTP ${response.status}）`);
-    data = await response.json();
+    const next = await response.json();
+    if (revision !== allocationRevision && data) next.llm = data.llm;
+    data = next;
+    const url = new URL(location.href);
+    url.searchParams.set("source", data.id);
+    history.replaceState(null, "", url);
     connected = true;
     const selected = $("date-filter").value;
     $("date-filter").innerHTML = '<option value="">全部日期</option>' + data.jobs.map((job) => `<option value="${escape(job.date)}">${escape(job.date)}</option>`).join("");
@@ -258,11 +358,43 @@ async function refresh() {
     $("connection-error").textContent = `连接中断：${error.message}${data ? `；保留 ${time(data.sampledAt)} 的状态` : ""}`;
     $("pipeline-status").textContent = "连接中断";
     renderExecution(); updateCountdowns();
+    if (data) renderLlm();
   } finally {
     busy = false; $("refresh").disabled = false;
     timer = setTimeout(refresh, 5000);
   }
 }
+$("llm-allocations").addEventListener("input", event => {
+  if (event.target.matches("input")) event.target.dataset.dirty = "true";
+});
+$("llm-allocations").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target, sourceId = form.dataset.source, input = form.querySelector("input");
+  if (!connected || savingAllocations.has(sourceId) || !form.reportValidity()) return;
+  const concurrency = Number(input.value);
+  allocationRevision++;
+  savingAllocations.add(sourceId);
+  $("llm-error").hidden = true;
+  renderLlm();
+  try {
+    const response = await fetch("/api/llm-concurrency", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceId, concurrency }), signal: AbortSignal.timeout(15000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+    data.llm = result;
+    delete input.dataset.dirty;
+    input.value = result.sources.find(source => source.sourceId === sourceId).concurrency;
+  } catch (error) {
+    $("llm-error").hidden = false;
+    $("llm-error").textContent = `设置 LLM 并发失败：${error.message}`;
+  } finally {
+    savingAllocations.delete(sourceId);
+    renderLlm();
+    void refresh();
+  }
+});
 $("refresh").addEventListener("click", refresh);
 function filterChanged() {
   for (const id of Object.keys(pages)) pages[id] = 0;

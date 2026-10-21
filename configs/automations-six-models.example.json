@@ -27,7 +27,7 @@
   "maxEvaluationAttempts": 3,
   "dailyComparisonLimitPerTier": 300,
   "channelConcurrency": {
-    "evaluation-gateway": 16
+    "openai": 1
   },
   "requestTimeoutMs": 600000,
   "publishProgress": true,

@@ -36,6 +36,7 @@ SHANGHAI = timezone(timedelta(hours=8))
 TOP_LEVEL_FIELD_ORDER = ("request_time", "has_standard_answer", "versions")
 ROOT_MODELS = ("a_fast", "b_fast", "a_expert", "b_expert")
 MODELS = ("a_fast", "b_fast", "a_expert", "b_expert", "6_luna", "6.1sol")
+POST_TRAINING_MODELS = ("a_fast", "b_fast", "b_post_train_fast")
 STAGES = ("criteria", "attribution", "clustering")
 TASK_COUNTS = {"total", "completed", "running", "pending", "failed", "blocked", "cancelled"}
 VERSION_NAMES = {
@@ -43,6 +44,7 @@ VERSION_NAMES = {
     "b_fast": "B Fast",
     "a_expert": "A Expert",
     "b_expert": "B Expert",
+    "b_post_train_fast": "B post_train_fast",
     "6_luna": "6_luna",
     "6.1sol": "6.1sol",
 }
@@ -69,12 +71,14 @@ def valid_iso_day(value: object) -> bool:
 
 
 def model_for_member(member: str) -> str | None:
-    explicit = re.search(r"(?:^|[_-])(a_fast|b_fast|a_expert|b_expert|6_luna|6\.1sol)(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE)
+    explicit = re.search(r"(?:^|[_-])(a_fast|b_fast|b_post_train_fast|a_expert|b_expert|6_luna|6\.1sol)(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE)
     if explicit:
         return explicit.group(1).lower()
     gpt = re.search(r"(?:^|[_-])gpt-(luna|sol)(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE)
     if gpt:
         return {"luna": "6_luna", "sol": "6.1sol"}[gpt.group(1).lower()]
+    if re.search(r"(?:^|[_-])(?:aa|b)-post_train_fast(?:_V1)?(?:\.incr\d+)?\.jsonl$", PurePosixPath(member).name, re.IGNORECASE):
+        return "b_post_train_fast"
     match = MEMBER_MODEL.search(PurePosixPath(member).name)
     if not match:
         return None
@@ -407,7 +411,8 @@ class Dataset:
         self.pairs = ({"fast": ("a_fast", "b_fast"), "expert": ("a_expert", "b_expert")}
                       if not prefix else {
                           "__vs__".join(sorted((left, right))): (left, right)
-                          for group in (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol"))
+                          for group in ((POST_TRAINING_MODELS,) if prefix == "/post_training_model" else
+                                        (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol")))
                           for index, left in enumerate(group) for right in group[index + 1:]
                       })
 
@@ -758,7 +763,7 @@ class Dataset:
                                 skipped[(model, "invalid_json")] += 1
                                 continue
                             try:
-                                day, row = normalize_row(value, model, path.name, member, number, testset_dates=self.prefix == "/gpt")
+                                day, row = normalize_row(value, model, path.name, member, number, testset_dates=self.prefix in ("/gpt", "/post_training_model"))
                             except InvalidRecord as exc:
                                 skipped[(model, exc.reason)] += 1
                                 continue
@@ -1159,7 +1164,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        max_length = 1024 * 1024 if dataset.prefix else 8192
+        max_length = 1024 * 1024
         if length < 1 or length > max_length:
             self.send_json(413 if length > max_length else 400, {"error": "invalid request size"})
             return
@@ -1253,6 +1258,8 @@ def make_datasets(root: Path = ROOT, state_dir: Path = CODE_DIR / "state", multi
     datasets = {
         "": Dataset(root, state_dir, ROOT_MODELS),
         "/gpt": Dataset(root / "gpt", state_dir / "gpt", MODELS, "/gpt"),
+        "/post_training_model": Dataset(root / "post_training_model", state_dir / "post_training_model",
+                                        POST_TRAINING_MODELS, "/post_training_model"),
     }
     if multi_root is not None:
         from multi_agent_inputs import AgentDataset, SOURCES

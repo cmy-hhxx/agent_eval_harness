@@ -122,6 +122,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     ...config,
     execution: supplied.execution,
     reviewQuestions: supplied.reviewQuestions,
+    prediction: supplied.prediction,
     standardAnswerReview: supplied.standardAnswerReview === true,
     // Automation explicitly extends a daily run's model selection; normal resume retains its selection.
     comparisons: selectComparisonGroups(supplied.comparisons, versions.map((version) => version.id)),
@@ -130,6 +131,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     clustering: supplied.clustering,
     inputs: {
       ...config.inputs,
+      ...(supplied.prediction ? { case_ids: supplied.inputs.case_ids } : {}),
       versions: versions.map((v) => ({
         ...v,
         sources: config.inputs.dataset_id && supplied.inputs.dataset_id !== config.inputs.dataset_id

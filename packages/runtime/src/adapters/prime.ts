@@ -4,6 +4,7 @@ import { setLogSink, stringifyLogEntry } from "#prime-ai";
 import type { AgentBackend, EngineIdentity } from "@eval/contracts";
 import { redact } from "@eval/contracts";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+import { controlledModelStream } from "../model-request.js";
 
 const credentials = new Set<string>();
 setLogSink(entry => {
@@ -88,6 +89,8 @@ export function primeBackend(identity: EngineIdentity): AgentBackend {
         customTools,
       });
       await session.bindExtensions({});
+      if (options.modelRequest)
+        session.agent.streamFn = controlledModelStream(session.agent.streamFn, options.modelRequest, (_model, _context, options) => options?.signal);
       const unsubscribe = session.subscribe(options.onEvent);
       return {
         run: (prompt) => session.prompt(prompt),

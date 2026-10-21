@@ -118,6 +118,7 @@ export function comparisonRow(
     attribution_task_ids: Object.fromEntries(Object.keys(data.candidates).map((label) => [data.candidates[label]!.version, task.dependencies[label]])),
 
     evaluation_type: "group_model_comparison",
+    ...(data.prediction ? { evaluation_purpose: "prediction", prediction: data.prediction } : {}),
     comparison_id: data.comparisonId || "cmp_" + task.id,
     case: { batch_id: first.batch_id, case_id: first.case_id },
     ground_truth: { available: data.reference !== null, value: data.reference },

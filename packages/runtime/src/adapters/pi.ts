@@ -2,6 +2,8 @@ import path from "node:path";
 import * as sdk from "#pi-sdk";
 import { object, type AgentBackend, type EngineIdentity } from "@eval/contracts";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, sdkContent, transformPayload } from "../sdk-utils.js";
+import { controlledModelStream } from "../model-request.js";
+import { providerFetch } from "../provider-http.js";
 
 export function piBackend(identity: EngineIdentity): AgentBackend {
   return {
@@ -104,6 +106,11 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         customTools,
       });
       await session.bindExtensions({ mode: "rpc" });
+      const providerStream = session.agent.streamFunction;
+      session.agent.streamFunction = (model, context, streamOptions) =>
+        providerStream(model, context, { ...streamOptions, fetch: providerFetch });
+      if (options.modelRequest)
+        session.agent.streamFunction = controlledModelStream(session.agent.streamFunction, options.modelRequest, (_model, _context, options) => options?.signal);
       const unsubscribe = session.subscribe(options.onEvent);
       return {
         run: (prompt) => session.prompt(prompt),

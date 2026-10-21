@@ -15,8 +15,9 @@ function textReferences(value: unknown, path: string[] = [], result = new Map<st
     for (const [key,item] of Object.entries(value)) textReferences(item,[...path,key],result);
   return result;
 }
-export function difference(base: unknown, value: unknown, path: string[] = [], texts = textReferences(base)): Patch {
+export function difference(base: unknown, value: unknown, path: string[] = [], texts?: Map<string, string[]>): Patch {
   if (isDeepStrictEqual(base,value)) return [];
+  texts ??= textReferences(base);
   if (typeof value === "string" && texts.has(value)) return [{path,from:texts.get(value)!}];
   const sameContainer = !!base && !!value && typeof base === "object" && typeof value === "object" &&
     Array.isArray(base) === Array.isArray(value) && (!Array.isArray(base) || base.length === (value as unknown[]).length);
@@ -49,6 +50,29 @@ export function restore(base: unknown, patch: Patch): unknown {
     else delete parent[key];
   }
   return value;
+}
+// Accepted bodies are immutable and shared by checkpoint snapshots. Retain only
+// their computed submission patch; replacing either body computes a fresh one.
+const submissionPatches = new WeakMap<object, { submitted: unknown; patch: Patch }>();
+function submissionDifference(evaluation: unknown, submitted: unknown): Patch {
+  if (!evaluation || typeof evaluation !== "object") return difference(evaluation, submitted);
+  const previous = submissionPatches.get(evaluation);
+  if (previous && previous.submitted === submitted) return previous.patch;
+  const patch = difference(evaluation, submitted);
+  submissionPatches.set(evaluation, { submitted, patch });
+  return patch;
+}
+const evaluationPatches = new WeakMap<object, { row: JsonObject; mapping: string; patch: Patch }>();
+function evaluationDifference(data: TaskData, row: JsonObject, evaluation: unknown, rewriteIds?: string[]): Patch {
+  if (!evaluation || typeof evaluation !== "object")
+    return difference(resultEvaluation(data, row, rewriteIds), evaluation);
+  const mapping = JSON.stringify([data.stage, data.rewriteOf?.stage,
+    Object.entries(data.candidates).map(([label, candidate]) => [label, candidate.version])]);
+  const previous = evaluationPatches.get(evaluation);
+  if (previous?.row === row && previous.mapping === mapping) return previous.patch;
+  const patch = difference(resultEvaluation(data, row, rewriteIds), evaluation);
+  evaluationPatches.set(evaluation, { row, mapping, patch });
+  return patch;
 }
 function encodeState(state: RunState): Checkpoint {
   const { tasks, states, inputs: _inputs, inputCatalog, ...metadata } = state.manifest;
@@ -93,7 +117,7 @@ function encodeState(state: RunState): Checkpoint {
           ...(exported.file ? { file: exported.file } : {}),
         };
         const evaluationPatch = exported
-          ? difference(resultEvaluation(task.data as TaskData, exported.row, rewriteIds), evaluation)
+          ? evaluationDifference(task.data as TaskData, exported.row, evaluation, rewriteIds)
           : [];
         value.receipt = {
           ...rest,
@@ -104,7 +128,7 @@ function encodeState(state: RunState): Checkpoint {
                 ...(evaluationPatch.length ? { evaluationPatch } : {}),
               }
             : { evaluation }),
-          ...(submitted !== undefined ? { submittedPatch: difference(evaluation, submitted) } : {}),
+          ...(submitted !== undefined ? { submittedPatch: submissionDifference(evaluation, submitted) } : {}),
         };
       }
       return [task.id, value];

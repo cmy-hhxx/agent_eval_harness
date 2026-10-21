@@ -1,0 +1,1012 @@
+{
+  "$jsonSchema": {
+    "oneOf": [
+      {
+        "bsonType": "object",
+        "required": [
+          "kind",
+          "id",
+          "model",
+          "category",
+          "direction",
+          "label",
+          "definition",
+          "originalLabel",
+          "originalDefinition",
+          "_id"
+        ],
+        "properties": {
+          "kind": {
+            "bsonType": "string",
+            "enum": [
+              "class"
+            ]
+          },
+          "id": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model": {
+            "anyOf": [
+              {
+                "bsonType": "string",
+                "enum": [
+                  "a_fast"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "a_expert"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_fast"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_expert"
+                ]
+              }
+            ]
+          },
+          "category": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "direction": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "label": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "definition": {
+            "bsonType": "string"
+          },
+          "originalLabel": {
+            "bsonType": "string"
+          },
+          "originalDefinition": {
+            "bsonType": "string"
+          },
+          "_id": {
+            "bsonType": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "bsonType": "object",
+        "required": [
+          "kind",
+          "id",
+          "model",
+          "inputId",
+          "traceId",
+          "date",
+          "caseId",
+          "taskSummary",
+          "source",
+          "replay",
+          "findings",
+          "_id"
+        ],
+        "properties": {
+          "kind": {
+            "bsonType": "string",
+            "enum": [
+              "sample"
+            ]
+          },
+          "id": {
+            "bsonType": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "bsonType": "string",
+                "enum": [
+                  "a_fast"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "a_expert"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_fast"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_expert"
+                ]
+              }
+            ]
+          },
+          "inputId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "traceId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "date": {
+            "bsonType": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "caseId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "taskSummary": {
+            "bsonType": "string"
+          },
+          "source": {
+            "bsonType": "object",
+            "required": [
+              "runId",
+              "taskId",
+              "submissionId",
+              "evaluatorVersion"
+            ],
+            "properties": {
+              "runId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "taskId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "submissionId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "evaluatorVersion": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "additionalProperties": false
+          },
+          "replay": {
+            "anyOf": [
+              {
+                "bsonType": "null"
+              },
+              {
+                "bsonType": "object",
+                "required": [
+                  "inputSet",
+                  "batchId",
+                  "caseId",
+                  "versionId",
+                  "topic"
+                ],
+                "properties": {
+                  "inputSet": {
+                    "anyOf": [
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "default"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "new"
+                        ]
+                      }
+                    ]
+                  },
+                  "batchId": {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "caseId": {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "versionId": {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "topic": {
+                    "anyOf": [
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "daily"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "objective"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "findings": {
+            "bsonType": "array",
+            "items": {
+              "bsonType": "object",
+              "required": [
+                "id",
+                "summary",
+                "text",
+                "reason",
+                "importance",
+                "evidenceStatus",
+                "status",
+                "pendingStatuses",
+                "classIds",
+                "components",
+                "evidence"
+              ],
+              "properties": {
+                "id": {
+                  "bsonType": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "summary": {
+                  "bsonType": "string"
+                },
+                "text": {
+                  "bsonType": "string"
+                },
+                "reason": {
+                  "bsonType": "string"
+                },
+                "importance": {
+                  "anyOf": [
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "high"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "medium"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "low"
+                      ]
+                    }
+                  ]
+                },
+                "evidenceStatus": {
+                  "bsonType": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "grouped"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "deferred"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "unlocated"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "unclassified"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "mixed"
+                      ]
+                    }
+                  ]
+                },
+                "pendingStatuses": {
+                  "bsonType": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "deferred"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "unlocated"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "uncertain"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "unclassified"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "mixed"
+                        ]
+                      }
+                    ]
+                  },
+                  "uniqueItems": true
+                },
+                "classIds": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "uniqueItems": true
+                },
+                "components": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "string"
+                  }
+                },
+                "evidence": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "object",
+                    "required": [
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "bsonType": [
+                          "int",
+                          "long",
+                          "double"
+                        ],
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "bsonType": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "_id": {
+            "bsonType": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "bsonType": "object",
+        "required": [
+          "kind",
+          "id",
+          "model",
+          "category",
+          "direction",
+          "label",
+          "definition",
+          "originalLabel",
+          "originalDefinition",
+          "_id",
+          "evaluationTaskId",
+          "evaluation_topic",
+          "batchId",
+          "runId",
+          "scope"
+        ],
+        "properties": {
+          "kind": {
+            "bsonType": "string",
+            "enum": [
+              "class"
+            ]
+          },
+          "id": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model": {
+            "bsonType": "string",
+            "enum": [
+              "b_post_train_fast"
+            ]
+          },
+          "category": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "direction": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "label": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "definition": {
+            "bsonType": "string"
+          },
+          "originalLabel": {
+            "bsonType": "string"
+          },
+          "originalDefinition": {
+            "bsonType": "string"
+          },
+          "_id": {
+            "bsonType": "string"
+          },
+          "evaluationTaskId": {
+            "bsonType": "string",
+            "enum": [
+              "remote-post-training-evaluation"
+            ]
+          },
+          "evaluation_topic": {
+            "bsonType": "string",
+            "enum": [
+              "后训练三模型专题评测（2026-10-19）"
+            ]
+          },
+          "batchId": {
+            "bsonType": "string",
+            "enum": [
+              "2026-10-19"
+            ]
+          },
+          "runId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "scope": {
+            "bsonType": "object",
+            "required": [
+              "kind",
+              "capturedAt",
+              "sourceEvaluationComplete",
+              "targetAttributions",
+              "acceptedAttributions",
+              "excludedAttributions"
+            ],
+            "properties": {
+              "kind": {
+                "bsonType": "string",
+                "enum": [
+                  "full-evaluation",
+                  "accepted-at-cutoff"
+                ]
+              },
+              "capturedAt": {
+                "bsonType": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+              },
+              "sourceEvaluationComplete": {
+                "bsonType": "bool"
+              },
+              "targetAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              },
+              "acceptedAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              },
+              "excludedAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              }
+            },
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "full-evaluation"
+                    ]
+                  },
+                  "sourceEvaluationComplete": {
+                    "enum": [
+                      true
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "accepted-at-cutoff"
+                    ]
+                  },
+                  "sourceEvaluationComplete": {
+                    "enum": [
+                      false
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "bsonType": "object",
+        "required": [
+          "kind",
+          "id",
+          "model",
+          "inputId",
+          "traceId",
+          "date",
+          "caseId",
+          "taskSummary",
+          "source",
+          "replay",
+          "findings",
+          "_id",
+          "evaluationTaskId",
+          "evaluation_topic",
+          "batchId",
+          "runId",
+          "scope"
+        ],
+        "properties": {
+          "kind": {
+            "bsonType": "string",
+            "enum": [
+              "sample"
+            ]
+          },
+          "id": {
+            "bsonType": "string",
+            "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"
+          },
+          "model": {
+            "bsonType": "string",
+            "enum": [
+              "b_post_train_fast"
+            ]
+          },
+          "inputId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "traceId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "date": {
+            "bsonType": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "caseId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "taskSummary": {
+            "bsonType": "string"
+          },
+          "source": {
+            "bsonType": "object",
+            "required": [
+              "runId",
+              "taskId",
+              "submissionId",
+              "evaluatorVersion"
+            ],
+            "properties": {
+              "runId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "taskId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "submissionId": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "evaluatorVersion": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "additionalProperties": false
+          },
+          "replay": {
+            "bsonType": "null"
+          },
+          "findings": {
+            "bsonType": "array",
+            "items": {
+              "bsonType": "object",
+              "required": [
+                "id",
+                "summary",
+                "text",
+                "reason",
+                "importance",
+                "evidenceStatus",
+                "status",
+                "pendingStatuses",
+                "classIds",
+                "components",
+                "evidence"
+              ],
+              "properties": {
+                "id": {
+                  "bsonType": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "summary": {
+                  "bsonType": "string"
+                },
+                "text": {
+                  "bsonType": "string"
+                },
+                "reason": {
+                  "bsonType": "string"
+                },
+                "importance": {
+                  "anyOf": [
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "high"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "medium"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "low"
+                      ]
+                    }
+                  ]
+                },
+                "evidenceStatus": {
+                  "bsonType": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "grouped"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "deferred"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "unlocated"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "unclassified"
+                      ]
+                    },
+                    {
+                      "bsonType": "string",
+                      "enum": [
+                        "mixed"
+                      ]
+                    }
+                  ]
+                },
+                "pendingStatuses": {
+                  "bsonType": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "deferred"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "unlocated"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "uncertain"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "unclassified"
+                        ]
+                      },
+                      {
+                        "bsonType": "string",
+                        "enum": [
+                          "mixed"
+                        ]
+                      }
+                    ]
+                  },
+                  "uniqueItems": true
+                },
+                "classIds": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "uniqueItems": true
+                },
+                "components": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "string"
+                  }
+                },
+                "evidence": {
+                  "bsonType": "array",
+                  "items": {
+                    "bsonType": "object",
+                    "required": [
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "bsonType": [
+                          "int",
+                          "long",
+                          "double"
+                        ],
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "bsonType": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "_id": {
+            "bsonType": "string"
+          },
+          "evaluationTaskId": {
+            "bsonType": "string",
+            "enum": [
+              "remote-post-training-evaluation"
+            ]
+          },
+          "evaluation_topic": {
+            "bsonType": "string",
+            "enum": [
+              "后训练三模型专题评测（2026-10-19）"
+            ]
+          },
+          "batchId": {
+            "bsonType": "string",
+            "enum": [
+              "2026-10-19"
+            ]
+          },
+          "runId": {
+            "bsonType": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "scope": {
+            "bsonType": "object",
+            "required": [
+              "kind",
+              "capturedAt",
+              "sourceEvaluationComplete",
+              "targetAttributions",
+              "acceptedAttributions",
+              "excludedAttributions"
+            ],
+            "properties": {
+              "kind": {
+                "bsonType": "string",
+                "enum": [
+                  "full-evaluation",
+                  "accepted-at-cutoff"
+                ]
+              },
+              "capturedAt": {
+                "bsonType": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+              },
+              "sourceEvaluationComplete": {
+                "bsonType": "bool"
+              },
+              "targetAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              },
+              "acceptedAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              },
+              "excludedAttributions": {
+                "bsonType": [
+                  "int",
+                  "long",
+                  "double"
+                ],
+                "minimum": 0,
+                "multipleOf": 1
+              }
+            },
+            "additionalProperties": false,
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "full-evaluation"
+                    ]
+                  },
+                  "sourceEvaluationComplete": {
+                    "enum": [
+                      true
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "accepted-at-cutoff"
+                    ]
+                  },
+                  "sourceEvaluationComplete": {
+                    "enum": [
+                      false
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  }
+}
