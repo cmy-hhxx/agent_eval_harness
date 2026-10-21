@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { completedTopicScope, frozenTopicScope } from "./topic-clustering-scope.mjs";
+import { completedTopicScope, frozenTopicScope, reuseClusteredScope } from "./topic-clustering-scope.mjs";
 
 function fixture() {
   return { checkpoint: { runId: "topic", status: "finished", pausedStages: [],
@@ -11,6 +11,23 @@ function fixture() {
     download: "ready", observed: { b_post_train_fast: 1 }, downloaded: { b_post_train_fast: 1 } } };
 }
 const scope = f => completedTopicScope(f.checkpoint, f.job, "b_post_train_fast", "2026-10-19", "2026-10-21T00:00:00Z");
+
+test("remaining clustering retains the already clustered receipt and adds only new answers", () => {
+  const f = fixture();
+  f.checkpoint.tasks.later = { ...structuredClone(f.checkpoint.tasks.task), receipt: { submissionId: "later", acceptedAt: 2 } };
+  f.checkpoint.inputs.new = { version: "b_post_train_fast", batch_id: "2026-10-19" };
+  f.checkpoint.tasks.new = { ...structuredClone(f.checkpoint.tasks.task), inputIds: { answer: "new" },
+    receipt: { submissionId: "new", acceptedAt: 3 } };
+  const sources = [{ run_id: "topic", task_id: "task", submission_id: "accepted", input_id: "answer",
+    model: "b_post_train_fast", batch_id: "2026-10-19" }];
+  const current = scope(f), pinned = reuseClusteredScope(f.checkpoint, current, sources);
+  assert.deepEqual(pinned.accepted.map(ref => ref.submissionId), ["accepted", "new"]);
+  assert.equal(current.accepted[0].submissionId, "later", "selection does not mutate source state or prior scope");
+  assert.deepEqual(pinned.selectedInputs, ["answer", "new"]);
+  for (const patch of [{ submission_id: "changed" }, { model: "b_fast" }, { run_id: "other" }, { batch_id: "other" }])
+    assert.throws(() => reuseClusteredScope(f.checkpoint, current, [{ ...sources[0], ...patch }]), /changed/);
+  assert.throws(() => reuseClusteredScope(f.checkpoint, current, [...sources, ...sources]), /changed/);
+});
 
 test("completed topic scope waits for both evaluation and full input promotion", () => {
   for (const change of [f => { f.checkpoint.status = "running"; }, f => { f.job.download = "downloading"; },

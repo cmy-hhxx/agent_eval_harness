@@ -31,6 +31,23 @@ export function completedTopicScope(checkpoint, job, model, batchId, capturedAt)
     excluded: excluded.filter(item => excludedInputs.includes(item.inputId)) };
 }
 
+/** An answer already clustered keeps that accepted receipt, even if another accepted task exists for it. */
+export function reuseClusteredScope(checkpoint, scope, sources) {
+  const accepted = new Map(scope.accepted.map(ref => [ref.inputId, ref])), seen = new Set();
+  for (const source of sources) {
+    const task = checkpoint.tasks[source.task_id], input = checkpoint.inputs[source.input_id];
+    if (seen.has(source.input_id) || !accepted.has(source.input_id) || source.run_id !== checkpoint.runId ||
+        task?.stage !== "attribution" || task.status !== "succeeded" || task.inputIds.answer !== source.input_id ||
+        task.receipt?.submissionId !== source.submission_id || !Number.isFinite(task.receipt.acceptedAt) ||
+        input?.version !== source.model || input.batch_id !== source.batch_id)
+      throw new Error("Previously clustered receipt changed: " + source.input_id);
+    seen.add(source.input_id);
+    accepted.set(source.input_id, { taskId: source.task_id, inputId: source.input_id,
+      submissionId: source.submission_id, acceptedAt: task.receipt.acceptedAt });
+  }
+  return { ...scope, accepted: [...accepted.values()] };
+}
+
 /** A user-approved cutoff keeps its accepted receipts even when later evaluation results arrive. */
 export function frozenTopicScope(checkpoint, scope, model, batchId) {
   const cutoff = Date.parse(scope?.capturedAt);

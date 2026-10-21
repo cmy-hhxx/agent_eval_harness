@@ -43,6 +43,7 @@
     ]
   },
   "execution": {
+    "maxTaskAttempts": 2,
     "concurrency": 40,
     "idleTimeoutSeconds": 300,
     "stageRepairAttempts": {

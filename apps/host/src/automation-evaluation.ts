@@ -147,7 +147,34 @@ export function summarize(checkpoints: Checkpoint[]): EvaluationSummary {
   return summary;
 }
 
-type RepairPolicy = Pick<Policy, "repairAttempts" | "stageRepairAttempts">;
+type RepairPolicy = Pick<Policy, "repairAttempts" | "stageRepairAttempts" | "maxTaskAttempts">;
+
+/** Exhausted samples are terminal only after all other selected work has drained. */
+function terminalAttemptLimitReason(states: Checkpoint[], policy: RepairPolicy): string | undefined {
+  if (policy.maxTaskAttempts === undefined) return;
+  let exhausted = 0;
+  for (const state of states) {
+    const scope = state.executionScope && new Set(state.executionScope);
+    const entries = Object.entries(state.tasks).filter(([id, task]) => (!scope || scope.has(id)) && isAutomationTask(task));
+    const terminal = new Set(entries.filter(([, task]) => {
+      if (task.receipt?.exported?.file === "comparison-review.jsonl") return true;
+      if (!task.receipt && ["failed", "timed_out", "cancelled"].includes(task.status) && task.attempts >= policy.maxTaskAttempts!) {
+        exhausted++; return true;
+      }
+      return false;
+    }).map(([id]) => id));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [id, task] of entries) if (!terminal.has(id) && task.status === "blocked" &&
+        Object.values(task.dependencies).some(parent => terminal.has(parent))) {
+        terminal.add(id); changed = true;
+      }
+    }
+    if (entries.some(([id, task]) => !(task.status === "succeeded" && task.receipt) && !terminal.has(id))) return;
+  }
+  return exhausted ? `Task attempt limit reached for ${exhausted} tasks; other selected work is complete.` : undefined;
+}
 
 const temporary = (category: string) => category === "transport" || category === "interruption";
 function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): string | undefined {
@@ -161,12 +188,14 @@ function exhaustedContentReason(states: Checkpoint[], policy: RepairPolicy): str
   return exhausted.length ? `Content submission budget exhausted: ${exhausted.join("; ")}. Adjust the cumulative cap or resolve the unfinished work.` : undefined;
 }
 export function automaticResumeStages(state: Checkpoint, policy: RepairPolicy): string[] {
+  if (terminalAttemptLimitReason([state], policy)) return [];
   if (exhaustedContentReason([state], policy)) return [];
   return automationPauses(state).filter((pause) => temporary(pause.category)).map((pause) => pause.stage);
 }
 
 /** Authority comes from Host receipts and failure categories, never the dashboard's old error text. */
 export function checkpointRecovery(states: Checkpoint[], policy: RepairPolicy): "interrupted" | "transient" | undefined {
+  if (terminalAttemptLimitReason(states, policy)) return;
   if (exhaustedContentReason(states, policy)) return;
   if (!states.length || states.some((state) => automationPauses(state).some((pause) => !temporary(pause.category)))) return;
   const tasks = states.flatMap((state) => Object.values(state.tasks).filter(task => isAutomationTask(task) &&
@@ -235,6 +264,8 @@ function evaluationComplete(states: Checkpoint[], summary: EvaluationSummary): b
 }
 
 export function evaluationOutcome(states: Checkpoint[], summary: EvaluationSummary, policy: RepairPolicy, limit: number, empty = false): EvaluationOutcome {
+  const attempts = terminalAttemptLimitReason(states, policy);
+  if (attempts) return { status: "blocked", summary, transient: false, error: attempts };
   const blocked = exhaustedContentReason(states, policy);
   if (blocked) return { status: "blocked", summary, transient: false, error: blocked };
   const review = terminalReviewReason(states);

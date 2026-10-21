@@ -16,6 +16,8 @@ export interface Policy {
   repairAttempts: number;
   /** Explicit content-repair limits by workflow stage; omitted stages use repairAttempts. */
   stageRepairAttempts?: Record<string, number>;
+  /** Optional cumulative attempt cap per task, including same-run resumes. */
+  maxTaskAttempts?: number;
   codeTimeoutSeconds: number;
   maxOutputChars: number;
   maxTokens?: number;

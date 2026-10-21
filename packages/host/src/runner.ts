@@ -86,6 +86,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     throw new Error("channelConcurrency requires positive integer limits");
   if (options.maxAttempts !== undefined && (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 0))
     throw new Error("maxAttempts must be a non-negative integer");
+  if (options.policy.maxTaskAttempts !== undefined && (!Number.isSafeInteger(options.policy.maxTaskAttempts) || options.policy.maxTaskAttempts < 1))
+    throw new Error("maxTaskAttempts must be a positive integer");
   if (options.stopStartingAt !== undefined && (!Number.isFinite(options.stopStartingAt) || options.stopStartingAt <= 0))
     throw new Error("stopStartingAt must be an absolute timestamp in milliseconds");
   const layout = runLayout(options.output, options.runId),
@@ -193,7 +195,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
     const includesTask = createScopeMembership(manifest);
     const inScope = (task: PlannedTask) => includesTask(task.id);
-    const observesFailures = (task: PlannedTask) => options.taskSource.observesFailures?.(task) !== false;
+    const attemptsExhausted = (task: PlannedTask) => options.policy.maxTaskAttempts !== undefined &&
+      !saved.receipts[task.id] && manifest.states[task.id]!.attempts >= options.policy.maxTaskAttempts;
+    const observesFailures = (task: PlannedTask) => {
+      const state = manifest.states[task.id]!;
+      // A bounded slow sample must not stop fresh samples; other failure classes retain the guard.
+      const boundedTimeout = options.policy.maxTaskAttempts !== undefined && state.status === "timed_out" &&
+        /^(Task deadline exceeded|Model\/tool idle timeout)(；|$)/.test(state.reason ?? "");
+      return !attemptsExhausted(task) && !boundedTimeout && options.taskSource.observesFailures?.(task) !== false;
+    };
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
     manifest.concurrency = desiredConcurrency;
@@ -217,6 +227,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         state = manifest.states[task.id];
       if (receipt) {
         state.status = "succeeded";
+      } else if (attemptsExhausted(task)) {
+        state.status = "failed";
+        state.reason ??= `Task attempt limit reached: ${state.attempts}/${options.policy.maxTaskAttempts}`;
       } else if (options.skipFailed && ["failed", "timed_out", "blocked"].includes(state.status)) {
         continue;
       } else if (contentRemaining(task) <= 0) {
@@ -782,7 +795,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         options.onProgress?.(`succeeded ${task.stage} ${task.id}`);
         return;
       }
-      if (controller.signal.aborted || paused(task) || state.failure?.stopped ||
+      if (controller.signal.aborted || paused(task) || attemptsExhausted(task) || state.failure?.stopped ||
         !contentLedgerConfirmed || contentRemaining(task) <= 0) return;
       if (rerouted) {
         // A new channel has its own transport budget; content accounting remains unchanged.
