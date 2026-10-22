@@ -2,8 +2,9 @@ const PAIRS = [
   { id: "fast", label: "A Fast 对 B组 Fast", a: "a_fast", b: "b_fast" },
   { id: "expert", label: "A Expert 对 B组 Expert", a: "a_expert", b: "b_expert" },
 ];
-const DATASET = location.pathname.split("/")[1];
-const BASE_PATH = ["gpt", "post_training_model", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
+const PATH_PARTS = location.pathname.split("/").filter(Boolean);
+const DATASET = PATH_PARTS[1] || "wencai";
+const BASE_PATH = `/data/${DATASET}`;
 const IS_POST_TRAINING = DATASET === "post_training_model";
 const GROUPED_BATTLES = DATASET === "gpt" || IS_POST_TRAINING;
 const SINGLE_MODELS = {
@@ -72,7 +73,7 @@ if (SINGLE_MODELS) {
   const headings = document.querySelectorAll(".results-table thead th");
   ["Fast", "Expert"].forEach((label, index) => headings[index + 1].replaceChildren(document.createTextNode(label)));
 }
-document.querySelector(`[data-dataset="${BASE_PATH ? DATASET : "root"}"]`).setAttribute("aria-current", "page");
+document.querySelector(`[data-dataset="${DATASET}"]`)?.setAttribute("aria-current", "page");
 
 const formatCount = (count) => new Intl.NumberFormat("zh-CN").format(Number.isInteger(count) ? count : 0);
 const dateTime = new Intl.DateTimeFormat("zh-CN", {

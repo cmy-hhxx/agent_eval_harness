@@ -13,7 +13,6 @@ from pathlib import Path, PurePosixPath
 
 import app
 
-ROOT = Path("/mnt/fin_bench/multi_agent_eval")
 SOURCES = {
     "aime": ("1_aime", ("aime_fast", "aime_expert")),
     "ifind": ("2_ifind", ("ifind_normal_agent", "ifind_deep_research")),
@@ -142,13 +141,14 @@ class StagedRecord:
 
 
 class AgentDataset(app.Dataset):
-    def __init__(self, root: Path, provider: str):
+    def __init__(self, root: Path, state_root: Path, provider: str, url_prefix: str):
         directory, models = SOURCES[provider]
-        super().__init__(root / directory, root / "0_process_code" / "state" / provider, models, "/" + provider)
+        dataset_root = root / directory
+        super().__init__(dataset_root, state_root / provider, models, provider, url_prefix=url_prefix)
         self.provider = provider
-        self.archive_dir = self.root / "1_7z_data"
-        self.archived_dir = self.root / "0_archive"
-        self.output_dir = self.root / "2_daily_eval_input"
+        self.archive_dir = dataset_root / "1_7z_data"
+        self.archived_dir = dataset_root / "0_archive"
+        self.output_dir = dataset_root / "2_daily_eval_input"
         self.archive_part_files = 100
         self.daily_archive_check = True
         self.independent = True

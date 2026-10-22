@@ -4,4 +4,4 @@ extract-*/
 *.log
 service.pid
 *.7z
-2_eval_data_input/
+2_daily_eval_input/

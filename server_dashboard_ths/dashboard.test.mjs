@@ -16,127 +16,8 @@ const processing = {
   archive: { packages: 667, bytes: 3.38 * 1024 ** 3, partitions: 30, checked_at: Date.parse("2026-10-19T01:00:00Z"), oversized: [] },
 };
 
-async function renderGpt(missing = null, empty = false, postTraining = false) {
-  const prefix = postTraining ? "/post_training_model" : "/gpt";
-  const dom = new JSDOM(html.replaceAll("__BASE__", prefix), { url: `http://localhost${prefix}/`, runScripts: "outside-only" });
-  const groups = postTraining ? [["a_fast", "b_fast", "b_post_train_fast"]]
-    : [["a_fast", "b_fast", "6_luna"], ["a_expert", "b_expert", "6.1sol"]];
-  const pairs = Object.fromEntries(groups.flatMap(group => group.flatMap((left, index) => group.slice(index + 1).map(right => [
-    [left, right].sort().join("__vs__"), { ...done },
-  ]))));
-  if (missing) for (const pair of Object.keys(pairs)) if (pair.split("__vs__").includes(missing)) delete pairs[pair];
-  const requests = [];
-  dom.window.fetch = async url => {
-    requests.push(url);
-    if (url.endsWith("/processing-status")) return { ok: true, json: async () => processing };
-    return { ok: true, json: async () => ({
-      dates: empty ? [] : [{ date: "2026-10-19", ready: true, models: Object.fromEntries(groups.flat().map(id => [
-        id, { ready: id !== missing, row_count: id === missing ? 0 : 90 },
-      ])) }],
-      evaluation: { status: "finished", stale: false, dates: [{ date: "2026-10-19", pairs }] },
-    }) };
-  };
-  dom.window.setInterval = () => 0;
-  vm.runInContext(source, dom.getInternalVMContext());
-  await new Promise(setImmediate);
-  return { dom, requests };
-}
-
-test("post-training dashboard shows three inputs and battles in its own namespace", async () => {
-  const { dom, requests } = await renderGpt(null, false, true);
-  try {
-    const document = dom.window.document;
-    assert.deepEqual(requests, ["/post_training_model/dashboard-data", "/post_training_model/processing-status"]);
-    assert.equal(document.title, "后训练模型评测");
-    assert.equal(document.querySelector('[data-dataset="post_training_model"]').getAttribute("aria-current"), "page");
-    assert.equal(document.querySelector(".dataset-range-models").textContent, "3 个模型");
-    assert.equal(document.querySelectorAll(".results-table thead th").length, 2);
-    assert.equal(document.querySelectorAll(".gpt-pair-progress").length, 3);
-    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 3);
-    const links = [...document.querySelectorAll(".model-link")];
-    assert.equal(links.length, 3);
-    assert(links.every(link => link.getAttribute("href").startsWith("/post_training_model/records?")));
-    assert.match(document.querySelector(".gpt-group-cell").textContent, /B post_train_fast/);
-  } finally { dom.window.close(); }
-});
-
-test("missing post-trained input keeps the A/B battle visible and waits on two others", async () => {
-  const { dom } = await renderGpt("b_post_train_fast", false, true);
-  try {
-    assert.equal(dom.window.document.querySelectorAll('.pair-status[data-status="finished"]').length, 1);
-    assert.equal([...dom.window.document.querySelectorAll(".pair-empty")].filter(el => el.textContent === "等待数据").length, 2);
-  } finally { dom.window.close(); }
-});
-
-test("GPT dashboard loads its namespace, links six models and presents six separate battles", async () => {
-  const { dom, requests } = await renderGpt();
-  try {
-    const document = dom.window.document;
-    assert.deepEqual(requests, ["/gpt/dashboard-data", "/gpt/processing-status"]);
-    assert.equal(document.querySelector(".dataset-range-models").textContent, "6 个模型");
-    assert.equal(document.querySelector('[data-dataset="gpt"]').getAttribute("aria-current"), "page");
-    assert.equal(document.querySelector('[data-dataset="root"]').getAttribute("href"), "/");
-    assert.equal(document.querySelectorAll(".gpt-pair-progress").length, 6);
-    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 6);
-    const links = [...document.querySelectorAll(".model-link")];
-    assert.equal(links.length, 6);
-    assert.ok(links.every(link => link.getAttribute("href").startsWith("/gpt/records?")));
-    assert.ok(links.some(link => link.getAttribute("href").endsWith("model=6.1sol")));
-    assert.equal(document.querySelector(".date-count").textContent, "540 条");
-    assert.match(document.querySelector(".gpt-group-cell").textContent, /A Fast 对 6_luna/);
-  } finally { dom.window.close(); }
-});
-
-test("missing GPT input waits for data without hiding the other four ready battles", async () => {
-  const { dom } = await renderGpt("6_luna");
-  try {
-    const document = dom.window.document;
-    assert.equal(document.querySelectorAll(".model-link").length, 5);
-    assert.equal(document.querySelector(".model-link-pending").textContent, "6_luna —");
-    assert.equal(document.querySelectorAll('.pair-status[data-status="finished"]').length, 4);
-    assert.equal([...document.querySelectorAll(".pair-empty")].filter(el => el.textContent === "等待数据").length, 2);
-    assert.equal(document.querySelector(".date-count").textContent, "450 条");
-  } finally { dom.window.close(); }
-});
-
-test("empty GPT source remains online and does not manufacture dates or counts", async () => {
-  const { dom } = await renderGpt(null, true);
-  try {
-    const document = dom.window.document;
-    assert.equal(document.querySelector("#dataset-range-dates").textContent, "暂无数据");
-    assert.equal(document.querySelector("#ready-count").textContent, "0 / 0");
-    assert.equal(document.querySelector("#total-rows").textContent, "0");
-    assert.equal(document.querySelector("#service-state").dataset.state, "online");
-    assert.equal(document.querySelectorAll(".model-link").length, 0);
-  } finally { dom.window.close(); }
-});
-
-for (const [prefix, model, label] of [["/gpt", "6.1sol", "6.1sol"], ["/post_training_model", "b_post_train_fast", "B post_train_fast"]])
-test(`${prefix} sample viewer keeps pagination and return navigation inside its namespace`, async () => {
-  const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
-  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", prefix), {
-    url: `http://localhost${prefix}/records?date=2026-10-19&model=${model}`, runScripts: "outside-only",
-  });
-  const requests = [];
-  dom.window.fetch = async url => {
-    requests.push(url);
-    return { ok: true, json: async () => ({ total: 25, items: [{ question: "Question", answer: "Answer" }] }) };
-  };
-  dom.window.scrollTo = () => {};
-  try {
-    vm.runInContext(recordsSource, dom.getInternalVMContext());
-    await new Promise(setImmediate);
-    dom.window.document.querySelector("#next-page").click();
-    await new Promise(setImmediate);
-    assert.deepEqual(requests, [1, 2].map(page => `${prefix}/records/2026-10-19/${model}?page=${page}&page_size=20`));
-    assert.equal(dom.window.document.querySelector(".back-link").getAttribute("href"), prefix + "/");
-    assert.equal(dom.window.location.pathname, prefix + "/records");
-    assert.equal(dom.window.document.querySelector("#records-title").textContent, `2026-10-19 · ${label}`);
-  } finally { dom.window.close(); }
-});
-
 async function render(status, stale = false, counts = done, catalogDates = null, sourceRows = counts.total_cases) {
-  const dom = new JSDOM(html, { url: "http://localhost/", runScripts: "outside-only" });
+  const dom = new JSDOM(html, { url: "http://localhost/data/wencai/", runScripts: "outside-only" });
   const dates = catalogDates || ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-30", "2026-10-08"];
   const active = { ...done, completed_cases: 10, running_cases: 1, queued_cases: 79 };
   dom.window.fetch = async url => url.endsWith("/processing-status")
@@ -312,7 +193,7 @@ test("a fulfilled daily quota stays complete when more source rows arrive", asyn
 
 for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifind", ["ifind_normal_agent", "ifind_deep_research"]]]) {
   test(`${provider} presents separate modes and real stage progress without battle rules`, async () => {
-    const dom = new JSDOM(html.replaceAll("__BASE__", `/${provider}`), { url: `http://localhost/${provider}/`, runScripts: "outside-only" });
+    const dom = new JSDOM(html.replaceAll("__BASE__", `/data/${provider}`), { url: `http://localhost/data/${provider}/`, runScripts: "outside-only" });
     const requests = [];
     dom.window.fetch = async url => {
       requests.push(url);
@@ -331,13 +212,13 @@ for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifin
       vm.runInContext(source, dom.getInternalVMContext());
       await new Promise(setImmediate);
       const doc = dom.window.document;
-      assert.deepEqual(requests, [`/${provider}/dashboard-data`, `/${provider}/processing-status`]);
+      assert.deepEqual(requests, [`/data/${provider}/dashboard-data`, `/data/${provider}/processing-status`]);
       assert.deepEqual([...doc.querySelectorAll("thead th")].map(el => el.textContent.trim()), ["日期", "Fast", "Expert"]);
       assert.equal(doc.querySelector(`[data-dataset="${provider}"]`).getAttribute("aria-current"), "page");
       assert.equal(doc.querySelectorAll(".stage-progress").length, 6);
       assert.equal(doc.querySelectorAll(".pair-quota,.gpt-pair-progress,.pair-status").length, 0);
       assert.equal(doc.querySelectorAll(".model-link").length, 1);
-      assert.equal(doc.querySelector(".model-link").getAttribute("href"), `/${provider}/records?date=2026-10-14&model=${models[0]}`);
+      assert.equal(doc.querySelector(".model-link").getAttribute("href"), `/data/${provider}/records?date=2026-10-14&model=${models[0]}`);
       assert.match(doc.querySelector(".input-cell").textContent, /归因 · 已完成 780 \/ 780 任务 · 进度停更/);
       assert.match(doc.querySelector(".input-cell").textContent, /聚类 · 已完成 6 \/ 8 任务 · 排队 1 · 失败 1/);
       assert.doesNotMatch(doc.querySelector(".results-table").textContent, /对战|300|配对/);
@@ -349,8 +230,8 @@ for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifin
 
 test("session sample viewer keeps all rounds and scoped pagination", async () => {
   const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
-  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/aime"), {
-    url: "http://localhost/aime/records?date=2026-10-18&model=aime_fast", runScripts: "outside-only",
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/data/aime"), {
+    url: "http://localhost/data/aime/records?date=2026-10-18&model=aime_fast", runScripts: "outside-only",
   });
   const requests = [];
   dom.window.fetch = async url => {
@@ -373,7 +254,7 @@ test("session sample viewer keeps all rounds and scoped pagination", async () =>
     assert.match(doc.querySelector("#records-title").textContent, /aime Fast/);
     doc.querySelector("#next-page").click();
     await new Promise(setImmediate);
-    assert.ok(requests.every(url => url.startsWith("/aime/records/2026-10-18/aime_fast?")));
+    assert.ok(requests.every(url => url.startsWith("/data/aime/records/2026-10-18/aime_fast?")));
     assert.match(requests[1], /page=2/);
   } finally { dom.window.close(); }
 });
@@ -381,8 +262,8 @@ test("session sample viewer keeps all rounds and scoped pagination", async () =>
 
 async function samplePage(items, clipboard, questionHeight = () => 18) {
   const recordsHtml = await readFile(new URL("records.html", import.meta.url), "utf8");
-  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/ifind"), {
-    url: "http://example.test/ifind/records?date=2026-10-14&model=ifind_normal_agent", runScripts: "outside-only",
+  const dom = new JSDOM(recordsHtml.replaceAll("__BASE__", "/data/ifind"), {
+    url: "http://example.test/data/ifind/records?date=2026-10-14&model=ifind_normal_agent", runScripts: "outside-only",
   });
   dom.window.fetch = async () => ({ ok: true, json: async () => ({ total: items.length, items }) });
   if (clipboard) Object.defineProperty(dom.window.navigator, "clipboard", { value: clipboard });

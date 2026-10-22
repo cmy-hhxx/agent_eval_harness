@@ -29,7 +29,7 @@ function messagePage({ sources, full, format }: ReturnType<typeof messageMateria
 }
 
 export class LocalAnalysisData implements AnalysisDataSource {
-  constructor(readonly directory: string, readonly publication?: { stateFile: string; logFile: string }) {}
+  constructor(readonly directory: string, readonly publication?: { stateFile: string; logFile: string; deliveryFile: string }) {}
   run(id: string) { return path.join(this.directory, safeId(id)); }
   private async statistics(runId: string, summary: ReturnType<typeof analysisProgress>) {
     try {

@@ -1,6 +1,6 @@
 {
   "id": "remote-evaluation",
-  "sourceUrl": "http://117.50.195.94:2256",
+  "sourceUrl": "http://127.0.0.1:8081/data/wencai",
   "remoteModels": [
     "a_fast",
     "b_fast",

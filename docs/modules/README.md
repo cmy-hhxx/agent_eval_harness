@@ -6,7 +6,7 @@
 
 | 模块 | 职责 | 入口 |
 |---|---|---|
-| apps/host | CLI、配置、组装、看板及自动化应用 | [cli.ts](../../apps/host/src/cli.ts)、[composition.ts](../../apps/host/src/composition.ts)、[dashboard.ts](../../apps/host/src/dashboard.ts)、[automation-command.ts](../../apps/host/src/automation-command.ts) |
+| apps/host | CLI、配置、组装、工作台 supervisor、登录/relay API、看板及自动化应用 | [workbench.ts](../../apps/host/src/workbench.ts)、[cli.ts](../../apps/host/src/cli.ts)、[dashboard.ts](../../apps/host/src/dashboard.ts)、[automation-command.ts](../../apps/host/src/automation-command.ts) |
 | apps/worker | Worker 进程入口 | [cli.ts](../../apps/worker/src/cli.ts) |
 | agent | Eris 定义、产品接口与界面 | [Agent 说明](../../agent/README.md) |
 | Contracts | 纯类型、协议、证据坐标与共用规则 | [index.ts](../../packages/contracts/src/index.ts) |
@@ -23,6 +23,7 @@
 | Tools | 证据、分页、图片、计算、代码与搜索 | [index.ts](../../packages/tools/src/index.ts) |
 | Prompts | 全部模型可见规则与工具文案 | [说明](../../packages/prompts/README.md) |
 | Schemas | 集中 JSON 资源，构建时复制 | [说明](../../schemas/README.md) |
+| 数据服务 | `/data/` 包处理、ready、样本与同机进度 | [app.py](../../server_dashboard_ths/app.py) |
 | evaluation-report | 独立离线汇报与历史快照 | [说明](../../evaluation-report/README.md) |
 
 ## 跨模块修改

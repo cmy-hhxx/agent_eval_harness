@@ -10,8 +10,8 @@ import { startWorker } from "@eval/runtime/worker";
 
 function logs(root: string) {
   return createFileLogger({
-    directory: path.join(root, "log"),
-    lockDirectory: path.join(root, ".runtime/log-writer"),
+    directory: path.resolve(process.env.EVAL_LOG_DIR || path.join(root, "log")),
+    lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(root, ".runtime/log-writer")),
     secrets: configurationSecrets(),
   });
 }

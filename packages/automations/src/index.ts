@@ -1,7 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { randomUUID } from "node:crypto";
 import { errorText, RemoteInputNotReadyError, type PublicationCounts, type RemoteDay } from "@eval/contracts";
-import { nextPublicationAt, PUBLICATION_INTERVAL_MS, type MongoPublicationState, type MongoReceipt, type PublicationState } from "./publication.js";
+import { nextPublicationAt, PUBLICATION_INTERVAL_MS, type MongoPublicationState, type MongoReceipt, type StatisticsSchedule } from "./publication.js";
 import { createEvaluationScheduler } from "./evaluation-scheduler.js";
 export * from "./publication.js";
 export { createEvaluationScheduler } from "./evaluation-scheduler.js";
@@ -56,8 +55,7 @@ export interface AutomationState {
   lastPollAt?: number;
   pollError?: string;
   reportError?: string;
-  publication?: PublicationState;
-  publicationHistory?: PublicationState[];
+  statistics?: StatisticsSchedule;
   jobs: Record<string, AutomationJob>;
 }
 export interface PipelineOptions {
@@ -81,7 +79,7 @@ export interface PipelineServices {
   save(state: AutomationState): Promise<void>;
   event(name: string, job?: AutomationJob, detail?: string): Promise<void>;
   observe?(state: AutomationState, signal: AbortSignal): Promise<void>;
-  publish?(state: AutomationState, save: () => Promise<void>, signal: AbortSignal): Promise<void>;
+  publish?(state: AutomationState, save: () => Promise<void>, signal: AbortSignal): Promise<{ traceId: string; generatedAt: number }>;
   syncMongo?(job: AutomationJob, signal: AbortSignal): Promise<PublicationCounts>;
 }
 export const sameRows = (a: RemoteDay["rows"] | undefined, b: RemoteDay["rows"]) =>
@@ -159,14 +157,14 @@ export async function runPipeline(
       delete job.mongo.error;
     }
   }
-  if (state.publication?.log?.status === "sending") {
-    state.publication.log.status = "uncertain";
-    state.publication.status = "uncertain";
-    state.publication.error = "Interrupted log upload: verify the server receipt before resolving";
-  } else if (state.publication?.status === "running") state.publication.status = "retry";
-  let publishOnStartup = Boolean(services.publish);
-  let refreshAfterReplay = state.publication?.status !== "completed" && state.publication?.log !== undefined;
-  if (services.publish) state.publication ??= { status: "pending", attempts: 0, nextAt: 0 };
+  if (services.publish) state.statistics ??= { attempts: 0, nextAt: 0 };
+  if (state.statistics?.attempts) {
+    state.statistics.attempts = 0;
+    if (state.statistics.lastWindow !== Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS)
+      state.statistics.nextAt = 0;
+  }
+  let publishOnStartup = Boolean(services.publish && state.statistics?.lastWindow !==
+    Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS);
   state.status = "running";
   state.startedAt = Date.now();
   await save();
@@ -268,8 +266,8 @@ export async function runPipeline(
         job.nextEvaluationAt = 0;
         delete job.evaluationError;
       }
-      if (state.publication?.status === "retry" && !state.publication.log)
-        state.publication.nextAt = Date.now();
+      if (state.statistics && state.statistics.lastWindow !== Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS)
+        state.statistics.nextAt = Date.now();
       await save();
       await services.event(result.changed ? "input_updated" : "input_unchanged", job);
     } catch (error) {
@@ -345,37 +343,27 @@ export async function runPipeline(
   }
 
   async function publish() {
-    let delivery = state.publication!;
-    if (delivery.window === undefined || delivery.status === "completed") {
-      if (delivery.status === "completed") (state.publicationHistory ??= []).push(structuredClone(delivery));
-      delivery = state.publication = { status: "pending", attempts: 0, nextAt: delivery.nextAt, startedAt: Date.now() };
-      delivery.window = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS;
-      delivery.traceId = `comparison-snapshot-${state.id}-${delivery.window}-${randomUUID()}`;
+    const schedule = state.statistics!;
+    const window = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS;
+    if (schedule.lastWindow === window) {
+      schedule.nextAt = nextPublicationAt(Date.now());
+      await save();
+      return;
     }
-    delivery.status = "running";
-    delivery.attempts++;
+    schedule.attempts++;
+    delete schedule.error;
     await save();
     await services.event("publication_started");
     try {
-      await services.publish!(state, save, activeSignal);
-      delivery.status = "completed";
-      delivery.completedAt = Date.now();
-      delivery.nextAt = refreshAfterReplay ? Date.now() : nextPublicationAt(Date.now());
-      refreshAfterReplay = false;
-      delivery.attempts = 0;
-      delete delivery.error;
+      const generated = await services.publish!(state, save, activeSignal);
+      state.statistics = { lastWindow: window, lastTraceId: generated.traceId, generatedAt: generated.generatedAt,
+        nextAt: nextPublicationAt(generated.generatedAt), attempts: 0 };
     } catch (error) {
-      delivery.error = errorText(error);
-      if (delivery.log?.status === "sending" || delivery.log?.status === "uncertain") {
-        delivery.log.status = "uncertain";
-        delivery.status = "uncertain";
-      } else {
-        delivery.status = "retry";
-        delivery.nextAt = Date.now() + backoff(delivery.attempts);
-      }
+      schedule.error = errorText(error);
+      schedule.nextAt = Date.now() + backoff(schedule.attempts);
     }
     await save();
-    await services.event(`publication_${delivery.status}`, undefined, delivery.error);
+    await services.event(state.statistics?.lastWindow === window ? "publication_generated" : "publication_retry", undefined, state.statistics?.error);
   }
 
   const mongoSource = (job: AutomationJob) => ({
@@ -418,10 +406,10 @@ export async function runPipeline(
       if (polls === 0) { await polling; continue; }
       const jobs = activeJobs().sort((a, b) => a.date.localeCompare(b.date));
       // Refresh downloads retain installed inputs. Only their promotion conflicts with a log snapshot.
-      if (!publishing && services.publish && state.publication && state.publication.status !== "uncertain" &&
+      if (!publishing && services.publish && state.statistics &&
           Object.values(state.jobs).some(job => job.downloaded !== undefined) && !jobs.some(job => job.download === "installing") &&
-          (publishOnStartup || now >= state.publication.nextAt) &&
-          (publishOnStartup || !options.once || state.publication.status !== "retry")) {
+          (publishOnStartup || now >= state.statistics.nextAt) &&
+          (publishOnStartup || !options.once || !state.statistics.error)) {
         publishOnStartup = false;
         publishing = guarded(publish(), () => { publishing = undefined; });
       }

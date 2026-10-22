@@ -9,6 +9,17 @@ export async function readStatisticsLog(file: string, traceId: string): Promise<
   return found[0];
 }
 
+export async function readStatisticsLogs(file: string): Promise<JsonObject[]> {
+  const rows = (await records(file)).rows;
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (typeof row.traceId !== "string" || !row.traceId) throw new Error("Statistics log record requires traceId");
+    if (ids.has(row.traceId)) throw new Error("Duplicate statistics traceId: " + row.traceId);
+    ids.add(row.traceId);
+  }
+  return rows;
+}
+
 async function records(file: string) {
   let text: string;
   try { text = await readFile(file, "utf8"); }

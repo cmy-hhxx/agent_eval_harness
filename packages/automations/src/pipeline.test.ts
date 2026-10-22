@@ -58,7 +58,7 @@ test("date boundaries preserve saved history across recovery, polling and every 
     job.evaluationError = "saved failure";
   }
   state.jobs[current].evaluation = "pending";
-  state.publication = { status: "pending", attempts: 0, nextAt: 0 };
+  state.statistics = { attempts: 0, nextAt: 0 };
   const preserved = [historical, future].map(date => structuredClone(state.jobs[date]));
   const recovered: string[] = [], downloaded: string[] = [], evaluated: string[] = [], uploaded: string[] = [];
   let published = 0;
@@ -72,6 +72,7 @@ test("date boundaries preserve saved history across recovery, polling and every 
       published++;
       assert.deepEqual([historical, future].map(date => snapshot.jobs[date]), preserved,
         "cumulative statistics still receive the unchanged history");
+      return { traceId: "history", generatedAt: Date.now() };
     },
   }), t.signal);
   for (const calls of [recovered, downloaded, evaluated, uploaded]) assert.deepEqual([...new Set(calls)], [current]);
@@ -106,47 +107,37 @@ test("settled historical dates refresh daily while recent dates and changed coun
   assert.deepEqual(downloads, [dates[0]], "same-count historical corrections still receive a full daily check");
 });
 
-test("a due statistics publication runs before the next queued download", async (t) => {
+test("a due statistics snapshot runs before the next queued download and records its schedule", async (t) => {
   const state = fresh(), order: string[] = [];
+  let generatedAt = Date.now();
   const deps = services({ discover: async () => [day("2026-10-01"), day("2026-10-02")],
-    publish: async () => { order.push("publish"); },
+    publish: async () => { order.push("publish"); return { traceId: "snapshot-1", generatedAt: generatedAt++ }; },
     sync: async (job) => { order.push(job.date); return { changed: false, bytes: 10, rows: job.observed }; },
   });
   await runPipeline(state, { ...options, once: true }, deps, t.signal);
-  state.publication!.nextAt = 0;
+  state.statistics!.nextAt = 0;
+  state.statistics!.lastWindow = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS - PUBLICATION_INTERVAL_MS;
   for (const job of Object.values(state.jobs)) job.checkedAt = 0;
   order.length = 0;
   await runPipeline(state, { ...options, once: true }, deps, t.signal);
   assert.deepEqual(order, ["publish", "2026-10-01", "2026-10-02"]);
+  assert.equal(state.statistics!.lastTraceId, "snapshot-1");
+  assert(state.statistics!.nextAt > Date.now());
 });
 
-test("a progressing retry resets the consecutive failure budget", async () => {
-  const state = fresh();
-  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
-  const job = state.jobs["2026-09-29"];
-  job.evaluation = "retry"; job.evaluationAttempts = 10; job.nextEvaluationAt = 0;
-  const controller = new AbortController();
-  await runPipeline(state, options, services({
-    evaluate: async () => ({ status: "retry", transient: true, error: "transport/unavailable", summary: {
-      ...summary, stages: { ...summary.stages, rewrite: { ...summary.stages.rewrite, completed: summary.stages.rewrite.completed + 1 } },
-    } }),
-    save: async (saved) => { if (saved.jobs[job.date].evaluationError === "transport/unavailable") controller.abort(); },
-  }), controller.signal);
-  assert.equal(job.evaluationAttempts, 1);
-  assert(job.nextEvaluationAt - Date.now() < 1000, "newly accepted work must not trigger the outage cooldown");
-});
-
-test("statistics publish during a refresh without waiting for the running evaluation", async () => {
+test("statistics generation during a refresh does not wait for queued evaluation", async () => {
   const state = fresh(), date = "2026-09-29", controller = new AbortController();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   state.jobs[date].evaluation = "pending";
-  state.publication = { status: "pending", attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS };
+  state.statistics = { attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
+    lastWindow: Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS };
   let release!: () => void, publishedDuringRefresh = false;
   const held = new Promise<void>(resolve => { release = resolve; });
   const work = runPipeline(state, options, services({
     discover: async () => [day(date, 2)],
     sync: async (_job, remote, _signal, beforeReplace) => {
-      state.publication!.nextAt = 0;
+      state.statistics!.lastWindow = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS - PUBLICATION_INTERVAL_MS;
+      state.statistics!.nextAt = 0;
       await held;
       await beforeReplace();
       return { changed: true, bytes: 10, rows: remote.rows };
@@ -154,6 +145,7 @@ test("statistics publish during a refresh without waiting for the running evalua
     evaluate: async () => { await held; return { status: "completed", summary }; },
     publish: async current => {
       if (current.jobs[date].download === "downloading") publishedDuringRefresh = true;
+      return { traceId: "during-refresh", generatedAt: Date.now() };
     },
   }), controller.signal);
   try { await until(() => publishedDuringRefresh); }
@@ -161,53 +153,36 @@ test("statistics publish during a refresh without waiting for the running evalua
   assert(publishedDuringRefresh);
 });
 
-test("restart publishes current statistics without waiting for the next four-hour deadline", async () => {
+test("restart generates only one snapshot for the current four-hour window", async () => {
   const state = fresh();
-  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
-  state.publication = { status: "completed", attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
-    traceId: "previous-snapshot", window: 1, log: { status: "uploaded", requestId: "previous-receipt" } };
   let publications = 0;
-  await runPipeline(state, { ...options, once: true }, services({ publish: async current => {
-    publications++;
-    assert.notEqual(current.publication!.traceId, "previous-snapshot");
-  } }), AbortSignal.timeout(3000));
+  const deps = services({ publish: async () => ({ traceId: `snapshot-${++publications}`, generatedAt: Date.now() }) });
+  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
+  const first = structuredClone(state.statistics!);
+  const restored = JSON.parse(JSON.stringify(state)) as AutomationState;
+  await runPipeline(restored, { ...options, once: true }, deps, AbortSignal.timeout(3000));
   assert.equal(publications, 1);
-  assert.equal(state.publicationHistory![0].log!.requestId, "previous-receipt");
+  assert.deepEqual(restored.statistics, first);
 });
 
-test("startup completes a saved log before immediately publishing the latest statistics", async () => {
+test("a failed statistics snapshot records an error and retry without blocking evaluation", async () => {
   const state = fresh();
-  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
-  state.publication = { status: "retry", attempts: 1, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
-    traceId: "saved-log", window: 1, log: { status: "pending", writtenAt: 1 } };
-  const calls: string[] = [];
-  await runPipeline(state, { ...options, once: true }, services({ publish: async current => {
-    calls.push(current.publication!.traceId!);
-    current.publication!.log = { status: "uploaded", requestId: "receipt-" + calls.length };
-  } }), AbortSignal.timeout(3000));
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0], "saved-log");
-  assert.notEqual(calls[1], calls[0]);
-  assert.equal(state.publicationHistory![0].log!.requestId, "receipt-1");
-  assert(state.publication.nextAt > Date.now());
-});
-
-test("a saved log retry retains the startup refresh after a transient upload failure", async () => {
-  const state = fresh(), controller = new AbortController();
-  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
-  state.publication = { status: "retry", attempts: 1, nextAt: 0,
-    traceId: "saved-log", window: 1, log: { status: "pending", writtenAt: 1 } };
-  const calls: string[] = [];
-  const work = runPipeline(state, options, services({ publish: async current => {
-    calls.push(current.publication!.traceId!);
-    if (calls.length === 1) throw new Error("Connection refused before upload");
-    current.publication!.log = { status: "uploaded", requestId: "receipt-" + calls.length };
-  } }), controller.signal);
-  try {
-    await until(() => calls.length === 3 && state.publication?.status === "completed");
-    assert.deepEqual(calls.slice(0, 2), ["saved-log", "saved-log"]);
-    assert.notEqual(calls[2], "saved-log");
-  } finally { controller.abort(); await work; }
+  let calls = 0, evaluations = 0;
+  const deps = services({
+    evaluate: async () => { evaluations++; return { status: "completed", summary }; },
+    publish: async () => {
+      calls++;
+      if (calls === 1) throw new Error("Mongo labels unavailable");
+      return { traceId: "snapshot-recovered", generatedAt: Date.now() };
+    },
+  });
+  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
+  assert.equal(evaluations, 1);
+  assert.equal(state.statistics?.error, "Mongo labels unavailable");
+  assert(Number.isFinite(state.statistics!.nextAt));
+  state.statistics!.nextAt = 0;
+  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
+  assert.equal(state.statistics?.lastTraceId, "snapshot-recovered");
 });
 
 test("a corrected input snapshot retries a paused date, while unchanged input preserves the pause", async () => {
@@ -261,31 +236,6 @@ test("once mode records a newer complete response without repeatedly downloading
   assert.deepEqual(state.jobs["2026-09-29"].observed, day("2026-09-29", 2).rows);
 });
 
-test("publication rollover preserves receipts and resets current timestamps, including across restart", async () => {
-  const state = fresh();
-  await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
-  state.publication = { status: "completed", nextAt: 0, attempts: 0, traceId: "previous-window", window: 100,
-    startedAt: 101, completedAt: 104,
-    log: { status: "uploaded", writtenAt: 102, uploadedAt: 104, requestId: "prior-receipt" } };
-  const previous = structuredClone(state.publication);
-  let publications = 0;
-  const deps = services({ publish: async (current) => {
-    publications++;
-    assert.equal(current.publication?.log, undefined);
-    assert.equal(current.publication?.completedAt, undefined);
-    assert(current.publication!.startedAt! > previous.startedAt!);
-    current.publication!.log = { status: "uploaded", requestId: "new-receipt" };
-  } });
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.deepEqual(state.publicationHistory, [previous]);
-  const firstPublication = structuredClone(state.publication!);
-  const restored = JSON.parse(JSON.stringify(state)) as AutomationState;
-  await runPipeline(restored, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(publications, 2);
-  assert.deepEqual(restored.publicationHistory, [previous, firstPublication]);
-  assert.notEqual(restored.publication!.traceId, firstPublication.traceId);
-  assert.equal(restored.publication!.log!.requestId, "new-receipt");
-});
 async function until(predicate: () => boolean) {
   const end = Date.now() + 3000;
   while (!predicate()) { if (Date.now() > end) throw new Error("Timed out waiting for pipeline"); await delay(5); }
@@ -389,7 +339,8 @@ test("interrupted refresh retains the installed snapshot for startup statistics"
   let published = false;
   await runPipeline(state, { ...options, once: true }, services({
     sync: async () => { throw new Error("Unchanged installed inputs should remain usable"); },
-    publish: async () => { assert.equal(job.download, "ready"); published = true; },
+    publish: async () => { assert.equal(job.download, "ready"); published = true;
+      return { traceId: "recovered", generatedAt: Date.now() }; },
   }), AbortSignal.timeout(3000));
   assert(published);
 });
@@ -398,7 +349,7 @@ test("statistics retry immediately after input recovery without reading the inte
   const state = fresh(), date = "2026-09-29", controller = new AbortController();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   state.jobs[date].download = "pending";
-  state.publication = { status: "retry", attempts: 5, nextAt: Date.now() + PUBLICATION_INTERVAL_MS };
+  state.statistics = { attempts: 5, nextAt: Date.now() + PUBLICATION_INTERVAL_MS };
   let finishDownload!: () => void;
   const held = new Promise<void>(resolve => { finishDownload = resolve; });
   let transferring = false, recovered = false, publications = 0;
@@ -412,6 +363,7 @@ test("statistics retry immediately after input recovery without reading the inte
       publications++;
       if (!recovered) throw new Error("Installed input snapshot requires recovery");
       assert.equal(current.jobs[date].download, "ready");
+      return { traceId: "recovered-input", generatedAt: Date.now() };
     },
   }), controller.signal);
   try {
@@ -421,7 +373,7 @@ test("statistics retry immediately after input recovery without reading the inte
     await delay(250);
     assert.equal(publications, before, "do not read old files during recovery transfer");
     finishDownload();
-    await until(() => state.publication?.status === "completed");
+    await until(() => state.statistics?.lastTraceId === "recovered-input");
     assert.equal(publications, before + 1);
   } finally { finishDownload(); controller.abort(); await work; }
 });
@@ -429,6 +381,8 @@ test("statistics retry immediately after input recovery without reading the inte
 test("input promotion waits for an already-running statistics snapshot", async () => {
   const state = fresh(), date = "2026-09-29", controller = new AbortController();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
+  state.statistics = { attempts: 0, nextAt: Date.now() + PUBLICATION_INTERVAL_MS,
+    lastWindow: Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS };
   let downloadReady!: () => void, finishLog!: () => void;
   const downloadGate = new Promise<void>(resolve => { downloadReady = resolve; });
   const logGate = new Promise<void>(resolve => { finishLog = resolve; });
@@ -437,15 +391,16 @@ test("input promotion waits for an already-running statistics snapshot", async (
     discover: async () => [day(date, 2)],
     evaluationConcurrency: () => 0,
     sync: async (_job, remote, _signal, beforeReplace) => {
-      state.publication!.nextAt = 0;
+      state.statistics!.lastWindow = Math.floor(Date.now() / PUBLICATION_INTERVAL_MS) * PUBLICATION_INTERVAL_MS - PUBLICATION_INTERVAL_MS;
+      state.statistics!.nextAt = 0;
       await downloadGate;
       promotionAttempted = true;
       await beforeReplace(); promoted = true;
       return { changed: true, bytes: 20, rows: remote.rows };
     },
     publish: async current => {
-      if (current.jobs[date].download !== "downloading") return;
-      logRunning = true; await logGate;
+      if (current.jobs[date].download === "downloading") { logRunning = true; await logGate; }
+      return { traceId: "promotion", generatedAt: Date.now() };
     },
   }), controller.signal);
   try {
@@ -745,28 +700,26 @@ test("one broken historical registration does not prevent discovery of later dat
   assert.equal(state.jobs["2026-09-29"].evaluation, "completed");
 });
 
-test("startup publishes history immediately and schedules the next four-hour snapshot", async () => {
+test("startup appends cumulative history and schedules the next four-hour snapshot", async () => {
   const state = fresh(); let publications = 0, evaluations = 0;
   const deps = services({
     discover: async () => [day("2026-09-22"), day("2026-09-30")],
     initialize: async (day) => ({ runIds: ["daily-" + day.date], adopted: day.date === "2026-09-22" }),
     evaluate: async () => { evaluations++; return { status: "completed", summary }; },
-    publish: async (current, save) => { publications++; current.publication!.log = { status: "uploaded", requestId: "req" }; await save(); },
+    publish: async () => ({ traceId: `snapshot-${++publications}`, generatedAt: Date.now() }),
   });
   assert.equal(nextPublicationAt(0), PUBLICATION_INTERVAL_MS);
   assert.equal(nextPublicationAt(PUBLICATION_INTERVAL_MS), PUBLICATION_INTERVAL_MS * 2);
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
   assert.equal(publications, 1); assert.equal(state.jobs["2026-09-22"].evaluation, "completed");
-  const delivery = state.publication!;
-  const deadline = delivery.nextAt;
+  const deadline = state.statistics!.nextAt;
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(state.publication!.nextAt, deadline);
-  assert.equal(publications, 2);
-  state.publication!.nextAt = 0;
+  assert.equal(state.statistics!.nextAt, deadline);
+  assert.equal(publications, 1);
+  state.statistics!.lastWindow! -= PUBLICATION_INTERVAL_MS; state.statistics!.nextAt = 0;
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(publications, 3); assert.equal(evaluations, 1);
-  const completed = state.publication!;
-  assert.equal(completed.status, "completed"); assert(completed.nextAt > Date.now());
+  assert.equal(publications, 2); assert.equal(evaluations, 1);
+  assert.equal(state.statistics!.lastTraceId, "snapshot-2");
 });
 
 test("Mongo delivers inputs and newly settled outputs during evaluation without waiting for logs or resending unchanged work", async () => {
@@ -782,7 +735,7 @@ test("Mongo delivers inputs and newly settled outputs during evaluation without 
       mongoCalls++;
       return { inputs: 4, comparisons: job.summary?.readyComparisons ?? 0, inserted: mongoCalls === 1 ? 4 : 1, updated: 0 };
     },
-    publish: async () => { logs++; },
+    publish: async () => { logs++; return { traceId: "mongo-cycle", generatedAt: Date.now() }; },
   });
   const work = runPipeline(state, options, deps, controller.signal);
   try {
@@ -860,34 +813,36 @@ test("a slow Mongo date does not block settled results on another date or duplic
   } finally { release(); controller.abort(); await work; }
 });
 
-test("Mongo failures do not delay scheduled logs and uncertain logs do not block Mongo retry", async () => {
+test("Mongo retry and statistics generation fail independently and both recover", async () => {
   const state = fresh(), date = "2026-09-29";
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   const job = state.jobs[date];
-  state.publication = { status: "pending", nextAt: 0, attempts: 0 };
-  let failed = true, logs = 0;
+  state.statistics = { attempts: 0, nextAt: 0 };
+  let failedMongo = true, failedStatistics = true, logAttempts = 0;
   const deps = services({
     syncMongo: async () => {
-      if (failed) throw new Error("Mongo offline");
+      if (failedMongo) throw new Error("Mongo offline");
       return { inputs: 4, comparisons: 1, inserted: 5, updated: 0 };
     },
-    publish: async (current) => { logs++; current.publication!.log = { status: "uploaded", requestId: "receipt" }; },
+    publish: async () => {
+      logAttempts++;
+      if (failedStatistics) throw new Error("statistics offline");
+      return { traceId: "statistics-recovered", generatedAt: Date.now() };
+    },
   });
   await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
   assert.equal(job.mongo!.status, "retry");
   assert.match(job.mongo!.error!, /Mongo offline/);
-  assert.equal(state.publication.status, "completed");
+  assert.equal(state.statistics?.error, "statistics offline");
   assert.equal(job.evaluationAttempts, 0);
-  failed = false; job.mongo!.nextAt = 0;
-  state.publication.status = "uncertain"; state.publication.log!.status = "uncertain";
+  failedMongo = false; failedStatistics = false; job.mongo!.nextAt = 0; state.statistics!.nextAt = 0;
   const controller = new AbortController();
   await runPipeline(state, options, { ...deps, save: async (snapshot) => {
-    if (snapshot.jobs[date].mongo?.status === "completed") controller.abort();
+    if (snapshot.jobs[date].mongo?.status === "completed" && snapshot.statistics?.lastTraceId) controller.abort();
   } }, AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
   assert.equal(job.mongo!.status, "completed");
-  assert.equal(job.mongo!.error, undefined);
-  assert.equal(state.publication.status, "uncertain");
-  assert.equal(logs, 1);
+  assert.equal(state.statistics?.lastTraceId, "statistics-recovered");
+  assert.equal(logAttempts, 2);
 });
 
 for (const previousTarget of [undefined, "another-task"] as const)
@@ -955,29 +910,7 @@ test("Mongo pins inputs during delivery and an interrupted upload resumes immedi
   assert.equal(job.mongo!.status, "completed");
 });
 
-test("a lost global log response remains uncertain across restarts without blocking evaluation", async () => {
-  const state = fresh(); let attempts = 0;
-  const deps = services({ discover: async () => [day("2026-09-28"), day("2026-09-29")],
-    publish: async (current, save) => {
-      attempts++; current.publication!.log = { status: "sending" }; await save();
-      throw new Error("Response lost");
-    },
-  });
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  state.publication!.nextAt = 0;
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(state.publication!.status, "uncertain");
-  assert(Object.values(state.jobs).every(job => job.evaluation === "completed"));
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(attempts, 1);
-  state.publication!.log!.status = "sending";
-  state.publication!.status = "running";
-  await runPipeline(state, { ...options, once: true }, deps, AbortSignal.timeout(3000));
-  assert.equal(attempts, 1);
-  assert.match(state.publication!.error!, /Interrupted log upload/);
-});
-
-test("global log publication pins all inputs while catalog polling keeps advancing", async () => {
+test("a statistics snapshot pins input promotion while catalog polling keeps advancing", async () => {
   const state = fresh(), controller = new AbortController();
   const first = "2026-09-28", second = "2026-09-29";
   let count = 1, publishing = false, nextDateAdvanced = false;
@@ -989,7 +922,8 @@ test("global log publication pins all inputs while catalog polling keeps advanci
       if (count === 2) nextDateAdvanced = true;
       return { changed: true, bytes: count, rows: job.observed };
     },
-    publish: async () => { publishing = true; await gate; publishing = false; },
+    publish: async () => { publishing = true; await gate; publishing = false;
+      return { traceId: "pinned-input-snapshot", generatedAt: Date.now() }; },
   });
   await runPipeline(state, { ...options, once: true }, { ...deps, publish: undefined }, AbortSignal.timeout(3000));
   const work = runPipeline(state, options, deps, AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]));

@@ -1,6 +1,12 @@
 import path from "node:path";
+import { readJson } from "@eval/data";
 import { ROOT } from "./paths.js";
 import type { AutomationConfig } from "./automation-config.js";
+
+export interface AutomationSourceFile {
+  name: string;
+  file: string;
+}
 
 /** Bind delivery receipts to an evaluation task and destination without storing credentials. */
 export function automationMongoTarget(config: AutomationConfig): string {
@@ -25,13 +31,37 @@ export function validateAutomationTasks(configs: readonly AutomationConfig[]): v
   }
 }
 
-export function automationConfigFiles(command: string, configured?: string[]): string[] {
-  const files = configured ?? [path.join(ROOT, "configs/automations.json")];
-  const resolved = files.map(file => path.resolve(file));
-  if (new Set(resolved).size !== resolved.length) throw new Error("Duplicate automation config");
-  if (resolved.length > 1 && !["run", "check", "status"].includes(command))
+export async function automationSourceFiles(options: {
+  command: string;
+  configured?: string[];
+  manifestFile?: string;
+  configDirectory?: string;
+}): Promise<AutomationSourceFile[]> {
+  const configured = options.configured?.map(file => ({ name: path.basename(file), file: path.resolve(file) }));
+  const resolved = configured ?? await manifestSources(
+    options.manifestFile ?? path.join(ROOT, "configs/automations.manifest.json"),
+    options.configDirectory ?? path.join(ROOT, "configs"),
+  );
+  if (new Set(resolved.map(source => source.file)).size !== resolved.length) throw new Error("Duplicate automation config");
+  if (resolved.length > 1 && !["run", "check", "status"].includes(options.command))
     throw new Error("This automation command requires one --config");
   return resolved;
+}
+
+async function manifestSources(manifestFile: string, configDirectory: string): Promise<AutomationSourceFile[]> {
+  const value = await readJson<Record<string, unknown>>(manifestFile);
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 ||
+      !Array.isArray(value.sources) || !value.sources.length)
+    throw new Error("Invalid automation manifest");
+  const directory = path.resolve(configDirectory);
+  return value.sources.map((entry): AutomationSourceFile => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) ||
+        Object.keys(entry).some(key => !["name", "config"].includes(key)) ||
+        typeof entry.name !== "string" || !entry.name.trim() ||
+        typeof entry.config !== "string" || !entry.config.trim())
+      throw new Error("Invalid automation manifest source");
+    return { name: entry.name.trim(), file: path.resolve(directory, entry.config) };
+  });
 }
 
 /** Only writes to the same destination task and date serialize; unrelated deliveries proceed independently. */

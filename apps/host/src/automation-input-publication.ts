@@ -4,16 +4,16 @@ import { completeCaseMetadata, fileSourceReader, readCaseMetadata, withPinnedInp
 import { normalizeInput } from "@eval/workflows/comparison";
 import { publishMongo } from "@eval/runtime/client";
 import type { AutomationConfig } from "./automation-config.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, type HostConfig } from "./config.js";
 import { automationMongoTarget, createAutomationMongoLane } from "./automation-sources.js";
 
 /** Publish each validated file before installation; short batches share the output publication lane. */
 export async function syncMongoInputFile(
   config: AutomationConfig, date: string, model: string, source: string, signal: AbortSignal,
-  lane: ReturnType<typeof createAutomationMongoLane>, mongo = publishMongo,
+  lane: ReturnType<typeof createAutomationMongoLane>, mongo = publishMongo, loadedHost?: HostConfig,
 ) {
   if (config.prediction || !config.remoteModels.includes(model)) throw new Error("Unexpected input publication model");
-  const host = await loadConfig(config.hostConfigs);
+  const host = loadedHost ?? await loadConfig(config.hostConfigs);
   const version = host.evaluation.inputs.versions.find(item => item.id === model);
   if (!version) throw new Error("Input publication model is not configured");
   const settings = config.publication, uri = process.env[settings.mongoUriEnv];

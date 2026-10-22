@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 from test_dashboard import FakeArchive, HAS_PY7ZR
 import multi_agent_inputs as worker
-import progress_bridge as bridge
 
 
 def row(provider="aime", mode="fast", case="case", day="2026-10-14", answer="Answer"):
@@ -27,8 +26,8 @@ class MultiAgentTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="multi-agent-input-test-")
         self.root = Path(self.temp.name)
-        self.aime = worker.AgentDataset(self.root, "aime")
-        self.ifind = worker.AgentDataset(self.root, "ifind")
+        self.aime = worker.AgentDataset(self.root, self.root / "state", "aime", "/data/aime")
+        self.ifind = worker.AgentDataset(self.root, self.root / "state", "ifind", "/data/ifind")
         for data in (self.aime, self.ifind):
             data.archive_dir.mkdir(parents=True)
             data.state_dir.mkdir(parents=True)
@@ -48,34 +47,29 @@ class MultiAgentTest(unittest.TestCase):
     def read(self, data, model, day="2026-10-14"):
         return [json.loads(line) for line in (data.output_dir / model / (day + ".jsonl")).read_text().splitlines()]
 
-    def test_local_start_keeps_all_dataset_directories_local_and_honors_explicit_multi_root(self):
+    def test_local_start_keeps_all_dataset_directories_in_eval_data_and_state_roots(self):
         root = self.root / "local-data"
         factory = worker.app.make_datasets
         mkdir = Path.mkdir
         def local_mkdir(path, *args, **kwargs):
             self.assertTrue(path.is_relative_to(self.root), f"startup writes outside local data: {path}")
             return mkdir(path, *args, **kwargs)
-        for explicit in (False, True):
-            with self.subTest(explicit=explicit):
-                multi_root = self.root / "separate-multi" if explicit else root / "multi_agent_eval"
-                environment = {"DATA_ROOT": str(root)}
-                if explicit:
-                    environment["MULTI_AGENT_ROOT"] = str(multi_root)
-                with patch.dict(os.environ, environment, clear=True), \
-                     patch.object(worker.app.sys, "argv", ["app.py"]), \
-                     patch.object(worker.app, "make_datasets", side_effect=lambda **kwargs: factory(root, self.root / "state", **kwargs)), \
-                     patch.object(worker.app, "DashboardServer") as server, \
-                     patch.object(worker.app.threading, "Thread"), \
-                     patch.object(Path, "mkdir", autospec=True, side_effect=local_mkdir):
-                    worker.app.main()
-                datasets = server.call_args.args[1]
-                for provider, (directory, models) in worker.SOURCES.items():
-                    data = datasets["/" + provider]
-                    self.assertEqual(data.root, multi_root / directory)
-                    self.assertTrue(data.archive_dir.is_dir())
-                    self.assertTrue(data.state_dir.is_dir())
-                    self.assertTrue(all((data.output_dir / model).is_dir() for model in models))
-                server.return_value.serve_forever.assert_called_once()
+        environment = {"DATA_ROOT": str(root), "STATE_ROOT": str(self.root / "state")}
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(worker.app.sys, "argv", ["app.py"]), \
+             patch.object(worker.app, "make_datasets", side_effect=factory), \
+             patch.object(worker.app, "DashboardServer") as server, \
+             patch.object(worker.app.threading, "Thread"), \
+             patch.object(Path, "mkdir", autospec=True, side_effect=local_mkdir):
+            worker.app.main()
+        datasets = server.call_args.args[1]
+        for provider, (directory, models) in worker.SOURCES.items():
+            data = datasets["/data/" + provider]
+            self.assertEqual(data.root, root / directory)
+            self.assertTrue(data.archive_dir.is_dir())
+            self.assertTrue(data.state_dir.is_dir())
+            self.assertTrue(all((data.output_dir / model).is_dir() for model in models))
+        server.return_value.serve_forever.assert_called_once()
 
     def test_ifind_session_mode_fallbacks_publish_complete_sessions(self):
         rows = []
@@ -210,7 +204,7 @@ class MultiAgentTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "interrupted"):
                 self.aime.process_archives(worker.app.archive_signature(self.aime.archive_dir))
         self.assertEqual(list(self.aime.state_dir.glob("ingest-*")), [])
-        restarted = worker.AgentDataset(self.root, "aime")
+        restarted = worker.AgentDataset(self.root, self.root / "state", "aime", "/data/aime")
         with patch.object(worker.app, "SevenZipFile", side_effect=AssertionError("must not extract again")):
             restarted.recover()
         self.assertEqual(len(self.read(restarted, "aime_fast")), 1)
@@ -285,7 +279,7 @@ class MultiAgentTest(unittest.TestCase):
         self.archive(self.aime, "ainvest_20261014_010000.7z", [row()])
         self.archive(self.ifind, "ifind_normal_agent_20261014_010000.7z", [[row("ifind", "normal_agent")]])
         self.process(self.aime); self.process(self.ifind)
-        datasets = worker.app.make_datasets(self.root / "old", self.root / "old-state", self.root)
+        datasets = worker.app.make_datasets(self.root, self.root / "state")
         server = worker.app.DashboardServer(("127.0.0.1", 0), datasets)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         base = f"http://127.0.0.1:{server.server_port}"
@@ -294,32 +288,38 @@ class MultiAgentTest(unittest.TestCase):
                 return json.load(response)
         try:
             for provider, model in (("aime", "aime_fast"), ("ifind", "ifind_normal_agent")):
-                self.assertTrue(get(f"/{provider}/health")["ok"])
-                self.assertEqual(get(f"/{provider}/dashboard-data")["dates"][0]["models"][model]["row_count"], 1)
-                self.assertEqual(get(f"/{provider}/data/2026-10-14/{model}.jsonl")["version"], model)
-                self.assertEqual(get(f"/{provider}/records/2026-10-14/{model}")["items"][0]["answer"], "Answer")
-                with urlopen(base + "/" + provider) as response:
-                    self.assertEqual(response.url, base + "/" + provider + "/")
-                    self.assertIn(f'/{provider}/dashboard.js', response.read().decode())
+                self.assertTrue(get(f"/data/{provider}/health")["ok"])
+                self.assertEqual(get(f"/data/{provider}/dashboard-data")["dates"][0]["models"][model]["row_count"], 1)
+                self.assertEqual(get(f"/data/{provider}/data/2026-10-14/{model}.jsonl")["version"], model)
+                self.assertEqual(get(f"/data/{provider}/records/2026-10-14/{model}")["items"][0]["answer"], "Answer")
+                with urlopen(base + "/data/" + provider) as response:
+                    self.assertEqual(response.url, base + "/data/" + provider + "/")
+                    self.assertIn(f'/data/{provider}/dashboard.js', response.read().decode())
             state = {"runId": "aime-test", "startedAt": 1, "status": "running", "engine": {"engine": "pi"},
                      "inputs": {"answer": {"version": "aime_fast", "batch_id": "2026-10-14", "case_id": "q"}},
                      "tasks": {"c": {"stage": "criteria", "status": "succeeded", "receipt": {"status": "succeeded"}, "inputIds": {"A": "answer"}},
                                "a": {"stage": "attribution", "status": "running", "inputIds": {"answer": "answer"}},
                                "g": {"stage": "clustering", "status": "pending", "data": {"scope": {"version": "aime_fast", "batch_id": "2026-10-14"}}}}}
-            progress = bridge.independent_progress([state, state], "aime", 2)
-            stages = progress["dates"][0]["models"]["aime_fast"]
+            def count(total=0, completed=0, running=0, pending=0):
+                return {"total": total, "completed": completed, "running": running, "pending": pending,
+                        "failed": 0, "blocked": 0, "cancelled": 0}
+            stages = {"criteria": count(1, 1), "attribution": count(1, 0, 1), "clustering": count(1, 0, 0, 1)}
+            progress = {"run_id": "aime-test", "engine": "pi", "status": "running", "started_at": 1, "updated_at": 2,
+                        "dates": [{"date": "2026-10-14", "models": {"aime_fast": stages}}]}
             self.assertEqual(stages["criteria"]["completed"], 1)
             self.assertEqual(stages["attribution"]["running"], 1)
             self.assertEqual(stages["clustering"]["pending"], 1)
             def post(provider, payload):
-                request = Request(base + f"/{provider}/evaluation-progress", data=json.dumps(payload).encode(),
+                request = Request(base + f"/data/{provider}/evaluation-progress", data=json.dumps(payload).encode(),
                                   headers={"Content-Type": "application/json"})
                 with urlopen(request, timeout=3) as response:
                     return json.load(response)
             self.assertTrue(post("aime", progress)["saved"])
-            self.assertEqual(get("/aime/dashboard-data")["evaluation"]["dates"], progress["dates"])
-            self.assertIsNone(get("/ifind/dashboard-data")["evaluation"])
-            self.assertIsNone(get("/dashboard-data")["evaluation"])
+            self.assertEqual(get("/data/aime/dashboard-data")["evaluation"]["dates"], progress["dates"])
+            self.assertIsNone(get("/data/ifind/dashboard-data")["evaluation"])
+            with self.assertRaises(HTTPError) as root_error:
+                get("/dashboard-data")
+            self.assertEqual(root_error.exception.code, 404)
             for provider, payload in (("ifind", progress), ("aime", {**progress, "dates": [{"date": "2026-10-14", "pairs": {}}]})):
                 with self.assertRaises(HTTPError) as error:
                     post(provider, payload)

@@ -200,7 +200,8 @@ export async function startDashboard(options: DashboardOptions) {
   if (!isRecord(output) || typeof output.path !== "string")
     throw new Error("Invalid output target in dashboard config");
   const outputDir = path.resolve(output.path);
-  const logs = options.logs ?? { directory: path.join(ROOT, "log"), lockDirectory: path.join(ROOT, ".runtime/log-writer") };
+  const logs = options.logs ?? { directory: path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log")),
+    lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")) };
   // A spawned child has not acquired its run lock yet, and may write its final error after releasing it.
   const changingRuns = new Map<string, number | undefined>();
   const reserveRun = (runId: string) => {
@@ -229,10 +230,10 @@ export async function startDashboard(options: DashboardOptions) {
     res.setHeader("Referrer-Policy", "no-referrer");
     // No CSP / X-Frame-Options: local annotation overlays inject styles and need to embed the page.
     const host = (req.headers.host || "").toLowerCase();
-    if (!/^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host))
-      throw new HttpError(403, "Only loopback requests are allowed");
-    if (["POST", "DELETE"].includes(req.method || "") && req.headers.origin !== `http://${host}`)
+    if (!host) throw new HttpError(403, "Host header is required");
+    if (["POST", "DELETE"].includes(req.method || "") && ![`http://${host}`, `https://${host}`].includes(req.headers.origin ?? ""))
       throw new HttpError(403, "Request origin does not match the dashboard");
+    if (req.method === "GET" && url.pathname === "/api/health") return json(res, { ok: true });
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(await asset("index.html"));

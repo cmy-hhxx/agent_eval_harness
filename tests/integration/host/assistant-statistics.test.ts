@@ -11,14 +11,15 @@ import { object } from "@eval/contracts";
 
 test("Eris historical statistics select the latest completed upload, validate it and keep live runs separate", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-statistics-"));
-  const files = { stateFile: path.join(directory, "state.json"), logFile: path.join(directory, "statistics.jsonl") };
-  const completed = (traceId: string, completedAt: number) => ({ traceId, completedAt, status: "completed", log: { status: "uploaded" } });
+  const files = { stateFile: path.join(directory, "state.json"), logFile: path.join(directory, "statistics.jsonl"),
+    deliveryFile: path.join(directory, "delivery.json") };
   const statistics = new PublicationStatistics([]);
   const older = statistics.record("older", 1000), latest = statistics.record("published", 2000), pending = statistics.record("pending", 3000);
   try {
     await writeJsonl(files.logFile, [older, latest, pending]);
-    await writeJson(files.stateFile, { publicationHistory: [completed("published", 2100), completed("older", 1100)],
-      publication: { traceId: "pending", status: "running", log: { status: "sending" } } });
+    await writeJson(files.stateFile, { statistics: { lastTraceId: "published", lastWindow: 1, generatedAt: 2000, nextAt: 4000, attempts: 0 } });
+    await writeJson(files.deliveryFile, { records: { published: { traceId: "published", status: "uploaded", uploadedAt: 2100,
+      automationId: "test", logFile: files.logFile, logUrl: "http://example.test/upload", writtenAt: 2000, updatedAt: 2100, attempts: 1 } } });
     const result = await readPublishedStatistics(files);
     assert.equal(result.traceId, "published", "neither file order nor an unfinished newer upload chooses the snapshot");
     assert.equal(result.snapshotAt, latest.logtime);
@@ -48,14 +49,15 @@ test("Eris historical statistics select the latest completed upload, validate it
     assert.equal(partial.history.status, "unavailable");
     await writeJsonl(files.logFile, [older, { ...latest, data: { ...(latest.data as object), caseCount: "0" } }]);
     await assert.rejects(readPublishedStatistics(files), /frozen contract/);
-    await writeJson(files.stateFile, { publicationHistory: [], publication: { traceId: "pending", status: "uncertain", log: { status: "uploaded" } } });
+    await writeJson(files.stateFile, { statistics: { attempts: 0, nextAt: 0 } });
     await assert.rejects(readPublishedStatistics(files), /没有完整发布成功/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("Eris supplies completion percentages and losses without changing the frozen published record", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-rates-"));
-  const files = { stateFile: path.join(directory, "state.json"), logFile: path.join(directory, "statistics.jsonl") };
+  const files = { stateFile: path.join(directory, "state.json"), logFile: path.join(directory, "statistics.jsonl"),
+    deliveryFile: path.join(directory, "delivery.json") };
   const record = new PublicationStatistics([]).record("published", 2000);
   const metric = { p50: null, p90: null, count: 0 };
   Object.assign(object(record.data), { totalCaseCount: 20554, caseCount: 12114,
@@ -66,7 +68,9 @@ test("Eris supplies completion percentages and losses without changing the froze
   });
   try {
     await writeJsonl(files.logFile, [record]);
-    await writeJson(files.stateFile, { publication: { traceId: "published", completedAt: 2100, status: "completed", log: { status: "uploaded" } } });
+    await writeJson(files.stateFile, { statistics: { lastTraceId: "published", lastWindow: 1, generatedAt: 2000, nextAt: 4000, attempts: 0 } });
+    await writeJson(files.deliveryFile, { records: { published: { traceId: "published", status: "uploaded", uploadedAt: 2100,
+      automationId: "test", logFile: files.logFile, logUrl: "http://example.test/upload", writtenAt: 2000, updatedAt: 2100, attempts: 1 } } });
     const before = await readFile(files.logFile);
     const source = new LocalAnalysisData(path.join(directory, "runs"), files);
     const result = await source.list({ view: "statistics" });

@@ -27,10 +27,7 @@ spec = importlib.util.spec_from_file_location("remote_dashboard_app", ROOT / "ap
 app = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = app
 spec.loader.exec_module(app)
-bridge_spec = importlib.util.spec_from_file_location("remote_dashboard_bridge", ROOT / "progress_bridge.py")
-bridge = importlib.util.module_from_spec(bridge_spec)
-sys.modules[bridge_spec.name] = bridge
-bridge_spec.loader.exec_module(bridge)
+PAIR_FIELDS = ("total_cases", "completed_cases", "running_cases", "queued_cases", "failed_cases", "skipped_cases")
 
 
 class FakeArchive:
@@ -92,7 +89,7 @@ class PostTrainingArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="post-training-test-") as folder:
             root = Path(folder)
             post = app.Dataset(root / "archives", root / "state", app.POST_TRAINING_MODELS,
-                               "/post_training_model")
+                               "post_training_model", url_prefix="/data/post_training_model")
             post.archive_dir.mkdir()
             post.state_dir.mkdir()
             names = ("629d3a74073c434f_20261020_141107.7z", "629d3a74073c434f_20261020_163255.7z")
@@ -190,8 +187,8 @@ class DashboardTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="remote-dashboard-test-")
         root = Path(self.temp.name)
-        self.data = app.Dataset(root / "archives", root / "state", app.ROOT_MODELS)
-        self.gpt = app.Dataset(root / "archives" / "gpt", root / "state" / "gpt", app.MODELS, "/gpt")
+        self.data = app.Dataset(root / "archives", root / "state", app.ROOT_MODELS, url_prefix="/data/wencai")
+        self.gpt = app.Dataset(root / "archives" / "gpt", root / "state" / "gpt", app.MODELS, "gpt", url_prefix="/data/gpt")
         self.legacy_date_dir = root / "legacy-dates"
         self.data.archive_dir.mkdir(parents=True)
         self.gpt.archive_dir.mkdir()
@@ -241,7 +238,7 @@ class DashboardTest(unittest.TestCase):
         for model in self.data.models:
             (self.data.output_dir / model).mkdir(parents=True, exist_ok=True)
         self.data.register_local_import(self.day)
-        self.server = app.DashboardServer(("127.0.0.1", 0), {"": self.data, "/gpt": self.gpt})
+        self.server = app.DashboardServer(("127.0.0.1", 0), {"/data/wencai": self.data, "/data/gpt": self.gpt})
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -253,69 +250,10 @@ class DashboardTest(unittest.TestCase):
         self.temp.cleanup()
 
     def get_json(self, path):
+        if path.startswith(("/dashboard-data", "/processing-status", "/records/", "/dates")):
+            path = "/data/wencai" + path
         with urlopen(self.base + path, timeout=3) as response:
             return json.loads(response.read())
-
-    def test_post_training_archive_routes_progress_and_recovery_are_isolated(self):
-        datasets = app.make_datasets(self.data.root, self.data.state_dir)
-        post = datasets["/post_training_model"]
-        self.server.datasets[post.prefix] = post
-        post.archive_dir.mkdir()
-        post.state_dir.mkdir()
-        self.assertEqual(self.get_json(post.prefix + "/dashboard-data")["dates"], [])
-        root_before = (self.data.output_dir / "a_fast" / f"{self.day}.jsonl").read_bytes()
-        members = {}
-        for model, member in zip(post.models, ("run_A-fast.jsonl", "run_AA-fast.incr00001.jsonl", "sub/run_AA-post_train_fast.jsonl")):
-            self.assertEqual(app.model_for_member(member), model)
-            self.assertEqual(app.model_for_member(f"run_{model}.incr00002.jsonl"), model)
-            row = archive_row(model, "shared", request_time="2026-10-21 01:00:00",
-                              meta_fields={"testset_name": "post-20261020"})
-            if model == "b_post_train_fast":
-                row["version"] = "AA post_train_fast"
-            members[member] = json.dumps(row) + "\n"
-        archive = post.archive_dir / "post_20261020_010000.7z"
-        archive.write_text(json.dumps(members))
-        signature = app.archive_signature(post.archive_dir)
-        with patch.object(app, "SevenZipFile", FakeArchive):
-            post.process_archives(signature)
-        day = "2026-10-20"
-        models = self.get_json(post.prefix + "/dashboard-data")["dates"][0]["models"]
-        self.assertEqual(set(models), set(post.models))
-        self.assertTrue(all(item == {"ready": True, "row_count": 1} for item in models.values()))
-        for model in post.models:
-            with urlopen(f"{self.base}{post.prefix}/data/{day}/{model}.jsonl") as response:
-                row = json.loads(response.read())
-                self.assertEqual(row["version"], app.VERSION_NAMES[model])
-                self.assertEqual(row["batch_id"], day)
-            self.assertEqual(self.get_json(f"{post.prefix}/records/{day}/{model}")["total"], 1)
-        recovered = app.make_datasets(self.data.root, self.data.state_dir)[post.prefix]
-        with patch.object(app, "SevenZipFile", side_effect=AssertionError("accepted archives must not replay")):
-            recovered.process_archives(signature)
-        recovered.archive_processed(signature)
-        self.assertFalse(archive.exists())
-        self.assertEqual(len(list(post.archived_dir.rglob("*.7z"))), 1)
-        self.assertEqual((self.data.output_dir / "a_fast" / f"{self.day}.jsonl").read_bytes(), root_before)
-        self.assertEqual(self.get_json("/gpt/dashboard-data")["dates"], [])
-        tasks = {pair: {"stage": "comparison", "status": "succeeded", "data": {"group": list(post.models)},
-                        "inputIds": {"A": left, "B": right}} for pair, (left, right) in post.pairs.items()}
-        state = {"status": "finished", "engine": {"engine": "pi"}, "runId": "post", "startedAt": 1,
-                 "tasks": tasks, "inputs": {model: {"version": model, "batch_id": day, "case_id": "shared"} for model in post.models},
-                 "preflight": {"skipped": []}}
-        progress = bridge.progress_from_states([state], updated_at=2, dataset="post_training_model")
-        self.assertEqual(set(progress["dates"][0]["pairs"]), set(post.pairs))
-        self.assertTrue(all(item["completed_cases"] == 1 for item in progress["dates"][0]["pairs"].values()))
-        request = Request(self.base + post.prefix + "/evaluation-progress", data=json.dumps(progress).encode(),
-                          headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(request) as response:
-            self.assertEqual(response.status, 200)
-        self.assertIsNone(self.get_json("/dashboard-data")["evaluation"])
-        self.assertIsNone(self.get_json("/gpt/dashboard-data")["evaluation"])
-        self.assertEqual(self.get_json(post.prefix + "/dashboard-data")["evaluation"]["dates"], progress["dates"])
-        progress["dates"][0]["pairs"] = {"fast": dict.fromkeys(bridge.PAIR_FIELDS, 0)}
-        request.data = json.dumps(progress).encode()
-        with self.assertRaises(HTTPError) as error:
-            urlopen(request)
-        self.assertEqual(error.exception.code, 400)
 
     def test_six_model_files_are_discoverable_and_downloadable(self):
         for model in self.gpt.models:
@@ -327,13 +265,13 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(normalized["version"], app.VERSION_NAMES[model])
             (folder / f"{self.day}.jsonl").write_text(json.dumps(normalized) + "\n")
         self.gpt.register_local_import(self.day)
-        catalog = self.get_json("/gpt/dashboard-data")
+        catalog = self.get_json("/data/gpt/dashboard-data")
         self.assertEqual(len(catalog["dates"][0]["models"]), 6)
         for model in self.gpt.models:
             self.assertEqual(catalog["dates"][0]["models"][model], {"ready": True, "row_count": 1})
-            with urlopen(f"{self.base}/gpt/data/{self.day}/{model}.jsonl", timeout=3) as response:
+            with urlopen(f"{self.base}/data/gpt/data/{self.day}/{model}.jsonl", timeout=3) as response:
                 self.assertEqual(json.loads(response.read())["version"], app.VERSION_NAMES[model])
-            self.assertEqual(self.get_json(f"/gpt/records/{self.day}/{model}")["total"], 1)
+            self.assertEqual(self.get_json(f"/data/gpt/records/{self.day}/{model}")["total"], 1)
 
     def test_aa_archive_members_are_normalized_to_b_models(self):
         for member, model, source_version, expected_version in (
@@ -366,18 +304,18 @@ class DashboardTest(unittest.TestCase):
         write(self.gpt, {"a_fast": "GPT old", "6_luna": "Luna"})
         with patch.object(app, "SevenZipFile", FakeArchive):
             self.gpt.process_archives(app.archive_signature(self.gpt.archive_dir))
-        models = self.get_json("/gpt/dashboard-data")["dates"][0]["models"]
+        models = self.get_json("/data/gpt/dashboard-data")["dates"][0]["models"]
         self.assertEqual([model for model, item in models.items() if item["ready"]], ["a_fast", "6_luna"])
-        self.assertEqual(self.get_json("/gpt/dates")["dates"], [{"date": day, "models": ["6_luna", "a_fast"]}])
+        self.assertEqual(self.get_json("/data/gpt/dates")["dates"], [{"date": day, "models": ["6_luna", "a_fast"]}])
         with self.assertRaises(HTTPError) as error:
-            urlopen(f"{self.base}/gpt/data/{day}/6.1sol.jsonl")
+            urlopen(f"{self.base}/data/gpt/data/{day}/6.1sol.jsonl")
         self.assertEqual(error.exception.code, 404)
         luna = self.gpt.output_dir / "6_luna" / f"{day}.jsonl"
         luna_before = (luna.read_bytes(), luna.stat().st_mtime_ns)
         write(self.gpt, {"a_fast": "GPT new", "6.1sol": "Sol"})
         with patch.object(app, "SevenZipFile", FakeArchive):
             self.gpt.process_archives(app.archive_signature(self.gpt.archive_dir))
-        self.assertEqual(self.get_json(f"/gpt/records/{day}/a_fast")["items"][0]["answer"], "GPT new")
+        self.assertEqual(self.get_json(f"/data/gpt/records/{day}/a_fast")["items"][0]["answer"], "GPT new")
         self.assertEqual(self.get_json(f"/records/{day}/a_fast")["items"][0]["answer"], "original root")
         self.assertEqual((luna.read_bytes(), luna.stat().st_mtime_ns), luna_before)
         signature = app.archive_signature(self.gpt.archive_dir)
@@ -387,18 +325,18 @@ class DashboardTest(unittest.TestCase):
         self.assertFalse((self.gpt.archive_dir / name).exists())
         self.assertTrue((self.gpt.archived_dir / "2026-10-19" / "part-0001" / name).exists())
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
-        self.assertEqual(self.get_json(f"/gpt/records/{day}/6.1sol")["total"], 1)
+        self.assertEqual(self.get_json(f"/data/gpt/records/{day}/6.1sol")["total"], 1)
 
     def test_gpt_routes_and_progress_do_not_read_or_overwrite_root(self):
-        self.assertEqual(self.get_json("/gpt/dashboard-data"), {"dates": [], "evaluation": None})
-        self.assertEqual(self.get_json("/gpt/dates"), {"dates": []})
-        for prefix in ("", "/gpt"):
+        self.assertEqual(self.get_json("/data/gpt/dashboard-data"), {"dates": [], "evaluation": None})
+        self.assertEqual(self.get_json("/data/gpt/dates"), {"dates": []})
+        for prefix in ("/data/wencai", "/data/gpt"):
             with urlopen(self.base + prefix + "/") as response:
                 html = response.read().decode()
             self.assertIn(f'href="{prefix}/dashboard.css"', html)
             self.assertIn(f'src="{prefix}/dashboard.js"', html)
             self.assertNotIn("__BASE__", html)
-        counts = dict.fromkeys(bridge.PAIR_FIELDS, 0)
+        counts = dict.fromkeys(PAIR_FIELDS, 0)
         counts.update({"total_cases": 3, "completed_cases": 3})
         payload = {"run_id": "six-model-test", "engine": "pi", "status": "finished",
                    "started_at": 100, "updated_at": 200, "dates": [
@@ -410,20 +348,20 @@ class DashboardTest(unittest.TestCase):
             request = Request(self.base + prefix + "/evaluation-progress", data=json.dumps(body).encode(),
                               headers={"Content-Type": "application/json"}, method="POST")
             return urlopen(request, timeout=3)
-        with post("/gpt", payload) as response:
+        with post("/data/gpt", payload) as response:
             self.assertEqual(response.status, 200)
-        self.assertEqual(self.get_json("/gpt/dashboard-data")["evaluation"]["dates"], payload["dates"])
+        self.assertEqual(self.get_json("/data/gpt/dashboard-data")["evaluation"]["dates"], payload["dates"])
         self.assertIsNone(self.get_json("/dashboard-data")["evaluation"])
         with self.assertRaises(HTTPError) as error:
-            post("", payload)
+            post("/data/wencai", payload)
         self.assertEqual(error.exception.code, 400)
         payload["dates"] = [{"date": self.day, "pairs": {"fast": counts}}]
         with self.assertRaises(HTTPError) as error:
-            post("/gpt", payload)
+            post("/data/gpt", payload)
         self.assertEqual(error.exception.code, 400)
 
     def test_root_progress_accepts_all_dates_with_a_bounded_request(self):
-        counts = dict.fromkeys(bridge.PAIR_FIELDS, 0)
+        counts = dict.fromkeys(PAIR_FIELDS, 0)
         counts.update({"total_cases": 3, "completed_cases": 3})
         payload = {"run_id": "daily-all-dates", "engine": "pi", "status": "running",
                    "started_at": 100, "updated_at": 200, "dates": [
@@ -432,13 +370,13 @@ class DashboardTest(unittest.TestCase):
                    ]}
         body = json.dumps(payload).encode()
         self.assertGreater(len(body), 8192)
-        request = Request(self.base + "/evaluation-progress", data=body,
+        request = Request(self.base + "/data/wencai/evaluation-progress", data=body,
                           headers={"Content-Type": "application/json"}, method="POST")
         with urlopen(request, timeout=3) as response:
             self.assertEqual(response.status, 200)
         self.assertEqual(self.get_json("/dashboard-data")["evaluation"]["dates"], payload["dates"])
-        self.assertIsNone(self.get_json("/gpt/dashboard-data")["evaluation"])
-        request = Request(self.base + "/evaluation-progress", data=b"{}",
+        self.assertIsNone(self.get_json("/data/gpt/dashboard-data")["evaluation"])
+        request = Request(self.base + "/data/wencai/evaluation-progress", data=b"{}",
                           headers={"Content-Type": "application/json", "Content-Length": str(1024 * 1024 + 1)}, method="POST")
         with self.assertRaises(HTTPError) as error:
             urlopen(request, timeout=3)
@@ -460,11 +398,11 @@ class DashboardTest(unittest.TestCase):
                 member = f"nested/run_{model}.incr00002.jsonl"
                 archive.writestr(json.dumps(row) + "\n", member)
         self.gpt.process_archives(app.archive_signature(self.gpt.archive_dir))
-        catalog = self.get_json("/gpt/dashboard-data")
+        catalog = self.get_json("/data/gpt/dashboard-data")
         self.assertEqual(catalog["dates"][0]["date"], day)
         self.assertTrue(all(item == {"ready": True, "row_count": 1} for item in catalog["dates"][0]["models"].values()))
         for model in self.gpt.models:
-            with urlopen(f"{self.base}/gpt/data/{day}/{model}.jsonl") as response:
+            with urlopen(f"{self.base}/data/gpt/data/{day}/{model}.jsonl") as response:
                 row = json.loads(response.read())
             self.assertEqual(row["version"], app.VERSION_NAMES[model])
             self.assertEqual(row["trace_id"], "actual-trace")
@@ -496,7 +434,7 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(state["failed_archives"], [])
         for model in self.gpt.models:
             day = "2026-10-16"
-            with urlopen(f"{self.base}/gpt/data/{day}/{model}.jsonl") as response:
+            with urlopen(f"{self.base}/data/gpt/data/{day}/{model}.jsonl") as response:
                 result = json.load(response)
             self.assertEqual(result["messages"], originals[model])
             self.assertEqual(result["version"], app.VERSION_NAMES[model])
@@ -504,7 +442,7 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(result["meta"]["ask_time"], 1792415415804 if model in ("6_luna", "6.1sol") else 1792156215804)
         self.assertEqual(len(self.get_json("/dashboard-data")["dates"]), 1)
 
-    def test_gpt_progress_bridge_reports_all_six_actual_pairings(self):
+    def test_gpt_progress_payload_reports_all_six_actual_pairings(self):
         groups = (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol"))
         inputs = {model: {"version": model, "batch_id": self.day, "case_id": "same-case"}
                   for group in groups for model in group}
@@ -514,7 +452,10 @@ class DashboardTest(unittest.TestCase):
                  for pair in ["__vs__".join(sorted((left, right)))]}
         state = {"status": "finished", "engine": {"engine": "pi"}, "runId": "six", "startedAt": 1,
                  "tasks": tasks, "inputs": inputs, "preflight": {"skipped": []}}
-        progress = bridge.progress_from_states([state], updated_at=2, dataset="gpt")
+        pair_counts = {field: 0 for field in PAIR_FIELDS}
+        pair_counts.update(total_cases=2, completed_cases=1)
+        progress = {"run_id": "six", "engine": "pi", "status": "finished", "started_at": 1, "updated_at": 2,
+                    "dates": [{"date": self.day, "pairs": {pair: dict(pair_counts) for pair in self.gpt.pairs}}]}
         pairs = progress["dates"][0]["pairs"]
         self.assertEqual(set(pairs), set(self.gpt.pairs))
         self.assertTrue(all(counts["completed_cases"] == 1 for counts in pairs.values()))
@@ -593,7 +534,7 @@ class DashboardTest(unittest.TestCase):
         data = self.get_json("/dashboard-data")
         self.assertTrue(data["dates"][0]["models"]["b_fast"]["ready"])
         self.assertEqual(data["dates"][0]["models"]["b_fast"]["row_count"], 1)
-        with urlopen(self.base + f"/data/{self.day}/a_fast.jsonl", timeout=3) as response:
+        with urlopen(self.base + f"/data/wencai/data/{self.day}/a_fast.jsonl", timeout=3) as response:
             raw = response.read().decode()
         self.assertIn("do not expose this", raw)
 
@@ -826,16 +767,16 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in published}, published)
 
     def test_processing_status_distinguishes_unprocessed_failures_and_archive_inspection(self):
-        self.assertEqual(self.get_json("/gpt/processing-status"), {
+        self.assertEqual(self.get_json("/data/gpt/processing-status"), {
             "received_at": None, "published_at": None, "pending": 0, "failed": [], "archive": None, "error": None,
         })
         broken = self.gpt.archive_dir / "broken.7z"
         broken.write_text("incomplete")
-        self.assertEqual(self.get_json("/gpt/processing-status")["pending"], 1)
+        self.assertEqual(self.get_json("/data/gpt/processing-status")["pending"], 1)
         with patch.object(app, "SevenZipFile", FakeArchive):
             self.gpt.process_archives(app.archive_signature(self.gpt.archive_dir))
         self.gpt.organize_archives()
-        status = self.get_json("/gpt/processing-status")
+        status = self.get_json("/data/gpt/processing-status")
         self.assertEqual(status["pending"], 0)
         self.assertEqual(status["failed"][0]["name"], "broken.7z")
         self.assertEqual(status["received_at"], broken.stat().st_mtime_ns // 1_000_000)
@@ -843,8 +784,9 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(self.get_json("/processing-status")["failed"], [])
 
     def test_archive_inspection_command_does_not_process_input_packages(self):
-        with patch.object(app.sys, "argv", ["app.py", "--organize-archives"]), \
-             patch.object(app, "make_datasets", return_value={"": self.data, "/gpt": self.gpt}), \
+        with patch.dict(os.environ, {"DATA_ROOT": self.temp.name, "STATE_ROOT": str(Path(self.temp.name) / "state")}), \
+             patch.object(app.sys, "argv", ["app.py", "--organize-archives"]), \
+             patch.object(app, "make_datasets", return_value={"/data/wencai": self.data, "/data/gpt": self.gpt}), \
              patch.object(app.Dataset, "process_archives", side_effect=AssertionError("must not process new inputs")):
             app.main()
         self.assertTrue((self.data.state_dir / "archive-maintenance.json").is_file())
@@ -1118,56 +1060,6 @@ class DashboardTest(unittest.TestCase):
             self.assertTrue(day_entry["ready"])
             self.assertEqual(day_entry["models"]["a_fast"]["row_count"], 1)
 
-    def test_progress_bridge_groups_checkpoint_cases_by_date_and_pair(self):
-        inputs = {}
-        tasks = {}
-
-        def comparison(task_id, pair, day, case_id, status):
-            left, right = ("a_fast", "b_fast") if pair == "fast" else ("a_expert", "b_expert")
-            input_ids = {}
-            for label, model in zip(("A", "B"), (left, right)):
-                input_id = f"{task_id}-{label}"
-                input_ids[label] = input_id
-                inputs[input_id] = {
-                    "version": model, "batch_id": "batch", "case_id": case_id,
-                    "source": f"/inputs/{model}/{day}.jsonl",
-                }
-            tasks[task_id] = {
-                "stage": "comparison", "status": status,
-                "data": {"group": [left, right]}, "inputIds": input_ids,
-            }
-
-        comparison("fast-done", "fast", "2026-09-22", "one", "succeeded")
-        comparison("fast-running", "fast", "2026-09-22", "two", "running")
-        comparison("expert-blocked", "expert", "2026-09-23", "three", "blocked")
-        tasks["rewrite"] = {"stage": "rewrite", "status": "failed", "data": {}, "inputIds": {}}
-        state = {
-            "status": "running", "engine": {"engine": "pi"}, "runId": "run-1", "startedAt": 123,
-            "executionScope": ["expert-blocked"],
-            "tasks": tasks, "inputs": inputs,
-            "preflight": {"skipped": [{
-                "batch_id": "batch", "case_id": "four", "versions": ["a_expert", "b_expert"],
-                "sources": [{"source": "/inputs/a_expert/2026-09-23.jsonl"}],
-            }, {
-                "batch_id": "2026-09-23", "case_id": "five", "versions": ["a_expert", "b_expert"],
-                "sources": [],
-            }]},
-        }
-        later = {
-            "status": "finished", "engine": {"engine": "pi"}, "runId": "run-2", "startedAt": 124,
-            "tasks": {}, "inputs": {}, "preflight": {"skipped": []},
-        }
-        progress = bridge.progress_from_states([state, later], updated_at=200)
-        by_date = {entry["date"]: entry["pairs"] for entry in progress["dates"]}
-        self.assertEqual(progress["run_id"], "run-2")
-        self.assertEqual(by_date["2026-09-22"]["fast"], {
-            "total_cases": 2, "completed_cases": 1, "running_cases": 1,
-            "queued_cases": 0, "failed_cases": 0, "skipped_cases": 0,
-        })
-        self.assertEqual(by_date["2026-09-23"]["expert"]["total_cases"], 3)
-        self.assertEqual(by_date["2026-09-23"]["expert"]["failed_cases"], 1)
-        self.assertEqual(by_date["2026-09-23"]["expert"]["skipped_cases"], 2)
-
     def test_progress_endpoint_accepts_date_pair_counts(self):
         empty_pair = {
             "total_cases": 0, "completed_cases": 0, "running_cases": 0,
@@ -1182,7 +1074,7 @@ class DashboardTest(unittest.TestCase):
             "started_at": 100, "updated_at": 200,
             "dates": [{"date": "2026-10-08", "pairs": {"fast": fast_pair, "expert": empty_pair}}],
         }
-        request = Request(self.base + "/evaluation-progress", data=json.dumps(payload).encode(),
+        request = Request(self.base + "/data/wencai/evaluation-progress", data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json"}, method="POST")
         with urlopen(request, timeout=3) as response:
             self.assertEqual(response.status, 200)

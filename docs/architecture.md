@@ -10,6 +10,8 @@
 flowchart LR
   CLI[CLI / 看板] --> Host[通用 Host]
   Automation[自动化] --> Host
+Workbench[工作台 supervisor / 网关] --> Automation
+Workbench --> DataService[Python 数据服务]
   Eris[Eris 专业任务] --> Host
   Definitions[Agent / Workflow] --> Host
   Validation[稳定性 Workflow] --> Host
@@ -36,7 +38,7 @@ Worker 清理会话和工作区后报告终态；Host 收齐记录和所需产�
 
 ## HTTP 协议
 
-内部路由统一 `/api`，无协议版本和远程鉴权。启动核对底座身份、构建 UUID 与工具能力；模型凭据仅传环境变量名。畸形 URL、JSON 和处理异常由 HTTP 边界返回错误。
+Worker 与 Host 内部路由统一 `/api`，无协议版本。启动核对底座身份、构建 UUID 与工具能力；模型凭据仅传环境变量名。畸形 URL、JSON 和处理异常由 HTTP 边界返回错误。
 
 | 服务 | 路由与用途 |
 |---|---|
@@ -53,7 +55,9 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 显式提示词缓存仅在渠道声明 `supports_explicit_prompt_caching=true` 时启用，适用于支持的 GPT Responses 评测请求；其他请求保留 SDK 策略。它不复用判词或跨任务会话，实际收益以服务返回用量核对。实现与测试见 [sdk-utils.ts](../packages/runtime/src/sdk-utils.ts)。
 
-本机看板的 `/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
+工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化看板 `4174` 和运行实例看板 `4173` 只监听回环地址。外部 `/data/*` 原样转发到数据服务，`/runtime/*` 组合自动化与运行实例页面/API。旧一级路径不代理。
+
+工作台在网关层完成单管理员登录、会话 Cookie 与 relay Bearer token 校验；页面和 API 不自建账号体系。运行实例页的 `/runtime/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
 
 ## 接口和底座路由
 

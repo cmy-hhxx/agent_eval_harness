@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <title>问题库 · 评测工作台</title>
-  <link rel="stylesheet" href="/dashboard.css" />
-  <link rel="stylesheet" href="/problems.css" />
+  <link rel="stylesheet" href="/runtime/run-assets/dashboard.css" />
+  <link rel="stylesheet" href="/runtime/run-assets/problems.css" />
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="工作台导航">
-      <nav class="workspace-nav" aria-label="工作台导航"><a href="/">运行工作台</a><a href="/reference">数据与流程</a><a href="/problems" aria-current="page">问题库</a></nav>
+      <nav class="workspace-nav" aria-label="工作台导航"><a href="/">工作台</a><a href="/runtime/">运行时</a><a href="/runtime/runs/">运行实例</a><a href="/runtime/reference">数据与流程</a><a href="/runtime/problems" aria-current="page">问题库</a><a href="/data/">数据</a><a href="/logout">退出</a></nav>
     </aside>
     <main class="main-content problems-page" aria-label="问题库">
       <div class="problem-page-actions"><span id="problem-updated" class="problem-updated"></span><button id="problem-refresh" class="button problem-refresh" type="button"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M16 7a6.5 6.5 0 1 0 .3 5M16 7V3m0 4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>刷新</button></div>
@@ -29,6 +29,6 @@
       </section>
     </main>
   </div>
-  <script type="module" src="/problems.js"></script>
+  <script type="module" src="/runtime/run-assets/problems.js"></script>
 </body>
 </html>

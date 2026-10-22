@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <title>评测工作台</title>
-    <link rel="stylesheet" href="/dashboard.css" />
+    <link rel="stylesheet" href="/runtime/run-assets/dashboard.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="运行导航">
-        <nav class="workspace-nav" aria-label="工作台导航"><a href="/" aria-current="page">运行工作台</a><a href="/reference">数据与流程</a><a href="/problems">问题库</a></nav>
+        <nav class="workspace-nav" aria-label="工作台导航"><a href="/">工作台</a><a href="/runtime/">运行时</a><a href="/runtime/runs/" aria-current="page">运行实例</a><a href="/runtime/reference">数据与流程</a><a href="/runtime/problems">问题库</a><a href="/data/">数据</a><a href="/logout">退出</a></nav>
         <div class="sidebar-heading"><h2>运行</h2><button id="refresh-button" class="button button-quiet" type="button">刷新</button></div>
         <div id="run-list" class="run-list" aria-live="polite"><span class="loading" role="status" aria-label="正在读取运行"><span class="spinner" aria-hidden="true"></span></span></div>
       </aside>
@@ -76,7 +76,7 @@
             <summary>聚类详情</summary>
             <div id="clustering-tasks"></div>
           </details>
-          <a class="library-workspace-link" href="/problems">问题库 <span aria-hidden="true">↗</span></a>
+          <a class="library-workspace-link" href="/runtime/problems">问题库 <span aria-hidden="true">↗</span></a>
         </section>
 
         <section class="explorer" id="explorer" hidden>
@@ -102,6 +102,6 @@
         <div class="dialog-actions"><button id="delete-cancel" class="button" type="button">取消</button><button id="delete-confirm" class="button button-danger" type="submit">删除运行</button></div>
       </form>
     </dialog>
-    <script type="module" src="/dashboard.js"></script>
+    <script type="module" src="/runtime/run-assets/dashboard.js"></script>
   </body>
 </html>

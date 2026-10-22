@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { syncMongoInputFile } from "../../../apps/host/src/automation-input-publication.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationMongoTarget, createAutomationMongoLane } from "../../../apps/host/src/automation-sources.js";
+import { loadConfig } from "../../../apps/host/src/config.js";
+import { testSettings } from "../../fixtures/settings.js";
 
 async function inputConfig(directory: string) {
   const config = await loadAutomationConfig("configs/automations-post-training.json");
@@ -26,6 +28,7 @@ test("complete input files upload in bounded batches with output interleaving an
   rows.push({ ...rows[0] });
   await writeFile(file, rows.map(row => JSON.stringify(row)).join("\n"));
   const config = await inputConfig(directory);
+  const host = await loadConfig(config.hostConfigs, testSettings());
   const lane = createAutomationMongoLane(), published: string[] = [], order: string[] = [];
   let output: Promise<void> | undefined;
   const result = await syncMongoInputFile(config, date, "a_fast", file, t.signal, lane, async (settings, batch, inputs, results) => {
@@ -44,7 +47,7 @@ test("complete input files upload in bounded batches with output interleaving an
       output = lane(async () => { order.push("output"); }, t.signal, JSON.stringify([automationMongoTarget(config), date]));
     }
     return { inputs: records.length, comparisons: 0, inserted: records.length, updated: 0 };
-  });
+  }, host);
   await output;
   assert.equal(result.rows, 36); assert.equal(result.quarantined, 2);
   assert.equal(result.counts.inputs, 34); assert.equal(new Set(published).size, 34);
@@ -59,9 +62,10 @@ test("malformed complete input files perform no Mongo writes", async t => {
   const file = path.join(incoming, "a_fast.jsonl");
   await writeFile(file, '{"case_id":"ok","messages":[{}]}\n{"broken":');
   const config = await inputConfig(directory);
+  const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
   await assert.rejects(syncMongoInputFile(config, "2026-10-19", "a_fast", file, t.signal, createAutomationMongoLane(),
-    async () => { writes++; return { inputs: 0, comparisons: 0, inserted: 0, updated: 0 }; }), SyntaxError);
+    async () => { writes++; return { inputs: 0, comparisons: 0, inserted: 0, updated: 0 }; }, host), SyntaxError);
   assert.equal(writes, 0);
 });
 
@@ -78,6 +82,7 @@ test("input publication supplements info by case identity without replacing sour
     case_id: caseId, meta: { task: "manual", usage: { total: 42 } }, messages: [{ role: "assistant", content: "answer" }],
   }) + "\n");
   const config = await inputConfig(directory);
+  const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
   const result = await syncMongoInputFile(config, "2026-10-19", "a_fast", file, t.signal, createAutomationMongoLane(),
     async (_settings, _date, inputs) => {
@@ -86,7 +91,7 @@ test("input publication supplements info by case identity without replacing sour
         writes++;
       }
       return { inputs: writes, comparisons: 0, inserted: writes, updated: 0 };
-    });
+    }, host);
   assert.equal(result.counts.inputs, 1);
 });
 
@@ -98,6 +103,7 @@ test("an input refresh sends corrected bodies and metadata for existing identiti
     messages: [{ role: "assistant", content: "corrected answer" }], meta: { info: { task: "updated label" } } }));
   await writeFile(file, rows.map(row => JSON.stringify(row)).join("\n"));
   const config = await inputConfig(directory);
+  const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
   const uploaded: string[] = [];
   const result = await syncMongoInputFile(config, date, "a_fast", file, t.signal, createAutomationMongoLane(),
@@ -111,7 +117,7 @@ test("an input refresh sends corrected bodies and metadata for existing identiti
         assert.deepEqual(input.trace.meta, rows[0].meta);
       }
       return { inputs: count, comparisons: 0, inserted: 0, updated: count };
-    });
+    }, host);
   assert.equal(writes, 3);
   assert.deepEqual(uploaded, rows.map(row => row.case_id));
   assert.deepEqual(result.counts, { inputs: 35, comparisons: 0, inserted: 0, updated: 35 });

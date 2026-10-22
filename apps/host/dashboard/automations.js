@@ -38,14 +38,14 @@ function renderSources() {
       link.innerHTML = "<strong></strong><span></span>";
       nav.append(link);
     }
-    link.href = `/?source=${encodeURIComponent(source.id)}`;
+    link.href = `/runtime/?source=${encodeURIComponent(source.id)}`;
     link.querySelector("strong").textContent = source.name;
     link.querySelector("span").textContent = `${source.status === "running" && !source.dateCount ? "等待数据" : labels[source.status] ?? source.status} · ${number(source.dateCount)} 个日期`;
     if (source.id === data.id) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
   for (const link of [...nav.children]) if (!data.sources.some(source => source.id === link.dataset.source)) link.remove();
-  $("errors-link").href = `/errors?source=${encodeURIComponent(data.id)}`;
+  $("errors-link").href = `/runtime/errors?source=${encodeURIComponent(data.id)}`;
 }
 
 function renderLlm() {
@@ -187,11 +187,13 @@ function renderFlow() {
   const pendingOutputs = data.jobs.reduce((total, job) => total + Math.max(0, (job.summary?.readyComparisons ?? 0) - (confirmedMongo(job)?.counts.comparisons ?? 0)), 0);
   $("lane-mongo").textContent = stopped || (uploading ? `${uploading.date} · 上传中` : data.jobs.some(job => job.mongo?.status === "retry") ? "等待重试" : "等待增量交付");
   $("lane-mongo-queue").textContent = unconfirmed.length ? `${number(unconfirmed.length)} 日期未登记` : `待传输出 ${number(pendingOutputs)} 条`;
-  const publication = data.publication;
-  $("lane-log").textContent = !data.publishStatisticsLog ? "已关闭" : stopped || (publication?.status === "running" ? "落盘 / 上传中" : publication?.status === "uncertain" ? "待核实回执" :
-    publication?.status === "retry" ? "等待重试" : publication?.nextAt ? `下次 ${time(publication.nextAt)}` : "等待调度");
-  const receipts = [...(data.publicationHistory ?? []), ...(publication ? [publication] : [])]
-    .map(item => item.log?.uploadedAt ?? item.log?.confirmedAt).filter(Boolean);
+  const statistics = data.statistics, deliveries = data.statisticsDeliveries ?? [];
+  const pendingDeliveries = deliveries.filter(item => item.status !== "uploaded");
+  $("lane-log").textContent = !data.publishStatisticsLog ? "已关闭" : stopped ||
+    (pendingDeliveries.some(item => item.status === "uncertain") ? "待核实回执" :
+      pendingDeliveries.some(item => item.status === "sending") ? "relay 上传中" :
+        pendingDeliveries.length ? `待上传 ${number(pendingDeliveries.length)} 条` : statistics?.nextAt ? `下次 ${time(statistics.nextAt)}` : "等待调度");
+  const receipts = deliveries.map(item => item.uploadedAt).filter(Boolean);
   $("lane-log-receipt").textContent = receipts.length ? `最近确认 ${time(Math.max(...receipts))}` : "无上传回执";
 }
 function downloadState(job) {
@@ -275,16 +277,15 @@ function render() {
     <td class="volume-cell"><div class="volume"><strong>${number(hour.completed)}</strong><span class="volume-track" aria-hidden="true"><span style="width:${hour.completed / maximum * 100}%"></span></span></div></td>
     ${stages.map((name) => `<td>${number(hour.stages[name])}</td>`).join("")}</tr>`).join("") || empty(6, "此时段暂无完成记录");
 
-  const deliveries = data.publishStatisticsLog ? [...(data.publicationHistory ?? []), ...(data.publication?.traceId ? [data.publication] : [])] : [];
-  const visible = deliveries.filter((delivery) => Math.max(delivery.startedAt ?? 0, delivery.completedAt ?? 0, delivery.log?.uploadedAt ?? 0, delivery.log?.confirmedAt ?? 0, delivery.window ?? 0) >= cutoff || ["running", "retry", "uncertain"].includes(delivery.status)).sort((a, b) => (b.window ?? 0) - (a.window ?? 0));
-  $("delivery-total").textContent = data.publishStatisticsLog ? `${number(visible.length)} 次日志交付` : "统计日志已关闭";
+  const statisticsDeliveries = data.publishStatisticsLog ? data.statisticsDeliveries ?? [] : [];
+  const visible = statisticsDeliveries.filter(delivery => Math.max(delivery.writtenAt ?? 0, delivery.updatedAt ?? 0, delivery.uploadedAt ?? 0) >= cutoff ||
+    ["pending", "sending", "uncertain"].includes(delivery.status)).sort((a, b) => b.writtenAt - a.writtenAt);
+  $("delivery-total").textContent = data.publishStatisticsLog ? `${number(visible.length)} 条统计记录` : "统计日志已关闭";
   $("delivery-rows").innerHTML = pageRows("delivery", visible).map((delivery) => {
-    const log = delivery.log, counts = delivery.counts;
-    return `<tr><td>全看板${sub(time(delivery.window))}</td>
-      <td>${status(delivery.status)}${delivery.status === "retry" ? retrySchedule(delivery.nextAt) : ""}${errorDetails(delivery.error, `log:${delivery.traceId}`, "日志交付错误")}</td>
-      <td>${counts ? `${number(counts.cases)} / ${number(counts.comparisons)}` : "—"}</td>
-      <td>${time(log?.writtenAt)}</td>
-      <td>${log ? status(log.status) : "—"}${log?.uploadedAt ? sub(time(log.uploadedAt)) : log?.confirmedAt ? sub(`人工确认 ${time(log.confirmedAt)}`) : log?.startedAt ? sub(`尝试 ${time(log.startedAt)}`) : ""}${log?.requestId ? sub(log.requestId, "receipt") : ""}</td></tr>`;
+    return `<tr><td><code title="${escape(delivery.traceId)}">${escape(delivery.traceId)}</code></td>
+      <td>${status(delivery.status)}${delivery.attempts ? sub(`尝试 ${number(delivery.attempts)} 次`) : ""}</td>
+      <td>${errorDetails(delivery.lastError, `log:${delivery.traceId}`, "日志交付错误") || "—"}</td><td>${time(delivery.writtenAt)}</td>
+      <td>${time(delivery.updatedAt)}${delivery.requestId ? sub(delivery.requestId, "receipt") : ""}</td></tr>`;
   }).join("") || empty(5, data.publishStatisticsLog ? "此时段暂无日志记录" : "统计日志已关闭");
 
   const mongo = jobs.flatMap((job) => [
@@ -338,7 +339,7 @@ async function refresh() {
     const source = new URL(location.href).searchParams.get("source");
     if (source) query.set("source", source);
     const revision = allocationRevision;
-    const response = await fetch("/api/status?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+    const response = await fetch("/runtime/api/status?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`读取状态失败（HTTP ${response.status}）`);
     const next = await response.json();
     if (revision !== allocationRevision && data) next.llm = data.llm;
@@ -377,7 +378,7 @@ $("llm-allocations").addEventListener("submit", async event => {
   $("llm-error").hidden = true;
   renderLlm();
   try {
-    const response = await fetch("/api/llm-concurrency", {
+    const response = await fetch("/runtime/api/llm-concurrency", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ sourceId, concurrency }), signal: AbortSignal.timeout(15000),
     });

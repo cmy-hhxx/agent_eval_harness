@@ -14,8 +14,9 @@ const MODEL_LABELS = {
   ifind_deep_research: "ifind Expert",
 };
 const PAGE_SIZE = 20;
-const DATASET = location.pathname.split("/")[1];
-const BASE_PATH = ["gpt", "post_training_model", "aime", "ifind"].includes(DATASET) ? `/${DATASET}` : "";
+const PATH_PARTS = location.pathname.split("/").filter(Boolean);
+const DATASET = PATH_PARTS[1] || "wencai";
+const BASE_PATH = `/data/${DATASET}`;
 const params = new URLSearchParams(location.search);
 const date = params.get("date") || "";
 const model = params.get("model") || "";

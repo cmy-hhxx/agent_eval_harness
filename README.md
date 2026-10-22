@@ -4,7 +4,43 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
-## 最短运行路径
+## 远程工作台
+
+生产入口只有 `workbench.sh`。服务器代码与运行数据分离：
+
+- checkout：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code`
+- 持久目录：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime`
+- 数据源：`/mnt/fin_bench/eval_data`
+- 内部监听：工作台 `5001`；数据服务 `127.0.0.1:8081`；自动化看板 `127.0.0.1:4174`；运行实例看板 `127.0.0.1:4173`
+- 外部映射：`http://117.50.195.94:3309/`
+- 页面：`/` 工作台首页，`/data/` 数据处理与样本，`/runtime/` 自动化与评测运行
+
+首次部署由本地一次性执行：
+
+```bash
+WORKBENCH_ADMIN_PASSWORD='<管理员密码>' npm run deploy:workbench
+```
+
+部署脚本从现有 Git origin 建立 checkout，安装仓库锁定的工具链，并在 checkout 外创建不覆盖已有文件的运行配置。之后日常只需要：
+
+```bash
+ssh <eval_data_server>
+cd /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code
+tmux new -s workbench
+bash workbench.sh
+```
+
+`workbench.sh` 不执行 `git pull`，不每次重装依赖，不 daemonize。首次缺少依赖或构建产物时执行 bootstrap/build；后续只构建过期产物。实例锁阻止重复启动，子服务异常按退避重启，配置错误、端口冲突或连续崩溃会停止整套服务。
+
+服务器侧统计记录由每四小时任务生成并追加到 `runtime/log/comparison-statistics-log.jsonl`。本地只运行轻量 relay，不下载输入、运行状态或评测正文：
+
+```bash
+export WORKBENCH_SERVER_URL=http://117.50.195.94:3309
+export WORKBENCH_RELAY_TOKEN='<工作台 relay token>'
+npm run report:relay -- --once
+```
+
+## 本地开发
 
 ```bash
 mise trust
@@ -17,30 +53,31 @@ npm run build
 npm run doctor
 ```
 
-在 `config.ini` 填写渠道地址与密钥，在 `configs/local/models.json` 填写网关模型 ID，然后运行：
+在 `config.ini` 填写渠道地址与密钥，在 `configs/local/models.json` 填写网关模型 ID。底层 CLI 继续供开发和测试使用：
 
 ```bash
 npm run eval -- preflight
-npm run eval -- run --engine pi --run-id pi-001 \
-  --config configs/host.json --config configs/local/models.json
+npm run automations -- check
+npm run automations -- run --once
 ```
 
-结果写入 `data/runs/comparison/pi-001/`；同一 `run-id` 续跑未完成任务，保留已接受结果。新日期或重评使用新 ID。
+容器、来源清单与恢复语义见[自动化](docs/automations.md)。工作台部署与故障排查见[远程部署](docs/deployment.md)。
 
 ## 按任务阅读
 
 | 任务 | 文档 |
 |---|---|
 | 配置、输入、运行、恢复、产物 | [使用指南](docs/usage.md) |
+| 远程工作台部署与运行 | [部署](docs/deployment.md) |
+| 持续取数、评测、MongoDB 与统计 relay | [自动化](docs/automations.md) |
 | 输入、阶段结果、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) · [字段用途](docs/schema-fields.md) |
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |
-| 本机界面规则 | [PRODUCT.md](PRODUCT.md) |
-| 持续取数、评测与交付 | [自动化](docs/automations.md) · [远程接口](docs/handoff.md) |
-| 同花顺远程输入数据看板 | [服务源码与部署](server_dashboard_ths/README.md) |
+| 界面规则 | [PRODUCT.md](PRODUCT.md) |
+| 同花顺数据服务 | [服务源码](server_dashboard_ths/README.md) |
 | Eris 对话、数据与工具 | [Agent 说明](agent/README.md) |
 | 离线汇报与历史快照 | [汇报模块](evaluation-report/README.md) |
 
-配置完成后，`bash run.sh` 启动评测看板，`bash agent/run.sh` 启动 Eris，`bash automation.sh` 启动自动化流水线与监控。各入口的运行条件见对应指南。
+本地开发仍可使用 `npm run eval -- dashboard` 和 `bash agent/run.sh`。

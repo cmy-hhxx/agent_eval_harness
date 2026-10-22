@@ -28,6 +28,7 @@ const config = await loadConfig(sources, configuration);
 const automation = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
 const data = new LocalAnalysisData(config.evaluation.output.path, {
   stateFile: path.join(automation.stateDirectory, "state.json"), logFile: automation.publication.logFile,
+  deliveryFile: path.join(ROOT, "data/automations/statistics-delivery.json"),
 });
 logger.addSecrets(...configurationSecrets());
 const { model, gateways } = assistantModelConfiguration(createModelResolver(config.models)("attribution"), configuration);

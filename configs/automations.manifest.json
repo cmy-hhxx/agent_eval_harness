@@ -1,0 +1,8 @@
+{
+  "sources": [
+    {
+      "name": "普通四路",
+      "config": "automations.json"
+    }
+  ]
+}

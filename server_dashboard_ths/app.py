@@ -8,6 +8,7 @@ import fcntl
 import math
 import os
 import re
+import signal
 import sqlite3
 import sys
 import tempfile
@@ -26,8 +27,6 @@ sys.path.insert(0, str(CODE_DIR / ".packages"))
 
 from py7zr import SevenZipFile  # noqa: E402
 
-ROOT = Path(os.environ.get("DATA_ROOT", "/mnt/fin_bench/A_AA_comparision_data"))
-PORT = int(os.environ.get("PORT", "8081"))
 POLL_SECONDS = 5
 STABLE_SECONDS = 30
 ARCHIVE_PART_FILES = 50
@@ -394,24 +393,26 @@ def visible_record(row: dict[str, object]) -> dict[str, object]:
 
 
 class Dataset:
-    def __init__(self, root: Path, state_dir: Path, models: tuple[str, ...], prefix: str = ""):
+    def __init__(self, root: Path, state_dir: Path, models: tuple[str, ...], kind: str = "", *,
+                 url_prefix: str | None = None, archive_dir: Path | None = None, output_dir: Path | None = None):
         self.root = root
-        self.archive_dir = root
-        self.archived_dir = root / "3_processed_archives"
-        self.output_dir = root / "2_eval_data_input"
+        self.archive_dir = archive_dir or root
+        self.archived_dir = self.archive_dir / "3_processed_archives"
+        self.output_dir = output_dir or root / "2_eval_data_input"
         self.state_dir = state_dir
         self.progress_file = state_dir / "evaluation-progress.json"
         self.root_archive_state_file = state_dir / "root-archives.json"
         self.progress_lock = threading.Lock()
         self.models = models
-        self.prefix = prefix
+        self.kind = kind
+        self.url_prefix = url_prefix if url_prefix is not None else ("" if not kind else "/" + kind)
         self.archive_part_files = ARCHIVE_PART_FILES
         self.daily_archive_check = False
         self.independent = False
         self.pairs = ({"fast": ("a_fast", "b_fast"), "expert": ("a_expert", "b_expert")}
-                      if not prefix else {
+                      if not kind else {
                           "__vs__".join(sorted((left, right))): (left, right)
-                          for group in ((POST_TRAINING_MODELS,) if prefix == "/post_training_model" else
+                          for group in ((POST_TRAINING_MODELS,) if kind == "post_training_model" else
                                         (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol")))
                           for index, left in enumerate(group) for right in group[index + 1:]
                       })
@@ -738,7 +739,9 @@ class Dataset:
         path = self.archive_dir / str(info["name"])
         records: dict[RecordKey, IncomingRecord] = {}
         skipped = Counter()
-        with tempfile.TemporaryDirectory(prefix="extract-", dir=CODE_DIR) as name:
+        temporary_root = Path(os.environ.get("TEMP_ROOT", tempfile.gettempdir()))
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="extract-", dir=temporary_root) as name:
             folder = Path(name)
             try:
                 with SevenZipFile(path, mode="r") as archive:
@@ -763,7 +766,8 @@ class Dataset:
                                 skipped[(model, "invalid_json")] += 1
                                 continue
                             try:
-                                day, row = normalize_row(value, model, path.name, member, number, testset_dates=self.prefix in ("/gpt", "/post_training_model"))
+                                day, row = normalize_row(value, model, path.name, member, number,
+                                                         testset_dates=self.kind in ("gpt", "post_training_model"))
                             except InvalidRecord as exc:
                                 skipped[(model, exc.reason)] += 1
                                 continue
@@ -787,7 +791,7 @@ class Dataset:
                 if state is None:
                     if self.ready_path(day).exists() or any((self.output_dir / model / f"{day}.jsonl").exists() for model in self.models):
                         raise ValueError(f"cannot merge incomplete published day: {day}")
-                    initial_models = self.models if not self.prefix else ()
+                    initial_models = self.models if not self.kind else ()
                     state = {"source": "root_archives", "rows": dict.fromkeys(initial_models, 0), "files": {}}
                     affected.update((day, model) for model in initial_models)
                 if state["source"] != "root_archives":
@@ -994,9 +998,7 @@ class Handler(BaseHTTPRequestHandler):
     def dataset_path(self) -> tuple[Dataset | None, str]:
         path = urlsplit(self.path).path
         datasets = cast(DashboardServer, self.server).datasets
-        for prefix in datasets:
-            if not prefix:
-                continue
+        for prefix in sorted(datasets, key=len, reverse=True):
             if path == prefix:
                 self.send_response(308)
                 self.send_header("Location", prefix + "/")
@@ -1004,7 +1006,8 @@ class Handler(BaseHTTPRequestHandler):
                 return None, path
             if path.startswith(prefix + "/"):
                 return datasets[prefix], path[len(prefix):]
-        return datasets[""], path
+        self.send_json(404, {"error": "not found"})
+        return None, path
 
     def send_json(self, status: int, value: object) -> None:
         body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -1047,7 +1050,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if path in static_files:
             filename, content_type = static_files[path]
-            self.send_static(CODE_DIR / filename, content_type, dataset.prefix)
+            self.send_static(CODE_DIR / filename, content_type, dataset.url_prefix)
             return
         if path == "/health":
             self.send_json(200, {"ok": True})
@@ -1211,7 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
                 seen_dates.add(day)
                 continue
             valid_pairs = (isinstance(pairs, dict) and
-                           (set(pairs) == set(dataset.pairs) if not dataset.prefix else set(pairs) <= set(dataset.pairs)))
+                           (set(pairs) == set(dataset.pairs) if not dataset.kind else set(pairs) <= set(dataset.pairs)))
             if not valid_day or day in seen_dates or not valid_pairs:
                 self.send_json(400, {"error": "invalid date or comparison pairs"})
                 return
@@ -1251,47 +1254,52 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"saved": True})
 
     def log_message(self, format: str, *args) -> None:
-        print(f"http {self.address_string()} {format % args}", flush=True)
+        return
 
 
-def make_datasets(root: Path = ROOT, state_dir: Path = CODE_DIR / "state", multi_root: Path | None = None) -> dict[str, Dataset]:
+def make_datasets(root: Path, state_root: Path) -> dict[str, Dataset]:
+    wencai = root / "0_wencai"
     datasets = {
-        "": Dataset(root, state_dir, ROOT_MODELS),
-        "/gpt": Dataset(root / "gpt", state_dir / "gpt", MODELS, "/gpt"),
-        "/post_training_model": Dataset(root / "post_training_model", state_dir / "post_training_model",
-                                        POST_TRAINING_MODELS, "/post_training_model"),
+        "/data/wencai": Dataset(wencai, state_root / "wencai", ROOT_MODELS,
+                                archive_dir=wencai / "1_7z_adta", output_dir=wencai / "2_daily_eval_input", url_prefix="/data/wencai"),
     }
-    if multi_root is not None:
-        from multi_agent_inputs import AgentDataset, SOURCES
-        datasets.update({"/" + provider: AgentDataset(multi_root, provider) for provider in SOURCES})
+    from multi_agent_inputs import AgentDataset, SOURCES
+    datasets.update({"/data/" + provider: AgentDataset(root, state_root, provider, "/data/" + provider) for provider in SOURCES})
     return datasets
 
 
 def main() -> None:
-    multi_default = Path(os.environ["DATA_ROOT"]) / "multi_agent_eval" if "DATA_ROOT" in os.environ else Path("/mnt/fin_bench/multi_agent_eval")
-    datasets = make_datasets(multi_root=Path(os.environ.get("MULTI_AGENT_ROOT", str(multi_default))))
+    if "DATA_ROOT" not in os.environ or "STATE_ROOT" not in os.environ:
+        raise SystemExit("DATA_ROOT and STATE_ROOT are required")
+    root, state_root = Path(os.environ["DATA_ROOT"]), Path(os.environ["STATE_ROOT"])
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8081"))
+    datasets = make_datasets(root, state_root)
     if sys.argv[1:] == ["--organize-archives"]:
         for dataset in datasets.values():
             dataset.state_dir.mkdir(parents=True, exist_ok=True)
             dataset.organize_archives()
         return
     if len(sys.argv) == 3 and sys.argv[1] == "--register-local-import":
-        datasets[""].state_dir.mkdir(parents=True, exist_ok=True)
-        datasets[""].register_local_import(sys.argv[2])
+        datasets["/data/wencai"].state_dir.mkdir(parents=True, exist_ok=True)
+        datasets["/data/wencai"].register_local_import(sys.argv[2])
         return
     if len(sys.argv) != 1:
         raise SystemExit("usage: app.py [--register-local-import YYYY-MM-DD | --organize-archives]")
-    server = DashboardServer(("0.0.0.0", PORT), datasets)
+    server = DashboardServer((host, port), datasets)
     for dataset in datasets.values():
         dataset.archive_dir.mkdir(parents=True, exist_ok=True)
         dataset.state_dir.mkdir(parents=True, exist_ok=True)
-        if dataset.prefix:
-            for model in dataset.models:
-                (dataset.output_dir / model).mkdir(parents=True, exist_ok=True)
+        for model in dataset.models:
+            (dataset.output_dir / model).mkdir(parents=True, exist_ok=True)
         print(f"watching {dataset.archive_dir}/*.7z; output: {dataset.output_dir}; state: {dataset.state_dir}", flush=True)
-        threading.Thread(target=dataset.processing_loop, name=f"archive-processor{dataset.prefix or '-root'}", daemon=True).start()
-    print(f"serving on 0.0.0.0:{PORT}; data root: {ROOT}", flush=True)
+        threading.Thread(target=dataset.processing_loop, name=f"archive-processor{dataset.url_prefix}", daemon=True).start()
+    print(f"serving on {host}:{port}; data root: {root}", flush=True)
+    def stop(_signal: int, _frame: object) -> None:
+        threading.Thread(target=server.shutdown, name="dashboard-shutdown", daemon=True).start()
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     server.serve_forever()
+    server.server_close()
 
 
 if __name__ == "__main__":

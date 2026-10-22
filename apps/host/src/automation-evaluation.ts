@@ -435,7 +435,8 @@ export function remoteDateProgress(date: string, runs: Checkpoint[], limit: numb
 }
 
 export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], dates: ReturnType<typeof remoteDateProgress>[]) {
-  const namedPairs = ["/gpt", "/post_training_model"].includes(new URL(state.sourceUrl).pathname.replace(/\/+$/, ""));
+  const sourcePath = new URL(state.sourceUrl).pathname.replace(/\/+$/, "");
+  const namedPairs = ["/data/gpt", "/data/post_training_model"].includes(sourcePath);
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||
     ["pending", "evaluating", "retry"].includes(job.evaluation));
   return {

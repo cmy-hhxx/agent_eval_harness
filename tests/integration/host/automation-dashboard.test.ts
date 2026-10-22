@@ -1,11 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, chmod, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { emptyUsage, type RunState } from "@eval/contracts";
 import { fileSourceReader, runLock, writeJson } from "@eval/data";
 import type { AutomationJob, AutomationState } from "@eval/automations";
@@ -29,7 +27,7 @@ const state = (): AutomationState => ({ id: "fixture", sourceUrl: "http://fixtur
 const scheduling = (ids = ["fixture"]) => createAutomationLlm(ids,
   { sources: Object.fromEntries(ids.map(id => [id, { concurrency: 32 }])) }, async () => {});
 const dashboard = () => ({ ...state(), sourceName: "fixture", publishStatisticsLog: true,
-  llm: scheduling().snapshot(),
+  llm: scheduling().snapshot(), statistics: { attempts: 0, nextAt: at + hour }, statisticsDeliveries: [],
   sources: [{ id: "fixture", name: "fixture", status: "stopped", dateCount: 0 }] });
 const job = (date: string): AutomationJob => ({ date, runIds: ["fixture"], observed: { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 },
   adopted: false, download: "ready", evaluation: "completed", checkedAt: at, downloadAttempts: 0,
@@ -99,7 +97,7 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     assert.equal(first.jobs[0].summary!.stages.rewrite.completed, plan.tasks.filter((task) => task.stage === "rewrite" && (task.data as { rewriteOf: { stage: string } }).rewriteOf.stage !== "clustering").length);
     assert.equal(first.jobs[0].summary!.stages.clustering, undefined);
     assert.equal(current.jobs["2026-09-30"].summary, undefined, "read-only projection cannot mutate scheduler state");
-    const source = { config: automation, output: directory, state: () => current, settings, monitor };
+    const source = { name: "普通四路", config: automation, output: directory, state: () => current, settings, monitor };
     const server = await startAutomationDashboard({ sources: () => [source], llm: scheduling(), port: 0 });
     try {
       const response = await fetch(server.url + "/api/status");
@@ -182,11 +180,12 @@ test("one dashboard isolates source snapshots, publication settings and error lo
   const directory = await mkdtemp(path.join(tmpdir(), "automation-dashboard-sources-"));
   const template = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
   const ids = ["remote-evaluation", "remote-six-model-evaluation", "remote-post-training-evaluation", "prediction-evaluation"];
+  const names = ["普通四路", "GPT 六路", "后训练三路", "预测类自动评测"];
   const calls = ids.map(() => 0), date = "2026-10-16", runtimeLogFile = path.join(directory, "runtime.log");
   const sources: AutomationDashboardSource[] = ids.map((id, index) => {
     const current: AutomationState = { ...state(), id, jobs: index < 2 ? { [date]: { ...job(date), runIds: [], evaluation: "pending" } } : {} };
     const monitor = createAutomationMonitor(directory, 300);
-    return { config: { ...template, id, publishStatisticsLog: index === 0,
+    return { name: names[index], config: { ...template, id, publishStatisticsLog: index === 0,
       publication: { ...template.publication, mongoCollection: `collection-${index}` } },
       output: directory, settings, state: () => current,
       monitor: async job => { calls[index]++; return monitor(job); } };
@@ -204,7 +203,7 @@ test("one dashboard isolates source snapshots, publication settings and error lo
     const [four, gpt, post, prediction] = await Promise.all(ids.map(id => get(`/api/status?source=${id}`)));
     assert.deepEqual([four.id, gpt.id, post.id, prediction.id], ids);
     assert.deepEqual(four.sources.map((source: any) => [source.name, source.dateCount]),
-      [["普通四路", 1], ["GPT 六路", 1], ["后训练三路", 0], ["预测类自动评测", 0]]);
+      names.map((name, index) => [name, index < 2 ? 1 : 0]));
     assert.deepEqual([four.publishStatisticsLog, gpt.publishStatisticsLog, post.publishStatisticsLog, prediction.publishStatisticsLog], [true, false, false, false]);
     assert.deepEqual([four.mongoCollection, gpt.mongoCollection], ["collection-0", "collection-1"]);
     assert.deepEqual(post.jobs, []);
@@ -253,7 +252,7 @@ test("LLM allocations preserve drafts, control each source and show actual provi
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async (url: string, options: RequestInit) => {
     if (offline) throw new Error("offline");
-    if (url === "/api/llm-concurrency") {
+    if (url === "/runtime/api/llm-concurrency") {
       assert.equal(options.method, "POST");
       const { sourceId, concurrency } = JSON.parse(String(options.body));
       writes.push([sourceId, concurrency]);
@@ -293,11 +292,12 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
-  const payload = { ...dashboard(), execution: execution(), publication: {
-      status: "completed", traceId: "trace", window: at, startedAt: at, completedAt: at + 5000,
-      counts: { cases: 4, comparisons: 4 },
-      log: { status: "uploaded", writtenAt: at + 3000, uploadedAt: at + 5000, requestId: "receipt<one>" },
-    }, sampledAt: at + hour, logFile: "/fixture/statistics.jsonl", mongoCollection: "fixture_collection", jobs: [
+  const payload = { ...dashboard(), execution: execution(), statisticsDeliveries: [{
+      traceId: "trace", automationId: "fixture", status: "uploaded", writtenAt: at + 3000, updatedAt: at + 5000,
+      uploadedAt: at + 5000, requestId: "receipt<one>", attempts: 1, logFile: "/fixture/statistics.jsonl",
+      logUrl: "http://fixture/upload", record: { logtime: "2026-09-30 09:00:03.000", data: { totalCaseCount: 4,
+        progress: { completedBattleCount: 4 } } },
+    }], sampledAt: at + hour, logFile: "/fixture/statistics.jsonl", mongoCollection: "fixture_collection", jobs: [
     { ...job("2026-09-30"), hours: [{ start: at, completed: 4, stages: { rewrite: 12 } }], mongo: { status: "completed", startedAt: at, completedAt: at + 2000,
       counts: { inputs: 8, comparisons: 4, inserted: 12, updated: 0 } },
       mongoHistory: [{ startedAt: at - 1000, completedAt: at - 500, counts: { inputs: 8, comparisons: 0, inserted: 8, updated: 0 } }],
@@ -383,7 +383,7 @@ test("monitor identifies its source and retains all dates across pagination, fil
     const payload = { ...dashboard(), ...source, sourceName: source.name, execution: execution(), sampledAt: at,
       sources: sources.map(source => ({ id: source.id, name: source.name, status: "running", dateCount: source.dates.length })),
       publishStatisticsLog: source === sources[0],
-      publication: { status: "pending", traceId: "old-pending", window: at },
+      statistics: { attempts: 0, nextAt: at + hour }, statisticsDeliveries: [],
       jobs: source.dates.map(date => ({ ...job(date), hours: [] })) };
     let poll = async () => {};
     dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
@@ -523,9 +523,11 @@ test("monitor paginates each record list, preserves pages during polling and res
     hours: [{ start: at - index * hour, completed: 1, stages: { comparison: 1 } }],
     mongoHistory: index ? [] : Array.from({ length: 25 }, (_, i) => ({ startedAt: at - i * 1000,
       completedAt: at - i * 1000 + 50, counts: { inputs: 25 - i, comparisons: 25 - i, inserted: 1, updated: 0 } })),
-  })), publicationHistory: Array.from({ length: 23 }, (_, index) => ({
-    traceId: `trace-${index}`, status: "completed", window: at - index * 1000,
-    log: { status: "uploaded", requestId: `receipt-${index}`, uploadedAt: at - index * 1000 },
+  })), statisticsDeliveries: Array.from({ length: 23 }, (_, index) => ({
+    traceId: `trace-${index}`, automationId: "fixture", status: "uploaded", writtenAt: at - index * 1000,
+    updatedAt: at - index * 1000, requestId: `receipt-${index}`, uploadedAt: at - index * 1000,
+    attempts: 1, logFile: "/fixture/statistics.jsonl", logUrl: "http://fixture/upload",
+    record: { logtime: "2026-09-30 09:00:00.000", data: { totalCaseCount: 1, progress: { completedBattleCount: 1 } } },
   })) };
   let poll = async () => {};
   dom.window.setTimeout = (callback: () => Promise<void>) => { poll = callback; return 1; };
@@ -634,7 +636,10 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
       summary: { stages: { attribution: { failed: 3 } } }, downloadError: "network", nextDownloadAt: at + 60_000,
       mongo: { status: "retry", nextAt: at + 120_000, startedAt: at, error: "network" } },
     { ...job("2026-09-28"), evaluation: "blocked", hours: [], summary: { stages: { attribution: { failed: 99 } } } },
-  ], publication: { status: "retry", traceId: "log-retry", nextAt: at + 180_000, window: at } };
+  ], statistics: { attempts: 1, nextAt: at + 180_000, error: "relay pending" },
+    statisticsDeliveries: [{ traceId: "log-retry", automationId: "fixture", status: "pending", writtenAt: at,
+      updatedAt: at, attempts: 1, logFile: "/fixture/statistics.jsonl", logUrl: "http://fixture/upload",
+      record: { logtime: "2026-09-30 09:00:00.000", data: { totalCaseCount: 1, progress: { completedBattleCount: 1 } } } }] };
   let now = at, failed = false, tick = () => {}, poll = async () => {};
   dom.window.Date.now = () => now;
   dom.window.setInterval = (callback: () => void) => { tick = callback; return 1; };
@@ -651,7 +656,7 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
     assert.equal(text("lane-evaluation"), "2026-09-30 · 评测中");
     assert.equal(text("lane-evaluation-queue"), "可执行 12 · 等依赖 7");
     assert.equal(text("lane-mongo"), "等待重试");
-    assert.equal(text("lane-log"), "等待重试");
+    assert.equal(text("lane-log"), "待上传 1 条");
     assert.match(doc.querySelector(".task-pool").textContent, /待执行 12.*待重试 2/);
     assert.match(text("live-stages"), /^2 题 · 标准 0 · 归因 2 · 对比 1 · 改写 2$/);
     assert.equal(text("retry-count"), "5 任务 · 2 日期");
@@ -659,7 +664,8 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
     assert.equal(text("next-retry"), "45 秒后");
     assert.match(text("date-rows"), /连续失败 2 轮/);
     assert.match(text("mongo-progress-rows"), /2 分 0 秒后/);
-    assert.match(text("delivery-rows"), /3 分 0 秒后/);
+    assert.match(text("delivery-rows"), /log-retry/);
+    assert.match(text("delivery-rows"), /等待中/);
     now += 10_000; tick(); assert.equal(text("next-retry"), "35 秒后");
     doc.getElementById("date-filter").value = "2026-09-28";
     doc.getElementById("date-filter").dispatchEvent(new dom.window.Event("change"));
@@ -676,25 +682,9 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
   } finally { dom.window.close(); }
 });
 
-test("root launcher prepares then execs one dashboard pipeline; preparation failure never starts it", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "automation-launcher-"));
-  try {
-    await writeFile(path.join(directory, "automation.sh"), await readFile(path.join(ROOT, "automation.sh")));
-    const bin = path.join(directory, "bin"); await mkdir(bin);
-    const trace = path.join(directory, "trace");
-    const mock = '#!/bin/bash\nprintf "%s\\n" "$*" >> "$AUTOMATION_TEST_TRACE"\nif [[ "$*" == *scripts/build.mjs* && "$AUTOMATION_TEST_FAIL" == 1 ]]; then exit 9; fi\n';
-    for (const name of ["node", "npm"]) { await writeFile(path.join(bin, name), mock); await chmod(path.join(bin, name), 0o755); }
-    const env = { ...process.env, PATH: bin + ":" + process.env.PATH, AUTOMATION_TEST_TRACE: trace };
-    const exec = promisify(execFile);
-    await exec("bash", [path.join(directory, "automation.sh"), "--help"], { cwd: tmpdir(), env });
-    await assert.rejects(readFile(trace), /ENOENT/);
-    await exec("bash", [path.join(directory, "automation.sh"), "--port", "4199", "--config", "settings with spaces.json"], { cwd: tmpdir(), env });
-    const commands = (await readFile(trace, "utf8")).trim().split("\n");
-    assert(commands.includes("scripts/bootstrap.mjs"));
-    assert(commands.includes("scripts/build.mjs"));
-    assert.match(commands.at(-1)!, /automations.js run --dashboard --port 4199 --config settings with spaces.json$/);
-    await writeFile(trace, "");
-    await assert.rejects(exec("bash", [path.join(directory, "automation.sh")], { env: { ...env, AUTOMATION_TEST_FAIL: "1" } }));
-    assert.doesNotMatch(await readFile(trace, "utf8"), /automations.js/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+test("workbench is the only production launcher", async () => {
+  const script = await readFile(path.join(ROOT, "workbench.sh"), "utf8");
+  assert.match(script, /dist\/apps\/host\/src\/workbench\.js/);
+  assert.match(script, /npm run bootstrap/);
+  assert.match(script, /npm run build:app/);
 });

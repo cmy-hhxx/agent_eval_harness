@@ -1,6 +1,6 @@
 {
   "id": "remote-post-training-evaluation",
-  "sourceUrl": "http://117.50.195.94:2256/post_training_model",
+  "sourceUrl": "http://127.0.0.1:8081/data/post_training_model",
   "remoteModels": [
     "a_fast",
     "b_fast",

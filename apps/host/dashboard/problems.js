@@ -11,6 +11,7 @@ const classKey = (id) => `class:${id}`;
 const componentKey = (id) => `component:${id}`;
 const classMatches = (problem, query) => !query || `${problem.label} ${problem.definition} ${problem.aliases.join(" ")} ${(problem.category_paths || []).map(path => path.join(" / ")).join(" ")}`.toLocaleLowerCase().includes(query);
 const componentMatches = (component, query) => query && `${component.label} ${component.definition} ${component.aliases.join(" ")}`.toLocaleLowerCase().includes(query);
+const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
 
 /** Read-only browser for the current input models' shared problem libraries. */
 export function createProblemBrowser(document, request = globalThis.fetch) {
@@ -18,7 +19,7 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
   const state = { models: null, model: null, classId: null, detail: null, search: "", expanded: new Set(), modelExpanded: true, focusKey: "model", remembered: new Map(), listRequest: 0, detailRequest: 0 };
   const currentModel = () => state.models?.find((model) => model.model === state.model);
   const query = () => state.search.trim().toLocaleLowerCase();
-  const classUrl = (model, id, page) => `/api/dashboard/library/${encodeURIComponent(model)}/classes/${encodeURIComponent(id)}?page=${page}`;
+  const classUrl = (model, id, page) => `${API_ROOT}/library/${encodeURIComponent(model)}/classes/${encodeURIComponent(id)}?page=${page}`;
   async function get(url) {
     const response = await request(url, { signal: AbortSignal.timeout(60000) });
     const data = await response.json();
@@ -142,7 +143,7 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
     $("#problem-refresh").disabled = true;
     $("#problem-error").hidden = true;
     try {
-      const models = await get("/api/dashboard/library");
+      const models = await get(`${API_ROOT}/library`);
       if (token !== state.listRequest) return;
       state.models = models;
       const initial = new URLSearchParams(document.defaultView?.location?.search || "").get("model");

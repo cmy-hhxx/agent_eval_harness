@@ -8,24 +8,26 @@ import { automationDateSelected, runPipeline, nextPublicationAt, type Automation
 import { syncRemoteInputs } from "./automation-download.js";
 import { syncMongoInputFile } from "./automation-input-publication.js";
 import { createMongoResultPublisher } from "./automation-result-publication.js";
-import { publishSnapshot, syncMongoDay } from "./automation-publication.js";
+import { generateStatisticsSnapshot, syncMongoDay } from "./automation-publication.js";
 import { startAutomationDashboard, type AutomationDashboardSource } from "./automation-dashboard.js";
 import { automationEvaluationConfig, loadAutomationConfig, type AutomationConfig } from "./automation-config.js";
 import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
 import { createAutomationMonitor } from "./automation-monitor.js";
 import { loadConfig } from "./config.js";
 import { createAutomationModels } from "./automation-models.js";
-import { automationConfigFiles, automationMongoTarget, createAutomationMongoLane, validateAutomationTasks } from "./automation-sources.js";
+import { automationMongoTarget, automationSourceFiles, createAutomationMongoLane, validateAutomationTasks } from "./automation-sources.js";
 import { automationLlm } from "./automation-llm.js";
 import { logger } from "./composition.js";
 import { discoverPrediction, predictionOrigin, predictionRemoteDay, syncPrediction } from "./automation-prediction.js";
 import { ROOT } from "./paths.js";
+import { StatisticsDeliveryStore } from "./statistics-delivery.js";
 
 function automationArguments(args: string[]) {
   return parseArgs({ args, allowPositionals: true, options: {
     config: { type: "string", multiple: true },
+    manifest: { type: "string" }, "config-dir": { type: "string" },
     date: { type: "string" }, once: { type: "boolean" }, help: { type: "boolean" },
-    outcome: { type: "string" }, "request-id": { type: "string" },
+    outcome: { type: "string" }, "request-id": { type: "string" }, "trace-id": { type: "string" },
     dashboard: { type: "boolean" }, port: { type: "string", default: "4174" },
   } });
 }
@@ -34,9 +36,9 @@ export async function automationCommand(args: string[]): Promise<void> {
   const { positionals, values } = automationArguments(args);
   const command = positionals[0];
   if (values.help || !command) {
-    console.log(`automations run|check|status|retry|publish-log|resolve-log [--config FILE]
-run: 默认只启动日常四路；看板按来源分配 LLM 并发，0 暂停新模型请求，非 LLM 工作继续；--config 可重复指定来源；--dashboard 在 --port（默认 4174）提供统一看板；--once 每个来源只发现一轮并执行每个日期一次
-publish-log: 停止流水线后立即生成并上传一条全看板累计日志，不调用模型
+    console.log(`automations run|check|status|retry|publish-log|resolve-log [--manifest FILE] [--config-dir DIR] [--config FILE]
+run: 来源由 manifest 登记；看板按来源分配 LLM 并发，0 暂停新模型请求，非 LLM 工作继续；--config 可重复指定来源用于开发；--dashboard 在 --port（默认 4174）提供统一运行时看板；--once 每个来源只发现一轮并执行每个日期一次
+publish-log: 停止流水线后立即生成并追加一条全看板累计日志，不调用模型、不直接上传
 check: 只读检查远端与历史 run，不下载、不调用模型
 status: 输出流水线状态、每阶段数量、错误和下次重试时间
 retry --date YYYY-MM-DD: 停止流水线后解除该日期的重试限制和 Host 阶段暂停
@@ -50,15 +52,20 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid dashboard port");
   if (values.date && command !== "retry") throw new Error("--date only applies to retry");
-  if ((values.outcome || values["request-id"]) && command !== "resolve-log") throw new Error("Log resolution flags only apply to resolve-log");
-  const files = automationConfigFiles(command, values.config);
-  const configs = await Promise.all(files.map(loadAutomationConfig));
+  if ((values.outcome || values["request-id"] || values["trace-id"]) && command !== "resolve-log") throw new Error("Log resolution flags only apply to resolve-log");
+  if (values.manifest && values.config?.length) throw new Error("--manifest and --config cannot be combined");
+  const files = await automationSourceFiles({ command, configured: values.config,
+    manifestFile: values.manifest, configDirectory: values["config-dir"] });
+  const configs = await Promise.all(files.map(source => loadAutomationConfig(source.file)));
   validateAutomationTasks(configs);
   const controller = new AbortController(), interrupt = () => controller.abort(new Error("Automation stopped"));
-  const schedulingFile = path.join(ROOT, "data/automations/scheduling.json");
+  const schedulingFile = path.resolve(process.env.EVAL_AUTOMATION_SCHEDULING_FILE || path.join(ROOT, "data/automations/scheduling.json"));
+  const statisticsStore = new StatisticsDeliveryStore(path.resolve(process.env.EVAL_STATISTICS_DELIVERY_FILE ||
+    path.join(ROOT, "data/automations/statistics-delivery.json")));
+  const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : files[index].name]));
   const llm = command === "run" ? await automationLlm(schedulingFile, Object.fromEntries(await Promise.all(configs.map(async config =>
     [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const)))) : undefined;
-  const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(),
+  const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(), sourceNames, statisticsStore,
     exhaustedChannels: new Set<string>(), dashboards: new Map<string, AutomationDashboardSource>() };
   if (command !== "run") {
     for (const config of configs) await executeAutomationCommand(command, values, config, scope);
@@ -68,7 +75,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
     if (values.dashboard) {
-      dashboard = await startAutomationDashboard({ port, llm: llm!,
+      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore,
         sources: () => scope.dashboards.size === configs.length ? configs.map(config => scope.dashboards.get(config.id)!) : [] });
       console.log(`自动化看板：${dashboard.url}`);
     }
@@ -88,7 +95,8 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
 async function executeAutomationCommand(
   command: string, values: ReturnType<typeof automationArguments>["values"], config: AutomationConfig,
   scope: { signal: AbortSignal; llm: Awaited<ReturnType<typeof automationLlm>> | undefined;
-    mongo: ReturnType<typeof createAutomationMongoLane>; exhaustedChannels: Set<string>; dashboards: Map<string, AutomationDashboardSource> },
+    mongo: ReturnType<typeof createAutomationMongoLane>; exhaustedChannels: Set<string>; dashboards: Map<string, AutomationDashboardSource>;
+    sourceNames: Map<string, string>; statisticsStore: StatisticsDeliveryStore },
 ): Promise<number | void> {
   const file = path.join(config.stateDirectory, "state.json");
   if (["publish-log", "resolve-log"].includes(command) && !config.publishStatisticsLog)
@@ -139,46 +147,24 @@ async function executeAutomationCommand(
     if (state.id !== config.id || state.sourceUrl !== config.sourceUrl || !state.jobs || Array.isArray(state.jobs))
       throw new Error("Automation state does not match this source/id");
     if (command === "resolve-log") {
-      const delivery = state.publication;
-      if (!delivery || !["uncertain", "sending"].includes(delivery.log?.status ?? "")) throw new Error("No uncertain dashboard log");
+      if (!values["trace-id"]) throw new Error("resolve-log requires --trace-id");
       if (values.outcome === "written") {
         if (!values["request-id"]) throw new Error("--outcome written requires the verified --request-id");
-        delivery.log = { ...delivery.log, status: "uploaded", requestId: values["request-id"], confirmedAt: Date.now() };
-      } else if (values.outcome === "retry") delivery.log = { ...delivery.log, status: "pending" };
+        await scope.statisticsStore.resolve(values["trace-id"], { outcome: "written", requestId: values["request-id"] });
+      } else if (values.outcome === "retry") await scope.statisticsStore.resolve(values["trace-id"], { outcome: "retry" });
       else throw new Error("--outcome must be written or retry");
-      delivery.status = "retry"; delivery.nextAt = 0;
-      delete delivery.error;
-      state.updatedAt = Date.now();
-      await writeJson(file, state);
       await logger.event("log_resolved", { component: "automations", automation_id: config.id, outcome: values.outcome });
-      console.log("日志状态已更新，下次 automations run 继续处理。");
+      console.log("统计日志交付状态已更新。");
       return;
     }
     if (command === "publish-log") {
-      if (state.publication && ["running", "uncertain"].includes(state.publication.status))
-        throw new Error("Resolve the outstanding dashboard log before publishing another snapshot");
-      const now = Date.now();
-      if (state.publication?.status === "completed" || !state.publication?.traceId) {
-        if (state.publication?.traceId) (state.publicationHistory ??= []).push(structuredClone(state.publication));
-        state.publication = { status: "pending", attempts: 0, nextAt: nextPublicationAt(now), window: now,
-          traceId: `comparison-snapshot-${config.id}-${now}`, startedAt: now };
-      }
-      state.publication.status = "running";
-      state.publication.attempts++;
-      delete state.publication.error;
-      const save = async () => { state.updatedAt = Date.now(); await writeJson(file, state); };
-      await save();
-      try {
-        await publishSnapshot(config, state, save, scope.signal);
-        state.publication.status = "completed"; state.publication.completedAt = Date.now(); state.publication.attempts = 0;
-        state.publication.nextAt = nextPublicationAt(Date.now());
-      } catch (error) {
-        state.publication.status = state.publication.log?.status === "sending" ? "uncertain" : "retry";
-        state.publication.error = errorText(error);
-        if (state.publication.log?.status === "sending") state.publication.log.status = "uncertain";
-        throw error;
-      } finally { await save(); }
-      console.log(JSON.stringify(state.publication));
+      const generated = await generateStatisticsSnapshot(config, state, scope.statisticsStore, scope.signal);
+      state.statistics = { nextAt: nextPublicationAt(generated.generatedAt),
+        attempts: 0, lastWindow: Math.floor(generated.generatedAt / (4 * 60 * 60_000)) * 4 * 60 * 60_000,
+        lastTraceId: generated.traceId, generatedAt: generated.generatedAt };
+      state.updatedAt = Date.now();
+      await writeJson(file, state);
+      console.log(JSON.stringify(generated));
       return;
     }
     if (command === "retry") {
@@ -197,7 +183,7 @@ async function executeAutomationCommand(
     releaseSources = await runLock(config.sourceDirectory);
     const monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier);
     if (values.dashboard) {
-      scope.dashboards.set(config.id, { config, output, state: () => state, monitor,
+      scope.dashboards.set(config.id, { name: scope.sourceNames.get(config.id) ?? config.id, config, output, state: () => state, monitor,
         settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
     }
     const resultPublisher = createMongoResultPublisher(config, error =>
@@ -249,7 +235,7 @@ async function executeAutomationCommand(
         }
         return syncRemoteInputs(remote!, path.join(config.sourceDirectory, day.date), output, job, day, signal, beforeReplace,
           process.env[config.publication.mongoUriEnv] ? async (file, model) => {
-            const receipt = await syncMongoInputFile(config, day.date, model, file, signal, scope.mongo);
+            const receipt = await syncMongoInputFile(config, day.date, model, file, signal, scope.mongo, undefined, host);
             await writeJson(path.join(config.stateDirectory, "input-publications", day.date, model + ".json"), {
               at: new Date().toISOString(), ...receipt,
             });
@@ -261,7 +247,8 @@ async function executeAutomationCommand(
           Math.max(1, Object.values(state.jobs).filter(job => job.evaluation === "evaluating").length)),
         acquire: (context, signal) => scope.llm!.acquire(config.id, job.date, context, signal),
       }), observe,
-      publish: config.publishStatisticsLog ? (current, save, signal) => publishSnapshot(config, current, save, signal) : undefined,
+      publish: config.publishStatisticsLog ? (current, _save, signal) =>
+        generateStatisticsSnapshot(config, current, scope.statisticsStore, signal) : undefined,
       syncMongo: (job, signal) => scope.mongo(() => syncMongoDay(config, job, signal), signal, JSON.stringify([mongoDestination, job.date])),
     }, scope.signal);
     await resultPublisher.settled();
@@ -271,7 +258,7 @@ async function executeAutomationCommand(
       await logger.error(error, { component: "automations", event: "progress_failed" });
     }
     await writeJson(file, state);
-    return scope.signal.aborted ? 130 : state.pollError || config.publishStatisticsLog && ["retry", "uncertain"].includes(state.publication?.status ?? "") || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
+    return scope.signal.aborted ? 130 : state.pollError || config.publishStatisticsLog && Boolean(state.statistics?.error) || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
       job.download !== "ready" || ["retry", "blocked", "pending"].includes(job.evaluation) ||
       job.mongo?.status === "retry") ? 2 : 0;
   } finally {

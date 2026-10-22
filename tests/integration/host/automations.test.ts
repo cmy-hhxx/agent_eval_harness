@@ -44,7 +44,7 @@ test("six-model automation configuration validates remote identities and reserve
   const { directory, config } = await fixtureConfig();
   try {
     const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations-six-models.example.json"));
-    assert.equal(new URL(settings.sourceUrl).pathname, "/gpt");
+    assert.equal(new URL(settings.sourceUrl).pathname, "/data/gpt");
     assert(settings.fromDate <= "2026-10-16", "GPT date range must include the available batch");
     assert.equal(settings.runPrefix, "daily-six-");
     assert.equal(settings.sourceDirectory, path.join(ROOT, "data/sources/automations/remote-six-model-evaluation"));
@@ -1189,7 +1189,7 @@ for (const postTraining of [false, true]) test(`${postTraining ? "post-training"
     inputs: Object.fromEntries(groups.flat().map(id => [id, { version: id, batch_id: date, case_id: "same-case" }])),
     preflight: { skipped: [], issues: [] },
   } as unknown as Checkpoint;
-  const state = { id: "six", sourceUrl: postTraining ? "http://test/post_training_model/" : "http://test/gpt/", status: "running", startedAt: 1,
+  const state = { id: "six", sourceUrl: postTraining ? "http://test/data/post_training_model/" : "http://test/data/gpt/", status: "running", startedAt: 1,
     jobs: { [date]: { date, evaluation: "done", download: "ready" } },
   } as unknown as AutomationState;
   const local = remoteDateProgress(date, [run], 300), before = structuredClone(local);

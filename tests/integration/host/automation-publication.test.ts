@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { MongoClient, type Document } from "mongodb";
 import { fileSourceReader, readJson, writeJson, writeJsonl } from "@eval/data";
@@ -9,12 +9,16 @@ import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type
 import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, bindTask, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
 import type { RewriteItem } from "@eval/agents/rewrite";
 import type { AutomationJob, AutomationState } from "@eval/automations";
-import { publicationSnapshot, publishSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
+import { generateStatisticsSnapshot, publicationSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
 import { syncMongoReadyResults } from "../../../apps/host/src/automation-result-publication.js";
 import { loadAutomationConfig, type AutomationConfig } from "../../../apps/host/src/automation-config.js";
-import { automationConfigFiles, automationMongoTarget } from "../../../apps/host/src/automation-sources.js";
+import { automationMongoTarget, automationSourceFiles } from "../../../apps/host/src/automation-sources.js";
+import { StatisticsDeliveryStore } from "../../../apps/host/src/statistics-delivery.js";
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, comparisonResult, emptyAudit, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
+
+const automationConfigFiles = async (command: string, configured: string[]) =>
+  (await automationSourceFiles({ command, configured })).map(source => source.file);
 
 test("comparison delivery waits for its rewrite, independently of attribution and clustering rewrites", async () => {
   const { directory, config } = await fixtureConfig(undefined, true, true);
@@ -199,8 +203,9 @@ test("completed file receipts avoid retransmitting inputs only while their sourc
 });
 
 test("daily and independent experiments sharing a collection keep answers, verdicts and statistics separate", async t => {
-  const configs = (await Promise.all(automationConfigFiles("run", ["automations.json", "automations-six-models.example.json", "automations-post-training.json"]
-    .map(file => path.join(ROOT, "configs", file))).map(loadAutomationConfig))).filter(config => !config.prediction);
+  const sourceFiles = await automationConfigFiles("run", ["automations.json", "automations-six-models.example.json", "automations-post-training.json"]
+    .map(file => path.join(ROOT, "configs", file)));
+  const configs = (await Promise.all(sourceFiles.map(loadAutomationConfig))).filter(config => !config.prediction);
   configs.push({ ...configs[2], id: "post-training-experiment-2" });
   const key = "TEST_TASK_MONGO_URI", previous = process.env[key];
   process.env[key] = "mongodb://mock";
@@ -902,18 +907,14 @@ test("latest Mongo difficulty replaces old labels across models without losing b
 });
 
 for (const file of ["automations-six-models.example.json", "automations-post-training.json"])
-test(`disabled statistics publication for ${file} never reads or uploads a pending or recovered log`, async () => {
+test(`disabled statistics publication for ${file} never reads or appends a snapshot`, async () => {
   const config = await loadAutomationConfig(path.join(ROOT, "configs", file));
   assert.equal(config.publishStatisticsLog, false);
-  for (const status of ["pending", "retry", "uncertain"] as const) {
-    const state = { publication: { status, traceId: "gpt-disabled", attempts: 1, nextAt: 0 } } as AutomationState;
-    const before = structuredClone(state);
-    await assert.rejects(publishSnapshot(config, state, async () => assert.fail("must not save"), AbortSignal.timeout(1000), {
-      snapshot: async () => assert.fail("must not read statistics"),
-      upload: async () => assert.fail("must not upload"),
-    }), /Statistics log publication is disabled/);
-    assert.deepEqual(state, before);
-  }
+  const state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} } as AutomationState;
+  const store = new StatisticsDeliveryStore(path.join(config.stateDirectory, "unused-delivery.json"));
+  await assert.rejects(generateStatisticsSnapshot(config, state, store, AbortSignal.timeout(1000), {
+    snapshot: async () => assert.fail("must not read statistics"),
+  }), /Statistics log publication is disabled/);
 });
 
 test("daily statistics use a paired request date or the batch date when all request timestamps are absent", () => {
@@ -982,77 +983,49 @@ test("statistics use installed inputs and accepted results while refreshed input
   }), /Statistics input snapshot is not ready/);
 });
 
-test("dashboard log snapshots use the complete inventory and resume without a duplicate line", async () => {
+test("dashboard statistics append once per window and register a pending relay delivery", async () => {
   const { directory } = await fixtureConfig();
   try {
     const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
     config.publishStatisticsLog = true;
     config.publication = { ...config.publication, logFile: path.join(directory, "statistics.jsonl"), mongoUriEnv: "PATH" };
-    const state = { publication: { traceId: "trace-window", status: "running", attempts: 1, nextAt: 0 } } as AutomationState;
-    let uploads = 0, persisted = "";
-    const dependencies: Parameters<typeof publishSnapshot>[4] = {
-      snapshot: async () => { const stats = new PublicationStatistics(configuredGroups); inputs.forEach(input => stats.addInput(input)); stats.addResult(result); return stats; },
-      upload: async (_url, record) => {
-        uploads++;
-        assert.equal(persisted, "sending");
-        assertStatisticsLog(record);
-        assert.equal((record.data as Record<string, any>).stats[0].both_good, 0);
-        assert.equal((record.data as Record<string, any>).stats[0].both_bad, 0);
-        assert.deepEqual(JSON.parse((await readFile(config.publication.logFile, "utf8")).trim()), record);
-        if (uploads === 1) throw new Error("response lost");
-        return "req-verified";
-      },
-    };
-    const save = async () => { persisted = state.publication!.log?.status ?? ""; };
-    await assert.rejects(publishSnapshot(config, state, save, AbortSignal.timeout(5000), dependencies), /response lost/);
-    assert.equal(state.publication!.log!.status, "sending");
-    await assert.rejects(publishSnapshot(config, state, save, AbortSignal.timeout(5000), dependencies), /manual receipt/);
-    assert.equal(uploads, 1);
-    // Operator has verified that the first POST was not written.
-    state.publication!.log = { ...state.publication!.log, status: "pending" };
-    await publishSnapshot(config, state, save, AbortSignal.timeout(5000), dependencies);
-    await publishSnapshot(config, state, save, AbortSignal.timeout(5000), dependencies);
-    assert.equal(uploads, 2);
-    const delivery = state.publication!;
-    assert.equal(delivery.log!.status, "uploaded");
-    assert.equal(delivery.log!.requestId, "req-verified");
-    assert.deepEqual(delivery.counts, { cases: 1, comparisons: 1 });
-    assert(delivery.log!.writtenAt! <= delivery.log!.startedAt!);
-    assert(delivery.log!.uploadedAt! >= delivery.log!.startedAt!);
-    assert.equal((await readFile(config.publication.logFile, "utf8")).trim().split("\n").length, 1);
+    const state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} } as AutomationState;
+    const store = new StatisticsDeliveryStore(path.join(directory, "delivery.json"));
+    const dependencies = { snapshot: async () => {
+      const stats = new PublicationStatistics(configuredGroups); inputs.forEach(input => stats.addInput(input)); stats.addResult(result); return stats;
+    } };
+    const first = await generateStatisticsSnapshot(config, state, store, AbortSignal.timeout(5000), dependencies);
+    const second = await generateStatisticsSnapshot(config, state, store, AbortSignal.timeout(5000), dependencies);
+    assert.equal(first.traceId, second.traceId);
+    const lines = (await readFile(config.publication.logFile, "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1);
+    const record = JSON.parse(lines[0]);
+    assertStatisticsLog(record);
+    const deliveries = await store.list([{ id: config.id, logFile: config.publication.logFile, logUrl: config.publication.logUrl }]);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].status, "pending");
+    assert.equal(deliveries[0].traceId, first.traceId);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("publication blocks structural drift before appending or uploading a recovered log", async () => {
+test("structural drift is rejected before a statistics record is appended", async () => {
   const { directory } = await fixtureConfig();
   try {
     const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
     config.publishStatisticsLog = true;
+    config.publication = { ...config.publication, logFile: path.join(directory, "invalid.jsonl"), mongoUriEnv: "PATH" };
+    const state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} } as AutomationState;
     const stats = new PublicationStatistics(configuredGroups);
-    inputs.forEach((row) => stats.addInput(row));
-    stats.addResult(result);
-    const record = stats.record("invalid", Date.now());
-    delete (record.data as Record<string, any>).requestDates[0].difficultyLevels;
-    stats.record = () => record;
-    for (const recovered of [false, true]) {
-      config.publication.logFile = path.join(directory, `${recovered}.jsonl`);
-      const line = JSON.stringify(record) + "\n";
-      if (recovered) await writeFile(config.publication.logFile, line);
-      const state = { publication: { traceId: "invalid", status: "running", attempts: 1, nextAt: 0 } } as AutomationState;
-      let saves = 0, snapshots = 0, uploads = 0;
-      await assert.rejects(publishSnapshot(config, state, async () => { saves++; }, AbortSignal.timeout(5000), {
-        snapshot: async () => { snapshots++; return stats; },
-        upload: async () => { uploads++; return "must-not-upload"; },
-      }), /frozen contract/);
-      assert.equal(uploads, 0);
-      assert.equal(saves, 0);
-      assert.equal(snapshots, recovered ? 0 : 1);
-      assert.equal(state.publication!.log, undefined);
-      if (recovered) assert.equal(await readFile(config.publication.logFile, "utf8"), line);
-      else await assert.rejects(readFile(config.publication.logFile), { code: "ENOENT" });
-    }
+    inputs.forEach(row => stats.addInput(row)); stats.addResult(result);
+    const invalid = stats.record("invalid", Date.now());
+    delete (invalid.data as Record<string, any>).requestDates[0].difficultyLevels;
+    stats.record = () => invalid;
+    await assert.rejects(generateStatisticsSnapshot(config, state,
+      new StatisticsDeliveryStore(path.join(directory, "delivery.json")), AbortSignal.timeout(5000),
+      { snapshot: async () => stats }), /frozen contract/);
+    await assert.rejects(readFile(config.publication.logFile), { code: "ENOENT" });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

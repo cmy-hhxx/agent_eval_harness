@@ -33,7 +33,9 @@ function suggestedRunId() {
   const now = new Date(), pad = (value) => String(value).padStart(2, "0");
   return `eval-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
-const urlFor = (id) => `/api/dashboard/runs/${encodeURIComponent(id)}`;
+const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
+const apiUrl = (path) => `${API_ROOT}${path}`;
+const urlFor = (id) => apiUrl(`/runs/${encodeURIComponent(id)}`);
 const loading = (label) => `<span class="loading" role="status" aria-label="${escapeHtml(label)}"><span class="spinner" aria-hidden="true"></span></span>`;
 
 async function api(url, options = {}) {
@@ -352,7 +354,7 @@ async function refresh(auto = false) {
   const request = ++state.runRequest;
   const wasRunning = state.run?.status === "running";
   try {
-    const { runs, errors } = await api("/api/dashboard/runs");
+    const { runs, errors } = await api(apiUrl("/runs"));
     if (request !== state.runRequest) return;
     state.runs = runs;
     const previousRun = state.selectedRun;
@@ -523,7 +525,7 @@ async function loadInputs() {
   clearTimeout(state.inputsTimer);
   if (!state.inputs) $("#date-options").innerHTML = loading("正在读取日期");
   try {
-    const inventory = await api("/api/dashboard/inputs");
+    const inventory = await api(apiUrl("/inputs"));
     state.inputs = inventory;
     $("#preview-button").disabled = inventory.status !== "ready";
     if (inventory.status === "loading") state.inputsTimer = setTimeout(() => void loadInputs(), 500);
@@ -542,7 +544,7 @@ async function loadInputs() {
 }
 async function loadConfig() {
   try {
-    state.config = await api("/api/dashboard/config");
+    state.config = await api(apiUrl("/config"));
     const known = new Set((state.config.settings?.models || []).map((model) => model.id));
     if (!state.modelsReady) {
       state.selectedModels = new Set(known);
@@ -657,7 +659,7 @@ async function preview() {
   status.className = "preview-result is-loading";
   status.innerHTML = loading("正在预检");
   try {
-    const value = await api("/api/dashboard/preview", { method: "POST", body: JSON.stringify(launchPayload()) });
+    const value = await api(apiUrl("/preview"), { method: "POST", body: JSON.stringify(launchPayload()) });
     if (state.sampleInfo !== sampleInfo) return;
     state.preview = value;
     state.rangeLocked = Boolean(value.resuming);
@@ -695,7 +697,7 @@ async function startRun() {
   $("#launch-button").disabled = true;
   $("#launch-button").textContent = "启动中…";
   try {
-    const value = await api("/api/dashboard/runs", { method: "POST", body: JSON.stringify(launchPayload()) });
+    const value = await api(apiUrl("/runs"), { method: "POST", body: JSON.stringify(launchPayload()) });
     state.startingRun = { id: value.run_id, deadline: Date.now() + 120000 };
     toast(`已提交运行 ${value.run_id}`);
     state.preview = null;

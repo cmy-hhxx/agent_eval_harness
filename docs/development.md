@@ -22,7 +22,7 @@
 | 安装、构建、依赖 | `node scripts/test-clean.mjs`；本机环境用 `npm run doctor` |
 | Eris 上游、浏览器、性能 | [Eris 验证](../agent/README.md#验证) |
 | 离线汇报 | [汇报验证](../evaluation-report/README.md#维护与构建) |
-| 远程输入数据看板 | [服务验证](../server_dashboard_ths/README.md#文件与依赖)，已接入 `npm test` 与 `test:full` |
+| 远程工作台 / 数据服务 | [部署](deployment.md)、[服务验证](../server_dashboard_ths/README.md#本地验证)，已接入 `npm test` 与 `test:full` |
 
 测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建；前两者限制测试文件并发，避免 Worker 子进程挤占时限。失败应定位原因，不自动重跑或延长时限。
 
@@ -38,7 +38,7 @@
 
 ## 构建与依赖
 
-安装和完整构建见 [README](../README.md#最短运行路径)。`build:pi` / `build:prime` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
+安装和完整构建见 [README](../README.md#本地开发)。`build:pi` / `build:prime` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
 
 根 workspace、两套 vendor workspace 和 Prime Python runtime 使用独立依赖树。公共代码工具用根 `.venv`。修改 vendor 必须登记 `local_changes` 并重建。
 

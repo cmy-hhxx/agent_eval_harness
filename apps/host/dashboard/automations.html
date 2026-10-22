@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>自动化评测</title>
-  <link rel="stylesheet" href="/dashboard.css">
-  <link rel="stylesheet" href="/automations.css">
-  <script src="/automations.js" defer></script>
+  <link rel="stylesheet" href="/runtime/automation-assets/dashboard.css">
+  <link rel="stylesheet" href="/runtime/automation-assets/automations.css">
+  <script src="/runtime/automation-assets/automations.js" defer></script>
 </head>
 <body class="automation-page">
   <main>
     <header class="page-header">
       <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status">连接中</span></div>
       <nav id="source-nav" class="source-nav" aria-label="数据来源"></nav>
-      <div class="monitor-actions"><a id="errors-link" class="button" href="/errors">错误日志</a><button id="refresh" class="button" type="button">刷新</button></div>
+      <div class="monitor-actions"><a class="button" href="/">工作台</a><a class="button" href="/runtime/runs/">运行实例</a><a class="button" href="/runtime/problems">问题库</a><a class="button" href="/runtime/reference">数据与流程</a><a id="errors-link" class="button" href="/runtime/errors">错误日志</a><a class="button" href="/logout">退出</a><button id="refresh" class="button" type="button">刷新</button></div>
     </header>
     <div id="llm-allocations" class="llm-allocations" aria-label="LLM 并发分配"></div>
     <div id="llm-error" class="error-banner" role="alert" hidden></div>
@@ -95,10 +95,10 @@
       <nav id="mongo-pagination" class="table-pagination" aria-label="MongoDB 同步记录分页" hidden></nav>
     </section>
     <section id="deliveries" role="tabpanel" aria-labelledby="tab-deliveries" tabindex="0" hidden>
-      <div class="section-heading"><h2 id="deliveries-title">每四小时日志</h2><span id="delivery-total" class="muted"></span></div>
-      <dl class="delivery-destinations"><div><dt>本地日志</dt><dd id="log-path">—</dd></div></dl>
+      <div class="section-heading"><h2 id="deliveries-title">统计日志交付</h2><span id="delivery-total" class="muted"></span></div>
+      <dl class="delivery-destinations"><div><dt>服务器日志</dt><dd id="log-path">—</dd></div><div><dt>本地 relay</dt><dd>仅上传统计记录</dd></div></dl>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日志交付记录">
-        <table class="data-table"><thead><tr><th scope="col">统计范围 / 日志周期</th><th scope="col">状态</th><th scope="col">题目 / 对比累计</th><th scope="col">日志落盘</th><th scope="col">线上日志</th></tr></thead><tbody id="delivery-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table"><thead><tr><th scope="col">Trace ID</th><th scope="col">上传状态</th><th scope="col">最后错误</th><th scope="col">日志落盘</th><th scope="col">最后更新 / 回执</th></tr></thead><tbody id="delivery-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="delivery-pagination" class="table-pagination" aria-label="日志交付记录分页" hidden></nav>
     </section>

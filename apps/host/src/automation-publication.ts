@@ -1,7 +1,8 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLog, writeJson } from "@eval/data";
-import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
+import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLogs, writeJson } from "@eval/data";
+import { publishMongo, readMongoLabels } from "@eval/runtime/client";
 import { PublicationStatistics, statisticsInput, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
@@ -10,6 +11,7 @@ import { loadConfig } from "./config.js";
 import { logger } from "./composition.js";
 import { automationMongoTarget } from "./automation-sources.js";
 import { predictionOrigin } from "./automation-prediction.js";
+import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-delivery.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
 export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, purpose: "publication" | "statistics" = "publication") {
@@ -275,40 +277,31 @@ export async function statisticsSnapshot(
   return statistics;
 }
 
-export async function publishSnapshot(
-  config: AutomationConfig, state: AutomationState, save: () => Promise<void>, signal: AbortSignal,
-  dependencies = { snapshot: statisticsSnapshot, upload: uploadStatisticsLog },
-): Promise<void> {
+export async function generateStatisticsSnapshot(
+  config: AutomationConfig, state: AutomationState, store: StatisticsDeliveryStore, signal: AbortSignal,
+  dependencies = { snapshot: statisticsSnapshot },
+): Promise<{ traceId: string; generatedAt: number }> {
   if (!config.publishStatisticsLog) throw new Error("Statistics log publication is disabled for this automation");
-  const delivery = state.publication!, settings = config.publication;
-  if (!delivery.traceId) throw new Error("Publication traceId missing");
-  if (delivery.log?.status === "uploaded") return;
-  if (delivery.log?.status === "sending" || delivery.log?.status === "uncertain") throw new Error("Log upload needs manual receipt resolution");
-  let record = await readStatisticsLog(settings.logFile, delivery.traceId);
-  if (!record) {
-    if (delivery.log) throw new Error("Persisted statistics record missing; refusing to regenerate an upload");
-    const statistics = await dependencies.snapshot(config, structuredClone(state), signal);
-    record = statistics.record(delivery.traceId, Date.now());
+  const settings = config.publication, generatedAt = Date.now();
+  const window = Math.floor(generatedAt / (4 * 60 * 60_000)) * 4 * 60 * 60_000;
+  const prefix = `comparison-snapshot-${config.id}-${window}-`;
+  const existing = (await readStatisticsLogs(settings.logFile).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [] as JsonObject[];
+    throw error;
+  })).filter(record => typeof record.traceId === "string" && record.traceId.startsWith(prefix));
+  if (existing.length > 1) throw new Error("Duplicate statistics snapshot for the current window: " + prefix);
+  if (existing[0]) {
+    const record = existing[0];
     assertStatisticsLog(record);
-    const data = object(record.data);
-    delivery.counts = { cases: Number(data.totalCaseCount), comparisons: Number(object(data.progress).completedBattleCount) };
-    if (Buffer.byteLength(JSON.stringify(record)) > 10 * 1024 * 1024) throw new Error("Statistics log exceeds the 10 MiB upload limit");
-    await save();
-    record = await appendStatisticsLog(settings.logFile, record);
-    delivery.log = { status: "pending", writtenAt: Date.now() };
+    await store.register(statisticsSource(config), record);
+    return { traceId: String(record.traceId), generatedAt: Date.parse(String(record.logtime).replace(" ", "T") + "+08:00") };
   }
-  // Validate recovered records too, before persisting an upload attempt or issuing the POST.
+  const statistics = await dependencies.snapshot(config, state, signal);
+  let record = statistics.record(prefix + randomUUID(), generatedAt);
   assertStatisticsLog(record);
-  // A recovered line retains its embedded log time if the process stopped before saving the append receipt.
-  delivery.log ??= { status: "pending", writtenAt: Date.parse(String(record.logtime).replace(" ", "T") + "+08:00") };
-  await save();
   if (Buffer.byteLength(JSON.stringify(record)) > 10 * 1024 * 1024) throw new Error("Statistics log exceeds the 10 MiB upload limit");
-  // Persist the attempt before the POST. An interrupted/ambiguous POST must never be sent twice automatically.
-  signal.throwIfAborted();
-  delivery.log.status = "sending";
-  delivery.log.startedAt = Date.now();
-  await save();
-  const requestId = await dependencies.upload(settings.logUrl, record as JsonObject, signal);
-  delivery.log = { ...delivery.log, status: "uploaded", requestId, uploadedAt: Date.now() };
-  await save();
+  record = await appendStatisticsLog(settings.logFile, record);
+  assertStatisticsLog(record);
+  await store.register(statisticsSource(config), record);
+  return { traceId: String(record.traceId), generatedAt };
 }

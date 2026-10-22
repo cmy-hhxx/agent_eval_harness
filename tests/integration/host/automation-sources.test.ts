@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { readJson, writeJson, hasLiveRunOwner } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import { runPipeline, type AutomationState, type EvaluationSummary } from "@eval/automations";
-import { automationConfigFiles, automationMongoTarget, createAutomationMongoLane, validateAutomationTasks } from "../../../apps/host/src/automation-sources.js";
+import { automationMongoTarget, automationSourceFiles, createAutomationMongoLane, validateAutomationTasks } from "../../../apps/host/src/automation-sources.js";
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationCommand } from "../../../apps/host/src/automation-command.js";
 import { fixtureConfig } from "../../fixtures/comparison.js";
@@ -13,27 +13,29 @@ import { ROOT } from "../../fixtures/services.js";
 
 const configuredSources = ["automations.json", "automations-six-models.example.json", "automations-post-training.json", "automations-prediction.json"]
   .map(file => path.join(ROOT, "configs", file));
+const configFiles = async (command: string, configured?: string[]) =>
+  (await automationSourceFiles({ command, configured })).map(source => source.file);
 
-test("automation defaults to daily only for evaluation and delivery", () => {
+test("automation defaults to the registered daily source", async () => {
   for (const command of ["run", "check", "status", "publish-log", "resolve-log", "retry"])
-    assert.deepEqual(automationConfigFiles(command), [configuredSources[0]]);
+    assert.deepEqual(await configFiles(command), [configuredSources[0]]);
 });
 
 test("explicit sources retain independent delivery and model allocation", async () => {
-  const files = automationConfigFiles("run", configuredSources);
-  assert.deepEqual(automationConfigFiles("check", configuredSources), files);
-  assert.deepEqual(automationConfigFiles("status", configuredSources), files);
+  const files = await configFiles("run", configuredSources);
+  assert.deepEqual(await configFiles("check", configuredSources), files);
+  assert.deepEqual(await configFiles("status", configuredSources), files);
   const [four, gpt, post, prediction] = await Promise.all(files.map(loadAutomationConfig));
   assert.deepEqual(four.remoteModels, ["a_fast", "b_fast", "a_expert", "b_expert"]);
-  assert.equal(new URL(four.sourceUrl).pathname, "/");
-  assert.equal(new URL(gpt.sourceUrl).pathname, "/gpt");
+  assert.equal(new URL(four.sourceUrl).pathname, "/data/wencai");
+  assert.equal(new URL(gpt.sourceUrl).pathname, "/data/gpt");
   assert.equal(gpt.remoteModels.length, 6);
   assert.equal(four.publishStatisticsLog, true);
   assert.equal(gpt.publishStatisticsLog, false);
   assert.notEqual(four.stateDirectory, gpt.stateDirectory);
   assert.notEqual(four.sourceDirectory, gpt.sourceDirectory);
   assert.notEqual(four.runPrefix, gpt.runPrefix);
-  assert.equal(new URL(post.sourceUrl).pathname, "/post_training_model");
+  assert.equal(new URL(post.sourceUrl).pathname, "/data/post_training_model");
   assert.deepEqual(post.remoteModels, ["a_fast", "b_fast", "b_post_train_fast"]);
   assert.equal(post.publishStatisticsLog, false);
   assert.equal(post.fromDate, "2026-10-19");
@@ -54,16 +56,16 @@ test("explicit sources retain independent delivery and model allocation", async 
     const budget = await readJson<{ execution: { concurrency: number } }>(config.hostConfigs.at(-1)!);
     assert.equal(budget.execution.concurrency, config === post ? 40 : 6);
   }
-  assert.deepEqual(automationConfigFiles("run", [files[1]]), [files[1]]);
-  assert.deepEqual(automationConfigFiles("publish-log"), [files[0]]);
-  assert.throws(() => automationConfigFiles("run", [files[0], files[0]]), /Duplicate/);
-  assert.throws(() => automationConfigFiles("retry", files), /one --config/);
+  assert.deepEqual(await configFiles("run", [files[1]]), [files[1]]);
+  assert.deepEqual(await configFiles("publish-log"), [files[0]]);
+  await assert.rejects(configFiles("run", [files[0], files[0]]), /Duplicate/);
+  await assert.rejects(configFiles("retry", files), /one --config/);
 });
 
 test("independent experiments may share a source and collection but cannot share checkpoints or runs", async t => {
   const { directory } = await fixtureConfig();
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const original = await loadAutomationConfig(automationConfigFiles("run", configuredSources)[2]);
+  const original = await loadAutomationConfig((await configFiles("run", configuredSources))[2]);
   const experiment = { ...original, id: "post-training-experiment-2", runPrefix: "experiment-2-", publishProgress: false,
     stateDirectory: path.join(directory, "state-2"), sourceDirectory: path.join(directory, "inputs-2") };
   validateAutomationTasks([original, experiment]);
@@ -80,7 +82,7 @@ test("independent experiments may share a source and collection but cannot share
 });
 
 test("sources with no LLM allocation still discover, download and deliver completed output", { timeout: 5000 }, async t => {
-  const configs = await Promise.all(automationConfigFiles("run", configuredSources).map(loadAutomationConfig));
+  const configs = await Promise.all((await configFiles("run", configuredSources)).map(loadAutomationConfig));
   const mongo = createAutomationMongoLane(), date = "2026-10-19";
   const downloaded: string[] = [], evaluated: string[] = [], delivered: string[] = [];
   let active = 0, peak = 0;
@@ -144,7 +146,7 @@ test("one automation command serves all sources on one dashboard and releases it
     const files: string[] = [], states: string[] = [];
     const models = path.join(directory, "models.json");
     await writeJson(models, { models: { judge: { model: "fixture" } } });
-    const remoteConfigs = (await Promise.all(automationConfigFiles("run", configuredSources).map(loadAutomationConfig))).filter(config => !config.prediction);
+    const remoteConfigs = (await Promise.all((await configFiles("run", configuredSources)).map(loadAutomationConfig))).filter(config => !config.prediction);
     for (const [index, config] of remoteConfigs.entries()) {
       const file = path.join(directory, `source-${index}.json`);
       config.sourceUrl = server.url + new URL(config.sourceUrl).pathname.replace(/\/$/, "");
@@ -167,7 +169,7 @@ test("one automation command serves all sources on one dashboard and releases it
       }
     } finally { release(); await running; }
     await assert.rejects(fetch(dashboardUrl + "/api/status"), /fetch failed/);
-    assert.deepEqual(new Set(requests), new Set(["/dashboard-data", "/gpt/dashboard-data", "/post_training_model/dashboard-data"]));
+    assert.deepEqual(new Set(requests), new Set(["/data/wencai/dashboard-data", "/data/gpt/dashboard-data", "/data/post_training_model/dashboard-data"]));
     for (const directory of states) {
       assert.equal((await readJson<AutomationState>(path.join(directory, "state.json"))).status, "stopped");
       assert.equal(await hasLiveRunOwner(directory), false);

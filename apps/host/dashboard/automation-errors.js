@@ -14,14 +14,14 @@ async function refresh() {
     const query = new URLSearchParams({ page: String(page), hours: $("time-filter").value, date: $("date-filter").value });
     const source = new URL(location.href).searchParams.get("source");
     if (source) query.set("source", source);
-    const response = await fetch("/api/errors?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+    const response = await fetch("/runtime/api/errors?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`读取错误日志失败（HTTP ${response.status}）`);
     const data = await response.json();
     if (version !== generation) return;
     const url = new URL(location.href);
     url.searchParams.set("source", data.sourceId);
     history.replaceState(null, "", url);
-    $("monitor-link").href = `/?source=${encodeURIComponent(data.sourceId)}`;
+    $("monitor-link").href = `/runtime/?source=${encodeURIComponent(data.sourceId)}`;
     $("page-title").textContent = `错误日志 · ${data.sourceName}`;
     document.title = `自动化错误日志 · ${data.sourceName}`;
     page = data.page;

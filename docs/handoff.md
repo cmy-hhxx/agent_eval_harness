@@ -1,69 +1,72 @@
 # 远程输入服务接口
 
-[返回首页](../README.md) · [自动化运行与交付](automations.md) · [输入记录契约](contract.md#输入)
+[返回首页](../README.md) · [自动化](automations.md) · [部署](deployment.md) · [输入契约](contract.md#输入)
 
-本页只维护本仓库实际消费的 HTTP 接口。服务地址由 [automations.json](../configs/automations.json) 的 `sourceUrl` 配置；客户端实现见 [RemoteInputs](../packages/runtime/src/remote-inputs.ts)。远端部署、压缩包处理和数据盘点由服务方维护，参见[远端文档](http://117.50.195.94:2256/docs)；可用日期以运行时目录为准。
+数据服务只监听 `127.0.0.1:8081`。工作台通过 `/data/*` 访问它，自动化直接使用同机地址。当前来源和地址由外部 `runtime/config/automations.json` 与仓库 `configs/automations.manifest.json` 决定。
 
-## 接口
+## 路由
 
-| 请求 | 本地用途 |
+| 来源 | 页面与 API 前缀 | 自动化 `sourceUrl` |
+|---|---|---|
+| 日常四路（wencai） | `/data/wencai/` | `http://127.0.0.1:8081/data/wencai` |
+| aime | `/data/aime/` | 当前未登记自动化 |
+| ifind | `/data/ifind/` | 当前未登记自动化 |
+
+每个来源提供：
+
+| 请求 | 用途 |
 |---|---|
-| `GET /dashboard-data` | 发现已就绪日期及各模型行数 |
-| `GET /data/{date}/{model}.jsonl` | 流式下载模型输入 |
-| `POST /evaluation-progress` | 上报已登记运行的 Comparison 进度 |
+| `GET /health` | 服务健康 |
+| `GET /dashboard-data` | 已就绪日期、模型行数和评测进度 |
+| `GET /dates` | 可用日期与已发布模型 |
+| `GET /data/{date}/{model}.jsonl` | 流式下载已就绪输入 |
+| `GET /records?date=...&model=...` | 样本浏览页 |
+| `GET /records/{date}/{model}?page=1&page_size=20` | 分页样本 API |
+| `GET /processing-status` | 收包、待处理和异常状态 |
+| `POST /evaluation-progress` | 自动化直接上报同机进度 |
 
-模型 ID 由自动化 remoteModels 指定；当前支持 `a_fast`、`b_fast`、`6_luna`、`a_expert`、`b_expert`、`6.1sol`；日期为有效的 `YYYY-MM-DD`。本地未配置远端鉴权。目录读取每次最多等待 10 秒，临时网络或 HTTP 错误最多尝试三次，间隔 1、2 秒；进度上报单次最多等待 10 秒。下载采用配置中的无数据进展超时。
-
-默认自动化分别监听服务根路径、`/gpt` 和 `/post_training_model`。上述路由均追加到各自的 sourceUrl，例如 GPT 访问 `/gpt/dashboard-data`、`/gpt/data/{date}/{model}.jsonl` 和 `/gpt/evaluation-progress`。
+完整 URL 为前缀加路径，例如 `http://127.0.0.1:8081/data/wencai/dashboard-data`。服务根路径和其他一级路径返回 404。
 
 ## 日期目录
 
-`/dashboard-data` 返回带 `dates` 数组的 JSON。每个日期包含 `date`、`ready` 和 `models`；只有日期及 remoteModels 指定的全部模型均为 ready 才进入下载候选。各配置模型的 `row_count` 必须是非负安全整数，日期不得重复。
+`/dashboard-data` 返回 `dates` 数组。每个日期包含 `date`、`ready` 和 `models`；只有日期及该来源要求的全部模型均为 ready 时才能进入下载候选。`row_count` 必须是非负安全整数，日期不得重复。
 
 ```json
 {
   "dates": [{
-    "date": "2026-09-29",
+    "date": "2026-10-21",
     "ready": true,
     "models": {
       "a_fast": { "ready": true, "row_count": 100 },
       "b_fast": { "ready": true, "row_count": 100 },
       "a_expert": { "ready": true, "row_count": 100 },
-      "b_expert": { "ready": true, "row_count": 100 },
-      "6_luna": { "ready": true, "row_count": 100 },
-      "6.1sol": { "ready": true, "row_count": 100 }
+      "b_expert": { "ready": true, "row_count": 100 }
     }
   }]
 }
 ```
 
-日期筛选、轮询和定期复查取自自动化配置，不根据文档中的历史数量或日期范围推断可用性。
+日期筛选、轮询和复查周期来自自动化配置，不用文档中的示例数量推断。
 
 ## 输入下载
 
-响应必须包含正文及非负整数 `Content-Length`。本地核对实际字节数与 JSONL 结构，并要求实际行数不少于请求前的目录观察值。目录在下载期间继续增长不使完整文件失效；安装后按文件实际行数记录已下载数量。全日文件通过校验且旧输入的评测、Mongo 交付结束后，才取得 run 锁并替换本地源文件。响应 `404` 且 JSON `error` 为 `data not ready` 时按远端准备中处理；其他 HTTP 错误保留状态码和可解析原因。
+响应必须包含正文和非负整数 `Content-Length`。自动化核对实际字节数、JSONL 结构和实际行数，并要求行数不少于下载前目录观察值。目录在下载期间继续增长不使完整文件失效。
 
-连接中断、无进展超时及 HTTP 408 / 429 / 5xx 在当前文件内最多尝试三次，间隔 1、2 秒。同一轮已校验的其他文件保留在暂存目录，失败文件从头重新请求。错误包含日期、模型、底层连接错误码和已收到的字节数。用户停止立即取消等待；鉴权、JSONL、行数等非暂态错误直接交回整日调度，保留已有正式输入。每个响应独立校验，后续轮询发现新增数据时再做增量同步；不等待整个远端日期停止增长。
-
-接口不提供可供本地使用的修订号或不可变快照 ID。行数相同不代表内容相同，也不能保证各模型文件来自同一生成时刻；同量内容修正通过定期逐块比较发现。已有正式结果仍遵守[同 run 续跑规则](usage.md#运行与恢复)。源文件提升和失败恢复见[自动化状态](automations.md#调度与状态)。
-
-JSONL 每行必须满足[输入契约](contract.md#输入)。远端日期用于文件组织和下载选择，记录身份仍是 `batch_id + case_id + version`；本地不根据请求时间重新分批。
+连接中断、无进展超时及 HTTP 408 / 429 / 5xx 在当前文件内最多尝试三次，间隔 1、2 秒。认证、JSONL、行数等非暂态错误直接交回整日调度，保留已有正式输入。JSONL 每行必须满足[输入契约](contract.md#输入)；记录身份为 `batch_id + case_id + version`。
 
 ## 进度上报
 
-GPT 六路的 `/gpt/evaluation-progress` 使用六个同档模型对的独立键（模型 ID 按字典序排序，以 `__vs__` 连接），各对计数字段与下例一致。后训练 `/post_training_model/evaluation-progress` 同样使用独立模型对键，三路及目录见[后训练说明](../server_dashboard_ths/README.md#后训练模型评测)。以下 `fast / expert` 示例仅适用于原四路服务根路径。
-
-POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来源日期分组，`pairs` 固定且仅包含 `fast` 与 `expert`，分别对应 A/B Fast 与 A/B Expert；不可直接发送内部模型组合键或额外 baseline 配对。刚发现、尚无 Host 检查点的日期也提供这两组零计数。每组包含以下六个非负整数，零值也保留：
+日常四路使用 `fast` 和 `expert` 两个固定模型对。每组六个计数均为非负整数，零值也保留：
 
 ```json
 {
-  "run_id": "daily-2026-09-29",
+  "run_id": "daily-2026-10-21-a_fast__vs__b_fast",
   "engine": "pi",
   "status": "running",
-  "started_at": 1790683200000,
-  "updated_at": 1790683200000,
+  "started_at": 1792515600000,
+  "updated_at": 1792519200000,
   "dates": [{
-    "date": "2026-09-29",
+    "date": "2026-10-21",
     "pairs": {
       "fast": {
         "total_cases": 100,
@@ -74,11 +77,11 @@ POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来
         "skipped_cases": 3
       },
       "expert": {
-        "total_cases": 0,
-        "completed_cases": 0,
-        "running_cases": 0,
-        "queued_cases": 0,
-        "failed_cases": 0,
+        "total_cases": 100,
+        "completed_cases": 8,
+        "running_cases": 2,
+        "queued_cases": 89,
+        "failed_cases": 1,
         "skipped_cases": 0
       }
     }
@@ -86,6 +89,6 @@ POST 使用 `application/json`，时间戳为 Unix 毫秒。`dates` 按输入来
 }
 ```
 
-`status` 为 `running / finished / interrupted`。样本在日期和配对内按 `batch_id + case_id` 去重；`total_cases - skipped_cases` 为可评测数量。只统计 Comparison：失败和超时计失败，取消和依赖阻塞计排队，预检无法配对计跳过；Rewrite 与 Clustering 不进入该分母。跨 run 去重时按运行中、失败、成功、跳过、排队的优先级归类。
+`status` 为 `running / finished / interrupted`。aime 和 ifind 使用 `dates[].models.<model>.<criteria|attribution|clustering>` 的任务计数，不生成对战额度或配对结果。
 
-自动化从 Host 检查点生成进度，`publishProgress` 控制是否发送。HTTP 409 等上报错误保留为 `reportError`，不阻断评测。配对额度与交付完成条件见[自动化状态](automations.md#调度与状态)；目录行数不能推算精确配对数，远端 Comparison 完成数也不表示本地润色已结束。
+自动化只在 `publishProgress: true` 时上报。上报错误写入自动化状态与现有日志，不阻断评测、MongoDB 交付或统计快照生成。

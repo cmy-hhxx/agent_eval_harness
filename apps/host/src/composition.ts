@@ -10,8 +10,8 @@ import path from "node:path";
 import { createFileLogger } from "@eval/data";
 import { ROOT, runtimePaths } from "./paths.js";
 export const logger = createFileLogger({
-  directory: path.join(ROOT, "log"),
-  lockDirectory: path.join(ROOT, ".runtime/log-writer"),
+  directory: path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log")),
+  lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")),
   secrets: configurationSecrets(),
 });
 export const agents = new AgentRegistry([criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);

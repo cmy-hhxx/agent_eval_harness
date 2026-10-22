@@ -1,4 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
+const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const state = { data: null, inventory: null, inventoryError: "", section: "inputs", stage: "criteria", profile: "default", document: "result", date: null, search: "", page: 1, disclosures: new Map() };
 const documentNames = { request: "请求 Schema", submission: "提交 Schema", modelSubmission: "模型提交基础 Schema", result: "结果 Schema", inspection: "首查保存 Schema", modelInspection: "首查提交 Schema", system: "系统提示词", instructions: "任务提示词", submissionNudge: "补交提示词", taskType: "任务类型文案", sourceRule: "原文验收规则", referenceRule: "标准答案验收规则", reviewPending: "待复核文案", notApplicable: "不适用文案", tools: "工具描述与 Schema", comparison: "对比结果", clustering: "聚类结果", material: "材料文案", evidence: "证据说明", taskFocus: "任务聚焦", budget: "预算提示", recovery: "恢复提示", nudge: "补交提示" };
@@ -179,7 +180,7 @@ document.addEventListener("input", (event) => {
 async function init() {
   const inventory = loadInventory();
   try {
-    state.data = await get("/api/dashboard/reference");
+    state.data = await get(`${API_ROOT}/reference`);
     $("#reference-version").textContent = `评测器 ${state.data.evaluator_version}`;
     render();
   } catch (error) {
@@ -193,7 +194,7 @@ async function init() {
 function loadingInputs() { return '<span class="loading" role="status" aria-label="正在读取输入"><span class="spinner" aria-hidden="true"></span></span>'; }
 async function loadInventory() {
   try {
-    state.inventory = await get("/api/dashboard/inputs");
+    state.inventory = await get(`${API_ROOT}/inputs`);
     state.inventoryError = "";
     if (state.inventory.status === "loading") setTimeout(() => void loadInventory(), 1000);
   } catch (error) { state.inventoryError = error.message; }

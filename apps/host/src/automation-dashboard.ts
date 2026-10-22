@@ -12,19 +12,14 @@ import { automationErrors } from "./automation-errors.js";
 import { ROOT } from "./paths.js";
 import { automationMongoTarget } from "./automation-sources.js";
 import { validLlmConcurrency, type createAutomationLlm } from "./automation-llm.js";
+import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-delivery.js";
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 export interface AutomationMonitorSettings { evaluatorVersion: string; concurrency: number }
 export interface AutomationDashboardSource {
-  config: AutomationConfig; output: string; state: () => AutomationState; settings: AutomationMonitorSettings;
+  name: string; config: AutomationConfig; output: string; state: () => AutomationState; settings: AutomationMonitorSettings;
   monitor?: ReturnType<typeof createAutomationMonitor>;
 }
-const sourceNames: Record<string, string> = {
-  "remote-evaluation": "普通四路",
-  "remote-six-model-evaluation": "GPT 六路",
-  "remote-post-training-evaluation": "后训练三路",
-  "prediction-evaluation": "预测类自动评测",
-};
 
 export async function automationSnapshot(config: AutomationConfig, output: string, state: AutomationState, settings: AutomationMonitorSettings,
   monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
@@ -60,7 +55,7 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
     execution: { ...settings, ...liveExecution(activeRuns),
       ...(activeRuns.length ? { evaluatorVersion: activeRuns[0].evaluatorVersion,
         concurrency: activeRuns.reduce((total, run) => total + (run.concurrency ?? settings.concurrency), 0) } : {}) },
-    mongoCollection: config.publication.mongoCollection, publication: snapshot.publication, publicationHistory: snapshot.publicationHistory, jobs,
+    mongoCollection: config.publication.mongoCollection, statistics: snapshot.statistics, jobs,
   };
 }
 
@@ -68,6 +63,7 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
 export async function startAutomationDashboard(options: {
   sources: () => readonly AutomationDashboardSource[]; port: number;
   llm: Pick<ReturnType<typeof createAutomationLlm>, "snapshot" | "setConcurrency">;
+  statistics?: StatisticsDeliveryStore;
   runtimeLogFile?: string;
 }) {
   const observations = new Map<AutomationDashboardSource, {
@@ -89,7 +85,7 @@ export async function startAutomationDashboard(options: {
       [...sources.map(source => process.env[source.config.publication.mongoUriEnv] ?? ""), ...configurationSecrets()])));
     if (req.method === "POST" && url.pathname === "/api/llm-concurrency") {
       const host = (req.headers.host ?? "").toLowerCase();
-      if (!/^(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host) || req.headers.origin !== `http://${host}`)
+      if (!host || ![`http://${host}`, `https://${host}`].includes(req.headers.origin ?? ""))
         throw new HttpError(403, "Request origin does not match the dashboard");
       const value = await body(req, 1024);
       if (!value || typeof value !== "object" || Array.isArray(value) || !("sourceId" in value) ||
@@ -102,17 +98,62 @@ export async function startAutomationDashboard(options: {
       await options.llm.setConcurrency(value.sourceId, value.concurrency);
       return send(options.llm.snapshot());
     }
+    const statisticsSources = sources.filter(source => source.config.publishStatisticsLog).map(source => statisticsSource(source.config));
+    const relayParts = url.pathname.split("/").filter(Boolean);
+    if (relayParts[0] === "api" && relayParts[1] === "relay" && relayParts[2] === "records") {
+      if (!options.statistics) throw new HttpError(503, "Statistics relay store is unavailable");
+      const all = await options.statistics.list(statisticsSources);
+      if (req.method === "GET" && relayParts.length === 3)
+        return send(all.filter(item => item.status === "pending"));
+      throw new HttpError(404, "Not found");
+    }
+    if (req.method === "POST" && relayParts[0] === "api" && relayParts[1] === "relay" && relayParts[2] === "records" &&
+        relayParts[4] === "claim" && relayParts.length === 5 && options.statistics) {
+      const traceId = decodeURIComponent(relayParts[3]!);
+      const entry = await options.statistics.claim(traceId);
+      const listed = await options.statistics.list(statisticsSources);
+      const record = listed.find(item => item.traceId === traceId)?.record;
+      if (!record) throw new HttpError(409, "Statistics delivery record is unavailable");
+      return send({ ...entry, record });
+    }
+    if (req.method === "POST" && relayParts[0] === "api" && relayParts[1] === "relay" && relayParts[2] === "records" &&
+        relayParts[4] === "receipt" && relayParts.length === 5 && options.statistics) {
+      const traceId = decodeURIComponent(relayParts[3]!);
+      const raw = await body(req, 16 * 1024);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof (raw as Record<string, unknown>).status !== "string")
+        throw new HttpError(400, "Invalid statistics receipt");
+      const value = raw as Record<string, unknown>;
+      if (value.status === "uploaded" && typeof value.requestId === "string" && value.requestId.trim() && Object.keys(value).length === 2)
+        return send(await options.statistics.receipt(traceId, { status: "uploaded", requestId: value.requestId.trim() }));
+      if ((value.status === "pending" || value.status === "uncertain") && typeof value.error === "string" && value.error.trim() && Object.keys(value).length === 2)
+        return send(await options.statistics.receipt(traceId, { status: value.status, error: value.error.trim() }));
+      throw new HttpError(400, "Invalid statistics receipt");
+    }
+    if (req.method === "POST" && relayParts[0] === "api" && relayParts[1] === "relay" && relayParts[2] === "records" &&
+        relayParts[4] === "resolve" && relayParts.length === 5 && options.statistics) {
+      const traceId = decodeURIComponent(relayParts[3]!);
+      const raw = await body(req, 16 * 1024);
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof (raw as Record<string, unknown>).outcome !== "string")
+        throw new HttpError(400, "Invalid statistics resolution");
+      const value = raw as Record<string, unknown>;
+      if (value.outcome === "written" && typeof value.requestId === "string" && value.requestId.trim() && Object.keys(value).length === 2)
+        return send(await options.statistics.resolve(traceId, { outcome: "written", requestId: value.requestId.trim() }));
+      if (value.outcome === "retry" && Object.keys(value).length === 1)
+        return send(await options.statistics.resolve(traceId, { outcome: "retry" }));
+      throw new HttpError(400, "Invalid statistics resolution");
+    }
     if (req.method !== "GET") throw new HttpError(405, "Method not allowed");
+    if (url.pathname === "/api/health") return json(res, { ok: true, sources: sources.length });
     if (url.pathname === "/api/status" || url.pathname === "/api/errors") {
       const id = url.searchParams.get("source");
       const source = id ? sources.find(source => source.config.id === id) : sources[0];
       if (!source) throw new HttpError(sources.length ? 404 : 503, sources.length ? "Unknown automation source" : "自动化来源正在初始化");
       const { config, output, state, settings } = source;
-      const sourceName = sourceNames[config.id] ?? config.id;
+      const sourceName = source.name;
       let observation = observations.get(source);
       if (!observation) {
         observation = { sampledAt: 0, monitor: source.monitor ?? createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
-          errors: automationErrors(options.runtimeLogFile ?? path.join(ROOT, "log/runtime.log"), state) };
+          errors: automationErrors(options.runtimeLogFile ?? path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log"), "runtime.log"), state) };
         observations.set(source, observation);
       }
       if (url.pathname === "/api/errors")
@@ -124,9 +165,11 @@ export async function startAutomationDashboard(options: {
       const snapshot = observation.snapshot;
       try {
         const result = await snapshot;
-        send({ ...result, sourceName, llm: options.llm.snapshot(), sources: sources.map(source => {
+        send({ ...result, sourceName, llm: options.llm.snapshot(),
+          statisticsDeliveries: options.statistics ? await options.statistics.list(statisticsSources, false) : [],
+          sources: sources.map(source => {
           const current = source.state();
-          return { id: source.config.id, name: sourceNames[source.config.id] ?? source.config.id,
+          return { id: source.config.id, name: source.name,
             status: current.status, dateCount: Object.keys(current.jobs).length };
         }) });
       } catch (error) { if (observation.snapshot === snapshot) observation.snapshot = undefined; throw error; }

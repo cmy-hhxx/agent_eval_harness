@@ -4,7 +4,7 @@
 
 ## 最短路径
 
-先完成 [README 安装步骤](../README.md#最短运行路径)，再预检和运行：
+先完成 [README 本地开发步骤](../README.md#本地开发)，再预检和运行：
 
 ```bash
 npm run eval -- preflight
@@ -60,9 +60,11 @@ npm run eval -- model-probe --engine prime --stage comparison --config configs/l
 
 默认值与字段全集直接查 [EvalConfig](../packages/workflows/src/comparison/types.ts)、[DEFAULT_POLICY](../packages/contracts/src/index.ts)、[loadConfig](../apps/host/src/config.ts)，不复制到文档。
 
-`run / reattribute / cluster --balance-channels` 按 INI 的 traffic_weight 分配完整任务，普通重试保持渠道，明确配额耗尽才切换；各渠道须提供相同阶段模型。自动化渠道池见[自动化启动](automations.md#启动)。
+`run / reattribute / cluster --balance-channels` 按 INI 的 traffic_weight 分配完整任务，普通重试保持渠道，明确配额耗尽才切换；各渠道须提供相同阶段模型。自动化渠道池见[自动化启动与调度](automations.md#启动与调度)。
 
 ## 目录约定
+
+下表是 checkout 内开发默认值。生产运行时，`data/`、`log/`、配置和状态由外部 `runtime/` 路径替代；checkout 只保留代码、依赖和构建产物。生产目录与启动方式见[远程部署](deployment.md)。
 
 | 位置 | 内容 |
 |---|---|
@@ -134,7 +136,7 @@ npm run eval -- run --run-id third-party-001 \
 |---|---|
 | log/runtime.log | 命令、任务、Worker 与自动化诊断；错误保留原因、堆栈和可用身份 |
 | log/evaluation.log | 已接受收据的业务结果，按提交身份去重；改写不单独记录 |
-| log/comparison-statistics-log.jsonl | 自动化统计交付记录，见[冻结契约与上传](automations.md#mongodb-增量交付与每四小时日志) |
+| log/comparison-statistics-log.jsonl | 自动化统计交付记录，见[四小时统计快照](automations.md#四小时统计快照) |
 
 日志为 UTF-8 单行 JSON，持续追加。正常重复事件一分钟内合并，错误逐条保留；密钥脱敏。续跑补记已接受结果，日志失败不撤销判决。日志不是恢复数据源，不按日期或 run 新建日志文件。
 
@@ -182,7 +184,7 @@ npm run eval -- run --run-id pi-001 --resume-stage rewrite \
   --config configs/host.json --config configs/local/models.json
 ```
 
-resume-stage 可重复，保留固定范围。自动化的退避与保护性暂停另见[自动化状态](automations.md#调度与状态)。
+resume-stage 可重复，保留固定范围。自动化的退避与保护性暂停另见[自动化启动与调度](automations.md#启动与调度)。
 
 ### 小批验收再放量
 
@@ -199,21 +201,21 @@ npm run eval -- run --run-id pilot-001 --discover-inputs \
 
 释放前按[改写放量验收](quality.md#改写放量验收)检查。运行中用 `concurrency --run PATH --value N` 调整上限，`progress --run PATH` 查看状态；降低并发让在途任务自然完成。以新增正式交付衡量产出，不用 Worker 数代替。
 
-### 本机运行看板
+### 运行实例看板
 
 ```bash
-bash run.sh
+npm run eval -- dashboard --port 4173 --config configs/host.json --config configs/local/models.json
 ```
 
-默认 `127.0.0.1:4173`，加载共享配置和存在的本机模型配置。支持 --port；--debug 显示启动诊断。启动会重建应用，仅替换同仓库旧看板进程，其他程序占用端口时报错。
+该命令只用于本地开发。生产由 `workbench.sh` 启动同一 Host 看板，并只监听 `127.0.0.1:4173`，通过网关映射到 `/runtime/runs/`。端口被占用时启动失败，不自动切换。
 
 选择日期、模型与抽样，调整高级设置，等待扫描后预检并确认启动；设置变化须重新预检。模型来自渠道目录，密钥不进入浏览器。运行中可停止、调并发，详情可续跑。
 
 | 页面 | 内容 |
 |---|---|
-| 工作台 | 输入、主线阶段、正式结果与改写；聚类在运行总览 |
-| /problems | 问题类、有效样本与来源召回，只读 |
-| /reference | 当前构建的流程、Schema、提示词和工具，只读 |
+| `/runtime/runs/` | 输入、主线阶段、正式结果与改写；聚类在运行总览 |
+| `/runtime/problems/` | 问题类、有效样本与来源召回，只读 |
+| `/runtime/reference/` | 当前构建的流程、Schema、提示词和工具，只读 |
 
 删除须确认，清除该 run 产物及两份运行日志中的对应记录；活动或损坏锁、损坏日志阻止删除。原始输入、共享问题库、其他 run 与聚合交付回执保留。界面规范见 [PRODUCT](../PRODUCT.md)。
 

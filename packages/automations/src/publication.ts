@@ -2,23 +2,12 @@ import type { PublicationCounts } from "@eval/contracts";
 
 export const PUBLICATION_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const nextPublicationAt = (now: number) => (Math.floor(now / PUBLICATION_INTERVAL_MS) + 1) * PUBLICATION_INTERVAL_MS;
-export interface PublicationState {
-  status: "pending" | "running" | "completed" | "retry" | "uncertain";
+export interface StatisticsSchedule {
   nextAt: number;
   attempts: number;
-  window?: number;
-  traceId?: string;
-  counts?: { cases: number; comparisons: number };
-  startedAt?: number;
-  log?: {
-    status: "pending" | "sending" | "uploaded" | "uncertain";
-    writtenAt?: number;
-    startedAt?: number;
-    uploadedAt?: number;
-    confirmedAt?: number;
-    requestId?: string;
-  };
-  completedAt?: number;
+  lastWindow?: number;
+  lastTraceId?: string;
+  generatedAt?: number;
   error?: string;
 }
 

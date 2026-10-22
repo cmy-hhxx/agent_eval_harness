@@ -1,6 +1,6 @@
 {
   "id": "remote-six-model-evaluation",
-  "sourceUrl": "http://117.50.195.94:2256/gpt",
+  "sourceUrl": "http://127.0.0.1:8081/data/gpt",
   "remoteModels": [
     "a_fast",
     "b_fast",
