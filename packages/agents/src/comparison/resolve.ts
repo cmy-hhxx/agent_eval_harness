@@ -5,7 +5,7 @@ import schema from "../../../../schemas/comparison/submission.schema.json" with 
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import { criterionAppliesToPair, findingAppliesToPair } from "./pair-scope.js";
 import { comparisonDecisiveFindings } from "./result-checks.js";
-import { comparisonSlots, comparisonSlotCellState, comparisonSlotSummary, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, comparisonSlotSummary, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
 /** Model-facing and local validation share the same program-owned row identities. */
 export function comparisonSubmissionSchema(request: AgentRequest) {
@@ -15,6 +15,9 @@ export function comparisonSubmissionSchema(request: AgentRequest) {
   const scopeSlots = slots.flatMap((slot, index) => slot.kind === "criterion" && slot.shared && slot.criterion_ids.length ? [index] : []);
   if (scopeSlots.length) Object.assign(result.properties.scope_conflicts.items.properties.slot_index, { enum: scopeSlots });
   else Object.assign(result.properties.scope_conflicts, { maxItems: 0 });
+  const reviewSlots = comparisonSlotChoices(request).filter(slot => slot.reviewable_candidates.length).map(slot => slot.slot_index);
+  if (reviewSlots.length) Object.assign(result.properties.source_reviews.items.properties.slot_index, { enum: reviewSlots });
+  else Object.assign(result.properties.source_reviews, { maxItems: 0 });
   return result;
 }
 
@@ -62,6 +65,26 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     const slot = slots[conflict.slot_index]; // The request-specific schema permits only existing shared criterion slots.
     reviews.push(...labels.map(candidate => ({ candidate, criterion_ids: [...slot.criterion_ids],
       finding_indices: [...slot.finding_indices[candidate]], reason: conflict.reason.trim() })));
+  });
+  const sourceReviews = value.source_reviews ?? [], choices = comparisonSlotChoices(request), selectedReviews = new Set<string>();
+  if (sourceReviews.length && (preference !== null || value.relative_preference !== null))
+    conflictIssues.push({ category: "decision", code: "source_review_preference", path: "/source_reviews",
+      message: "决定性归因尚待核实，preference 省略或填 null，relative_preference=null；不得同时保留胜负或相对偏好。" });
+  sourceReviews.forEach((review, index) => {
+    const slot = slots[review.slot_index], choice = choices[review.slot_index], key = `${review.slot_index}:${review.candidate}`;
+    if (!choice?.reviewable_candidates.includes(review.candidate)) {
+      conflictIssues.push({ category: "decision", code: "source_review_candidate", path: `/source_reviews/${index}/candidate`,
+        message: "只选择该槽 reviewable_candidates 中的本方候选，不复核资源或不适用的候选。" });
+      return;
+    }
+    if (selectedReviews.has(key) || selected.has(review.slot_index)) {
+      conflictIssues.push({ category: "decision", code: "source_review_duplicate", path: `/source_reviews/${index}`,
+        message: "同槽同候选只提请一次；已有 scope_conflicts 覆盖双方时，不重复提交 source_reviews。" });
+      return;
+    }
+    selectedReviews.add(key);
+    reviews.push({ candidate: review.candidate, criterion_ids: [...slot.criterion_ids],
+      finding_indices: [...slot.finding_indices[review.candidate]], reason: review.reason.trim() });
   });
   if (conflictIssues.length) throw new ValidationError(conflictIssues);
   if (reviews.length) return pendingComparison(request, Object.fromEntries(labels.map(label => [label, { summary: label === "A" ? value.a_summary : value.b_summary }])), reviews);

@@ -13,10 +13,14 @@ import {
   type DashboardModelLoader,
 } from "./dashboard-models.js";
 
-interface LaunchOptions {
+export interface LaunchOptions {
   configPaths: string[];
   outputDir: string;
   modelCatalog?: DashboardModelLoader;
+  resumeStages?: string[];
+  discoverInputs?: boolean;
+  beforeLaunch?: () => Promise<void>;
+  onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
   plan: (config: EvalConfig) => Promise<TaskPlan>;
 }
 interface RunLock {
@@ -149,10 +153,14 @@ export async function previewRun(options: LaunchOptions, value: Record<string, u
 
 /** A child runs the same CLI reconciliation and run lock rules as terminal launches. */
 export async function startRun(options: LaunchOptions, value: Record<string, unknown>) {
-  const { runId, engine, chosen, settings, resuming, plan, run } = await prepare(options, value, true);
+  const { runId, engine, chosen, settings, resuming, plan, run, config } = await prepare(options, value, true);
   if (!resuming && !plan?.tasks.length) throw new HttpError(400, "没有可评对比组，请先查看预检诊断");
+  if (!resuming && config.inputs.workbench && (plan?.summary.issues as unknown[] | undefined)?.length && plan?.tasks.length)
+    throw new HttpError(409, "输入预检存在异常，请修复后启动");
   if (await readLock(run)) throw new HttpError(409, "Run is already running");
+  await options.beforeLaunch?.();
   const args = [CLI_ENTRY, "run"];
+  if (options.discoverInputs) args.push("--discover-inputs");
   for (const config of options.configPaths) args.push("--config", config);
   args.push("--engine", engine, "--run-id", runId, "--dashboard-settings", JSON.stringify(settings));
   if (!resuming) {
@@ -160,6 +168,7 @@ export async function startRun(options: LaunchOptions, value: Record<string, unk
       for (const item of chosen[name] || []) args.push(`--${name}`, item);
     if (chosen.limitCases) args.push("--limit-cases", String(chosen.limitCases));
   }
+  for (const stage of options.resumeStages ?? []) args.push("--resume-stage", stage);
   if (chosen.debug) args.push("--debug");
   const child = spawn(process.execPath, args, { env: process.env, stdio: "ignore" });
   try {
@@ -171,6 +180,7 @@ export async function startRun(options: LaunchOptions, value: Record<string, unk
   } catch (error) {
     throw new HttpError(500, `无法启动运行进程：${errorText(error)}`);
   }
+  if (options.onExit) child.once("exit", options.onExit);
   child.unref();
   return { run_id: runId, pid: child.pid, output_dir: options.outputDir };
 }

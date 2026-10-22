@@ -124,7 +124,7 @@ test("comparison rewrite preserves the blind identity map beside unmodified cand
   assert.match(items[0].context!, /已确定的对局结论/);
   assert.equal(items[0].label, "B组Fast与A组Fast的偏好及理由");
   assert(items.every(item => item.context?.split("\n")[0] === mapping));
-  assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
+  assert.deepEqual(items.slice(1).map(item => item.id), ["assessment.A.summary", "assessment.B.summary", ...Array.from({length: 5}, (_, i) => [`comparison.${i}.A.summary`, `comparison.${i}.B.summary`]).flat(), "tradeoff"]);
   assert.equal(items[1].label, "B组Fast的整体总评");
   assert.equal(items[2].label, "A组Fast的整体总评");
   assert.equal(items.at(-1)!.text, result.decision_basis.tradeoff);
@@ -148,7 +148,7 @@ test("Rewrite projects each selected text slot without injecting other slots int
   const binding = bindRewrite("comparison", result, { A: "A组<Fast>", B: "B组<Fast>" }, "A");
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 6);
+  assert.equal(shown.length, 14);
   assert.equal(shown[0]!.text, "漏插＜visual＞属小瑕疵；27.98%与27.18%-27.80%的口径不变。");
   assert.equal(shown[1]!.label, "A组＜Fast＞的整体总评");
   assert.equal(shown[1]!.text, "使用＜visual＞展示27.98%。");
@@ -180,7 +180,7 @@ test("all attribution rewrite slots preserve protocol attributes and figures in 
   const binding = bindRewrite("attribution", result);
   const original = binding.request.input.items as RewriteItem[];
   const shown = binding.modelInput!.items as RewriteItem[];
-  assert.equal(shown.length, 24);
+  assert.equal(shown.length, 28);
   assert(original.some(item => item.id === "findings.0.assessment.impact"));
   assert(shown.every(item => item.text === "＜vis-html ref=html-7b1ac344 /＞保留24.2%、15.1%；x＜0且x＞5；已有＜visual＞。"));
   assert(original.every(item => item.text === text));

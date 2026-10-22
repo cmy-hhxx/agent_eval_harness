@@ -22,7 +22,7 @@ export * from "./validate.js";
 export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";
 export * from "./observations.js";
-export { prepareClusteringJob, clusteringJobWorkflow, clusteringJobRepository, reportClusteringJob,
+export { prepareFrozenClusteringJob, prepareClusteringJob, clusteringJobWorkflow, clusteringJobRepository, reportClusteringJob,
   type ClusteringJobConfig, type ClusteringJobSource } from "./clustering-job.js";
 export * from "./publication.js";
 export * from "./prediction.js";
@@ -39,3 +39,5 @@ export { prepareComparisonVerification } from "./verification-preparation.js";
 export * from "./stability.js";
 export * from "./stability-statistics.js";
 export * from "./stability-report.js";
+export * from "./run-errors.js";
+export * from "./analysis-scope.js";

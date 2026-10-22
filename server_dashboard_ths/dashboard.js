@@ -1,18 +1,20 @@
+export function mountData(root, options = {}) {
 const PAIRS = [
   { id: "fast", label: "A Fast 对 B组 Fast", a: "a_fast", b: "b_fast" },
   { id: "expert", label: "A Expert 对 B组 Expert", a: "a_expert", b: "b_expert" },
 ];
 const PATH_PARTS = location.pathname.split("/").filter(Boolean);
-const DATASET = PATH_PARTS[1] || "wencai";
+const DATASET = options.dataset || PATH_PARTS[1] || "wencai";
 const BASE_PATH = `/data/${DATASET}`;
-const IS_POST_TRAINING = DATASET === "post_training_model";
-const GROUPED_BATTLES = DATASET === "gpt" || IS_POST_TRAINING;
+const PROFILE = options.profile || DATASET;
+const IS_POST_TRAINING = PROFILE === "post_training_model";
+const GROUPED_BATTLES = PROFILE === "gpt" || IS_POST_TRAINING;
 const SINGLE_MODELS = {
   aime: ["aime_fast", "aime_expert"],
   ifind: ["ifind_normal_agent", "ifind_deep_research"],
-}[DATASET];
+}[PROFILE];
 const GROUPS = (IS_POST_TRAINING ? [
-  { label: "Fast", models: ["a_fast", "b_fast", "b_post_train_fast"] },
+  { label: "Fast", models: ["b_fast", "b_post_train_fast"] },
 ] : [
   { label: "Fast", models: ["a_fast", "b_fast", "6_luna"] },
   { label: "Expert", models: ["a_expert", "b_expert", "6.1sol"] },
@@ -21,8 +23,8 @@ const GROUPS = (IS_POST_TRAINING ? [
 }))) }));
 const MODEL_LABELS = {
   a_fast: "A Fast",
-  b_fast: "B组 Fast",
-  b_post_train_fast: "B post_train_fast",
+  b_fast: IS_POST_TRAINING ? "AA-fast" : "B组 Fast",
+  b_post_train_fast: "AA-post_train_fast_V1",
   a_expert: "A Expert",
   b_expert: "B组 Expert",
   "6_luna": "6_luna",
@@ -35,28 +37,29 @@ const MODEL_LABELS = {
 const DAILY_BATTLE_LIMIT = 300;
 const DATES_PER_PAGE = 14;
 
-const rows = document.querySelector("#date-rows");
-const pagination = document.querySelector("#date-pagination");
-const previousPageButton = document.querySelector("#previous-page");
-const nextPageButton = document.querySelector("#next-page");
-const pageSummary = document.querySelector("#page-summary");
-const datasetRange = document.querySelector("#dataset-range-dates");
-const state = document.querySelector("#service-state");
-const readyCount = document.querySelector("#ready-count");
-const totalRows = document.querySelector("#total-rows");
-const errorMessage = document.querySelector("#connection-error");
-const refreshButton = document.querySelector("#refresh");
-let loading = false;
+const rows = root.querySelector("#date-rows");
+const pagination = root.querySelector("#date-pagination");
+const previousPageButton = root.querySelector("#previous-page");
+const nextPageButton = root.querySelector("#next-page");
+const pageSummary = root.querySelector("#page-summary");
+const datasetRange = root.querySelector("#dataset-range-dates");
+const state = root.querySelector("#service-state");
+const readyCount = root.querySelector("#ready-count");
+const totalRows = root.querySelector("#total-rows");
+const errorMessage = root.querySelector("#connection-error");
+const refreshButton = root.querySelector("#refresh");
+let loading = false, disposed = false;
 let hasLoadedCatalog = false;
 let currentPage = 0;
 let currentCatalog = null;
+const shell = root.querySelector('.page-shell');
+shell.classList.remove('gpt-dataset', 'single-dataset');
 
 if (GROUPED_BATTLES) {
-  document.body.classList.add("gpt-dataset");
-  document.title = IS_POST_TRAINING ? "后训练模型评测" : "GPT 六路评测数据";
-  document.querySelector(".dataset-range-models").textContent = `${GROUPS.flatMap(group => group.models).length} 个模型`;
-  document.querySelector(".results-table caption").textContent = `${document.title}输入及两两对战进度`;
-  const headings = document.querySelectorAll(".results-table thead th");
+  shell.classList.add("gpt-dataset");
+  root.querySelector(".dataset-range-models").textContent = `${GROUPS.flatMap(group => group.models).length} 个模型`;
+  root.querySelector(".results-table caption").textContent = `${DATASET}输入及两两对战进度`;
+  const headings = root.querySelectorAll(".results-table thead th");
   if (IS_POST_TRAINING) headings[2].remove();
   GROUPS.forEach((group, index) => {
     headings[index + 1].replaceChildren(document.createTextNode(group.models.map(id => MODEL_LABELS[id]).join(" · ")));
@@ -66,14 +69,13 @@ if (GROUPED_BATTLES) {
   });
 }
 if (SINGLE_MODELS) {
-  document.body.classList.add("single-dataset");
-  document.title = `${DATASET} 评测输入数据`;
-  document.querySelector(".dataset-range-models").textContent = `${DATASET} · Fast / Expert`;
-  document.querySelector(".results-table caption").textContent = `每日 ${DATASET} Fast 和 Expert 输入数据`;
-  const headings = document.querySelectorAll(".results-table thead th");
+  shell.classList.add("single-dataset");
+  root.querySelector(".dataset-range-models").textContent = `${DATASET} · Fast / Expert`;
+  root.querySelector(".results-table caption").textContent = `每日 ${DATASET} Fast 和 Expert 输入数据`;
+  const headings = root.querySelectorAll(".results-table thead th");
   ["Fast", "Expert"].forEach((label, index) => headings[index + 1].replaceChildren(document.createTextNode(label)));
 }
-document.querySelector(`[data-dataset="${DATASET}"]`)?.setAttribute("aria-current", "page");
+root.querySelector(`[data-dataset="${DATASET}"]`)?.setAttribute("aria-current", "page");
 
 const formatCount = (count) => new Intl.NumberFormat("zh-CN").format(Number.isInteger(count) ? count : 0);
 const dateTime = new Intl.DateTimeFormat("zh-CN", {
@@ -86,32 +88,32 @@ function formatBytes(bytes) {
 }
 
 function renderProcessing(info) {
-  const error = document.querySelector("#processing-error");
+  const error = root.querySelector("#processing-error");
   error.hidden = Boolean(info && !info.error);
   if (!error.hidden) return;
   for (const [id, value] of [["last-received", info.received_at], ["last-published", info.published_at]]) {
-    const element = document.querySelector(`#${id}`);
+    const element = root.querySelector(`#${id}`);
     element.textContent = value ? dateTime.format(new Date(value)) : "暂无";
     element.title = value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) + " 北京时间" : "";
   }
-  document.querySelector("#pending-archives").textContent = formatCount(info.pending);
-  const failed = document.querySelector("#failed-archives");
+  root.querySelector("#pending-archives").textContent = formatCount(info.pending);
+  const failed = root.querySelector("#failed-archives");
   failed.textContent = formatCount(info.failed.length);
   failed.classList.toggle("has-failures", info.failed.length > 0);
-  document.querySelector("#processing-failures").hidden = info.failed.length === 0;
-  const errors = document.querySelector("#archive-errors");
+  root.querySelector("#processing-failures").hidden = info.failed.length === 0;
+  const errors = root.querySelector("#archive-errors");
   errors.replaceChildren(...info.failed.map(item => {
     const li = document.createElement("li");
     li.textContent = `${item.name}：${item.error}`;
     return li;
   }));
   const archive = info.archive;
-  document.querySelector("#archive-summary").textContent = archive
+  root.querySelector("#archive-summary").textContent = archive
     ? `归档 ${formatCount(archive.packages)} 包 · ${formatBytes(archive.bytes)} · ${formatCount(archive.partitions)} 卷`
     : "归档未巡检";
-  document.querySelector("#archive-checked").textContent = archive ? `巡检 ${dateTime.format(new Date(archive.checked_at))}` : "";
+  root.querySelector("#archive-checked").textContent = archive ? `巡检 ${dateTime.format(new Date(archive.checked_at))}` : "";
 }
-for (const label of document.querySelectorAll(".pair-quota"))
+for (const label of root.querySelectorAll(".pair-quota"))
   label.textContent = `${GROUPED_BATTLES ? "每对模型" : ""}每天最多评测 ${formatCount(DAILY_BATTLE_LIMIT)} 次对战`;
 
 function quotaProgress(counts) {
@@ -133,7 +135,8 @@ function makeModelLink(day, model, item) {
   }
   const link = document.createElement("a");
   link.className = "model-link";
-  link.href = `${BASE_PATH}/records?date=${encodeURIComponent(day)}&model=${encodeURIComponent(model)}`;
+  link.href = "#samples";
+  link.addEventListener("click", event => { event.preventDefault(); options.onSamples?.({ dataset: DATASET, profile:PROFILE, date: day, model }); });
   link.textContent = `${MODEL_LABELS[model]} ${formatCount(item.row_count)} 条`;
   link.setAttribute("aria-label", `查看 ${day} ${MODEL_LABELS[model]} 问句`);
   return link;
@@ -244,7 +247,7 @@ function makePairCell(day, entry, pair, evaluation, dayProgress, grouped = false
   if (counts.exceeded_cases) {
     const excluded = document.createElement("div");
     excluded.className = "quota-excluded";
-    excluded.textContent = `${formatCount(counts.exceeded_cases)} 条超过评测配额，不评测`;
+    excluded.textContent = `超额未评测 ${formatCount(counts.exceeded_cases)} 条`;
     cell.append(excluded);
   }
   return cell;
@@ -360,10 +363,13 @@ async function loadCatalog() {
         .then(response => response.ok ? response.json() : null).catch(() => null),
     ]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    currentCatalog = await response.json();
+    const catalog = await response.json();
+    if (disposed) return;
+    currentCatalog = catalog;
     renderCatalog(currentCatalog);
     renderProcessing(processing);
   } catch {
+    if (disposed) return;
     state.dataset.state = "offline";
     state.querySelector(".state-label").textContent = "离线";
     errorMessage.textContent = "数据目录暂不可用";
@@ -395,10 +401,25 @@ nextPageButton.addEventListener("click", () => {
   renderCatalog(currentCatalog);
 });
 refreshButton.addEventListener("click", loadCatalog);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") loadCatalog();
-});
-window.setInterval(() => {
+const timer = window.setInterval(() => {
   if (document.visibilityState === "visible") loadCatalog();
 }, 15000);
-loadCatalog();
+void loadCatalog();
+return { destroy() { disposed = true; clearInterval(timer); } };
+}
+if (globalThis.document?.querySelector("#dataset-range")) {
+  let selectionRevision = 0;
+  mountData(document, { async onSamples(selection) {
+    const revision = ++selectionRevision;
+    let container = document.getElementById("inline-records");
+    if (!container) { container = document.createElement("section"); container.id = "inline-records"; document.querySelector("main").append(container); }
+    try {
+      const response = await fetch(`/data/${selection.dataset}/records`, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = new DOMParser().parseFromString(await response.text(), "text/html");
+      if (revision !== selectionRevision) return;
+      container.replaceChildren(html.querySelector("main"));
+      globalThis.DataRecords.mountRecords(container, selection);
+    } catch (error) { if (revision === selectionRevision) container.textContent = `样本读取失败：${error.message}`; }
+  } });
+}

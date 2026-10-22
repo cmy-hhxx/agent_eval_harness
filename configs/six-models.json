@@ -1,4 +1,8 @@
 {
+  "output": {
+    "kind": "directory",
+    "path": "/mnt/fin_bench/eval_data/1_aime/eval_output/0_daily_eval"
+  },
   "inputs": {
     "versions": [
       {

@@ -85,6 +85,45 @@ test("absent or empty scope conflicts preserve the existing decided result", () 
   assert.deepEqual(f.registry.resolve(f.binding, { ...f.draft, scope_conflicts: [] }, audit), original);
 });
 
+test("a decisive source interpretation dispute binds the existing finding and defers ranking without changing attribution", () => {
+  const f = scenario(), before = structuredClone(f.input.attributions), slot = comparisonSlots(f.request)[0];
+  const reason = "原文给综合位次，归因却按单项排序判错；这项解释影响正式胜负，须退回来源核查。";
+  const result = f.registry.resolve(f.binding, { ...f.draft, preference: null, relative_preference: null,
+    source_reviews: [{ slot_index: 0, candidate: "B", reason }] }, audit) as ComparisonResult;
+  f.registry.validate(f.binding, result, audit);
+  assert.equal(result.status, "needs_review");
+  assert.deepEqual(result.ranking, []);
+  assert.deepEqual(result.decision_basis.decisive_findings, []);
+  assert.deepEqual(result.review_requests, [{ candidate: "B", criterion_ids: slot.criterion_ids,
+    finding_indices: slot.finding_indices.B, reason }]);
+  assert.equal(result.assessments.B.meets_core, null);
+  assert.equal(result.assessments.A.meets_core, before.A.core_assessment.meets_core);
+  assert.deepEqual(f.input.attributions, before);
+});
+
+test("source review cannot coexist with a winner or an inclination", () => {
+  for (const preference of ["A", null]) {
+    const f = scenario();
+    assert.throws(() => f.registry.resolve(f.binding, { ...f.draft, preference, relative_preference: "A",
+      source_reviews: [{ slot_index: 0, candidate: "A", reason }] }, audit), error => error instanceof ValidationError &&
+      error.issues!.some(issue => issue.code === "source_review_preference"));
+  }
+});
+
+test("source review rejects duplicate, resource and invented choices instead of changing source facts", () => {
+  const f = scenario(), before = structuredClone(f.input.attributions), review = { slot_index: 0, candidate: "A", reason };
+  const resource = comparisonSlots(f.request).findIndex(slot => slot.kind === "resource");
+  for (const source_reviews of [[review, review], [{ ...review, slot_index: 999 }], [{ ...review, candidate: "C" }],
+    ...(resource < 0 ? [] : [[{ ...review, slot_index: resource }]])]) {
+    assert.throws(() => f.registry.resolve(f.binding, { ...f.draft, preference: null, relative_preference: null, source_reviews }, audit), ValidationError);
+  }
+  assert.throws(() => f.registry.resolve(f.binding, { ...conflictDraft(f.draft), source_reviews: [review] }, audit),
+    error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "source_review_duplicate"));
+  assert.deepEqual(f.input.attributions, before);
+  assert.deepEqual(f.registry.resolve(f.binding, { ...f.draft, source_reviews: [] }, audit),
+    f.registry.resolve(f.binding, f.draft, audit), "uncontested factual comparisons still decide normally");
+});
+
 test("scope conflict choices reject duplicate slots, invalid scope and free-form identities", () => {
   const f = scenario();
   const own = { id: "own", text: "本方格式", acceptance_rule: "本方格式", applies_to: [f.input.candidates.A.candidate_id] };

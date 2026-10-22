@@ -1,11 +1,12 @@
+import type { ServerResponse } from "node:http";
 import { readSettings, type ApplicationSettings } from "./settings.js";
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
-import { deleteRun, exists, locateRun, readJson, RunDeletionError } from "@eval/data";
-import { editableDashboardSettings, loadEvaluation, readConfigSources } from "./config.js";
+import { deleteRun, exists, localFiles, listRunArtifacts, locateRun, runLock, readJson, RunDeletionError } from "@eval/data";
+import { editableDashboardSettings, loadEvaluation, loadConfig, createModelResolver, readConfigSources } from "./config.js";
 import { dashboardReference } from "./dashboard-reference.js";
 import {
   clearUnavailableDashboardModels,
@@ -16,6 +17,10 @@ import {
 } from "./dashboard-models.js";
 import { readLock, previewRun, startRun } from "./dashboard-launch.js";
 import { createDashboardInputs } from "./dashboard-inputs.js";
+import { DashboardBatches, type BatchRun } from "./dashboard-batches.js";
+import { DashboardAnalysis } from "./dashboard-analysis.js";
+import { DashboardErrors } from "./dashboard-errors.js";
+import { prepareFailedTasks, type ClusteringJobConfig } from "@eval/workflows/comparison";
 import { ROOT } from "./paths.js";
 import { listClusteringTasks, listConfiguredProblemLibrary, listRunCases, readCaseDetail, readConfiguredProblemClass, readRegisteredInput, readTaskResult } from "@eval/workflows/comparison";
 
@@ -24,6 +29,8 @@ interface DashboardOptions {
   port: number;
   /** Test seam; production discovery always uses the configured config.ini channels. */
   modelCatalog?: DashboardModelLoader;
+  batchDirectory?: string;
+  dataUrl?: string;
   /** Test seam; production journals always use the shared project log directory. */
   logs?: { directory: string; lockDirectory: string };
 }
@@ -194,6 +201,15 @@ async function controlRun(outputDir: string, runId: string, action: "stop" | "co
   return result;
 }
 
+async function runArtifacts(res: ServerResponse, directory: string, requested: string | null) {
+  const files = await listRunArtifacts(directory);
+  if (!requested) return {directory,files};
+  if (!files.some(file=>file.name===requested)) throw new HttpError(404,"产物不存在");
+  res.writeHead(200,{"content-type":"application/octet-stream","content-disposition":`attachment; filename="${path.basename(requested)}"`});
+  res.end(await localFiles.read(path.join(directory,requested)));
+  return undefined;
+}
+
 export async function startDashboard(options: DashboardOptions) {
   const source = await readConfigSources(options.configPaths);
   const output = source.output;
@@ -214,6 +230,10 @@ export async function startDashboard(options: DashboardOptions) {
     changingRuns.set(runId, undefined);
   };
   const inputs = createDashboardInputs();
+  const batches = new DashboardBatches(options.batchDirectory ?? process.env.EVAL_WORKBENCH_RUNS_DIR ?? path.join(ROOT, ".runtime/workbench-runs"),
+    options.dataUrl ?? process.env.EVAL_WORKBENCH_DATA_URL ?? "http://127.0.0.1:8081");
+  const errorReader = new DashboardErrors(logs.directory);
+  const runOutput = async (id: string) => (await batches.get(id))?.outputDir ?? outputDir;
   let modelCatalogFailures: DashboardModelFailure[] = [];
   const loadModels = options.modelCatalog ?? (() => discoverDashboardModels(failures => { modelCatalogFailures = failures; }));
   let modelCatalogPromise: Promise<DashboardModel[]> | undefined;
@@ -223,6 +243,23 @@ export async function startDashboard(options: DashboardOptions) {
       throw error;
     });
     return modelCatalogPromise;
+  };
+  const analysis = new DashboardAnalysis(batches, options.configPaths, readModels);
+  const batchOptions = (entry: BatchRun) => ({ configPaths: [...options.configPaths, batches.config(entry.runId)],
+    outputDir: entry.outputDir, modelCatalog: readModels, plan: inputs.plan });
+  const batchPayload = (entry: BatchRun) => ({ runId: entry.runId, engine: entry.engine, settings: entry.settings });
+  const batchSummary = async (entry: BatchRun) => {
+    let state, stateError: string | undefined;
+    try { state = await inspectRun(entry.outputDir, entry.runId); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") stateError = errorText(error); }
+    let status = entry.status;
+    if (!state && status === "starting") {
+      try { if (!entry.pid) throw new Error("no pid"); process.kill(entry.pid, 0); }
+      catch { status = "interrupted"; }
+    }
+    return { ...state, run_id: entry.runId, started_at: state?.started_at ?? entry.createdAt,
+      status: state?.status ?? status, launch_error: stateError ?? entry.error, task: entry.scope.task,
+      batch_ids: entry.scope.batch_ids, output_dir: path.join(entry.outputDir, entry.runId), batch_run: true, archived_at: entry.archivedAt };
   };
   const server = await listen(async (req, res, url) => {
     res.setHeader("Cache-Control", "no-store");
@@ -282,8 +319,138 @@ export async function startDashboard(options: DashboardOptions) {
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")
       return json(res, await inputs.read(await loadEvaluation(options.configPaths)));
-    if (req.method === "GET" && url.pathname === "/api/dashboard/runs")
-      return json(res, await allRuns(outputDir));
+    if (req.method === "POST" && url.pathname === "/api/dashboard/batch-runs/preview") {
+      const entry = await batches.prepare(record(await body(req, 64 * 1024), "Expected JSON object"));
+      try {
+        const preview = await previewRun(batchOptions(entry), batchPayload(entry));
+        entry.status = "ready"; await batches.save(entry);
+        const host = await loadConfig(batchOptions(entry).configPaths, undefined, entry.settings);
+        const resolve = createModelResolver(host.models);
+        const active = ["criteria", "attribution", ...(Number(preview.summary.comparison_tasks) ? ["comparison"] : []),
+          ...(Number(preview.summary.rewrite_tasks) ? ["rewrite"] : [])];
+        const evaluatorModels = Object.fromEntries(active.map(stage => { const model = resolve(stage); return [stage, model.model]; }));
+        return json(res, { ...preview, evaluator_models: evaluatorModels, evaluator_version: host.evaluatorVersion, run_id: entry.runId, task: entry.scope.task, batch_ids: entry.scope.batch_ids,
+          output_dir: path.join(entry.outputDir, entry.runId),
+          models: entry.models });
+      } catch (error) { entry.status = "preview_failed"; entry.error = errorText(error); await batches.save(entry); throw error; }
+    }
+    if (url.pathname === "/api/dashboard/analysis/scope" && req.method === "POST") {
+      const {page = 1, status = "", ...selection} = record(await body(req,64 * 1024), "Expected scope");
+      if (!Number.isSafeInteger(page) || Number(page)<1 || !["","available","included","reserved","unfinished","superseded"].includes(String(status))) throw new HttpError(400,"无效的分页或状态");
+      const scope = await analysis.scope(selection), rows = scope.rows.filter(row=>!status || row.status===status);
+      return json(res,{...scope,rows:rows.slice((Number(page)-1)*40,Number(page)*40),page,page_size:40,total:rows.length});
+    }
+    if (url.pathname === "/api/dashboard/analysis/preview" && req.method === "POST")
+      return json(res, await analysis.preview(record(await body(req,64 * 1024), "Expected scope")));
+    if (url.pathname === "/api/dashboard/analysis" && req.method === "GET") return json(res, { jobs: await analysis.list() });
+    if (/^\/api\/dashboard\/analysis\/[^/]+\/(start|resume|sources|artifacts|errors|stop)$/.test(url.pathname)) {
+      const parts = url.pathname.split("/"), id = safeId(parts[4]!), action = parts[5];
+      const job = await analysis.get(id); if (!job) throw new HttpError(404,"分析作业不存在");
+      if (req.method === "POST" && ["start","resume"].includes(action!))
+        return json(res, await analysis.launch(id,record(await body(req,64 * 1024),"Expected object")),202);
+      if (req.method === "POST" && action === "stop") return json(res, await controlRun(job.output_dir,id,"stop"));
+      if (req.method === "GET" && action === "errors") return json(res, await errorReader.read(path.join(job.output_dir,id),url.searchParams));
+      if (req.method === "GET" && action === "sources") {
+        const page=Number(url.searchParams.get("page") || 1);
+        if (!Number.isSafeInteger(page) || page<1) throw new HttpError(400,"Invalid page");
+        const selection=await readJson<ClusteringJobConfig["clusteringJob"]>(analysis.selectionFile(id));
+        const sources=[...selection.sources.map(source=>({kind:"selected",source})),
+          ...(selection.recall ?? []).map(ref=>({kind:"recalled",finding_id:ref.finding_id,source:{...ref.attribution,
+            model:ref.version,batch_id:ref.batch_id,case_id:ref.case_id,input_id:ref.input_id,source:ref.source}}))];
+        return json(res,{sources:sources.slice((page-1)*40,page*40),page,page_size:40,total:sources.length,
+          selected_count:selection.sources.length,recalled_count:selection.recall?.length ?? 0});
+      }
+      if (req.method === "GET" && action === "artifacts") {
+        const result = await runArtifacts(res,path.join(job.output_dir,id),url.searchParams.get("file"));
+        if (result) return json(res,result.files); return;
+      }
+    }
+    if (/^\/api\/dashboard\/batch-runs\/[^/]+\/(archive|artifacts)$/.test(url.pathname)) {
+      const parts = url.pathname.split("/"), id = safeId(parts[4]!), action = parts[5];
+      const entry = await batches.get(id); if (!entry) throw new HttpError(404,"批次运行不存在");
+      const directory = path.join(entry.outputDir,id);
+      if (req.method === "GET" && action === "artifacts") {
+        const result = await runArtifacts(res,directory,url.searchParams.get("file"));
+        if (result) return json(res,{...result,archived_at:entry.archivedAt}); return;
+      }
+      if (req.method === "POST" && action === "archive") {
+        reserveRun(id);
+        let release: (()=>Promise<void>) | undefined;
+        try {
+          if (entry.pid) {
+            try { process.kill(entry.pid,0); throw new HttpError(409,"运行尚未退出"); }
+            catch(error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+          }
+          if (!await exists(locateRun(directory).stateFile)) throw new HttpError(409,"暂无可归档结果");
+          try { release = await runLock(directory,{createDirectory:false}); }
+          catch(error) { throw new HttpError(409,errorText(error)); }
+          if (!await exists(locateRun(directory).stateFile) || !(await listRunArtifacts(directory)).length) throw new HttpError(409,"暂无可归档结果");
+          entry.archivedAt = Date.now(); await batches.save(entry);
+          return json(res,{run_id:id,archived_at:entry.archivedAt,directory});
+        } finally { await release?.(); changingRuns.delete(id); }
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/dashboard/batch-runs") {
+      const entries = await batches.list();
+      return json(res, { runs: await Promise.all(entries.filter(entry => !["draft", "preview_failed"].includes(entry.status))
+        .sort((a,b) => b.createdAt - a.createdAt).map(batchSummary)) });
+    }
+    if (req.method === "POST" && /^\/api\/dashboard\/batch-runs\/[^/]+\/(start|resume|retry)$/.test(url.pathname)) {
+      const parts = url.pathname.split("/"), id = safeId(parts[4]!), action = parts[5];
+      const entry = await batches.get(id);
+      if (!entry) throw new HttpError(404, "批次运行不存在");
+      const value = record(await body(req, 64 * 1024), "Expected JSON object");
+      if (Object.keys(value).some(key => !["task_ids", "resume_stages"].includes(key))) throw new HttpError(400, "Unknown recovery field");
+      for (const key of ["task_ids", "resume_stages"] as const)
+        if (value[key] !== undefined && (!Array.isArray(value[key]) || (value[key] as unknown[]).some(item => typeof item !== "string" || !item)))
+          throw new HttpError(400, "Invalid " + key);
+      const directory = path.join(entry.outputDir, id);
+      if (entry.pid) {
+        try { process.kill(entry.pid, 0); throw new HttpError(409, "运行进程尚未退出"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      }
+      reserveRun(id);
+      try {
+        if (await readLock(directory)) throw new HttpError(409, "运行仍在执行");
+        const saved = await exists(locateRun(directory).stateFile);
+        if (action === "start" && saved) throw new HttpError(409, "运行已存在，请续跑");
+        if (action === "retry" && !saved) throw new HttpError(409, "运行尚无失败任务");
+        if (saved && value.resume_stages) {
+          const checkpoint = await readJson<{ pausedStages?: { stage: string }[] }>(locateRun(directory).stateFile);
+          if ((value.resume_stages as string[]).some(stage => !checkpoint.pausedStages?.some(pause => pause.stage === stage)))
+            throw new HttpError(400, "只能解除当前已暂停的阶段");
+        }
+        const settings = batchOptions(entry);
+        const preview = await previewRun(settings, batchPayload(entry));
+        if (!preview.tasks) throw new HttpError(409, "没有可评任务");
+        entry.status = "starting"; delete entry.archivedAt; delete entry.error; await batches.save(entry);
+        const result = await startRun({ ...settings, discoverInputs: action === "resume", beforeLaunch: async () => {
+          if (action === "retry") {
+            const repair = await prepareFailedTasks(directory, { taskIds: value.task_ids as string[] | undefined, apply: true });
+            if (!repair.count) throw new HttpError(409, "没有可重试的失败任务");
+          }
+        }, resumeStages: value.resume_stages as string[] | undefined,
+          onExit: (code, signal) => { void (async () => {
+            const current = await batches.get(id);
+            if (!current || current.pid !== result.pid) return;
+            current.status = code === 0 ? "finished" : "interrupted";
+            if (code !== 0 && !await exists(locateRun(directory).stateFile)) current.error = `启动进程退出：${signal ?? code}，请查看运行日志`;
+            delete current.pid; await batches.save(current);
+          })().catch(error => console.error("保存运行退出状态失败：", error)); },
+        }, batchPayload(entry));
+        entry.pid = result.pid; await batches.save(entry);
+        changingRuns.set(id, result.pid);
+        return json(res, result, 202);
+      } catch (error) {
+        changingRuns.delete(id); entry.error = errorText(error); await batches.save(entry); throw error;
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/dashboard/runs") {
+      const existing = await allRuns(outputDir), registered = await batches.list();
+      const ids = new Set(existing.runs.map(run => run.run_id));
+      const extra = await Promise.all(registered.filter(entry => !ids.has(entry.runId) && !["draft","ready","preview_failed"].includes(entry.status)).map(batchSummary));
+      return json(res, { ...existing, runs: [...existing.runs, ...extra].sort((a,b) => b.started_at - a.started_at) });
+    }
     if (req.method === "POST" && url.pathname === "/api/dashboard/preview")
       return json(res, await previewRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, record(await body(req, 64 * 1024), "Expected JSON object")));
     if (req.method === "POST" && url.pathname === "/api/dashboard/runs") {
@@ -292,6 +459,7 @@ export async function startDashboard(options: DashboardOptions) {
       let runId: string;
       try { runId = safeId(value.runId); }
       catch { throw new HttpError(400, "Invalid runId"); }
+      if (await batches.get(runId)) throw new HttpError(409, "请使用批次运行的继续或重试操作");
       reserveRun(runId);
       try {
         const result = await startRun({ configPaths: options.configPaths, outputDir, modelCatalog: readModels, plan: inputs.plan }, value);
@@ -318,16 +486,23 @@ export async function startDashboard(options: DashboardOptions) {
     if (parts[0] !== "api" || parts[1] !== "dashboard" || parts[2] !== "runs" || !parts[3])
       throw new HttpError(404, "Not found");
     const runId = safeId(parts[3]);
-    const directory = path.join(outputDir, runId);
+    const selectedOutput = await runOutput(runId);
+    const directory = path.join(selectedOutput, runId);
     if (req.method === "DELETE" && parts.length === 4) {
       reserveRun(runId);
       try {
-        return json(res, await deleteRun({ outputDirectory: outputDir, runId,
-          logDirectory: logs.directory, logLockDirectory: logs.lockDirectory }));
+        const result = await deleteRun({ outputDirectory: selectedOutput, runId,
+          logDirectory: logs.directory, logLockDirectory: logs.lockDirectory });
+        if (await batches.get(runId)) await localFiles.remove(path.dirname(batches.file(runId)), { recursive: true });
+        return json(res, result);
       } catch (error) {
         if (error instanceof RunDeletionError) throw new HttpError(error.reason === "not_found" ? 404 : 409, error.message);
         throw error;
       } finally { changingRuns.delete(runId); }
+    }
+    if (req.method === "GET" && parts[4] === "errors" && parts.length === 5) {
+      if (!await batches.get(runId) && !await exists(locateRun(directory).stateFile)) throw new HttpError(404, "Run not found");
+      return json(res, await errorReader.read(directory, url.searchParams));
     }
     if (!(await exists(locateRun(directory).stateFile))) throw new HttpError(404, "Run not found");
     if (req.method === "GET" && parts[4] === "cases" && parts[5] === "detail" && parts.length === 6) {
@@ -366,13 +541,13 @@ export async function startDashboard(options: DashboardOptions) {
       }
     }
     if (req.method === "GET" && parts.length === 4)
-      return json(res, await inspectRun(outputDir, runId));
+      return json(res, { ...await inspectRun(selectedOutput, runId), batch_run: !!await batches.get(runId) });
     if (req.method === "POST" && parts[4] === "stop")
-      return json(res, await controlRun(outputDir, runId, "stop"));
+      return json(res, await controlRun(selectedOutput, runId, "stop"));
     if (req.method === "POST" && parts[4] === "concurrency") {
       const value = record(await body(req, 64 * 1024), "Expected JSON object").value;
       if (!Number.isInteger(value) || Number(value) < 1) throw new HttpError(400, "value must be positive");
-      return json(res, await controlRun(outputDir, runId, "concurrency", Number(value)));
+      return json(res, await controlRun(selectedOutput, runId, "concurrency", Number(value)));
     }
     throw new HttpError(404, "Not found");
   }, options.port);

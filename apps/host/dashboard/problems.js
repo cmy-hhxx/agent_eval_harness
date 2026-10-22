@@ -1,20 +1,18 @@
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const colors = [{ color: "var(--model-0, #3562a4)", soft: "#edf3fa" }, { color: "var(--model-1, #7460a8)", soft: "#f2eff8" }, { color: "var(--model-2, #087f83)", soft: "#eaf5f4" }, { color: "var(--model-3, #a3632e)", soft: "#fbf2e9" }];
-const chevron = '<svg class="tree-chevron" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m4.5 3 3 3-3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>';
-const separator = '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m4.5 3 3 3-3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>';
 const arrow = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9M8 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>';
 const loading = (label) => `<span class="loading" role="status" aria-label="${escapeHtml(label)}"><span class="spinner" aria-hidden="true"></span></span>`;
 const recallReasons = { run_missing: "运行已删除", sample_missing: "样本缺失", result_missing: "归因结果缺失", finding_missing: "归因项缺失", input_unavailable: "输入不可读", run_unavailable: "运行不可读" };
 const dateText = (value, time = false) => value ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", ...(time ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}) }).format(new Date(value)) : "—";
 const modelName = (model) => model.name || model.model;
 const classKey = (id) => `class:${id}`;
-const componentKey = (id) => `component:${id}`;
 const classMatches = (problem, query) => !query || `${problem.label} ${problem.definition} ${problem.aliases.join(" ")} ${(problem.category_paths || []).map(path => path.join(" / ")).join(" ")}`.toLocaleLowerCase().includes(query);
 const componentMatches = (component, query) => query && `${component.label} ${component.definition} ${component.aliases.join(" ")}`.toLocaleLowerCase().includes(query);
-const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
+
 
 /** Read-only browser for the current input models' shared problem libraries. */
-export function createProblemBrowser(document, request = globalThis.fetch) {
+export function createProblemBrowser(document, request = globalThis.fetch, options = {}) {
+  const API_ROOT = options.apiRoot || "/api/dashboard";
   const $ = (selector) => document.querySelector(selector);
   const state = { models: null, model: null, classId: null, detail: null, search: "", expanded: new Set(), modelExpanded: true, focusKey: "model", remembered: new Map(), listRequest: 0, detailRequest: 0 };
   const currentModel = () => state.models?.find((model) => model.model === state.model);
@@ -48,20 +46,17 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
   }
   function renderTree(focus = false) {
     const model = currentModel(), components = filteredComponents();
-    const visible = ["model", ...(state.modelExpanded ? components.flatMap((component) => [componentKey(component.id), ...(state.expanded.has(component.id) ? component.classes.map((problem) => classKey(problem.id)) : [])]) : [])];
-    if (!visible.includes(state.focusKey)) state.focusKey = "model";
-    const tabIndex = (key) => key === state.focusKey ? "0" : "-1";
-    $("#problem-tree").innerHTML = !model ? '' : `<ul role="none"><li role="none"><button type="button" role="treeitem" aria-level="1" aria-expanded="${state.modelExpanded}" tabindex="${tabIndex("model")}" data-node-key="model" data-node-kind="model">${chevron}<span class="tree-label">${escapeHtml(modelName(model))}</span><span class="tree-count">${model.totals.classes}</span></button>${state.modelExpanded ? `<ul role="group">${components.map((component) => `<li role="none"><button type="button" role="treeitem" aria-level="2" aria-expanded="${state.expanded.has(component.id)}" tabindex="${tabIndex(componentKey(component.id))}" data-node-key="${escapeHtml(componentKey(component.id))}" data-node-kind="component" data-component="${escapeHtml(component.id)}">${chevron}<span class="tree-label">${highlight(component.label)}</span><span class="tree-count">${component.classes.length}</span></button>${state.expanded.has(component.id) ? `<ul role="group">${component.classes.map((problem) => `<li role="none"><button type="button" role="treeitem" aria-level="3" aria-selected="${state.classId === problem.id}" tabindex="${tabIndex(classKey(problem.id))}" data-node-key="${escapeHtml(classKey(problem.id))}" data-node-kind="class" data-class="${escapeHtml(problem.id)}" data-component="${escapeHtml(component.id)}"><span class="tree-class-dot" aria-hidden="true"></span><span class="tree-label">${highlight(problem.label)}</span><span class="tree-count" aria-label="${problem.occurrences} 次出现">${problem.occurrences}</span></button></li>`).join("")}</ul>` : ""}</li>`).join("")}</ul>` : ""}</li></ul>`;
+    $("#problem-tree").innerHTML = `<div class="table-scroll"><table class="data-table"><thead><tr><th>责任组件</th><th>问题类</th><th>出现次数</th></tr></thead><tbody>${components.flatMap(component => component.classes.map(problem => `<tr><td>${highlight(component.label)}</td><td><button type="button" class="table-link" data-node-key="${escapeHtml(classKey(problem.id))}" data-node-kind="class" data-class="${escapeHtml(problem.id)}" aria-pressed="${state.classId === problem.id}">${highlight(problem.label)}</button></td><td>${problem.occurrences}</td></tr>`)).join("")}</tbody></table></div>`;
     $("#problem-tree-result").textContent = !model ? "无问题库" : query() ? `${components.reduce((count, component) => count + component.classes.length, 0)} 个匹配问题类` : `${model.totals.components} 个组件 · ${model.totals.classes} 个问题类`;
-    $("#problem-topics").innerHTML = model?.categories?.length ? `<details><summary>主题 ${model.categories.length}</summary><ul class="problem-merge-list">${model.categories.map(topic => `<li><button type="button" data-topic="${escapeHtml(topic.path.join(" / "))}">${escapeHtml(topic.path.join(" / "))}</button><span>${topic.occurrences} 次出现</span></li>`).join("")}</ul></details>` : "";
-    $("#problem-merges").innerHTML = model?.merged.length ? `<details><summary>已合并 ${model.merged.length} 个类</summary>${mergeList(model.merged)}</details>` : "";
+    $("#problem-topics").innerHTML = model?.categories?.length ? `<section><header>主题 ${model.categories.length}</header><ul class="problem-merge-list">${model.categories.map(topic => `<li><button type="button" data-topic="${escapeHtml(topic.path.join(" / "))}">${escapeHtml(topic.path.join(" / "))}</button><span>${topic.occurrences} 次出现</span></li>`).join("")}</ul></section>` : "";
+    $("#problem-merges").innerHTML = model?.merged.length ? `<section><header>已合并 ${model.merged.length} 个类</header>${mergeList(model.merged)}</section>` : "";
     if (focus) focusTreeNode(state.focusKey);
   }
   function focusTreeNode(key) {
     const node = [...$("#problem-tree").querySelectorAll("[data-node-key]")].find((item) => item.dataset.nodeKey === key);
     if (node) {
       state.focusKey = key;
-      for (const item of $("#problem-tree").querySelectorAll("[data-node-key]")) item.tabIndex = item === node ? 0 : -1;
+      for (const item of $("#problem-tree").querySelectorAll("[data-node-key]")) item.tabIndex = 0;
       node.focus({ preventScroll: true });
       if (typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest", behavior: "instant" });
     }
@@ -71,13 +66,13 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
   }
   function metadata(problem) {
     const origin = problem.first_seen;
-    return `<details class="problem-class-meta"><summary>类记录</summary><dl><dt>类 ID</dt><dd><code>${escapeHtml(problem.id)}</code></dd>${origin ? `<dt>首次出现</dt><dd>${dateText(origin.at, true)}</dd><dt>首次样本</dt><dd><code>${escapeHtml(origin.batch_id)} / ${escapeHtml(origin.case_id)}</code></dd><dt>评测器</dt><dd>${escapeHtml(origin.evaluator_version)}</dd>` : ""}</dl></details>`;
+    return `<section class="problem-class-meta"><header>类记录</header><dl><dt>类 ID</dt><dd><code>${escapeHtml(problem.id)}</code></dd>${origin ? `<dt>首次出现</dt><dd>${dateText(origin.at, true)}</dd><dt>首次样本</dt><dd><code>${escapeHtml(origin.batch_id)} / ${escapeHtml(origin.case_id)}</code></dd><dt>评测器</dt><dd>${escapeHtml(origin.evaluator_version)}</dd>` : ""}</dl></section>`;
   }
   function occurrenceHtml(occurrence) {
     const recall = occurrence.recall;
     const fileName = occurrence.source.file.split(/[\\/]/).at(-1);
     const evidence = occurrence.evidence_status === "established" ? "已确认" : occurrence.evidence_status === "uncertain" ? "待核实" : "状态缺失";
-    return `<section class="problem-occurrence" aria-label="样本 ${escapeHtml(occurrence.case_id)}"><div class="occurrence-head"><div class="occurrence-identity"><strong>${escapeHtml(occurrence.case_id)}</strong><span class="occurrence-batch">${escapeHtml(occurrence.batch_id)}</span></div>${recall.available && recall.url ? `<a class="occurrence-recall" href="${escapeHtml(recall.url)}" aria-label="召回样本 ${escapeHtml(occurrence.case_id)}">召回样本${arrow}</a>` : `<div class="occurrence-unavailable"><strong>不可召回</strong><span>${escapeHtml(recallReasons[recall.reason] || recall.reason || "来源不可用")}</span></div>`}</div><div class="occurrence-state"><span class="occurrence-evidence ${escapeHtml(occurrence.evidence_status)}">${evidence}</span><span>${occurrence.classification === "created" ? "新建类" : "归入"}${occurrence.previous_class_id ? " · 合并迁入" : ""}</span><time datetime="${escapeHtml(occurrence.at)}">${dateText(occurrence.at)}</time></div><details class="occurrence-origin"><summary>来源 <code>${escapeHtml(fileName)}:${occurrence.source.line}</code></summary><dl><dt>源文件</dt><dd><code>${escapeHtml(occurrence.source.file)}:${occurrence.source.line}</code></dd><dt>运行</dt><dd><code>${escapeHtml(occurrence.run_id)}</code></dd><dt>归因项</dt><dd><code>${escapeHtml(occurrence.finding_id)}</code></dd><dt>消息</dt><dd>#${escapeHtml(occurrence.message_index)}</dd><dt>评测器</dt><dd>${escapeHtml(occurrence.evaluator_version)}</dd>${occurrence.previous_class_id ? `<dt>原问题类</dt><dd><code>${escapeHtml(occurrence.previous_class_id)}</code></dd>` : ""}</dl></details></section>`;
+    return `<section class="problem-occurrence" aria-label="样本 ${escapeHtml(occurrence.case_id)}"><div class="occurrence-head"><div class="occurrence-identity"><strong>${escapeHtml(occurrence.case_id)}</strong><span class="occurrence-batch">${escapeHtml(occurrence.batch_id)}</span></div>${recall.available && recall.url ? `<a class="occurrence-recall" href="${escapeHtml(recall.url)}" aria-label="召回样本 ${escapeHtml(occurrence.case_id)}">召回样本${arrow}</a>` : `<div class="occurrence-unavailable"><strong>不可召回</strong><span>${escapeHtml(recallReasons[recall.reason] || recall.reason || "来源不可用")}</span></div>`}</div><div class="occurrence-state"><span class="occurrence-evidence ${escapeHtml(occurrence.evidence_status)}">${evidence}</span><span>${occurrence.classification === "created" ? "新建类" : "归入"}${occurrence.previous_class_id ? " · 合并迁入" : ""}</span><time datetime="${escapeHtml(occurrence.at)}">${dateText(occurrence.at)}</time></div><section class="occurrence-origin"><header>来源 <code>${escapeHtml(fileName)}:${occurrence.source.line}</code></header><dl><dt>源文件</dt><dd><code>${escapeHtml(occurrence.source.file)}:${occurrence.source.line}</code></dd><dt>运行</dt><dd><code>${escapeHtml(occurrence.run_id)}</code></dd><dt>归因项</dt><dd><code>${escapeHtml(occurrence.finding_id)}</code></dd><dt>消息</dt><dd>#${escapeHtml(occurrence.message_index)}</dd><dt>评测器</dt><dd>${escapeHtml(occurrence.evaluator_version)}</dd>${occurrence.previous_class_id ? `<dt>原问题类</dt><dd><code>${escapeHtml(occurrence.previous_class_id)}</code></dd>` : ""}</dl></section></section>`;
   }
   function renderDetail() {
     const detail = state.detail, model = currentModel();
@@ -86,7 +81,7 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
     if (!detail) { node.innerHTML = '<p class="problem-detail-empty">暂无问题类</p>'; return; }
     const problem = detail.class, pages = Math.max(1, Math.ceil(detail.total / detail.page_size));
     const available = detail.occurrences.filter((occurrence) => occurrence.recall.available).length;
-    node.innerHTML = `<div class="problem-detail-enter"><div class="problem-breadcrumb"><span>${escapeHtml(modelName(model))}</span>${separator}<span>${escapeHtml(detail.component?.label || "无组件")}</span></div><div class="problem-detail-heading"><h1>${escapeHtml(problem.label)}</h1><span class="problem-class-status">${problem.status === "merged" ? "已合并" : "活跃"}</span></div><p class="problem-definition">${escapeHtml(problem.definition)}</p>${detail.rewrite_error ? `<p class="problem-detail-error" role="alert">改写来源读取失败：${escapeHtml(detail.rewrite_error)}</p>` : ""}${problem.aliases.length ? `<div class="problem-aliases"><span>别名</span>${problem.aliases.map((alias) => `<span>${escapeHtml(alias)}</span>`).join("")}</div>` : ""}${problem.category_paths?.length ? `<div class="problem-aliases"><span>主题</span>${problem.category_paths.map(path => `<span>${escapeHtml(path.join(" / "))}</span>`).join("")}</div>` : ""}${metadata(problem)}${problem.status === "merged" && problem.merged_into ? `<div class="problem-aliases"><span>合并至</span><button class="table-link" type="button" data-merge-target="${escapeHtml(problem.merged_into)}">${escapeHtml(model.merged.find((merge) => merge.id === problem.id)?.into_label || problem.merged_into)}</button></div>` : ""}<section class="problem-occurrences" aria-labelledby="problem-occurrences-title"><div class="problem-occurrences-heading"><h2 id="problem-occurrences-title">出现样本 <span>${detail.total}</span></h2><span class="problem-recall-count">本页可召回 ${available} / ${detail.occurrences.length}</span></div>${detail.occurrences.map(occurrenceHtml).join("") || '<p class="empty-state">暂无出现样本</p>'}${pages > 1 ? `<div class="problem-pager"><button type="button" class="button" data-page="${detail.page - 1}" ${detail.page <= 1 ? "disabled" : ""}>上一页</button><span>${detail.page} / ${pages}</span><button type="button" class="button" data-page="${detail.page + 1}" ${detail.page >= pages ? "disabled" : ""}>下一页</button></div>` : ""}</section>${detail.lineage?.length ? `<details class="problem-lineage"><summary>合并记录 ${detail.lineage.length}</summary>${mergeList(detail.lineage)}</details>` : ""}</div>`;
+    node.innerHTML = `<div class="problem-detail-enter"><div class="problem-breadcrumb"><span>${escapeHtml(modelName(model))}</span><span> / </span><span>${escapeHtml(detail.component?.label || "无组件")}</span></div><div class="problem-detail-heading"><h1>${escapeHtml(problem.label)}</h1><span class="problem-class-status">${problem.status === "merged" ? "已合并" : "活跃"}</span></div><p class="problem-definition">${escapeHtml(problem.definition)}</p>${detail.rewrite_error ? `<p class="problem-detail-error" role="alert">改写来源读取失败：${escapeHtml(detail.rewrite_error)}</p>` : ""}${problem.aliases.length ? `<div class="problem-aliases"><span>别名</span>${problem.aliases.map((alias) => `<span>${escapeHtml(alias)}</span>`).join("")}</div>` : ""}${problem.category_paths?.length ? `<div class="problem-aliases"><span>主题</span>${problem.category_paths.map(path => `<span>${escapeHtml(path.join(" / "))}</span>`).join("")}</div>` : ""}${metadata(problem)}${problem.status === "merged" && problem.merged_into ? `<div class="problem-aliases"><span>合并至</span><button class="table-link" type="button" data-merge-target="${escapeHtml(problem.merged_into)}">${escapeHtml(model.merged.find((merge) => merge.id === problem.id)?.into_label || problem.merged_into)}</button></div>` : ""}<section class="problem-occurrences" aria-labelledby="problem-occurrences-title"><div class="problem-occurrences-heading"><h2 id="problem-occurrences-title">出现样本 <span>${detail.total}</span></h2><span class="problem-recall-count">本页可召回 ${available} / ${detail.occurrences.length}</span></div>${detail.occurrences.map(occurrenceHtml).join("") || '<p class="empty-state">暂无出现样本</p>'}${pages > 1 ? `<div class="problem-pager"><button type="button" class="button" data-page="${detail.page - 1}" ${detail.page <= 1 ? "disabled" : ""}>上一页</button><span>${detail.page} / ${pages}</span><button type="button" class="button" data-page="${detail.page + 1}" ${detail.page >= pages ? "disabled" : ""}>下一页</button></div>` : ""}</section>${detail.lineage?.length ? `<section class="problem-lineage"><header>合并记录 ${detail.lineage.length}</header>${mergeList(detail.lineage)}</section>` : ""}</div>`;
   }
   function expandForSelection() {
     const components = filteredComponents();
@@ -191,38 +186,9 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
     const node = event.target.closest("[data-node-key]");
     if (!node) return;
     state.focusKey = node.dataset.nodeKey;
-    if (node.dataset.nodeKind === "model") { state.modelExpanded = !state.modelExpanded; renderTree(true); }
-    else if (node.dataset.nodeKind === "component") {
-      if (state.expanded.has(node.dataset.component)) state.expanded.delete(node.dataset.component); else state.expanded.add(node.dataset.component);
-      renderTree(true);
-    } else { void loadClass(node.dataset.class, 1, true); focusTreeNode(state.focusKey); }
+    void loadClass(node.dataset.class, 1, true); focusTreeNode(state.focusKey);
   });
-  $("#problem-tree").addEventListener("focusin", (event) => {
-    const node = event.target.closest("[data-node-key]");
-    if (!node) return;
-    state.focusKey = node.dataset.nodeKey;
-    for (const item of $("#problem-tree").querySelectorAll("[data-node-key]")) item.tabIndex = item === node ? 0 : -1;
-  });
-  $("#problem-tree").addEventListener("keydown", (event) => {
-    const node = event.target.closest("[data-node-key]"), nodes = [...$("#problem-tree").querySelectorAll("[data-node-key]")];
-    if (!node || !["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const index = nodes.indexOf(node), kind = node.dataset.nodeKind;
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") focusTreeNode(nodes[Math.max(0, Math.min(nodes.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))].dataset.nodeKey);
-    else if (event.key === "Home" || event.key === "End") focusTreeNode(nodes[event.key === "Home" ? 0 : nodes.length - 1].dataset.nodeKey);
-    else if (event.key === "ArrowRight") {
-      if (node.getAttribute("aria-expanded") === "false") {
-        if (kind === "model") state.modelExpanded = true; else state.expanded.add(node.dataset.component);
-        renderTree(true);
-      } else if (kind !== "class" && nodes[index + 1]) focusTreeNode(nodes[index + 1].dataset.nodeKey);
-    } else if (event.key === "ArrowLeft") {
-      if (node.getAttribute("aria-expanded") === "true") {
-        if (kind === "model") state.modelExpanded = false; else state.expanded.delete(node.dataset.component);
-        renderTree(true);
-      } else if (kind === "class") focusTreeNode(componentKey(node.dataset.component));
-      else if (kind === "component") focusTreeNode("model");
-    }
-  });
+
   $("#problem-workspace").addEventListener("click", (event) => {
     const target = event.target.closest("[data-merge-target], [data-page], [data-retry-class]");
     if (!target || target.disabled) return;
@@ -230,7 +196,11 @@ export function createProblemBrowser(document, request = globalThis.fetch) {
     else if (target.dataset.page && state.detail) void loadClass(state.classId, Number(target.dataset.page), false, true);
     else if (target.dataset.retryClass) void loadClass(target.dataset.retryClass, Number(target.dataset.retryPage), false, true);
   });
+  $("#problem-detail").addEventListener("click", event => {
+    const link = event.target.closest(".occurrence-recall");
+    if (link && options.onRecall) { event.preventDefault(); options.onRecall(new URL(link.href).searchParams); }
+  });
   return { state, load, selectModel, loadClass, setSearch, renderTree, renderDetail };
 }
 
-if (typeof document !== "undefined") void createProblemBrowser(document).load();
+if (globalThis.document?.querySelector("#problem-models")) void createProblemBrowser(document).load();

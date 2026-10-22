@@ -15,6 +15,7 @@ import {
 export * from "./models.js";
 export * from "./settings.js";
 export { createBalancedModels } from "./balanced-models.js";
+export { testEvaluationOutput } from "./evaluation-output.js";
 import { readSettings, applySettings, type ApplicationSettings } from "./settings.js";
 
 const EXECUTION_DEFAULTS = {
@@ -189,8 +190,20 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       clustering: source.rewrite.clustering !== false,
     };
   }
+  const scope = config.inputs?.workbench;
+  if (scope !== undefined) {
+    if (!isObject(scope) || !isObject(scope.task) || typeof scope.task.id !== "string" || !scope.task.id ||
+        !Array.isArray(scope.batch_ids) || !scope.batch_ids.length || scope.batch_ids.some(id => typeof id !== "string" || !id) ||
+        !Array.isArray(scope.records) || !scope.records.length || scope.records.some(row => !isObject(row) ||
+          (["model", "batch_id", "case_id", "input_file", "package_id", "package_name", "original_file"] as const).some(key => typeof row[key] !== "string" || !row[key]) ||
+          !Number.isSafeInteger(row.input_index) || Number(row.input_index) < 0 || !path.isAbsolute(String(row.input_file)) ||
+          !Number.isSafeInteger(row.original_line) || Number(row.original_line) < 1 || !scope.batch_ids.includes(String(row.package_id))))
+      throw new Error("Invalid cleaning scope");
+    const coordinates = scope.records.map(row => JSON.stringify([row.model,row.input_file,row.input_index]));
+    if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
+  }
   const versions = config.inputs?.versions;
-  if (!Array.isArray(versions) || versions.length < 2) throw new Error("至少配置两个输入版本");
+  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench ? 1 : 2)) throw new Error("至少配置两个输入版本");
   for (const item of versions) {
     if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
@@ -207,7 +220,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       throw new Error(`Duplicate or empty ${key}`);
   }
   const rawGroups = source.comparisons;
-  if (!Array.isArray(rawGroups) || !rawGroups.length) throw new Error("Missing comparisons");
+  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench)) throw new Error("Missing comparisons");
   const seenGroups = new Set<string>();
   for (const group of rawGroups) {
     if (

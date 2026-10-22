@@ -126,13 +126,13 @@ async function executeAutomationCommand(
     console.log(JSON.stringify({ source: config.sourceUrl, stages: ["criteria", "attribution", "comparison", "rewrite"],
       rewrite: ["attribution", "comparison"], dates: entries,
       ...(config.prediction ? { prediction: await discoverPrediction(config, output) } : {}),
-      publication: { logEnabled: config.publishStatisticsLog, logIntervalHours: 4, mongo: config.prediction ? "replace_existing_results" : "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
+      publication: { logEnabled: config.publishStatisticsLog, logIntervalHours: 4, mongo: !config.publishMongo ? "disabled" : config.prediction ? "replace_existing_results" : "incremental", ...config.publication, mongoConfigured: !!process.env[config.publication.mongoUriEnv] },
     }, null, 2));
     return;
   }
   if (command === "run") {
-    if (!process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
-    logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
+    if (config.publishMongo && !process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
+    if (process.env[config.publication.mongoUriEnv]) logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
     createAutomationModels(host.models, host.automation.channels, undefined, config.channelConcurrency);
   }
   const release = await runLock(config.stateDirectory);
@@ -234,7 +234,7 @@ async function executeAutomationCommand(
           return { ...await syncPrediction(config, output, day.date, beforeReplace), rows: day.rows };
         }
         return syncRemoteInputs(remote!, path.join(config.sourceDirectory, day.date), output, job, day, signal, beforeReplace,
-          process.env[config.publication.mongoUriEnv] ? async (file, model) => {
+          config.publishMongo ? async (file, model) => {
             const receipt = await syncMongoInputFile(config, day.date, model, file, signal, scope.mongo, undefined, host);
             await writeJson(path.join(config.stateDirectory, "input-publications", day.date, model + ".json"), {
               at: new Date().toISOString(), ...receipt,
@@ -249,7 +249,7 @@ async function executeAutomationCommand(
       }), observe,
       publish: config.publishStatisticsLog ? (current, _save, signal) =>
         generateStatisticsSnapshot(config, current, scope.statisticsStore, signal) : undefined,
-      syncMongo: (job, signal) => scope.mongo(() => syncMongoDay(config, job, signal), signal, JSON.stringify([mongoDestination, job.date])),
+      syncMongo: config.publishMongo ? (job, signal) => scope.mongo(() => syncMongoDay(config, job, signal), signal, JSON.stringify([mongoDestination, job.date])) : undefined,
     }, scope.signal);
     await resultPublisher.settled();
     try { await observe(state, AbortSignal.timeout(10_000)); }
@@ -260,7 +260,7 @@ async function executeAutomationCommand(
     await writeJson(file, state);
     return scope.signal.aborted ? 130 : state.pollError || config.publishStatisticsLog && Boolean(state.statistics?.error) || Object.values(state.jobs).filter(job => selected(job.date)).some((job) =>
       job.download !== "ready" || ["retry", "blocked", "pending"].includes(job.evaluation) ||
-      job.mongo?.status === "retry") ? 2 : 0;
+      config.publishMongo && job.mongo?.status === "retry") ? 2 : 0;
   } finally {
     try { await releaseSources?.(); } finally { await release(); }
   }

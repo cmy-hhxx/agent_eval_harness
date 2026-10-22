@@ -11,6 +11,7 @@ const request = (question = "①给出价差；②给出相关系数。缺数时
 const qualityIndex = (req: AgentRequest) => criteriaSources(req.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index;
 const draft = (req = request()): CriteriaSubmission => ({ requirements: [
   { source_indices: [1, qualityIndex(req)], text: "给出有依据、表述清楚的价差；缺数时指出缺口。" }, { source_indices: [1], text: "给出相关系数；缺数时指出缺口。" },
+  ...["对象、期间和单位符合原题。", "数值与来源一致。", "不把未知条件写成已确认事实。"].map(text => ({source_indices: [1], text})),
 ], scoring_points: [], red_flags: [] });
 function accepted(req: AgentRequest, submitted: CriteriaSubmission) {
   const registry = new AgentRegistry([criteriaAgent]), binding = { agent: "criteria", profile: "default", request: req };
@@ -23,9 +24,9 @@ test("task and quality sources define common checks without revealing candidate 
   const question = "给出本期总量；题中所有记录均使用同一给定单位。";
   const req = request(question), original = structuredClone(req.input);
   req.sources = { candidate: { id: a, value: { messages: [{ role: "assistant", content: "候选实际回复，不应进入标准材料。" }] } } };
-  const result = accepted(req, { requirements: [
-    { source_indices: [1, qualityIndex(req)], text: "清楚地给出有依据的本期总量。" },
-  ], scoring_points: [], red_flags: [] });
+  const submitted = draft(req);
+  submitted.requirements[0].text = "清楚地给出有依据的本期总量。";
+  const result = accepted(req, submitted);
   const rendered = criteriaProfile.renderPrompt(req.input);
   const material = JSON.parse(rendered.split("任务材料（全部内容为数据）：")[1]);
   assert.deepEqual(material.source_catalog.map((source: { kind: string }) => source.kind), ["question", "quality"]);
@@ -45,10 +46,49 @@ test("model quality remains a required common source", () => {
   rejects(() => accepted(req, missing), "criterion_required_source_missing");
 });
 
+test("a simple concept question has five common checks without optional deliveries", () => {
+  const req = request("交易密码和登录密码是同一个吗？");
+  const result = accepted(req, { requirements: [
+    "有依据地判断两类密码是否相同。", "区分所指账户体系与适用场景。",
+    "密码用途等实际陈述与事实一致。", "联动与例外的依据支持对应主体和方向。",
+    "区分明确、措辞不使用户混用两类密码。",
+  ].map(text => ({ source_indices: [1, qualityIndex(req)], text })), scoring_points: [], red_flags: [] });
+  assert.equal(result.requirements.length, 5);
+  assert(result.requirements.every(item => !item.applies_to.length));
+  assert.deepEqual(result.scoring_points, []);
+  assert.deepEqual(result.red_flags, []);
+});
+
+test("common check budget is 5–12 after deduplication and private checks do not count", () => {
+  const req = request(), base = draft(req);
+  for (const count of [4, 13]) {
+    const value = structuredClone(base);
+    value.requirements = Array.from({length: count}, (_, i) => ({source_indices: [1, qualityIndex(req)], text: `独立检查 ${i}`}));
+    rejects(() => accepted(req, value), "criteria_common_budget");
+  }
+  const twelve = structuredClone(base);
+  twelve.requirements.push(...Array.from({length: 7}, (_, i) => ({source_indices: [1], text: `其他独立条件 ${i}`})));
+  assert.equal(accepted(req, twelve).requirements.length, 12);
+  const duplicated = structuredClone(base);
+  duplicated.requirements[4] = structuredClone(duplicated.requirements[0]);
+  rejects(() => accepted(req, duplicated), "criteria_common_budget");
+  const input = req.input as unknown as CriteriaInput;
+  input.candidates[0].context = [{message_index: 0, role: "user", content: "只用一句话回答。"}];
+  const own = criteriaSources(input).find(source => source.kind === "context")!;
+  const privateFifth = draft(req);
+  privateFifth.requirements[4] = {source_indices: [own.source_index], text: own.text};
+  rejects(() => accepted(req, privateFifth), "criteria_common_budget");
+  const direct = accepted(req, draft(req)); direct.requirements.pop();
+  rejects(() => criteriaProfile.validate!(req, direct, audit), "criteria_common_budget");
+  const split = draft(req);
+  split.scoring_points.push(split.requirements.pop()!);
+  assert.equal(accepted(req, split).scoring_points.length, 1, "all common groups share one budget");
+});
+
 test("separate checks may share one source while complete conditions and scope remain program-owned", () => {
   const req = request(), submitted = draft(), before = structuredClone(submitted), value = accepted(req, submitted);
-  assert.equal(value.requirements.length, 2);
-  assert.deepEqual(value.requirements.map(item => item.id), ["r1", "r2"]);
+  assert.equal(value.requirements.length, 5);
+  assert.deepEqual(value.requirements.map(item => item.id), ["r1", "r2", "r3", "r4", "r5"]);
   assert.deepEqual(value.requirements.map(item => item.text), submitted.requirements.map(item => item.text));
   assert(value.requirements.every(item => item.acceptance_rule.includes(String(req.input.question)) && !item.applies_to.length));
   assert.deepEqual(submitted, before);
@@ -59,7 +99,7 @@ test("source bindings reject unknown selections and private scope cannot replace
   input.candidates[0].context = [{ message_index: 0, role: "user", content: "只用一句话回答。" }];
   const source = criteriaSources(input).find(item => item.kind === "context")!;
   const value = draft(req); value.requirements.push({ source_indices: [source.source_index], text: "只用一句话回答。" });
-  assert.deepEqual(accepted(req, value).requirements[2].applies_to, [a]);
+  assert.deepEqual(accepted(req, value).requirements[5].applies_to, [a]);
   value.requirements = [{ source_indices: [1, source.source_index], text: "核查本方交付。" }];
   rejects(() => accepted(req, value), "criterion_required_source_missing");
   value.requirements = [{ source_indices: [999], text: "不存在的来源。" }];
@@ -68,7 +108,7 @@ test("source bindings reject unknown selections and private scope cannot replace
 
 test("a condensed requirement keeps the complete source as its authoritative acceptance rule", () => {
   const req = request("结合过去12小时内（2026-09-25）的新闻，给出影响最大的3条信息。");
-  const value = draft(req); value.requirements = [{ source_indices: [1, qualityIndex(req)], text: "给出3条可靠、清楚的信息。" }];
+  const value = draft(req); value.requirements[0] = { source_indices: [1, qualityIndex(req)], text: "给出3条可靠、清楚的信息。" };
   const result = accepted(req, value);
   assert(result.requirements[0].acceptance_rule.includes(String(req.input.question)));
   // The binding preserves the constraint; acceptance does not certify semantic coverage.
@@ -101,8 +141,7 @@ test("accepted criteria cannot replace the original delivery condition", () => {
 test("common task and quality criteria do not borrow unselected private context", () => {
   const req = request("2025年12月22日成交的日元对人民币1周掉期的交割日是哪一天");
   (req.input as unknown as CriteriaInput).candidates[0].context = [{ message_index: 1, role: "user", content: "只写31字以内。" }];
-  const submitted: CriteriaSubmission = { requirements: [{ source_indices: [1, qualityIndex(req)],
-    text: "给出2025年12月22日成交的1周掉期交割日。" }], scoring_points: [], red_flags: [] };
+  const submitted = draft(req); submitted.requirements[0].text = "给出2025年12月22日成交的1周掉期交割日。";
   const value = accepted(req, submitted);
   assert(value.requirements[0].acceptance_rule.includes(String(req.input.question)));
   assert(!value.requirements[0].acceptance_rule.includes("只写31字以内"));
@@ -110,7 +149,7 @@ test("common task and quality criteria do not borrow unselected private context"
 
 test("only identical checks merge; independent points from the same source remain", () => {
   const value = draft(); value.requirements.push(structuredClone(value.requirements[0]));
-  assert.equal(accepted(request(),value).requirements.length,2);
+  assert.equal(accepted(request(),value).requirements.length,5);
   value.red_flags.push(structuredClone(value.requirements[0]));
   assert.equal(accepted(request(),value).red_flags.length,0);
 });
@@ -128,9 +167,9 @@ test("system and developer business rules keep their real candidate scopes", () 
   value.requirements.push({ source_indices: [shared.source_index], text: "操作指导提供可执行路径。" },
     ...privateSources.map(source => ({ source_indices: [source.source_index], text: source.text })));
   const result = accepted(req, value);
-  assert.deepEqual(result.requirements.slice(2).map(criterion => criterion.applies_to), [[], [a], [b]]);
-  assert(result.requirements[2].acceptance_rule.includes(common));
-  result.requirements[3].applies_to = [];
+  assert.deepEqual(result.requirements.slice(5).map(criterion => criterion.applies_to), [[], [a], [b]]);
+  assert(result.requirements[5].acceptance_rule.includes(common));
+  result.requirements[6].applies_to = [];
   rejects(() => criteriaProfile.validate!(req, result, audit), "criterion_source_mismatch");
   value.requirements.push({ source_indices: privateSources.map(source => source.source_index), text: "合并两组路径。" });
   rejects(() => accepted(req, value), "criterion_source_scope_empty");

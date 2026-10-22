@@ -123,7 +123,7 @@ test("public judgment bindings keep global indices and separate blind originals 
       const answer = cite(owner, 2, evidenceSources(actual.messages[2]).find(source => source.kind === "text" && source.path === "/content")!, 0, `${label} 完整最终回答。`.length);
       const question = cite(owner, 1, evidenceSources(actual.messages[1]).find(source => source.kind === "text" && source.path === "/content")!, 0, candidates[label]!.question.length);
       attribution.findings[0]!.evidence = [answer];
-      attribution.criterion_assessments[0]!.evidence = [answer, question];
+      attribution.criterion_assessments = analysis.requirements.map(criterion => ({ ...attribution.criterion_assessments[0]!, criterion_id: criterion.id, evidence: [answer, question] }));
       attribution.task_analysis = structuredClone(analysis);
       dependencies[label] = receipt(task.dependencies[label]!, attribution);
     }

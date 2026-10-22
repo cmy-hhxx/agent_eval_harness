@@ -507,6 +507,10 @@ export interface RunRepository {
   createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
 }
 export interface LogContext {
+  evaluator_model?: string;
+  evaluator_version?: string;
+  channel?: string;
+  attempt?: number;
   component: string;
   event: string;
   run_id?: string;

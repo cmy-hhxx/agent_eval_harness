@@ -89,13 +89,20 @@ test("statistics deliveries never resend uncertain records and require explicit 
 test("public routing exposes only data and runtime regions and never forwards old top-level paths", () => {
   const ports = { data: 8081, automation: 4174, runs: 4173 };
   assert.deepEqual(workbenchProxyTarget("/data/wencai/dashboard-data", ports), { port: 8081, path: "/data/wencai/dashboard-data" });
-  assert.deepEqual(workbenchProxyTarget("/runtime/", ports), { port: 4174, path: "/" });
   assert.deepEqual(workbenchProxyTarget("/runtime/api/status", ports), { port: 4174, path: "/api/status" });
   assert.deepEqual(workbenchProxyTarget("/runtime/api/relay/records", ports), { port: 4174, path: "/api/relay/records" });
   assert.deepEqual(workbenchProxyTarget("/runtime/api/dashboard/runs", ports), { port: 4173, path: "/api/dashboard/runs" });
-  assert.deepEqual(workbenchProxyTarget("/runtime/runs/", ports), { port: 4173, path: "/" });
-  assert.deepEqual(workbenchProxyTarget("/runtime/problems", ports), { port: 4173, path: "/problems" });
-  assert.deepEqual(workbenchProxyTarget("/runtime/reference", ports), { port: 4173, path: "/reference" });
-  for (const old of ["/aime/", "/ifind/", "/gpt/", "/post_training_model/", "/api/status", "/dashboard"])
+  for (const old of ["/runtime/", "/runtime/runs/", "/runtime/problems", "/runtime/reference", "/data/", "/data/wencai/", "/aime/", "/ifind/", "/gpt/", "/post_training_model/", "/api/status", "/dashboard"])
     assert.equal(workbenchProxyTarget(old, ports), undefined, old);
+});
+
+
+test("workbench proxies only the registered intake endpoints", () => {
+  const ports = { data:8081, automation:4174, runs:4173 };
+  for (const route of ["catalog", "tasks", "assign", "clean", "batches/1234-abcd/report", "batches/1234-abcd/sample"]) {
+    const pathname = `/data/workbench/${route}`;
+    assert.deepEqual(workbenchProxyTarget(pathname, ports), { port:8081, path:pathname });
+  }
+  assert.equal(workbenchProxyTarget("/data/workbench/delete", ports), undefined);
+  assert.equal(workbenchProxyTarget("/data/workbench/batches/../secrets", ports), undefined);
 });

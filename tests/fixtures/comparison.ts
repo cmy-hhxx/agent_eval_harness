@@ -76,16 +76,17 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
     ),
     decision_basis: {
       tradeoff: "双方均满足同一要求，没有结果差异。",
-      comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [0] }]),
-      ) }],
+      comparisons: analysis.requirements.map((criterion, index) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: index === 0 ? [0] : [] }]),
+      ) })),
       decisive_findings: [],
     },
   };
 }
 function criteriaDraft(sources: CriterionSource[]): CriteriaSubmission {
-  return { requirements: [{ text: "正确、清楚地完成用户所求结果。",
-    source_indices: sources.filter((source) => ["question", "quality"].includes(source.kind)).map((source) => source.source_index) }],
+  return { requirements: ["完成用户所求结果。", "遵守题目限定的对象和范围。", "所列事实和数值准确。",
+    "结论与依据及运算相符。", "结果表述清楚，不引起使用歧义。"].map(text => ({ text,
+    source_indices: sources.filter((source) => ["question", "quality"].includes(source.kind)).map((source) => source.source_index) })),
     scoring_points: [], red_flags: [] };
 }
 export function criteriaResult(input: CriteriaInput = { question: "计算2+2",
@@ -144,17 +145,17 @@ export async function fixtureConfig(
 }
 
 export function attributionResult(correct = true, answer = "2+2=4", available = true, inputId = "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd"): AttributionResult {
+  const task_analysis = criteriaResult({ question: "计算2+2", candidates: [{ candidate_id: inputId, instructions: [], context: [] }] });
   return {
     has_standard_answer: available,
     is_correct: available ? correct : null,
     correctness_reason: available ? "与标准答案一致。" : "",
     numeric_checks: [],
     correctness_evidence: available ? [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }] : [],
-    task_analysis: criteriaResult({ question: "计算2+2",
-      candidates: [{ candidate_id: inputId, instructions: [], context: [] }] }),
-    criterion_assessments: [{ criterion_id: "r1", status: correct ? "met" : "unmet", evidence_status: "established",
+    task_analysis,
+    criterion_assessments: task_analysis.requirements.map(criterion => ({ criterion_id: criterion.id, status: correct || !["r1", "r3", "r4"].includes(criterion.id) ? "met" : "unmet", evidence_status: "established",
       summary: correct ? "正确给出4。" : "结果错误。", evidence: [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer },
-        { evidence_id: evidenceId(inputId, 0, "text", "/content", 0, 5), message_index: 0, quote: "计算2+2" }] }],
+        { evidence_id: evidenceId(inputId, 0, "text", "/content", 0, 5), message_index: 0, quote: "计算2+2" }] })),
     core_assessment: { meets_core: correct, reason: correct ? "核心计算交付完成。" : "关键计算结果错误。", criterion_ids: ["r1"] },
     summary: correct ? "正确给出结果。" : "结果错误。",
     findings: [

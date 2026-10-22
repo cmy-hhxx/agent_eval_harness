@@ -4,7 +4,7 @@ import { criteriaText } from "@eval/prompts";
 import requestSchema from "../../../../schemas/criteria/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/criteria/submission.schema.json" with { type: "json" };
 import { criteriaSources, eligibleCriterionSource, requiredCriterionSource, type CriterionSource } from "./sources.js";
-import { criteriaGroups, criterionIdentity } from "./identity.js";
+import { commonCriteriaBudget, criteriaGroups, criterionIdentity } from "./identity.js";
 
 export interface CriteriaSubmission {
   requirements: { source_indices: number[]; text: string }[];
@@ -88,6 +88,8 @@ export function resolveCriteria(request: AgentRequest, draft: unknown): TaskAnal
       output[entry.group].push({ ...entry.criterion, id: `${prefix}${output[entry.group].length + 1}` });
     }
   }
+  const budgetErrors = commonCriteriaBudget(output);
+  if (budgetErrors.length) throw new ValidationError(budgetErrors);
   return output;
 }
 

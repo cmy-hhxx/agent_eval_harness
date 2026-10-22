@@ -225,9 +225,10 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     await runEvaluation({ ...options, evaluatorVersion: "refreshed-items", plan: { tasks: [], inputs: {}, summary: {} } });
     assert.equal(calls, expectedCalls + 2);
     const afterItems = await rows(comparisonFile);
-    const proseIds = new Set(["assessment.A.summary", "assessment.B.summary", "comparison.0.A.summary", "comparison.0.B.summary", "tradeoff"]);
+    const proseIds = new Set(["assessment.A.summary", "assessment.B.summary", "tradeoff",
+      ...Array.from({length: 5}, (_, index) => [`comparison.${index}.A.summary`, `comparison.${index}.B.summary`]).flat()]);
     const prose = (afterItems[0]!.rewritten as any).rewrites.filter((item: any) => proseIds.has(item.id));
-    assert.equal(prose.length, 5);
+    assert.equal(prose.length, 13);
     assert(prose.every((item: any) => item.text.startsWith("精简：")));
     assert((afterItems[0]!.rewritten as any).rewrites.some((item: any) => item.id.startsWith("comparison.")));
     assert.deepEqual(afterItems[0]!.decision_basis, beforeItems[0]!.decision_basis);

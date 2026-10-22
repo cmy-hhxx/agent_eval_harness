@@ -7,7 +7,6 @@ import json
 import re
 import shutil
 import tempfile
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -19,8 +18,8 @@ SOURCES = {
 }
 
 
-def normalize_session(value: dict, provider: str, archive: str, member: str, line: int, item: int) -> tuple[str, str, dict]:
-    meta = value["meta"]
+def normalize_session(value: dict, provider: str, archive: str, member: str, line: int, item: int, metadata_issues: list | None = None) -> tuple[str, str, dict]:
+    meta = app.normalize_meta(value["meta"], metadata_issues)
     traces = value["traces"]
     if "messages" in value or not isinstance(traces, list) or not traces:
         raise app.InvalidRecord("session_traces_invalid")
@@ -54,7 +53,7 @@ def normalize_session(value: dict, provider: str, archive: str, member: str, lin
             raise app.InvalidRecord("ifind_mode_unknown_or_conflicting")
         channel = "ifind_" + mode
     timing = meta
-    if value.get("request_time") is None and meta.get("request_time") is None and meta.get("ask_time") is None:
+    if value.get("request_time") is None and meta.get("request_time") is None and meta.get("timestamp_time") is None:
         timing = {**meta, "request_time": next((trace["meta"]["timestamp"] for trace in traces if trace["meta"].get("timestamp")), None)}
     day, request_time = app.request_day_and_value(value, timing)
     identity = meta.get("session_id") or value.get("case_id") or meta.get("case_id")
@@ -67,18 +66,18 @@ def normalize_session(value: dict, provider: str, archive: str, member: str, lin
         raise app.InvalidRecord("batch_id_invalid")
     row = {"request_time": request_time, "has_standard_answer": app.standard_answer_flag(value, meta), "versions": "default",
            **{key: field for key, field in value.items() if key not in ("request_time", "has_standard_answer", "versions")}}
-    row.update(batch_id=batch, case_id=str(identity).strip(), version=channel,
+    row.update(batch_id=batch, case_id=str(identity).strip(), version=channel, meta=meta,
                _source={"original_file": archive + "/" + member, "original_line": line, "original_item": item})
     return channel, day, row
 
 
-def normalize(value: object, provider: str, archive: str, member: str, line: int, item: int) -> tuple[str, str, dict]:
+def normalize(value: object, provider: str, archive: str, member: str, line: int, item: int, metadata_issues: list | None = None) -> tuple[str, str, dict]:
     if not isinstance(value, dict) or not isinstance(value.get("meta"), dict):
         raise app.InvalidRecord("record_or_meta_invalid")
     if "traces" in value:
-        return normalize_session(value, provider, archive, member, line, item)
+        return normalize_session(value, provider, archive, member, line, item, metadata_issues)
     row = dict(value)
-    meta = dict(row["meta"])
+    meta = app.normalize_meta(row["meta"], metadata_issues)
     if meta.get("ok") is False:
         raise app.InvalidRecord("collection_failed")
     messages = row.get("messages")
@@ -150,7 +149,6 @@ class AgentDataset(app.Dataset):
         self.archived_dir = dataset_root / "0_archive"
         self.output_dir = dataset_root / "2_daily_eval_input"
         self.archive_part_files = 100
-        self.daily_archive_check = True
         self.independent = True
         self.pairs = {}
         self.staging: Path | None = None
@@ -176,21 +174,21 @@ class AgentDataset(app.Dataset):
                     if re.fullmatch(r"\.\d{4}-\d{2}-\d{2}\.[a-z0-9_]{8}\.tmp", path.name):
                         path.unlink()
 
-    def process_archives(self, signature: list[dict[str, object]]) -> None:
+    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False) -> None:
         with tempfile.TemporaryDirectory(prefix=f"ths-ingest-{self.provider}-") as folder:
             self.staging = Path(folder)
             try:
-                super().process_archives(signature)
+                super().process_archives(signature, retry_failed=retry_failed)
             finally:
                 self.staging = None
 
-    def read_archive_records(self, info: dict[str, object]) -> tuple[dict[app.RecordKey, app.IncomingRecord], Counter]:
+    def read_archive_records(self, info: dict[str, object]) -> tuple[dict[app.RecordKey, app.IncomingRecord], app.CleaningReport]:
         if self.staging is None:
             raise RuntimeError("archive processing has no staging directory")
         path = self.archive_dir / str(info["name"])
         cache = self.staging / "normalized.jsonl"
         records: dict[app.RecordKey, app.IncomingRecord] = {}
-        skipped = Counter()
+        skipped = app.CleaningReport()
         with tempfile.TemporaryDirectory(prefix="raw-", dir=self.staging) as folder:
             try:
                 with app.SevenZipFile(path, "r") as archive:
@@ -202,35 +200,43 @@ class AgentDataset(app.Dataset):
                         if safe.is_absolute() or ".." in safe.parts:
                             raise ValueError("unsafe archive member: " + member)
                     archive.extract(path=folder, targets=members)
-                    if any(not Path(folder).joinpath(*PurePosixPath(member.replace("\\", "/")).parts).is_file() for member in members):
-                        raise ValueError("extracted JSONL member is missing")
+
             except Exception as exc:
                 raise app.ArchiveReadError(str(exc)) from exc
             with cache.open("wb") as output:
                 for member in members:
                     source = Path(folder).joinpath(*PurePosixPath(member.replace("\\", "/")).parts)
-                    with source.open("rb") as stream:
-                        for line, raw in enumerate(stream, 1):
-                            if not raw.strip():
-                                continue
+                    for line, raw in skipped.lines(source, path.name, member):
+                        if not raw.strip():
+                            continue
+                        try:
+                            value = json.loads(raw.decode("utf-8-sig"))
+                        except (ValueError, UnicodeDecodeError):
+                            skipped.read += 1
+                            skipped.exclude(self.provider, "invalid_json", path.name, member, line)
+                            continue
+                        items = value if isinstance(value, list) else [value]
+                        if not items:
+                            skipped.read += 1
+                            skipped.exclude(self.provider, "empty_session", path.name, member, line)
+                        for index, item in enumerate(items, 1):
+                            skipped.read += 1
                             try:
-                                value = json.loads(raw.decode("utf-8-sig"))
-                            except (ValueError, UnicodeDecodeError):
-                                skipped[(self.provider, "invalid_json")] += 1
+                                issues = []
+                                model, day, row = normalize(item, self.provider, path.name, member, line, index, issues)
+                                key = self.record_identity(row, model)
+                            except app.InvalidRecord as exc:
+                                skipped.exclude(self.provider, exc.reason, path.name, member, line, index, item)
                                 continue
-                            items = value if isinstance(value, list) else [value]
-                            if not items:
-                                skipped[(self.provider, "empty_session")] += 1
-                            for index, item in enumerate(items, 1):
-                                try:
-                                    model, day, row = normalize(item, self.provider, path.name, member, line, index)
-                                    key = self.record_identity(row, model)
-                                except app.InvalidRecord as exc:
-                                    skipped[(self.provider, exc.reason)] += 1
-                                    continue
-                                encoded = (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
-                                records[key] = StagedRecord(day, cache, output.tell(), len(encoded), path.name, member)
-                                output.write(encoded)
-                            if line % 200 == 0:
-                                print(f"staged {path.name}: {line} lines, {len(records)} valid unique records", flush=True)
+                            skipped.note_metadata(model, row, issues)
+                            if key in records:
+                                reason = "duplicate_case" if app.comparable_row(records[key].row) == app.comparable_row(row) else "identity_conflict"
+                                skipped.exclude_row(model, reason, row)
+                                continue
+                            encoded = (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+                            records[key] = StagedRecord(day, cache, output.tell(), len(encoded), path.name, member)
+                            output.write(encoded)
+                            output.flush()
+                        if line % 200 == 0:
+                            print(f"staged {path.name}: {line} lines, {len(records)} valid unique records", flush=True)
         return records, skipped

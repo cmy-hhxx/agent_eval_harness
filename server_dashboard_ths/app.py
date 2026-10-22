@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import fcntl
-import math
 import os
 import re
 import signal
@@ -14,7 +13,6 @@ import sys
 import tempfile
 import threading
 import time
-from collections import Counter
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +24,8 @@ CODE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(CODE_DIR / ".packages"))
 
 from py7zr import SevenZipFile  # noqa: E402
+from cleaning_report import CleaningReport  # noqa: E402
+from metadata import normalize_meta  # noqa: E402
 
 POLL_SECONDS = 5
 STABLE_SECONDS = 30
@@ -35,7 +35,7 @@ SHANGHAI = timezone(timedelta(hours=8))
 TOP_LEVEL_FIELD_ORDER = ("request_time", "has_standard_answer", "versions")
 ROOT_MODELS = ("a_fast", "b_fast", "a_expert", "b_expert")
 MODELS = ("a_fast", "b_fast", "a_expert", "b_expert", "6_luna", "6.1sol")
-POST_TRAINING_MODELS = ("a_fast", "b_fast", "b_post_train_fast")
+POST_TRAINING_MODELS = ("b_fast", "b_post_train_fast")
 STAGES = ("criteria", "attribution", "clustering")
 TASK_COUNTS = {"total", "completed", "running", "pending", "failed", "blocked", "cancelled"}
 VERSION_NAMES = {
@@ -117,14 +117,16 @@ def request_day_and_value(row: dict[str, object], meta: dict[str, object]) -> tu
         local = parsed.astimezone(SHANGHAI)
         return local.date().isoformat(), request_time.strip()
 
-    ask_time = meta.get("ask_time")
-    if isinstance(ask_time, bool) or not isinstance(ask_time, (int, float)) or not math.isfinite(ask_time) or ask_time <= 0:
+    timestamp = meta.get("timestamp_time")
+    if timestamp is None:
         raise InvalidRecord("request_time_missing")
+    if type(timestamp) is not int or timestamp <= 0:
+        raise InvalidRecord("timestamp_time_invalid")
     try:
-        local = datetime.fromtimestamp(ask_time / 1000, SHANGHAI)
+        local = datetime.fromtimestamp(timestamp / 1000, SHANGHAI)
     except (OverflowError, OSError, ValueError) as exc:
-        raise InvalidRecord("ask_time_invalid") from exc
-    return local.date().isoformat(), local.strftime("%Y-%m-%d %H:%M:%S")
+        raise InvalidRecord("timestamp_time_invalid") from exc
+    return local.date().isoformat(), local.isoformat(sep=" ", timespec="milliseconds")
 
 
 def record_versions(day: str, model: str) -> str:
@@ -160,7 +162,7 @@ def top_level_fields(request_time: str, has_standard_answer: bool, day: str, mod
     return fields
 
 
-def normalize_row(value: object, model: str, archive_name: str, member: str, line_number: int, *, testset_dates: bool = False) -> tuple[str, dict[str, object]]:
+def normalize_row(value: object, model: str, archive_name: str, member: str, line_number: int, *, testset_dates: bool = False, metadata_issues: list | None = None) -> tuple[str, dict[str, object]]:
     if not isinstance(value, dict):
         raise InvalidRecord("record_not_object")
     row = value
@@ -181,7 +183,7 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
         if not isinstance(trace_meta, dict):
             raise InvalidRecord("trace_meta_invalid")
         meta = {**trace_meta, **meta}
-        if row.get("request_time") is None and meta.get("request_time") is None and meta.get("ask_time") is None:
+        if row.get("request_time") is None and meta.get("request_time") is None and meta.get("timestamp_time") is None:
             meta["request_time"] = trace_meta.get("timestamp")
         row = {key: item for key, item in row.items() if key != "traces"}
         row.update({
@@ -190,6 +192,7 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
             "trace_id": trace_meta.get("trace_id") or row.get("trace_id") or meta.get("trace_id"),
         })
 
+    meta = normalize_meta(meta, metadata_issues)
     batch_id = row.get("batch_id") or meta.get("batch_id")
     testset = meta.get("testset_name") if testset_dates else None
     case_id = row.get("case_id") or meta.get("case_id") or meta.get("item_id")
@@ -249,15 +252,16 @@ def normalize_row(value: object, model: str, archive_name: str, member: str, lin
     normalized["batch_id"] = batch_id or day
     normalized["case_id"] = case_id.strip()
     normalized["version"] = VERSION_NAMES[model]
+    normalized["meta"] = meta
     normalized["trace_id"] = row.get("trace_id") or meta.get("trace_id")
     normalized["_source"] = {
-        "original_file": f"{archive_name}/{PurePosixPath(member).name}",
+        "original_file": f"{archive_name}/{member}",
         "original_line": line_number,
     }
     return day, normalized
 
 
-def members_by_model(archive: SevenZipFile, archive_path: Path, models: tuple[str, ...]) -> dict[str, list[str]]:
+def members_by_model(archive: SevenZipFile, archive_path: Path, models: tuple[str, ...], report: CleaningReport) -> dict[str, list[str]]:
     grouped = {model: [] for model in models}
     for member in archive.getnames():
         if not member.lower().endswith(".jsonl"):
@@ -267,7 +271,8 @@ def members_by_model(archive: SevenZipFile, archive_path: Path, models: tuple[st
             raise ValueError(f"unsafe archive path: {member}")
         model = model_for_member(member)
         if model not in grouped:
-            raise ValueError(f"unrecognized model JSONL in {archive_path.name}: {member}")
+            report.file_errors.append({"original_file": f"{archive_path.name}/{member}", "reason": "model_unknown"})
+            continue
         grouped[model].append(member)
     if not any(grouped.values()):
         raise ValueError(f"{archive_path.name} has no recognized model JSONL files")
@@ -328,8 +333,8 @@ def record_key(row: dict, model: str) -> RecordKey:
     return archive_source_id(archive), model, batch, case
 
 
-def record_priority(archive: str, member: str) -> tuple[str, int, str]:
-    return archive, member_increment(member), PurePosixPath(member).name.casefold()
+def comparable_row(row: dict) -> dict:
+    return {key: value for key, value in row.items() if key != "_source"}
 
 
 def write_json_atomic(path: Path, value: object) -> None:
@@ -407,12 +412,11 @@ class Dataset:
         self.kind = kind
         self.url_prefix = url_prefix if url_prefix is not None else ("" if not kind else "/" + kind)
         self.archive_part_files = ARCHIVE_PART_FILES
-        self.daily_archive_check = False
         self.independent = False
         self.pairs = ({"fast": ("a_fast", "b_fast"), "expert": ("a_expert", "b_expert")}
                       if not kind else {
                           "__vs__".join(sorted((left, right))): (left, right)
-                          for group in ((POST_TRAINING_MODELS,) if kind == "post_training_model" else
+                          for group in ((models,) if kind == "post_training_model" else
                                         (("a_fast", "b_fast", "6_luna"), ("a_expert", "b_expert", "6.1sol")))
                           for index, left in enumerate(group) for right in group[index + 1:]
                       })
@@ -627,40 +631,8 @@ class Dataset:
             return {"error": str(exc)}
 
 
-    def archive_processed(self, signature: list[dict[str, object]]) -> None:
-        with self.archive_lock():
-            self.move_processed_archives(signature)
 
 
-    def move_processed_archives(self, signature: list[dict[str, object]]) -> None:
-        state = self.load_archive_state()
-        processed = {item["name"]: item for item in state["archives"]}
-        failed = {item["name"] for item in state["failed_archives"]}
-        candidates = [item for item in signature if item["name"] not in failed and processed.get(item["name"]) == item]
-        if not candidates:
-            return
-        writers = self.open_archive_writers()
-        moved = 0
-        slots: dict[str, tuple[Path, int, int]] = {}
-        for item in candidates:
-            name = str(item["name"])
-            source = self.archive_dir / name
-            if name in writers or file_signature(source) != item:
-                continue
-            match = re.search(r"_(\d{8})_\d{6}\.7z$", name)
-            day = datetime.fromtimestamp(cast(int, item["mtime_ns"]) / 1_000_000_000, SHANGHAI).date()
-            if match:
-                try:
-                    day = datetime.strptime(match.group(1), "%Y%m%d").date()
-                except ValueError:
-                    pass
-            target = self.archive_target(day.isoformat(), source, slots)
-            if file_signature(source) != item:
-                continue
-            source.rename(target)
-            moved += 1
-        if moved:
-            print(f"archived {moved} processed packages under {self.archived_dir}", flush=True)
 
 
     def open_archive_index(self) -> sqlite3.Connection:
@@ -710,7 +682,9 @@ class Dataset:
             finally:
                 db.close()
                 temporary.unlink(missing_ok=True)
-        return sqlite3.connect(path)
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE IF NOT EXISTS cleaning_reports (name TEXT, size INTEGER, mtime_ns INTEGER, report TEXT NOT NULL, PRIMARY KEY (name, size, mtime_ns))")
+        return db
 
 
     def publish_pending(self, db: sqlite3.Connection) -> None:
@@ -735,53 +709,56 @@ class Dataset:
             db.execute("DELETE FROM pending WHERE id = 1")
 
 
-    def read_archive_records(self, info: dict[str, object]) -> tuple[dict[RecordKey, IncomingRecord], Counter]:
+    def read_archive_records(self, info: dict[str, object]) -> tuple[dict[RecordKey, IncomingRecord], CleaningReport]:
         path = self.archive_dir / str(info["name"])
         records: dict[RecordKey, IncomingRecord] = {}
-        skipped = Counter()
+        skipped = CleaningReport()
         temporary_root = Path(os.environ.get("TEMP_ROOT", tempfile.gettempdir()))
         temporary_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="extract-", dir=temporary_root) as name:
             folder = Path(name)
             try:
                 with SevenZipFile(path, mode="r") as archive:
-                    grouped = members_by_model(archive, path, self.models)
+                    grouped = members_by_model(archive, path, self.models, skipped)
                     archive.extract(path=folder, targets=[member for members in grouped.values() for member in members])
                 missing = [member for members in grouped.values() for member in members
                            if not folder.joinpath(*PurePosixPath(member.replace("\\", "/")).parts).is_file()]
-                if missing:
-                    raise ValueError(f"extracted members not found: {', '.join(missing)}")
+                for member in missing:
+                    skipped.file_errors.append({"original_file": f"{path.name}/{member}", "reason": "member_missing"})
             except Exception as exc:
                 raise ArchiveReadError(str(exc)) from exc
             for model, members in grouped.items():
                 for member in reversed(members):
                     source = folder.joinpath(*PurePosixPath(member.replace("\\", "/")).parts)
-                    with source.open("rb") as stream:
-                        for number, raw in enumerate(stream, 1):
-                            if not raw.strip():
-                                continue
-                            try:
-                                value = json.loads(raw.decode("utf-8-sig"))
-                            except (UnicodeDecodeError, ValueError):
-                                skipped[(model, "invalid_json")] += 1
-                                continue
-                            try:
-                                day, row = normalize_row(value, model, path.name, member, number,
-                                                         testset_dates=self.kind in ("gpt", "post_training_model"))
-                            except InvalidRecord as exc:
-                                skipped[(model, exc.reason)] += 1
-                                continue
-                            key = self.record_identity(row, model)
-                            if key in records:
-                                skipped[(model, "duplicate_case")] += 1
-                                continue
-                            records[key] = ArchiveRecord(day, row, path.name, PurePosixPath(member).name)
+                    for number, raw in skipped.lines(source, path.name, member):
+                        if not raw.strip():
+                            continue
+                        skipped.read += 1
+                        try:
+                            value = json.loads(raw.decode("utf-8-sig"))
+                        except (UnicodeDecodeError, ValueError):
+                            skipped.exclude(model, "invalid_json", path.name, member, number)
+                            continue
+                        try:
+                            issues = []
+                            day, row = normalize_row(value, model, path.name, member, number,
+                                                     testset_dates=self.kind in ("gpt", "post_training_model"), metadata_issues=issues)
+                        except InvalidRecord as exc:
+                            skipped.exclude(model, exc.reason, path.name, member, number, value=value)
+                            continue
+                        skipped.note_metadata(model, row, issues)
+                        key = self.record_identity(row, model)
+                        if key in records:
+                            previous = records[key].row
+                            reason = "duplicate_case" if comparable_row(previous) == comparable_row(row) else "identity_conflict"
+                            skipped.exclude_row(model, reason, row)
+                            continue
+                        records[key] = ArchiveRecord(day, row, path.name, member)
         return records, skipped
 
 
-    def prepare_archive_files(self, changes: dict[RecordKey, IncomingRecord], previous_days: dict[RecordKey, str]) -> tuple[dict, list[dict]]:
+    def prepare_archive_files(self, changes: dict[RecordKey, IncomingRecord]) -> tuple[dict, list[dict]]:
         affected = {(record.day, key[1]) for key, record in changes.items()}
-        affected.update((day, key[1]) for key, day in previous_days.items())
         ready = {}
         artifacts = []
         temporary_paths = []
@@ -809,7 +786,9 @@ class Dataset:
                         before = target.stat()
                         with target.open("rb") as source:
                             for raw in source:
-                                if raw.strip() and self.record_identity(json.loads(raw), model) not in changes:
+                                if raw.strip():
+                                    if self.record_identity(json.loads(raw), model) in changes:
+                                        raise ValueError("published identity is missing from the archive index; refusing to overwrite")
                                     offsets.append([output.tell(), len(raw)])
                                     output.write(raw)
                         after = target.stat()
@@ -845,11 +824,15 @@ class Dataset:
             raise
 
 
-    def process_archives(self, signature: list[dict[str, object]]) -> None:
+    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False) -> None:
         db = self.open_archive_index()
         try:
             self.publish_pending(db)
-            for info in reversed(self.pending_archives(signature)):
+            pending = self.pending_archives(signature)
+            if retry_failed:
+                failed = {item["name"] for item in self.load_archive_state()["failed_archives"]}
+                pending = [info for info in signature if info in pending or info["name"] in failed]
+            for info in reversed(pending):
                 archive_path = self.archive_dir / str(info["name"])
                 if file_signature(archive_path) != info:
                     continue
@@ -857,28 +840,48 @@ class Dataset:
                 try:
                     records, skipped = self.read_archive_records(info)
                 except ArchiveReadError as exc:
-                    records, skipped = {}, Counter()
+                    records, skipped = {}, CleaningReport()
                     error = str(exc)
                 if file_signature(archive_path) != info:
                     print(f"archive {archive_path.name} changed while reading; deferred", flush=True)
                     continue
                 changes = {}
-                previous_days = {}
                 local_days = {
                     marker.name.removesuffix(".ready.json") for marker in self.state_dir.glob("*.ready.json")
                     if json.loads(marker.read_text()).get("source") == "local_import"
                 }
+                existing_rows = {}
                 for key, record in records.items():
                     if record.day in local_days:
-                        skipped[(key[1], "local_import_overlap")] += 1
+                        skipped.exclude_row(key[1], "local_import_overlap", record.row)
                         continue
                     old = db.execute("SELECT day, archive, member FROM records WHERE source = ? AND model = ? AND batch_id = ? AND case_id = ?", key).fetchone()
-                    if old and record_priority(record.archive, record.member) < record_priority(old[1], old[2]):
+                    if old:
+                        location = (old[0], key[1])
+                        if location not in existing_rows:
+                            before = self.ready_state(old[0])
+                            if before is None:
+                                raise ValueError("published input is not ready")
+                            matches = {}
+                            with (self.output_dir / key[1] / f"{old[0]}.jsonl").open() as stream:
+                                for raw in stream:
+                                    if not raw.strip():
+                                        continue
+                                    previous_row = json.loads(raw)
+                                    previous_key = self.record_identity(previous_row, key[1])
+                                    if previous_key in records:
+                                        matches[previous_key] = comparable_row(previous_row) == comparable_row(records[previous_key].row)
+                            if self.ready_state(old[0]) != before:
+                                raise ValueError("published input changed while checking duplicates")
+                            existing_rows[location] = matches
+                        identical = existing_rows[location].get(key)
+                        if identical is None:
+                            raise ValueError("published business record missing from source")
+                        reason = "duplicate_case" if identical else "identity_conflict"
+                        skipped.exclude_row(key[1], reason, record.row)
                         continue
                     changes[key] = record
-                    if old:
-                        previous_days[key] = old[0]
-                ready, artifacts = self.prepare_archive_files(changes, previous_days)
+                ready, artifacts = self.prepare_archive_files(changes)
                 durable = False
                 try:
                     if file_signature(archive_path) != info:
@@ -895,9 +898,12 @@ class Dataset:
                             "dates": sorted(set(root["dates"]) | set(ready)),
                             "failed_archives": sorted(failures.values(), key=lambda item: item["name"])}
                     plan = {"files": artifacts, "ready": ready, "root": root}
+                    report = skipped.finish(changes, self.pairs, self.output_dir, ready, error)
                     with db:
+                        db.execute("INSERT OR REPLACE INTO cleaning_reports VALUES (?, ?, ?, ?)",
+                                   (info["name"], info["size"], info["mtime_ns"], json.dumps(report, ensure_ascii=False)))
                         for key, record in changes.items():
-                            db.execute("INSERT OR REPLACE INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, record.day, record.archive, record.member))
+                            db.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, record.day, record.archive, record.member))
                         db.execute("INSERT INTO pending VALUES (1, ?)", (json.dumps(plan, separators=(",", ":")),))
                     durable = True
                     self.publish_pending(db)
@@ -951,46 +957,12 @@ class Dataset:
         print(f"registered local import {day}: {sum(rows.values())} records", flush=True)
 
 
-    def processing_loop(self) -> None:
-        observed: dict[str, tuple[dict[str, object], float]] = {}
-        initialized = False
-        next_inspection = 0
-        while True:
-            eligible = []
-            try:
-                if not initialized:
-                    self.recover()
-                    initialized = True
-                if self.daily_archive_check and time.time() >= next_inspection:
-                    report = self.state_dir / "archive-maintenance.json"
-                    checked_at = json.loads(report.read_text())["checked_at"] / 1000 if report.exists() else 0
-                    next_inspection = checked_at + 86400
-                    if time.time() >= next_inspection:
-                        self.organize_archives()
-                        next_inspection = time.time() + 86400
-                signature = archive_signature(self.archive_dir)
-                now = time.monotonic()
-                current_names = {str(item["name"]) for item in signature}
-                observed = {name: value for name, value in observed.items() if name in current_names}
-                for item in signature:
-                    name = str(item["name"])
-                    if name not in observed or observed[name][0] != item:
-                        observed[name] = (item, now)
-                stable = [item for item in signature if now - observed[str(item["name"])][1] >= STABLE_SECONDS]
-                eligible = self.pending_archives(stable)
-                if eligible:
-                    self.process_archives(eligible)
-                self.archive_processed(stable)
-            except Exception as exc:
-                for item in eligible:
-                    observed[str(item["name"])] = (item, time.monotonic())
-                print(f"archive processor error in {self.archive_dir}: {exc}", flush=True)
-            time.sleep(POLL_SECONDS)
 
 
 class DashboardServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], datasets: dict[str, Dataset]):
+    def __init__(self, address: tuple[str, int], datasets: dict[str, Dataset], catalog=None):
         self.datasets = datasets
+        self.catalog = catalog
         super().__init__(address, Handler)
 
 
@@ -1033,7 +1005,49 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def workbench_request(self) -> bool:
+        parsed = urlsplit(self.path)
+        if not parsed.path.startswith("/data/workbench/"):
+            return False
+        from workbench_catalog import Conflict
+        catalog = cast(DashboardServer, self.server).catalog
+        if catalog is None:
+            self.send_json(503, {"error": "工作台索引不可用"})
+            return True
+        path = parsed.path.removeprefix("/data/workbench/")
+        try:
+            if self.command == "GET" and path == "catalog":
+                self.send_json(200, catalog.snapshot(parse_qs(parsed.query)))
+            elif self.command == "GET" and re.fullmatch(r"batches/[a-f0-9-]+/(report|sample)", path):
+                action = catalog.sample if path.endswith("/sample") else catalog.report
+                self.send_json(200, action(path.split("/")[1], parse_qs(parsed.query)))
+            elif self.command == "POST" and path in ("tasks", "assign", "clean", "evaluation-scope"):
+                if not self.headers.get("Content-Type", "").startswith("application/json"):
+                    self.send_json(415, {"error": "application/json required"})
+                    return True
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 65536:
+                    self.send_json(413 if length > 65536 else 400, {"error": "invalid request size"})
+                    return True
+                value = json.loads(self.rfile.read(length))
+                action = {"tasks": catalog.create_task, "assign": catalog.assign, "clean": catalog.start_clean, "evaluation-scope": catalog.evaluation_scope}[path]
+                self.send_json(202 if path == "clean" else 201 if path == "tasks" else 200, action(value))
+            else:
+                self.send_json(404, {"error": "not found"})
+        except Conflict as exc:
+            self.send_json(409, {"error": str(exc)})
+        except KeyError as exc:
+            self.send_json(404, {"error": str(exc)})
+        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            self.send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            print(f"workbench API error: {exc}", file=sys.stderr, flush=True)
+            self.send_json(500, {"error": str(exc)})
+        return True
+
     def do_GET(self) -> None:
+        if self.workbench_request():
+            return
         dataset, path = self.dataset_path()
         if dataset is None:
             return
@@ -1154,6 +1168,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self) -> None:
+        if self.workbench_request():
+            return
         dataset, path = self.dataset_path()
         if dataset is None:
             return
@@ -1261,7 +1277,11 @@ def make_datasets(root: Path, state_root: Path) -> dict[str, Dataset]:
     wencai = root / "0_wencai"
     datasets = {
         "/data/wencai": Dataset(wencai, state_root / "wencai", ROOT_MODELS,
-                                archive_dir=wencai / "1_7z_adta", output_dir=wencai / "2_daily_eval_input", url_prefix="/data/wencai"),
+                                archive_dir=wencai / "1_7z_data", output_dir=wencai / "2_daily_eval_input", url_prefix="/data/wencai"),
+        "/data/post_training_model": Dataset(wencai, state_root / "post_training_model", POST_TRAINING_MODELS,
+                                "post_training_model", url_prefix="/data/post_training_model",
+                                archive_dir=wencai / "1_7z_data/post_train_model",
+                                output_dir=wencai / "5_multi_task_eval_input/post_train_model_eval"),
     }
     from multi_agent_inputs import AgentDataset, SOURCES
     datasets.update({"/data/" + provider: AgentDataset(root, state_root, provider, "/data/" + provider) for provider in SOURCES})
@@ -1274,6 +1294,23 @@ def main() -> None:
     root, state_root = Path(os.environ["DATA_ROOT"]), Path(os.environ["STATE_ROOT"])
     host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8081"))
     datasets = make_datasets(root, state_root)
+    if len(sys.argv) == 3 and sys.argv[1] == "--process-archives":
+        dataset = datasets.get("/data/" + sys.argv[2])
+        if dataset is None:
+            raise SystemExit(f"unknown dataset: {sys.argv[2]}")
+        dataset.state_dir.mkdir(parents=True, exist_ok=True)
+        with dataset.archive_lock():
+            signature = archive_signature(dataset.archive_dir)
+            unstable = [item["name"] for item in dataset.pending_archives(signature)
+                        if time.time_ns() - int(item["mtime_ns"]) < STABLE_SECONDS * 1_000_000_000]
+            if unstable:
+                raise SystemExit(f"archives are still changing: {', '.join(unstable)}")
+            dataset.process_archives(signature)
+            state = dataset.load_archive_state()
+            if state["failed_archives"] or dataset.pending_archives(archive_signature(dataset.archive_dir)):
+                raise SystemExit("archive processing incomplete; inspect processing status")
+        print(json.dumps(dataset.dashboard_data(), ensure_ascii=False), flush=True)
+        return
     if sys.argv[1:] == ["--organize-archives"]:
         for dataset in datasets.values():
             dataset.state_dir.mkdir(parents=True, exist_ok=True)
@@ -1284,17 +1321,21 @@ def main() -> None:
         datasets["/data/wencai"].register_local_import(sys.argv[2])
         return
     if len(sys.argv) != 1:
-        raise SystemExit("usage: app.py [--register-local-import YYYY-MM-DD | --organize-archives]")
-    server = DashboardServer((host, port), datasets)
+        raise SystemExit("usage: app.py [--register-local-import YYYY-MM-DD | --organize-archives | --process-archives DATASET]")
+    from workbench_catalog import WorkbenchCatalog
+    catalog = WorkbenchCatalog(datasets, state_root, sys.modules[__name__])
+    server = DashboardServer((host, port), datasets, catalog)
     for dataset in datasets.values():
         dataset.archive_dir.mkdir(parents=True, exist_ok=True)
         dataset.state_dir.mkdir(parents=True, exist_ok=True)
         for model in dataset.models:
             (dataset.output_dir / model).mkdir(parents=True, exist_ok=True)
-        print(f"watching {dataset.archive_dir}/*.7z; output: {dataset.output_dir}; state: {dataset.state_dir}", flush=True)
-        threading.Thread(target=dataset.processing_loop, name=f"archive-processor{dataset.url_prefix}", daemon=True).start()
+        with dataset.archive_lock():
+            dataset.recover()
+    threading.Thread(target=catalog.loop, name="workbench-discovery", daemon=True).start()
     print(f"serving on {host}:{port}; data root: {root}", flush=True)
     def stop(_signal: int, _frame: object) -> None:
+        catalog.stop.set()
         threading.Thread(target=server.shutdown, name="dashboard-shutdown", daemon=True).start()
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)

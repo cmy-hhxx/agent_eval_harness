@@ -20,6 +20,10 @@
 
 ## 流程与科学边界
 
+Criteria 共同检查项去重后合计5–12项，简单题通常5项，复杂题按独立要求增加；私有项不计入共同数量，三个数组连同私有项总计最多24项。任务完成、范围口径、事实准确、依据推理、表达可用性是对已有交付的核查角度，不新增回答段落、案例、步骤或穷举义务。各项检查不同内容，同一失误及后果只记一次问题，不因关联多个检查点放大严重程度。共同任务与质量来源须完整覆盖，可选项和禁令数组允许为空。本方规范仍由 Attribution 按实际触发行为独立核查。
+
+Attribution 对证据充分的简单题在收尾一次写入结果文件；多轮调查才维护中间草稿。基本合规放在逐项结论，不为凑数量重复列为优点。质量缺陷关联到实际受影响的交付项，不要求另造通用质量项；没有真实关联时仍保留未绑定。性能验证必须同时审阅交付边界、证据和实质问题，不能只看条数或耗时下降。固定真实小样本覆盖简单题、复杂题与此前超时题，再决定是否恢复整批；模型档位、调用次数、超时及失败均须记录。
+
 主线及可选分支见[归因与判决](contract.md#归因与判决)。合法引用、完整读取、提交被接受或模拟网关测试通过，只说明机械约束满足，不证明事实、归责和取舍正确。同一模型的独立会话仍可能重复同一种误判。
 
 人工审阅必须检查：
@@ -101,16 +105,16 @@ Criteria 交付边界、Attribution 等价核验与 Comparison 主理由的固�
 先 build:app。collect 从 debug 的 content_loaded 事件收集被拒草稿，保存真实内容和来源引用；不转换过期格式、不覆盖既有回归集。
 
 ```bash
-npm run benchmark -- collect --run data/runs/comparison/pi-debug --output .artifacts/regression/fixtures.json --limit 32
-npm run benchmark -- replay --fixtures .artifacts/regression/fixtures.json --output .artifacts/regression/replay.json
-npm run benchmark -- run --fixtures .artifacts/regression/fixtures.json --run-id sample-pi --limit 4
+npm run benchmark -- collect --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/pi-debug --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --limit 32
+npm run benchmark -- replay --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/replay.json
+npm run benchmark -- run --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --run-id sample-pi --limit 4
 ```
 
 run 默认预览，--execute 才调用模型；支持 --engine prime 和 --swap，须用新 ID。collect 的 limit 是草稿数，run 的 limit 是对比组数。失败草稿集不能估计生产首次通过率。
 
 ```bash
-npm run benchmark -- compare --run .artifacts/model-benchmarks/sample-pi \
-  --run .artifacts/model-benchmarks/sample-pi-swapped --output .artifacts/regression/stability.json
+npm run benchmark -- compare --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/sample-pi \
+  --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/sample-pi-swapped --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/stability.json
 ```
 
 compare 按业务题目与稳定模型对比结果、核心状态和依据，文本变化单列供人工核查。
@@ -118,9 +122,9 @@ compare 按业务题目与稳定模型对比结果、核心状态和依据，文
 ## 矩阵、区间与人工金标
 
 ```bash
-npm run benchmark -- summarize --run data/runs/comparison/RUN --bootstrap-rounds 2000
-npm run benchmark -- gold-template --run data/runs/comparison/RUN --output .artifacts/expert.json
-npm run benchmark -- calibrate --run data/runs/comparison/RUN --gold .artifacts/expert.json
+npm run benchmark -- summarize --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --bootstrap-rounds 2000
+npm run benchmark -- gold-template --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/expert.json
+npm run benchmark -- calibrate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --gold /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/expert.json
 ```
 
 胜、负、都好、都差按对局统计；核心完成与标准一致性按 batch/case/version 去重。缺失与冲突保持未知，待核不算平局。重复 run 选择明确拒绝；模型、评测器和来源差异保留 cohort。

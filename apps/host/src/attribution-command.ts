@@ -3,7 +3,7 @@ import { safeId, type Engine } from "@eval/contracts";
 import { exists, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { attributionJobWorkflow, comparisonRepository, prepareAttributionJob, prepareAttributionPilotExpansion, reportRun, type AttributionJobConfig } from "@eval/workflows/comparison";
-import { createModelResolver, type HostConfig } from "./config.js";
+import { createModelResolver, testEvaluationOutput, type HostConfig } from "./config.js";
 import { createBalancedModels } from "./balanced-models.js";
 import { services } from "./composition.js";
 
@@ -15,8 +15,10 @@ export async function runAttributionCommand(host: HostConfig, options: {
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("reattribute --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
-  const output = { kind: "directory" as const, path: options.output ? path.resolve(options.output) :
-    path.resolve(host.evaluation.output.path, "../attribution") };
+  const pilot = options.pilotAnswers !== undefined || options.pilotPerModel !== undefined;
+  const output = { kind: "directory" as const, path: pilot
+    ? testEvaluationOutput(host.evaluation.output.path, options.output ?? path.join(testEvaluationOutput(host.evaluation.output.path), "attribution"))
+    : options.output ? path.resolve(options.output) : path.resolve(host.evaluation.output.path, "attribution") };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   if (layout && options.runs?.some(run => path.resolve(run) === layout.directory))
     throw new Error("重归因作业目录不能覆盖来源 run");

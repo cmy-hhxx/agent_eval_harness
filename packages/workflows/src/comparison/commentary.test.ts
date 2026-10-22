@@ -28,7 +28,7 @@ test("attribution rewrite groups isolate duplicate prose and each finding even b
   }
   const before = structuredClone(result), groups = attributionRewriteGroups(result);
   assert.deepEqual(groups[0], ["summary", "core_assessment.reason", "correctness_reason"]);
-  assert.deepEqual(groups[1], ["criterion_assessments.0.summary"]);
+  assert.deepEqual(groups[1], Array.from({length: 5}, (_, i) => `criterion_assessments.${i}.summary`));
   assert.deepEqual(groups[2], attributionSlots(result).filter(item => item.id.startsWith("findings.0.")).map(item => item.id));
   assert.deepEqual(groups[3], attributionSlots(result).filter(item => item.id.startsWith("findings.1.")).map(item => item.id));
   assert(groups.every(group => group.length <= 20));
@@ -228,7 +228,7 @@ test("attribution rewrites include displayed observations and impact without cha
   } as unknown as RunState;
   const before = structuredClone(state);
   assert.deepEqual(attributionSlots(result).map(item => item.id), ["summary", "core_assessment.reason", "correctness_reason",
-    "criterion_assessments.0.summary", "findings.0.text", "findings.0.reason", "findings.0.assessment.observation", "findings.0.assessment.impact"]);
+    ...Array.from({length: 5}, (_, i) => `criterion_assessments.${i}.summary`), "findings.0.text", "findings.0.reason", "findings.0.assessment.observation", "findings.0.assessment.impact"]);
   const projection = acceptedRewriteProjection(state, "source")!;
   assert.deepEqual(projection.rewritten.rewrites, valid);
   assert.deepEqual([...projection.owners.keys()], valid.map(item => item.id));

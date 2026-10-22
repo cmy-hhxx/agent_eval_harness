@@ -50,7 +50,7 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
   return {
     id: snapshot.id, status: snapshot.status, startedAt: snapshot.startedAt, updatedAt: snapshot.updatedAt,
     lastPollAt: snapshot.lastPollAt, pollError: snapshot.pollError, reportError: snapshot.reportError,
-    sampledAt: Date.now(), sourceUrl: config.sourceUrl, logFile: config.publication.logFile, publishStatisticsLog: config.publishStatisticsLog,
+    sampledAt: Date.now(), sourceUrl: config.sourceUrl, logFile: config.publication.logFile, publishMongo: config.publishMongo, publishStatisticsLog: config.publishStatisticsLog,
     cache: cacheUsage([...measuredRuns.values()]),
     execution: { ...settings, ...liveExecution(activeRuns),
       ...(activeRuns.length ? { evaluatorVersion: activeRuns[0].evaluatorVersion,

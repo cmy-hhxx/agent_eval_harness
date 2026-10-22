@@ -4,10 +4,19 @@
     "answersFile": "../data/sources/automations/prediction-evaluation/answers.jsonl",
     "sourceConfig": "automations.json"
   },
-  "remoteModels": ["a_fast", "b_fast", "a_expert", "b_expert"],
+  "remoteModels": [
+    "a_fast",
+    "b_fast",
+    "a_expert",
+    "b_expert"
+  ],
   "fromDate": "2026-09-22",
   "completedDates": [],
-  "hostConfigs": ["host.json", "local/models.json", "automations-host.json"],
+  "hostConfigs": [
+    "host.json",
+    "local/models.json",
+    "automations-host.json"
+  ],
   "stateDirectory": "../data/automations/prediction-evaluation",
   "sourceDirectory": "../data/sources/automations/prediction-evaluation",
   "runPrefix": "prediction-",
@@ -17,7 +26,9 @@
   "retryMs": 30000,
   "maxEvaluationAttempts": 3,
   "dailyComparisonLimitPerTier": 300,
-  "channelConcurrency": { "openai": 1 },
+  "channelConcurrency": {
+    "openai": 1
+  },
   "requestTimeoutMs": 600000,
   "publishProgress": false,
   "publishStatisticsLog": false,
@@ -28,5 +39,6 @@
     "mongoDatabase": "query_quality_new",
     "mongoCollection": "agent_eval_bench_version_comparisons_new",
     "mongoTlsCAFileEnv": "AUTOMATIONS_MONGODB_TLS_CA_FILE"
-  }
+  },
+  "publishMongo": true
 }

@@ -29,7 +29,7 @@ async function render(status, stale = false, counts = done, catalogDates = null,
     } })) },
   }) });
   dom.window.setInterval = () => 0;
-  vm.runInContext(source, dom.getInternalVMContext());
+  vm.runInContext(source.replace(/^export /gm, ""), dom.getInternalVMContext());
   await new Promise(setImmediate);
   return dom;
 }
@@ -127,7 +127,7 @@ test("quota labels and capped progress keep completed, running and queued battle
     assert.match(cell.textContent, /已完成 120 条/);
     assert.match(cell.textContent, /运行中 12 · 排队 168/);
     assert.match(cell.textContent, /其中失败待重试 8 条/);
-    assert.match(cell.textContent, /660 条超过评测配额，不评测/);
+    assert.match(cell.textContent, /超额未评测 660 条/);
   } finally { dom.window.close(); }
 });
 
@@ -140,7 +140,7 @@ test("historical completions above quota survive and excess work does not remain
     assert.match(cell.textContent, /历史已完成 674 条/);
     assert.equal(cell.querySelector(".pair-status").dataset.status, "finished");
     assert.equal(cell.querySelector(".active-counts"), null);
-    assert.match(cell.textContent, /220 条超过评测配额，不评测/);
+    assert.match(cell.textContent, /超额未评测 220 条/);
   } finally { dom.window.close(); }
 });
 
@@ -209,16 +209,15 @@ for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifin
     };
     dom.window.setInterval = () => 0;
     try {
-      vm.runInContext(source, dom.getInternalVMContext());
+      vm.runInContext(source.replace(/^export /gm, ""), dom.getInternalVMContext());
       await new Promise(setImmediate);
       const doc = dom.window.document;
       assert.deepEqual(requests, [`/data/${provider}/dashboard-data`, `/data/${provider}/processing-status`]);
       assert.deepEqual([...doc.querySelectorAll("thead th")].map(el => el.textContent.trim()), ["日期", "Fast", "Expert"]);
-      assert.equal(doc.querySelector(`[data-dataset="${provider}"]`).getAttribute("aria-current"), "page");
       assert.equal(doc.querySelectorAll(".stage-progress").length, 6);
       assert.equal(doc.querySelectorAll(".pair-quota,.gpt-pair-progress,.pair-status").length, 0);
       assert.equal(doc.querySelectorAll(".model-link").length, 1);
-      assert.equal(doc.querySelector(".model-link").getAttribute("href"), `/data/${provider}/records?date=2026-10-14&model=${models[0]}`);
+      assert.equal(doc.querySelector(".model-link").getAttribute("href"), "#samples");
       assert.match(doc.querySelector(".input-cell").textContent, /归因 · 已完成 780 \/ 780 任务 · 进度停更/);
       assert.match(doc.querySelector(".input-cell").textContent, /聚类 · 已完成 6 \/ 8 任务 · 排队 1 · 失败 1/);
       assert.doesNotMatch(doc.querySelector(".results-table").textContent, /对战|300|配对/);
@@ -299,7 +298,7 @@ test("sample table separates formats and groups session rounds with full, copyab
     assert.deepEqual(copied, [traceSample.trace_id]);
     assert.equal(button.textContent, "已复制");
     assert.equal(doc.querySelectorAll("details[open]").length, 0);
-    assert.equal(doc.querySelectorAll(".answer-markdown").length, 0, "closed answers are not parsed eagerly");
+    assert.equal(doc.querySelectorAll(".answer-markdown").length, 3, "selected page answers are directly visible");
   } finally { dom.window.close(); }
 });
 
@@ -324,77 +323,18 @@ test("HTTP sample viewer copies through a selected textarea and reports denied c
   }
 });
 
-test("questions that fit the preview have no visible expand control", async () => {
-  let height = 18;
-  const question = "Leveraged ETF that has holding of AMAT";
-  const dom = await samplePage([{ ...traceSample, question }], undefined, node => height + (node.parentElement.querySelector(".question-action").hidden ? 0 : 18));
-  try {
-    const doc = dom.window.document, action = doc.querySelector(".question-action");
-    assert.equal(action.hidden, true);
-    assert.equal(doc.querySelector(".question-text").textContent, question);
-    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
-    assert.equal(action.hidden, true, "a question fitting one line stays plain");
-    height = 36; dom.window.dispatchEvent(new dom.window.Event("resize"));
-    assert.equal(action.hidden, false, "narrower columns expose the full-text control when needed");
-    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
-    assert.equal(action.hidden, true, "wider columns reclaim the control's width before checking overflow");
-  } finally { dom.window.close(); }
-});
 
-test("overflowing questions expand without changing stored text and recheck clipping after resize", async () => {
-  const question = "First line\n\n" + "Long question ".repeat(50) + "<script>plain text</script>";
-  let height = 120;
-  const dom = await samplePage([{ ...traceSample, question }], undefined, () => height);
-  try {
-    const doc = dom.window.document, content = doc.querySelector(".question-content");
-    const text = content.querySelector(".question-text"), action = content.querySelector(".question-action");
-    assert.equal(action.hidden, false);
-    assert.equal(action.getAttribute("aria-expanded"), "false");
-    assert.equal(text.textContent, question);
-    action.click();
-    assert.equal(text.classList.contains("question-preview"), false);
-    assert.equal(action.getAttribute("aria-expanded"), "true");
-    assert.equal(action.textContent, "收起问句");
-    assert.equal(doc.querySelector(".answer-details").open, false);
-    assert.equal(content.querySelector("script"), null);
-    height = 18; dom.window.dispatchEvent(new dom.window.Event("resize"));
-    assert.equal(action.getAttribute("aria-expanded"), "true", "resize preserves an opened question");
-    action.click();
-    assert.equal(text.classList.contains("question-preview"), true);
-    assert.equal(action.hidden, true);
-    assert.equal(action.textContent, "展开问句");
-  } finally { dom.window.close(); }
-});
 
-test("a bounded answer overview never truncates the expanded answer", async () => {
-  const answer = "# Overview\n\n" + "Full answer content. ".repeat(300) + "\n\nFinal paragraph.";
-  const dom = await samplePage([{ ...traceSample, answer }]);
-  try {
-    const doc = dom.window.document, details = doc.querySelector(".answer-details");
-    assert.match(details.querySelector(".answer-preview").textContent, /^Overview Full answer content\./);
-    assert.doesNotMatch(details.querySelector(".answer-preview").textContent, /Final paragraph/);
-    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
-    assert.match(doc.querySelector(".answer-markdown").textContent, /Final paragraph\.$/);
-    assert.equal(doc.querySelectorAll(".answer-markdown p")[0].textContent, "Full answer content. ".repeat(300).trim());
-  } finally { dom.window.close(); }
-});
 
-test("expanded answers render GFM tables, lists and code while blocking raw HTML and unsafe URLs", async () => {
+test("answers directly render GFM tables, lists and code while blocking raw HTML and unsafe URLs", async () => {
   const answer = ["# Heading", "", "**Bold** and *italic* and ~~deleted~~. [Safe](https://example.com)", "",
     "| Stock | Score |", "| :--- | ---: |", "| A | 9 |", "", "> Quote", "", "1. First", "2. Second", "", "~~~js", "const x = '<script>';", "~~~", "",
     "<script>window.injected = true</script>", "", "<img src=x onerror=alert(1)>", "",
     "[Unsafe](javascript:alert%281%29) ![Blocked](data:text/html,script)"].join("\n");
   const dom = await samplePage([{ ...traceSample, answer, standard_answer: "**Reference**" }]);
   try {
-    const doc = dom.window.document, details = doc.querySelector(".answer-details");
-    const preview = details.querySelector(".answer-preview");
-    assert.match(preview.textContent, /^Heading Bold and italic and deleted\. Safe Stock Score A 9/);
-    assert.doesNotMatch(preview.textContent, /\*\*|https:\/\/example\.com/);
-    assert.equal(details.open, false);
-    assert.equal(doc.querySelector(".answer-markdown"), null);
-    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
-    assert.equal(preview.hidden, true);
-    assert.equal(details.querySelector(".answer-action").textContent, "收起回答");
+    const doc = dom.window.document;
+    assert.equal(doc.querySelector("details"), null);
     const content = doc.querySelector(".answer-markdown");
     assert.equal(content.querySelector("h1").textContent, "Heading");
     assert.equal(content.querySelector("strong").textContent, "Bold");
@@ -408,10 +348,29 @@ test("expanded answers render GFM tables, lists and code while blocking raw HTML
     assert.equal(content.querySelector("a").rel, "noopener noreferrer");
     assert.equal(dom.window.injected, undefined);
     assert.equal(doc.querySelectorAll(".answer-markdown")[1].querySelector("strong").textContent, "Reference");
-    details.open = false; details.dispatchEvent(new dom.window.Event("toggle"));
-    assert.equal(preview.hidden, false);
-    assert.equal(details.querySelector(".answer-action").textContent, "展开回答");
-    details.open = true; details.dispatchEvent(new dom.window.Event("toggle"));
-    assert.equal(doc.querySelectorAll(".answer-markdown").length, 2);
+  } finally { dom.window.close(); }
+});
+
+test("post-training task shows exactly two original model labels and opens samples in place", async () => {
+  const dom = new JSDOM(html, { url:"http://localhost/data/post_training_model/", runScripts:"outside-only" });
+  const selections = [];
+  dom.window.setInterval = () => 0;
+  dom.window.fetch = async url => ({ ok:true, json:async () => url.endsWith('/processing-status') ? processing : {
+    dates:[{ date:'2026-10-19', ready:true, models:{ b_fast:{ ready:true,row_count:720 }, b_post_train_fast:{ ready:true,row_count:745 } } }], evaluation:null,
+  } });
+  try {
+    vm.runInContext(source.replace(/^export /gm, '').replace(/if \(globalThis\.document\?\.querySelector\("#dataset-range"\)\) \{[\s\S]*$/, ''), dom.getInternalVMContext());
+    dom.window.mountData(dom.window.document, { dataset:'post_training_model', onSamples:selection => selections.push(selection) });
+    await new Promise(setImmediate);
+    const doc=dom.window.document;
+    assert.equal(doc.querySelectorAll('thead th').length,2);
+    assert.equal(doc.querySelector('.dataset-range-models').textContent,'2 个模型');
+    assert.match(doc.querySelector('thead').textContent,/AA-fast.*AA-post_train_fast_V1/);
+    const links=[...doc.querySelectorAll('#date-rows .model-link')];
+    assert.equal(links.length,2);
+    links[1].click();
+    assert.deepEqual(JSON.parse(JSON.stringify(selections)),[{dataset:'post_training_model',profile:'post_training_model',date:'2026-10-19',model:'b_post_train_fast'}]);
+    assert.equal(dom.window.location.pathname,'/data/post_training_model/');
+    assert.equal(doc.querySelector('#total-rows').textContent,'1,465');
   } finally { dom.window.close(); }
 });

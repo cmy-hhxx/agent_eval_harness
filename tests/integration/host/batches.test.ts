@@ -167,7 +167,7 @@ test("100 + 120 daily samples retain repeated questions through planning, export
     assert.equal(comparisonIds.size, 220);
     const validation = await validateRun(run);
     assert.equal(validation.results.valid, true, JSON.stringify(validation.results.errors));
-    assert.equal(validation.evidence.valid, true);
+    assert.equal(validation.evidence.valid, true, JSON.stringify(validation.evidence.errors));
     assert.equal(validation.delivery.valid, true);
     assert.equal(validation.valid, true);
     assert.deepEqual((await reportRun(run)).by_batch, daily);
@@ -323,7 +323,7 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         for (const label of labels) {
           result.assessments[label] = { meets_core: false, core_failure_refs: ["r1"], summary: "核心结果错误。" };
           for (const comparison of result.decision_basis.comparisons) {
-            comparison.assessments[label]!.status = "unmet";
+            comparison.assessments[label]!.status = ["r1", "r3", "r4"].includes(comparison.criterion_ids[0]!) ? "unmet" : "met";
             comparison.assessments[label]!.summary = "结果错误。";
           }
         }
@@ -337,9 +337,9 @@ test("batch reports distinguish verdicts, correctness, failures, pending tasks a
         result.assessments[winner] = { meets_core: true, core_failure_refs: [], summary: "完成核心要求。" };
         result.assessments[loser] = { meets_core: false, core_failure_refs: ["r1"], summary: "关键计算结果错误。" };
         for (const comparison of result.decision_basis.comparisons) {
-          comparison.assessments[loser]!.status = "unmet";
+          comparison.assessments[loser]!.status = ["r1", "r3", "r4"].includes(comparison.criterion_ids[0]!) ? "unmet" : "met";
           comparison.assessments[loser]!.summary = "结果错误。";
-          comparison.better_candidates = [winner];
+          comparison.better_candidates = comparison.criterion_ids[0] === "r1" ? [winner] : [];
         }
         result.decision_basis.tradeoff = "完成核心计算要求的回答胜出。";
       }

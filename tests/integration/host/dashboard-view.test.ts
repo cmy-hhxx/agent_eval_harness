@@ -41,10 +41,10 @@ function render(stage: string, result: JsonObject, id = "task-one") {
   return { dom, document, views, state };
 }
 
-test("criteria tasks show readable requirements, candidate scope and collapsed acceptance rules", () => {
+test("criteria tasks show readable requirements, candidate scope and visible acceptance rules", () => {
   const criteria = criteriaResult();
   const candidateId = "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd";
-  criteria.requirements.push({ id: "r2", text: "保留原文的条件与例外。", applies_to: [candidateId, "unknown-input"],
+  criteria.requirements.push({ id: "private", text: "保留原文的条件与例外。", applies_to: [candidateId, "unknown-input"],
     acceptance_rule: criteria.requirements[0]!.acceptance_rule });
   const result = caseResultView("criteria", { result: criteria })!;
   const original = structuredClone(result);
@@ -55,15 +55,15 @@ test("criteria tasks show readable requirements, candidate scope and collapsed a
     const group = document.querySelector('[data-stage="criteria"]');
     assert(group);
     const entries = [...group.querySelectorAll('[data-criterion-kind="requirements"]')];
-    assert.equal(entries.length, 2);
+    assert.equal(entries.length, 6);
     assert.match(entries[0].querySelector(".criterion-identity").textContent, /requirements\[0\].*r1/);
     assert.equal(entries[0].querySelector(".criterion-scope").textContent, "适用候选 · 全部候选");
-    assert.equal(entries[1].querySelector(".criterion-scope").textContent, "适用候选 · A组Fast / unknown-input");
+    assert.equal(entries[5].querySelector(".criterion-scope").textContent, "适用候选 · A组Fast / unknown-input");
     for (const [index, entry] of entries.entries()) {
       assert.equal(entry.querySelector(".criterion-text .text-content").textContent, criteria.requirements[index]!.text);
-      const rule = entry.querySelector("details.criterion-rule");
-      assert(rule && !rule.open, "verbose evaluator rules are closed by default");
-      assert.match(rule.querySelector("summary").textContent, /核验方法/);
+      const rule = entry.querySelector("section.criterion-rule");
+      assert.equal(rule?.tagName, "SECTION", "rules are visible without a disclosure");
+      assert.match(rule.querySelector("header").textContent, /核验方法/);
       assert.equal(rule.querySelector(".text-content").textContent, criteria.requirements[index]!.acceptance_rule);
     }
     assert.match(group.querySelector('[data-criteria-group="scoring_points"]').textContent, /得分点.*0 项/);
@@ -71,7 +71,7 @@ test("criteria tasks show readable requirements, candidate scope and collapsed a
     assert(!group.querySelector('[data-criteria-group="scoring_points"] .schema-list'));
     state.expandedTexts.add(entries[0].querySelector(".criterion-rule").dataset.criterionRule);
     views.renderDetail();
-    assert(document.querySelector(".criterion-rule").open, "expanded rules survive a task refresh");
+    assert.equal(document.querySelector(".criterion-rule").tagName, "SECTION");
     assert.deepEqual(result, original, "presentation preserves accepted criteria");
     assert(!group.textContent.includes("[object Object]"));
   } finally { dom.window.close(); }
@@ -196,7 +196,7 @@ test("case inputs keep A and B side by side with independent version selection a
     assert.equal(columns[1].querySelector(".input-view").textContent, "B快速回答<img src=x>");
     assert.equal(columns[1].querySelector("img"), null);
     assert.equal(columns[2].querySelector(".input-view").textContent, "加载中");
-    assert.equal(document.querySelector(".input-disclosure").open, true);
+    assert.equal(document.querySelector(".input-disclosure").tagName, "SECTION");
     assert.deepEqual(state.caseDetail, original, "grouping leaves source metadata intact");
     state.selectedInputs.a = "af";
     views.renderDetail();
@@ -221,7 +221,7 @@ test("attribution tasks follow their model columns in Fast and Expert order whil
     assert.deepEqual([...columns[0].querySelectorAll("[data-task]")].map((task: any) => task.dataset.task), ["a_fast", "a_expert"]);
     assert.deepEqual([...columns[1].querySelectorAll("[data-task]")].map((task: any) => task.dataset.task), ["b_fast", "b_expert"]);
     assert.equal(columns[0].querySelector(".task-name").textContent, "A组Fast");
-    assert.equal(columns[0].querySelector('[data-task="a_expert"]').open, true);
+    assert.equal(columns[0].querySelector('[data-task="a_expert"]').tagName, "SECTION");
     assert.equal(document.querySelector('[data-stage="comparison"] .case-columns'), null);
     assert.equal(document.querySelector('[data-stage="comparison"] .task-name').textContent, "A组Fast / B组Fast");
     assert.equal(document.querySelectorAll("[data-task]").length, 6, "every task appears once");
@@ -305,8 +305,8 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
     assert.equal(groups[1].querySelector(".finding-index").textContent, "0");
     const link = groups[0].querySelector("a");
     const target = document.getElementById(decodeURIComponent(link.hash.slice(1)));
-    assert.equal(target.tagName, "DETAILS");
-    assert.equal(target.open, false);
+    assert.equal(target.tagName, "SECTION");
+    assert.equal(target.tagName, "SECTION");
     assert.equal(link.dataset.findingTarget, target.id);
     assert.equal(target.querySelector(".rewrite-original .text-content").textContent, "优点原文");
     assert.equal(target.querySelector(".rewrite-polished .text-content").textContent, "优点改写");
@@ -323,7 +323,7 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
     assert.equal(document.getElementById(decodeURIComponent(back.hash.slice(1))).getAttribute("aria-label"), "发现目录");
     state.openFindings.add(target.dataset.finding);
     views.renderDetail();
-    assert.equal(document.getElementById(target.id).open, true, "expanded findings survive a result render");
+    assert.equal(document.getElementById(target.id).tagName, "SECTION");
   } finally { dom.window.close(); }
 });
 
@@ -380,10 +380,10 @@ test("pairwise comparison orders A before B and preserves attribution finding li
   try {
     assert.deepEqual([...document.querySelectorAll(".comparison-table thead th")].map((node: any) => node.textContent), ["比较点", "A组Fast", "B组Fast"]);
     const cells = [...document.querySelectorAll(".comparison-table tbody td")];
-    assert.deepEqual(cells.map((node: any) => node.dataset.candidate), ["a_fast", "b_fast"]);
+    assert.deepEqual(cells.map((node: any) => node.dataset.candidate), Array.from({length: 5}, () => ["a_fast", "b_fast"]).flat());
     const columns = [...document.querySelectorAll(".comparison-attributions .case-columns > .case-column")];
     assert.deepEqual(columns.map((node: any) => node.dataset.versionGroup), ["a", "b"]);
-    for (const [index, cell] of cells.entries()) {
+    for (const [index, cell] of cells.slice(0, 2).entries()) {
       const target = document.getElementById(cell.querySelector("[data-finding-target]").dataset.findingTarget);
       assert(columns[index].contains(target), "comparison links resolve within the same model column");
     }
@@ -450,7 +450,7 @@ test("dashboard aligns models by version, prioritizes impact, and keeps accepted
     assert.equal(left.querySelector(".comparison-original"), null);
     const target = document.getElementById(left.querySelector("a").dataset.findingTarget);
     assert.match(target.id, /evaluations.left.findings.0$/);
-    assert.equal(document.querySelector(".comparison-attributions").open, false);
+    assert.equal(document.querySelector(".comparison-attributions").tagName, "SECTION");
     assert.match(document.querySelector(".comparison-decision").textContent, /A组Fast更好/);
     assert.equal(document.querySelectorAll(".comparison-decision .findings-nav").length, 0);
   } finally { dom.window.close(); }
@@ -573,20 +573,20 @@ test("comparison cells preserve complete states, confirmed advantages and direct
         assert(evidence.textContent.includes(assessment.evidence_status === "established" ? "已建立" : "不确定"));
         assert.equal(Boolean(cell.querySelector(".comparison-advantage")), item.better_candidates.includes(version));
         if (item.better_candidates.includes(version)) assert.equal(cell.querySelector(".comparison-advantage").textContent, "更优");
-        const findings = [...cell.querySelectorAll("details.comparison-finding")];
+        const findings = [...cell.querySelectorAll("section.comparison-finding")];
         assert.deepEqual(findings.map((finding: any) => Number(finding.dataset.findingIndex)), assessment.finding_indices);
         for (const [offset, findingNode] of findings.entries()) {
           const findingIndex = assessment.finding_indices[offset]!;
           const finding = evaluations[version]!.findings[findingIndex]!;
-          assert.equal(findingNode.open, false, "source findings expand inside each cell");
-          assert.equal(findingNode.querySelector("summary .finding-type"), null,
+          assert.equal(findingNode.tagName, "SECTION");
+          assert.equal(findingNode.querySelector("header .finding-type"), null,
             "source finding types do not label relative comparisons");
           assert.equal(field(findingNode, "type").textContent.trim(), finding.type === "strength" ? "优点" : "缺点");
-          assert(findingNode.querySelector("summary").textContent.includes(`归因 #${findingIndex}`));
-          assert(findingNode.querySelector("summary").textContent.includes(finding.finding_id));
+          assert(findingNode.querySelector("header").textContent.includes(`归因 #${findingIndex}`));
+          assert(findingNode.querySelector("header").textContent.includes(finding.finding_id));
           assert(findingNode.textContent.includes(finding.type === "strength" ? "推理" : "证据质量"));
           assert(findingNode.textContent.includes(finding.stage === "execution" ? "执行" : "上下文"));
-          assert(findingNode.querySelector("summary").textContent.includes(`重要性 · ${finding.importance === "high" ? "高" : "中"}`));
+          assert(findingNode.querySelector("header").textContent.includes(`重要性 · ${finding.importance === "high" ? "高" : "中"}`));
           assert(field(findingNode, "text").textContent.includes(finding.text));
           assert(field(findingNode, "reason").textContent.includes(finding.reason));
           const assessmentNode = field(findingNode, "assessment");

@@ -9,12 +9,17 @@
 | Git checkout | `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code` |
 | 外部运行目录 | `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
+| 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/eval_output/0_daily_eval/` |
+| 专项评测产物 | `/mnt/fin_bench/eval_data/{source}/eval_output/1_task_eval/<任务>/` |
+| 所有测试评测产物 | `/mnt/fin_bench/eval_data/{source}/eval_output/test_eval/` |
 | 配置 | `runtime/config/` |
 | 密钥 | `runtime/secrets/workbench.env` |
 | 状态与锁 | `runtime/state/` |
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log`、`runtime/log/comparison-statistics-log.jsonl` |
 
 checkout 可以替换或重新克隆，运行目录不放入 Git。工作台只从 checkout 读取代码与来源清单，不把 `.servers.conf`、SSH 私钥或本机路径带入服务器运行。
+
+`source` 使用实际来源目录：`0_wencai`、`1_aime`、`2_ifind`。初始化为每个来源建立上述三个输出目录。正式结果、run 恢复状态、报告及显式 debug 材料都随 run 存在对应输出目录，禁止另存到 checkout 或 `runtime/data/runs`，也不建立指向旧目录的软链接。看板与自动化的 Host 配置必须指向相同的当前来源和任务目录；验证任务使用 `--test-eval` 或独立测试覆盖配置。
 
 ## 首次部署
 
@@ -48,8 +53,8 @@ bash workbench.sh
 浏览器入口：
 
 - `http://117.50.195.94:3309/`
-- `http://117.50.195.94:3309/data/`
-- `http://117.50.195.94:3309/runtime/`
+
+登录后在同一页通过一级导航切换模块；模块内定位与选择原位更新。`/runtime/api/` 和 `/data/<dataset>/` 下的数据接口只承载请求，不提供生产子页面。
 
 登录用户由初始化时的 `--admin-user` 决定，默认 `cmy`。会话使用 HttpOnly、SameSite=Strict Cookie；重启工作台后需要重新登录。
 
@@ -88,11 +93,12 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 `/mnt/fin_bench/eval_data` 当前按来源组织：
 
-- `0_wencai/1_7z_adta` 与 `0_wencai/2_daily_eval_input/<model>/<date>.jsonl`
+- `0_wencai/1_7z_data` 与 `0_wencai/2_daily_eval_input/<model>/<date>.jsonl`
+- 后训练专项：`0_wencai/1_7z_data/post_train_model` 与 `0_wencai/5_multi_task_eval_input/post_train_model_eval/<model>/<date>.jsonl`；在[数据与任务](../server_dashboard_ths/README.md#任务压缩包批次与清洗)中点击清洗发布，不加入日常自动评测清单。
 - `1_aime/1_7z_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
 - `2_ifind/1_7z_data` 与 `2_ifind/2_daily_eval_input/<model>/<date>.jsonl`
 
-工作台首次按空状态启动，已有正式输入文件保留但不回填 ready；部署后的新包经过稳定检查、增量处理和 ready 标记后进入看板与自动化。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
+工作台发现登记目录中的包并保存持久批次；日常自动清洗，专项由页面操作。已有正式输入文件保留但不自动回填 ready。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
 自动化从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
 

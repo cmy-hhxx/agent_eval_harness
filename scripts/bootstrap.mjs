@@ -1,7 +1,7 @@
 import { root, upstream, run } from "./lib.mjs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 
 await run("npm", ["ci", "--ignore-scripts"]);
 for (const item of [upstream.pi, upstream.prime])
@@ -11,6 +11,8 @@ await run("uv", ["venv", "--allow-existing", "--python", "3.12.12", path.join(ro
 const primeRuntime = path.join(root, "vendor/prime-agent/prime-agent-runtime");
 const primePython = path.join(root, ".runtime/prime-python/bin/python");
 await run("uv", ["venv", "--allow-existing", "--python", "3.12.12", path.join(root, ".runtime/prime-python")]);
+// uv creates the environment without pip; seed it from Python's bundled wheels.
+await run(primePython, ["-m", "ensurepip", "--upgrade"]);
 
 // Export exact versions from the frozen Prime lock, then install those pins with the
 // available pip index. This keeps server bootstrap independent of registry URL layout.

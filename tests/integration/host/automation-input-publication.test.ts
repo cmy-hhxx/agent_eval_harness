@@ -21,7 +21,7 @@ test("complete input files upload in bounded batches with output interleaving an
   const directory = await mkdtemp(path.join(tmpdir(), "input-publication-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const incoming = path.join(directory, ".incoming"); await mkdir(incoming);
-  const file = path.join(incoming, "a_fast.jsonl"), date = "2026-10-19";
+  const file = path.join(incoming, "b_fast.jsonl"), date = "2026-10-19";
   const rows = Array.from({ length: 35 }, (_, i) => ({
     batch_id: date, case_id: String(i), messages: [{ role: "assistant", content: "answer" }],
   }));
@@ -31,7 +31,7 @@ test("complete input files upload in bounded batches with output interleaving an
   const host = await loadConfig(config.hostConfigs, testSettings());
   const lane = createAutomationMongoLane(), published: string[] = [], order: string[] = [];
   let output: Promise<void> | undefined;
-  const result = await syncMongoInputFile(config, date, "a_fast", file, t.signal, lane, async (settings, batch, inputs, results) => {
+  const result = await syncMongoInputFile(config, date, "b_fast", file, t.signal, lane, async (settings, batch, inputs, results) => {
     assert.equal(settings.topic, config.publication.topic);
     assert.notEqual(settings.inputsUnchanged, true);
     assert.equal(batch, date);
@@ -43,7 +43,7 @@ test("complete input files upload in bounded batches with output interleaving an
     assert(records.length <= 16);
     published.push(...records.map(row => String(row.trace.case_id))); order.push("input");
     if (!output) {
-      await rename(file, path.join(directory, "a_fast.jsonl"));
+      await rename(file, path.join(directory, "b_fast.jsonl"));
       output = lane(async () => { order.push("output"); }, t.signal, JSON.stringify([automationMongoTarget(config), date]));
     }
     return { inputs: records.length, comparisons: 0, inserted: records.length, updated: 0 };
@@ -59,12 +59,12 @@ test("malformed complete input files perform no Mongo writes", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "bad-input-publication-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const incoming = path.join(directory, ".incoming"); await mkdir(incoming);
-  const file = path.join(incoming, "a_fast.jsonl");
+  const file = path.join(incoming, "b_fast.jsonl");
   await writeFile(file, '{"case_id":"ok","messages":[{}]}\n{"broken":');
   const config = await inputConfig(directory);
   const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
-  await assert.rejects(syncMongoInputFile(config, "2026-10-19", "a_fast", file, t.signal, createAutomationMongoLane(),
+  await assert.rejects(syncMongoInputFile(config, "2026-10-19", "b_fast", file, t.signal, createAutomationMongoLane(),
     async () => { writes++; return { inputs: 0, comparisons: 0, inserted: 0, updated: 0 }; }, host), SyntaxError);
   assert.equal(writes, 0);
 });
@@ -77,14 +77,14 @@ test("input publication supplements info by case identity without replacing sour
     _testset_name: "selected", _original_case_id: "case_00001", task: "screening", rued: { R: 1 },
   };
   await writeFile(path.join(directory, "case-meta.jsonl"), JSON.stringify({ case_id: caseId, meta: info }) + "\n");
-  const file = path.join(incoming, "a_fast.jsonl");
+  const file = path.join(incoming, "b_fast.jsonl");
   await writeFile(file, JSON.stringify({
     case_id: caseId, meta: { task: "manual", usage: { total: 42 } }, messages: [{ role: "assistant", content: "answer" }],
   }) + "\n");
   const config = await inputConfig(directory);
   const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
-  const result = await syncMongoInputFile(config, "2026-10-19", "a_fast", file, t.signal, createAutomationMongoLane(),
+  const result = await syncMongoInputFile(config, "2026-10-19", "b_fast", file, t.signal, createAutomationMongoLane(),
     async (_settings, _date, inputs) => {
       for await (const input of inputs) {
         assert.deepEqual(input.trace.meta, { task: "manual", usage: { total: 42 }, info });
@@ -98,7 +98,7 @@ test("input publication supplements info by case identity without replacing sour
 test("an input refresh sends corrected bodies and metadata for existing identities", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "existing-input-publication-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const date = "2026-10-19", file = path.join(directory, "a_fast.jsonl");
+  const date = "2026-10-19", file = path.join(directory, "b_fast.jsonl");
   const rows = Array.from({ length: 35 }, (_, i) => ({ batch_id: date, case_id: String(i),
     messages: [{ role: "assistant", content: "corrected answer" }], meta: { info: { task: "updated label" } } }));
   await writeFile(file, rows.map(row => JSON.stringify(row)).join("\n"));
@@ -106,7 +106,7 @@ test("an input refresh sends corrected bodies and metadata for existing identiti
   const host = await loadConfig(config.hostConfigs, testSettings());
   let writes = 0;
   const uploaded: string[] = [];
-  const result = await syncMongoInputFile(config, date, "a_fast", file, t.signal, createAutomationMongoLane(),
+  const result = await syncMongoInputFile(config, date, "b_fast", file, t.signal, createAutomationMongoLane(),
     async (settings, _date, inputs) => {
       assert.notEqual(settings.inputsUnchanged, true, "the writer must compare existing contents");
       writes++;

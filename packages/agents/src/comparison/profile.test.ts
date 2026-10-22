@@ -37,11 +37,13 @@ test("shared Criteria source combinations keep instruction provenance in either 
     const source_indices = normFirst ? [common.source_index, 1] : [1, common.source_index];
     const task = criteriaProfile.resolve!(criteriaRequest, { requirements: [{ source_indices, text: "用JSON给出计算结果。" },
       { source_indices: criteriaSources(criteriaInput).filter(source => ["question", "quality"].includes(source.kind))
-        .map(source => source.source_index), text: "核查计算结果的准确性与表达。" }], scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
+        .map(source => source.source_index), text: "核查计算结果的准确性。" },
+      ...["计算对象符合原题。", "算式支持结论。", "结果表述无歧义。"].map(text => ({source_indices: [1], text}))],
+      scoring_points: [], red_flags: [] }, audit) as TaskAnalysis;
     criteriaProfile.validate!(criteriaRequest, task, audit);
     assert.deepEqual(task.requirements[0]!.applies_to, []);
     input.task_analysis = task;
-    assert.deepEqual(task.requirements.map(criterion => criterion.id), ["r1", "r2"]);
+    assert.deepEqual(task.requirements.map(criterion => criterion.id), ["r1", "r2", "r3", "r4", "r5"]);
     data.result.decision_basis.comparisons[0]!.criterion_ids = ["r1"];
     for (const label of ["A", "B"] as const) {
       const final = label === "A" ? '{"answer":4}' : "2+2=4";
@@ -53,8 +55,9 @@ test("shared Criteria source combinations keep instruction provenance in either 
       attribution.task_analysis = structuredClone(task);
       attribution.criterion_assessments[0]!.criterion_id = "r1";
       attribution.core_assessment.criterion_ids = attribution.core_assessment.criterion_ids.map(() => "r1");
-      attribution.criterion_assessments.push({ criterion_id: "r2", status: "met", evidence_status: "established",
-        summary: "数值与标准4一致。" });
+      attribution.criterion_assessments.push(...task.requirements.slice(1).map(criterion => ({
+        criterion_id: criterion.id, status: "met" as const, evidence_status: "established" as const,
+        summary: "数值与标准4一致。" })));
       attribution.findings[0]!.evidence = [canonicalEvidence(data.request.sources[label]!.id, 2, final)];
     }
     input.attributions.A!.findings[0]!.dimension = "instruction_following";

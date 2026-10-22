@@ -25,7 +25,7 @@ async function page(respond: (url: string) => unknown) {
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-test("problem browser keeps four model tabs and searchable model/component/class hierarchy", async () => {
+test("problem browser filters models and shows component/class rows without a tree", async () => {
   const models = [model("af", "A组Fast", 2), model("ae", "A组Expert"), model("bf", "B组Fast"), model("be", "B组Expert", 0)];
   const view = await page((url) => url === "/api/dashboard/library" ? models : detail("af"));
   try {
@@ -33,10 +33,8 @@ test("problem browser keeps four model tabs and searchable model/component/class
     assert.deepEqual([...view.document.querySelectorAll("[role=tab]")].map((tab) => tab.textContent.split(" 问题类")[0]), ["A组Fast2", "A组Expert1", "B组Fast1", "B组Expert0"]);
     assert.equal(view.document.querySelectorAll("[role=tab][aria-selected=true]").length, 1);
     view.setSearch("检查缺失");
-    assert.equal(view.document.querySelectorAll("[aria-level='1']").length, 1);
-    assert.equal(view.document.querySelectorAll("[aria-level='2']").length, 1);
-    assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 1);
-    assert.match(view.document.querySelector("[aria-level='3']").textContent, /答案缺少核对/);
+    assert.equal(view.document.querySelectorAll("[data-node-kind='class']").length, 1);
+    assert.match(view.document.querySelector("[data-node-kind='class']").textContent, /答案缺少核对/);
     assert.equal(view.document.querySelector("#problem-tree-result").textContent, "1 个匹配问题类");
     await view.selectModel("be");
     assert.equal(view.state.detail, null);
@@ -44,22 +42,13 @@ test("problem browser keeps four model tabs and searchable model/component/class
   } finally { view.dom.window.close(); }
 });
 
-test("problem tree offers roving focus and left/right keyboard expansion", async () => {
-  const view = await page((url) => url === "/api/dashboard/library" ? [model("af", "A组Fast", 2)] : detail("af"));
+test("problem classes are visible without opening model or component branches", async () => {
+  const view = await page(url => url === "/api/dashboard/library" ? [model("af", "A组Fast", 2)] : detail("af"));
   try {
     await view.load();
-    const leaf = view.document.querySelector("[aria-level='3']");
-    leaf.focus();
-    leaf.dispatchEvent(new view.dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-    assert.equal(view.document.activeElement.dataset.nodeKind, "component");
-    view.document.activeElement.dispatchEvent(new view.dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
-    assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 0);
-    assert.equal(view.document.activeElement.getAttribute("aria-expanded"), "false");
-    view.document.activeElement.dispatchEvent(new view.dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 2);
-    view.document.activeElement.dispatchEvent(new view.dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
-    assert.equal(view.document.activeElement.dataset.nodeKind, "class");
-    assert.equal(view.document.querySelectorAll("#problem-tree [tabindex='0']").length, 1);
+    assert.equal(view.document.querySelectorAll("[data-class]").length, 2);
+    assert.equal(view.document.querySelector("[role=treeitem]"), null);
+    assert.equal(view.document.querySelector("details"), null);
   } finally { view.dom.window.close(); }
 });
 
@@ -124,8 +113,8 @@ test("topics show distinct defect counts and select the same existing class", as
     await view.load();
     assert.match(view.document.querySelector("#problem-topics").textContent, /指令遵循 \/ 遗漏.*1 次出现/);
     view.document.querySelector("[data-topic]").click();
-    assert.equal(view.document.querySelectorAll("[aria-level='3']").length, 1);
-    assert.equal(view.document.querySelector("[aria-level='3']").dataset.class, "class-af-1");
+    assert.equal(view.document.querySelectorAll("[data-node-kind='class']").length, 1);
+    assert.equal(view.document.querySelector("[data-node-kind='class']").dataset.class, "class-af-1");
     assert.match(view.document.querySelector("#problem-detail").textContent, /主题数值可靠性/);
   } finally { view.dom.window.close(); }
 });

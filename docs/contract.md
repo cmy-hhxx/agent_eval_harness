@@ -54,6 +54,8 @@
 
 标准读取 `meta.ground_truth / meta.std_answer`；同题有效候选的非空标准须一致，可共享其中一方提供的标准。`ok=false`、无法解析或没有完整最终回答的记录不参评。重复身份、题目冲突或标准冲突只使受影响对局失效，不任取一份。
 
+工作台清洗入口会补齐 `meta.info` 中的业务标签、按 RUED 计算完整精度 `meta.difficulty_score` 并补缺失的 `meta.difficulty`，同时规整毫秒耗时与 `usage`。既有难度冲突、非法可选指标写入清洗报告，不因此排除有效回答；`ask_time` 不作为请求时间。字段优先级与未知值规则见[标签与效率清洗](../server_dashboard_ths/docs/metadata.md)。
+
 适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口也接受 `{meta,traces:[{meta,messages}]}`，当前要求恰好一个 trace；多 trace、与顶层 messages 并存、计数或身份不一致均拒绝。不重排消息、不拼造最终回答。外层题目与标准优先；模型、trace、耗时和 usage 取本 trace，缺失不以会话总量补齐。
 
 原始消息中的 `role: null` 表示未记录角色；生成 Agent 请求的 catalog 时省略该可选字段，保留原始输入及证据坐标，不推断或补造角色。
@@ -78,9 +80,11 @@
 
 ### 归因与共同基准
 
-Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；原问与质量来源须由共同 requirement 覆盖。本方私规不升为共同义务，数量、必交范围、可选性与例外按所选原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
+Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。本方私规不升为共同义务，数量、必交范围、可选性与例外按所选原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
 
 Attribution 按固定 criterion_checks 顺序提交逐项判断；程序绑定判据。核心选择只引用共同 requirements 的正整数编号。核心 false 须有 established 的 unmet/partial 支持；局部 partial 不机械等于整体不可用。整体未知可与局部已确认事实共存，理由须说明未知范围。
+
+普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
 
 `is_correct` 表示标准一致性，`meets_core` 表示关键交付可用性，两者独立。有标准时提供核对理由和本方最终回答证据；无法核实正确性时核心也保留未知。无标准时提交固定空值：`is_correct=null`、空理由、空正确性证据和空 numeric_checks。
 

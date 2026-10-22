@@ -398,6 +398,9 @@ export async function buildPlan(
     skipped: unknown[] = [],
     seen = new Set<string>(),
     invalid = new Set<string>();
+  const scope = config.inputs.workbench?.records;
+  const scopeRows = scope && new Map(scope.map(row => [canonical([row.model, row.input_file, row.input_index + 1]), row]));
+  const foundScope = new Set<string>();
   for (const version of config.inputs.versions) {
     const label = version.sources.map((source) => source.path).join(", ");
     let files: string[];
@@ -440,6 +443,13 @@ export async function buildPlan(
           scanned = true;
           if (!row) continue;
           const { index, batchId, caseId, raw } = row;
+          if (scopeRows) {
+            const coordinate = canonical([version.id, source, index]), selectedRow = scopeRows.get(coordinate);
+            if (!selectedRow) continue;
+            if (selectedRow.batch_id !== batchId || selectedRow.case_id !== caseId)
+              throw new Error("清洗范围与输入身份不一致：" + source + ":" + index);
+            foundScope.add(coordinate);
+          }
           let key: string | undefined;
           try {
             if (
@@ -544,6 +554,8 @@ export async function buildPlan(
     }
   }
   // Keep registered work on invalid scans; the caller must not run it without its original material.
+  if (scopeRows && foundScope.size !== scopeRows.size)
+    throw new Error("清洗范围存在缺失或已变动的记录，请检查输入发布状态");
   for (const [key, record] of oldRecords)
     if (!records.has(key)) {
       records.set(key, record);
@@ -553,7 +565,7 @@ export async function buildPlan(
     }
   const selected = [...cases.values()]
     .sort((a, b) => (canonical(a) < canonical(b) ? -1 : 1))
-    .slice(0, config.inputs.limit);
+    .slice(0, config.inputs.workbench ? undefined : config.inputs.limit);
   // Read each model's problem library once; clustering tasks get its projection and budget headroom.
   const libraries = new Map<string, ProblemLibrary>();
   if (config.clustering.enabled)
@@ -817,6 +829,29 @@ export async function buildPlan(
       stats.comparison_tasks++;
     }
   }
+  // Cleaned answers without a complete configured pair still receive independent attribution.
+  const selectedKeys = new Set(selected.map(entry => canonical(entry)));
+  const attributed = new Set([...checks.values(), ...(previous?.tasks ?? []).filter(task =>
+    task.stage === "attribution" && accepted.has(task.id))].flatMap(task => Object.values(task.inputIds)));
+  if (config.inputs.workbench) for (const record of records.values()) {
+    if (!selectedKeys.has(canonical([record.batch_id, record.case_id])) || attributed.has(record.input_id)) continue;
+    const criteriaScope = canonical([record.batch_id, record.case_id, [record.version]]);
+    const previousCriteria = oldTasks.get(canonical(["criteria", criteriaScope]));
+    const criteria: PlannedTask = { id: previousCriteria?.id || randomUUID(), stage: "criteria", dependencies: {},
+      inputIds: { A: record.input_id }, data: { stage: "criteria", candidates: { A: record },
+        reference: record.reference, criteriaScope } satisfies TaskData };
+    criteriaTasks.set(criteriaScope, criteria);
+    const key = canonical([record.batch_id, record.case_id, "attribution", [record.version], criteriaScope]);
+    const prior = oldTasks.get(key);
+    const task: PlannedTask = { id: prior?.id || randomUUID(), stage: "attribution", dependencies: { criteria: criteria.id },
+      inputIds: { answer: record.input_id }, data: { stage: "attribution", standalone: true, candidates: { A: record },
+        reference: record.reference, criteriaScope, initialContextChars: config.execution.initialContextChars,
+        standardAnswerReview: config.standardAnswerReview === true } satisfies TaskData };
+    checks.set(key, task);
+    batchStats(record.batch_id).attribution_tasks++;
+    addRewrite("attribution", task.id, task.id,
+      { case: { batch_id: record.batch_id, case_id: record.case_id, question: record.question } }, 1, { A: record.name });
+  }
   // Clustering groups the batch's attribution receipts per model; shards bound prompt and output size.
   const clusteringTasks: PlannedTask[] = [];
   if (config.clustering.enabled) {
@@ -948,13 +983,12 @@ export async function buildPlan(
     }
   }
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
-  const selectedKeys = new Set(selected.map((entry) => canonical(entry)));
   const catalog = [...records.values()].filter((record) =>
     selectedKeys.has(canonical([record.batch_id, record.case_id])),
   );
   const used = new Set(catalog.map((record) => record.input_id));
   // Retain byte coordinates only; the Host reads a record when preparing an active task.
-  if (config.comparisons.length && options.materializeInputs !== false) {
+  if ((config.comparisons.length || config.inputs.workbench) && options.materializeInputs !== false) {
     const bySource = new Map<string, Map<number, Candidate[]>>();
     for (const record of catalog) {
       if (!freshRecords.has(record)) continue;

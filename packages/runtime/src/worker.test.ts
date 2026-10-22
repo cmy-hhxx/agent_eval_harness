@@ -1014,14 +1014,16 @@ test("file submission repairs evidence through locating, reading and editing aft
     const task = fixture.store.manifest.tasks.find(item => item.id === fixture.spec.taskId)!;
     const trustedAnalysis = fixture.store.state.receipts[task.dependencies.criteria]!.evaluation as AttributionResult["task_analysis"];
     const shown = parsedMaterial(fixture.spec) as { task_analysis: { requirements: { requirement_index: number }[] } };
-    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [1],
+    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [1, 2, 3, 4, 5],
       "the model view displays the global requirement index");
     assert(trustedAnalysis.requirements.every(item => !Object.hasOwn(item, "requirement_index")),
       "the accepted Criteria remains the undecorated business analysis");
     expected.task_analysis = structuredClone(trustedAnalysis);
     expected.findings[0]!.assessment.observation = expected.findings[0]!.text;
     expected.findings[0]!.assessment.impact = expected.findings[0]!.reason;
-    expected.criterion_assessments[0]!.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
+    expected.criterion_assessments.forEach(row => {
+      row.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
+    });
     expected.findings[0]!.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
     assert.deepEqual(receipt?.evaluation, expected);
     assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
@@ -1462,6 +1464,43 @@ test("changed drafts with the same errors retain repair opportunities without re
     assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
   } finally { await fixture.close(); }
 });
+for (const reason of ["deadline", "idle", "no-submission"] as const)
+test(`unsubmitted file drafts survive ${reason} and resume without spending content budget`, async () => {
+  let release: (() => void) | undefined;
+  const fixture = await harness(async options => ({
+    async run() {
+      if (options.spec.recovery) {
+        assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), { ok: true });
+        assert.equal(options.spec.recovery.contentSubmissions, 0);
+        assert.equal((await options.execute("submit_evaluation_file", { path: "submission-rejected.json" })).terminate, true);
+        return;
+      }
+      assert.equal((await options.execute("edit_json", { path: "evaluation-draft.json", set_json: '{"ok":true}' })).isError, undefined);
+      assert.equal((await options.execute("edit_json", { path: "evaluation-draft.json", set_json: '{"ok":' })).isError, true);
+      if (reason !== "no-submission") await new Promise<void>(resolve => { release = resolve; });
+    },
+    async abort() { release?.(); }, async dispose() {},
+  }), { material: "fixture", policy: { idleTimeoutSeconds: reason === "idle" ? 1 : 10 }, profile: { ...fileProfile, toolNames: ["edit_json"], requiredReads: () => [],
+    toolDescriptions: { edit_json: "Update the evaluation draft.", submit_evaluation_file: "Submit the evaluation draft." } } });
+  try {
+    if (reason === "deadline") fixture.spec.deadline = Date.now() + 2000;
+    await fixture.start();
+    const first = await fixture.done();
+    assert.equal(first.state, reason === "no-submission" ? "failed" : "timed_out");
+    assert.equal(first.retryable === true, reason !== "deadline");
+    assert.equal(first.failure?.errors[0]?.category, "interruption");
+    assert.deepEqual(first.failure?.draft, { ok: true });
+    assert.equal(first.failure?.contentSubmissions, 0);
+    assert.equal(fixture.counts().posts, 0, "a durable draft is not an accepted or submitted evaluation");
+    await fixture.store.endAttempt(fixture.spec, first.state as "failed" | "timed_out", first.error!);
+    const spec = { ...fixture.spec, attemptId: "resume-written-draft", recovery: first.failure,
+      prompt: fixture.prepared.renderAttempt(fixture.spec.policy, first.failure), deadline: Date.now() + 10000 };
+    await fixture.start(spec);
+    assert.equal((await fixture.done(spec.attemptId)).state, "succeeded");
+    assert.equal((await fixture.store.receipt(spec.taskId))?.submissionStats?.contentSubmissions, 1);
+  } finally { await fixture.close(); }
+});
+
 test("resuming an unfinished invalid draft preserves its repair file and cumulative content count", async () => {
   const submitted = new Set<string>();
   const fixture = await harness(async (options) => ({

@@ -16,6 +16,7 @@ import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
 
 const registry = new AgentRegistry([attributionAgent]);
+const qualityChecks = (source_index: number) => ["范围与条件清楚。", "事实与数值准确。", "推导和依据支持结论。", "表述不影响结果使用。"].map(text => ({source_indices: [source_index], text}));
 const candidatesFor = (question: string, finalIndex: number, reference: unknown): Record<string, Candidate> =>
   Object.fromEntries(["A", "B"].map(label => [label, {
     batch_id: "b1", case_id: "merged-norm", version: label.toLowerCase() + "_fast", name: label + "组Fast",
@@ -191,7 +192,7 @@ test("reference changes leave Criteria material unchanged and remain complete in
     const analysis = criteriaProfile.resolve!(criteria.request, { requirements: [{
       source_indices: sources.filter(source => ["question", "quality"].includes(source.kind)).map(source => source.source_index),
       text: "给出有依据的季度汽车销量，写清范围和单位。",
-    }], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
+    }, ...qualityChecks(sources.find(source => source.kind === "quality")!.source_index)], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
     criteriaProfile.validate!(criteria.request, analysis, emptyAudit());
     const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
       acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: analysis,
@@ -226,9 +227,10 @@ test("common quality and correctness survive the workflow while each system rule
     { source_indices: [1], text: "给出二加二的计算结果。" },
     { source_indices: [catalogue.find(source => source.kind === "quality")!.source_index], text: "结果可靠，推理成立，表达清楚。" },
     ...catalogue.filter(source => source.kind === "instruction").map(source => ({ source_indices: [source.source_index], text: source.text })),
+    ...qualityChecks(catalogue.find(source => source.kind === "quality")!.source_index).slice(1),
   ], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
-  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [], [candidates.A.input_id], [candidates.B.input_id]]);
+  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [], [candidates.A.input_id], [candidates.B.input_id], [], [], []]);
   assert(!criteriaProfile.renderPrompt(criteria.request.input).includes(replies.B));
   const receipt = (task: PlannedTask, evaluation: unknown): SubmissionReceipt => ({ taskId: task.id, attemptId: randomUUID(),
     submissionId: randomUUID(), acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture",
@@ -248,7 +250,7 @@ test("common quality and correctness survive the workflow while each system rule
     const reads = emptyAudit(), finalNumber = selectEvidence(reads.evidenceBank!, finalRef).evidence_index;
     const draft: AttributionSubmission = { is_correct: true, correctness_reason: "结果与参考答案四一致。",
       correctness_evidence_indices: [finalNumber], numeric_checks: [],
-      criterion_assessments: Array.from({ length: 3 }, () => ({ status: "met", evidence_status: "established", summary: "满足本项要求。", evidence_indices: [finalNumber] })),
+      criterion_assessments: Array.from({ length: 6 }, () => ({ status: "met", evidence_status: "established", summary: "满足本项要求。", evidence_indices: [finalNumber] })),
       meets_core: true, core_reason: "正确给出所求结果。", core_requirements: [1], summary: "正确完成计算。", strengths: [], problems: [] };
     const result = registry.resolve(binding, draft, reads) as AttributionResult;
     registry.validate(binding, result, reads);
@@ -263,7 +265,7 @@ test("common quality and correctness survive the workflow while each system rule
     data: { stage: "comparison", candidates, reference, group: ["a_fast", "b_fast"] } satisfies TaskData };
   tasks.push(comparisonTask);
   const comparison = bindTask(comparisonTask, inputs, dependencies, { tasks });
-  assert.deepEqual(comparisonScope(comparison.request).common_criterion_ids, ["r1", "r2"]);
+  assert.deepEqual(comparisonScope(comparison.request).common_criterion_ids, ["r1", "r2", "r5", "r6", "r7"]);
 });
 
 for (const normFirst of [true, false]) test(`accepted merged Criteria retains norm and answer closure with ${normFirst ? "norm" : "question"} first`, () => {
@@ -280,7 +282,7 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   const sharedNorm = catalogue.find(source => source.kind === "context" && source.text === norm)!;
   const quality = catalogue.find(source => source.kind === "quality")!.source_index;
   assert.deepEqual(sharedNorm.applies_to, []);
-  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [{ source_indices: normFirst ? [sharedNorm.source_index,1,quality] : [1,sharedNorm.source_index,quality], text: "用JSON清楚地交付正确计算结果。" }],
+  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [{ source_indices: normFirst ? [sharedNorm.source_index,1,quality] : [1,sharedNorm.source_index,quality], text: "用JSON清楚地交付正确计算结果。" }, ...qualityChecks(quality)],
     scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
@@ -301,7 +303,7 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   const finalRef = shown.final_evidence[0]!.reference;
   const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
   const draft:AttributionSubmission = { is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks: [],
-    criterion_assessments: [{ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] }],
+    criterion_assessments: rubric.requirements.map(() => ({ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] })),
     meets_core: true, core_reason: "给出可用结果。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [] };
   const result = registry.resolve(binding,draft,reads) as AttributionResult;
   assert.deepEqual(result.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final)]);
@@ -359,9 +361,10 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     { source_indices: criteriaSources(criteria.request.input as unknown as CriteriaInput)
       .filter(source => ["question", "quality"].includes(source.kind)).map(source => source.source_index), text: "核查所求结果的正确性与表达。" },
     { source_indices: [source.source_index], text: "核查本项要求的实际交付。" },
+    ...qualityChecks(criteriaSources(criteria.request.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index),
   ], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
   criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
-  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [candidates.A!.input_id]]);
+  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [candidates.A!.input_id], [], [], [], []]);
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
@@ -435,7 +438,7 @@ test("a headed private norm keeps all leaf origins without being promoted by a s
   const criteriaTask:PlannedTask={id:randomUUID(),stage:"criteria",inputIds:{A:candidates.A.input_id,B:candidates.B.input_id},dependencies:{},data:{stage:"criteria",candidates,reference:null} satisfies TaskData};
   const criteria=bindTask(criteriaTask,inputs,{}, {tasks:[criteriaTask]});
   const rubric=criteriaProfile.resolve!(criteria.request,{requirements:[{source_indices:criteriaSources(criteria.request.input as unknown as CriteriaInput)
-    .filter(source=>["question","quality"].includes(source.kind)).map(source=>source.source_index),text:"准确清楚地解释平均利率的含义。"}],scoring_points:[],red_flags:[]},emptyAudit()) as TaskAnalysis;
+    .filter(source=>["question","quality"].includes(source.kind)).map(source=>source.source_index),text:"准确清楚地解释平均利率的含义。"}, ...qualityChecks(criteriaSources(criteria.request.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index)],scoring_points:[],red_flags:[]},emptyAudit()) as TaskAnalysis;
   const receipt:SubmissionReceipt={taskId:criteriaTask.id,attemptId:randomUUID(),submissionId:randomUUID(),acceptedAt:1,status:"succeeded",evaluatorVersion:"fixture",judge:"fixture",evaluation:rubric,audit:emptyAudit(),usage:emptyUsage()};
   const task:PlannedTask={id:randomUUID(),stage:"attribution",inputIds:{answer:candidates.A.input_id},dependencies:{criteria:criteriaTask.id},data:{stage:"attribution",candidates:{A:candidates.A},reference:null} satisfies TaskData};
   const binding=bindTask(task,inputs,{criteria:receipt},{tasks:[criteriaTask,task]});
@@ -445,7 +448,7 @@ test("a headed private norm keeps all leaf origins without being promoted by a s
   const finalRef=(binding.modelInput!.answer as any).final_evidence[0].reference;
   const reads=emptyAudit(),finalNumber=selectEvidence(reads.evidenceBank!,finalRef).evidence_index;
   const draft:AttributionSubmission={is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks:[],summary:"已解释含义。",meets_core:true,core_reason:"给出了所求含义。",core_requirements:[1],
-    criterion_assessments:[{status:"met",evidence_status:"established",summary:"给出了融资成本含义。",evidence_indices:[finalNumber]}],
+    criterion_assessments:rubric.requirements.map(()=>({status:"met",evidence_status:"established",summary:"给出了融资成本含义。",evidence_indices:[finalNumber]})),
     problems:[],strengths:[{dimension:"instruction_following",stage:"final_answer",importance:"low",text:"纯概念解释没有加入投资风险提示。",reason:"该条件在本轮未触发。",basis_index:attributionFindingBasis(binding.request.input).find(item=>item.norm_index===own.norm_index)!.basis_index,evidence_indices:[finalNumber],evidence_status:"established"}]};
   const result=registry.resolve(binding,draft,reads) as AttributionResult;
   registry.validate(binding,result,reads);

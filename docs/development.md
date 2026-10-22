@@ -40,7 +40,7 @@
 
 安装和完整构建见 [README](../README.md#本地开发)。`build:pi` / `build:prime` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
 
-根 workspace、两套 vendor workspace 和 Prime Python runtime 使用独立依赖树。公共代码工具用根 `.venv`。修改 vendor 必须登记 `local_changes` 并重建。
+根 workspace、两套 vendor workspace 和 Prime Python runtime 使用独立依赖树。公共代码工具用根 `.venv`。`bootstrap` 创建 Prime 虚拟环境后，用 Python 自带的 `ensurepip` 初始化环境内的 pip，再通过配置的 pip 安装源安装锁定依赖。修改 vendor 必须登记 `local_changes` 并重建。
 
 `build:app` 先在临时目录编译和复制资源，再逐文件发布到 `dist/`，随后构建 Eris。编译阶段失败不改变旧产物，发布或后续失败可能留下部分更新。实现见 [build-app.mjs](../scripts/build-app.mjs)、[build-agent.mjs](../scripts/build-agent.mjs)和 [publishTree](../scripts/lib.mjs)。
 

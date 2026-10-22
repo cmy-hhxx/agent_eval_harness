@@ -71,6 +71,37 @@ def trace_row(model="b_fast"):
 
 
 class PostTrainingArchiveTest(unittest.TestCase):
+    def test_task_source_uses_dedicated_paths_and_explicit_import_without_starting_services(self):
+        with tempfile.TemporaryDirectory(prefix="post-training-import-") as folder:
+            root, state = Path(folder) / "data", Path(folder) / "state"
+            datasets = app.make_datasets(root, state)
+            self.assertEqual(datasets["/data/wencai"].archive_dir, root / "0_wencai/1_7z_data")
+            post = datasets["/data/post_training_model"]
+            self.assertEqual(post.output_dir, root / "0_wencai/5_multi_task_eval_input/post_train_model_eval")
+            self.assertEqual(post.archive_dir, root / "0_wencai/1_7z_data/post_train_model")
+            self.assertEqual(post.pairs, {"b_fast__vs__b_post_train_fast": ("b_fast", "b_post_train_fast")})
+            post.archive_dir.mkdir(parents=True)
+            for model, label in zip(post.models, ("AA-fast", "AA-post_train_fast_V1")):
+                package = post.archive_dir / f"batch_{label}.7z"
+                row = archive_row(model, "paired", request_time="2026-10-22 11:00:00",
+                                  meta_fields={"testset_name": "selected_queries_20261019"})
+                package.write_text(json.dumps({f"batch_{label}.jsonl": json.dumps(row) + "\n"}))
+                os.utime(package, (1000, 1000))
+            with patch.dict(os.environ, {"DATA_ROOT": str(root), "STATE_ROOT": str(state)}), \
+                 patch.object(app.sys, "argv", ["app.py", "--process-archives", "post_training_model"]), \
+                 patch.object(app, "SevenZipFile", FakeArchive), patch.object(app, "DashboardServer") as server:
+                app.main()
+                before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in post.output_dir.rglob("*.jsonl")}
+                app.main()
+                self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before})
+                server.assert_not_called()
+            self.assertEqual(post.ready_state("2026-10-19")["rows"], dict.fromkeys(post.models, 1))
+            self.assertEqual(datasets["/data/wencai"].known_days(), [])
+            for model in post.models:
+                value = json.loads((post.output_dir / model / "2026-10-19.jsonl").read_text())
+                self.assertEqual(value["request_time"], "2026-10-22 11:00:00")
+                self.assertEqual(value["case_id"], "paired")
+
     def test_v1_members_map_to_post_training_without_accepting_other_variants(self):
         for member in (
             "629d3a74073c434f_AA-post_train_fast_V1.incr00001.jsonl",
@@ -85,7 +116,7 @@ class PostTrainingArchiveTest(unittest.TestCase):
             with self.subTest(member=member):
                 self.assertIsNone(app.model_for_member(member))
 
-    def test_v1_incremental_archives_publish_all_three_models(self):
+    def test_v1_incremental_archives_publish_both_models(self):
         with tempfile.TemporaryDirectory(prefix="post-training-test-") as folder:
             root = Path(folder)
             post = app.Dataset(root / "archives", root / "state", app.POST_TRAINING_MODELS,
@@ -95,7 +126,7 @@ class PostTrainingArchiveTest(unittest.TestCase):
             names = ("629d3a74073c434f_20261020_141107.7z", "629d3a74073c434f_20261020_163255.7z")
             for increment, name in enumerate(names, 1):
                 members = {}
-                for model, label in zip(post.models, ("A-fast", "AA-fast", "AA-post_train_fast_V1")):
+                for model, label in zip(post.models, ("AA-fast", "AA-post_train_fast_V1")):
                     member = f"629d3a74073c434f_{label}.incr{increment:05}.jsonl"
                     rows = [archive_row(model, case, request_time="2026-10-20 14:00:00",
                                         answer=f"answer-{increment}", meta_fields={"testset_name": "post-20261019"})
@@ -153,7 +184,7 @@ class TraceFormatTest(unittest.TestCase):
                 self.assertEqual(app.visible_record(normalized), {"format": "trace", "trace_id": "actual-trace", "session_id": "thread-session", "question": "Question", "answer": "Answer"})
                 self.assertNotIn("messages", row)
 
-    def test_outer_request_time_reference_and_ask_time_take_priority(self):
+    def test_outer_request_time_and_reference_take_priority_but_ask_time_does_not(self):
         row = trace_row()
         row["meta"].update({"request_time": "2026-10-14 23:59:00", "std_answer": "Reference"})
         day, normalized = app.normalize_row(row, "b_fast", "new.7z", "answers.jsonl", 1)
@@ -162,8 +193,9 @@ class TraceFormatTest(unittest.TestCase):
         self.assertEqual(app.visible_record(normalized)["standard_answer"], "Reference")
         row["meta"].pop("request_time")
         row["meta"]["ask_time"] = 1791979200000  # 2026-10-14 20:00:00 UTC+8
-        day, _ = app.normalize_row(row, "b_fast", "new.7z", "answers.jsonl", 1)
-        self.assertEqual(day, "2026-10-14")
+        day, normalized = app.normalize_row(row, "b_fast", "new.7z", "answers.jsonl", 1)
+        self.assertEqual(day, "2026-10-15")
+        self.assertEqual(normalized["request_time"], "2026-10-14T16:30:00Z")
 
     def test_invalid_trace_shape_and_failed_or_empty_answer_are_rejected(self):
         for traces, reason in ((None, "traces_invalid"), ([], "single_trace_required"), ([{}, {}], "single_trace_required"), ([None], "trace_invalid"), ([{"meta": []}], "trace_meta_invalid")):
@@ -285,7 +317,7 @@ class DashboardTest(unittest.TestCase):
             _, normalized = app.normalize_row(row, model, "archive.7z", member, 1)
             self.assertEqual(normalized["version"], expected_version)
 
-    def test_gpt_processing_is_incremental_isolated_and_archived(self):
+    def test_gpt_processing_is_incremental_isolated_and_preserves_original_package(self):
         name = "1234567890abcdef_20261019_010000.7z"
         day = "2026-09-29"
         def write(dataset, members):
@@ -315,15 +347,13 @@ class DashboardTest(unittest.TestCase):
         write(self.gpt, {"a_fast": "GPT new", "6.1sol": "Sol"})
         with patch.object(app, "SevenZipFile", FakeArchive):
             self.gpt.process_archives(app.archive_signature(self.gpt.archive_dir))
-        self.assertEqual(self.get_json(f"/data/gpt/records/{day}/a_fast")["items"][0]["answer"], "GPT new")
+        self.assertEqual(self.get_json(f"/data/gpt/records/{day}/a_fast")["items"][0]["answer"], "GPT old")
         self.assertEqual(self.get_json(f"/records/{day}/a_fast")["items"][0]["answer"], "original root")
         self.assertEqual((luna.read_bytes(), luna.stat().st_mtime_ns), luna_before)
         signature = app.archive_signature(self.gpt.archive_dir)
         with patch.object(app, "SevenZipFile", side_effect=AssertionError("unchanged archive must not replay")):
             self.gpt.process_archives(signature)
-        self.gpt.archive_processed(signature)
-        self.assertFalse((self.gpt.archive_dir / name).exists())
-        self.assertTrue((self.gpt.archived_dir / "2026-10-19" / "part-0001" / name).exists())
+        self.assertTrue((self.gpt.archive_dir / name).exists())
         self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
         self.assertEqual(self.get_json(f"/data/gpt/records/{day}/6.1sol")["total"], 1)
 
@@ -422,6 +452,7 @@ class DashboardTest(unittest.TestCase):
                 row["meta"]["testset_name"] = "complex_queries_rued_20261016"
                 if model in ("6_luna", "6.1sol"):
                     row["meta"]["ask_time"] = 1792415415804  # Collected three days after the test set.
+                    row["meta"]["request_time"] = "2026-10-19 12:00:00"
                     row["traces"][0]["meta"].pop("timestamp")
                     row["traces"][0]["messages"] = [{"type": "message", "role": "user", "content": "Question"},
                                                            {"type": "message", "role": "assistant", "content": "GPT answer"}]
@@ -564,7 +595,6 @@ class DashboardTest(unittest.TestCase):
         self.assertIn('<table class="results-table">', dashboard)
         self.assertNotIn('id="date-cards"', dashboard)
         self.assertIn("A Fast 对 B组 Fast", dashboard_script)
-        self.assertIn('b_fast: "B组 Fast"', dashboard_script)
         self.assertIn('b_expert: "B组 Expert"', dashboard_script)
         self.assertIn('b_fast: "B组 Fast"', records_script)
         self.assertIn('b_expert: "B组 Expert"', records_script)
@@ -625,14 +655,14 @@ class DashboardTest(unittest.TestCase):
     def test_root_archives_group_filter_and_emit_required_header_fields(self):
         day_next = "2026-09-30"
         shanghai = ZoneInfo("Asia/Shanghai")
-        ask_time = int(datetime(2026, 9, 30, 12, 0, tzinfo=shanghai).timestamp() * 1000)
+        timestamp_time = int(datetime(2026, 9, 30, 12, 0, tzinfo=shanghai).timestamp() * 1000)
         payload = {}
         for model in self.data.models:
             member = f"answers_{model.upper()}.jsonl"
             rows = [
                 archive_row(model, f"before-{model}", request_time="2026-09-28 11:00:00"),
                 archive_row(model, f"dated-{model}", meta_fields={"std_answer": "Reference"}),
-                archive_row(model, f"ask-{model}", request_time=None, meta_fields={"ask_time": ask_time}),
+                archive_row(model, f"timestamp-{model}", request_time=None, meta_fields={"timestamp_time": timestamp_time}),
                 archive_row(model, f"empty-{model}", answer="  "),
                 archive_row(model, f"failed-{model}", meta_fields={"ok": False}),
                 archive_row(model, f"unknown-{model}"),
@@ -659,7 +689,7 @@ class DashboardTest(unittest.TestCase):
                     self.assertEqual(rows[0]["request_time"], "2026-09-29 11:00:00")
                     self.assertTrue(rows[0]["has_standard_answer"])
                 elif day == day_next:
-                    self.assertEqual(rows[0]["request_time"], "2026-09-30 12:00:00")
+                    self.assertEqual(rows[0]["request_time"], "2026-09-30 12:00:00.000+08:00")
                     self.assertFalse(rows[0]["has_standard_answer"])
                 else:
                     self.assertEqual(rows[0]["request_time"], "2026-09-28 11:00:00")
@@ -694,51 +724,7 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(opened, [])
         self.assertEqual(self.get_json("/records/2026-10-19/a_fast")["total"], 1)
 
-    def test_archives_only_successful_unchanged_packages_without_changing_published_data(self):
-        name = "0123456789abcdef_20261019_010000.7z"
-        payload = json.dumps({"answers_A-fast.jsonl": json.dumps(archive_row("a_fast", "one")) + "\n"})
-        path = self.data.archive_dir / name
-        path.write_text(payload)
-        broken = self.data.archive_dir / "broken.7z"
-        broken.write_text("unfinished")
-        with patch.object(app, "SevenZipFile", FakeArchive):
-            self.data.process_archives(app.archive_signature(self.data.archive_dir))
-        files = list(self.data.output_dir.glob("*/*.jsonl")) + list(self.data.state_dir.glob("*.ready.json")) + list(self.data.state_dir.glob("records/*/*.json"))
-        before = {file: (file.read_bytes(), file.stat().st_mtime_ns) for file in files}
-        receipts = self.data.root_archive_state_file.read_bytes()
-        metadata = app.file_signature(path)
-        (self.data.archive_dir / "new.7z").write_text(payload)
-        self.data.archive_processed(app.archive_signature(self.data.archive_dir))
-        archived = self.data.archived_dir / "2026-10-19" / "part-0001" / name
-        self.assertEqual(archived.read_text(), payload)
-        self.assertEqual(app.file_signature(archived), metadata)
-        self.assertFalse(path.exists())
-        self.assertTrue(broken.exists())
-        self.assertTrue((self.data.archive_dir / "new.7z").exists())
-        self.assertEqual(self.data.root_archive_state_file.read_bytes(), receipts)
-        self.assertEqual({file: (file.read_bytes(), file.stat().st_mtime_ns) for file in files}, before)
-        with patch.object(app, "SevenZipFile", side_effect=AssertionError("must not replay archived packages")):
-            self.data.process_archives([app.file_signature(broken)])
-        self.assertTrue(self.data.is_ready("2026-09-29"))
 
-    def test_archiving_keeps_reuploads_and_incrementally_merges_the_same_name(self):
-        name = "0123456789abcdef_20261019_010000.7z"
-        path = self.data.archive_dir / name
-        payloads = []
-        with patch.object(app, "SevenZipFile", FakeArchive):
-            for case in ("one", "two"):
-                payload = json.dumps({"answers_A-fast.jsonl": json.dumps(archive_row("a_fast", case)) + "\n"})
-                payloads.append(payload)
-                path.write_text(payload)
-                self.data.process_archives(app.archive_signature(self.data.archive_dir))
-                self.data.archive_processed(app.archive_signature(self.data.archive_dir))
-                self.assertFalse(path.exists())
-        archived = list(self.data.archived_dir.rglob("*.7z"))
-        self.assertEqual(len(archived), 2)
-        self.assertEqual({file.name for file in archived}, {name})
-        self.assertEqual({file.read_text() for file in archived}, set(payloads))
-        self.assertEqual(self.get_json("/records/2026-09-29/a_fast")["total"], 2)
-        self.assertEqual(self.data.pending_archives(app.archive_signature(self.data.archive_dir)), [])
 
     def test_archive_inspection_partitions_history_without_reextracting_or_changing_files(self):
         folder = self.data.archived_dir / "2026-10-19"
@@ -792,37 +778,7 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue((self.data.state_dir / "archive-maintenance.json").is_file())
         self.assertTrue((self.gpt.state_dir / "archive-maintenance.json").is_file())
 
-    def test_archiving_defers_changed_or_open_for_writing_packages(self):
-        path = self.data.archive_dir / "writing.7z"
-        payload = json.dumps({"answers_A-fast.jsonl": json.dumps(archive_row("a_fast", "one")) + "\n"})
-        path.write_text(payload)
-        with patch.object(app, "SevenZipFile", FakeArchive):
-            self.data.process_archives(app.archive_signature(self.data.archive_dir))
-        signature = app.archive_signature(self.data.archive_dir)
-        with patch.object(self.data, "open_archive_writers", return_value={path.name}):
-            self.data.archive_processed(signature)
-        self.assertTrue(path.exists())
-        path.write_text(payload + " ")
-        self.data.archive_processed(signature)
-        self.data.archive_processed(app.archive_signature(self.data.archive_dir))
-        self.assertTrue(path.exists())
-        self.assertFalse(self.data.archived_dir.exists())
 
-    def test_failed_archive_move_leaves_source_and_receipt_for_retry(self):
-        path = self.data.archive_dir / "move.7z"
-        path.write_text(json.dumps({"answers_A-fast.jsonl": json.dumps(archive_row("a_fast", "one")) + "\n"}))
-        with patch.object(app, "SevenZipFile", FakeArchive):
-            self.data.process_archives(app.archive_signature(self.data.archive_dir))
-        signature = app.archive_signature(self.data.archive_dir)
-        receipts = self.data.root_archive_state_file.read_bytes()
-        with patch.object(Path, "rename", side_effect=OSError("move unavailable")):
-            with self.assertRaisesRegex(OSError, "move unavailable"):
-                self.data.archive_processed(signature)
-        self.assertTrue(path.exists())
-        self.assertEqual(self.data.root_archive_state_file.read_bytes(), receipts)
-        self.data.archive_processed(signature)
-        self.assertFalse(path.exists())
-        self.assertTrue(self.data.is_ready("2026-09-29"))
 
     def test_same_name_archive_growth_and_new_archive_merge_without_duplicates(self):
         day = "2026-09-29"
@@ -863,7 +819,7 @@ class DashboardTest(unittest.TestCase):
             self.assertTrue(self.data.is_ready(day))
             self.assertEqual(self.data.pending_archives(signature), [])
 
-    def test_changed_archive_upserts_valid_rows_without_removing_previous_rows(self):
+    def test_changed_archive_excludes_conflicts_without_removing_previous_rows(self):
         name = "0123456789abcdef_20261019_010000.7z"
 
         def write(name, rows):
@@ -882,7 +838,7 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual((other.read_bytes(), other.stat().st_mtime_ns), before)
             rows = [json.loads(line) for line in (self.data.output_dir / "a_fast" / "2026-09-29.jsonl").read_text().splitlines()]
             self.assertEqual({row["case_id"] for row in rows}, {"kept", "shared", "added"})
-            self.assertEqual(next(row for row in rows if row["case_id"] == "shared")["messages"][-1]["content"], "new")
+            self.assertEqual(next(row for row in rows if row["case_id"] == "shared")["messages"][-1]["content"], "old")
             write("0123456789abcdef_20261019_020000.7z", [archive_row("a_fast", "shared", answer="latest")])
             self.data.process_archives(app.archive_signature(self.data.archive_dir))
             current = self.data.output_dir / "a_fast" / "2026-09-29.jsonl"
@@ -894,7 +850,7 @@ class DashboardTest(unittest.TestCase):
             self.data.process_archives(app.archive_signature(self.data.archive_dir))
             self.assertEqual(self.get_json("/records/2026-09-29/a_fast")["total"], 4)
 
-    def test_corrected_request_date_moves_only_the_same_business_record(self):
+    def test_conflicting_request_date_preserves_the_published_record(self):
         path = self.data.archive_dir / "same.7z"
 
         def write(day):
@@ -906,8 +862,14 @@ class DashboardTest(unittest.TestCase):
             self.data.process_archives(app.archive_signature(self.data.archive_dir))
             write("2026-10-19")
             self.data.process_archives(app.archive_signature(self.data.archive_dir))
-        self.assertEqual(self.get_json("/records/2026-10-18/a_fast")["total"], 0)
-        self.assertEqual(self.get_json("/records/2026-10-19/a_fast")["total"], 1)
+        self.assertEqual(self.get_json("/records/2026-10-18/a_fast")["total"], 1)
+        self.assertFalse(self.data.is_ready("2026-10-19"))
+        db = self.data.open_archive_index()
+        try:
+            report = json.loads(db.execute("SELECT report FROM cleaning_reports ORDER BY rowid DESC LIMIT 1").fetchone()[0])
+            self.assertEqual(report["exclusions"][0]["reason"], "identity_conflict")
+        finally:
+            db.close()
 
     def test_unrelated_arriving_archive_does_not_discard_a_stable_archive(self):
         payload = json.dumps({"answers_A-fast.jsonl": json.dumps(archive_row("a_fast", "one")) + "\n"})
@@ -1019,26 +981,6 @@ class DashboardTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "receipts missing"):
                 self.data.process_archives(app.archive_signature(self.data.archive_dir))
 
-    def test_scanner_does_not_let_a_growing_archive_block_another_stable_archive(self):
-        tick = [0]
-        processed = []
-        stable = {"name": "stable.7z", "size": 1, "mtime_ns": 1}
-
-        def sleep(_):
-            tick[0] += 1
-            if tick[0] == 4:
-                raise StopIteration()
-
-        with patch.object(app, "archive_signature", side_effect=lambda _: [stable, {"name": "growing.7z", "size": tick[0], "mtime_ns": 1}]), \
-             patch.object(self.data, "pending_archives", side_effect=lambda signature: signature), \
-             patch.object(self.data, "process_archives", side_effect=lambda signature: processed.append(signature)), \
-             patch.object(self.data, "archive_processed") as archive_processed, \
-             patch.object(app.time, "monotonic", side_effect=lambda: tick[0] * 10), \
-             patch.object(app.time, "sleep", side_effect=sleep):
-            with self.assertRaises(StopIteration):
-                self.data.processing_loop()
-        self.assertEqual([batch for batch in processed if batch], [[stable]])
-        self.assertEqual([call.args[0] for call in archive_processed.call_args_list if call.args[0]], [[stable]])
 
     def test_new_archive_keeps_last_published_root_snapshot_visible(self):
         day = "2026-09-29"

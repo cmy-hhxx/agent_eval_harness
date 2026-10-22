@@ -613,6 +613,14 @@ export async function startWorker(
                   signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
                   explorationLimit(),
                 );
+            if (spec.evaluation.fileSubmission && name === "edit_json" && !result.isError) {
+              // Keep the last successfully written draft before workspace cleanup.
+              // Writing is not submission: the resumed model must still submit it
+              // through the ordinary validation path and content budget.
+              const draft = await loadFileContent({ path: (args as { path: string }).path });
+              record.failure = { ...failure, draft };
+              await saveRecord();
+            }
           } catch (error) {
             result = {
               content: [{ type: "text" as const, text: errorText(error) }],
@@ -768,15 +776,18 @@ export async function startWorker(
       clearTimeout(idle!);
       controller.abort();
       if (!accepted) {
-        const retryableInterruption = submissions === 0 && !record.failure &&
-          (spec.recovery?.draft === undefined || spec.recovery.stopped) &&
+        const recovery = record.failure ?? spec.recovery;
+        // Saving an unsubmitted draft is not a validation failure. Keep interruption
+        // retries available across attempts, while real rejections retain their budget.
+        const retryableInterruption = submissions === 0 && (!recovery || recovery.stopped ||
+          recovery.errors.every(({ category }) => category === "transport" || category === "interruption")) &&
           ((attempt.status.state === "failed" && attempt.status.error === "Agent ended without an accepted submission") ||
             (attempt.status.state === "timed_out" && attempt.status.error === "Model/tool idle timeout"));
         if (retryableInterruption) attempt.status.retryable = true;
-        const recoveryDraft = spec.recovery?.stopped ? undefined : spec.recovery?.draft;
-        record.failure ??= {
+        const recoveryDraft = recovery?.stopped ? undefined : recovery?.draft;
+        if (!record.failure?.errors.length) record.failure = {
           evidenceBank: [...audit.evidenceBank!],
-          ...(spec.recovery?.inspection ? { inspection: structuredClone(spec.recovery.inspection) } : {}),
+          ...(recovery?.inspection ? { inspection: structuredClone(recovery.inspection) } : {}),
           ...(recoveryDraft === undefined ? {} : { draft: recoveryDraft }),
           errors: [
             {
@@ -785,7 +796,7 @@ export async function startWorker(
               path: "/",
               message: attempt.status.error || "No accepted submission",
             },
-            ...(recoveryDraft === undefined ? [] : spec.recovery!.errors.filter(
+            ...(recoveryDraft === undefined ? [] : recovery!.errors.filter(
               ({ category }) => category !== "transport" && category !== "interruption",
             )),
           ],

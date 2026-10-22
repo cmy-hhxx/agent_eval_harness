@@ -2,7 +2,6 @@
   "id": "remote-post-training-evaluation",
   "sourceUrl": "http://127.0.0.1:8081/data/post_training_model",
   "remoteModels": [
-    "a_fast",
     "b_fast",
     "b_post_train_fast"
   ],
@@ -17,7 +16,7 @@
   ],
   "stateDirectory": "../data/automations/remote-post-training-evaluation",
   "sourceDirectory": "../data/sources/automations/remote-post-training-evaluation",
-  "runPrefix": "daily-post-training-",
+  "runPrefix": "task-post-training-",
   "engine": "pi",
   "pollMs": 15000,
   "refreshMs": null,
@@ -25,12 +24,12 @@
   "maxEvaluationAttempts": 3,
   "dailyComparisonLimitPerTier": null,
   "channelConcurrency": {
-    "evaluation-gateway": 40
+    "evaluation-gateway": 32
   },
   "requestTimeoutMs": 600000,
   "publishProgress": true,
   "publication": {
-    "topic": "后训练三模型专题评测（2026-10-19）",
+    "topic": "后训练双模型专项评测（2026-10-19）",
     "logFile": "../log/comparison-statistics-log.jsonl",
     "logUrl": "https://aime.myhexin.com/agent-eval/api/logs",
     "mongoUriEnv": "AUTOMATIONS_MONGODB_URI",
@@ -38,5 +37,6 @@
     "mongoCollection": "agent_eval_bench_version_comparisons_new",
     "mongoTlsCAFileEnv": "AUTOMATIONS_MONGODB_TLS_CA_FILE"
   },
-  "publishStatisticsLog": false
+  "publishStatisticsLog": false,
+  "publishMongo": false
 }

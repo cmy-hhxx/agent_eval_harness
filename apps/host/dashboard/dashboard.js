@@ -1,5 +1,7 @@
 import { createDashboardViews, groupCaseCandidates } from "./dashboard-view.js";
 
+export function mountRuns(root, options = {}) {
+
 const state = {
   runs: [], selectedRun: null, startingRun: null, run: null, cases: null, selectedCase: null,
   clusteringTasks: null, clusteringRun: null, clusteringRequest: 0,
@@ -9,10 +11,10 @@ const state = {
   inputs: null, inputsTimer: 0, selectedDates: new Set(), datesReady: false,
   selectedModels: new Set(), modelsReady: false,
   sampledCases: null, sampleInfo: null, rangeLocked: false,
-  inputOpen: false, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), openFindings: new Set(), expandedTexts: new Set(),
+  inputOpen: true, taskResults: {}, taskResultsLoading: new Set(), openTasks: new Set(), openFindings: new Set(), expandedTexts: new Set(),
   refreshTimer: 0, runsSignature: "", overviewSignature: "", casesSignature: "", datesSignature: "", modelsSignature: "",
 };
-const $ = (selector) => document.querySelector(selector);
+const $ = (selector) => root.querySelector(selector);
 const stageLabels = { criteria: "共同标准", attribution: "归因", comparison: "对比", rewrite: "改写", clustering: "聚类" };
 const statusLabels = {
   running: "运行中", finished: "已结束", interrupted: "已中断", pending: "排队",
@@ -33,7 +35,7 @@ function suggestedRunId() {
   const now = new Date(), pad = (value) => String(value).padStart(2, "0");
   return `eval-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
-const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
+const API_ROOT = options.apiRoot || "/api/dashboard";
 const apiUrl = (path) => `${API_ROOT}${path}`;
 const urlFor = (id) => apiUrl(`/runs/${encodeURIComponent(id)}`);
 const loading = (label) => `<span class="loading" role="status" aria-label="${escapeHtml(label)}"><span class="spinner" aria-hidden="true"></span></span>`;
@@ -131,9 +133,9 @@ function renderOverview() {
   }).join("");
 }
 function scrollBehavior() {
-  return document.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
+  return (root.ownerDocument || root).defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
 }
-async function restoreRecall(params = new URLSearchParams(document.defaultView.location.search)) {
+async function restoreRecall(params = new URLSearchParams((root.ownerDocument || root).defaultView.location.search)) {
   const runId = params.get("run"), batch = params.get("batch"), caseId = params.get("case");
   if (!runId) return;
   if (!state.runs.some((run) => run.run_id === runId)) { showError("样本召回失败：运行不可用"); return; }
@@ -162,7 +164,7 @@ async function restoreRecall(params = new URLSearchParams(document.defaultView.l
     const path = `${task.id}.findings.${index}`;
     state.openFindings.add(path);
     renderTaskResult(task.id);
-    const target = document.getElementById(`finding-${path}`);
+    const target = root.getElementById(`finding-${path}`);
     target?.setAttribute("tabindex", "-1");
     target?.focus({ preventScroll: true });
     target?.scrollIntoView?.({ behavior: scrollBehavior(), block: "start" });
@@ -206,7 +208,7 @@ const compactJson = (value) => escapeHtml(JSON.stringify(value, null, 2) ?? "—
 const { renderDetail, renderTaskResult, renderClustering } = createDashboardViews({
   state,
   $,
-  document,
+  document: root,
   loading,
   escapeHtml,
   label,
@@ -233,27 +235,37 @@ async function loadClustering() {
     }
     state.clusteringTasks = tasks;
     if (changed) renderClustering();
-    for (const task of tasks) if (state.openTasks.has(task.id)) void loadTaskResult(task.id);
+    for (const task of tasks) void loadTaskResult(task.id);
   } catch (error) {
     if (state.selectedRun === runId && request === state.clusteringRequest)
       $("#clustering-tasks").innerHTML = `<p class="inline-error">${escapeHtml(error.message)}</p>`;
   }
 }
-async function loadTaskResult(taskId) {
+const taskRequests = new Map();
+function loadTaskResult(taskId) {
+  const key = `${state.selectedRun}:${taskId}`;
+  if (taskRequests.has(key)) return taskRequests.get(key);
+  const request = readTaskResult(taskId).finally(() => taskRequests.delete(key));
+  taskRequests.set(key, request);
+  return request;
+}
+async function readTaskResult(taskId) {
   const task = [...(state.caseDetail?.tasks || []), ...(state.clusteringTasks || [])].find((task) => task.id === taskId);
   if (!taskId || task?.status !== "succeeded"
       || state.taskResults[taskId] || state.taskResultsLoading.has(taskId)) return;
-  state.taskResultsLoading.add(taskId);
+  const results = state.taskResults, loadingResults = state.taskResultsLoading;
+  loadingResults.add(taskId);
   const runId = state.selectedRun,
     caseId = state.caseDetail?.case_id;
   try {
     const value = await api(`${urlFor(runId)}/tasks/${encodeURIComponent(taskId)}/result`);
-    if (state.selectedRun !== runId || (task.stage !== "clustering" && state.caseDetail?.case_id !== caseId)) return;
+    if (results !== state.taskResults || state.selectedRun !== runId || (task.stage !== "clustering" && state.caseDetail?.case_id !== caseId)) return;
     state.taskResults[taskId] = { result: value.result ?? null };
   } catch (error) {
-    state.taskResults[taskId] = { error: error.message };
+    if (results !== state.taskResults || runId !== state.selectedRun) return;
+    results[taskId] = { error: error.message };
   } finally {
-    state.taskResultsLoading.delete(taskId);
+    loadingResults.delete(taskId);
   }
   renderTaskResult(taskId);
 }
@@ -265,7 +277,7 @@ function resetInputs() {
 async function loadInput(inputId, groupId) {
   const changed = state.selectedInputs[groupId] !== inputId;
   state.selectedInputs[groupId] = inputId;
-  // Rendering an open disclosure schedules another toggle; cached/pending selections must settle.
+  // Reuse the selected case input while its request is pending.
   if (state.inputViews[inputId] || state.inputsLoading.has(inputId)) {
     if (changed) renderDetail();
     return;
@@ -302,7 +314,7 @@ async function loadCase(batch, caseId) {
     state.taskResultsLoading = new Set();
     state.openTasks = new Set();
     state.expandedTexts = new Set();
-    state.inputOpen = false;
+    state.inputOpen = true;
   }
   renderCases();
   try {
@@ -327,9 +339,9 @@ async function loadCase(batch, caseId) {
         state.selectedInputs[group.id] = group.candidates[0]?.input_id;
     }
     renderDetail();
-    for (const node of $("#case-detail").querySelectorAll("details.task-detail[open]"))
+    for (const node of $("#case-detail").querySelectorAll(".task-detail"))
       void loadTaskResult(node.dataset.task);
-    await loadCaseInputs();
+    void loadCaseInputs();
   } catch (error) {
     if (request !== state.caseRequest || runId !== state.selectedRun) return;
     state.caseDetail = null;
@@ -361,7 +373,6 @@ async function refresh(auto = false) {
     if (state.startingRun) {
       if (runs.some((run) => run.run_id === state.startingRun.id)) {
         state.selectedRun = state.startingRun.id;
-        $("#config").open = false;
         state.startingRun = null;
         state.page = 1;
       } else if (Date.now() >= state.startingRun.deadline) {
@@ -372,7 +383,6 @@ async function refresh(auto = false) {
     }
     if (state.selectedRun && !runs.some((item) => item.run_id === state.selectedRun)) state.selectedRun = null;
     if (previousRun !== state.selectedRun) {
-      $("#config").open = !state.selectedRun;
       ++state.caseRequest;
       state.selectedCase = state.caseDetail = null;
       resetInputs();
@@ -388,7 +398,7 @@ async function refresh(auto = false) {
     await loadCases();
     if (state.selectedCase && (!auto || (wasRunning && state.run?.status !== "running")))
       await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
-    if ($("#clustering-panel").open) await loadClustering();
+    if (state.selectedRun) await loadClustering();
     if (!auto) $("#refresh-time").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
   } catch (error) {
     if (request === state.runRequest) showError(`运行状态读取失败：${error.message}`);
@@ -422,7 +432,6 @@ async function selectRun(runId) {
   if (runId === state.selectedRun) return;
   ++state.caseRequest;
   state.selectedRun = runId;
-  $("#config").open = false;
   state.selectedCase = state.caseDetail = state.cases = null;
   resetInputs();
   state.page = 1;
@@ -589,9 +598,9 @@ function launchPayload() {
   const batches = scope.full && !sample.length ? [] : scope.batches;
   const cases = sample.length ? sample : scope.full ? [] : scope.cases;
   const bindings = {};
-  document.querySelectorAll("[data-model-stage]").forEach((input) => {
+  root.querySelectorAll("[data-model-stage]").forEach((input) => {
     const stage = input.dataset.modelStage;
-    const thinking = document.querySelector(`[data-thinking-stage="${stage}"]`).value;
+    const thinking = root.querySelector(`[data-thinking-stage="${stage}"]`).value;
     const selected = input.value ? JSON.parse(input.value) : undefined;
     bindings[stage] = { ...(selected ? { channel: selected[0], model: selected[1] } : {}), thinking };
   });
@@ -680,7 +689,7 @@ async function preview() {
     ];
     status.className = "preview-result is-ready";
     status.innerHTML = `<div class="preview-stats">${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
-      ${issues.length ? `<details><summary>输入异常 ${issues.length}</summary><pre>${compactJson(issues)}</pre></details>` : ""}`;
+      ${issues.length ? `<section><header>输入异常 ${issues.length}</header><pre>${compactJson(issues)}</pre></section>` : ""}`;
   } catch (error) {
     if (state.sampleInfo !== sampleInfo) return;
     state.preview = null;
@@ -758,10 +767,10 @@ $("#run-actions").addEventListener("click", async (event) => {
   if (!node) return;
   if (node.dataset.delete) requestDelete(node.dataset.delete);
   else if (node.dataset.resume) {
+    if (state.run.batch_run && options.onBatchResume) { options.onBatchResume(node.dataset.resume); return; }
     state.runId = node.dataset.resume;
     $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
-    $("#config").open = true;
     $("#config").scrollIntoView({ behavior: scrollBehavior() });
     $("#preview-button").focus();
   } else if (node.dataset.stop && confirm(`确定停止 ${node.dataset.stop}？已接受结果会保留。`)) {
@@ -787,68 +796,20 @@ $("#case-list").addEventListener("click", (event) => {
   renderDetail();
   void loadCase(node.dataset.batch, node.dataset.case);
 });
-$("#clustering-panel").addEventListener("toggle", (event) => {
-  if (event.target.open) void loadClustering();
-});
-document.addEventListener("click", async (event) => {
+root.addEventListener("click", async (event) => {
   const findingLink = event.target.closest("[data-finding-target]");
   if (findingLink) {
-    const finding = document.getElementById(findingLink.dataset.findingTarget);
+    const finding = root.getElementById(findingLink.dataset.findingTarget);
     if (finding) {
-      for (let parent = finding.parentElement; parent; parent = parent.parentElement)
-        if (parent.tagName === "DETAILS") parent.open = true;
-      finding.open = true;
-      state.openFindings.add(finding.dataset.finding);
+      event.preventDefault();
+      finding.setAttribute("tabindex", "-1"); finding.focus({ preventScroll:true });
+
     }
-    return;
-  }
-  const toggle = event.target.closest("[data-expand-text]");
-  if (toggle) {
-    const key = toggle.dataset.expandText;
-    const expanded = !state.expandedTexts.has(key);
-    const content = document.getElementById(toggle.getAttribute("aria-controls"));
-    const returnToPreview = !expanded && content.getBoundingClientRect().top < 0;
-    if (expanded) state.expandedTexts.add(key); else state.expandedTexts.delete(key);
-    content.classList.toggle("is-clamped", !expanded);
-    toggle.setAttribute("aria-expanded", String(expanded));
-    toggle.textContent = expanded ? "收起" : "展开";
-    if (returnToPreview)
-      toggle.closest(".expandable-text").scrollIntoView({ block: "start", behavior: "instant" });
     return;
   }
   const input = event.target.closest("[data-input]");
   if (input) await loadInput(input.dataset.input, input.dataset.inputGroup);
 });
-// `toggle` does not bubble; capture it so expanded tasks load their result once.
-document.addEventListener(
-  "toggle",
-  (event) => {
-    if (event.target.matches?.(".criterion-rule, .comparison-finding")) {
-      const key = event.target.dataset.criterionRule || event.target.dataset.comparisonFinding;
-      if (event.target.open) state.expandedTexts.add(key);
-      else state.expandedTexts.delete(key);
-      return;
-    }
-    if (event.target.matches?.(".finding")) {
-      if (event.target.open) state.openFindings.add(event.target.dataset.finding);
-      else state.openFindings.delete(event.target.dataset.finding);
-      return;
-    }
-    const inputDisclosure = event.target.matches?.(".input-disclosure") ? event.target : null;
-    if (inputDisclosure) {
-      state.inputOpen = inputDisclosure.open;
-      if (state.inputOpen) void loadCaseInputs();
-      return;
-    }
-    const node = event.target.matches?.(".task-detail") ? event.target : null;
-    if (!node?.dataset.task) return;
-    if (node.open) {
-      state.openTasks.add(node.dataset.task);
-      void loadTaskResult(node.dataset.task);
-    } else state.openTasks.delete(node.dataset.task);
-  },
-  true,
-);
 $("#prev-page").addEventListener("click", () => { state.page--; state.selectedCase = state.caseDetail = null; resetInputs(); renderDetail(); void loadCases(); });
 $("#next-page").addEventListener("click", () => { state.page++; state.selectedCase = state.caseDetail = null; resetInputs(); renderDetail(); void loadCases(); });
 $("#date-options").addEventListener("click", (event) => {
@@ -918,7 +879,11 @@ syncSampleMode();
 $("#preview-button").addEventListener("click", () => void preview());
 $("#start-form").addEventListener("submit", (event) => { event.preventDefault(); void startRun(); });
 
-(async () => {
+const ready = (async () => {
   state.runId = suggestedRunId();
   await Promise.all([loadConfig(), loadInputs(), refresh().then(() => restoreRecall())]);
 })();
+
+return { ready, restoreRecall: async params => { await refresh(); await restoreRecall(params); } };
+}
+if (globalThis.document?.querySelector("#start-form")) mountRuns(document);

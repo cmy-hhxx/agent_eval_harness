@@ -1,4 +1,6 @@
-import { markdownPreview, renderMarkdown } from "./records-markdown.js";
+import { renderMarkdown } from "./records-markdown.js";
+
+export function mountRecords(root, options = {}) {
 
 const MODEL_LABELS = {
   a_fast: "A Fast",
@@ -15,20 +17,24 @@ const MODEL_LABELS = {
 };
 const PAGE_SIZE = 20;
 const PATH_PARTS = location.pathname.split("/").filter(Boolean);
-const DATASET = PATH_PARTS[1] || "wencai";
+const DATASET = options.dataset || PATH_PARTS[1] || "wencai";
+if ((options.profile || DATASET) === "post_training_model") {
+  MODEL_LABELS.b_fast = "AA-fast";
+  MODEL_LABELS.b_post_train_fast = "AA-post_train_fast_V1";
+}
 const BASE_PATH = `/data/${DATASET}`;
 const params = new URLSearchParams(location.search);
-const date = params.get("date") || "";
-const model = params.get("model") || "";
+const date = options.date || params.get("date") || "";
+const model = options.model || params.get("model") || "";
 let page = Math.max(1, Number.parseInt(params.get("page") || "1", 10) || 1);
 let total = 0;
 
-const list = document.querySelector("#records-list");
-const title = document.querySelector("#records-title");
-const count = document.querySelector("#records-count");
-const previous = document.querySelector("#previous-page");
-const next = document.querySelector("#next-page");
-const pageStatus = document.querySelector("#page-status");
+const list = root.querySelector("#records-list");
+const title = root.querySelector("#records-title");
+const count = root.querySelector("#records-count");
+const previous = root.querySelector("#previous-page");
+const next = root.querySelector("#next-page");
+const pageStatus = root.querySelector("#page-status");
 const formatCount = (value) => new Intl.NumberFormat("zh-CN").format(value);
 
 function displayText(value) {
@@ -56,7 +62,7 @@ async function copyIdentifier(value, button) {
       try { await navigator.clipboard.writeText(value); copied = true; } catch { /* Try HTTP's copy command. */ }
     }
     if (!copied) {
-      const focused = document.activeElement;
+      const focused = root.activeElement;
       const field = document.createElement("textarea");
       field.value = value;
       field.className = "clipboard-field";
@@ -164,64 +170,18 @@ function renderItems(items) {
     table.append(body);
   });
   scroll.append(table); list.append(scroll);
-  updateQuestionOverflow();
 }
 
 function makeRecordQuestion(value) {
-  const text = displayText(value) || "（空）";
-  const question = document.createElement("div");
-  question.className = "question-content";
-  const full = document.createElement("div");
-  full.className = "question-text question-preview"; full.textContent = text;
-  const action = document.createElement("button");
-  action.type = "button"; action.hidden = true;
-  action.setAttribute("aria-expanded", "false");
-  action.className = "question-action"; action.textContent = "展开问句";
-  action.addEventListener("click", () => {
-    const open = action.getAttribute("aria-expanded") !== "true";
-    action.setAttribute("aria-expanded", String(open));
-    question.classList.toggle("is-expanded", open);
-    full.classList.toggle("question-preview", !open);
-    action.textContent = open ? "收起问句" : "展开问句";
-    if (!open) updateQuestionOverflow();
-  });
-  question.append(full, action);
-  return question;
+  const node = document.createElement("div");
+  node.className = "question-text"; node.textContent = displayText(value) || "（空）";
+  return node;
 }
-
-function updateQuestionOverflow() {
-  for (const question of list.querySelectorAll(".question-content")) {
-    const action = question.querySelector(".question-action");
-    if (action.getAttribute("aria-expanded") === "true") continue;
-    const text = question.querySelector(".question-text");
-    action.hidden = true;
-    action.hidden = text.scrollHeight <= text.clientHeight + 1;
-  }
-}
-
 function makeRecordAnswer(item) {
-  const details = document.createElement("details");
-  details.className = "answer-details";
-  const summary = document.createElement("summary");
-  const preview = document.createElement("span");
-  preview.className = "answer-preview";
-  const text = displayText(item.answer);
-  preview.textContent = markdownPreview(text) || text.slice(0, 1000).replace(/\s+/g, " ").trim() || "（空）";
-  const action = document.createElement("span");
-  action.className = "answer-action"; action.textContent = "展开回答";
-  summary.append(preview, action);
-  details.addEventListener("toggle", () => {
-    preview.hidden = details.open;
-    action.textContent = details.open ? "收起回答" : "展开回答";
-    if (details.open && !fields.childNodes.length) {
-      fields.append(makeAnswerField("回答", item.answer));
-      if (Object.prototype.hasOwnProperty.call(item, "standard_answer")) fields.append(makeAnswerField("标准答案", item.standard_answer));
-    }
-  });
-  const fields = document.createElement("div");
-  fields.className = "answer-fields";
-  details.append(summary, fields);
-  return details;
+  const fields = document.createElement("div"); fields.className = "answer-fields";
+  fields.append(makeAnswerField("回答", item.answer));
+  if (Object.hasOwn(item, "standard_answer")) fields.append(makeAnswerField("标准答案", item.standard_answer));
+  return fields;
 }
 
 function updatePagination() {
@@ -251,7 +211,6 @@ async function loadPage() {
     if (page > lastPage) {
       page = lastPage;
       params.set("page", String(page));
-      history.replaceState({}, "", `${location.pathname}?${params.toString()}`);
       return loadPage();
     }
     renderItems(data.items);
@@ -269,16 +228,12 @@ async function loadPage() {
 function setPage(value) {
   page = value;
   params.set("page", String(page));
-  history.pushState({}, "", `${location.pathname}?${params.toString()}`);
   loadPage();
-  window.scrollTo(0, 0);
+
 }
 
 previous.addEventListener("click", () => setPage(page - 1));
 next.addEventListener("click", () => setPage(page + 1));
-window.addEventListener("popstate", () => {
-  page = Math.max(1, Number.parseInt(new URLSearchParams(location.search).get("page") || "1", 10) || 1);
-  loadPage();
-});
-window.addEventListener("resize", updateQuestionOverflow);
-loadPage();
+void loadPage();
+}
+if (globalThis.document?.querySelector("#records-list")) mountRecords(document);

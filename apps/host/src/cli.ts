@@ -6,7 +6,7 @@ import type { Engine } from "@eval/contracts";
 import { ROOT } from "./paths.js";
 import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
-import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
+import { boundProfiles, createModelResolver, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
 import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
 import { reportRun, reportStability } from "@eval/workflows/comparison";
@@ -58,11 +58,13 @@ async function main(): Promise<void> {
       "stop-starting-at": { type: "string" },
       seed: { type: "string" },
       "review-file": { type: "string" },
+      "clustering-selection": { type: "string" },
       "discover-inputs": { type: "boolean" },
       "resume-stage": { type: "string", multiple: true },
       "require-rewrite": { type: "string", multiple: true },
       "require-batch": { type: "string", multiple: true },
       "pilot-cases": { type: "string" },
+      "test-eval": { type: "boolean" },
       "pilot-answers": { type: "string" },
       "pilot-per-model": { type: "string" },
       "from-date": { type: "string" },
@@ -83,12 +85,12 @@ run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
 selection: --batch ID --case ID --limit-cases N
-pilot: run --pilot-cases N；验收后 run --discover-inputs 释放其余任务
+test: run --test-eval；pilot-cases N 自动进入同来源 test_eval；续跑保留 --test-eval
 recovery: run --resume-stage STAGE 解除已修复阶段的熔断，可重复
 inputs/output: --input ID=PATH --output DIR
 index: --dataset ID --dataset-name NAME --input VERSION=PATH ... [--catalog DIR]
 preflight/run: --dataset ID [--catalog DIR] 选择已索引的评测集
-status/validate/report: --run data/runs/comparison/ID
+status/validate/report: --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/ID
 validate: [--require-rewrite items|verdicts ...] [--require-batch ID ...] [--selected]
 report: [--details] 为 debug 运行导出逐题 JSON 与任务状态
 retry-failed: --run PATH [--task ID ...|--result ID ...] [--apply]
@@ -135,6 +137,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     throw new Error("--dataset 仅用于 index、preflight 和 run");
   if (values.catalog && !values.dataset) throw new Error("--catalog 需要同时指定 --dataset");
   if (values.debug && !["run", "cluster", "reattribute", "validate-stability"].includes(command)) throw new Error("--debug 仅用于运行命令");
+  if (values["test-eval"] && command !== "run") throw new Error("--test-eval 仅用于 run");
   for (const flag of ["discover-inputs", "resume-stage", "pilot-cases"] as const)
     if (values[flag] && command !== "run" && !(flag !== "pilot-cases" && command === "reattribute") &&
       !(flag === "resume-stage" && ["cluster", "validate-stability"].includes(command))) throw new Error(`--${flag} 不适用于当前命令`);
@@ -289,10 +292,11 @@ dashboard: --port 4173 在本机启动控制看板`,
       resumeStages: values["resume-stage"], discoverInputs: values["discover-inputs"], balanceChannels: values["balance-channels"] });
     return;
   }
+  if (values["clustering-selection"] && command !== "cluster") throw new Error("--clustering-selection 仅用于 cluster");
   if (command === "cluster") {
     if (values.input || values.batch || values.case || values["limit-cases"] || values.dataset)
       throw new Error("cluster 通过多个 --run 选择已接受归因，不接受原始输入筛选");
-    process.exitCode = await runClusteringCommand(host, { runs: values.run, runId: values["run-id"],
+    process.exitCode = await runClusteringCommand(host, { selectionFile: values["clustering-selection"], runs: values.run, runId: values["run-id"],
       output: values.output, apply: values.apply, engine: values.engine, debug: values.debug,
       workers: values.worker, resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"] });
     return;
@@ -308,7 +312,9 @@ dashboard: --port 4173 在本机启动控制看板`,
     return;
   }
   let config = host.evaluation;
-  if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
+  if (values["test-eval"] || values["pilot-cases"]) {
+    config.output = { kind: "directory", path: testEvaluationOutput(config.output.path, values.output) };
+  } else if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
   const resuming = command === "run" && !!values["run-id"] &&
     await exists(runLayout(config.output, values["run-id"]).stateFile);
   if (values["pilot-cases"] && (resuming || values["discover-inputs"]))

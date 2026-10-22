@@ -7,7 +7,7 @@ import { exists, readJson, readJsonl, writeJson, readInputSource, localFiles } f
 import { canonical } from "@eval/contracts";
 import { readRunState, loadRunInputs, outputSchema } from "@eval/workflows/comparison";
 import { services, agents } from "@eval/host-app/composition";
-import { boundProfiles, createModelResolver, loadConfig } from "@eval/host-app/config";
+import { boundProfiles, createModelResolver, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
 import { runEvaluation } from "@eval/host";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
@@ -33,6 +33,8 @@ const {
 });
 const limit = Number(values.limit);
 if (!Number.isInteger(limit) || limit < 1) throw new Error("--limit must be positive");
+if (values.output && command !== "run")
+  values.output = testEvaluationOutput(values.output, values.output);
 
 // Locate a record by business identity, tolerant of appends and reordering in the fixture source.
 function matchesInput(raw, ref) {
@@ -330,7 +332,7 @@ if (command === "collect") {
     const config = host.evaluation;
     config.output = {
       kind: "directory",
-      path: path.resolve(values.output || ".artifacts/model-benchmarks"),
+      path: testEvaluationOutput(config.output.path, values.output),
     };
     if (await exists(path.join(config.output.path, values["run-id"])))
       throw new Error("Benchmark requires a new run ID");

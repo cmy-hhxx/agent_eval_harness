@@ -43,7 +43,7 @@ test("automation errors retain every raw record without grouping, page full deta
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("error page keeps expanded details and pagination during refresh, escapes content, and retains the last page offline", async () => {
+test("error region keeps visible details and pagination during refresh, escapes content, and retains the last page offline", async () => {
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automation-errors.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automation-errors.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/errors?source=remote-six-model-evaluation" });
@@ -62,17 +62,15 @@ test("error page keeps expanded details and pagination during refresh, escapes c
   };
   const settle = () => new Promise(resolve => setImmediate(resolve));
   try {
-    dom.window.eval(script); await settle();
+    dom.window.eval(script.replace(/^export /gm, "")); await settle();
     const doc = dom.window.document;
     assert.equal(requests[0].get("source"), "remote-six-model-evaluation");
-    assert.equal(doc.title, "自动化错误日志 · GPT 六路");
-    assert.equal(new URL(doc.getElementById("monitor-link").href).searchParams.get("source"), "remote-six-model-evaluation");
+    assert.equal(doc.title, "自动化错误日志");
     assert.equal(doc.getElementById("error-records").hidden, false);
     assert.equal(doc.querySelector("[data-group]"), null);
     assert.equal(doc.querySelector("img"), null);
-    doc.querySelector("details").open = true;
     assert.match(doc.querySelector("pre").textContent, /evidence_id_invalid.*\n/);
-    await poll(); assert.equal(doc.querySelector("details").open, true);
+    await poll(); assert.equal(doc.querySelector("details"), null);
     doc.getElementById("next").click(); await settle();
     await poll(); assert.equal(requests.at(-1)!.get("page"), "2");
     failed = true; await poll(); assert.match(doc.getElementById("connection-error").textContent, /offline/);

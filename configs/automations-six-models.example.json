@@ -39,5 +39,6 @@
     "mongoCollection": "agent_eval_bench_version_comparisons_new",
     "mongoTlsCAFileEnv": "AUTOMATIONS_MONGODB_TLS_CA_FILE"
   },
-  "publishStatisticsLog": false
+  "publishStatisticsLog": false,
+  "publishMongo": true
 }

@@ -18,6 +18,10 @@
 
 增加来源只修改外部自动化配置并登记清单，然后重启工作台；`workbench.sh` 和调度实现不保存来源名称列表。显式 `--config` 只用于开发、测试或单来源 CLI；生产不传 `--config`。
 
+日常评测使用上述持续流水线；数据集经常变化的专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)；`automations-post-training.json` 限定 2026-10-19 双模型数据，使用 `task-post-training-` 前缀、DeepSeek（`deepseek-v4.1-flash`）高档（high）推理和并发 32，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外的专项清单，仅登记该配置并命名为“专项 · 后训练双模型 · 678 对”；看板按独立任务显示进度，日常流水线不会随之启动。
+
+每个来源必须显式配置 `publishMongo`。日常任务为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。
+
 工作台配置通过环境变量传入：
 
 ```text
@@ -44,7 +48,7 @@ npm run automations -- run --dashboard --port 4174
 
 ## 数据链路
 
-1. 数据服务检测新包并稳定 30 秒，处理为 JSONL 和 ready 状态。
+1. 数据服务检测已登记日常任务的新包并稳定 30 秒，自动清洗为 JSONL 和 ready 状态；专项等待人工清洗。
 2. 自动化轮询 `http://127.0.0.1:8081/data/wencai/dashboard-data`。
 3. 对已就绪日期流式下载各模型 JSONL，校验 `Content-Length`、JSONL 和实际行数。
 4. 完整输入提升为可恢复快照；旧输入的评测与 Mongo 交付结束前不替换。
@@ -117,7 +121,7 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 ## 监控与错误
 
-`/runtime/` 显示自动化状态、来源、日期、阶段任务、实际 LLM 调用、并发分配、Mongo 回执、统计 relay 状态和错误日志。`/runtime/runs/` 显示当前正式 run、样本与结果；问题库和当前数据与流程定义分别在 `/runtime/problems` 和 `/runtime/reference`。
+`/` 单页工作台直接显示自动化状态、来源、日期、阶段任务、实际 LLM 调用、并发分配、Mongo 回执、统计 relay 状态、正式 run、样本结果、错误、问题库和流程定义。通过一级模块导航原位切换，模块内定位、筛选与分页都在当前页完成。
 
 错误进入根 `runtime.log`；正式接受记录进入 `evaluation.log`；统计交付记录进入 `comparison-statistics-log.jsonl`。不新增自动化私有日志、轮转或 daemon。
 

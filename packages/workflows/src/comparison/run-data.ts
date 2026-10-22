@@ -171,7 +171,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     (task.data as TaskData).standardAnswerReview = selected.standardAnswerReview === true;
   for (const [id, task] of tasks)
     if (task.stage === "attribution" && !dependencies.has(id) && !state.receipts[id] &&
-      !(task.data as TaskData).standardConflictReview) tasks.delete(id);
+      !(task.data as TaskData).standardConflictReview && !(task.data as TaskData).standalone) tasks.delete(id);
   // Unfinished tasks whose source records are no longer available are dropped with a diagnostic
   // instead of aborting the run; accepted work is never affected.
   const issues = [...((plan.summary.issues as unknown[]) || [])];

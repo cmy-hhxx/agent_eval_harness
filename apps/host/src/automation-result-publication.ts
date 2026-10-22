@@ -59,7 +59,7 @@ export function createMongoResultPublisher(config: AutomationConfig,
   const active = new Map<string, Promise<void>>(), delivered = new Map<string, string>();
   return {
     observe(job: AutomationJob, signal: AbortSignal) {
-      if (config.prediction || !process.env[config.publication.mongoUriEnv] || active.has(job.date) ||
+      if (!config.publishMongo || config.prediction || !process.env[config.publication.mongoUriEnv] || active.has(job.date) ||
           !job.summary?.readyComparisons) return;
       const revision = JSON.stringify([job.inputsUpdatedAt, job.summary.readyComparisons, job.summary.stages.rewrite?.completed]);
       if (delivered.get(job.date) === revision) return;

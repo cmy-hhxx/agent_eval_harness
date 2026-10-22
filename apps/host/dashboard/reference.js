@@ -1,7 +1,9 @@
-const $ = (selector) => document.querySelector(selector);
-const API_ROOT = globalThis.location?.pathname.startsWith("/runtime/") ? "/runtime/api/dashboard" : "/api/dashboard";
+
+export function mountReference(root, options = {}) {
+const $ = (selector) => root.querySelector(selector);
+const API_ROOT = options.apiRoot || "/api/dashboard";
 const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-const state = { data: null, inventory: null, inventoryError: "", section: "inputs", stage: "criteria", profile: "default", document: "result", date: null, search: "", page: 1, disclosures: new Map() };
+const state = { data: null, inventory: null, inventoryError: "", stage: "criteria", profile: "default", document: "result", date: null, search: "", page: 1 };
 const documentNames = { request: "请求 Schema", submission: "提交 Schema", modelSubmission: "模型提交基础 Schema", result: "结果 Schema", inspection: "首查保存 Schema", modelInspection: "首查提交 Schema", system: "系统提示词", instructions: "任务提示词", submissionNudge: "补交提示词", taskType: "任务类型文案", sourceRule: "原文验收规则", referenceRule: "标准答案验收规则", reviewPending: "待复核文案", notApplicable: "不适用文案", tools: "工具描述与 Schema", comparison: "对比结果", clustering: "聚类结果", material: "材料文案", evidence: "证据说明", taskFocus: "任务聚焦", budget: "预算提示", recovery: "恢复提示", nudge: "补交提示" };
 const onOff = (value) => value ? "开启" : "关闭";
 async function get(url) {
@@ -49,32 +51,13 @@ function inputsHtml() {
     `<code>${escapeHtml(version.adapter)}</code>`,
     version.sources.map((source) => `<code class="source-path">${escapeHtml(source.path)}</code>`).join(""),
   ])));
-  const fields = [
-    ["batch_id", "顶层 → meta.batch_id → 配置默认值；原值分批"],
-    ["case_id", "顶层或 meta.case_id；同时存在时必须一致"],
-    ["version", "由来源配置决定；记录值若存在，须与配置 name 一致"],
-    ["messages", "问题、回答与调用链；保留原始消息序号"],
-    ["messages[].timestamp", "最后一条 USER 消息的原始时刻；缺失或非字符串为 null"],
-    ["meta.question", "核对最后 USER 问题首段；缺少消息正文时回退到本字段；去空白后冲突拒绝"],
-    ["meta.ground_truth / std_answer", "同批次、同 case 的同问题范围共享有效标准答案；冲突时跳过受影响模型对"],
-    ["has_standard_answer", "false 忽略本条标准答案；最终对错核验取样本共享值"],
-    ["request_time", "原样保留；缺失为 null"],
-    ["meta.first_token_time_cost / first_answer_time_cost / finish_answer_time_cost", "按 timing_unit 转为秒；评测材料只提供完整回答完成耗时 finish_seconds"],
-    ["meta.usage", "读取输入、输出、总 token 和缓存输入；缓存为输入子集；缺失或无效指标为 null"],
-    ["meta.usage.type / messages[].model", "a 使用 usage.type；b 优先最终回答前最后 llm_turn.model，否则使用 usage.type"],
-    ["meta / trace_id", "采集状态、模型、耗时与追踪标识"],
-  ];
   return section("数据覆盖", coverage, inventory?.issues != null ? `<span class="inventory-state ${inventory.issues ? "has-issues" : ""}">${inventory.issues} 项输入异常</span>` : "")
     + (state.date ? section(escapeHtml(state.date), `<div class="reference-toolbar"><input id="case-search" type="search" aria-label="搜索样本或批次" placeholder="搜索样本或批次" value="${escapeHtml(state.search)}" /></div><div id="coverage-cases">${caseRows()}</div>`) : "")
     + section("输入来源", sources)
     + section("对比组", `<ul class="comparison-groups">${state.data.comparisons.map((group) => `<li>${group.map((id) => {
       const index = versions.findIndex((version) => version.id === id);
       return `<span class="model-column model-color-${index}">${escapeHtml(versions[index]?.display_name || versions[index]?.name || id)}</span>`;
-    }).join('<span class="list-separator" aria-label="对比">↔</span>')}</li>`).join("")}</ul>`)
-    + `<details class="reference-disclosure"><summary>字段与适配规则</summary>${table(["字段", "读取规则"], fields.map((items) => row([`<code>${items[0]}</code>`, items[1]])))}
-      ${table(["适配器", "消息类型"], [row(["a", "message · reasoning · function_call · function_call_output"]), row(["b", "user_question · llm_turn · tool_call · tool_result · final_answer"])])}
-      <ul class="rule-list"><li>样本身份：batch_id + case_id；回答身份再加 version。</li><li>标识重复、问题冲突、标准答案冲突会阻止对应比较。</li><li>meta.ok=false、最终回答缺失、消息类型无效的记录不参与比较。</li><li>缺失或冲突只跳过受影响的模型对；其余有效模型对继续比较。</li><li>原始输入只保留在数据源。</li></ul>
-    </details>`;
+    }).join('<span class="list-separator" aria-label="对比">↔</span>')}</li>`).join("")}</ul>`);
 }
 function flowHtml() {
   const data = state.data;
@@ -91,7 +74,7 @@ function flowHtml() {
       `<button class="table-link" data-open-stage="${stage.id}">${stage.name}</button><span class="table-sub">${stage.unit}</span>`,
       `${escapeHtml(stage.input)}<span class="table-sub">${escapeHtml(stage.output)}</span>`, escapeHtml(stage.dependency),
     ]))))
-    + section("判决与证据", `<ul class="rule-list">${data.flow.rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul><details class="reference-disclosure"><summary>流程来源</summary><div class="definition-source">${data.flow.sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></details>`)
+    + section("判决与证据", `<ul class="rule-list">${data.flow.rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join("")}</ul><section class="reference-disclosure"><header>流程来源</header><div class="flow-source">${data.flow.sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></section>`)
     + section("保存位置", table(["内容", "文件"], [
       ...data.stages.map((stage) => row([stage.name, stage.id === "rewrite" ? escapeHtml(stage.file)
         : stage.file.split(" / ").map((file) => `<code>${escapeHtml(data.storage.runs)}/&lt;run-id&gt;/results/${escapeHtml(file)}</code>`).join("<br>")])),
@@ -99,25 +82,6 @@ function flowHtml() {
       row(["运行 / 评测日志", "<code>log/runtime.log · log/evaluation.log</code>"]),
     ]))
     + `<div class="reference-columns">${section("执行预算", settings(data.execution))}${section("聚类约束", settings(data.clustering))}</div>`;
-}
-function resolveRef(schema, root) {
-  if (!schema?.$ref?.startsWith("#/")) return schema;
-  return schema.$ref.slice(2).split("/").reduce((value, part) => value?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], root) ?? schema;
-}
-function schemaHtml(schema, root = schema, name = "root", required = false, depth = 0) {
-  schema = resolveRef(schema, root);
-  if (typeof schema === "boolean") return `<p>${schema ? "允许任意值" : "不允许值"}</p>`;
-  const type = Array.isArray(schema.type) ? schema.type.join(" | ") : schema.type || (schema.enum ? "enum" : schema.$ref || "union");
-  const constraints = [schema.enum ? schema.enum.map((item) => JSON.stringify(item)).join(" · ") : "", schema.additionalProperties === false ? "禁止额外字段" : "", ...[["minItems", "最少条目"], ["maxItems", "最多条目"], ["minLength", "最短字符"], ["maxLength", "最长字符"], ["minimum", "最小值"], ["maximum", "最大值"]].filter(([key]) => schema[key] !== undefined).map(([key, title]) => `${title} ${schema[key]}`), schema.uniqueItems ? "条目唯一" : ""].filter(Boolean);
-  const children = [
-    ...Object.entries(schema.properties || {}).map(([key, value]) => schemaHtml(value, root, key, schema.required?.includes(key), depth + 1)),
-    ...(schema.items ? [schemaHtml(schema.items, root, "[ ]", false, depth + 1)] : []),
-    ...(schema.additionalProperties && typeof schema.additionalProperties === "object" ? [schemaHtml(schema.additionalProperties, root, "{ key }", false, depth + 1)] : []),
-    ...(schema.oneOf || schema.anyOf || schema.allOf || []).map((value, index) => schemaHtml(value, root, `分支 ${index + 1}`, false, depth + 1)),
-  ].join("");
-  const head = `<code>${escapeHtml(name)}</code><span class="schema-type">${escapeHtml(type)}</span>${required ? '<span class="schema-required">必填</span>' : ""}`;
-  const notes = constraints.length || schema.description ? `<p class="schema-constraints">${escapeHtml([schema.description, ...constraints].filter(Boolean).join("；"))}</p>` : "";
-  return children ? `<details class="schema-node" ${depth < 1 ? "open" : ""}><summary>${head}</summary>${notes}<div class="schema-children">${children}</div></details>` : `<div class="schema-leaf"><div>${head}</div>${notes}</div>`;
 }
 function contractHtml() {
   const isExport = state.stage === "exports";
@@ -132,46 +96,39 @@ function contractHtml() {
   const prompt = typeof value === "string";
   const tools = state.document === "tools";
   const sources = isExport ? state.data.exportSources[state.document] : isShared ? [state.data.sharedPrompts[state.document].source] : profile.sources[tools ? "toolSchemas" : state.document];
-  const tabs = (keys, name) => `<nav class="document-tabs" aria-label="${name}">${keys.map((key) => `<button type="button" data-document="${key}" aria-pressed="${key === state.document}">${escapeHtml(documentNames[key] || key)}</button>`).join("")}</nav>`;
-  return `<div class="contract-layout"><nav class="contract-stages" aria-label="评测阶段">${[...state.data.stages, { id: "shared", name: "共用提示词" }, { id: "exports", name: "正式导出" }].map(({ id, name }) => `<button type="button" data-stage="${id}" aria-pressed="${id === state.stage}">${escapeHtml(name)}</button>`).join("")}</nav><section class="contract-content">
-    <header class="section-heading"><h2>${escapeHtml(stage?.name || (isShared ? "共用提示词" : "正式导出"))}</h2>${stage ? `<span class="muted">${escapeHtml(stage.unit)}</span>` : ""}</header>
-    ${stage?.profiles.length > 1 ? `<nav class="profile-tabs" aria-label="阶段流程">${stage.profiles.map((item) => `<button type="button" data-profile="${escapeHtml(item.id)}" aria-pressed="${item.id === state.profile}">${escapeHtml(item.name)}</button>`).join("")}</nav>` : ""}
-    <div class="definition-documents">${isExport || isShared ? tabs(Object.keys(documents), isShared ? "共用提示词" : "正式导出 Schema") : tabs(Object.keys(profile.schemas), "Schema 定义") + tabs(Object.keys(profile.prompts), "提示词与文案") + (toolDocument ? tabs(["tools"], "工具定义") : "")}</div>
-    ${sources?.length ? sources.length > 1 ? `<details class="reference-disclosure definition-provenance"><summary>来源 · ${sources.length} 项</summary><div class="definition-source">${sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></details>` : `<p class="definition-source"><code>${escapeHtml(sources[0])}</code></p>` : ""}
-    ${tools ? `<dl class="tool-definitions">${Object.entries(profile.toolDescriptions).map(([name, description]) => `<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(description)}${profile.toolSchemas[name] ? `<details class="reference-disclosure"><summary>${name === "submit_evaluation" && profile.requestBoundSubmission ? "工具基础 Schema" : "工具 Schema"}</summary><pre class="schema-json">${escapeHtml(JSON.stringify(profile.toolSchemas[name], null, 2))}</pre></details>` : ""}</dd></div>`).join("")}</dl>`
-      : prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<div class="schema-tree">${schemaHtml(value)}</div>`}
-    ${!prompt && !tools ? `<details class="reference-disclosure"><summary>JSON 定义</summary><pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre></details>` : ""}
+  const select = (key, label, items) => `<label>${label}<select data-pick="${key}" aria-label="${label}">${items.map(([id, name]) => `<option value="${escapeHtml(id)}" data-${key}="${escapeHtml(id)}" ${state[key] === id ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label>`;
+  return `<div class="contract-layout"><div class="definition-filters">
+    ${select("stage", "阶段", [...state.data.stages, { id:"shared", name:"共用提示词" }, { id:"exports", name:"正式导出" }].map(item => [item.id, item.name]))}
+    ${stage?.profiles.length > 1 ? select("profile", "流程", stage.profiles.map(item => [item.id, item.name])) : ""}
+    ${select("document", "内容", [...Object.keys(documents), ...(toolDocument ? ["tools"] : [])].map(key => [key, documentNames[key] || key]))}
+    </div><section class="contract-content">
+    ${sources?.length ? sources.length > 1 ? `<section class="reference-disclosure definition-provenance"><header>来源 · ${sources.length} 项</header><div class="definition-source">${sources.map((source) => `<code>${escapeHtml(source)}</code>`).join("")}</div></section>` : `<p class="definition-source"><code>${escapeHtml(sources[0])}</code></p>` : ""}
+    ${tools ? `<dl class="tool-definitions">${Object.entries(profile.toolDescriptions).map(([name, description]) => `<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(description)}${profile.toolSchemas[name] ? `<section class="reference-disclosure"><header>${name === "submit_evaluation" && profile.requestBoundSubmission ? "工具基础 Schema" : "工具 Schema"}</header><pre class="schema-json">${escapeHtml(JSON.stringify(profile.toolSchemas[name], null, 2))}</pre></section>` : ""}</dd></div>`).join("")}</dl>`
+      : prompt ? `<div class="prompt-text">${escapeHtml(value)}</div>` : `<pre class="schema-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`}
   </section></div>`;
 }
 function render() {
   if (!state.data) return;
   const content = $("#reference-content");
-  if (content.dataset.view) state.disclosures.set(content.dataset.view, [...content.querySelectorAll("details")].map((detail) => detail.open));
-  const focused = document.activeElement;
-  const focusAttribute = ["section", "stage", "profile", "document"].find((name) => focused?.dataset[name]);
-  const focusValue = focusAttribute ? focused.dataset[focusAttribute] : null;
-  content.innerHTML = state.section === "inputs" ? inputsHtml() : state.section === "flow" ? flowHtml() : contractHtml();
-  content.dataset.view = `${state.section}:${state.stage}:${state.profile}:${state.document}`;
-  const saved = state.disclosures.get(content.dataset.view);
-  if (saved) [...content.querySelectorAll("details")].forEach((detail, index) => { detail.open = saved[index] === true; });
-  document.querySelectorAll("[data-section]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.section === state.section)));
-  if (focusAttribute) [...document.querySelectorAll(`[data-${focusAttribute}]`)].find((button) => button.dataset[focusAttribute] === focusValue)?.focus();
+  const focused = root.activeElement;
+  const pick = focused?.dataset.pick;
+  content.innerHTML = inputsHtml() + flowHtml() + contractHtml();
+  if (pick) root.querySelector(`[data-pick="${pick}"]`)?.focus({ preventScroll:true });
 }
-document.addEventListener("click", (event) => {
+root.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (button.dataset.section) state.section = button.dataset.section;
-  else if (button.dataset.stage) { state.stage = button.dataset.stage; state.profile = "default"; state.document = "result"; }
-  else if (button.dataset.openStage) { state.section = "contracts"; state.stage = button.dataset.openStage; state.profile = button.dataset.openProfile || "default"; state.document = "result"; }
+  if (button.dataset.stage) { state.stage = button.dataset.stage; state.profile = "default"; state.document = "result"; }
+  else if (button.dataset.openStage) { state.stage = button.dataset.openStage; state.profile = button.dataset.openProfile || "default"; state.document = "result"; }
   else if (button.dataset.profile) state.profile = button.dataset.profile;
   else if (button.dataset.document) state.document = button.dataset.document;
   else if (button.dataset.date) { state.date = state.date === button.dataset.date ? null : button.dataset.date; state.search = ""; state.page = 1; }
   else if (button.dataset.casePage) { state.page = Number(button.dataset.casePage); $("#coverage-cases").innerHTML = caseRows(); return; }
   else return;
   render();
-  if (button.dataset.openStage) (document.querySelector(`[data-profile="${state.profile}"]`) || document.querySelector(`[data-stage="${state.stage}"]`))?.focus();
+  if (button.dataset.openStage) root.querySelector('[data-pick="stage"]')?.focus({ preventScroll:true });
 });
-document.addEventListener("input", (event) => {
+root.addEventListener("input", (event) => {
   if (event.target.id !== "case-search") return;
   state.search = event.target.value;
   state.page = 1;
@@ -200,17 +157,14 @@ async function loadInventory() {
   } catch (error) { state.inventoryError = error.message; }
   render();
 }
-document.addEventListener("keydown", (event) => {
-  const button = event.target.closest(".page-tabs button, .document-tabs button, .contract-stages button, .profile-tabs button");
-  if (!button || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-  const items = [...button.parentElement.querySelectorAll("button")];
-  const index = items.indexOf(button);
-  const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
-    : (index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + items.length) % items.length;
-  event.preventDefault();
-  const attribute = button.dataset.section ? "section" : button.dataset.stage ? "stage" : button.dataset.profile ? "profile" : "document";
-  const value = items[next].dataset[attribute];
-  items[next].click();
-  document.querySelector(`[data-${attribute}="${value}"]`)?.focus();
+root.addEventListener("change", event => {
+  const key = event.target.dataset.pick;
+  if (!["stage", "profile", "document"].includes(key)) return;
+  state[key] = event.target.value;
+  if (key === "stage") { state.profile = "default"; state.document = "result"; }
+  render();
 });
 void init();
+
+}
+if (globalThis.document?.querySelector("#reference-content")) mountReference(document);

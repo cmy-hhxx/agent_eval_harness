@@ -758,6 +758,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         ...(rerouted ? { from_channel: model.provider, to_channel: taskModel().provider,
           reason: "model_quota_exhausted" } : {}),
         attempt_id: spec.attemptId, stage: task.stage, errors,
+        evaluator_model: model.model, evaluator_version: options.evaluatorVersion, channel: model.provider, attempt: state.attempts,
         detail: status?.errorDetail ?? record.status?.errorDetail,
       });
       if (pause) {

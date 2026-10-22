@@ -19,7 +19,7 @@ test("long attribution evidence keeps exact references and a bounded full-quote 
   const trace: RawInput = { messages: [{ role: "system", content: [{ text: `前文\n${long}\n后文` }] }] };
   const result = attributionResult(), entry = canonicalEvidence(evidenceInputId, 0, long, "/content/0/text", 3);
   result.correctness_evidence = [entry];
-  result.criterion_assessments[0]!.evidence = [entry];
+  result.criterion_assessments.forEach(row => { row.evidence = [entry]; });
   result.findings[0]!.evidence = [entry];
   result.findings[0]!.context_evidence = [entry];
   result.criterion_assessments[0]!.context_evidence = [entry];
@@ -111,7 +111,7 @@ test("Comparison binding projects blinded attribution quotes only in modelInput 
     result.task_analysis = structuredClone(rubric);
     if (label === "A") {
       result.findings[0]!.evidence = [canonicalEvidence(candidates.A.input_id, 2, "A组Fast：" + long)];
-      result.findings[0]!.assessment.requirement_index = 1;
+      result.findings[0]!.assessment.requirement_index = rubric.requirements.length - 1;
     }
     return [label, receipt(label, label === "criteria" ? rubric : result)];
   }));

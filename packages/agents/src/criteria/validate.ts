@@ -6,7 +6,7 @@ import resultSchema from "../../../../schemas/criteria/result.schema.json" with 
 import { criteriaText } from "@eval/prompts";
 import { criteriaSources, eligibleCriterionSource, requiredCriterionSource } from "./sources.js";
 import { matchCriterionSources } from "./resolve.js";
-import { criteriaGroups, criterionIdentity } from "./identity.js";
+import { commonCriteriaBudget, criteriaGroups, criterionIdentity } from "./identity.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const validateRequest = ajv.compile<unknown>(requestSchema);
@@ -18,7 +18,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validateResult(result)) throw new ValidationError(schemaIssues(validateResult.errors, result));
   const input = request.input as unknown as CriteriaInput;
   const value = result as TaskAnalysis;
-  const errors: ValidationIssue[] = [];
+  const errors: ValidationIssue[] = commonCriteriaBudget(value);
   const catalogue = criteriaSources(input).filter(eligibleCriterionSource);
   const requiredSources = new Set<number>();
   if (value.goal !== input.question || value.task_type !== criteriaText("task_type")) errors.push({

@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><body><main class="intake">
+<div class="intake-toolbar"><h2>结果与分析范围</h2><button id="analysis-refresh" class="button" type="button">刷新</button></div>
+<p id="analysis-error" role="alert" class="error" hidden></p>
+<div class="intake-toolbar"><label>任务<select id="analysis-task"></select></label><label>压缩包批次<select id="analysis-batch" multiple size="3"><option value="">全部批次</option></select></label></div>
+<div class="table-scroll"><table><thead><tr><th>选择</th><th>运行 / 批次</th><th>评测状态</th><th>归档</th><th>操作</th></tr></thead><tbody id="analysis-runs"></tbody></table></div>
+<div class="intake-toolbar"><button id="analysis-scope" class="button" type="button">查看所选范围</button><button id="analysis-preview" class="button" type="button" disabled>预检聚类</button><label>引擎<select id="analysis-engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label><button id="analysis-start" class="button button-primary" type="button" disabled>开始聚类</button></div>
+<p id="analysis-counts" role="status"></p><p id="analysis-plan" role="status"></p>
+<section id="analysis-coverage" hidden><div class="intake-toolbar"><h3>回答纳入清单</h3><label>纳入状态<select id="analysis-status"><option value="">全部</option><option value="available">本次可纳入</option><option value="included">已完成分析</option><option value="reserved">已占用 / 待恢复</option><option value="unfinished">评测未完成</option><option value="superseded">已被较新归因替代</option></select></label></div>
+<div class="table-scroll"><table><thead><tr><th>样本 / 模型</th><th>包 / 原始位置</th><th>评测 / 纳入状态</th><th>运行 / 分析作业</th><th>操作</th></tr></thead><tbody id="analysis-rows"></tbody></table></div>
+<nav class="intake-toolbar" aria-label="纳入清单分页"><button id="analysis-prev" class="button" type="button">上一页</button><span id="analysis-page"></span><button id="analysis-next" class="button" type="button">下一页</button></nav></section>
+<section id="analysis-archive" hidden><h3>归档产物</h3><p id="analysis-directory" class="intake-path"></p><div id="analysis-files"></div></section>
+<h2>分析作业</h2><div class="table-scroll"><table><thead><tr><th>作业 / 范围</th><th>状态</th><th>完成 / 总任务</th><th>操作</th></tr></thead><tbody id="analysis-jobs"></tbody></table></div>
+<section id="analysis-job-detail" hidden><h3>分析作业明细</h3><div id="analysis-job-body"></div></section>
+</main></body></html>

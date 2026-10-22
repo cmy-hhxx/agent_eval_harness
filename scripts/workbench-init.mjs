@@ -14,9 +14,12 @@ const dataRoot = path.resolve(args.values["data-root"]);
 const adminUser = args.values["admin-user"];
 const adminPassword = process.env.WORKBENCH_ADMIN_PASSWORD;
 if (!adminPassword) throw new Error("WORKBENCH_ADMIN_PASSWORD is required to initialize the admin login");
-const directories = ["config", "data/runs/comparison", "data/problems", "data/sources/automations/remote-evaluation", "state/automations/remote-evaluation",
+const directories = ["config", "data/problems", "data/sources/automations/remote-evaluation", "state/automations/remote-evaluation",
   "state/data-service", "state/log-writer", "state/workbench", "log", "python-packages", "secrets"];
 for (const directory of directories) await mkdir(path.join(runtime, directory), { recursive: true });
+for (const source of ["0_wencai", "1_aime", "2_ifind"])
+  for (const category of ["0_daily_eval", "1_task_eval", "test_eval"])
+    await mkdir(path.join(dataRoot, source, "eval_output", category), { recursive: true });
 
 async function exists(file) { return access(file).then(() => true, () => false); }
 async function writeOnce(file, value, mode) {
@@ -30,9 +33,12 @@ async function copyOnce(file, source) {
 }
 
 const host = JSON.parse(await readFile(path.join(root, "configs/host.json"), "utf8"));
-host.output = { kind: "directory", path: path.join(runtime, "data/runs/comparison") };
+host.output = { kind: "directory", path: path.join(dataRoot, "0_wencai/eval_output/0_daily_eval") };
 host.problemLibrary = { kind: "directory", path: path.join(runtime, "data/problems") };
 await writeOnce(path.join(runtime, "config/host.json"), JSON.stringify(host, null, 2) + "\n");
+await writeOnce(path.join(runtime, "config/test-eval.json"), JSON.stringify({ output: {
+  kind: "directory", path: path.join(dataRoot, "0_wencai/eval_output/test_eval"),
+} }, null, 2) + "\n");
 await copyOnce(path.join(runtime, "config/models.json"),
   path.join(root, (await exists(path.join(root, "configs/local/models.json"))) ? "configs/local/models.json" : "configs/models.example.json"));
 await copyOnce(path.join(runtime, "config/automations-host.json"), path.join(root, "configs/automations-host.json"));

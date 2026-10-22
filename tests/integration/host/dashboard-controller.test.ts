@@ -5,8 +5,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "../../fixtures/services.js";
-import { attributionResult, comparisonResult, criteriaResult } from "../../fixtures/comparison.js";
-import { caseResultView } from "@eval/workflows/comparison";
 import { editableDashboardSettings, readConfigSources } from "@eval/host-app/config";
 
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
@@ -20,7 +18,7 @@ async function controller(respond: (url: string, options?: RequestInit) => unkno
   let nextTimer = 0;
   // Exercise the real controller with an in-memory DOM and network; no browser or boot requests.
   const load = new Function("document", "createDashboardViews", "groupCaseCandidates", "fetch", "setTimeout", "clearTimeout",
-    source.slice(source.indexOf("\n") + 1, source.lastIndexOf("\n(async () => {")) +
+    "const root = document, options = {};\n" + source.slice(source.indexOf("const state"), source.lastIndexOf("\nconst ready =")) +
     "\nreturn { state, loadConfig, loadInputs, refresh, selectRun, loadCase, loadInput, loadCaseInputs, resetInputs, pickSample, launchPayload, preview, startRun, deleteRun, restoreRecall };",
   );
   const api = load(dom.window.document, createDashboardViews, groupCaseCandidates,
@@ -137,55 +135,7 @@ test("dashboard preserves explicitly disabled rewrites", async () => {
   } finally { page.dom.window.close(); }
 });
 
-test("comparison finding links reveal collapsed attribution details and preserve the opened finding", async () => {
-  const page = await controller(() => ({}));
-  try {
-    page.document.querySelector("#case-detail").innerHTML = '<a href="#target" data-finding-target="target">归因 #0</a><details class="comparison-attributions"><summary>归因明细</summary><details class="finding" id="target" data-finding="task.evaluations.left.findings.0"><summary>发现</summary></details></details>';
-    page.document.querySelector("[data-finding-target]").click();
-    assert.equal(page.document.querySelector(".comparison-attributions").open, true);
-    assert.equal(page.document.querySelector("#target").open, true);
-    assert(page.state.openFindings.has("task.evaluations.left.findings.0"));
-  } finally { page.dom.window.close(); }
-});
 
-test("criterion rule toggles survive case refreshes and retain a user's closed state", async () => {
-  const criteria = criteriaResult();
-  const criteriaTask = { id: "criteria-one", stage: "criteria", status: "succeeded", versions: ["a_fast"], attempts: 1 };
-  const pendingTask = { id: "attribution-one", stage: "attribution", status: "running", versions: ["a_fast"], attempts: 0 };
-  const page = await controller(url => {
-    assert(url.includes("/cases/detail"));
-    return { batch_id: "batch", case_id: "q1", question: "问题", tasks: [criteriaTask, pendingTask], candidates: [
-      { version: "a_fast", name: "A组Fast", input_id: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd" },
-    ] };
-  });
-  try {
-    page.state.selectedRun = "run-one";
-    await page.loadCase("batch", "q1");
-    page.state.taskResults[criteriaTask.id] = { result: { result: criteria } };
-    page.state.openTasks.add(criteriaTask.id);
-    pendingTask.attempts++;
-    await page.loadCase("batch", "q1");
-    let rule = page.document.querySelector(".criterion-rule");
-    assert.equal(rule.open, false);
-    const key = rule.dataset.criterionRule;
-    rule.open = true;
-    rule.dispatchEvent(new page.dom.window.Event("toggle"));
-    assert(page.state.expandedTexts.has(key), "the controller records a native rule disclosure");
-    const opened = rule;
-    pendingTask.attempts++;
-    await page.loadCase("batch", "q1");
-    rule = page.document.querySelector(".criterion-rule");
-    assert.notEqual(rule, opened, "another task's progress causes the detail view to redraw");
-    assert.equal(rule.open, true);
-    assert.equal(rule.querySelector(".text-content").textContent, criteria.requirements[0]!.acceptance_rule);
-    rule.open = false;
-    rule.dispatchEvent(new page.dom.window.Event("toggle"));
-    assert(!page.state.expandedTexts.has(key));
-    pendingTask.attempts++;
-    await page.loadCase("batch", "q1");
-    assert.equal(page.document.querySelector(".criterion-rule").open, false, "a closed rule stays closed after refreshing");
-  } finally { page.dom.window.close(); }
-});
 
 test("case refresh updates review lineage and business status without changing execution progress", async () => {
   const initial = { id: "initial", stage: "attribution", status: "succeeded", versions: ["a_fast"], attempts: 1 };
@@ -211,44 +161,11 @@ test("case refresh updates review lineage and business status without changing e
     assert.equal(page.document.querySelector('[data-task="initial"] .task-phase').textContent, "首次归因");
     assert.equal(page.document.querySelector('[data-task="review"] .task-phase').textContent, "归因复核 · 第 1 轮");
     assert.equal(page.document.querySelector('[data-task="review"] .task-review-reasons').textContent, "当前证据存在冲突");
-    assert(page.document.querySelector('[data-task="review"]').open);
+    assert.equal(page.document.querySelector('[data-task="review"]').tagName, "SECTION");
     review.review_of.reasons = ["补充核验原始材料"];
     await page.loadCase("batch", "q1");
     assert.equal(page.document.querySelector('[data-task="review"] .task-review-reasons').textContent, "补充核验原始材料");
-    assert(page.document.querySelector('[data-task="review"]').open, "refresh preserves the expanded review");
-  } finally { page.dom.window.close(); }
-});
-
-test("inline comparison findings retain their expanded state after another task progresses", async () => {
-  const comparison = { id: "comparison", stage: "comparison", status: "succeeded", versions: ["a_fast", "b_fast"], attempts: 1 };
-  const pending = { id: "pending", stage: "attribution", status: "running", versions: ["a_fast"], attempts: 0 };
-  const page = await controller(() => ({ batch_id: "batch", case_id: "q1", question: "问题", tasks: [comparison, pending], candidates: [
-    { version: "a_fast", name: "A组Fast", input_id: "a" }, { version: "b_fast", name: "B组Fast", input_id: "b" },
-  ] }));
-  try {
-    page.state.selectedRun = "run-one";
-    await page.loadCase("batch", "q1");
-    page.state.taskResults[comparison.id] = { result: caseResultView("comparison", {
-      ...comparisonResult(["a_fast", "b_fast"]), evaluations: { a_fast: attributionResult(), b_fast: attributionResult() },
-    }) };
-    page.state.openTasks.add(comparison.id);
-    pending.attempts++;
-    await page.loadCase("batch", "q1");
-    let finding = page.document.querySelector(".comparison-finding");
-    assert.equal(finding.open, false);
-    const key = finding.dataset.comparisonFinding;
-    finding.open = true;
-    finding.dispatchEvent(new page.dom.window.Event("toggle"));
-    assert(page.state.expandedTexts.has(key));
-    pending.attempts++;
-    await page.loadCase("batch", "q1");
-    finding = page.document.querySelector(".comparison-finding");
-    assert.equal(finding.open, true);
-    finding.open = false;
-    finding.dispatchEvent(new page.dom.window.Event("toggle"));
-    pending.attempts++;
-    await page.loadCase("batch", "q1");
-    assert.equal(page.document.querySelector(".comparison-finding").open, false);
+    assert.equal(page.document.querySelector('[data-task="review"]').tagName, "SECTION");
   } finally { page.dom.window.close(); }
 });
 
@@ -273,9 +190,9 @@ test("sample recall opens the requested run, model and persistent finding even o
     assert.equal(page.state.selectedRun, "recall-run");
     assert.equal(page.state.selectedCase.caseId, "q80");
     assert.equal(page.document.querySelector('[data-input="ae"]').getAttribute("aria-pressed"), "true");
-    assert.equal(page.document.querySelector('[data-task="attr-a"]').open, true);
+    assert.equal(page.document.querySelector('[data-task="attr-a"]').tagName, "SECTION");
     const finding = page.document.getElementById("finding-attr-a.findings.0");
-    assert.equal(finding.open, true);
+    assert.equal(finding.tagName, "SECTION");
     assert.equal(page.document.activeElement, finding);
   } finally { page.dom.window.close(); }
 });
@@ -332,41 +249,8 @@ test("a launched process keeps refreshing until its checkpoint appears, then sel
     await page.refresh();
     assert.equal(page.state.startingRun, null);
     assert.equal(page.state.selectedRun, "new-run");
-    assert.equal(page.document.querySelector("#config").open, false);
+    assert.equal(page.document.querySelector("#config").tagName, "SECTION");
     assert.equal(page.timers.size, 0, "a finished run stops polling");
-  } finally { page.dom.window.close(); }
-});
-
-test("run selection folds launch settings while refresh preserves a reopened draft and resume reveals it", async () => {
-  const run = { run_id: "layout-run", status: "finished", engine: "pi", progress: {}, stages: {} };
-  let runs = [run];
-  const page = await controller(url => url.endsWith("/runs") ? { runs, errors: [] }
-    : url.includes("/cases?") ? { cases: [], total: 0, page_size: 20 } : run);
-  try {
-    const config = page.document.querySelector("#config");
-    assert.equal(config.open, true);
-    await page.selectRun(run.run_id);
-    assert.equal(config.open, false);
-    assert.match(page.document.querySelector("#stage-summary").textContent, /对比/);
-    config.open = true;
-    page.document.querySelector("#sample-size").value = "19";
-    await page.refresh(true);
-    assert.equal(config.open, true);
-    assert.equal(page.document.querySelector("#sample-size").value, "19");
-    config.open = false;
-    config.scrollIntoView = () => {};
-    page.document.querySelector("[data-resume]").click();
-    assert.equal(config.open, true);
-    assert.equal(page.state.runId, run.run_id);
-    assert.equal(page.document.activeElement.id, "preview-button");
-    page.state.startingRun = { id: run.run_id, deadline: Date.now() + 120000 };
-    await page.refresh();
-    assert.equal(config.open, false, "registering a resumed run also folds the launch form");
-    assert.equal(page.document.querySelector("#sample-size").value, "19");
-    runs = [];
-    config.open = false;
-    await page.refresh();
-    assert.equal(config.open, true, "an unavailable selected run returns to launch settings");
   } finally { page.dom.window.close(); }
 });
 
@@ -520,7 +404,7 @@ test("a pending preview cannot enable launch after the seed changes", async () =
   } finally { page.dom.window.close(); }
 });
 
-test("case inputs load both sides only when opened, switch independently and discard stale responses", async () => {
+test("selected case inputs load both sides, switch independently and discard stale responses", async () => {
   const calls: string[] = [];
   let finishOld: ((value: unknown) => void) | undefined;
   const page = await controller((url) => {
@@ -536,7 +420,8 @@ test("case inputs load both sides only when opened, switch independently and dis
   try {
     page.state.selectedRun = "run-one";
     await page.loadCase("batch", "q1");
-    assert.equal(calls.filter((url) => url.includes("/inputs/")).length, 0);
+    assert.equal(calls.filter((url) => url.includes("/inputs/")).length, 2);
+    await new Promise(setImmediate);
     page.state.inputOpen = true;
     await page.loadCaseInputs();
     assert.deepEqual(page.state.selectedInputs, { a: "af", b: "bf" });
@@ -552,7 +437,7 @@ test("case inputs load both sides only when opened, switch independently and dis
   } finally { page.dom.window.close(); }
 });
 
-test("input disclosure toggles do not redraw cached or already loading selections", async () => {
+test("repeated input selection reuses pending and cached requests", async () => {
   let finishInput!: (value: unknown) => void;
   let inputRequests = 0;
   const page = await controller((url) => url.includes("/cases/detail")
@@ -566,12 +451,13 @@ test("input disclosure toggles do not redraw cached or already loading selection
     page.state.inputOpen = true;
     const loading = page.loadCaseInputs();
     const disclosure = page.document.querySelector(".input-disclosure");
-    disclosure.dispatchEvent(new page.dom.window.Event("toggle"));
+    await page.loadCaseInputs();
     assert.equal(page.document.querySelector(".input-disclosure"), disclosure, "a pending request must not redraw and trigger another toggle");
     finishInput({ answer: "A回答" });
     await loading;
+    await new Promise(setImmediate);
     const cached = page.document.querySelector(".input-disclosure");
-    cached.dispatchEvent(new page.dom.window.Event("toggle"));
+    await page.loadCaseInputs();
     assert.equal(page.document.querySelector(".input-disclosure"), cached, "a cached selection must settle without another toggle");
     assert.equal(inputRequests, 1);
   } finally { page.dom.window.close(); }

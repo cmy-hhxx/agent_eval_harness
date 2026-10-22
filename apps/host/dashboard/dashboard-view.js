@@ -111,13 +111,7 @@ export function createDashboardViews({
   // Long text expands in place: there is only one copy of the question or field.
   function textHtml(value, key, question = false) {
     const text = String(value ?? "—");
-    const collapsible = text.length > (question ? 180 : 360) || text.split("\n").length > 6;
-    const expanded = state.expandedTexts.has(key);
-    const id = `text-${encodeURIComponent(key)}`;
-    return `<div class="expandable-text ${question ? "question-text" : ""}">
-      <div id="${escapeHtml(id)}" class="text-content ${collapsible && !expanded ? "is-clamped" : ""}">${escapeHtml(text)}</div>
-      ${collapsible ? `<button class="text-toggle" type="button" data-expand-text="${escapeHtml(key)}" aria-controls="${escapeHtml(id)}" aria-expanded="${expanded}">${expanded ? "收起" : "展开"}</button>` : ""}
-    </div>`;
+    return `<div class="expandable-text ${question ? "question-text" : ""}"><div id="${escapeHtml(`text-${encodeURIComponent(key)}`)}" class="text-content">${escapeHtml(text)}</div></div>`;
   }
 
   const fieldLabels = {
@@ -201,7 +195,7 @@ export function createDashboardViews({
         return `<article class="criterion" data-criterion-kind="${kind}" data-criterion-index="${index}">
           <div class="criterion-heading"><h6 class="criterion-identity"><code>${kind}[${index}]</code><strong>${escapeHtml(criterion.id)}</strong></h6><span class="criterion-scope" title="${escapeHtml(criterion.applies_to.join(" / "))}">适用候选 · ${escapeHtml(scope)}</span></div>
           <div class="criterion-text"><div class="criterion-text-label">原文 <code>text</code></div>${textHtml(criterion.text, `${criterionPath}.text`)}</div>
-          <details class="criterion-rule" data-criterion-rule="${escapeHtml(rulePath)}" ${state.expandedTexts.has(rulePath) ? "open" : ""}><summary>${fieldLabel("acceptance_rule")}</summary><div class="text-content">${escapeHtml(criterion.acceptance_rule)}</div></details>
+          <section class="criterion-rule" data-criterion-rule="${escapeHtml(rulePath)}" ${state.expandedTexts.has(rulePath) ? "open" : ""}><header>${fieldLabel("acceptance_rule")}</header><div class="text-content">${escapeHtml(criterion.acceptance_rule)}</div></section>
         </article>`;
       }).join("")}</section>`).join("")}</div>`;
   }
@@ -223,8 +217,8 @@ export function createDashboardViews({
 
   function findingHtml(finding, index, path, rewrites, taskId) {
     const { finding_id, type, dimension, stage, importance, ...fields } = finding;
-    return `<details class="finding" id="${escapeHtml(`finding-${path}`)}" data-finding="${escapeHtml(path)}" ${state.openFindings.has(path) ? "open" : ""}><summary><span class="finding-head"><span class="finding-type ${escapeHtml(type)}">${escapeHtml(scalar(type, "type"))}</span><strong>findings[${index}]</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span><span class="finding-tags">${findingMetadataHtml(finding)}</span></summary>
-      <div class="finding-content"><a class="findings-return" href="#${encodeURIComponent(`findings-${taskId}`)}">返回目录</a>${fieldsHtml(fields, path, rewrites)}</div></details>`;
+    return `<section class="finding" id="${escapeHtml(`finding-${path}`)}" data-finding="${escapeHtml(path)}" ${state.openFindings.has(path) ? "open" : ""}><header><span class="finding-head"><span class="finding-type ${escapeHtml(type)}">${escapeHtml(scalar(type, "type"))}</span><strong>findings[${index}]</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span><span class="finding-tags">${findingMetadataHtml(finding)}</span></header>
+      <div class="finding-content"><a class="findings-return" href="#${encodeURIComponent(`findings-${taskId}`)}">返回目录</a>${fieldsHtml(fields, path, rewrites)}</div></section>`;
   }
 
   function attributionHtml(evaluation, path, rewritten) {
@@ -240,7 +234,7 @@ export function createDashboardViews({
   function comparisonText(value, path, rewrites) {
     const polished = rewrites.get(path);
     return `<div class="comparison-copy">${textHtml(polished ?? value, polished ? `${path}.rewritten` : path)}${polished !== undefined
-      ? `<details class="comparison-original"><summary>原文</summary>${textHtml(value, path)}</details>` : ""}</div>`;
+      ? `<section class="comparison-original"><header>原文</header>${textHtml(value, path)}</section>` : ""}</div>`;
   }
 
   function comparisonFindingHtml(evaluation, findingIndex, version, rowIndex, taskId) {
@@ -250,10 +244,10 @@ export function createDashboardViews({
     const rewrites = new Map((evaluation.rewritten?.rewrites || []).filter((item) => item.path.startsWith(prefix))
       .map((item) => [`${path}.${item.path.slice(prefix.length)}`, item.text]));
     const { finding_id, type, dimension, stage, importance, ...fields } = finding;
-    return `<details class="comparison-finding" data-comparison-finding="${escapeHtml(path)}" data-finding-index="${findingIndex}" ${state.expandedTexts.has(path) ? "open" : ""}>
-      <summary><span class="finding-head"><strong>归因 #${findingIndex}</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-tags">${findingMetadataHtml(finding)}</span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span></summary>
+    return `<section class="comparison-finding" data-comparison-finding="${escapeHtml(path)}" data-finding-index="${findingIndex}" ${state.expandedTexts.has(path) ? "open" : ""}>
+      <header><span class="finding-head"><strong>归因 #${findingIndex}</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-tags">${findingMetadataHtml(finding)}</span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span></header>
       <div class="comparison-finding-content">${fieldsHtml({ type, ...fields }, path, rewrites)}</div>
-    </details>`;
+    </section>`;
   }
 
   function comparisonHtml(row, taskId, rewrites) {
@@ -295,17 +289,17 @@ export function createDashboardViews({
       body = attributionHtml(row.evaluation, task.id, row.rewritten);
     } else if (task.stage === "comparison") {
       body = comparisonHtml(row, task.id, rewrites);
-      body += `<details class="comparison-details"><summary>裁决明细</summary>` + ["status", "review_requests", "models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
+      body += `<section class="comparison-details"><header>裁决明细</header>` + ["status", "review_requests", "models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
         .filter((key) => row[key] !== undefined)
         .map((key) => sectionHtml(key, key === "task_analysis" ? taskAnalysisHtml(row[key], `${task.id}.${key}`, rewrites)
           : valueHtml(row[key], `${task.id}.${key}`, key, rewrites))).join("")
-        + sectionHtml("decisive_findings", valueHtml(row.decision_basis.decisive_findings, `${task.id}.decision_basis.decisive_findings`, "decisive_findings", rewrites)) + "</details>";
+        + sectionHtml("decisive_findings", valueHtml(row.decision_basis.decisive_findings, `${task.id}.decision_basis.decisive_findings`, "decisive_findings", rewrites)) + "</section>";
       const evaluationGroups = groupCaseCandidates(Object.keys(row.evaluations).map((version) => ({ version, name: row.models?.[version]?.version || version })));
-      body += `<details class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><summary>归因明细</summary><div class="case-columns">` + evaluationGroups.map((group) =>
+      body += `<section class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><header>归因明细</header><div class="case-columns">` + evaluationGroups.map((group) =>
         `<section class="case-column" data-version-group="${escapeHtml(group.id)}"><h4 class="case-column-heading">${escapeHtml(group.name)}</h4>${group.candidates.map(({ version, name }) => {
           const { rewritten, ...evaluation } = row.evaluations[version];
           return `<section class="model-evaluation"><h6>${escapeHtml(name)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
-        }).join("")}</section>`).join("") + "</div></details>";
+        }).join("")}</section>`).join("") + "</div></section>";
     } else if (task.stage === "criteria") {
       body = taskAnalysisHtml(row.result, task.id, rewrites);
     } else if (task.stage === "clustering") {
@@ -316,7 +310,7 @@ export function createDashboardViews({
   }
 
   function taskHtml(task) {
-    const open = state.openTasks.has(task.id);
+    const open = true;
     const versions = groupCaseCandidates(task.versions.map((version) => ({
       version, name: state.caseDetail?.candidates.find((candidate) => candidate.version === version)?.name || version,
     }))).flatMap((group) => group.candidates.map((candidate) => candidate.name));
@@ -336,13 +330,13 @@ export function createDashboardViews({
     ].filter(Boolean);
     const reviewReasons = task.review_of?.reasons.length
       ? `<section class="task-review"><h4>复核原因</h4><ul class="task-review-reasons">${task.review_of.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></section>` : "";
-    return `<details class="task-detail" data-task="${escapeHtml(task.id)}" ${open ? "open" : ""}>
-      <summary><span class="task-heading"><strong class="task-name">${escapeHtml(scope)}</strong>${phase ? `<span class="task-phase">${escapeHtml(phase)}</span>` : ""}</span><span class="task-status ${escapeHtml(displayStatus)}">${escapeHtml(label(displayStatus))}</span></summary>
+    return `<section class="task-detail" data-task="${escapeHtml(task.id)}" ${open ? "open" : ""}>
+      <header><span class="task-heading"><strong class="task-name">${escapeHtml(scope)}</strong>${phase ? `<span class="task-phase">${escapeHtml(phase)}</span>` : ""}</span><span class="task-status ${escapeHtml(displayStatus)}">${escapeHtml(label(displayStatus))}</span></header>
       <div class="task-content"><div class="task-meta-row">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
         ${reviewReasons}
         ${task.reason ? `<p class="inline-error">${escapeHtml(taskReasonText(task.reason))}</p>` : ""}
         ${task.status === "succeeded" ? `<div class="task-result" data-result-for="${escapeHtml(task.id)}">${resultNodeHtml(task.id, open)}</div>` : ""}
-      </div></details>`;
+      </div></section>`;
   }
 
   function renderDetail() {
@@ -361,7 +355,7 @@ export function createDashboardViews({
     const standardAnswer = detail.ground_truth?.available
       ? `<section class="standard-answer"><h3>标准答案</h3>${textHtml(typeof detail.ground_truth.value === "string" ? detail.ground_truth.value : JSON.stringify(detail.ground_truth.value, null, 2), "ground_truth")}</section>` : "";
     $("#case-detail").innerHTML = `<header class="detail-heading"><div class="section-heading"><h2>问题</h2><span class="case-identity">${escapeHtml(detail.batch_id)} / ${escapeHtml(detail.case_id)}</span></div>${textHtml(detail.question, "question", true)}${standardAnswer}</header>
-      <details class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><summary><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></summary><div class="input-content case-columns">${inputs}</div></details>
+      <section class="detail-section input-disclosure" ${state.inputOpen ? "open" : ""}><header><strong>评测输入</strong><span class="section-meta">${candidates.length} 个版本</span></header><div class="input-content case-columns">${inputs}</div></section>
       ${["criteria", "attribution", "comparison"].map((stage) => {
         const tasks = detail.tasks.filter((task) => task.stage === stage);
         if (!tasks.length) return "";

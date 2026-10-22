@@ -12,3 +12,4 @@ export * from "./input-snapshot.js";
 export * from "./case-metadata.js";
 export * from "./statistics-log.js";
 export * from "./run-deletion.js";
+export * from "./run-artifacts.js";

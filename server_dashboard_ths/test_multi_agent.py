@@ -176,7 +176,7 @@ class MultiAgentTest(unittest.TestCase):
             self.aime.process_archives(worker.app.archive_signature(self.aime.archive_dir))
         self.assertEqual(opened, ["ainvest_20261014_020000.7z"])
         self.assertEqual(len(self.read(self.aime, "aime_fast")), 2)
-        self.assertEqual(self.read(self.aime, "aime_fast")[0]["messages"][-1]["content"], "new")
+        self.assertEqual(self.read(self.aime, "aime_fast")[0]["messages"][-1]["content"], "old")
         self.assertEqual((expert.read_bytes(), expert.stat().st_mtime_ns), before)
         with patch.object(worker.app, "SevenZipFile", side_effect=AssertionError("must not replay")):
             self.aime.process_archives(worker.app.archive_signature(self.aime.archive_dir))
@@ -227,32 +227,15 @@ class MultiAgentTest(unittest.TestCase):
         self.assertEqual((target.read_bytes(), target.stat().st_mtime_ns), before)
 
     def test_new_archive_parts_hold_at_most_one_hundred_packages(self):
+        archive_day = self.aime.archived_dir / "2026-10-14"
+        archive_day.mkdir(parents=True)
         for index in range(101):
-            (self.aime.archive_dir / f"aime_20261014_{index:06d}.7z").write_bytes(b"raw")
-        signature = worker.app.archive_signature(self.aime.archive_dir)
-        worker.app.write_json_atomic(self.aime.root_archive_state_file, {"archives": signature, "dates": [], "failed_archives": []})
-        self.aime.archive_processed(signature)
+            (archive_day / f"aime_20261014_{index:06d}.7z").write_bytes(b"raw")
+        self.aime.organize_archives()
         parts = sorted(self.aime.archived_dir.glob("*/part-*"))
         self.assertEqual([len(list(part.glob("*.7z"))) for part in parts], [100, 1])
         self.assertEqual(self.aime.organize_archives()["packages"], 101)
 
-    def test_daily_inspection_is_built_into_the_worker_loop(self):
-        now = [100000]
-        loops = [0]
-        def sleep(_):
-            loops[0] += 1
-            if loops[0] == 3:
-                raise StopIteration()
-            now[0] += 43200
-        with patch.object(worker.app.time, "time", side_effect=lambda: now[0]), \
-             patch.object(worker.app.time, "monotonic", side_effect=lambda: now[0]), \
-             patch.object(worker.app.time, "sleep", side_effect=sleep), \
-             patch.object(self.aime, "process_archives"), patch.object(self.aime, "archive_processed"), \
-             patch.object(self.aime, "organize_archives") as inspect:
-            with self.assertRaises(StopIteration):
-                self.aime.processing_loop()
-        self.assertEqual(inspect.call_count, 2)
-        self.assertTrue(self.aime.daily_archive_check)
 
     @unittest.skipUnless(HAS_PY7ZR, "real 7z requires requirements.txt")
     def test_real_archive_handles_ifind_openai_blocks_and_multiple_dates(self):

@@ -7,8 +7,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const fixturePath = path.join(root, "tests/fixtures/search-audit.json");
 const usage = `Financial search audit (explicit paid network run)
 
-  node scripts/search-audit.mjs --live --output .artifacts/search-audit-<run>
-  node scripts/search-audit.mjs --live --case apple-annual-sales --output .artifacts/search-audit-<rerun>
+  node scripts/search-audit.mjs --live --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/search-audit-<run>
+  node scripts/search-audit.mjs --live --case apple-annual-sales --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/search-audit-<rerun>
 
 Requires current npm run build:app output and SEARCH_API_KEY in the root config.ini [environment].
 Without --live and --output the script makes no requests. --case may be repeated.
@@ -126,7 +126,8 @@ async function main() {
   const apiKey = settings.environment.SEARCH_API_KEY?.trim();
   if (!apiKey) throw new Error("SEARCH_API_KEY is required for --live");
   const { createSerperSearch, createWebReader } = await import("@eval/tools");
-  const output = path.resolve(root, values.output);
+  const { testEvaluationOutput } = await import("@eval/host-app/config");
+  const output = testEvaluationOutput(values.output, values.output);
   await mkdir(output, { recursive: true });
   const reportPath = path.join(output, "results.json");
   const summaryPath = path.join(output, "summary.json");

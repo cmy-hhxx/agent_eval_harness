@@ -13,7 +13,7 @@ test("reattribute CLI previews bounded per-model expansion and rejects full-disc
   const fixture = await attributionPilotFixture(); t.after(() => rm(fixture.directory, { recursive: true, force: true }));
   const configFile = path.join(fixture.directory, "host.json"); await writeJson(configFile, { ...fixture.baseConfig, evaluatorVersion: fakeEvaluatorVersion });
   const args = [path.join(ROOT, "dist/tests/fixtures/cli.js"), fixture.directory, "reattribute", "--run-id", "pilot", "--pilot-per-model", "3",
-    "--output", path.join(fixture.directory, "attribution"), "--config", path.join(ROOT, "configs/host.json"), "--config", configFile];
+    "--output", path.dirname(fixture.run), "--config", path.join(ROOT, "configs/host.json"), "--config", configFile];
   const file = path.join(fixture.run, "state.json"), before = await readFile(file, "utf8"), execute = promisify(execFile);
   const result = await execute(process.execPath, args, { env: process.env });
   const summary = JSON.parse(result.stdout); assert.equal(summary.pilot_answers, 12);

@@ -159,7 +159,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.models.judge?.thinking, "medium");
   assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
-  assert.equal(host.evaluation.output.path, path.join(ROOT, "data/runs/comparison"));
+  assert.equal(host.evaluation.output.path, "/mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval");
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
   assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);
@@ -526,7 +526,9 @@ test("image observations require an actual image tool audit", async () => {
       task = plan.tasks.find((item) => item.stage === "attribution")!,
       result = attributionResult(false, "2+2=4", false, task.inputIds.answer!),
       audit = emptyAudit();
-    result.criterion_assessments[0].evidence![0] = canonicalEvidence(task.inputIds.answer!, 1, "2+2=4", "/content/0/text");
+    result.criterion_assessments.forEach(row => {
+      row.evidence![0] = canonicalEvidence(task.inputIds.answer!, 1, "2+2=4", "/content/0/text");
+    });
     result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
     result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);

@@ -1,4 +1,6 @@
-const $ = (id) => document.getElementById(id);
+
+export function mountAutomation(root, options = {}) {
+const $ = (id) => root.getElementById(id);
 const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const number = (value) => Number(value ?? 0).toLocaleString("zh-CN");
 const percent = (value) => value == null ? "暂无用量" : value.toLocaleString("zh-CN", { style: "percent", maximumFractionDigits: 1 });
@@ -15,17 +17,15 @@ let data, busy = false, connected = false, timer, allocationRevision = 0;
 const savingAllocations = new Set();
 const pageSize = 10;
 const pages = Object.fromEntries(["date", "activity", "mongo-progress", "mongo", "delivery"].map((id) => [id, 0]));
-const tabs = [...document.querySelectorAll('[role="tab"]')];
-const expandedDates = new Set();
-let panel = "dates";
+let sourceId = options.source || new URL(location.href).searchParams.get("source") || "", generation = 0;
 
 function errorDetails(value, key, label) {
   if (!value) return "";
   const review = /^Comparison remains unresolved: ([\w.-]+(?:, [\w.-]+)*)$/.exec(value);
   const ids = review?.[1].split(", ");
-  const title = ids ? `对比待复核 · ${number(ids.length)} 项` : `查看${label}`;
+  const title = ids ? `对比待复核 · ${number(ids.length)} 项` : label;
   const detail = ids ? `Comparison remains unresolved:\n${ids.join("\n")}` : value;
-  return `<details class="row-error" data-error-key="${escape(key)}"><summary>${escape(title)}</summary><pre tabindex="0" aria-label="${escape(label)}完整详情">${escape(detail)}</pre></details>`;
+  return `<section class="row-error" data-error-key="${escape(key)}"><header>${escape(title)}</header><pre tabindex="0" aria-label="${escape(label)}完整详情">${escape(detail)}</pre></section>`;
 }
 
 function renderSources() {
@@ -33,19 +33,18 @@ function renderSources() {
   for (const source of data.sources) {
     let link = [...nav.children].find(node => node.dataset.source === source.id);
     if (!link) {
-      link = document.createElement("a");
+      link = document.createElement("button");
       link.dataset.source = source.id;
       link.innerHTML = "<strong></strong><span></span>";
       nav.append(link);
     }
-    link.href = `/runtime/?source=${encodeURIComponent(source.id)}`;
+    link.type = "button";
     link.querySelector("strong").textContent = source.name;
     link.querySelector("span").textContent = `${source.status === "running" && !source.dateCount ? "等待数据" : labels[source.status] ?? source.status} · ${number(source.dateCount)} 个日期`;
     if (source.id === data.id) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
   for (const link of [...nav.children]) if (!data.sources.some(source => source.id === link.dataset.source)) link.remove();
-  $("errors-link").href = `/runtime/errors?source=${encodeURIComponent(data.id)}`;
 }
 
 function renderLlm() {
@@ -60,7 +59,7 @@ function renderLlm() {
       container.append(form);
     }
     const input = form.querySelector("input"), saving = savingAllocations.has(source.sourceId);
-    if (!input.dataset.dirty && document.activeElement !== input) input.value = source.concurrency;
+    if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
     input.disabled = !connected || saving;
     form.querySelector("button").disabled = !connected || saving;
     form.querySelector("output").textContent = !connected ? "连接中断" : saving ? "正在保存" :
@@ -81,7 +80,7 @@ function retryText(at) {
 const retryCountdown = (at) => `<span class="retry-countdown" data-retry-at="${Number(at) || 0}">${retryText(at)}</span>`;
 const retrySchedule = (at) => `<span class="table-sub">${retryCountdown(at)}${at ? ` · ${time(at)}` : ""}</span>`;
 function updateCountdowns() {
-  for (const node of document.querySelectorAll("[data-retry-at]")) node.textContent = retryText(Number(node.dataset.retryAt));
+  for (const node of root.querySelectorAll("[data-retry-at]")) node.textContent = retryText(Number(node.dataset.retryAt));
 }
 
 function renderExecution() {
@@ -135,35 +134,6 @@ function pageRows(id, rows) {
   return rows.slice(start, start + pageSize);
 }
 
-function selectPanel(id) {
-  panel = tabs.some((tab) => tab.getAttribute("aria-controls") === id) ? id : "dates";
-  for (const tab of tabs) {
-    const active = tab.getAttribute("aria-controls") === panel;
-    tab.setAttribute("aria-selected", String(active));
-    tab.tabIndex = active ? 0 : -1;
-    $(tab.getAttribute("aria-controls")).hidden = !active;
-  }
-  $("date-filter-label").hidden = panel === "deliveries";
-  $("time-filter-label").hidden = panel === "dates";
-  $("date-total").hidden = panel !== "dates";
-  $("activity-total").hidden = panel !== "activity";
-  render();
-}
-
-for (const tab of tabs) tab.addEventListener("click", () => {
-  const id = tab.getAttribute("aria-controls");
-  history.replaceState(null, "", `#${id}`);
-  selectPanel(id);
-});
-document.querySelector('[role="tablist"]').addEventListener("keydown", (event) => {
-  const index = tabs.indexOf(event.target);
-  if (index < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-  event.preventDefault();
-  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-  tabs[next].focus(); tabs[next].click();
-});
-window.addEventListener("hashchange", () => selectPanel(location.hash.slice(1)));
-
 const inputCount = (rows) => rows ? Object.values(rows).reduce((a, b) => a + b, 0) : undefined;
 const inputsMatch = (job) => job.downloaded && Object.entries(job.observed).every(([model, count]) => job.downloaded[model] === count);
 const confirmedMongo = (job) => [...(job.mongoHistory ?? []), ...(job.mongo?.status === "completed" && job.mongo.counts ? [{ ...job.mongo, verified: false }] : []),
@@ -185,8 +155,8 @@ function renderFlow() {
   const uploading = data.jobs.find(job => job.mongo?.status === "running");
   const unconfirmed = data.jobs.filter(job => !confirmedMongo(job));
   const pendingOutputs = data.jobs.reduce((total, job) => total + Math.max(0, (job.summary?.readyComparisons ?? 0) - (confirmedMongo(job)?.counts.comparisons ?? 0)), 0);
-  $("lane-mongo").textContent = stopped || (uploading ? `${uploading.date} · 上传中` : data.jobs.some(job => job.mongo?.status === "retry") ? "等待重试" : "等待增量交付");
-  $("lane-mongo-queue").textContent = unconfirmed.length ? `${number(unconfirmed.length)} 日期未登记` : `待传输出 ${number(pendingOutputs)} 条`;
+  $("lane-mongo").textContent = !data.publishMongo ? "本地保存" : stopped || (uploading ? `${uploading.date} · 上传中` : data.jobs.some(job => job.mongo?.status === "retry") ? "等待重试" : "等待增量交付");
+  $("lane-mongo-queue").textContent = !data.publishMongo ? "" : unconfirmed.length ? `${number(unconfirmed.length)} 日期未登记` : `待传输出 ${number(pendingOutputs)} 条`;
   const statistics = data.statistics, deliveries = data.statisticsDeliveries ?? [];
   const pendingDeliveries = deliveries.filter(item => item.status !== "uploaded");
   $("lane-log").textContent = !data.publishStatisticsLog ? "已关闭" : stopped ||
@@ -214,10 +184,9 @@ function downloadState(job) {
 
 function render() {
   if (!data) return;
-  const focusedDate = document.activeElement?.dataset?.dateDetails;
-  const disclosures = new Map([...document.querySelectorAll(".row-error")].map(node => [node.dataset.errorKey, {
-    open: node.open, top: node.querySelector("pre").scrollTop, left: node.querySelector("pre").scrollLeft,
-    focused: node.contains(document.activeElement) ? document.activeElement.tagName.toLowerCase() : undefined,
+  const disclosures = new Map([...root.querySelectorAll(".row-error")].map(node => [node.dataset.errorKey, {
+    top: node.querySelector("pre").scrollTop, left: node.querySelector("pre").scrollLeft,
+    focused: node.contains(root.activeElement) ? root.activeElement.tagName.toLowerCase() : undefined,
   }]));
   renderSources();
   renderLlm();
@@ -225,16 +194,17 @@ function render() {
   const selected = $("date-filter").value;
   const jobs = data.jobs.filter((job) => !selected || job.date === selected);
   const range = $("time-filter").value;
-  $("reset-filters").disabled = (panel === "deliveries" || !selected) && (panel === "dates" || range === "24");
+  $("reset-filters").disabled = !selected && range === "24";
   // Bucket-aligned ranges are explicit below; a partial hour is never presented as an exact rolling count.
   const cutoff = range === "all" ? 0 : Math.floor(data.sampledAt / 3600000) * 3600000 - (Number(range) - 1) * 3600000;
-  document.title = `自动化评测 · ${data.sourceName}`;
+
   $("source-url").textContent = data.sourceUrl;
   $("pipeline-status").innerHTML = connected ? status(data.status) : "连接中断";
   $("sample-time").textContent = `更新 ${time(data.sampledAt)}`;
   $("poll-time").textContent = time(data.lastPollAt);
   $("log-path").textContent = data.logFile;
   $("mongo-collection").textContent = data.mongoCollection;
+  $("mongo-deliveries").hidden = !data.publishMongo;
   const errors = [data.pollError, data.reportError].filter(Boolean);
   $("pipeline-errors").hidden = !errors.length;
   $("pipeline-errors").textContent = errors.join("\n");
@@ -252,15 +222,15 @@ function render() {
     const local = inputCount(job.downloaded);
     const retrying = job.execution?.retryingTasks ?? 0, retries = counts("failed") + counts("cancelled") + retrying;
     const pool = job.summary ? `待执行 ${number(Math.max(0, counts("pending") - retrying))}${retries ? sub(`${job.evaluation === "blocked" ? "已暂停" : "待重试"} ${number(retries)}`, "tone-warning") : ""}${counts("blocked") ? sub(`依赖阻塞 ${number(counts("blocked"))}`) : ""}${counts("running") ? sub(`进行中 ${number(counts("running"))}`, "tone-active") : ""}` : "—";
-    const open = expandedDates.has(job.date), detailId = `tasks-${job.date}`;
+    const detailId = `tasks-${job.date}`;
     return `<tr class="date-row"><td><strong>${escape(job.date)}</strong>${job.adopted ? sub("历史已完成") : ""}</td>
       <td class="remote-inputs">${number(inputCount(job.observed))}</td><td class="local-inputs">${local === undefined ? "—" : number(local)}${job.summary?.issues ? sub(`输入异常 ${number(job.summary.issues)}`, "tone-error") : ""}</td>
       <td>${downloadState(job)}</td>
       <td>${job.evaluation === "evaluating" && data.llm.sources.find(source => source.sourceId === data.id)?.concurrency === 0 ? status("pending", "LLM 已暂停") : status(job.evaluation)}${job.evaluation === "retry" ? retrySchedule(job.nextEvaluationAt) : ""}${job.execution?.retryingTasks ? sub(`任务重试 ${number(job.execution.retryingTasks)} 个`, "tone-warning") + retrySchedule(job.execution.nextRetryAt) : ""}${error}</td>
       <td class="completed-comparisons">${job.summary ? number(job.summary.readyComparisons) : "—"}</td>
-      <td><button class="details-toggle" type="button" data-date-details="${escape(job.date)}" aria-label="${escape(job.date)} 任务明细" aria-expanded="${open}" aria-controls="${escape(detailId)}">${open ? "收起" : "展开"}</button></td></tr>
-      <tr class="date-detail-row" id="${escape(detailId)}"${open ? "" : " hidden"}><td colspan="7"><dl class="task-facts" aria-label="${escape(job.date)} 任务明细"><div><dt>任务池</dt><dd class="task-pool">${pool}</dd></div>${cells}<div><dt>缓存命中率</dt><dd class="cache-rate">${percent(job.cache?.hitRate)}</dd></div></dl>${job.summary?.skipped || job.evaluation === "retry" ? `<div class="task-detail-meta">${job.summary?.skipped ? `<span>预检跳过 ${number(job.summary.skipped)}</span>` : ""}${job.evaluation === "retry" ? `<span>连续失败 ${number(job.evaluationAttempts)} 轮</span>` : ""}</div>` : ""}</td></tr>`;
-  }).join("") || empty(7, "暂无日期");
+      </tr>
+      <tr class="date-detail-row" id="${escape(detailId)}"><td colspan="6"><dl class="task-facts" aria-label="${escape(job.date)} 任务明细"><div><dt>任务池</dt><dd class="task-pool">${pool}</dd></div>${cells}<div><dt>缓存命中率</dt><dd class="cache-rate">${percent(job.cache?.hitRate)}</dd></div></dl>${job.summary?.skipped || job.evaluation === "retry" ? `<div class="task-detail-meta">${job.summary?.skipped ? `<span>预检跳过 ${number(job.summary.skipped)}</span>` : ""}${job.evaluation === "retry" ? `<span>连续失败 ${number(job.evaluationAttempts)} 轮</span>` : ""}</div>` : ""}</td></tr>`;
+  }).join("") || empty(6, "暂无日期");
 
   const hours = new Map();
   for (const job of jobs) for (const hour of job.hours) {
@@ -308,45 +278,32 @@ function render() {
     <td>${time(delivery.startedAt)}</td><td>${time(delivery.completedAt)}</td>
     <td>${delivery.counts ? number(delivery.counts.inputs) : "—"}</td><td>${delivery.counts ? number(delivery.counts.comparisons) : "—"}</td>
     <td>${delivery.counts ? `新增 ${number(delivery.counts.inserted)}${sub(`更新 ${number(delivery.counts.updated)}`)}` : "—"}</td></tr>`).join("") || empty(7, "此时段暂无 MongoDB 同步记录");
-  for (const node of document.querySelectorAll(".row-error")) {
+  for (const node of root.querySelectorAll(".row-error")) {
     const previous = disclosures.get(node.dataset.errorKey);
     if (!previous) continue;
-    node.open = previous.open;
     node.querySelector("pre").scrollTop = previous.top;
     node.querySelector("pre").scrollLeft = previous.left;
     if (previous.focused) node.querySelector(previous.focused)?.focus({ preventScroll: true });
   }
-  if (focusedDate) [...document.querySelectorAll("[data-date-details]")].find(node => node.dataset.dateDetails === focusedDate)?.focus({ preventScroll: true });
 }
-
-$("date-rows").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-date-details]");
-  if (!button) return;
-  const date = button.dataset.dateDetails, open = !expandedDates.has(date);
-  if (open) expandedDates.add(date);
-  else expandedDates.delete(date);
-  button.setAttribute("aria-expanded", String(open));
-  button.textContent = open ? "收起" : "展开";
-  $(button.getAttribute("aria-controls")).hidden = !open;
-});
 
 async function refresh() {
   if (busy || savingAllocations.size) return;
   clearTimeout(timer);
   busy = true; $("refresh").disabled = true;
+  const version = generation;
   try {
     const query = new URLSearchParams();
-    const source = new URL(location.href).searchParams.get("source");
+    const source = sourceId;
     if (source) query.set("source", source);
     const revision = allocationRevision;
     const response = await fetch("/runtime/api/status?" + query, { cache: "no-store", signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`读取状态失败（HTTP ${response.status}）`);
     const next = await response.json();
     if (revision !== allocationRevision && data) next.llm = data.llm;
-    data = next;
-    const url = new URL(location.href);
-    url.searchParams.set("source", data.id);
-    history.replaceState(null, "", url);
+    if (version !== generation) return;
+    data = next; sourceId = data.id;
+    options.onSource?.(sourceId);
     connected = true;
     const selected = $("date-filter").value;
     $("date-filter").innerHTML = '<option value="">全部日期</option>' + data.jobs.map((job) => `<option value="${escape(job.date)}">${escape(job.date)}</option>`).join("");
@@ -354,6 +311,7 @@ async function refresh() {
     $("connection-error").hidden = true;
     render();
   } catch (error) {
+    if (version !== generation) return;
     connected = false;
     $("connection-error").hidden = false;
     $("connection-error").textContent = `连接中断：${error.message}${data ? `；保留 ${time(data.sampledAt)} 的状态` : ""}`;
@@ -362,7 +320,8 @@ async function refresh() {
     if (data) renderLlm();
   } finally {
     busy = false; $("refresh").disabled = false;
-    timer = setTimeout(refresh, 5000);
+    if (version !== generation) void refresh();
+    else timer = setTimeout(refresh, 5000);
   }
 }
 $("llm-allocations").addEventListener("input", event => {
@@ -404,10 +363,20 @@ function filterChanged() {
 $("date-filter").addEventListener("change", filterChanged);
 $("time-filter").addEventListener("change", filterChanged);
 $("reset-filters").addEventListener("click", () => {
-  if (panel !== "deliveries") $("date-filter").value = "";
-  if (panel !== "dates") $("time-filter").value = "24";
+  $("date-filter").value = "";
+  $("time-filter").value = "24";
   filterChanged();
 });
-selectPanel(location.hash.slice(1));
+$("source-nav").addEventListener("click", event => {
+  const button = event.target.closest("[data-source]");
+  if (!button || button.dataset.source === sourceId) return;
+  sourceId = button.dataset.source; generation++;
+  for (const id of Object.keys(pages)) pages[id] = 0;
+  $("date-filter").value = "";
+  void refresh();
+});
 setInterval(updateCountdowns, 1000);
 void refresh();
+
+}
+if (globalThis.document?.querySelector("#pipeline-status")) mountAutomation(document);

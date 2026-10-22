@@ -657,67 +657,78 @@ for (const exhausted of [false, true]) test(`completed SDK malformed arguments $
 });
 
 for (const reason of ["no-submission", "idle"] as const)
-  for (const scenario of ["disabled", "recovered", "exhausted"] as const)
-    test(`unsubmitted ${reason} interruptions ${scenario} respect the configured retry budget`, async () => {
-      const { directory, config, modelForStage } = await fixtureConfig();
-      let targetId: string | undefined, targetAttempts = 0, targetRuns = 0, retryAt: number | undefined;
-      const starts: number[] = [];
-      const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
-        targetId ??= options.spec.taskId;
-        const targeted = options.spec.taskId === targetId;
-        const fail = targeted && (++targetAttempts === 1 || scenario === "exhausted");
-        if (targeted) starts.push(Date.now());
-        let release = () => {};
-        return { async run() {
-          await inspectFor(options);
-          if (targeted) targetRuns++;
-          if (fail) {
-            if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
-            return;
+  for (const written of [false, true])
+    for (const scenario of ["disabled", "recovered", "exhausted"] as const)
+      test(`unsubmitted ${reason} interruptions ${scenario} respect the configured retry budget (written draft: ${written})`, async () => {
+        const { directory, config, modelForStage } = await fixtureConfig();
+        let targetId: string | undefined, targetAttempts = 0, targetRuns = 0, retryAt: number | undefined;
+        const starts: number[] = [];
+        let draft: unknown;
+        const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+          if (!written || options.spec.evaluation.id === "attribution") targetId ??= options.spec.taskId;
+          const targeted = options.spec.taskId === targetId;
+          const fail = targeted && (++targetAttempts === 1 || scenario === "exhausted");
+          if (targeted) starts.push(Date.now());
+          let release = () => {};
+          return { async run() {
+            await inspectFor(options);
+            if (targeted) targetRuns++;
+            if (targeted && written && options.spec.recovery) {
+              assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
+              assert.equal(options.spec.recovery.contentSubmissions, 0);
+            }
+            if (fail) {
+              if (written) {
+                draft = draftFor(options.spec, taskResult(options.spec));
+                assert.equal((await options.execute("edit_json", { path: "evaluation-draft.json", set_json: JSON.stringify(draft) })).isError, undefined);
+              }
+              if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
+              return;
+            }
+            const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+            assert.equal(result.isError, undefined, JSON.stringify(result));
+          }, async abort() { release(); }, async dispose() {} };
+        } }, path.join(directory, "worker"));
+        try {
+          const runId = `${reason}-${scenario}`;
+          const summary = await runEvaluation({ ...services, runId, output: config.output, config,
+            plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+            policy: { ...config.execution, idleTimeoutSeconds: reason === "idle" ? 1 : 10 }, concurrency: 1,
+            retries: scenario === "disabled" ? 0 : 1, retryDelaySeconds: .05, workerUrls: [worker.url],
+            signal: AbortSignal.timeout(20_000),
+            repository: { ...services.repository, async writeRun(run, saved) {
+              await services.repository.writeRun(run, saved);
+              if (targetId && retryAt === undefined) retryAt = saved.manifest.states[targetId]?.nextRetryAt;
+            } },
+          });
+          const saved = await readRunState(path.join(config.output.path, runId));
+          const state = saved.manifest.states[targetId!];
+          const attempts = scenario === "disabled" ? 1 : 2;
+          assert.equal(targetAttempts, attempts, "the configured budget bounds fresh attempts");
+          assert.equal(state.attempts, attempts);
+          assert.equal(state.nextRetryAt, undefined);
+          if (scenario === "disabled") assert.equal(retryAt, undefined);
+          else {
+            assert(retryAt, "the existing retry delay is persisted before the replacement attempt");
+            assert(starts[1] >= retryAt, "replacement attempts wait until the persisted retry deadline");
           }
-          const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
-          assert.equal(result.isError, undefined, JSON.stringify(result));
-        }, async abort() { release(); }, async dispose() {} };
-      } }, path.join(directory, "worker"));
-      try {
-        const runId = `${reason}-${scenario}`;
-        const summary = await runEvaluation({ ...services, runId, output: config.output, config,
-          plan: await buildPlan(config), modelForStage, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
-          policy: { ...config.execution, idleTimeoutSeconds: reason === "idle" ? 1 : 10 }, concurrency: 1,
-          retries: scenario === "disabled" ? 0 : 1, retryDelaySeconds: .05, workerUrls: [worker.url],
-          signal: AbortSignal.timeout(20_000),
-          repository: { ...services.repository, async writeRun(run, saved) {
-            await services.repository.writeRun(run, saved);
-            if (targetId && retryAt === undefined) retryAt = saved.manifest.states[targetId]?.nextRetryAt;
-          } },
-        });
-        const saved = await readRunState(path.join(config.output.path, runId));
-        const state = saved.manifest.states[targetId!];
-        const attempts = scenario === "disabled" ? 1 : 2;
-        assert.equal(targetAttempts, attempts, "the configured budget bounds fresh attempts");
-        assert.equal(state.attempts, attempts);
-        assert.equal(state.nextRetryAt, undefined);
-        if (scenario === "disabled") assert.equal(retryAt, undefined);
-        else {
-          assert(retryAt, "the existing retry delay is persisted before the replacement attempt");
-          assert(starts[1] >= retryAt, "replacement attempts wait until the persisted retry deadline");
-        }
-        assert.equal(summary.completed_comparisons, scenario === "recovered" ? 1 : 0);
-        if (scenario === "recovered") {
-          assert.equal(state.status, "succeeded");
-          assert(saved.receipts[targetId!]);
-        } else {
-          assert.equal(state.status, reason === "idle" ? "timed_out" : "failed");
-          assert.equal(state.reason, reason === "idle" ? "Model/tool idle timeout" : "Agent ended without an accepted submission");
-          assert.equal(state.failure?.errors[0]?.category, "interruption");
-          assert.equal(state.failure?.contentSubmissions, 0);
-          assert.equal(state.failure?.draft, undefined);
-          assert.equal(saved.receipts[targetId!], undefined);
-        }
-        assert.equal(targetRuns, reason === "idle" ? attempts : scenario === "recovered" ? 3 : 2 * attempts,
-          "only a normally stopped session receives one submission nudge");
-      } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
-    });
+          assert.equal(summary.completed_comparisons, scenario === "recovered" ? 1 : 0);
+          if (scenario === "recovered") {
+            assert.equal(state.status, "succeeded");
+            assert(saved.receipts[targetId!]);
+            assert.equal(saved.receipts[targetId!].submissionStats?.contentSubmissions, 1);
+          } else {
+            assert.equal(state.status, reason === "idle" ? "timed_out" : "failed");
+            assert.equal(state.reason, reason === "idle" ? "Model/tool idle timeout" : "Agent ended without an accepted submission");
+            assert.equal(state.failure?.errors[0]?.category, "interruption");
+            assert.equal(state.failure?.contentSubmissions, 0);
+            assert.deepEqual(state.failure?.draft, written ? draft : undefined);
+            assert.equal(saved.receipts[targetId!], undefined);
+          }
+          assert.equal(targetRuns, reason === "idle" ? attempts : scenario === "recovered" ? 3 : 2 * attempts,
+            "only a normally stopped session receives one submission nudge");
+        } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+      });
 
 test("a repair attempt that makes no submission retains its draft and counters for explicit resume", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
@@ -733,6 +744,7 @@ test("a repair attempt that makes no submission retains its draft and counters f
         if (attempts === 1 && draft === undefined) {
           draft = invalidDraft(options.spec);
           assert.equal((await submitFor(options, draft)).isError, true);
+          assert.equal((await options.execute("edit_json", { path: "evaluation-draft.json", set_json: JSON.stringify(draft) })).isError, undefined);
         } else assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
         return;
       }

@@ -115,7 +115,12 @@ for (const objective of [false, true])
             comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [aFast], assessments: {
               [aFast]: { status: "met", evidence_status: "established", summary: `【候选${aFast}】给出正确结果。`, finding_indices: [0] },
               [bFast]: { status: "unmet", evidence_status: "established", summary: `【候选${bFast}】结果错误。`, finding_indices: [0] },
-            } }],
+            } }, ...rubric.requirements.slice(1).map(criterion => ({ aspect: criterion.text, criterion_ids: [criterion.id],
+              importance: "low" as const, better_candidates: [], assessments: {
+                [aFast]: { status: "met" as const, evidence_status: "established" as const, summary: "本项已完成。", finding_indices: [] },
+                [bFast]: { status: ["r3", "r4"].includes(criterion.id) ? "unmet" as const : "met" as const,
+                  evidence_status: "established" as const, summary: "保留来源逐项结论。", finding_indices: [] },
+              } }))],
             decisive_findings: [
               { candidate: aFast, finding_index: 0 },
               { candidate: bFast, finding_index: 0 },

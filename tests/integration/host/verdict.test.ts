@@ -46,9 +46,11 @@ function group(labels: string[], meets: Record<string, boolean> = {}): Compariso
     ),
     decision_basis: {
       tradeoff: "并列。",
-      comparisons: [{ aspect: "计算结果", criterion_ids: ["r1"], importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { status: meets[label] === false ? "unmet" : "met", evidence_status: "established", summary: "给出计算结果。", finding_indices: [0] }]),
-      ) }],
+      comparisons: criteriaResult().requirements.map((criterion, index) => ({ aspect: criterion.text, criterion_ids: [criterion.id],
+        importance: "high", better_candidates: [], assessments: Object.fromEntries(
+          labels.map((label) => [label, { status: meets[label] === false && ["r1", "r3", "r4"].includes(criterion.id) ? "unmet" : "met",
+            evidence_status: "established", summary: "保留本项计算与交付判断。", finding_indices: index === 0 ? [0] : [] }]),
+        ) })),
       decisive_findings: labels.some(label => meets[label] === false) && labels.some(label => meets[label] !== false)
         ? labels.map(label => ({ candidate: label, finding_index: 0 })) : [],
     },
@@ -218,7 +220,7 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
     const markdown = await readFile(path.join(run, "task_summaries.md"), "utf8");
     assert.match(markdown, /## 同项对比/);
     assert.match(markdown, /\| 比较点 \| 重要性 \|/);
-    assert.match(markdown, /\| 计算结果 \| 高 \| 给出计算结果。 \| 给出计算结果。 \|/);
+    assert.match(markdown, /\| 完成用户所求结果。 \| 高 \| 保留本项计算与交付判断。 \| 保留本项计算与交付判断。 \|/);
     assert.match(markdown, /内容质量：.*都正确给出4/);
     assert.match(markdown, /完成耗时：.*1.2秒.*40秒/);
     assert.match(markdown, /总token：.*120.*1200/);

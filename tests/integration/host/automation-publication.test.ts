@@ -152,7 +152,7 @@ async function collect<T>(rows: AsyncIterable<T>): Promise<T[]> {
 
 test("Mongo sync forwards the configured topic for both input and result publication", async t => {
   const config = await loadAutomationConfig("configs/automations-post-training.json");
-  assert.equal(config.publication.topic, "后训练三模型专题评测（2026-10-19）");
+  assert.equal(config.publication.topic, "后训练双模型专项评测（2026-10-19）");
   const key = "TEST_TOPIC_MONGO_URI", previous = process.env[key];
   process.env[key] = "mongodb://mock";
   t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });

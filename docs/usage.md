@@ -10,9 +10,9 @@
 npm run eval -- preflight
 npm run eval -- run --engine pi --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json
-npm run eval -- status --run data/runs/comparison/pi-001
-npm run eval -- report --run data/runs/comparison/pi-001
-npm run eval -- validate --run data/runs/comparison/pi-001
+npm run eval -- status --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
+npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
+npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
 ```
 
 `preflight` 不调用模型，有输入问题退出码为 2。`run` 解析模型与密钥；执行退出码为 0 成功、2 有失败、130 中断。
@@ -64,16 +64,17 @@ npm run eval -- model-probe --engine prime --stage comparison --config configs/l
 
 ## 目录约定
 
-下表是 checkout 内开发默认值。生产运行时，`data/`、`log/`、配置和状态由外部 `runtime/` 路径替代；checkout 只保留代码、依赖和构建产物。生产目录与启动方式见[远程部署](deployment.md)。
+真实评测产物统一放在数据源的 `/mnt/fin_bench/eval_data/{source}/eval_output/` 下；不得写到 checkout 或 runtime 的其他目录。配置、流水线状态、输入快照与日志仍由外部 runtime 管理。生产目录与启动方式见[远程部署](deployment.md)。
 
 | 位置 | 内容 |
 |---|---|
 | configs/local/ | 不入库的本机覆盖配置 |
 | data/sources/ | 原始 JSONL，长期只保留在这里 |
 | data/input-catalog/ | 业务身份及字节位置索引，不存正文 |
-| data/runs/comparison/ | 批量评测运行 |
-| data/runs/attribution/、clustering/ | 独立归因与聚类作业 |
-| data/runs/validation/ | 后置稳定性实验，与生产统计分离 |
+| {source}/eval_output/0_daily_eval/ | 日常正式评测 |
+| {source}/eval_output/1_task_eval/<任务>/ | 专项正式评测 |
+| 当前评测目录的 attribution/、clustering/ | 独立归因与聚类作业 |
+| {source}/eval_output/test_eval/ | 所有小样本、试跑、benchmark 与稳定性验证 |
 | data/problems/ | 每模型问题库 |
 | log/ | 共用日志与统计交付记录 |
 | .runtime/、.venv/、dist/ | 执行环境与构建产物 |
@@ -112,7 +113,7 @@ npm run eval -- run --dataset competitor_comparison --engine pi --run-id competi
 
 索引只存文件、行号、UTF-8 字节位置及诊断。选择时重新核对原始文件，修正文件后重新 index；无效或重复记录不能因已建索引而参评。未传 dataset 时扫描配置来源。
 
-续跑按 state.json 中的原来源恢复，再传 dataset 不切换来源。未完成记录缺失或无效时跳过并报告诊断，已接受结果保留。运行中修改源文件会拒绝受影响读取，保存进度后同 ID 续跑。看板目前按日期选输入，命名评测集使用 CLI。
+续跑按 state.json 中的原来源恢复，再传 dataset 不切换来源。未完成记录缺失或无效时跳过并报告诊断，已接受结果保留。运行中修改源文件会拒绝受影响读取，保存进度后同 ID 续跑。数据与任务页支持按压缩包批次清洗和核对输入；运行表单仍按日期选输入，命名评测集使用 CLI。批次到新运行的范围交接尚未开放。
 
 ### 第三方模型
 
@@ -163,6 +164,8 @@ tail -f log/runtime.log
 | 未确认 Worker 最终账本 | 保存已知计数与原因，不推测用量 |
 | 源材料修订 | 清除失效草稿与阅读状态，保留历史计数 |
 
+文件提交任务会保存最近一次成功 `edit_json` 写入的草稿。超时或中断后，续跑从 `submission-rejected.json` 恢复；写草稿不计内容提交，也不代表通过校验，仍须正常提交。仅写草稿、尚无校验拒绝时，空闲超时或无提交结束仍按 retries / retryDelaySeconds 有界重试；写入不清除已有校验错误，也不重置累计预算。失败的写入不覆盖已保存草稿，盲核查通过后清除核查阶段草稿。
+
 提高实际阶段上限只增加差额，不补发完整预算。标准复核开关关闭会撤下未接受复核，已接受结果保留。提交反馈见[数据契约](contract.md#提交方式与反馈)。
 
 ### 只补失败与同类故障熔断
@@ -170,8 +173,8 @@ tail -f log/runtime.log
 停止该 run 的 Host，先预览，再准备固定补跑范围：
 
 ```bash
-npm run eval -- retry-failed --run data/runs/comparison/pi-001
-npm run eval -- retry-failed --run data/runs/comparison/pi-001 --task <task-uuid> --apply
+npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
+npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --task <task-uuid> --apply
 npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/local/models.json
 ```
 
@@ -188,18 +191,44 @@ resume-stage 可重复，保留固定范围。自动化的退避与保护性暂�
 
 ### 小批验收再放量
 
-pilot-cases 按日期、模型组选择对局并带上依赖，保留完整计划；不要用永久限制范围的 limit-cases 代替。
+真实模型测试使用 `run --test-eval`，输出自动进入同来源的 `eval_output/test_eval/`；问财测试也可最后加载 `configs/test-eval.json`。`--pilot-cases` 自动使用该目录，按日期、模型组选择对局并带上依赖，保留完整计划。续跑或释放剩余测试计划时保留 `--test-eval`。benchmark 和 validate-stability 同样强制使用同来源 test_eval，越界的 --output 会报错。
 
 ```bash
 npm run eval -- run --run-id pilot-001 --pilot-cases 40 \
   --config configs/host.json --config configs/local/models.json
-npm run eval -- validate --run data/runs/comparison/pilot-001 --selected --require-rewrite verdicts
-npm run eval -- rewrite-review --run data/runs/comparison/pilot-001 --limit-cases 50
-npm run eval -- run --run-id pilot-001 --discover-inputs \
+npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/pilot-001 --selected --require-rewrite verdicts
+npm run eval -- rewrite-review --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/pilot-001 --limit-cases 50
+npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
   --config configs/host.json --config configs/local/models.json
 ```
 
 释放前按[改写放量验收](quality.md#改写放量验收)检查。运行中用 `concurrency --run PATH --value N` 调整上限，`progress --run PATH` 查看状态；降低并发让在途任务自然完成。以新增正式交付衡量产出，不用 Worker 数代替。
+
+### 清洗批次运行
+
+工作台「数据与任务」选中同任务的清洗批次后进入预检；具体操作见[批次工作流](workbench.md#当前批次运行操作)。Host 接口由网关映射到 `/runtime/api/dashboard/`：
+
+| 接口 | 行为 |
+|---|---|
+| `POST batch-runs/preview` | batch_ids、engine、settings；生成 UUID 和固定范围，返回预检及输出目录 |
+| `GET batch-runs` | 持久化批次关联和当前运行状态 |
+| `POST batch-runs/<run>/start` | 重新校验输入/模型后启动，重复启动拒绝 |
+| `POST batch-runs/<run>/resume` | 恢复全部未完成任务，可显式传 resume_stages 解除阶段暂停 |
+| `POST batch-runs/<run>/retry` | 可传 task_ids 定向补失败，缺省补全部失败与依赖，不重评成功项 |
+| `POST batch-runs/<run>/archive` | 停止后登记归档时间；续跑清除标记，结果原地保留 |
+| `GET batch-runs/<run>/artifacts` | 正式产物清单；file 参数下载清单内单文件 |
+| `POST analysis/scope` | task_id、batch_ids（空为全部包）、run_ids；page/status 分页筛选回答纳入状态 |
+| `POST analysis/preview` | 同上范围字段；冻结最新接受归因引用，返回作业 UUID 与计划，不占用 |
+| `POST analysis/<job>/start` | engine；原子占用冻结范围并执行独立聚类 |
+| `POST analysis/<job>/resume` | 同作业续跑；可传 resume_stages 解除已暂停阶段 |
+| `POST analysis/<job>/stop` | 停止分析；保留收据和范围占用 |
+| `GET analysis` | 已启动分析作业、真实任务状态和错误 |
+| `GET analysis/<job>/errors` | page、stage、case、history；聚类任务错误及统一日志历史 |
+| `GET analysis/<job>/sources` | page 分页返回冻结归因与待观察召回引用，附各自总数 |
+| `GET analysis/<job>/artifacts` | 分析正式产物清单；file 参数单文件下载 |
+| `GET runs/<run>/errors` | page、stage、case、history；未恢复任务及统一日志中的历史 |
+
+启动关联存于 `EVAL_WORKBENCH_RUNS_DIR`，由 supervisor 设置在运行配置目录内；数据服务内部地址由 `EVAL_WORKBENCH_DATA_URL` 注入。输入只从服务端清洗报告获取。现有 runs 的样本、结果、停止和并发接口识别批次运行的实际输出目录。分析登记在其同级 `workbench-analysis/`，正式结果在任务输出目录的 `clustering/`；操作与纳入语义见[手动分析](workbench.md#结果归档与手动分析)。
 
 ### 运行实例看板
 
@@ -207,15 +236,15 @@ npm run eval -- run --run-id pilot-001 --discover-inputs \
 npm run eval -- dashboard --port 4173 --config configs/host.json --config configs/local/models.json
 ```
 
-该命令只用于本地开发。生产由 `workbench.sh` 启动同一 Host 看板，并只监听 `127.0.0.1:4173`，通过网关映射到 `/runtime/runs/`。端口被占用时启动失败，不自动切换。
+该命令只用于本地开发。生产由 `workbench.sh` 启动同一 Host 看板，并只监听 `127.0.0.1:4173`，由 `/` 工作台的评测运行区读取接口。端口被占用时启动失败，不自动切换。
 
 选择日期、模型与抽样，调整高级设置，等待扫描后预检并确认启动；设置变化须重新预检。模型来自渠道目录，密钥不进入浏览器。运行中可停止、调并发，详情可续跑。
 
-| 页面 | 内容 |
+| 同页区块 | 内容 |
 |---|---|
-| `/runtime/runs/` | 输入、主线阶段、正式结果与改写；聚类在运行总览 |
-| `/runtime/problems/` | 问题类、有效样本与来源召回，只读 |
-| `/runtime/reference/` | 当前构建的流程、Schema、提示词和工具，只读 |
+| 评测运行 | 输入、主线阶段、正式结果与改写；聚类在运行总览 |
+| 问题库 | 问题类、有效样本与来源召回，只读 |
+| 数据与流程定义 | 当前构建的流程、Schema、提示词和工具，只读 |
 
 删除须确认，清除该 run 产物及两份运行日志中的对应记录；活动或损坏锁、损坏日志阻止删除。原始输入、共享问题库、其他 run 与聚合交付回执保留。界面规范见 [PRODUCT](../PRODUCT.md)。
 
@@ -246,15 +275,15 @@ npm run eval -- validate-stability --run-id stability-001 \
 
 按[三层验收](quality.md#三层验收)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
 
-停止实验 Host 后，用 `npm run eval -- report --run data/runs/validation/stability-001` 重新生成实验报告，不调用模型。
+停止实验 Host 后，用 `npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/stability-001` 重新生成实验报告，不调用模型。
 
 ### 独立核验与聚类
 
 已接受正式对比的独立核验：
 
 ```bash
-npm run eval -- verify-comparisons --run data/runs/comparison/pi-001 --result <comparison-id>
-npm run eval -- verify-comparisons --run data/runs/comparison/pi-001 --result <comparison-id> --apply
+npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --result <comparison-id>
+npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --result <comparison-id> --apply
 npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/local/models.json
 ```
 
@@ -263,12 +292,14 @@ npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/
 归因结束后，可跨 run 创建独立聚类：
 
 ```bash
-npm run eval -- cluster --run data/runs/comparison/pi-001 --run-id problems-001
-npm run eval -- cluster --run data/runs/comparison/pi-001 --run-id problems-001 \
+npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --run-id problems-001
+npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --run-id problems-001 \
   --config configs/host.json --config configs/local/models.json --apply
 npm run eval -- cluster --run-id problems-001 --apply \
   --config configs/host.json --config configs/local/models.json
 ```
+
+工作台使用 `--clustering-selection FILE` 读取冻结来源引用，不能与 `--run` 同传；不会扩展到后续接受的结果。
 
 run 可重复；续跑只给作业 ID，查看进度省略 apply。来源状态及正式归因须可读，聚类不等待对比、改写或可选核验；失败归因跳过。新增日期或显式重聚类用新作业 ID。评测 run 内延期观察也可用 `recluster --run PATH --task ID` 或 --all 预览，apply 后同 run 续跑。
 
@@ -277,22 +308,22 @@ run 可重复；续跑只给作业 ID，查看进度省略 apply。来源状态�
 reattribute 按明确来源的正式对比定位回答，重做共同标准、归因与改写，不执行 Comparison，也不改来源 run。
 
 ```bash
-npm run eval -- reattribute --run data/runs/comparison/pi-001 \
+npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 \
   --from-date YYYY-MM-DD --pilot-answers 30 --run-id attribution-pilot
-npm run eval -- reattribute --run data/runs/comparison/pi-001 \
+npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 \
   --from-date YYYY-MM-DD --pilot-answers 30 --run-id attribution-pilot \
-  --config configs/host.json --config configs/local/models.json --apply
+  --config configs/host.json --config configs/local/models.json --config configs/test-eval.json --apply
 npm run eval -- reattribute --run-id attribution-pilot --apply \
-  --config configs/host.json --config configs/local/models.json
+  --config configs/host.json --config configs/local/models.json --config configs/test-eval.json
 ```
 
-默认预览，apply 执行。pilot-answers 选择回答数，冻结完整计划及当前范围；`--pilot-per-model N` 可在原计划内扩充每模型配额，不得缩小或超过可选数。`--discover-inputs` 释放完整计划，不能与扩充参数同用。
+默认预览，apply 执行。pilot-answers 和 pilot-per-model 自动写入同来源 test_eval/attribution；续跑加载相同测试输出覆盖配置。pilot-answers 选择回答数，冻结完整计划及当前范围；`--pilot-per-model N` 可在原计划内扩充每模型配额，不得缩小或超过可选数。`--discover-inputs` 释放完整计划，不能与扩充参数同用。
 
-试跑校验用 `validate --run data/runs/attribution/attribution-pilot --selected`。定向语义复核通过公开 prepareAttributionTargetedReviews 入口准备；接受后补齐改写。后置聚类可读取已完成试跑范围。
+试跑校验用 `validate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/attribution/attribution-pilot --selected`。定向语义复核通过公开 prepareAttributionTargetedReviews 入口准备；接受后补齐改写。后置聚类可读取已完成试跑范围。
 
 ```bash
-node scripts/attribution-review.mjs --run data/runs/attribution/attribution-pilot \
-  --clustering data/runs/clustering/attribution-pilot-tree
+node scripts/attribution-review.mjs --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/attribution/attribution-pilot \
+  --clustering /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/clustering/attribution-pilot-tree
 ```
 
 审阅脚本生成 review.html 与每模型 JSONL；默认读取 data/problems，可用 --library / --samples 指定问题库和摘要。不修改正式结果、问题库或执行范围。
@@ -308,10 +339,10 @@ node scripts/attribution-review.mjs --run data/runs/attribution/attribution-pilo
 停止该 run 的 Host，预览后加 apply，再同 ID 续跑：
 
 ```bash
-npm run eval -- rewrite-comparisons --run data/runs/comparison/pi-001 --scope items
-npm run eval -- rewrite-comparisons --run data/runs/comparison/pi-001 \
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --scope items
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 \
   --scope items --mode refresh --result <comparison-id> --slot comparison.2.B.summary --apply
-npm run eval -- rewrite-comparisons --run data/runs/comparison/pi-001 --scope verdicts --apply
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --scope verdicts --apply
 ```
 
 默认 missing 补缺；refresh 必须指定 task、result 或 --all。scope 为 items 或 verdicts，slot 可重复。应用保存固定清单，只更新选中槽位；应执行完当前清单再准备下一份。未完成同范围任务复用 UUID 与预算，已接受改写的刷新创建新 UUID。
@@ -342,7 +373,7 @@ debug 才保存 _internal/：契约快照、attempt 参数与记录、事件日�
 report 重建报告与统计，不调用模型；validate 检查结果、证据、覆盖及可选附件。计划未完成时整体 valid=false，不能用已有行合法代替全量完成。
 
 ```bash
-npm run eval -- validate --run data/runs/comparison/pi-001 \
+npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 \
   --require-batch <batch-id> --require-rewrite verdicts --require-rewrite items
 ```
 

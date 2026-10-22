@@ -6,27 +6,27 @@
   <title>自动化评测</title>
   <link rel="stylesheet" href="/runtime/automation-assets/dashboard.css">
   <link rel="stylesheet" href="/runtime/automation-assets/automations.css">
-  <script src="/runtime/automation-assets/automations.js" defer></script>
+  <script type="module" src="/runtime/automation-assets/automations.js" defer></script>
 </head>
 <body class="automation-page">
   <main>
     <header class="page-header">
       <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status">连接中</span></div>
       <nav id="source-nav" class="source-nav" aria-label="数据来源"></nav>
-      <div class="monitor-actions"><a class="button" href="/">工作台</a><a class="button" href="/runtime/runs/">运行实例</a><a class="button" href="/runtime/problems">问题库</a><a class="button" href="/runtime/reference">数据与流程</a><a id="errors-link" class="button" href="/runtime/errors">错误日志</a><a class="button" href="/logout">退出</a><button id="refresh" class="button" type="button">刷新</button></div>
+      <div class="monitor-actions"><button id="refresh" class="button" type="button">刷新</button></div>
     </header>
     <div id="llm-allocations" class="llm-allocations" aria-label="LLM 并发分配"></div>
     <div id="llm-error" class="error-banner" role="alert" hidden></div>
-    <details class="llm-activity" open>
-      <summary>正在调用 LLM <span id="llm-total"></span></summary>
+    <section class="llm-activity" open>
+      <header>正在调用 LLM <span id="llm-total"></span></header>
       <div class="table-scroll" tabindex="0" role="region" aria-label="当前 LLM 请求">
         <table class="data-table"><thead><tr><th>来源</th><th>数据日期</th><th>阶段</th><th>模型 / 渠道</th><th>开始时间</th><th>任务</th></tr></thead><tbody id="llm-requests"></tbody></table>
       </div>
-    </details>
+    </section>
     <div class="monitor-meta">
       <span id="sample-time">等待状态</span>
-      <details class="runtime-details">
-        <summary>运行详情</summary>
+      <section class="runtime-details">
+        <header>运行详情</header>
         <dl class="runtime-facts">
           <div><dt>数据源</dt><dd id="source-url">—</dd></div>
           <div><dt>评测器</dt><dd id="evaluator-version"></dd></div>
@@ -36,7 +36,7 @@
           <div><dt>槽位占用</dt><dd id="slot-utilization"></dd></div>
           <div><dt>缓存 Token</dt><dd id="cache-tokens"></dd></div>
         </dl>
-      </details>
+      </section>
     </div>
     <div id="connection-error" class="error-banner" role="alert" hidden></div>
     <div id="pipeline-errors" class="error-banner" role="alert" hidden></div>
@@ -53,35 +53,30 @@
       <div><dt>日志 · 每 4 小时</dt><dd id="lane-log"></dd><dd id="lane-log-receipt" class="metric-detail"></dd></div>
     </dl>
     <div class="monitor-toolbar">
-    <div class="monitor-nav" role="tablist" aria-label="看板区块">
-      <button type="button" id="tab-dates" role="tab" aria-controls="dates" aria-selected="true">日期进度</button>
-      <button type="button" id="tab-activity" role="tab" aria-controls="activity" aria-selected="false" tabindex="-1">时段完成量</button>
-      <button type="button" id="tab-mongo-deliveries" role="tab" aria-controls="mongo-deliveries" aria-selected="false" tabindex="-1">MongoDB 交付</button>
-      <button type="button" id="tab-deliveries" role="tab" aria-controls="deliveries" aria-selected="false" tabindex="-1">日志交付</button>
-    </div>
+
     <div class="monitor-filters">
       <span id="date-total" class="monitor-total"></span>
-      <span id="activity-total" class="monitor-total" hidden></span>
+      <span id="activity-total" class="monitor-total"></span>
       <label id="date-filter-label">数据日期 <select id="date-filter"><option value="">全部日期</option></select></label>
-      <label id="time-filter-label" hidden>记录时间 <select id="time-filter"><option value="24">近 24 小时</option><option value="168">近 7 天</option><option value="all">全部时间</option></select></label>
+      <label id="time-filter-label">记录时间 <select id="time-filter"><option value="24">近 24 小时</option><option value="168">近 7 天</option><option value="all">全部时间</option></select></label>
       <button id="reset-filters" class="button" type="button" disabled>重置筛选</button>
     </div>
     </div>
-    <section id="dates" role="tabpanel" aria-labelledby="tab-dates" tabindex="0">
+    <section id="dates">
       <h2 id="dates-title">日期进度</h2>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日期阶段进度">
-        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col" class="numeric">远端输入</th><th scope="col" class="numeric">本地输入</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col" class="numeric">完成对比（含改写）</th><th scope="col">任务明细</th></tr></thead><tbody id="date-rows"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table date-table"><thead><tr><th scope="col">数据日期</th><th scope="col" class="numeric">远端输入</th><th scope="col" class="numeric">本地输入</th><th scope="col">取数状态</th><th scope="col">评测状态</th><th scope="col" class="numeric">完成对比（含改写）</th></tr></thead><tbody id="date-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="date-pagination" class="table-pagination" aria-label="日期进度分页" hidden></nav>
     </section>
-    <section id="activity" role="tabpanel" aria-labelledby="tab-activity" tabindex="0" hidden>
+    <section id="activity">
       <h2 id="activity-title">时段完成量</h2>
       <div class="table-scroll" tabindex="0" role="region" aria-label="每小时完成数量">
         <table class="data-table"><thead><tr><th scope="col">完成时间段</th><th scope="col">完成对比 · 含改写</th><th scope="col">标准任务</th><th scope="col">归因任务</th><th scope="col">对比任务</th><th scope="col">改写任务</th></tr></thead><tbody id="activity-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="activity-pagination" class="table-pagination" aria-label="时段完成量分页" hidden></nav>
     </section>
-    <section id="mongo-deliveries" role="tabpanel" aria-labelledby="tab-mongo-deliveries" tabindex="0" hidden>
+    <section id="mongo-deliveries">
       <div class="section-heading"><h2 id="mongo-title">MongoDB 增量交付</h2><span id="mongo-total" class="muted"></span></div>
       <dl class="delivery-destinations"><div><dt>MongoDB 集合</dt><dd id="mongo-collection">—</dd></div></dl>
       <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 已确认交付数量">
@@ -90,13 +85,13 @@
       <nav id="mongo-progress-pagination" class="table-pagination" aria-label="MongoDB 日期进度分页" hidden></nav>
       <div class="section-heading delivery-history-heading"><h3>同步记录</h3><span id="mongo-history-total" class="muted"></span></div>
       <div class="table-scroll" tabindex="0" role="region" aria-label="MongoDB 增量交付记录">
-        <table class="data-table mongo-history-table"><thead><tr><th scope="col">数据日期</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">已确认输入 · 条</th><th scope="col">已确认评测输出 · 条</th><th scope="col">本轮写入</th></tr></thead><tbody id="mongo-rows"><tr><td colspan="7" class="empty">加载中</td></tr></tbody></table>
+        <table class="data-table mongo-history-table"><thead><tr><th scope="col">数据日期</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">已确认输入 · 条</th><th scope="col">已确认评测输出 · 条</th><th scope="col">本轮写入</th></tr></thead><tbody id="mongo-rows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table>
       </div>
       <nav id="mongo-pagination" class="table-pagination" aria-label="MongoDB 同步记录分页" hidden></nav>
     </section>
-    <section id="deliveries" role="tabpanel" aria-labelledby="tab-deliveries" tabindex="0" hidden>
+    <section id="deliveries">
       <div class="section-heading"><h2 id="deliveries-title">统计日志交付</h2><span id="delivery-total" class="muted"></span></div>
-      <dl class="delivery-destinations"><div><dt>服务器日志</dt><dd id="log-path">—</dd></div><div><dt>本地 relay</dt><dd>仅上传统计记录</dd></div></dl>
+      <dl class="delivery-destinations"><div><dt>服务器日志</dt><dd id="log-path">—</dd></div></dl>
       <div class="table-scroll" tabindex="0" role="region" aria-label="日志交付记录">
         <table class="data-table"><thead><tr><th scope="col">Trace ID</th><th scope="col">上传状态</th><th scope="col">最后错误</th><th scope="col">日志落盘</th><th scope="col">最后更新 / 回执</th></tr></thead><tbody id="delivery-rows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table>
       </div>

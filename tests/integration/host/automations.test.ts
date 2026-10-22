@@ -407,16 +407,16 @@ test("automation defers unfinished clustering and later classifies attributions 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-for (const modelCount of [4, 6, 3]) test(`automation resumes mixed flat and session inputs and delivers complete Mongo and statistics rows (${modelCount} models)`, { timeout: 90_000 }, async (t) => {
+for (const modelCount of [4, 6, 2]) test(`automation resumes mixed flat and session inputs and delivers complete Mongo and statistics rows (${modelCount} models)`, { timeout: 90_000 }, async (t) => {
   t.after(() => {
   });
   const { directory, config, modelForStage } = await fixtureConfig();
   let controller = new AbortController();
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
   const date = "2026-10-08", source = path.join(directory, "source");
-  const remoteModels = modelCount === 3 ? ["a_fast", "b_fast", "b_post_train_fast"]
+  const remoteModels = modelCount === 2 ? ["b_fast", "b_post_train_fast"]
     : modelCount === 6 ? [...REMOTE_MODELS, "6_luna", "6.1sol"] : REMOTE_MODELS;
-  if (modelCount === 3) {
+  if (modelCount === 2) {
     const overlay = await readJson<Pick<typeof config, "inputs" | "comparisons">>(path.join(ROOT, "configs/post-training-models.json"));
     config.inputs = overlay.inputs;
     config.comparisons = [overlay.inputs.versions.map(version => version.id)];
@@ -430,7 +430,7 @@ for (const modelCount of [4, 6, 3]) test(`automation resumes mixed flat and sess
   for (const model of remoteModels) {
     const record = sessionModels.has(model) ? sessionRaw("q1", "4", "2+2=5")
       : { ...raw("q1", "4", "2+2=5"), batch_id: date };
-    if (modelCount === 3 && model.startsWith("b_"))
+    if (modelCount === 2 && model.startsWith("b_"))
       for (const message of (record as RawInput).messages ?? []) {
         if (message.role === "user") message.type = "user_question";
         if (message.role === "assistant") message.type = "final_answer";
@@ -440,7 +440,7 @@ for (const modelCount of [4, 6, 3]) test(`automation resumes mixed flat and sess
   const evaluation = automationEvaluationConfig(config, source, date, remoteModels);
   const plan = await buildPlan(evaluation);
   assert.equal(plan.summary.attribution_tasks, modelCount === 4 ? 2 : modelCount);
-  assert.equal(plan.summary.comparison_tasks, modelCount === 4 ? 1 : modelCount);
+  assert.equal(plan.summary.comparison_tasks, modelCount === 6 ? 6 : 1);
   const backend: AgentBackend = {
     identity: fakeIdentity,
     async createSession(options) {
@@ -555,17 +555,17 @@ for (const modelCount of [4, 6, 3]) test(`automation resumes mixed flat and sess
       },
     });
     assert.equal(delivered.comparisons, counts.readyComparisons);
-    assert.equal(delivered.comparisons, modelCount === 4 ? 1 : modelCount);
+    assert.equal(delivered.comparisons, modelCount === 6 ? 6 : 1);
     assert.equal(delivered.inputs, remoteModels.length);
     const record = stats.record("current-automation-output", Date.now());
     assertStatisticsLog(record);
     if (modelCount !== 4) {
       const data = record.data as { progress: { expectedBattleCount: number; completedBattleCount: number; completedCaseCount: number };
         stats: { evaluated: number; accuracy: { count: number }; total: { count: number } }[] };
-      assert.deepEqual(data.progress, { expectedBattleCount: modelCount, completedBattleCount: modelCount, completedCaseCount: 1 });
+      assert.deepEqual(data.progress, { expectedBattleCount: modelCount === 6 ? 6 : 1, completedBattleCount: modelCount === 6 ? 6 : 1, completedCaseCount: 1 });
       assert.equal(data.stats.length, modelCount);
       for (const row of data.stats) {
-        assert.equal(row.evaluated, 2);
+        assert.equal(row.evaluated, modelCount === 6 ? 2 : 1);
         assert.equal(row.accuracy.count, 1);
         assert.equal(row.total.count, 1);
       }

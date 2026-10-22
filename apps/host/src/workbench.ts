@@ -1,8 +1,9 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { access, constants, mkdir, stat } from "node:fs/promises";
+import { access, constants, mkdir, stat, readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { errorText, redact } from "@eval/contracts";
 import { createFileLogger, runLock } from "@eval/data";
@@ -52,7 +53,9 @@ function childEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     EVAL_LOG_DIR: config.runtime.logDirectory, EVAL_LOG_LOCK_DIR: config.runtime.logLockDirectory,
     EVAL_AUTOMATION_SCHEDULING_FILE: config.runtime.schedulingFile,
     EVAL_STATISTICS_DELIVERY_FILE: config.runtime.statisticsDeliveryFile,
-    EVAL_WORKBENCH_PUBLIC_ORIGIN: config.publicOrigin, ...extra };
+    EVAL_WORKBENCH_PUBLIC_ORIGIN: config.publicOrigin,
+    EVAL_WORKBENCH_DATA_URL: `http://${config.data.host}:${config.data.port}`,
+    EVAL_WORKBENCH_RUNS_DIR: path.join(config.runtime.configDirectory, "workbench-runs"), ...extra };
 }
 
 function lineWriter(service: ServiceName, stream: "stdout" | "stderr", write: (...values: unknown[]) => void) {
@@ -158,19 +161,13 @@ async function waitHealthy(url: string, name: ServiceName, timeoutMs = 90_000): 
   throw new Error(`${name} health check timed out: ${last}`);
 }
 
-const HOME = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测工作台</title>
-<style>:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#17201d;background:#f3f6f4}*{box-sizing:border-box}body{margin:0}header{height:64px;display:flex;align-items:center;gap:20px;padding:0 28px;border-bottom:1px solid #dbe3df;background:#fff}header strong{margin-right:auto}h1{font-size:22px;margin:0}.nav{display:flex;gap:10px}.nav a,.region{border:1px solid #d5dfda;border-radius:8px;padding:9px 13px;color:inherit;text-decoration:none;background:#fff}.nav a:hover,.region:hover{border-color:#087f83;color:#087f83}main{max-width:1040px;margin:0 auto;padding:48px 28px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.region{min-height:220px;padding:28px;display:flex;flex-direction:column;justify-content:space-between}.region h2{font-size:30px;margin:0}.region span{font-size:14px;color:#52605a}@media(max-width:720px){.grid{grid-template-columns:1fr}header{padding:0 16px}.nav a:not(:last-child){display:none}}</style></head>
-<body><header><strong>评测工作台</strong><nav class="nav"><a href="/data/">数据</a><a href="/runtime/">运行时</a><a href="/logout">退出</a></nav></header>
-<main><div class="grid"><a class="region" href="/data/"><h2>数据</h2><span id="data-status">检查中</span></a><a class="region" href="/runtime/"><h2>运行时</h2><span id="runtime-status">检查中</span></a></div></main>
-<script>fetch('/health',{cache:'no-store'}).then(r=>r.json()).then(v=>{document.querySelector('#data-status').textContent=v.services.data?'在线':'异常';document.querySelector('#runtime-status').textContent=v.services.automation&&v.services.runs?'在线':'异常'}).catch(()=>{document.querySelector('#data-status').textContent='异常';document.querySelector('#runtime-status').textContent='异常'})</script></body></html>`;
+const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
+const workbenchAssets = new Set(["tabler.css", "workbench.css", "workbench-region.css", "workbench.bundle.js", "dashboard.css", "automations.css", "problems.css", "reference.css", "automations.html", "automation-errors.html", "index.html", "problems.html", "reference.html", "intake.html", "batch-runs.html", "analysis.html"]);
+const dataAssets: Record<string, string> = { "data.html": "dashboard.html", "data.css": "dashboard.css", "records.html": "records.html" };
 
 const LOGIN = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · 评测工作台</title>
 <style>:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#17201d;background:#f3f6f4}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center}form{width:min(360px,calc(100vw - 32px));background:#fff;border:1px solid #dbe3df;border-radius:12px;padding:28px}h1{font-size:22px;margin:0 0 22px}label{display:grid;gap:7px;margin:14px 0;font-size:14px}input{height:42px;border:1px solid #cdd8d2;border-radius:7px;padding:0 12px;font:inherit}button{width:100%;height:42px;margin-top:12px;border:0;border-radius:7px;background:#087f83;color:#fff;font:inherit;font-weight:600;cursor:pointer}.error{color:#a13030;font-size:14px;min-height:20px}</style></head>
 <body><form method="post" action="/login"><h1>登录</h1><label>用户<input name="username" autocomplete="username" required autofocus></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><div class="error">__ERROR__</div><button type="submit">登录</button></form></body></html>`;
-
-const DATA_HOME = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>数据 · 评测工作台</title>
-<style>:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#17201d;background:#f3f6f4}*{box-sizing:border-box}body{margin:0}header{height:64px;display:flex;align-items:center;gap:18px;padding:0 28px;border-bottom:1px solid #dbe3df;background:#fff}h1{font-size:21px;margin:0 auto 0 0}.nav a,.dataset{border:1px solid #d5dfda;border-radius:8px;padding:9px 13px;color:inherit;text-decoration:none;background:#fff}.nav{display:flex;gap:10px}.nav a:hover,.dataset:hover{border-color:#087f83;color:#087f83}main{max-width:960px;margin:0 auto;padding:40px 28px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.dataset{padding:24px;min-height:150px;display:flex;align-items:flex-end;font-size:24px;font-weight:650}@media(max-width:720px){main{grid-template-columns:1fr}header{padding:0 16px}}</style></head>
-<body><header><h1>数据</h1><nav class="nav"><a href="/">工作台</a><a href="/runtime/">运行时</a><a href="/logout">退出</a></nav></header><main><a class="dataset" href="/data/wencai/">wencai</a><a class="dataset" href="/data/aime/">aime</a><a class="dataset" href="/data/ifind/">ifind</a></main></body></html>`;
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
@@ -235,9 +232,17 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return sendJson(res, 401, { error: "Unauthorized" });
     return sendHtml(res, 303, "", { location: `/login?next=${encodeURIComponent(url.pathname)}` });
   }
-  if (url.pathname === "/") return sendHtml(res, 200, HOME.replaceAll("__USER__", secrets.adminUser));
-  if (url.pathname === "/data/") return sendHtml(res, 200, DATA_HOME);
-  if (url.pathname === "/runtime" || url.pathname === "/data") return sendHtml(res, 308, "", { location: url.pathname + "/" });
+  if (req.method !== "GET" && req.method !== "HEAD" && url.pathname.startsWith("/data/workbench/") &&
+      req.headers.origin && req.headers.origin !== config.publicOrigin) return sendJson(res, 403, { error: "来源校验失败" });
+  if (url.pathname === "/") return sendHtml(res, 200, await readFile(path.join(ASSETS, "workbench.html"), "utf8"));
+  if (url.pathname.startsWith("/workbench-assets/")) {
+    const name = url.pathname.slice("/workbench-assets/".length);
+    const file = workbenchAssets.has(name) ? path.join(ASSETS, name) : Object.hasOwn(dataAssets, name)
+      ? path.join(ROOT, "server_dashboard_ths", dataAssets[name]) : undefined;
+    if (!file) return sendJson(res, 404, { error: "Not found" });
+    res.writeHead(200, { "content-type": name.endsWith(".css") ? "text/css; charset=utf-8" : name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(await readFile(file)); return;
+  }
   const target = workbenchProxyTarget(url.pathname, {
     data: config.data.port, automation: config.runtime.automationPort, runs: config.runtime.runsPort,
   });

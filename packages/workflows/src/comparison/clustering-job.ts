@@ -140,14 +140,26 @@ export async function prepareClusteringJob(runs: string[], base: EvalConfig, opt
     recall.push(...(library?.pending_observations ?? []).filter(ref => ref.components.length && !chosen.has(ref.input_id)));
   }
   config.clusteringJob.recall = recall;
+  const { plan } = await prepareFrozenClusteringJob(config.clusteringJob, base);
+  return { config, plan: { ...plan, summary: { ...plan.summary,
+    excluded_attributions: excluded, out_of_scope_attributions: outsideScope, duplicate_answers: duplicates,
+  } } };
+}
+
+/** Rebuild materials from frozen receipt references, never expand the chosen source range. */
+export async function prepareFrozenClusteringJob(selection: ClusteringJobConfig["clusteringJob"], base: EvalConfig) {
+  if (!selection.sources?.length || !selection.runs?.length) throw new Error("聚类选择不能为空");
+  const sources = selection.sources, directories = selection.runs, recall = selection.recall ?? [];
+  if (new Set(sources.map(source => source.input_id)).size !== sources.length ||
+      sources.some(source => !directories.includes(source.run))) throw new Error("聚类选择引用重复或范围不一致");
+  const config: ClusteringJobConfig = { ...base, comparisons: [], inputs: { versions: [] }, clusteringJob: selection };
   const inputs = await loadClusteringJobInputs(config), tasks: PlannedTask[] = [];
   for (const model of Object.keys(inputs)) {
     const material = jobMaterial(inputs, model);
     tasks.push(...planClusteringTasks(model, material.observations, config));
   }
   return { config, plan: { tasks, inputs, summary: {
-    runs: directories, attribution_answers: sources.length, excluded_attributions: excluded,
-    out_of_scope_attributions: outsideScope, duplicate_answers: duplicates,
+    runs: directories, attribution_answers: sources.length,
     recalled_problems: recall.length, recalled_answers: new Set(recall.map(ref => ref.input_id)).size,
     models: Object.fromEntries(Object.keys(inputs).map(model => [model, {
       answers: sources.filter(source => source.model === model).length,

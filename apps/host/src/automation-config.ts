@@ -21,6 +21,7 @@ export interface AutomationConfig extends PipelineOptions {
   dailyComparisonLimitPerTier: number;
   channelConcurrency?: Record<string, number>;
   publishProgress: boolean;
+  publishMongo: boolean;
   publishStatisticsLog: boolean;
   prediction?: { answersFile: string; sourceConfig: string };
   /** Accepted prediction replacements applied to this source's publication and statistics. */
@@ -41,7 +42,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
   const keys = ["id", "sourceUrl", "remoteModels", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
-    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishStatisticsLog", "publication",
+    "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishMongo", "publishStatisticsLog", "publication",
     "prediction", "predictionResults"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
@@ -78,6 +79,8 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   if (engine !== "pi" && engine !== "prime") throw new Error("Invalid automation engine");
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
   if (typeof raw.publishStatisticsLog !== "boolean") throw new Error("Invalid automations.publishStatisticsLog");
+  if (typeof raw.publishMongo !== "boolean") throw new Error("Invalid automations.publishMongo");
+  if (prediction && !raw.publishMongo) throw new Error("Prediction requires Mongo publication");
   if (prediction && (raw.publishProgress || raw.publishStatisticsLog))
     throw new Error("Prediction source publishes results through its original task, without separate progress/statistics uploads");
   const predictionResults = raw.predictionResults === undefined ? undefined : path.resolve(directory, string("predictionResults"));
@@ -111,6 +114,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     dailyComparisonLimitPerTier: raw.dailyComparisonLimitPerTier === null ? Infinity : number("dailyComparisonLimitPerTier"),
     channelConcurrency,
     publishProgress: raw.publishProgress,
+    publishMongo: raw.publishMongo,
     publishStatisticsLog: raw.publishStatisticsLog,
     ...(prediction ? { prediction } : {}),
     ...(predictionResults ? { predictionResults } : {}),

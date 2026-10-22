@@ -23,11 +23,15 @@
 | Tools | 证据、分页、图片、计算、代码与搜索 | [index.ts](../../packages/tools/src/index.ts) |
 | Prompts | 全部模型可见规则与工具文案 | [说明](../../packages/prompts/README.md) |
 | Schemas | 集中 JSON 资源，构建时复制 | [说明](../../schemas/README.md) |
-| 数据服务 | `/data/` 包处理、ready、样本与同机进度 | [app.py](../../server_dashboard_ths/app.py) |
+| 数据服务 | `/data/` 任务/压缩包批次、清洗报告、输入发布、ready、样本与同机进度 | [app.py](../../server_dashboard_ths/app.py)、[任务批次](../../server_dashboard_ths/workbench_catalog.py)、[清洗报告](../../server_dashboard_ths/cleaning_report.py) |
 | evaluation-report | 独立离线汇报与历史快照 | [说明](../../evaluation-report/README.md) |
+
+批次启动关联与接口由 `apps/host/src/dashboard-batches.ts`、`dashboard.ts` 组装；运行错误业务坐标由 Workflow 的 `run-errors.ts` 投影，统一日志由 Data 的 RuntimeLogReader 读取。页面不解释判词，也不写正式结果。
 
 ## 跨模块修改
 
 Agent 之间不互相导入；Workflow 通过公开入口组合。Host 只接收定义，应用层注入具体 Agent、存储和 Runtime。依赖限制由[架构测试](../../tests/architecture/dependencies.test.ts)执行。
 
 验证先找模块同目录的 .test.ts，跨模块行为看 tests/integration/host；直接 SDK 看 tests/integration。具体命令见[开发指南](../development.md#验证)。
+
+工作台结果与分析入口：`apps/host/src/dashboard-analysis.ts` 登记任务/批次/运行选择和分析占用；`packages/workflows/src/comparison/analysis-scope.ts` 投影已接受归因身份，`clustering-job.ts` 校验冻结来源并复用独立作业。`packages/data/src/run-artifacts.ts` 枚举公开报告与结果，页面不读取 state 或 debug 材料。

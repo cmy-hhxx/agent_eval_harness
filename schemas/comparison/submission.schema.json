@@ -10,6 +10,19 @@
     "tradeoff"
   ],
   "properties": {
+    "source_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot_index", "candidate", "reason"],
+        "properties": {
+          "slot_index": { "type": "integer", "minimum": 0 },
+          "candidate": { "enum": ["A", "B"] },
+          "reason": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        }
+      }
+    },
     "scope_conflicts": {
       "type": "array",
       "items": {

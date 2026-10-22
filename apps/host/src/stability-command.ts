@@ -4,7 +4,7 @@ import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { createStabilityWorkflow, prepareStability, reportStability, stabilityRepository,
   type StabilityCase, type StabilityConfig, type StabilityTaskData } from "@eval/workflows/comparison";
-import { createModelResolver, type HostConfig } from "./config.js";
+import { createModelResolver, testEvaluationOutput, type HostConfig } from "./config.js";
 import { services } from "./composition.js";
 
 export function createStabilityModelResolver(modelForStage: (stage: string) => ModelConfig,
@@ -28,8 +28,7 @@ export async function runStabilityCommand(host: HostConfig, options: {
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("validate-stability --execute requires --run-id");
   if (options.runId) safeId(options.runId);
-  const output = { kind: "directory" as const, path: options.output ? path.resolve(options.output) :
-    path.resolve(host.evaluation.output.path, "../validation") };
+  const output = { kind: "directory" as const, path: testEvaluationOutput(host.evaluation.output.path, options.output) };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   const sourceRun = options.sourceRun ? path.resolve(options.sourceRun) : undefined;
   if (sourceRun && sourceRun === layout?.directory) throw new Error("Experiment directory must differ from the source run");

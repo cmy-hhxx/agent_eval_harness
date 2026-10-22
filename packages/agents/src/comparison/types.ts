@@ -153,6 +153,8 @@ export interface ComparisonSubmission {
   b_summary: string;
   /** Same common requirement assessed under incompatible scopes; source associations remain program-owned. */
   scope_conflicts?: { slot_index: number; reason: string }[];
+  /** A decisive source finding or assessment conflicts with original material; do not rewrite it here. */
+  source_reviews?: ComparisonVerificationSubmission["source_reviews"];
   comparisons: (SubmittedComparison | null)[];
   preference?: string | null;
   /** Ties normally retain an inclination; null is reserved for equivalent confirmed facts. */

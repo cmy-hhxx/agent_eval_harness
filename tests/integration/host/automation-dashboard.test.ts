@@ -26,7 +26,7 @@ const execution = () => ({ ...settings, runningTasks: 0, runningCases: 0,
 const state = (): AutomationState => ({ id: "fixture", sourceUrl: "http://fixture", status: "stopped", startedAt: at, updatedAt: at, jobs: {} });
 const scheduling = (ids = ["fixture"]) => createAutomationLlm(ids,
   { sources: Object.fromEntries(ids.map(id => [id, { concurrency: 32 }])) }, async () => {});
-const dashboard = () => ({ ...state(), sourceName: "fixture", publishStatisticsLog: true,
+const dashboard = () => ({ ...state(), sourceName: "fixture", publishMongo: true, publishStatisticsLog: true,
   llm: scheduling().snapshot(), statistics: { attempts: 0, nextAt: at + hour }, statisticsDeliveries: [],
   sources: [{ id: "fixture", name: "fixture", status: "stopped", dateCount: 0 }] });
 const job = (date: string): AutomationJob => ({ date, runIds: ["fixture"], observed: { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 },
@@ -180,7 +180,7 @@ test("one dashboard isolates source snapshots, publication settings and error lo
   const directory = await mkdtemp(path.join(tmpdir(), "automation-dashboard-sources-"));
   const template = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
   const ids = ["remote-evaluation", "remote-six-model-evaluation", "remote-post-training-evaluation", "prediction-evaluation"];
-  const names = ["普通四路", "GPT 六路", "后训练三路", "预测类自动评测"];
+  const names = ["普通四路", "GPT 六路", "后训练双模型", "预测类自动评测"];
   const calls = ids.map(() => 0), date = "2026-10-16", runtimeLogFile = path.join(directory, "runtime.log");
   const sources: AutomationDashboardSource[] = ids.map((id, index) => {
     const current: AutomationState = { ...state(), id, jobs: index < 2 ? { [date]: { ...job(date), runIds: [], evaluation: "pending" } } : {} };
@@ -264,7 +264,7 @@ test("LLM allocations preserve drafts, control each source and show actual provi
   };
   const flush = () => new Promise(resolve => setImmediate(resolve));
   try {
-    dom.window.eval(script); await flush();
+    dom.window.eval(script.replace(/^export /gm, "")); await flush();
     const doc = dom.window.document, input = doc.getElementById("llm-limit-fixture"), form = input.closest("form");
     const submit = (value: string) => { input.value = value; input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
       form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); };
@@ -314,7 +314,7 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => { if (failed) throw new Error("offline"); return { ok: true, json: async () => payload }; };
   try {
-    dom.window.eval(script);
+    dom.window.eval(script.replace(/^export /gm, ""));
     await new Promise((resolve) => setImmediate(resolve));
     const document = dom.window.document;
     assert.match(document.getElementById("delivery-rows").textContent, /receipt<one>/);
@@ -376,13 +376,13 @@ test("monitor identifies its source and retains all dates across pagination, fil
   const sources = [
     { id: "remote-evaluation", name: "普通四路", sourceUrl: "http://fixture", dates: Array.from({ length: 19 }, (_, i) => `2026-10-${String(19 - i).padStart(2, "0")}`) },
     { id: "remote-six-model-evaluation", name: "GPT 六路", sourceUrl: "http://fixture/gpt", dates: ["2026-10-16"] },
-    { id: "remote-post-training-evaluation", name: "后训练三路", sourceUrl: "http://fixture/post_training_model", dates: [] },
+    { id: "remote-post-training-evaluation", name: "后训练双模型", sourceUrl: "http://fixture/post_training_model", dates: [] },
   ];
   for (const source of sources) {
     const dom = new JSDOM(html, { runScripts: "outside-only", url: `http://fixture/?source=${source.id}` });
     const payload = { ...dashboard(), ...source, sourceName: source.name, execution: execution(), sampledAt: at,
       sources: sources.map(source => ({ id: source.id, name: source.name, status: "running", dateCount: source.dates.length })),
-      publishStatisticsLog: source === sources[0],
+      publishStatisticsLog: source === sources[0], publishMongo: source !== sources[2],
       statistics: { attempts: 0, nextAt: at + hour }, statisticsDeliveries: [],
       jobs: source.dates.map(date => ({ ...job(date), hours: [] })) };
     let poll = async () => {};
@@ -393,14 +393,18 @@ test("monitor identifies its source and retains all dates across pagination, fil
       return { ok: true, json: async () => payload };
     };
     try {
-      dom.window.eval(script); await new Promise(resolve => setImmediate(resolve));
+      dom.window.eval(script.replace(/^export /gm, "")); await new Promise(resolve => setImmediate(resolve));
       const doc = dom.window.document;
+      assert.equal(doc.getElementById("mongo-deliveries").hidden, !payload.publishMongo);
+      if (!payload.publishMongo) {
+        assert.equal(doc.getElementById("lane-mongo").textContent, "本地保存");
+        assert.equal(doc.getElementById("lane-mongo-queue").textContent, "");
+      }
       assert.equal(doc.getElementById("source-url")?.textContent, source.sourceUrl);
-      assert.equal(doc.title, `自动化评测 · ${source.name}`);
+      assert.equal(doc.title, "自动化评测");
       assert.equal(doc.querySelector('#source-nav [aria-current="page"]').dataset.source, source.id);
-      assert.deepEqual([...doc.querySelectorAll("#source-nav a")].map((link: any) => new URL(link.href).searchParams.get("source")), sources.map(source => source.id));
-      assert.match(doc.querySelector('#source-nav a:last-child').textContent, /后训练三路等待数据 · 0 个日期/);
-      assert.equal(new URL(doc.getElementById("errors-link").href).searchParams.get("source"), source.id);
+      assert.deepEqual([...doc.querySelectorAll("#source-nav button")].map((link: any) => link.dataset.source), sources.map(source => source.id));
+      assert.match(doc.querySelector('#source-nav button:last-child').textContent, /后训练双模型等待数据 · 0 个日期/);
       if (!payload.publishStatisticsLog) {
         assert.equal(doc.getElementById("lane-log").textContent, "已关闭");
         assert.equal(doc.getElementById("delivery-rows").textContent, "统计日志已关闭");
@@ -424,7 +428,7 @@ test("monitor identifies its source and retains all dates across pagination, fil
   }
 });
 
-test("long review errors collapse to a count and preserve full task IDs, expansion and scroll on polling", async () => {
+test("review errors show complete task IDs and preserve scroll on polling", async () => {
   const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
   const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
@@ -438,26 +442,21 @@ test("long review errors collapse to a count and preserve full task IDs, expansi
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => ({ ok: true, json: async () => payload });
   try {
-    dom.window.eval(script); await new Promise(resolve => setImmediate(resolve));
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise(resolve => setImmediate(resolve));
     const doc = dom.window.document, review = () => doc.querySelector('[data-error-key="evaluation:2026-10-16"]');
-    assert.equal(review().open, false);
-    assert.equal(review().querySelector("summary").textContent, "对比待复核 · 21 项");
+    assert.equal(review().querySelector("header").textContent, "对比待复核 · 21 项");
     assert.deepEqual(review().querySelector("pre").textContent.split("\n").slice(1), ids);
     assert.equal(doc.querySelector(".row-error img"), null);
     const download = doc.querySelector('[data-error-key="download:2026-10-16"]');
-    assert.equal(download.querySelector("summary").textContent, "查看下载错误");
+    assert.equal(download.querySelector("header").textContent, "下载错误");
     assert.equal(download.querySelector("pre").textContent, payload.jobs[0].downloadError);
-    review().open = true;
     review().querySelector("pre").scrollTop = 72;
     review().querySelector("pre").scrollLeft = 50;
     review().querySelector("pre").focus();
     await poll();
-    assert.equal(review().open, true);
     assert.equal(review().querySelector("pre").scrollTop, 72);
     assert.equal(review().querySelector("pre").scrollLeft, 50);
     assert.equal(doc.activeElement, review().querySelector("pre"));
-    review().open = false; await poll();
-    assert.equal(review().open, false);
   } finally { dom.window.close(); }
 });
 
@@ -481,7 +480,7 @@ test("date table separates remote/local input rows, refresh state, completed com
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => ({ ok: true, json: async () => payload });
   try {
-    dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise((resolve) => setImmediate(resolve));
     const document = dom.window.document;
     assert.equal(document.querySelector(".remote-inputs").textContent, "890");
     assert.match(document.querySelector(".local-inputs").textContent, /^890/);
@@ -489,28 +488,14 @@ test("date table separates remote/local input rows, refresh state, completed com
     assert.equal(document.querySelector(".completed-comparisons").textContent, "139", "publishable result count is independent of comparison task totals and accepted receipts");
     assert.match(document.querySelector('.stage-tasks[data-stage="comparison"]').textContent, /^280 \/ 405待执行 111依赖阻塞 14$/);
     assert.equal(document.querySelector(".date-table th:nth-child(6)").textContent, "完成对比（含改写）");
-    assert.equal(document.querySelectorAll(".date-table th").length, 7);
+    assert.equal(document.querySelectorAll(".date-table th").length, 6);
     assert.match(document.querySelector(".task-pool").textContent, /待执行 1,379待重试 15依赖阻塞 47/);
     assert.match(document.querySelector(".mongo-outputs").textContent, /^138待上传 1$/);
     assert.match(document.getElementById("mongo-progress-rows").textContent, /等待同步新输出/);
-    const toggle = () => document.querySelector('[data-date-details="2026-09-28"]');
-    const detail = () => document.getElementById(toggle().getAttribute("aria-controls"));
-    assert.equal(detail().hidden, true);
-    assert.equal(toggle().getAttribute("aria-expanded"), "false");
-    toggle().focus(); toggle().click();
-    assert.equal(detail().hidden, false);
-    assert.equal(toggle().getAttribute("aria-expanded"), "true");
-    document.querySelector(".runtime-details").open = true;
+    assert.equal(document.getElementById("tasks-2026-09-28").hidden, false);
     await poll();
-    assert.equal(detail().hidden, false, "polling preserves expanded task details");
-    assert.equal(document.activeElement, toggle(), "polling preserves the detail toggle focus");
-    assert.equal(document.querySelector(".runtime-details").open, true);
-    document.getElementById("tab-activity").click();
-    document.getElementById("tab-dates").click();
-    assert.equal(detail().hidden, false, "switching panels preserves expanded dates");
-    toggle().click(); await poll();
-    assert.equal(detail().hidden, true);
-    assert.equal(toggle().getAttribute("aria-expanded"), "false");
+    assert.equal(document.getElementById("tasks-2026-09-28").hidden, false);
+    assert.equal(document.querySelector("details"), null);
   } finally { dom.window.close(); }
 });
 
@@ -534,9 +519,9 @@ test("monitor paginates each record list, preserves pages during polling and res
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => ({ ok: true, json: async () => payload });
   try {
-    dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise((resolve) => setImmediate(resolve));
     const document = dom.window.document, el = (id: string) => document.getElementById(id);
-    assert.deepEqual([...document.querySelectorAll('section:not([hidden])')].map((item: any) => item.id), ["mongo-deliveries"]);
+    for (const id of ["dates", "activity", "mongo-deliveries", "deliveries"]) assert.equal(el(id).hidden, false);
     for (const id of ["date", "activity", "mongo-progress", "mongo", "delivery"])
       assert.equal(document.querySelectorAll(`#${id}-rows tr:not(.date-detail-row)`).length, 10);
     assert.match(el("mongo-total").textContent, /输入 25 条/);
@@ -546,14 +531,12 @@ test("monitor paginates each record list, preserves pages during polling and res
     await poll();
     assert.match(el("mongo-pagination").textContent, /2 \/ 3 页/);
     assert.match(el("mongo-progress-pagination").textContent, /2 \/ 3 页/);
-    el("tab-deliveries").click();
-    assert.equal(el("date-filter-label").hidden, true);
+    assert.equal(el("date-filter-label").hidden, false);
     assert.equal(el("time-filter-label").hidden, false);
     document.querySelector('#delivery-pagination [data-step="1"]').click();
     assert.match(el("delivery-rows").textContent, /receipt-10/);
     assert.doesNotMatch(el("delivery-rows").textContent, /receipt-0\b/);
-    el("tab-mongo-deliveries").click();
-    assert.match(el("mongo-pagination").textContent, /2 \/ 3 页/, "switching tabs preserves each table page");
+    assert.match(el("mongo-pagination").textContent, /2 \/ 3 页/, "each table retains its page");
     document.querySelector('#mongo-pagination [data-step="1"]').click();
     assert.equal(document.querySelectorAll("#mongo-rows tr").length, 5);
     assert.equal(document.querySelector('#mongo-pagination [data-step="1"]').disabled, true);
@@ -572,17 +555,11 @@ test("monitor paginates each record list, preserves pages during polling and res
     assert.equal(el("date-filter").value, "");
     assert.equal(el("time-filter").value, "24");
     assert.match(el("mongo-pagination").textContent, /1 \/ 2 页/);
-    el("tab-dates").click();
-    assert.equal(el("time-filter-label").hidden, true);
+    assert.equal(el("time-filter-label").hidden, false);
     document.querySelector('#date-pagination [data-step="1"]').click();
     assert.equal(el("date-rows").rows[0].cells[0].textContent, "2026-09-13");
     assert.match(el("date-total").textContent, /23 个日期/, "totals describe all filtered results, not just the current page");
-    el("tab-dates").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    assert.equal(document.activeElement.id, "tab-activity");
-    assert.equal(el("tab-activity").getAttribute("aria-selected"), "true");
-    el("tab-activity").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
-    assert.equal(document.activeElement.id, "tab-deliveries");
-    assert.equal(document.querySelectorAll('section:not([hidden])').length, 1);
+    assert.equal(document.querySelector('[role="tabpanel"]'), null);
   } finally { dom.window.close(); }
 });
 
@@ -600,7 +577,7 @@ test("download status distinguishes stale counts, active attempts, source readin
   dom.window.clearTimeout = () => {};
   dom.window.fetch = async () => ({ ok: true, json: async () => payload });
   try {
-    dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise((resolve) => setImmediate(resolve));
     const doc = dom.window.document, text = () => doc.querySelector("#date-rows tr").cells[3].textContent;
     assert.match(text(), /待更新输入.*远端多 215 条.*等待下载/);
     assert.doesNotMatch(text(), /本地已就绪/);
@@ -648,7 +625,7 @@ test("live overview counts retries, ticks deadlines and freezes predictions on d
   dom.window.fetch = async () => { if (failed) throw new Error("offline"); return { ok: true, json: async () => payload }; };
   try {
     payload.llm.sources[0].active = 2;
-    dom.window.eval(script); await new Promise((resolve) => setImmediate(resolve));
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise((resolve) => setImmediate(resolve));
     const doc = dom.window.document, text = (id: string) => doc.getElementById(id).textContent;
     assert.equal(text("evaluator-version"), settings.evaluatorVersion);
     assert.equal(text("live-concurrency"), "2 / 32 请求");

@@ -21,7 +21,7 @@ async function referencePage() {
   const dom = new JSDOM(await readFile(path.join(ROOT, "apps/host/dashboard/reference.html"), "utf8"));
   try {
     const source = await readFile(path.join(ROOT, "apps/host/dashboard/reference.js"), "utf8");
-    const load = new Function("document", "fetch", source.slice(0, source.lastIndexOf("void init();")) + "return init();");
+    const load = new Function("document", "fetch", "const root = document, options = {};\n" + source.slice(source.indexOf("const $"), source.lastIndexOf("void init();")) + "return init();");
     await load(dom.window.document, async (url: string) => {
       assert(["/api/dashboard/reference", "/api/dashboard/inputs"].includes(url));
       return new Response(JSON.stringify(url.endsWith("/reference") ? reference : { status: "ready", dates: [], issues: 0 }));
@@ -33,9 +33,12 @@ async function referencePage() {
 test("reference definitions distinguish source selections, derived comparisons and clustering short references", async () => {
   const page = await referencePage();
   const { document } = page;
-  const click = (selector: string) => document.querySelector(selector).click();
+  const click = (selector: string) => {
+    const node = document.querySelector(selector);
+    if (node.tagName === "OPTION") { node.parentElement.value = node.value; node.parentElement.dispatchEvent(new document.defaultView.Event("change", { bubbles:true })); }
+    else node.click();
+  };
   try {
-    click('[data-section="contracts"]');
     click('[data-stage="rewrite"]');
     assert(document.querySelector('[data-document="submission"]'), "model text arrays have a separate submission contract");
     assert.equal(document.querySelector('[data-document="result"]').textContent, "结果 Schema");
@@ -65,8 +68,6 @@ test("reference definitions distinguish source selections, derived comparisons a
 test("reference storage lists actual result files and keeps rewrites embedded in source rows", async () => {
   const { dom, document, reference } = await referencePage();
   try {
-    assert.match(document.querySelector(".rule-list").textContent, /缺失或冲突只跳过受影响的模型对/);
-    document.querySelector('[data-section="flow"]').click();
     const section = [...document.querySelectorAll(".reference-section")].find((element: any) => element.querySelector("h2").textContent === "保存位置")!;
     const cells = new Map([...section.querySelectorAll("tbody tr")].map((row: any) => [row.cells[0].textContent, row.cells[1]]));
     assert.deepEqual([...cells.get("对比").querySelectorAll("code")].map((element: any) => element.textContent),
@@ -87,14 +88,18 @@ test("reference storage lists actual result files and keeps rewrites embedded in
     assert.equal(proseRewrite.steps[0]!.name, "双方整体总评与取舍");
     assert.match(document.querySelector("#reference-content").textContent, /任务内正整数 evidence_index/);
     document.querySelector('[data-open-stage="comparison"][data-open-profile="verification"]').click();
-    assert.equal(document.querySelector('[data-profile="verification"]').getAttribute("aria-pressed"), "true");
-    assert.equal(document.activeElement, document.querySelector('[data-profile="verification"]'));
+    assert.equal(document.querySelector('[data-profile="verification"]').selected, true);
+    assert.equal(document.activeElement, document.querySelector('[data-pick="stage"]'));
   } finally { dom.window.close(); }
 });
 
 test("reference profiles expose independent inspection and the current canonical and model submission schemas", async () => {
   const { dom, document, reference } = await referencePage();
-  const click = (selector: string) => document.querySelector(selector).click();
+  const click = (selector: string) => {
+    const node = document.querySelector(selector);
+    if (node.tagName === "OPTION") { node.parentElement.value = node.value; node.parentElement.dispatchEvent(new document.defaultView.Event("change", { bubbles:true })); }
+    else node.click();
+  };
   try {
     const comparison = reference.stages.find((stage) => stage.id === "comparison")!;
     assert.deepEqual(comparison.profiles.map((profile) => profile.id), ["default", "verification"]);
@@ -124,7 +129,6 @@ test("reference profiles expose independent inspection and the current canonical
       for (const sources of Object.values(profile.sources)) for (const source of sources)
         assert((await readFile(path.join(ROOT, source), "utf8")).trim(), "reference source exists: " + source);
     }
-    click('[data-section="contracts"]');
     click('[data-stage="comparison"]');
     click('[data-profile="verification"]');
     for (const key of ["modelInspection", "inspection", "submission", "modelSubmission"] as const) {
@@ -153,13 +157,16 @@ test("reference profiles expose independent inspection and the current canonical
   } finally { dom.window.close(); }
 });
 
-test("reference shared prompts retain live text and definition disclosures survive document switches", async () => {
+test("reference shared prompts retain live text and definitions remain directly visible", async () => {
   const { dom, document, reference } = await referencePage();
-  const click = (selector: string) => document.querySelector(selector).click();
+  const click = (selector: string) => {
+    const node = document.querySelector(selector);
+    if (node.tagName === "OPTION") { node.parentElement.value = node.value; node.parentElement.dispatchEvent(new document.defaultView.Event("change", { bubbles:true })); }
+    else node.click();
+  };
   try {
     assert.deepEqual(reference.sharedPrompts, Object.fromEntries(sharedPromptResources().map(({ name, text, source }) => [name, { text, source }])));
     assert.deepEqual(Object.keys(reference.sharedPrompts), ["material", "commentary", "evidence", "taskFocus", "budget", "recovery", "nudge"]);
-    click('[data-section="contracts"]');
     click('[data-stage="shared"]');
     for (const [key, resource] of Object.entries(reference.sharedPrompts)) {
       click('[data-document="' + key + '"]');
@@ -170,19 +177,14 @@ test("reference shared prompts retain live text and definition disclosures survi
     click('[data-stage="comparison"]');
     click('[data-profile="verification"]');
     click('[data-document="inspection"]');
-    const disclosure = document.querySelector(".reference-disclosure");
-    disclosure.open = true;
     click('[data-document="system"]');
     click('[data-document="inspection"]');
-    assert.equal(document.querySelector(".reference-disclosure").open, true);
-    const current = document.querySelector('[data-profile="verification"]');
-    current.focus();
-    current.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
-    assert.equal(document.querySelector('[data-profile="default"]').getAttribute("aria-pressed"), "true");
-    assert.equal(document.activeElement, document.querySelector('[data-profile="default"]'));
+    assert.equal(document.querySelector(".reference-disclosure").tagName, "SECTION");
+    click('[data-profile="default"]');
+    assert.equal(document.querySelector('[data-profile="default"]').selected, true);
     assert.equal(document.querySelector('[data-document="inspection"]'), null);
     click('[data-profile="verification"]');
     click('[data-document="inspection"]');
-    assert.equal(document.querySelector(".reference-disclosure").open, true);
+    assert.equal(document.querySelector(".reference-disclosure").tagName, "SECTION");
   } finally { dom.window.close(); }
 });

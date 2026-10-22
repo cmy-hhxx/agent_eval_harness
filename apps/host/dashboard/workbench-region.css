@@ -1,0 +1,162 @@
+:host { display:block; min-width:0; color:var(--text); font:14px/1.65 var(--font); background:#fff; }
+[hidden] { display:none!important; }
+.app-shell { display:block; min-height:0; }
+.main-content,.automation-page main,.page-shell,.records-shell { max-width:none; width:100%; padding:0; margin:0; }
+.sidebar { position:static; width:100%; height:auto; border:0; padding:0; overflow:visible; background:none; margin:0 0 28px; }
+.sidebar-heading { margin:0 0 10px; }
+.sidebar-heading h2 { font-size:16px; color:var(--text); text-transform:none; }
+.run-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:6px; max-height:280px; overflow:auto; }
+.page-header,.automation-page .page-header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.monitor-title h1,.service-badge { display:none; }
+.monitor-actions { margin-left:auto; }
+.source-nav { justify-content:flex-start; }
+.source-nav button { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--text); }
+.source-nav button span { color:var(--muted); font-size:13px; }
+.source-nav button[aria-current] { border-color:var(--accent); color:var(--accent); }
+.llm-allocations { margin:0 0 24px; }
+.llm-allocation { padding:0; border:0; border-radius:0; }
+.llm-allocation label { font-size:15px; }
+.llm-activity { margin-top:24px; }
+.llm-activity>header { font-weight:600; margin-bottom:10px; }
+.monitor-meta { margin:20px 0; display:block; }
+.runtime-details>header { display:none; }
+.runtime-facts { margin:8px 0; font-size:13px; }
+.execution-overview,.pipeline-flow { border:0; padding:12px 0; }
+.monitor-toolbar { border:0; margin:24px 0 12px; }
+.automation-page main>section { margin-top:28px; }
+#dates-title,#activity-title { position:static; width:auto; height:auto; margin:0 0 12px; clip-path:none; overflow:visible; }
+.automation-page .table-scroll,.panel,.problem-detail,.problem-tree-panel,.processing-panel,.catalog { border:0; border-radius:0; box-shadow:none; background:transparent; }
+.automation-page .data-table td { white-space:normal; }
+.date-table { table-layout:auto; min-width:900px; }
+.date-detail-row { background:#f7f9fa; }
+.date-detail-row td { border:0; padding:8px 12px 16px!important; }
+.date-table th { width:auto!important; }
+.task-facts { gap:16px; padding:0; }
+.task-facts dt { font-size:12px; margin-bottom:2px; }
+.task-facts dd { font-size:13px; }
+.row-error header { color:var(--danger); font-weight:500; }
+.row-error pre { margin:4px 0!important; border:0; background:transparent; padding:0; }
+.panel-heading { padding:12px 0; border-bottom:1px solid var(--line); }
+.start-form { padding:20px 0; }
+.advanced-settings { border:0; padding:0; }
+.advanced-settings>header { font-size:15px; font-weight:600; margin:8px 0 16px; }
+.run-overview { margin-top:24px; border:0; padding:0; background:none; }
+.explorer { display:block; }
+.cases-panel { padding:0; margin:24px 0; }
+.case-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); max-height:300px; overflow:auto; }
+.detail-panel,.case-detail { padding:0; }
+.task-detail,.finding,.comparison-details,.comparison-finding,.detail-section,.input-disclosure,.criterion-rule,.problem-library { border:0; border-radius:0; box-shadow:none; background:transparent; }
+.task-detail { margin:20px 0; border-top:1px solid var(--line); padding:16px 0; }
+.task-detail>header,.detail-section>header { display:flex; gap:16px; align-items:center; margin-bottom:12px; }
+.task-detail>header { font-size:16px; }
+.finding { padding:16px 0; margin:12px 0; border-top:1px solid var(--line); }
+.finding>header,.comparison-finding>header,.comparison-details>header { display:block; font-weight:600; margin-bottom:10px; }
+.finding-content,.task-content,.input-content { padding:0; }
+.finding-preview { display:block; white-space:normal; max-height:none; }
+.findings-return,.findings-index { display:none; }
+.problem-workspace { display:block; }
+.problem-tree-panel { padding:0; max-height:none; }
+.problem-tree { overflow:visible; max-height:none; }
+.problem-detail { padding:24px 0 0; min-height:0; }
+.problem-class-meta,.occurrence-origin,.problem-merges { border:0; padding:12px 0; }
+.problem-class-meta>header,.occurrence-origin>header { font-size:13px; color:var(--muted); }
+.problem-models { margin:0 0 20px; }
+.problem-model-tab { border-radius:4px; }
+.problem-occurrence { background:none; border:0; border-top:1px solid var(--line); border-radius:0; padding:16px 0; }
+.reference-header { margin:0 0 16px; }
+.reference-section { border:0; margin:0 0 28px; padding:0; }
+.contract-layout { display:block; border:0; }
+.contract-stages,.definition-documents { display:flex; flex-wrap:wrap; gap:8px; }
+.contract-content { border:0; padding:20px 0 0; }
+.contract-stages button { padding:8px 12px; }
+.reference-disclosure,.schema-node,.schema-leaf { border:0; border-radius:0; }
+.reference-disclosure>header { font-size:14px; font-weight:600; margin:14px 0 8px; }
+.schema-children { border:0; margin:0; padding:0; }
+.schema-node { padding:8px 0; }
+.prompt-text { max-height:none; }
+.processing-panel { margin:0 0 20px; padding:0; }
+.dashboard-top { margin:0 0 20px; }
+.records-shell { margin-top:28px; }
+.records-header h1 { font-size:16px; }
+.records-table { table-layout:fixed; }
+.records-table .record-question,.records-table .record-answer { vertical-align:top; }
+.question-text { white-space:pre-wrap; }
+.answer-fields { margin:0; padding:0; }
+.answer-field h2 { font-size:13px; }
+h2 { font-size:16px; } h3 { font-size:15px; }
+pre,code { font-size:12px; }
+.table-scroll,.records-table-scroll { max-width:100%; overflow:auto; }
+button,input,select { min-height:36px; }
+.table-link { background:none; border:0; color:var(--accent); text-align:left; }
+@media(max-width:760px) { .runtime-facts{grid-template-columns:1fr}.source-nav{display:flex}.run-list,.case-list{grid-template-columns:1fr}.case-columns{grid-template-columns:1fr}.advanced-grid{grid-template-columns:1fr}.main-content{padding:0}.execution-overview,.pipeline-flow{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; scroll-behavior:auto!important; transition:none!important; } }
+.definition-filters { display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; }
+.definition-filters label { display:flex; gap:10px; align-items:center; color:var(--muted); }
+.definition-filters select { min-width:160px; max-width:100%; }
+.findings-nav { display:none; }
+.rewrite-pair>div { padding:12px 0; border-radius:0; background:none; }
+.comparison-groups li { padding:8px 0; border:0; border-radius:0; }
+.data-table th,.data-table td { padding:12px; }
+.data-table th { text-align:left; }
+.data-table .numeric,.problem-tree .data-table :is(th,td):last-child { text-align:right; font-variant-numeric:tabular-nums; }
+#deliveries .data-table :is(th,td):nth-child(3) { text-align:left; }
+/* Tabler owns control/table presentation; these rules align the existing business layouts. */
+:host {
+  --font:var(--tblr-font-sans-serif);
+  --tblr-font-sans-serif:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --tblr-primary:#087f83;
+  --tblr-primary-rgb:8,127,131;
+  --text:var(--tblr-body-color);
+  --muted:var(--tblr-secondary-color);
+  --line:var(--tblr-border-color);
+  line-height:1.6;
+}
+.btn { min-height:36px; }
+.form-select,.form-control { width:auto; max-width:100%; min-height:36px; }
+input.form-check-input { min-height:0; flex-shrink:0; }
+.form-control[type=number] { min-width:72px; }
+.table { margin-bottom:0; --tblr-table-cell-padding-x:12px; --tblr-table-cell-padding-y:12px; }
+.table>thead>tr>th { text-transform:none; letter-spacing:0; font-size:13px; white-space:nowrap; }
+.table :is(th,td).numeric { text-align:right; }
+.table-scroll,.records-table-scroll { border:1px solid var(--tblr-border-color); border-radius:var(--tblr-border-radius); }
+.table-pagination,.pager { display:flex; align-items:center; gap:8px; margin-top:16px; }
+.execution-overview,.pipeline-flow { gap:0; padding:16px 0; border-block:1px solid var(--line); }
+.execution-overview>div,.pipeline-flow>div { padding:0 16px; border-left:1px solid var(--line); }
+.execution-overview>div:first-child,.pipeline-flow>div:first-child { padding-left:0; border-left:0; }
+.source-nav { display:flex; flex-wrap:wrap; gap:8px; }
+.source-nav .btn[aria-current] { background:var(--accent-soft); border-color:var(--accent-line); }
+.monitor-meta { border-block:1px solid var(--line); padding:16px 0; }
+.runtime-facts { gap:16px; }
+.monitor-toolbar { margin-top:32px; }
+:is(#dates,#activity,#mongo-deliveries,#deliveries,#config,#explorer,#run-overview) { scroll-margin-top:24px; }
+.problem-models { gap:8px; }
+.reference-header h1,.dashboard-top h1 { display:none; }
+.run-list { gap:8px; }
+.run-item { min-height:64px; border-color:var(--line); }
+.llm-allocation { padding:16px 0; border-bottom:1px solid var(--line); }
+#run-description:empty,#config-path:empty { display:none; }
+@media(max-width:760px) { .execution-overview,.pipeline-flow { gap:16px; }.execution-overview>div,.pipeline-flow>div { padding:0; border:0; }.form-select,.form-control { min-width:0; } }
+.intake-toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:0 0 20px; }
+.intake-toolbar label { display:grid; gap:6px; min-width:120px; }
+.intake-toolbar .intake-check { display:flex; align-items:center; min-width:0; padding-bottom:7px; }
+.intake-toolbar select { max-width:320px; }
+.intake h2 { font-size:18px; margin:28px 0 12px; }
+.intake h3 { font-size:15px; }
+.intake table { min-width:780px; }
+.intake td { vertical-align:top; }
+.intake .intake-number { text-align:right; font-variant-numeric:tabular-nums; }
+.intake-path { font-family:ui-monospace,monospace; font-size:12px; overflow-wrap:anywhere; }
+.intake pre { background:transparent; color:inherit; padding:0; border:0; white-space:pre-wrap; overflow-wrap:anywhere; max-height:480px; overflow:auto; }
+.intake .error { color:var(--tblr-danger); }
+#batch-error-rows td:first-child { min-width:220px; max-width:360px; overflow-wrap:anywhere; }
+#batch-error-rows td:first-child p { white-space:pre-line; }
+#batch-error-rows td:nth-child(2) { max-width:260px; overflow-wrap:anywhere; }
+#batch-error-rows td:nth-child(3) { min-width:110px; }
+#batch-error-history details { margin-block:12px; }
+#batch-error-history summary { cursor:pointer; overflow-wrap:anywhere; }
+
+#analysis-rows td, #analysis-runs td, #analysis-jobs td, #analysis-job-body p { white-space: pre-line; overflow-wrap: anywhere; }
+#analysis-rows td, #analysis-runs td, #analysis-jobs td { min-width: 9rem; max-width: 25rem; }
+
+#analysis-runs th:first-child, #analysis-runs td:first-child { width: 3rem; min-width: 3rem; }
+#analysis-plan, #analysis-job-body pre { overflow-wrap: anywhere; white-space: pre-wrap; }

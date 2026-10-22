@@ -1,21 +1,21 @@
 import path from "node:path";
 import { canonical, safeId, type Engine } from "@eval/contracts";
-import { exists, runLayout } from "@eval/data";
+import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
-import { clusteringJobRepository, clusteringJobWorkflow, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
+import { clusteringJobRepository, clusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
 import { createModelResolver, type HostConfig } from "./config.js";
 import { services } from "./composition.js";
 import { createBalancedModels } from "./balanced-models.js";
 
 export async function runClusteringCommand(host: HostConfig, options: {
-  runs?: string[]; runId?: string; output?: string; apply?: boolean;
+  runs?: string[]; selectionFile?: string; runId?: string; output?: string; apply?: boolean;
   engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[]; balanceChannels?: boolean;
 }): Promise<number> {
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("cluster --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
   const output = { kind: "directory" as const,
-    path: options.output ? path.resolve(options.output) : path.resolve(host.evaluation.output.path, "../clustering") };
+    path: options.output ? path.resolve(options.output) : path.resolve(host.evaluation.output.path, "clustering") };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   const saved = layout && await exists(layout.stateFile) ? await clusteringJobRepository.readRun(layout.directory) : undefined;
   if (saved && options.runs && canonical([...new Set(options.runs.map(run => path.resolve(run)))].sort()) !==
@@ -23,7 +23,10 @@ export async function runClusteringCommand(host: HostConfig, options: {
     throw new Error("续跑沿用该作业已保存的来源选择；处理其他 run 请使用新的 --run-id");
   if (layout && options.runs?.some(run => path.resolve(run) === layout.directory))
     throw new Error("聚类作业目录不能覆盖来源 run");
-  const prepared = saved ? undefined : await prepareClusteringJob(options.runs ?? [], { ...host.evaluation, output });
+  if (options.selectionFile && options.runs) throw new Error("聚类来源不能同时提供 run 和冻结选择");
+  const prepared = saved ? undefined : options.selectionFile
+    ? await prepareFrozenClusteringJob(await readJson<ClusteringJobConfig["clusteringJob"]>(options.selectionFile), { ...host.evaluation, output })
+    : await prepareClusteringJob(options.runs ?? [], { ...host.evaluation, output });
   const config: ClusteringJobConfig = saved
     ? { ...host.evaluation, output, inputs: { versions: [] }, comparisons: [],
       clusteringJob: (saved.manifest.config as ClusteringJobConfig).clusteringJob }
@@ -35,7 +38,9 @@ export async function runClusteringCommand(host: HostConfig, options: {
   }
   const routing = options.balanceChannels ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
   const { modelForStage } = routing;
-  for (const stage of new Set((saved?.manifest.tasks ?? prepared!.plan.tasks).map(task => task.stage))) {
+  const pending = saved ? saved.manifest.tasks.filter(task => !saved.receipts[task.id] &&
+    (!saved.manifest.executionScope || saved.manifest.executionScope.includes(task.id))) : prepared!.plan.tasks;
+  for (const stage of new Set(pending.map(task => task.stage))) {
     const model = modelForStage(stage);
     if (!process.env[model.apiKeyEnv]) throw new Error(`Missing ${model.apiKeyEnv}; configure the model key in config.ini`);
   }

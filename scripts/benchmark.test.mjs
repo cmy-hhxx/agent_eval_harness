@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, stat, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -343,6 +343,16 @@ test("CLI compare reads only comparison.jsonl and traces accepted current receip
     const report = JSON.parse(result.stdout);
     assert.equal(report.stable, 1);
     assert.equal(report.samples[0].judgments[0].trace.judge, "resolved-judge");
+    const args = ["scripts/benchmark.mjs", "compare", "--run", path.join(directory, "left"), "--run", path.join(directory, "right")];
+    const output = path.join(directory, "source/eval_output/test_eval/comparison.json");
+    const saved = spawnSync(process.execPath, [...args, "--output", output], { encoding: "utf8" });
+    assert.equal(saved.status, 0, saved.stderr);
+    assert.equal(JSON.parse(await readFile(output, "utf8")).stable, 1);
+    const outside = path.join(directory, "comparison.json");
+    const rejected = spawnSync(process.execPath, [...args, "--output", outside], { encoding: "utf8" });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /source's eval_output/);
+    await assert.rejects(stat(outside), { code: "ENOENT" });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
