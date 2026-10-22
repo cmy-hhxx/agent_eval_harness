@@ -13,7 +13,7 @@ npm run automations -- check
 bash automation.sh
 ```
 
-check 只读，不下载、不调用模型、不上报。automation.sh 每次构建当前应用，默认启动日常四路与本次后训练专题；日常首次 LLM 配额为 2、统计日志上报开启，后训练首次配额为 40，统一看板使用 127.0.0.1:4174，顶部切换查看来源，并按来源分配 LLM 并发。支持 --port、--config 和 --debug；多个来源只占用 --port 指定的一个端口。端口占用则停止本次启动，Ctrl+C 保存各来源进度并一起停止；再次启动沿各自检查点恢复。
+check 只读，不下载、不调用模型、不上报。automation.sh 每次构建当前应用，默认只启动日常四路，首次 LLM 配额为 6，统计日志上报开启，统一看板使用 127.0.0.1:4174，顶部切换查看来源，并按来源分配 LLM 并发。支持 --port、--config 和 --debug；多个来源只占用 --port 指定的一个端口。端口占用则停止本次启动，Ctrl+C 保存各来源进度并一起停止；再次启动沿各自检查点恢复。
 
 [automations.json](../configs/automations.json)维护日期范围、轮询、每日限额、路径和交付目标；hostConfigs 依次合并 Host 与本机模型配置，再加载[自动化预算](../configs/automations-host.json)。修改配置后重启，不热更新。直接 CLI 使用现有构建：
 
@@ -25,7 +25,7 @@ npm run automations -- run --dashboard --port 4174
 
 once 处理一轮可执行日期，会调用模型；不等待本轮失败退避。status 的 ownerAlive 区分活进程与遗留状态。
 
-默认 run / check / status 加载 [日常四路配置](../configs/automations.json) 与 [后训练配置](../configs/automations-post-training.json)。GPT 六路和预测来源不会自动启动；需要时通过 `--config` 显式选择各自配置，多个来源重复传入 `--config`。看板调整过的配额保存于 `data/automations/scheduling.json`，后续启动沿用；没有已保存配额时使用各来源的 Host 配额（日常 2、后训练 40）。各来源独立检查和交付；各自的 LLM 并发由看板分配，设置为 0 暂停该来源的新模型请求。已在调用的请求正常结束，工具执行、下载、校验、Mongo 与统计交付继续。配额只覆盖实际 SDK 模型响应流，流结束即释放；等待配额不计入任务和空闲超时。Mongo 写入共用一个独立通道，允许来源共用集合；普通任务按 evaluationTaskId 隔离，预测重评按原比较收据精确替换已有文档。
+默认 run / check / status 只加载 [日常四路配置](../configs/automations.json)。后训练、GPT 六路和预测来源不会自动启动；需要时通过 `--config` 显式选择各自配置，多个来源重复传入 `--config`。看板调整过的配额保存于 `data/automations/scheduling.json`，后续启动沿用；没有已保存配额时使用各来源的 Host 配额（日常 6；显式选择后训练且无保存配额时为 40）。各来源独立检查和交付；各自的 LLM 并发由看板分配，设置为 0 暂停该来源的新模型请求。已在调用的请求正常结束，工具执行、下载、校验、Mongo 与统计交付继续。配额只覆盖实际 SDK 模型响应流，流结束即释放；等待配额不计入任务和空闲超时。Mongo 写入共用一个独立通道，允许来源共用集合；普通任务按 evaluationTaskId 隔离，预测重评按原比较收据精确替换已有文档。
 
 看板为每个来源提供 LLM 并发输入和应用按钮，查看来源与配额互不影响。配额保存到 `data/automations/scheduling.json` 的 `sources.<来源ID>.concurrency`；无保存记录的来源使用其 Host 配置并发。配置为 0 的来源不启动新评测日期，其他通道继续；运行中的日期在下一次模型请求处等待。全局调用表展示来源、日期、阶段、实际渠道、模型、任务及开始时间，LLM 请求数与运行任务数分别统计。本机同源 `POST /api/llm-concurrency` 接收 `{sourceId, concurrency}`，并发必须为非负整数；保存失败不改变配额，断连时禁用编辑。
 
@@ -48,7 +48,7 @@ once 处理一轮可执行日期，会调用模型；不等待本轮失败退避
 
 六路使用独立数据源 `http://117.50.195.94:2256/gpt`：通过 `/gpt/dashboard-data` 声明六路就绪及行数，并提供 `/gpt/data/YYYY-MM-DD/<模型ID>.jsonl`。原四路继续使用服务根路径；远端监听与输出目录见 [服务说明](../server_dashboard_ths/README.md#gpt-六路)。`6.1sol` 的点号保留；文件名、remoteModels 与 Host id 须一致。`6_luna`、`6.1sol` 示例采用 adapter=a（OpenAI 消息格式）；如采集使用显式轮次格式，须把对应 adapter 改为 b。JSONL 的 version 若提供，须等于 Host 配置的 name。
 
-[六路配置](../configs/automations-six-models.example.json) 指向 GPT 六路源，日期范围从 2026-10-16 开始，默认随四路一起检查新增数据。显式运行 `bash automation.sh --config configs/automations-six-models.example.json` 可只运行六路；无需手动下载。
+[六路配置](../configs/automations-six-models.example.json) 指向 GPT 六路源，日期范围从 2026-10-16 开始，只在显式选择六路来源后检查新增数据。显式运行 `bash automation.sh --config configs/automations-six-models.example.json` 可只运行六路；无需手动下载。
 
 GPT 六路设置 `publishStatisticsLog: false`：不生成、追加或上传统计交付日志，不续传历史待发日志，`publish-log / resolve-log` 也拒绝执行。Mongo、远端进度以及本地 `runtime.log / evaluation.log` 照常运行。该开关是必填布尔配置；需要统计交付的其他自动化显式设为 true。历史交付记录保留原样。
 
@@ -62,7 +62,7 @@ GPT 与四路共用 Mongo 集合 `agent_eval_bench_version_comparisons_new`，�
 
 ### 后训练三路输入
 
-[后训练 Host 配置](../configs/post-training-models.json) 保留 `a_fast / b_fast / b_post_train_fast` 三路输入，当前专题只新增 A Fast/后训练、B Fast/后训练两组对比；A Fast/B Fast 的已接受结果保留，尚未开始的对比暂停。同一判据下每份回答只归因一次，各场分别随机持久化盲测位置。
+[后训练 Host 配置](../configs/post-training-models.json) 保留 `a_fast / b_fast / b_post_train_fast` 三路输入，当前专题只新增 B Fast/后训练对比；所有含 A Fast 的已接受结果保留，未完成任务暂停。同一判据下每份回答只归因一次，各场分别随机持久化盲测位置。
 
 每份输入完成字节数、JSONL 与身份校验后立即分批上传，不等其他模型文件或旧评测结束。已上传输入保持不变，新输入携带专题标签；每批最多 16 条或约 8 MiB，与结果共用按任务和日期隔离的写入队列，结果可在输入批次之间交付。下载继续并行，整组输入安装仍等待在途评测结束。文件上传成功回执与当前源文件读取标识一致时，后续结果交付跳过输入正文重传。
 
@@ -74,7 +74,7 @@ GPT 与四路共用 Mongo 集合 `agent_eval_bench_version_comparisons_new`，�
 bash automation.sh --config configs/automations-post-training.json
 ```
 
-后训练评测与独立聚类均使用 `evaluation-gateway`。本次后训练只继续 `b_fast / b_post_train_fast` 对比，不再执行 A Fast 参与的未完成评测和改写；历史成功收据、原始结果及未完成改写声明保留，避免把未完整改写的历史结果误判为可上传。后训练单次模型／工具空闲等待为 300 秒，总任务时限保持 900 秒。日常四路配额为 2，后训练为 32，预测和 GPT 六路为 0；显式启动其他来源后，可由看板调整其配额。后训练当前一组对比的规划不限场次，纳入当前全部可配对数据，保留已接受的历史对比。评测结束后仅对 B post_train_fast 尚未聚类的成功归因做增量聚类，复用既有问题库与结果，本地交付并上传 `agent_eval_bench_comparison_problems`；不重跑已完成聚类。当前专题的任务 ID、状态与来源目录为 `remote-post-training-evaluation`，run 前缀为 `daily-post-training-`；后续独立实验使用新的任务 ID 和路径。Mongo 沿用现有集合，按 evaluationTaskId 隔离；`publication.topic` 写入输入的 `trace.meta.evaluation_topic` 和输出的 `result.comparison.evaluation_topic`，本次为 `后训练三模型专题评测（2026-10-19）`。已上传输入补标签只更新元数据，不重传正文；新增输入与正式结果持续增量上传。统计交付日志关闭，本地运行日志及三个模型对的远端进度正常上报。已完成收据按原规则恢复，追加数据只补未完成工作。
+后训练评测与独立聚类均使用 `evaluation-gateway`。本次后训练只继续 `b_fast / b_post_train_fast` 对比，不再执行 A Fast 参与的未完成评测和改写；历史成功收据、原始结果及未完成改写声明保留，避免把未完整改写的历史结果误判为可上传。后训练单次模型／工具空闲等待为 300 秒，总任务时限保持 900 秒。当前保存的日常四路配额为 6，后训练、预测和 GPT 六路为 0；显式启动其他来源后，可由看板调整其配额。后训练当前一组对比的规划不限场次，纳入当前全部可配对数据，保留已接受的历史对比。评测结束后仅对 B post_train_fast 尚未聚类的成功归因做增量聚类，复用既有问题库与结果，本地交付并上传 `agent_eval_bench_comparison_problems`；不重跑已完成聚类。当前专题的任务 ID、状态与来源目录为 `remote-post-training-evaluation`，run 前缀为 `daily-post-training-`；后续独立实验使用新的任务 ID 和路径。Mongo 沿用现有集合，按 evaluationTaskId 隔离；`publication.topic` 写入输入的 `trace.meta.evaluation_topic` 和输出的 `result.comparison.evaluation_topic`，本次为 `后训练三模型专题评测（2026-10-19）`。已上传输入补标签只更新元数据，不重传正文；新增输入与正式结果持续增量上传。统计交付日志关闭，本地运行日志及三个模型对的远端进度正常上报。已完成收据按原规则恢复，追加数据只补未完成工作。
 
 ### 预测类自动评测
 
@@ -108,7 +108,7 @@ channels = evaluation-gateway
 
 渠道须存在且有密钥，阶段模型和参数仍由 Host 配置决定。完整任务按 traffic_weight 分配，普通重试保持渠道；明确额度耗尽才切换，不把普通429、超时或鉴权失败当作额度耗尽。切换保留提交账本。
 
-channelConcurrency 限制指定渠道的并发，总并发仍由 Host 控制；等待槽位或退避不占执行槽位。当前自动化初始预算为 2 并发，本机暂时只启用 evaluation-gateway，避开 openai 的持续过载。配置保留 openai 渠道上限 1，重新加入渠道池时生效。渠道池在每个日期开始评测时重新读取；正在执行的日期需要重启后才应用修改，已保存的结果正常续跑。耗尽记录在本进程内共享，重启后重查完整渠道池。省略 automation 渠道池则使用阶段原绑定。
+channelConcurrency 限制指定渠道的并发，总并发仍由 Host 控制；等待槽位或退避不占执行槽位。当前自动化初始预算为 6 并发，本机暂时只启用 evaluation-gateway，避开 openai 的持续过载。配置保留 openai 渠道上限 1，重新加入渠道池时生效。渠道池在每个日期开始评测时重新读取；正在执行的日期需要重启后才应用修改，已保存的结果正常续跑。耗尽记录在本进程内共享，重启后重查完整渠道池。省略 automation 渠道池则使用阶段原绑定。
 
 ## 历史接管与更新
 
@@ -223,13 +223,13 @@ Mongo 回执绑定评测任务 ID、连接环境变量名、数据库和集合�
 
 启动后先生成并上传一条当前累计快照，随后按北京时间 00、04、08、12、16、20 点更新；停机跨多个周期不补造中间历史。每次新快照使用独立 traceId；已有待传日志先沿用原 traceId 和已落盘内容续传，成功后立即补发当前快照。每条含完整累计与逐日数据，消费者读取最新一条，不能把各周期相加。
 
-统计读取已安装的完整输入和已完成的正式比较，不等待整批评测、改写或刷新下载结束。刷新下载期间仍统计上一份完整输入；替换输入文件与统计快照互斥，避免多模型文件混读。首次下载未完成的日期暂不纳入，安装中断且无法确认完整的日期须先恢复输入；恢复优先于常规刷新，恢复成功后立即重试尚未落盘的统计快照，不把不完整数据当作空数据上传。场景分类沿用 `meta.task`，难度沿用 `meta.difficulty` 和 Mongo 后补标签，不根据问题文本猜分类，也不将 RUED 数值擅自换算为难度。
+统计读取已安装的完整输入和已完成的正式比较，不等待整批评测、改写或刷新下载结束。刷新下载期间仍统计上一份完整输入；替换输入文件与统计快照互斥，避免多模型文件混读。首次下载未完成的日期暂不纳入，安装中断且无法确认完整的日期须先恢复输入；恢复优先于常规刷新，恢复成功后立即重试尚未落盘的统计快照，不把不完整数据当作空数据上传。场景分类优先读取 `meta.task`，缺失或未分类时读取 `meta.info.task`；难度优先读取明确填写的 `meta.difficulty`，字段缺失时读取 `meta.info.difficulty`，并应用 Mongo 后补标签，不根据问题文本猜分类，也不将 RUED 数值擅自换算为难度。
 
-按坐标重读统计输入时，逐条让出事件循环，避免累计统计阻塞评测请求。
+统计在本次快照的首遍输入扫描中只保留身份、标签、日期和指标，不再第二遍读取完整回答正文；重复身份仍整体排除，结束前核对文件未变。摘要只存在于本次快照内存中，不跨快照缓存。Mongo 正文交付继续按坐标读取，并逐条让出事件循环。
 
 胜率按 wins / evaluated；单个模型对的 A.wins + B.wins + both_good + both_bad = evaluated。三模型时每份回答参与两场；对战数按模型对累计，准确率、耗时和 Token 按同题同模型去重。双方的 both_* 各表示参与次数，不能相加当场数。未知指标保留 null，分位数由原始数值重算，不平均逐日分位数。
 
-日期优先用同题有效 request_time 的北京时间日期，全部缺失才用批次日期。分类和难度读取输入及 Mongo 后补标签；难度按最新明确填写的值选择，缺字段保留已有标签，显式空值或未分层才清除旧分层。来源读取失败或分类冲突拒绝本轮快照，不静默生成空标签统计。
+日期优先用同题有效 request_time 的北京时间日期，全部缺失才用批次日期。分类和难度读取输入及 Mongo 后补标签；来源目录的 `statistics-labels.jsonl` 可保存已核对的历史标签，每行包含 `evaluationTaskId`、`batchId`、原始 `caseId` 以及 `task` / `difficulty`。补充表必须属于当前来源、同题不能重复，在输入后、当前 Mongo 标签前应用，不改原始 meta；未标注任务的 Mongo 历史记录仅在按日期、业务题号和模型人工核对后导入该表，常规 Mongo 查询仍严格按任务隔离。难度按最新明确填写的值选择，缺字段保留已有标签，显式空值或未分层才清除旧分层。来源读取失败或分类冲突拒绝本轮快照，不静默生成空标签统计。
 
 先追加本地日志，再 POST 配置目标。只有 HTTP 201、written=true 且有 requestId 才确认；同 traceId 不重复落盘。停止流水线后可立即执行：
 

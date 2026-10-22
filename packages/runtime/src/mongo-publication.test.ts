@@ -58,12 +58,14 @@ test("comparison publication leaves a separately published attribution tree unto
 });
 
 test("Mongo labels distinguish missing difficulty from an explicit empty value in stable time order", async (t) => {
-  const documents = [
+  const documents: Document[] = [
     { _id: "input:c", createdAt: new Date(2000), difficulty: "复杂" },
     { _id: "input:a", createdAt: new Date(1000), difficulty: "简单" },
     { _id: "input:b", createdAt: new Date(2000), difficulty: "中等" },
     { _id: "input:d", createdAt: new Date(3000), difficulty: undefined },
     { _id: "input:e", createdAt: new Date(4000), difficulty: "" },
+    { _id: "input:f", createdAt: new Date(5000), task: "", info: { task: "补充分类", difficulty: "复杂" } },
+    { _id: "input:g", createdAt: new Date(6000), difficulty: "", info: { task: "不覆盖直接分类", difficulty: "复杂" } },
   ];
   const signal = AbortSignal.timeout(5000);
   t.mock.method(MongoClient.prototype, "connect", async function (this: MongoClient) { return this; });
@@ -77,14 +79,17 @@ test("Mongo labels distinguish missing difficulty from an explicit empty value i
         assert.equal(options.signal, signal);
         assert.equal(options.timeoutMode, "iteration");
         assert.deepEqual(options.projection, { _id: 1, createdAt: 1, batchId: 1, "trace.case_id": 1,
-          "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1 });
+          "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1,
+          "trace.meta.info.task": 1, "trace.meta.info.difficulty": 1 });
         return { toArray: async () => documents.map(doc => ({ _id: doc._id, createdAt: doc.createdAt,
-          batchId: date, trace: { case_id: "one", meta: { task: "分类", difficulty: doc.difficulty } } })) };
+          batchId: date, trace: { case_id: "one", meta: { task: doc.task ?? "分类", difficulty: doc.difficulty, info: doc.info } } })) };
       },
     }),
   }));
   const config = { uri: "mongodb://localhost", database: "test", collection: "inputs", evaluationTaskId };
   const expected = ["简单", "中等", "复杂", undefined, ""].map(difficulty => ({ batchId: date, caseId: "one", task: "分类", difficulty }));
+  expected.push({ batchId: date, caseId: "one", task: "补充分类", difficulty: "复杂" },
+    { batchId: date, caseId: "one", task: "分类", difficulty: "" });
   assert.deepEqual(await readMongoLabels(config, [date], signal), expected);
   documents.reverse();
   assert.deepEqual(await readMongoLabels(config, [date], signal), expected);

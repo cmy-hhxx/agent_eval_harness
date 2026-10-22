@@ -523,6 +523,40 @@ test("pinned statistics input reads yield to pending Host requests between recor
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("statistics scan answer bodies once while retaining labels, metrics and duplicate quarantine", async t => {
+  const { directory, config } = await fixtureConfig();
+  try {
+    const file = path.join(directory, "inputs.jsonl"), runId = `daily-${date}`;
+    const healthy = { ...raw("healthy"), batch_id: date, request_time: "2026-09-29 23:00:00",
+      meta: { task: "数据查询类", difficulty: "复杂", first_token_time_cost: 12, finish_answer_time_cost: 48,
+        usage: { input_tokens: 100, output_tokens: 20 } } };
+    const duplicate = { ...healthy, case_id: "duplicate" };
+    await writeJsonl(file, [healthy, duplicate, duplicate]);
+    const hostFile = path.join(directory, "host.json");
+    await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...config });
+    await writeJson(path.join(config.output.path, runId, "state.json"), { config, tasks: {}, inputs: {
+      first: { version: "a_fast", source: file },
+    } });
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile] };
+    const job = { date, runIds: [runId], adopted: true } as AutomationJob;
+    settings.predictionResults = undefined;
+    const normal = await publicationSnapshot(settings, job, t.signal);
+    const expected = new PublicationStatistics(normal.comparisons);
+    for await (const input of normal.inputs()) expected.addInput(input);
+    t.mock.method(fileSourceReader, "record", () => assert.fail("statistics must not reread complete answer bodies"));
+    const snapshot = await publicationSnapshot(settings, job, t.signal, "statistics");
+    const actual = new PublicationStatistics(snapshot.comparisons);
+    const projected = await collect(snapshot.inputs());
+    assert.equal(projected.length, 1);
+    assert.equal(projected[0].trace.messages, undefined);
+    assert.deepEqual(projected[0].trace.meta, healthy.meta);
+    projected.forEach(input => actual.addInput(input));
+    assert.deepEqual(actual.record("same", 1000), expected.record("same", 1000));
+    await writeJsonl(file, [healthy]);
+    await assert.rejects(collect(snapshot.results("statistics")), /输入文件发生变化/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("three-model statistics use configured battles and count each answer's correctness once", () => {
   const ids = ["a_fast", "b_fast", "baseline"];
   const stats = new PublicationStatistics([ids]);
@@ -783,6 +817,50 @@ test("latest snapshot refreshes existing dates and includes new dates without do
   assert.equal(historical.totalCaseCount, 2);
   assert.equal(historical.requestDates.length, 1);
   assert.equal(historical.stats[0].total.p50, 150);
+});
+
+test("statistics read nested labels without guessing RUED difficulty or changing original metadata", () => {
+  const stats = new PublicationStatistics(configuredGroups);
+  const nested = inputs.map(input => ({ ...input, trace: { ...input.trace,
+    meta: { info: { task: "嵌套分类", rued: { R: 4, U: 4, E: 4, D: 4 } } } } }));
+  const before = structuredClone(nested);
+  nested.forEach(input => stats.addInput(input));
+  const data = stats.record("nested", Date.now()).data as Record<string, any>;
+  assert.equal(data.tasks[0].id, "嵌套分类");
+  assert.equal(data.difficultyLevels.find((row: any) => row.id === "unclassified").count, 1);
+  assert.deepEqual(nested, before);
+  const explicit = new PublicationStatistics(configuredGroups);
+  inputs.forEach(input => explicit.addInput({ ...input, trace: { ...input.trace,
+    meta: { task: "直接分类", difficulty: "", info: { task: "嵌套分类", difficulty: "复杂" } } } }));
+  const direct = explicit.record("direct", Date.now()).data as Record<string, any>;
+  assert.equal(direct.tasks[0].id, "直接分类");
+  assert.equal(direct.difficultyLevels.find((row: any) => row.id === "unclassified").count, 1);
+});
+
+test("historical statistics supplements are task scoped and current Mongo difficulty takes precedence", async t => {
+  const { directory } = await fixtureConfig();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  config.sourceDirectory = directory;
+  config.publication = { ...config.publication, mongoUriEnv: "PATH" };
+  const file = path.join(directory, "statistics-labels.jsonl");
+  const label = { evaluationTaskId: config.id, batchId: date, caseId: "one", task: "补充分类", difficulty: "简单" };
+  await writeJsonl(file, [label]);
+  const state = { jobs: { [date]: { date, download: "ready" } } } as unknown as AutomationState;
+  const dependencies: Parameters<typeof statisticsSnapshot>[3] = {
+    labels: async () => [{ batchId: date, caseId: "one", difficulty: "复杂" }],
+    snapshot: async () => ({ comparisons: configuredGroups,
+      inputs: () => rows(inputs.map(input => ({ ...input, trace: { ...input.trace, meta: {} } }))),
+      results: () => rows([result]) }),
+  };
+  const data = (await statisticsSnapshot(config, state, t.signal, dependencies)).record("supplement", Date.now()).data as Record<string, any>;
+  assert.equal(data.tasks[0].id, "补充分类");
+  assert.equal(data.tasks[0].progress.completedBattleCount, 1);
+  assert.equal(data.difficultyLevels.find((row: any) => row.id === "L3").count, 1);
+  await writeJsonl(file, [{ ...label, evaluationTaskId: "another-topic" }]);
+  await assert.rejects(statisticsSnapshot(config, state, t.signal, dependencies), /invalid task/);
+  await writeJsonl(file, [label, label]);
+  await assert.rejects(statisticsSnapshot(config, state, t.signal, dependencies), /Duplicate statistics label/);
 });
 
 test("latest Mongo difficulty replaces old labels across models without losing battles", async () => {

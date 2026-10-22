@@ -26,9 +26,7 @@ export function validateAutomationTasks(configs: readonly AutomationConfig[]): v
 }
 
 export function automationConfigFiles(command: string, configured?: string[]): string[] {
-  const files = configured ?? ["configs/automations.json",
-    ...(["run", "check", "status"].includes(command) ? ["configs/automations-post-training.json"] : [])]
-    .map(file => path.join(ROOT, file));
+  const files = configured ?? [path.join(ROOT, "configs/automations.json")];
   const resolved = files.map(file => path.resolve(file));
   if (new Set(resolved).size !== resolved.length) throw new Error("Duplicate automation config");
   if (resolved.length > 1 && !["run", "check", "status"].includes(command))

@@ -14,10 +14,9 @@ import { ROOT } from "../../fixtures/services.js";
 const configuredSources = ["automations.json", "automations-six-models.example.json", "automations-post-training.json", "automations-prediction.json"]
   .map(file => path.join(ROOT, "configs", file));
 
-test("automation defaults to daily and post-training; manual delivery commands select daily only", () => {
-  for (const command of ["run", "check", "status"])
-    assert.deepEqual(automationConfigFiles(command), [configuredSources[0], configuredSources[2]]);
-  assert.deepEqual(automationConfigFiles("publish-log"), [configuredSources[0]]);
+test("automation defaults to daily only for evaluation and delivery", () => {
+  for (const command of ["run", "check", "status", "publish-log", "resolve-log", "retry"])
+    assert.deepEqual(automationConfigFiles(command), [configuredSources[0]]);
 });
 
 test("explicit sources retain independent delivery and model allocation", async () => {
@@ -53,7 +52,7 @@ test("explicit sources retain independent delivery and model allocation", async 
   for (const config of [four, gpt, post, prediction]) {
     assert.deepEqual(config.channelConcurrency, config === post ? { "evaluation-gateway": 40 } : { openai: 1 });
     const budget = await readJson<{ execution: { concurrency: number } }>(config.hostConfigs.at(-1)!);
-    assert.equal(budget.execution.concurrency, config === post ? 40 : 2);
+    assert.equal(budget.execution.concurrency, config === post ? 40 : 6);
   }
   assert.deepEqual(automationConfigFiles("run", [files[1]]), [files[1]]);
   assert.deepEqual(automationConfigFiles("publish-log"), [files[0]]);

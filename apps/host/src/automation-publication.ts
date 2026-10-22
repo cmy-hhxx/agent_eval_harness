@@ -2,7 +2,7 @@ import path from "node:path";
 import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLog, writeJson } from "@eval/data";
 import { publishMongo, readMongoLabels, uploadStatisticsLog } from "@eval/runtime/client";
-import { PublicationStatistics, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
+import { PublicationStatistics, statisticsInput, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
@@ -12,7 +12,7 @@ import { automationMongoTarget } from "./automation-sources.js";
 import { predictionOrigin } from "./automation-prediction.js";
 
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
-export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal) {
+export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, purpose: "publication" | "statistics" = "publication") {
   const host = await loadConfig(config.hostConfigs);
   const metadata = await readCaseMetadata(path.join(config.sourceDirectory, "case-meta.jsonl"));
   const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
@@ -65,12 +65,14 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
     }
   }
   // Finish identity discovery before yielding anything: every member of a duplicate group is excluded.
-  // Retain coordinates only, never whole input bodies, and pin every reread to the same source revision.
+  // Retain coordinates and optional statistics fields, never bodies; pin reads to the same revision.
   const identities = new Set<string>(), quarantined = new Set<string>();
+  const summaries = purpose === "statistics" ? new Map<string, PublicationInput>() : undefined;
   for await (const input of sourceInputs()) {
     const key = inputKey(input.trace.case_id, input.versionId);
     if (identities.has(key)) quarantined.add(key);
     identities.add(key);
+    summaries?.set(key, statisticsInput(input));
   }
   if (quarantined.size) await logger.event("publication_inputs_quarantined", {
     component: "automations", automation_id: config.id, date: job.date, run_id: job.runIds.join(","),
@@ -81,7 +83,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
   });
   async function* inputs(): AsyncGenerator<PublicationInput> {
     const seen = new Set<string>();
-    for await (const input of sourceInputs()) {
+    for await (const input of summaries?.values() ?? sourceInputs()) {
       const key = inputKey(input.trace.case_id, input.versionId);
       if (quarantined.has(key)) continue;
       seen.add(key);
@@ -250,11 +252,25 @@ export async function statisticsSnapshot(
   const statistics = new PublicationStatistics([]);
   for (const job of jobs) {
     if (!installed(job)) continue;
-    const snapshot = await dependencies.snapshot(config, job, signal);
+    const snapshot = await dependencies.snapshot(config, job, signal, "statistics");
     statistics.addGroups(snapshot.comparisons, job.date);
     for await (const input of snapshot.inputs()) statistics.addInput(input);
     for await (const result of snapshot.results("statistics")) statistics.addResult(result);
   }
+  const labelKeys = new Set<string>();
+  try {
+    for await (const value of readJsonl(path.join(config.sourceDirectory, "statistics-labels.jsonl"))) {
+      signal.throwIfAborted();
+      const row = object(value), key = JSON.stringify([row.batchId, row.caseId]);
+      if (row.evaluationTaskId !== config.id || typeof row.batchId !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.batchId) ||
+          typeof row.caseId !== "string" || !row.caseId ||
+          row.task !== undefined && typeof row.task !== "string" || row.difficulty !== undefined && typeof row.difficulty !== "string")
+        throw new Error("Statistics label supplement has invalid task or business identity");
+      if (labelKeys.has(key)) throw new Error("Duplicate statistics label supplement: " + key);
+      labelKeys.add(key);
+      statistics.addLabels({ batchId: row.batchId, caseId: row.caseId, task: row.task as string | undefined, difficulty: row.difficulty as string | undefined });
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   for (const label of labels) statistics.addLabels(label);
   return statistics;
 }

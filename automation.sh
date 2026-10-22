@@ -8,7 +8,7 @@ for arg in "$@"; do
   case "$arg" in
     --help|-h)
       printf '%s\n' '用法：bash automation.sh [--port 4174] [--config FILE] [--debug]' \
-        '默认启动日常四路（2 并发、统计上报）与后训练 B Fast 对比（16 并发）；--config 可重复指定来源。' \
+        '默认只启动日常四路（6 并发、统计上报）；--config 可重复指定其他来源。' \
         '统一看板默认使用 127.0.0.1:4174，可切换来源、分配 LLM 并发并查看当前调用；Ctrl+C 保存进度并一起退出。'
       exit 0 ;;
     --debug) debug=true ;;

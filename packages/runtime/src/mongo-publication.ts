@@ -73,7 +73,8 @@ export async function readMongoLabels(config: MongoPublicationConfig, dates: str
   return withMongoPublication(config, signal, async (collection) => {
     const documents = await collection.find({ evaluationTaskId: config.evaluationTaskId, kind: "input", batchId: { $in: dates } }, {
       signal, timeoutMS: OPERATION_TIMEOUT_MS, timeoutMode: "iteration", batchSize: 500,
-      projection: { _id: 1, createdAt: 1, batchId: 1, "trace.case_id": 1, "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1 },
+      projection: { _id: 1, createdAt: 1, batchId: 1, "trace.case_id": 1, "trace.meta.case_id": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1,
+        "trace.meta.info.task": 1, "trace.meta.info.difficulty": 1 },
     }).toArray();
     // A server sort blocks the first batch until all historical traces have been scanned.
     for (const doc of documents) if (typeof doc._id !== "string" || !(doc.createdAt instanceof Date) || !Number.isFinite(doc.createdAt.getTime()))
@@ -82,7 +83,9 @@ export async function readMongoLabels(config: MongoPublicationConfig, dates: str
     return documents.map((doc) => {
       const caseId = doc.trace?.case_id ?? doc.trace?.meta?.case_id;
       if (typeof doc.batchId !== "string" || typeof caseId !== "string" || !caseId) throw new Error("Mongo label lacks business identity");
-      return { batchId: doc.batchId, caseId, task: doc.trace?.meta?.task, difficulty: doc.trace?.meta?.difficulty };
+      const meta = doc.trace?.meta ?? {}, task = typeof meta.task === "string" ? meta.task.trim() : "";
+      return { batchId: doc.batchId, caseId, task: task && !["未分类", "未分层"].includes(task) ? meta.task : meta.info?.task,
+        difficulty: meta.difficulty !== undefined ? meta.difficulty : meta.info?.difficulty };
     });
   });
 }

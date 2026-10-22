@@ -98,6 +98,18 @@ function requestDate(value: string): string | null {
   return local && date !== local[1] ? null : date;
 }
 
+/** Retain the exact statistics fields without keeping answer bodies in a snapshot. */
+export function statisticsInput({ versionId, trace }: PublicationInput): PublicationInput {
+  const meta = object(trace.meta ?? {});
+  const info = meta.info && typeof meta.info === "object" && !Array.isArray(meta.info) ? object(meta.info) : {};
+  const task = text(meta.task);
+  return { versionId, trace: { batch_id: trace.batch_id, case_id: trace.case_id, version: trace.version,
+    request_time: trace.request_time, meta: { task: task && !["未分类", "未分层"].includes(task) ? meta.task : info.task,
+      difficulty: meta.difficulty !== undefined ? meta.difficulty : info.difficulty,
+      first_token_time_cost: meta.first_token_time_cost, finish_answer_time_cost: meta.finish_answer_time_cost,
+      usage: meta.usage } } };
+}
+
 /** Keep only statistics fields in memory while reading input and result streams. */
 export class PublicationStatistics {
   private readonly inputs = new Map<string, InputSummary>();
@@ -131,7 +143,8 @@ export class PublicationStatistics {
     if (difficulty !== undefined) existing.difficulty = text(difficulty);
     this.labels.set(key, existing);
   }
-  addInput({ versionId, trace }: PublicationInput) {
+  addInput(input: PublicationInput) {
+    const { versionId, trace } = statisticsInput(input);
     const meta = object(trace.meta ?? {}), caseId = JSON.stringify([trace.batch_id, trace.case_id]);
     const difficulty = text(meta.difficulty);
     this.addLabels({ batchId: text(trace.batch_id), caseId: text(trace.case_id), task: text(meta.task),

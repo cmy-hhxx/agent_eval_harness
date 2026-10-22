@@ -35,7 +35,7 @@ export async function automationCommand(args: string[]): Promise<void> {
   const command = positionals[0];
   if (values.help || !command) {
     console.log(`automations run|check|status|retry|publish-log|resolve-log [--config FILE]
-run: 默认启动日常四路与后训练 B Fast 对比；看板按来源分配 LLM 并发，0 暂停新模型请求，非 LLM 工作继续；--config 可重复指定来源；--dashboard 在 --port（默认 4174）提供统一看板；--once 每个来源只发现一轮并执行每个日期一次
+run: 默认只启动日常四路；看板按来源分配 LLM 并发，0 暂停新模型请求，非 LLM 工作继续；--config 可重复指定来源；--dashboard 在 --port（默认 4174）提供统一看板；--once 每个来源只发现一轮并执行每个日期一次
 publish-log: 停止流水线后立即生成并上传一条全看板累计日志，不调用模型
 check: 只读检查远端与历史 run，不下载、不调用模型
 status: 输出流水线状态、每阶段数量、错误和下次重试时间
