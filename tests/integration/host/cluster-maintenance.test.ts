@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, evidenceId, type AgentBackend, type ProblemLibrary, type ProblemProjection, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { exists, readJson, problemLibraryFile, writeJson } from "@eval/data";
+import { exists, fileSourceReader, readJson, problemLibraryFile, writeJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { buildPlan, createResultWriter, prepareClusteringJob, readRunState, writeRunState,
@@ -56,6 +56,33 @@ async function fixture(caseCount = 2, components?: string[]) {
 }
 const sourceFiles = (runs: string[]) => runs.flatMap(run => ["state.json", "results/attribution.jsonl"].map(file => path.join(run, file)));
 const contents = (files: string[]) => Promise.all(files.map(file => readFile(file, "utf8")));
+
+test("live clustering ignores unrelated progress but rejects changed selected source receipts", async t => {
+  const f = await fixture(1); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const run = f.runs[0], file = path.join(run, "state.json");
+  const state = await readRunState(run), answer = state.manifest.tasks.find(task => task.stage === "attribution")!;
+  const unrelated = state.manifest.tasks.find(task => task.stage === "comparison")!;
+  const original = await readFile(file, "utf8"), revision = fileSourceReader.revision.bind(fileSourceReader);
+  for (const changeSelected of [false, true]) {
+    await writeFile(file, original);
+    let reads = 0;
+    const mocked = t.mock.method(fileSourceReader, "revision", async (target: string) => {
+      if (target === file && ++reads === 2) {
+        const checkpoint = JSON.parse(await readFile(file, "utf8"));
+        if (changeSelected) checkpoint.tasks[answer.id].receipt.submissionId = randomUUID();
+        else checkpoint.tasks[unrelated.id].status = "running";
+        await writeJson(file, checkpoint);
+      }
+      return revision(target);
+    });
+    try {
+      const prepared = prepareClusteringJob([run], f.config, { inputIds: [answer.inputIds.answer] });
+      if (changeSelected) await assert.rejects(prepared, /来源.*变化|原归因引用.*改变/);
+      else assert.deepEqual((await prepared).config.clusteringJob.sources.map(source => source.submission_id),
+        [state.receipts[answer.id].submissionId]);
+    } finally { mocked.mock.restore(); }
+  }
+});
 
 test("deferred findings persist across jobs and recall their pinned attribution without reading raw answers", async t => {
   const f = await fixture(); t.after(() => rm(f.directory, { recursive: true, force: true }));

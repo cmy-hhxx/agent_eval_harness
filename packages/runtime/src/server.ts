@@ -217,7 +217,7 @@ export async function startWorker(
           runtime.reserveDraftWrite();
       };
       reserveFileDraft();
-      const rejected = async (errors: ValidationIssue[], draft = failure.draft, content = true, compareDraft = true) => {
+      const rejected = async (errors: ValidationIssue[], draft = failure.draft, content = true, compareDraft = true, loadingError = false) => {
         const repeatedErrors = !compareDraft ? 0 :
           content && errorSet(errors) === errorSet(failure.errors) && canonical(draft) === canonical(failure.draft)
             ? failure.repeatedErrors + 1
@@ -232,7 +232,8 @@ export async function startWorker(
           repeatedErrors,
           // Repeated drafts remain diagnostic. The shared content cap owns repair
           // termination; stopping after two identical drafts discards valid repairs.
-          stopped: (spec.recovery?.fileErrors || 0) + fileErrors >= 3,
+          // Historical loading failures do not consume the independent content repairs.
+          stopped: loadingError && (spec.recovery?.fileErrors || 0) + fileErrors >= 3,
           attemptId: spec.attemptId,
         };
         record.failure = failure;
@@ -297,7 +298,7 @@ export async function startWorker(
       };
       const rejectedLoad = async (errors: ValidationIssue[]) => {
         fileErrors++;
-        const feedback = await rejected(errors, failure.draft, false, false);
+        const feedback = await rejected(errors, failure.draft, false, false, true);
         if (!failure.stopped) reserveFileDraft();
         return feedback;
       };

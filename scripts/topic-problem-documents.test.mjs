@@ -110,15 +110,25 @@ test("problem collection schema requires topic labels and keeps existing model b
       kind === "bool" ? typeof value === "boolean" : ["int", "long", "double"].includes(kind) ? typeof value === "number" : typeof value === kind);
   } });
   const valid = ajv.compile(schema.$jsonSchema);
-  for (const cutoff of [false, true]) {
+  for (const cutoff of [false, true]) for (const v2 of [false, true]) {
     const f = fixture();
+    if (v2) {
+      f.record.evaluationTaskId = "remote-post-training-evaluation-v2";
+      f.record.evaluation_topic = "后训练 v2 双模型专项评测（2026-10-19，678对）";
+    }
     if (cutoff) Object.assign(f.scope, { kind: "accepted-at-cutoff", sourceEvaluationComplete: false });
     for (const doc of topicProblemDocuments(f)) {
       assert(valid(doc), JSON.stringify(valid.errors));
       const missing = structuredClone(doc); delete missing.evaluation_topic;
       assert(!valid(missing)); assert(!valid({ ...doc, model: "b_fast" }));
-      assert(!valid({ ...doc, evaluationTaskId: "remote-evaluation" }));
+      assert(!valid({ ...doc, evaluationTaskId: "invalid task/id" }));
+      assert(!valid({ ...doc, evaluation_topic: "" }));
+      assert(!valid({ ...doc, batchId: "not-a-date" }));
       assert(!valid({ ...doc, scope: { ...doc.scope, sourceEvaluationComplete: cutoff } }));
+      const existing = structuredClone(doc);
+      for (const key of ["evaluationTaskId", "evaluation_topic", "batchId", "runId", "scope"]) delete existing[key];
+      if (existing.kind === "sample") existing.id = "a".repeat(64);
+      assert(valid(existing), "Existing unscoped model records must remain valid: " + JSON.stringify(valid.errors));
     }
   }
 });

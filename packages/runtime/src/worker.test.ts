@@ -1163,6 +1163,43 @@ test(`a missing submission file restores a bounded writer after ${firstWrite} co
   } finally { await fixture.close(); }
 });
 
+for (const newLoadingError of [false, true])
+test(`resumed exhausted file budget ${newLoadingError ? "still stops a new loading error" : "does not stop validly loaded content repairs"}`, async () => {
+  const fixture = await harness(async options => ({ async run() {
+    const rejected = await submitFor(options, { ok: false });
+    assert.equal(rejected.isError, true);
+    const budget = object(object(rejected.details).budget);
+    assert.equal(budget.content_remaining, 1);
+    assert.equal(budget.file_errors_remaining, 0, "historical file errors are not refunded");
+    if (newLoadingError) {
+      await options.execute("submit_evaluation_file", { path: "missing.json" });
+    } else {
+      assert.equal((await submitFor(options, { ok: true })).terminate, true);
+    }
+  }, async abort() {}, async dispose() {} }), {
+    material: "source", policy: { repairAttempts: 1 },
+    profile: { fileSubmission: true, requiredReads: () => [], toolNames: [],
+      toolDescriptions: { submit_evaluation_file: "Submit the complete JSON file." } },
+  });
+  fixture.spec.recovery = { errors: [{ category: "structure", code: "submission_file_invalid", path: "/",
+    message: "Previous attempts could not load a submission file." }], contentSubmissions: 0,
+    fileErrors: 3, repeatedErrors: 0, stopped: true, attemptId: "prior-attempt" };
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    if (newLoadingError) {
+      assert.equal(status.state, "failed");
+      assert.match(status.error!, /Submission loading budget exhausted/);
+      assert.equal(status.failure?.contentSubmissions, 1);
+      assert.equal(status.failure?.fileErrors, 4);
+    } else {
+      assert.equal(status.state, "succeeded", status.error);
+      assert.deepEqual((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats,
+        { contentSubmissions: 2, fileErrors: 3 });
+    }
+  } finally { await fixture.close(); }
+});
+
 test("file loading feedback cannot renew exhausted protected writers or bypass the independent file cap", async () => {
   const fixture = await harness(async options => ({ async run() {
     await options.execute("calculate", { operation: "add", operands: ["2", "2"] });

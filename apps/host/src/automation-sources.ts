@@ -43,7 +43,7 @@ export async function automationSourceFiles(options: {
     options.configDirectory ?? path.join(ROOT, "configs"),
   );
   if (new Set(resolved.map(source => source.file)).size !== resolved.length) throw new Error("Duplicate automation config");
-  if (resolved.length > 1 && !["run", "check", "status"].includes(options.command))
+  if (resolved.length > 1 && !["serve", "run", "check", "status"].includes(options.command))
     throw new Error("This automation command requires one --config");
   return resolved;
 }

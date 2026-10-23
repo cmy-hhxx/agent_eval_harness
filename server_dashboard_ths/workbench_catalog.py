@@ -389,12 +389,6 @@ class WorkbenchCatalog:
         while not self.stop.is_set():
             try:
                 self.discover()
-                with self.lock, self.db() as db:
-                    identifiers = [row[0] for row in db.execute("SELECT b.id FROM batches b JOIN tasks t ON t.id=b.task_id WHERE t.category='daily' AND b.status='ready' ORDER BY b.discovered_at LIMIT 200")]
-                if identifiers:
-                    self.start_clean({"batch_ids": identifiers})
-            except Conflict:
-                pass
             except Exception as exc:
                 print(f"workbench discovery error: {exc}", file=sys.stderr, flush=True)
             self.stop.wait(self.engine.POLL_SECONDS)

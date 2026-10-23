@@ -21,6 +21,7 @@ import { logger } from "./composition.js";
 import { discoverPrediction, predictionOrigin, predictionRemoteDay, syncPrediction } from "./automation-prediction.js";
 import { ROOT } from "./paths.js";
 import { StatisticsDeliveryStore } from "./statistics-delivery.js";
+import { createAutomationControl } from "./automation-control.js";
 
 function automationArguments(args: string[]) {
   return parseArgs({ args, allowPositionals: true, options: {
@@ -36,7 +37,8 @@ export async function automationCommand(args: string[]): Promise<void> {
   const { positionals, values } = automationArguments(args);
   const command = positionals[0];
   if (values.help || !command) {
-    console.log(`automations run|check|status|retry|publish-log|resolve-log [--manifest FILE] [--config-dir DIR] [--config FILE]
+    console.log(`automations serve|run|check|status|retry|publish-log|resolve-log [--manifest FILE] [--config-dir DIR] [--config FILE]
+serve: 只启动看板；每个来源等待点击运行后持续执行，停止或进程重启后等待再次点击
 run: 来源由 manifest 登记；看板按来源分配 LLM 并发，0 暂停新模型请求，非 LLM 工作继续；--config 可重复指定来源用于开发；--dashboard 在 --port（默认 4174）提供统一运行时看板；--once 每个来源只发现一轮并执行每个日期一次
 publish-log: 停止流水线后立即生成并追加一条全看板累计日志，不调用模型、不直接上传
 check: 只读检查远端与历史 run，不下载、不调用模型
@@ -46,7 +48,7 @@ resolve-log --outcome written|retry [--request-id ID]: 核实不确定的日志�
 SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自动恢复`);
     return;
   }
-  if (!["run", "check", "status", "retry", "publish-log", "resolve-log"].includes(command) || positionals.length !== 1) throw new Error("Invalid automation command");
+  if (!["serve", "run", "check", "status", "retry", "publish-log", "resolve-log"].includes(command) || positionals.length !== 1) throw new Error("Invalid automation command");
   if (values.once && command !== "run") throw new Error("--once only applies to run");
   if (values.dashboard && command !== "run") throw new Error("--dashboard only applies to run");
   const port = Number(values.port);
@@ -63,17 +65,47 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   const statisticsStore = new StatisticsDeliveryStore(path.resolve(process.env.EVAL_STATISTICS_DELIVERY_FILE ||
     path.join(ROOT, "data/automations/statistics-delivery.json")));
   const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : files[index].name]));
-  const llm = command === "run" ? await automationLlm(schedulingFile, Object.fromEntries(await Promise.all(configs.map(async config =>
+  const llm = ["run", "serve"].includes(command) ? await automationLlm(schedulingFile, Object.fromEntries(await Promise.all(configs.map(async config =>
     [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const)))) : undefined;
   const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(), sourceNames, statisticsStore,
     exhaustedChannels: new Set<string>(), dashboards: new Map<string, AutomationDashboardSource>() };
-  if (command !== "run") {
+  if (command !== "run" && command !== "serve") {
     for (const config of configs) await executeAutomationCommand(command, values, config, scope);
     return;
   }
   let dashboard: Awaited<ReturnType<typeof startAutomationDashboard>> | undefined;
+  let control: ReturnType<typeof createAutomationControl> | undefined;
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
+    if (command === "serve") {
+      for (const config of configs) {
+        const host = await loadConfig(config.hostConfigs);
+        let state: AutomationState;
+        try { state = await readJson(path.join(config.stateDirectory, "state.json")); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} };
+        }
+        if (state.id !== config.id || state.sourceUrl !== config.sourceUrl || !state.jobs || Array.isArray(state.jobs))
+          throw new Error("Automation state does not match this source/id");
+        // Historical progress is readable, but does not grant permission to resume work.
+        state.status = "stopped";
+        scope.dashboards.set(config.id, { name: sourceNames.get(config.id)!, config, output: host.evaluation.output.path,
+          state: () => state, settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
+      }
+      control = createAutomationControl(configs.map(config => config.id), async (id, signal) => {
+        try { await executeAutomationCommand("run", { ...values, dashboard: true }, configs.find(config => config.id === id)!, { ...scope, signal }); }
+        catch (error) {
+          await logger.error(error, { component: "automations", event: "source_failed", detail: id });
+          throw error;
+        }
+      });
+      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, control,
+        sources: () => configs.map(config => scope.dashboards.get(config.id)!) });
+      console.log(`自动化看板：${dashboard.url} · 等待手动运行`);
+      if (!controller.signal.aborted) await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
+      return;
+    }
     if (values.dashboard) {
       dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore,
         sources: () => scope.dashboards.size === configs.length ? configs.map(config => scope.dashboards.get(config.id)!) : [] });
@@ -88,6 +120,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       ...results.map(result => result.status === "fulfilled" ? result.value ?? 0 : 2));
   } finally {
     process.off("SIGINT", interrupt); process.off("SIGTERM", interrupt);
+    await control?.close();
     await dashboard?.close();
   }
 }
@@ -183,8 +216,11 @@ async function executeAutomationCommand(
     releaseSources = await runLock(config.sourceDirectory);
     const monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier);
     if (values.dashboard) {
-      scope.dashboards.set(config.id, { name: scope.sourceNames.get(config.id) ?? config.id, config, output, state: () => state, monitor,
-        settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
+      const source = { name: scope.sourceNames.get(config.id) ?? config.id, config, output, state: () => state, monitor,
+        settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } };
+      const existing = scope.dashboards.get(config.id);
+      if (existing) Object.assign(existing, source);
+      else scope.dashboards.set(config.id, source);
     }
     const resultPublisher = createMongoResultPublisher(config, error =>
       logger.error(error, { component: "automations", event: "mongo_result_failed" }));
@@ -252,7 +288,7 @@ async function executeAutomationCommand(
       syncMongo: config.publishMongo ? (job, signal) => scope.mongo(() => syncMongoDay(config, job, signal), signal, JSON.stringify([mongoDestination, job.date])) : undefined,
     }, scope.signal);
     await resultPublisher.settled();
-    try { await observe(state, AbortSignal.timeout(10_000)); }
+    try { if (!scope.signal.aborted) await observe(state, AbortSignal.timeout(10_000)); }
     catch (error) {
       state.reportError = errorText(error);
       await logger.error(error, { component: "automations", event: "progress_failed" });

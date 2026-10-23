@@ -94,10 +94,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     run = layout.directory,
     unlock = await runLock(run);
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
+  const exitedWorkers = new WeakSet<(typeof owned)[number]>();
   const workerExitLogs: Promise<void>[] = [];
   async function launchWorker(engine: Engine, directory: string) {
     const worker = await spawnWorker(engine, directory, options.runtime);
     workerExitLogs.push(worker.exited.then(async (exit) => {
+      exitedWorkers.add(worker);
       if (exit.expectedClose) return;
       await options.logger?.error(`Worker ${exit.pid} exited unexpectedly`, {
         component: "host", event: "worker_exited", run_id: options.runId,
@@ -344,6 +346,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       workerUrls.map(async (url) => ({
         url,
         health: await request<WorkerStatus>(`${url}/api/health`),
+        owner: owned.findLast(worker => worker.url === url),
       })),
     );
     const eligible = workers.filter(
@@ -355,6 +358,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
     });
+    async function replaceExitedWorker(worker: (typeof workers)[number]): Promise<boolean> {
+      // Bind capacity to its process, not a port that another child may later reuse.
+      if (!worker.owner || !exitedWorkers.has(worker.owner)) return false;
+      const replacement = await launchWorker(worker.health.identity.engine,
+        path.join(working, "workers", `${worker.health.identity.engine}-${randomUUID()}`));
+      owned.push(replacement);
+      worker.owner = replacement;
+      worker.url = replacement.url;
+      worker.health = await request<WorkerStatus>(`${worker.url}/api/health`);
+      return true;
+    }
     for (const worker of eligible) if (worker.health.activeAttempt) deferWorker(worker);
     const hostUrl = http.url;
     async function copyArtifacts(
@@ -410,26 +424,19 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           undefined,
           AbortSignal.timeout(10000),
         );
-        ready = !health.activeAttempt && canonical(health.identity) === canonical(identity);
+        ready = (!worker.owner || !exitedWorkers.has(worker.owner)) &&
+          !health.activeAttempt && canonical(health.identity) === canonical(identity);
       } catch {}
       if (!ready) {
-        const previous = owned.find((w) => w.url === workerUrl);
-        if (!previous) {
+        if (!await replaceExitedWorker(worker)) {
           // Capacity loss is not an evaluation failure. Requeue before creating
-          // an attempt and keep this worker out of dispatch until health recovers.
+          // an attempt; a failed observation must not terminate a live process.
           deferWorker(worker);
           state.status = "pending";
           await current.save();
           return;
         }
-        await previous.close();
-        const replacement = await launchWorker(
-          identity.engine,
-          path.join(working, "workers", `${identity.engine}-${randomUUID()}`),
-        );
-        owned.push(replacement);
-        workerUrl = replacement.url;
-        worker.url = workerUrl;
+        workerUrl = worker.url;
       }
       if (paused(task)) return;
       // Automatic retries and explicit resume share the task's cumulative content cap.
@@ -828,8 +835,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       });
       await Promise.all([...unavailable].filter(([, value]) => value.checkAt <= Date.now()).map(async ([worker]) => {
         try {
+          await replaceExitedWorker(worker);
           const health = await request<WorkerStatus>(worker.url + "/api/health", "GET", undefined, AbortSignal.timeout(1000));
-          if (!health.activeAttempt && canonical(health.identity) === canonical(identities[health.identity.engine])) {
+          if ((!worker.owner || !exitedWorkers.has(worker.owner)) && !health.activeAttempt &&
+              canonical(health.identity) === canonical(identities[health.identity.engine])) {
             worker.health = health;
             unavailable.delete(worker);
             return;
@@ -852,7 +861,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             );
             owned.push(worker);
             const health = await request<WorkerStatus>(`${worker.url}/api/health`);
-            eligible.push({ url: worker.url, health });
+            eligible.push({ url: worker.url, health, owner: worker });
           }
           slots -= target;
         }

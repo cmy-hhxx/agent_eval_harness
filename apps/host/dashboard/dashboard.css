@@ -34,8 +34,8 @@ h3 { font-size: 13px; }
 h4 { margin: 12px 0 5px; color: var(--muted); font-size: 12px; }
 a { color: var(--accent); }
 .muted { color: var(--muted); }
-input, select { min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-input[type="checkbox"] { min-height: 0; }
+input:not([type="checkbox"]):not([type="radio"]), select { min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+input[type="checkbox"], input[type="radio"] { min-height: 0; padding: 0; }
 pre { max-width: 100%; max-height: 260px; margin: 4px 0 0; padding: 8px 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); font: 11px/1.5 var(--mono); }
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar { position: sticky; top: 0; flex: none; width: 214px; height: 100vh; padding: 24px 14px; overflow: auto; background: var(--surface); border-right: 1px solid var(--line); }
@@ -48,9 +48,8 @@ pre { max-width: 100%; max-height: 260px; margin: 4px 0 0; padding: 8px 10px; ov
 .error-banner { margin-bottom: 10px; padding: 8px 10px; color: var(--danger); background: #fff3f2; border: 1px solid #e6b3ad; border-radius: var(--radius); }
 .error-banner[hidden] { display: none; }
 .run-list { display: grid; gap: 2px; }
-.run-entry { position: relative; min-width: 0; }
-.run-entry .run-item { padding-right: 34px; }
-.run-delete { position: absolute; top: 5px; right: 3px; display: grid; width: 28px; height: 28px; padding: 6px; place-items: center; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: var(--radius); }
+.run-entry { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: start; gap: 4px; min-width: 0; }
+.run-delete { display: grid; width: 28px; height: 28px; margin-top: 5px; padding: 6px; place-items: center; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: var(--radius); }
 .run-delete svg { width: 14px; height: 14px; }
 .run-delete:not(:disabled):hover { color: var(--danger); background: #fff3f2; border-color: #e6b3ad; }
 .run-delete:disabled { opacity: .3; }
@@ -421,7 +420,7 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .problem-library[open] > summary { color: var(--text); background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; border-bottom-color: transparent; }
 .problem-library[open] > summary::before { transform: rotate(45deg); }
 .model-fields { display: grid; gap: 4px; }
-.model-fields-head, .model-field-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) 80px; align-items: center; gap: 10px; }
+.model-fields-head, .model-field-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 112px; align-items: center; gap: 10px; }
 .model-fields-head { padding: 0 8px 1px; color: var(--muted); font-size: 11px; }
 .model-field-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .model-field-row:last-child { border-bottom: 0; }
@@ -435,10 +434,15 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
   .schema-field { grid-template-columns: 1fr; gap: 5px; }
   .schema-field dt { display: flex; flex-wrap: wrap; gap: 6px; }
   .schema-field dd > .schema-fields { margin: 0; padding-left: 12px; border-left: 1px solid var(--line); }
-  .model-fields-head, .model-field-row { grid-template-columns: 54px minmax(0, 1fr) 80px; gap: 4px; padding-inline: 0; }
+  .model-fields-head, .model-field-row { grid-template-columns: 64px minmax(0, 1fr) 112px; gap: 8px; padding-inline: 0; }
   .model-field-row input, .model-field-row select { min-width: 0; }
   .case-columns { grid-template-columns: 1fr; gap: 20px; }
   .case-column:nth-child(even) { padding: 20px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+}
+@container launch (max-width: 520px) {
+  .model-fields-head { display: none; }
+  .model-field-row { grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; }
+  .model-stage { grid-column: 1 / -1; }
 }
 
 /* Shared workbench navigation and reference surfaces. */

@@ -1,14 +1,14 @@
-:host { display:block; min-width:0; color:var(--text); font:14px/1.65 var(--font); background:#fff; }
+:host { display:block; min-width:0; container:workbench / inline-size; color:var(--text); font:14px/1.65 var(--font); background:#fff; }
 [hidden] { display:none!important; }
 .app-shell { display:block; min-height:0; }
 .main-content,.automation-page main,.page-shell,.records-shell { max-width:none; width:100%; padding:0; margin:0; }
 .sidebar { position:static; width:100%; height:auto; border:0; padding:0; overflow:visible; background:none; margin:0 0 28px; }
 .sidebar-heading { margin:0 0 10px; }
 .sidebar-heading h2 { font-size:16px; color:var(--text); text-transform:none; }
-.run-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:6px; max-height:280px; overflow:auto; }
-.page-header,.automation-page .page-header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.run-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:8px; max-height:280px; overflow:auto; }
+.page-header,.automation-page .page-header { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:space-between; align-items:center; margin:0 0 16px; }
 .monitor-title h1,.service-badge { display:none; }
-.monitor-actions { margin-left:auto; }
+.monitor-actions { margin-left:auto; flex-wrap:wrap; }
 .source-nav { justify-content:flex-start; }
 .source-nav button { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--text); }
 .source-nav button span { color:var(--muted); font-size:13px; }
@@ -63,7 +63,7 @@
 .problem-models { margin:0 0 20px; }
 .problem-model-tab { border-radius:4px; }
 .problem-occurrence { background:none; border:0; border-top:1px solid var(--line); border-radius:0; padding:16px 0; }
-.reference-header { margin:0 0 16px; }
+.reference-header { margin:0 0 16px; padding:0; }
 .reference-section { border:0; margin:0 0 28px; padding:0; }
 .contract-layout { display:block; border:0; }
 .contract-stages,.definition-documents { display:flex; flex-wrap:wrap; gap:8px; }
@@ -86,9 +86,8 @@
 h2 { font-size:16px; } h3 { font-size:15px; }
 pre,code { font-size:12px; }
 .table-scroll,.records-table-scroll { max-width:100%; overflow:auto; }
-button,input,select { min-height:36px; }
 .table-link { background:none; border:0; color:var(--accent); text-align:left; }
-@media(max-width:760px) { .runtime-facts{grid-template-columns:1fr}.source-nav{display:flex}.run-list,.case-list{grid-template-columns:1fr}.case-columns{grid-template-columns:1fr}.advanced-grid{grid-template-columns:1fr}.main-content{padding:0}.execution-overview,.pipeline-flow{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@container workbench (max-width:760px) { .runtime-facts{grid-template-columns:1fr}.source-nav{display:flex}.run-list,.case-list{grid-template-columns:1fr}.case-columns{grid-template-columns:1fr}.execution-overview,.pipeline-flow{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; scroll-behavior:auto!important; transition:none!important; } }
 .definition-filters { display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; }
 .definition-filters label { display:flex; gap:10px; align-items:center; color:var(--muted); }
@@ -112,12 +111,16 @@ button,input,select { min-height:36px; }
   line-height:1.6;
 }
 .btn { min-height:36px; }
-.form-select,.form-control { width:auto; max-width:100%; min-height:36px; }
-input.form-check-input { min-height:0; flex-shrink:0; }
+.form-select,.form-control { width:auto; max-width:100%; min-width:0; min-height:36px; font-size:13px; line-height:1.4; padding:8px 12px; }
+.form-select { padding-right:32px; background-position:right 10px center; }
+input.form-check-input { width:16px; height:16px; min-height:0; padding:0; margin:0; flex-shrink:0; border-radius:4px; }
+input.form-check-input[type=radio] { border-radius:50%; }
+.budget-grid .form-control,.model-field-row .form-select { width:100%; }
 .form-control[type=number] { min-width:72px; }
 .table { margin-bottom:0; --tblr-table-cell-padding-x:12px; --tblr-table-cell-padding-y:12px; }
 .table>thead>tr>th { text-transform:none; letter-spacing:0; font-size:13px; white-space:nowrap; }
 .table :is(th,td).numeric { text-align:right; }
+.table td.empty { display:table-cell; padding:24px 12px; text-align:left; white-space:normal; }
 .table-scroll,.records-table-scroll { border:1px solid var(--tblr-border-color); border-radius:var(--tblr-border-radius); }
 .table-pagination,.pager { display:flex; align-items:center; gap:8px; margin-top:16px; }
 .execution-overview,.pipeline-flow { gap:0; padding:16px 0; border-block:1px solid var(--line); }
@@ -131,15 +134,14 @@ input.form-check-input { min-height:0; flex-shrink:0; }
 :is(#dates,#activity,#mongo-deliveries,#deliveries,#config,#explorer,#run-overview) { scroll-margin-top:24px; }
 .problem-models { gap:8px; }
 .reference-header h1,.dashboard-top h1 { display:none; }
-.run-list { gap:8px; }
 .run-item { min-height:64px; border-color:var(--line); }
 .llm-allocation { padding:16px 0; border-bottom:1px solid var(--line); }
 #run-description:empty,#config-path:empty { display:none; }
-@media(max-width:760px) { .execution-overview,.pipeline-flow { gap:16px; }.execution-overview>div,.pipeline-flow>div { padding:0; border:0; }.form-select,.form-control { min-width:0; } }
+@container workbench (max-width:760px) { .execution-overview,.pipeline-flow { gap:16px; }.execution-overview>div,.pipeline-flow>div { padding:0; border:0; } }
 .intake-toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:0 0 20px; }
-.intake-toolbar label { display:grid; gap:6px; min-width:120px; }
+.intake-toolbar label { display:grid; gap:6px; min-width:min(120px,100%); max-width:100%; }
 .intake-toolbar .intake-check { display:flex; align-items:center; min-width:0; padding-bottom:7px; }
-.intake-toolbar select { max-width:320px; }
+.intake-toolbar select { max-width:min(320px,100%); }
 .intake h2 { font-size:18px; margin:28px 0 12px; }
 .intake h3 { font-size:15px; }
 .intake table { min-width:780px; }

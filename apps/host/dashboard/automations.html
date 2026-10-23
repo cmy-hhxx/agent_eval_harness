@@ -11,10 +11,11 @@
 <body class="automation-page">
   <main>
     <header class="page-header">
-      <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status">连接中</span></div>
+      <div class="monitor-title"><h1>自动化评测</h1><span id="pipeline-status" role="status" aria-live="polite">连接中</span></div>
       <nav id="source-nav" class="source-nav" aria-label="数据来源"></nav>
-      <div class="monitor-actions"><button id="refresh" class="button" type="button">刷新</button></div>
+      <div class="monitor-actions"><button id="source-run" class="button button-primary" type="button" hidden disabled>运行</button><button id="source-stop" class="button button-danger" type="button" hidden disabled>停止</button><button id="refresh" class="button" type="button">刷新</button></div>
     </header>
+    <div id="source-control-error" class="error-banner" role="alert" hidden></div>
     <div id="llm-allocations" class="llm-allocations" aria-label="LLM 并发分配"></div>
     <div id="llm-error" class="error-banner" role="alert" hidden></div>
     <section class="llm-activity" open>

@@ -512,6 +512,38 @@ test("correctness receipts are durable references and preserve exact duplicate c
   }
 });
 
+test("a queued checkpoint compacts accepted results without a redundant durable write", async () => {
+  const setup = await fixture();
+  const { directory, spec, value } = setup;
+  let enter = () => {}, release = () => {}, writes = 0;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const store = new RunStore(setup.store.run, setup.store.state, setup.store.inputs, {
+    ...services,
+    repository: { ...services.repository, async writeRun(run, snapshot) {
+      if (snapshot.receipts[spec.taskId]) {
+        writes++;
+        if (writes === 1) { enter(); await blocked; }
+      }
+      await services.repository.writeRun(run, snapshot);
+    } },
+  });
+  try {
+    await store.activate(spec);
+    const accepted = store.accept(value);
+    await entered;
+    const queued = store.save();
+    release();
+    await Promise.all([accepted, queued]);
+    assert.equal(writes, 2, "the already queued checkpoint performs compaction");
+    const restored = await readRunState(store.run);
+    assert.equal(restored.receipts[spec.taskId].submissionId, value.submissionId);
+    assert.deepEqual(restored.receipts[spec.taskId].submitted, value.evaluation);
+    assert.equal(restored.receipts[spec.taskId].exported?.id, spec.taskId);
+    assert.equal((await readFile(path.join(store.run, "results/attribution.jsonl"), "utf8")).trim().split("\n").length, 1);
+  } finally { release(); await rm(directory, { recursive: true, force: true }); }
+});
+
 for (const window of ["append", "compaction"] as const)
   test(`correctness recovers a failure during ${window}`, async () => {
     const { directory, store, spec, value } = await fixture([raw("q", "4")]);

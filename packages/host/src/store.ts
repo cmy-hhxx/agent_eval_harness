@@ -151,8 +151,9 @@ export class RunStore {
       await this.services.repository.writeRun(this.run, snapshot);
       await this.writeResults(snapshot);
       // Drop recovery payloads only after their formal result rows are durable.
+      // An already queued checkpoint will compact these references in its own durable write.
       // If this optional compaction fails, the earlier full checkpoint still recovers the accepted result.
-      if (pending) await this.services.repository.writeRun(this.run, snapshot).catch(() => {});
+      if (pending && !this.queuedWrite) await this.services.repository.writeRun(this.run, snapshot).catch(() => {});
       for (const [id, receipt] of Object.entries(snapshot.receipts))
         if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
           this.state.receipts[id].exported = receipt.exported;

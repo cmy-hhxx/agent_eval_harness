@@ -26,9 +26,9 @@ const execution = () => ({ ...settings, runningTasks: 0, runningCases: 0,
 const state = (): AutomationState => ({ id: "fixture", sourceUrl: "http://fixture", status: "stopped", startedAt: at, updatedAt: at, jobs: {} });
 const scheduling = (ids = ["fixture"]) => createAutomationLlm(ids,
   { sources: Object.fromEntries(ids.map(id => [id, { concurrency: 32 }])) }, async () => {});
-const dashboard = () => ({ ...state(), sourceName: "fixture", publishMongo: true, publishStatisticsLog: true,
+const dashboard = () => ({ ...state(), status: "running", sourceName: "fixture", publishMongo: true, publishStatisticsLog: true,
   llm: scheduling().snapshot(), statistics: { attempts: 0, nextAt: at + hour }, statisticsDeliveries: [],
-  sources: [{ id: "fixture", name: "fixture", status: "stopped", dateCount: 0 }] });
+  sources: [{ id: "fixture", name: "fixture", status: "running", dateCount: 0 }] });
 const job = (date: string): AutomationJob => ({ date, runIds: ["fixture"], observed: { a_fast: 1, b_fast: 1, a_expert: 1, b_expert: 1 },
   adopted: false, download: "ready", evaluation: "completed", checkedAt: at, downloadAttempts: 0,
   evaluationAttempts: 0, nextDownloadAt: 0, nextEvaluationAt: 0 });
@@ -364,7 +364,7 @@ test("monitor renders receipts, preserves filters on polling and marks stale dat
       document.getElementById(id).dispatchEvent(new dom.window.Event("change"));
       assert.equal(document.getElementById("pipeline-status").textContent, "连接中断");
     }
-    failed = false; await next();
+    failed = false; payload.status = "stopped"; payload.sources[0].status = "stopped"; await next();
     assert.equal(document.getElementById("pipeline-status").textContent, "已停止");
     assert.equal(document.getElementById("connection-error").hidden, true);
   } finally { dom.window.close(); }
@@ -664,4 +664,48 @@ test("workbench is the only production launcher", async () => {
   assert.match(script, /dist\/apps\/host\/src\/workbench\.js/);
   assert.match(script, /npm run bootstrap/);
   assert.match(script, /npm run build:app/);
+});
+
+test("manual monitor does not poll or run until clicked, and stops polling after stop", async () => {
+  const html = await readFile(path.join(ROOT, "apps/host/dashboard/automations.html"), "utf8");
+  const script = await readFile(path.join(ROOT, "apps/host/dashboard/automations.js"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://fixture/" });
+  const control = { status: "idle" };
+  const payload = { ...dashboard(), status: "stopped", control, sources: [{ id: "fixture", name: "fixture", status: "stopped", control, dateCount: 0 }], sampledAt: at, jobs: [] };
+  const calls: { url: string; method: string; body?: string }[] = [];
+  let scheduled = false, poll = async () => {};
+  dom.window.setTimeout = (callback: () => Promise<void>, delay: number) => {
+    if (delay === 5000) { scheduled = true; poll = callback; }
+    return 1;
+  };
+  dom.window.clearTimeout = () => { scheduled = false; };
+  dom.window.setInterval = () => 0;
+  dom.window.fetch = async (url: string, options: RequestInit = {}) => {
+    calls.push({ url, method: options.method ?? "GET", body: options.body as string | undefined });
+    if (url.endsWith("/control")) {
+      control.status = JSON.parse(options.body as string).action === "run" ? "running" : "idle";
+      payload.status = control.status === "running" ? "running" : "stopped";
+      return { ok: true, json: async () => structuredClone(control) };
+    }
+    return { ok: true, json: async () => structuredClone(payload) };
+  };
+  try {
+    dom.window.eval(script.replace(/^export /gm, "")); await new Promise(setImmediate);
+    const doc = dom.window.document;
+    assert.equal(calls.length, 1);
+    assert.equal(scheduled, false);
+    assert.equal(doc.getElementById("pipeline-status").textContent, "待运行");
+    assert.equal(doc.getElementById("source-run").disabled, false);
+    assert.equal(doc.getElementById("source-stop").disabled, true);
+    doc.getElementById("source-run").click(); await new Promise(setImmediate);
+    assert.deepEqual(JSON.parse(calls.find(call => call.method === "POST")!.body!), { sourceId: "fixture", action: "run" });
+    assert.equal(doc.getElementById("source-run").disabled, true);
+    assert.equal(doc.getElementById("source-stop").disabled, false);
+    assert.equal(scheduled, true);
+    await poll();
+    doc.getElementById("source-stop").click(); await new Promise(setImmediate);
+    assert.equal(scheduled, false);
+    assert.equal(doc.getElementById("pipeline-status").textContent, "待运行");
+    assert.equal(calls.filter(call => call.method === "POST").length, 2);
+  } finally { dom.window.close(); }
 });

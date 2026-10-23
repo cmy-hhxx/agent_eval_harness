@@ -52,6 +52,12 @@
                 "enum": [
                   "b_expert"
                 ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_post_train_fast"
+                ]
               }
             ]
           },
@@ -136,6 +142,12 @@
                 "bsonType": "string",
                 "enum": [
                   "b_expert"
+                ]
+              },
+              {
+                "bsonType": "string",
+                "enum": [
+                  "b_post_train_fast"
                 ]
               }
             ]
@@ -511,21 +523,15 @@
           },
           "evaluationTaskId": {
             "bsonType": "string",
-            "enum": [
-              "remote-post-training-evaluation"
-            ]
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
           },
           "evaluation_topic": {
             "bsonType": "string",
-            "enum": [
-              "后训练三模型专题评测（2026-10-19）"
-            ]
+            "minLength": 1
           },
           "batchId": {
             "bsonType": "string",
-            "enum": [
-              "2026-10-19"
-            ]
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
           },
           "runId": {
             "bsonType": "string",
@@ -898,21 +904,15 @@
           },
           "evaluationTaskId": {
             "bsonType": "string",
-            "enum": [
-              "remote-post-training-evaluation"
-            ]
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
           },
           "evaluation_topic": {
             "bsonType": "string",
-            "enum": [
-              "后训练三模型专题评测（2026-10-19）"
-            ]
+            "minLength": 1
           },
           "batchId": {
             "bsonType": "string",
-            "enum": [
-              "2026-10-19"
-            ]
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
           },
           "runId": {
             "bsonType": "string",

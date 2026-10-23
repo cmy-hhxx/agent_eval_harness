@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { canonical, type PlannedTask, type ProblemObservationRef, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader, locateRun, problemLibraryFile, readJson, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary, writeJson, atomicWrite } from "@eval/data";
 import { applyClustering, countProblemSamples, effectiveProblemOccurrences, emptyLibrary, normalizeLabel, problemSampleKey, projectLibrary, replacePendingObservations, type ClusteringResult } from "@eval/agents/clustering";
@@ -27,13 +28,22 @@ function clusteringAttributionIds(tasks: Pick<PlannedTask, "id" | "stage" | "inp
 /** Only accepted source receipts are read; no raw answers or source state are copied or changed. */
 async function stableSource(run: string, ids?: string[], inputIds?: ReadonlySet<string>) {
   const file = locateRun(run).stateFile, revision = await fileSourceReader.revision(file);
-  if (!ids) {
-    const checkpoint = await readJson<Checkpoint>(file);
-    if (checkpoint.format !== "evaluation-run") throw new Error("聚类来源必须是评测 run：" + run);
-    ids = clusteringAttributionIds(Object.entries(checkpoint.tasks).map(([id, task]) => ({ id, stage: task.stage, inputIds: task.inputIds })), checkpoint.executionScope, inputIds);
-  }
+  const checkpoint = await readJson<Checkpoint>(file), explicit = ids !== undefined;
+  if (checkpoint.format !== "evaluation-run") throw new Error("聚类来源必须是评测 run：" + run);
+  const selected = (value: Checkpoint) => clusteringAttributionIds(Object.entries(value.tasks)
+    .map(([id, task]) => ({ id, stage: task.stage, inputIds: task.inputIds })), value.executionScope, inputIds);
+  ids ??= selected(checkpoint);
   const state = await readRunTasks(run, ids);
-  if (await fileSourceReader.revision(file) !== revision) throw new Error("读取期间来源 run 发生变化，请重试：" + run);
+  if (await fileSourceReader.revision(file) !== revision) {
+    const current = await readJson<Checkpoint>(file);
+    // Live evaluation may advance unrelated tasks; only the selected source family must remain stable.
+    if (current.format !== checkpoint.format || current.runId !== checkpoint.runId ||
+        (!explicit && !isDeepStrictEqual(selected(current), ids)) || ids.some(id =>
+          !isDeepStrictEqual(current.tasks[id], checkpoint.tasks[id]) ||
+          Object.values(checkpoint.tasks[id]?.inputIds ?? {}).some(inputId =>
+            !isDeepStrictEqual(current.inputs[inputId], checkpoint.inputs[inputId]))))
+      throw new Error("读取期间所选来源发生变化，请重试：" + run);
+  }
   return state;
 }
 export async function readClusteringJobSources(sources: ClusteringJobSource[]) {

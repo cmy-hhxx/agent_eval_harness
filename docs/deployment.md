@@ -63,7 +63,8 @@ bash workbench.sh
 - 实例锁阻止同一运行目录重复启动。
 - 启动前校验固定工具链、配置、持久目录、密钥权限、运行账号权限和全部端口。
 - 端口被其他进程占用时拒绝启动，不自动换端口。
-- 数据服务、自动化进程和运行实例看板异常退出后按 `1s, 2s, 4s, 8s, 16s` 退避重启；同一服务在五分钟内超过五次重启、返回配置错误或端口冲突时停止整套服务。
+- 数据服务、自动化看板服务和运行实例看板异常退出后按 `1s, 2s, 4s, 8s, 16s` 退避重启；同一服务在五分钟内超过五次重启、返回配置错误或端口冲突时停止整套服务。
+- 启动与重启只恢复服务，不自动恢复来源流水线。运行监控按来源点击「运行」后持续执行，点击「停止」后等待再次手动运行。
 - Ctrl+C 或 SIGTERM 先停止公网接入，再依次停止自动化、运行实例看板和数据服务；自动化进程完成 Host 进度保存后退出。
 - supervisor 输出留在 tmux；应用日志只写现有 `runtime.log`、`evaluation.log` 和统计 JSONL，不创建轮转或私有日志。
 
@@ -98,9 +99,9 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 - `1_aime/1_7z_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
 - `2_ifind/1_7z_data` 与 `2_ifind/2_daily_eval_input/<model>/<date>.jsonl`
 
-工作台发现登记目录中的包并保存持久批次；日常自动清洗，专项由页面操作。已有正式输入文件保留但不自动回填 ready。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
+工作台发现登记目录中的包并保存持久批次；日常与专项均由页面选择批次并手动清洗。已有正式输入文件保留但不自动回填 ready。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
-自动化从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
+手动启动来源后，流水线从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
 
 ## 日常检查
 

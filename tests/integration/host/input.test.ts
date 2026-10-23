@@ -172,8 +172,9 @@ test("configuration composes layered files and resolves bound models", async () 
   for (const stage of ["criteria", "attribution", "comparison", "rewrite", "clustering"]) {
     assert.equal(modelForStage(stage).model, "your-gateway-model-id");
     assert.equal(modelForStage(stage).maxOutputTokens, 32768);
-    assert.equal(modelForStage(stage).thinking, stage === "attribution" ? "high" : "medium");
-    assert.equal(unconfigured(stage).thinking, stage === "attribution" ? "high" : "medium", "stage settings remain explicit when the profile uses its default");
+    const thinking = stage === "attribution" ? "high" : stage === "rewrite" ? "low" : "medium";
+    assert.equal(modelForStage(stage).thinking, thinking);
+    assert.equal(unconfigured(stage).thinking, thinking, "stage settings remain explicit when the profile uses its default");
   }
   const overridden = createModelResolver({
     ...resolved.models,
@@ -182,6 +183,7 @@ test("configuration composes layered files and resolves bound models", async () 
   });
   assert.equal(overridden("attribution").thinking, "high", "explicit profile reasoning is preserved");
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
+  assert.equal(overridden("rewrite").thinking, "low", "polish stays low even when the judge profile is high");
   await assert.rejects(loadConfig(file, { channels: {}, agent: {}, automation: { channels: [] }, environment: {} }), /Unknown.*channel/);
   assert.throws(() => testSettings("file:///tmp/model"), /base_url/);
 });

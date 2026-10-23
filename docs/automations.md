@@ -2,7 +2,7 @@
 
 [返回首页](../README.md) · [部署](deployment.md) · [远程接口](handoff.md) · [运行与恢复](usage.md#运行与恢复)
 
-生产自动化只由 `workbench.sh` 启动。流水线按登记来源轮询同机数据服务，下载并校验输入快照，调用 Host 完成 Criteria、Attribution、Comparison 和 Rewrite，再增量交付 MongoDB 并生成统计快照。自动化不运行聚类。
+生产自动化服务只由 `workbench.sh` 启动，默认等待手动运行，不启动任何来源流水线。在运行监控选中来源并点击「运行」后，该来源才轮询同机数据服务，下载并校验输入快照，调用 Host 完成 Criteria、Attribution、Comparison 和 Rewrite，再增量交付 MongoDB 并生成统计快照。自动化不运行聚类。
 
 ## 来源清单
 
@@ -18,7 +18,7 @@
 
 增加来源只修改外部自动化配置并登记清单，然后重启工作台；`workbench.sh` 和调度实现不保存来源名称列表。显式 `--config` 只用于开发、测试或单来源 CLI；生产不传 `--config`。
 
-日常评测使用上述持续流水线；数据集经常变化的专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)；`automations-post-training.json` 限定 2026-10-19 双模型数据，使用 `task-post-training-` 前缀、DeepSeek（`deepseek-v4.1-flash`）高档（high）推理和并发 32，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外的专项清单，仅登记该配置并命名为“专项 · 后训练双模型 · 678 对”；看板按独立任务显示进度，日常流水线不会随之启动。
+日常评测在手动运行后使用上述持续流水线；数据集经常变化的专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)；`automations-post-training.json` 限定 2026-10-19 双模型数据，使用 `task-post-training-` 前缀、DeepSeek（`deepseek-v4.1-flash`）高档（high）推理和并发 32，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外的专项清单，仅登记该配置并命名为“专项 · 后训练双模型 · 678 对”；看板按独立任务显示进度，点击该来源「运行」后才执行。
 
 每个来源必须显式配置 `publishMongo`。日常任务为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。
 
@@ -39,17 +39,17 @@ EVAL_CONFIG_FILE
 ```bash
 npm run automations -- check
 npm run automations -- run --once
-npm run automations -- run --dashboard --port 4174
+npm run automations -- serve --port 4174
 ```
 
-生产由工作台向第二个命令传入清单与外部配置目录。`check` 只读，不下载、不调用模型、不交付。`run --once` 执行每个来源的一轮可执行工作。看板按来源显示状态和并发；并发设置为 0 时只暂停该来源的新模型请求，使用中请求、工具、下载、校验、Mongo 和统计生成继续执行。
+生产由工作台向 `serve` 传入清单与外部配置目录。`serve` 只读历史状态并提供看板；点击「运行」才启动选定来源，其他来源保持待运行。点击「停止」会中断当前流水线并等待 Host 保存进度，停止中禁止再次运行；已接受结果保留。服务启动、崩溃重启和页面刷新均不会隐式启动来源；已手动运行的来源可在页面关闭后继续，重开页面会读取其状态。空闲页面不持续轮询运行状态，运行或停止中每 5 秒更新，空闲时可点击「刷新」。`check` 只读，不下载、不调用模型、不交付。显式 CLI `run` 直接执行，`run --once` 执行每个来源的一轮可执行工作。看板按来源显示状态和并发；并发设置为 0 时只暂停该来源的新模型请求，使用中请求、工具、下载、校验、Mongo 和统计生成继续执行。
 
 同一任务 ID、状态目录、输入目录或 run 前缀不能被多个来源共享；独立实验使用新的 `id`、`stateDirectory`、`sourceDirectory` 和 `runPrefix`。同一实验续跑沿用这些值。
 
 ## 数据链路
 
-1. 数据服务检测已登记日常任务的新包并稳定 30 秒，自动清洗为 JSONL 和 ready 状态；专项等待人工清洗。
-2. 自动化轮询 `http://127.0.0.1:8081/data/wencai/dashboard-data`。
+1. 数据服务检测登记任务的新包并稳定 30 秒；日常与专项均等待选择批次并点击清洗，完成后发布 JSONL 和 ready 状态。
+2. 手动点击来源「运行」后，流水线轮询 `http://127.0.0.1:8081/data/wencai/dashboard-data`。
 3. 对已就绪日期流式下载各模型 JSONL，校验 `Content-Length`、JSONL 和实际行数。
 4. 完整输入提升为可恢复快照；旧输入的评测与 Mongo 交付结束前不替换。
 5. Host 执行标准、归因、对比和改写，接受结果与 UUID 写入 run 状态。
@@ -85,7 +85,7 @@ agent_eval_bench_version_comparisons_new
 
 ## 四小时统计快照
 
-`publishStatisticsLog: true` 的自动化为每个四小时窗口生成一条累计快照。启动后生成当前窗口快照，停机跨多个周期不补造中间历史；已生成当前窗口后重启不重复生成。
+`publishStatisticsLog: true` 的自动化为每个四小时窗口生成一条累计快照。手动运行来源后生成当前窗口快照，停机跨多个周期不补造中间历史；已生成当前窗口后重启不重复生成。
 
 生成顺序：
 

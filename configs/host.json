@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r282",
+  "evaluatorVersion": "r303",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -100,7 +100,8 @@
       "profile": "judge"
     },
     "rewrite": {
-      "profile": "judge"
+      "profile": "judge",
+      "thinking": "low"
     },
     "clustering": {
       "profile": "judge"

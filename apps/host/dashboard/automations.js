@@ -10,10 +10,11 @@ const stages = ["criteria", "attribution", "comparison", "rewrite"];
 const stageLabels = { criteria: "标准任务", attribution: "归因任务", comparison: "对比任务", rewrite: "改写任务" };
 const labels = { running: "运行中", stopped: "已停止", pending: "等待中", downloading: "下载中", ready: "已就绪", retry: "等待重试", evaluating: "评测中", completed: "已完成", waiting_inputs: "已完成，等待新增输入", blocked: "已暂停", uncertain: "待核实", sending: "上传中", uploaded: "已上传" };
 const tones = { running: "active", evaluating: "active", downloading: "active", completed: "success", uploaded: "success", ready: "success", retry: "warning", uncertain: "warning", blocked: "error" };
+const controlLabels = { idle: "待运行", running: "运行中", stopping: "停止中", failed: "运行失败" };
 const status = (value, label = labels[value] ?? value) => `<span class="status-label tone-${tones[value] ?? "neutral"}">${escape(label)}</span>`;
 const sub = (value, className = "") => `<span class="table-sub ${className}">${escape(value)}</span>`;
 const empty = (columns, text) => `<tr><td colspan="${columns}" class="empty">${text}</td></tr>`;
-let data, busy = false, connected = false, timer, allocationRevision = 0;
+let data, busy = false, connected = false, timer, allocationRevision = 0, controlBusy = false, controlError = "";
 const savingAllocations = new Set();
 const pageSize = 10;
 const pages = Object.fromEntries(["date", "activity", "mongo-progress", "mongo", "delivery"].map((id) => [id, 0]));
@@ -40,11 +41,45 @@ function renderSources() {
     }
     link.type = "button";
     link.querySelector("strong").textContent = source.name;
-    link.querySelector("span").textContent = `${source.status === "running" && !source.dateCount ? "等待数据" : labels[source.status] ?? source.status} · ${number(source.dateCount)} 个日期`;
+    link.querySelector("span").textContent = `${source.control ? controlLabels[source.control.status] : source.status === "running" && !source.dateCount ? "等待数据" : labels[source.status] ?? source.status} · ${number(source.dateCount)} 个日期`;
+    link.disabled = controlBusy;
     if (source.id === data.id) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
   for (const link of [...nav.children]) if (!data.sources.some(source => source.id === link.dataset.source)) link.remove();
+}
+
+function renderControl() {
+  const control = data?.control;
+  for (const id of ["source-run", "source-stop"]) $(id).hidden = !control;
+  $("source-run").disabled = !connected || controlBusy || !control || ["running", "stopping"].includes(control.status);
+  $("source-stop").disabled = !connected || controlBusy || control?.status !== "running";
+  if (control && connected) $("pipeline-status").textContent = controlLabels[control.status];
+  const error = controlError || control?.error;
+  $("source-control-error").textContent = error || "";
+  $("source-control-error").hidden = !error;
+}
+
+async function controlSource(action) {
+  if (!connected || controlBusy || !data?.control) return;
+  const id = data.id;
+  controlBusy = true; generation++;
+  clearTimeout(timer);
+  controlError = "";
+  renderControl(); renderSources();
+  try {
+    const response = await fetch("/runtime/api/control", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceId: id, action }), signal: AbortSignal.timeout(15000) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+    data.control = result;
+  } catch (error) {
+    controlError = `${action === "run" ? "运行" : "停止"}失败：${error.message}`;
+  } finally {
+    controlBusy = false;
+    renderControl(); renderSources();
+    void refresh();
+  }
 }
 
 function renderLlm() {
@@ -208,6 +243,7 @@ function render() {
   const errors = [data.pollError, data.reportError].filter(Boolean);
   $("pipeline-errors").hidden = !errors.length;
   $("pipeline-errors").textContent = errors.join("\n");
+  renderControl();
   $("date-total").textContent = `${number(jobs.length)} 个日期`;
   $("date-rows").innerHTML = pageRows("date", jobs).map((job) => {
     const error = (["retry", "blocked"].includes(job.evaluation) ? errorDetails(job.evaluationError, `evaluation:${job.date}`, "评测错误") : "") +
@@ -288,7 +324,7 @@ function render() {
 }
 
 async function refresh() {
-  if (busy || savingAllocations.size) return;
+  if (busy || savingAllocations.size || controlBusy) return;
   clearTimeout(timer);
   busy = true; $("refresh").disabled = true;
   const version = generation;
@@ -318,10 +354,11 @@ async function refresh() {
     $("pipeline-status").textContent = "连接中断";
     renderExecution(); updateCountdowns();
     if (data) renderLlm();
+    renderControl();
   } finally {
     busy = false; $("refresh").disabled = false;
     if (version !== generation) void refresh();
-    else timer = setTimeout(refresh, 5000);
+    else if (data?.sources.some(source => source.control ? ["running", "stopping"].includes(source.control.status) : source.status === "running")) timer = setTimeout(refresh, 5000);
   }
 }
 $("llm-allocations").addEventListener("input", event => {
@@ -356,6 +393,8 @@ $("llm-allocations").addEventListener("submit", async event => {
   }
 });
 $("refresh").addEventListener("click", refresh);
+$("source-run").addEventListener("click", () => void controlSource("run"));
+$("source-stop").addEventListener("click", () => void controlSource("stop"));
 function filterChanged() {
   for (const id of Object.keys(pages)) pages[id] = 0;
   render();
@@ -371,6 +410,7 @@ $("source-nav").addEventListener("click", event => {
   const button = event.target.closest("[data-source]");
   if (!button || button.dataset.source === sourceId) return;
   sourceId = button.dataset.source; generation++;
+  controlError = "";
   for (const id of Object.keys(pages)) pages[id] = 0;
   $("date-filter").value = "";
   void refresh();

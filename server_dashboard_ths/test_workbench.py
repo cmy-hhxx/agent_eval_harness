@@ -209,20 +209,18 @@ class WorkbenchTest(unittest.TestCase):
         self.clean([conflict["id"]])
         self.assertEqual(self.catalog.report(conflict["id"], {})["items"][0]["reason"], "identity_conflict")
 
-    def test_task_directory_is_discovered_and_daily_cleaning_does_not_pick_special_tasks(self):
+    def test_discovery_never_starts_cleaning_until_explicitly_requested(self):
         daily = self.task("wencai", "daily", "wencai")
         special = self.task()
         for task in (daily, special):
             (Path(task["archive_dir"]) / "new.7z").write_text(json.dumps({"AA-fast.jsonl": json.dumps(archive_row("b_fast", "one"))}))
         batches = self.batches()
         self.assertEqual({row["task_id"] for row in batches}, {daily["id"], special["id"]})
-        picked = []
-        def clean(value):
-            picked.extend(value["batch_ids"])
-            self.catalog.stop.set()
-        with patch.object(self.catalog, "start_clean", side_effect=clean):
+        with patch.object(self.catalog, "start_clean") as clean, \
+                patch.object(self.catalog.stop, "wait", side_effect=lambda _: self.catalog.stop.set()):
             self.catalog.loop()
-        self.assertEqual(picked, [next(row["id"] for row in batches if row["task_id"] == daily["id"])])
+        clean.assert_not_called()
+        picked = [next(row["id"] for row in batches if row["task_id"] == daily["id"])]
         self.clean(picked)
         self.assertEqual(self.catalog.report(picked[0], {})["summary"]["accepted"], 1)
         restarted = WorkbenchCatalog(app.make_datasets(self.root / "data", self.root / "state"), self.root / "state", app)

@@ -82,7 +82,7 @@ function launch(service: Service): void {
       PYTHONPATH: config.data.pythonPackages, HOST: config.data.host, PORT: String(config.data.port),
     }), detached: true, stdio: ["ignore", "pipe", "pipe"] })
     : service.name === "automation"
-      ? spawn(command, [path.join(ROOT, "dist/apps/host/src/automations.js"), "run", "--dashboard",
+      ? spawn(command, [path.join(ROOT, "dist/apps/host/src/automations.js"), "serve",
         "--port", String(config.runtime.automationPort), "--manifest", config.runtime.manifest, "--config-dir", config.runtime.configDirectory],
         { cwd: ROOT, env: childEnvironment(), detached: true, stdio: ["ignore", "pipe", "pipe"] })
       : spawn(command, [path.join(ROOT, "dist/apps/host/src/cli.js"), "dashboard", "--port", String(config.runtime.runsPort),

@@ -13,6 +13,7 @@ import { ROOT } from "./paths.js";
 import { automationMongoTarget } from "./automation-sources.js";
 import { validLlmConcurrency, type createAutomationLlm } from "./automation-llm.js";
 import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-delivery.js";
+import type { createAutomationControl } from "./automation-control.js";
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 export interface AutomationMonitorSettings { evaluatorVersion: string; concurrency: number }
@@ -59,15 +60,17 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
   };
 }
 
-/** The command owns scheduling; this loopback UI allocates only model request capacity. */
+/** Scheduling stays in the command; this loopback UI exposes explicit source controls. */
 export async function startAutomationDashboard(options: {
   sources: () => readonly AutomationDashboardSource[]; port: number;
   llm: Pick<ReturnType<typeof createAutomationLlm>, "snapshot" | "setConcurrency">;
   statistics?: StatisticsDeliveryStore;
   runtimeLogFile?: string;
+  control?: ReturnType<typeof createAutomationControl>;
 }) {
   const observations = new Map<AutomationDashboardSource, {
     sampledAt: number; snapshot?: ReturnType<typeof automationSnapshot>;
+    state: AutomationDashboardSource["state"];
     monitor: ReturnType<typeof createAutomationMonitor>; errors: ReturnType<typeof automationErrors>;
   }>();
   const assets: Record<string, [string, string]> = {
@@ -83,11 +86,22 @@ export async function startAutomationDashboard(options: {
     const sources = options.sources();
     const send = (value: unknown) => json(res, JSON.parse(redact(JSON.stringify(value),
       [...sources.map(source => process.env[source.config.publication.mongoUriEnv] ?? ""), ...configurationSecrets()])));
-    if (req.method === "POST" && url.pathname === "/api/llm-concurrency") {
+    if (req.method === "POST" && ["/api/llm-concurrency", "/api/control"].includes(url.pathname)) {
       const host = (req.headers.host ?? "").toLowerCase();
       if (!host || ![`http://${host}`, `https://${host}`].includes(req.headers.origin ?? ""))
         throw new HttpError(403, "Request origin does not match the dashboard");
       const value = await body(req, 1024);
+      if (url.pathname === "/api/control") {
+        if (!value || typeof value !== "object" || Array.isArray(value) ||
+            typeof (value as Record<string, unknown>).sourceId !== "string" ||
+            !["run", "stop"].some(action => action === (value as Record<string, unknown>).action) || Object.keys(value).length !== 2)
+          throw new HttpError(400, "Expected sourceId and run/stop action");
+        if (!options.control) throw new HttpError(409, "此进程由 CLI 管理");
+        const { sourceId, action } = value as { sourceId: string; action: "run" | "stop" };
+        const result = options.control[action](sourceId);
+        observations.clear();
+        return send(result);
+      }
       if (!value || typeof value !== "object" || Array.isArray(value) || !("sourceId" in value) ||
           typeof value.sourceId !== "string" || !("concurrency" in value) || !validLlmConcurrency(value.concurrency) ||
           Object.keys(value).length !== 2)
@@ -151,8 +165,8 @@ export async function startAutomationDashboard(options: {
       const { config, output, state, settings } = source;
       const sourceName = source.name;
       let observation = observations.get(source);
-      if (!observation) {
-        observation = { sampledAt: 0, monitor: source.monitor ?? createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
+      if (!observation || observation.state !== state) {
+        observation = { sampledAt: 0, state, monitor: source.monitor ?? createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
           errors: automationErrors(options.runtimeLogFile ?? path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log"), "runtime.log"), state) };
         observations.set(source, observation);
       }
@@ -165,12 +179,15 @@ export async function startAutomationDashboard(options: {
       const snapshot = observation.snapshot;
       try {
         const result = await snapshot;
-        send({ ...result, sourceName, llm: options.llm.snapshot(),
+        const control = options.control?.snapshot(config.id);
+        send({ ...result, ...(control && { status: control.status === "running" || control.status === "stopping" ? "running" : "stopped", control }), sourceName, llm: options.llm.snapshot(),
           statisticsDeliveries: options.statistics ? await options.statistics.list(statisticsSources, false) : [],
           sources: sources.map(source => {
           const current = source.state();
+          const control = options.control?.snapshot(source.config.id);
           return { id: source.config.id, name: source.name,
-            status: current.status, dateCount: Object.keys(current.jobs).length };
+            status: control ? control.status === "running" || control.status === "stopping" ? "running" : "stopped" : current.status,
+            ...(control && { control }), dateCount: Object.keys(current.jobs).length };
         }) });
       } catch (error) { if (observation.snapshot === snapshot) observation.snapshot = undefined; throw error; }
       return;

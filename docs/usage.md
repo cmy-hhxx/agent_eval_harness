@@ -60,6 +60,8 @@ npm run eval -- model-probe --engine prime --stage comparison --config configs/l
 
 默认值与字段全集直接查 [EvalConfig](../packages/workflows/src/comparison/types.ts)、[DEFAULT_POLICY](../packages/contracts/src/index.ts)、[loadConfig](../apps/host/src/config.ts)，不复制到文档。
 
+共用配置把 Rewrite 的推理档位单独设为 `low`，保留润色，只处理已接受文本；其他阶段沿用各自配置。专项的后置覆盖也须保留该阶段设置，不能用全阶段 `high` 覆盖。降低推理档位不是语义保真证明，仍按改写验收流程对照原文抽查。
+
 `run / reattribute / cluster --balance-channels` 按 INI 的 traffic_weight 分配完整任务，普通重试保持渠道，明确配额耗尽才切换；各渠道须提供相同阶段模型。自动化渠道池见[自动化启动与调度](automations.md#启动与调度)。
 
 ## 目录约定
@@ -158,7 +160,7 @@ tail -f log/runtime.log
 | 预算/故障 | 恢复规则 |
 |---|---|
 | 内容提交 | 同任务跨 attempt 和续跑共享 `1 + (stageRepairAttempts[stage] ?? repairAttempts)` |
-| 文件/JSON 加载错误 | 独立累计 fileErrors，三次后停止，不挤占内容修正 |
+| 文件/JSON 加载错误 | 独立累计 fileErrors，新的加载失败达到三次上限时停止；续跑不清零，但已成功加载的内容仍可使用剩余内容修正预算 |
 | 传输、流中断及可恢复提前结束 | 按 retries / retryDelaySeconds 有界重试 |
 | 取消、总期限、耗尽预算 | 停止，不靠重启清零 |
 | 未确认 Worker 最终账本 | 保存已知计数与原因，不推测用量 |
@@ -301,6 +303,8 @@ npm run eval -- cluster --run-id problems-001 --apply \
 
 工作台使用 `--clustering-selection FILE` 读取冻结来源引用，不能与 `--run` 同传；不会扩展到后续接受的结果。
 
+已冻结的成功归因可与源评测并行聚类。源 run 中无关任务更新不阻断读取；所选归因、收据或输入引用在读取期间变化仍会报错。
+
 run 可重复；续跑只给作业 ID，查看进度省略 apply。来源状态及正式归因须可读，聚类不等待对比、改写或可选核验；失败归因跳过。新增日期或显式重聚类用新作业 ID。评测 run 内延期观察也可用 `recluster --run PATH --task ID` 或 --all 预览，apply 后同 run 续跑。
 
 ### 从正式对比数据重新归因
@@ -365,6 +369,10 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |
 
 正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
+
+高并发下，若已有后续检查点排队，已落盘结果的收据压缩并入该次写入，避免重复刷盘；没有后续写入时立即压缩。压缩失败仍能从先前的恢复检查点和正式结果恢复。
+
+Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出后才重建，避免端口复用误认其他 Worker。
 
 stats 的胜负按对局，标准一致性及核心完成按回答去重；未知、冲突与覆盖单列。Token 包含已记录失败与重试，未知终态不算零；缓存命中率为 cacheRead / (input + cacheRead + cacheWrite)。任务累计耗时与首次启动后的 wall_seconds 分开，后者包含停机间隔。
 
