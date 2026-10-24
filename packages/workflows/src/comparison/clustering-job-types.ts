@@ -1,6 +1,9 @@
-import { canonical, type AttributionSource, type JsonObject, type ProblemProjection, type ProblemObservationRef } from "@eval/contracts";
+import { canonical, type AttributionSource, type JsonObject, type ProblemProjection, type ProblemObservationRef, type RunState } from "@eval/contracts";
 import type { ClusteringObservation } from "@eval/agents/clustering";
 import type { EvalConfig } from "./types.js";
+
+/** Application-supplied projection of current workflow sources into the clustering view. */
+export type ClusteringRunReader = (run: string, taskIds: string[]) => Promise<RunState>;
 
 export interface ClusteringJobSource extends AttributionSource {
   model: string;

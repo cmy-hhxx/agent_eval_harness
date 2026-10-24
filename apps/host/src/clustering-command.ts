@@ -2,10 +2,14 @@ import path from "node:path";
 import { canonical, safeId, type Engine } from "@eval/contracts";
 import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
-import { clusteringJobRepository, clusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
+import { createClusteringJobRepository, createClusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
 import { createModelResolver, type HostConfig } from "./config.js";
 import { services } from "./composition.js";
 import { createBalancedModels } from "./balanced-models.js";
+import { readClusteringSource } from "./clustering-sources.js";
+
+const clusteringJobRepository = createClusteringJobRepository(readClusteringSource);
+const clusteringJobWorkflow = createClusteringJobWorkflow(readClusteringSource);
 
 export async function runClusteringCommand(host: HostConfig, options: {
   runs?: string[]; selectionFile?: string; runId?: string; output?: string; apply?: boolean;
@@ -26,8 +30,8 @@ export async function runClusteringCommand(host: HostConfig, options: {
     throw new Error("聚类作业目录不能覆盖来源 run");
   if (options.selectionFile && options.runs) throw new Error("聚类来源不能同时提供 run 和冻结选择");
   const prepared = saved ? undefined : options.selectionFile
-    ? await prepareFrozenClusteringJob(await readJson<ClusteringJobConfig["clusteringJob"]>(options.selectionFile), { ...host.evaluation, output })
-    : await prepareClusteringJob(options.runs ?? [], { ...host.evaluation, output });
+    ? await prepareFrozenClusteringJob(await readJson<ClusteringJobConfig["clusteringJob"]>(options.selectionFile), { ...host.evaluation, output }, readClusteringSource)
+    : await prepareClusteringJob(options.runs ?? [], { ...host.evaluation, output }, { readSource: readClusteringSource });
   const config: ClusteringJobConfig = saved
     ? { ...host.evaluation, output, inputs: { versions: [] }, comparisons: [],
       clusteringJob: (saved.manifest.config as ClusteringJobConfig).clusteringJob }
@@ -49,7 +53,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
     const result = await runEvaluation({ ...services, ...routing, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
-      report: reportClusteringJob, snapshots: {}, runId: options.runId!, output, engine: options.engine as Engine,
+      report: run => reportClusteringJob(run, readClusteringSource), snapshots: {}, runId: options.runId!, output, engine: options.engine as Engine,
       evaluatorVersion: host.evaluatorVersion, config,
       plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} },
       policy: config.execution, modelForStage, concurrency: config.execution.concurrency,

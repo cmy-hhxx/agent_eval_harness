@@ -291,7 +291,7 @@ npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/
 
 省略 result 选择全部正式对比。默认预览，apply 保存核验范围；结果不替换主线判词。
 
-归因结束后，可跨 run 创建独立聚类：
+归因结束后，可跨 comparison 或 answer-review run 创建独立聚类，聚类命令使用包含 clustering 和 problemLibrary 设置的对战配置：
 
 ```bash
 npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001 --run-id problems-001
@@ -306,6 +306,8 @@ npm run eval -- cluster --run-id problems-001 --apply \
 已冻结的成功归因可与源评测并行聚类。源 run 中无关任务更新不阻断读取；所选归因、收据或输入引用在读取期间变化仍会报错。
 
 run 可重复；续跑只给作业 ID，查看进度省略 apply。来源状态及正式归因须可读，聚类不等待对比、改写或可选核验；失败归因跳过。新增日期或显式重聚类用新作业 ID。评测 run 内延期观察也可用 `recluster --run PATH --task ID` 或 --all 预览，apply 后同 run 续跑。
+
+独立聚类全部任务完成后，在作业根目录生成 `cluster_tree.jsonl`，每行一个模型、功能责任、问题方向或具体问题节点；待观察问题单列，无问题回答仍列入模型节点的冻结来源范围。节点内问题计数按回答和 finding 去重，多责任问题可出现在不同责任分支，父计数按并集计算。`validate --run` 核对来源收据、全量任务覆盖及已落盘树与当前问题库的一致性；缺失、篡改或未完成不能通过。
 
 ### 从正式对比数据重新归因
 
@@ -399,6 +401,8 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
 ```
 
 外部 Worker 读取同一 INI，须具备所选渠道凭据，由调用方管理恢复。仅监听回环地址。代码工作区不是安全沙箱，隔离边界见[架构](architecture.md#新工具)。
+
+高并发可用 `worker --slots 25` 在一个 Node 进程内启动 25 个独立 HTTP 槽位，复用已加载的 SDK。ready 消息的 `urls` 列出各槽位地址，向 Host 重复传入 `--worker URL`；Host 总并发上限保持不变。各槽位独立保存任务、会话、工具预算及取消状态，目录按 slot 隔离。非零 `--port` 使用连续端口，默认由系统分别分配。池进程退出影响该池的全部槽位，由调用方监督恢复；关闭池会收尾全部活动任务。
 
 ## 独立评测分析 Agent
 

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "/workflow/clustering-tree.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "node_id",
+    "parent_id",
+    "level",
+    "path",
+    "label",
+    "definition",
+    "count",
+    "established_count",
+    "uncertain_count",
+    "established_answer_ids",
+    "meta"
+  ],
+  "properties": {
+    "node_id": {
+      "$ref": "#/$defs/text"
+    },
+    "parent_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3
+    },
+    "path": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    },
+    "label": {
+      "$ref": "#/$defs/text"
+    },
+    "definition": {
+      "$ref": "#/$defs/text"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "established_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "uncertain_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "established_answer_ids": {
+      "$ref": "#/$defs/strings"
+    },
+    "class_code": {
+      "$ref": "#/$defs/text"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "$ref": "/clustering/pending-observations.schema.json#/$defs/ref"
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "kind",
+        "answer_ids"
+      ],
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/text"
+        },
+        "kind": {
+          "enum": [
+            "model",
+            "component",
+            "direction",
+            "class",
+            "pending"
+          ]
+        },
+        "answer_ids": {
+          "$ref": "#/$defs/strings"
+        },
+        "attribution_sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/text"
+      },
+      "uniqueItems": true
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "run_id",
+        "task_id",
+        "submission_id",
+        "evaluator_version",
+        "model",
+        "batch_id",
+        "case_id",
+        "input_id",
+        "source"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/text"
+        },
+        "run_id": {
+          "$ref": "#/$defs/text"
+        },
+        "task_id": {
+          "$ref": "#/$defs/text"
+        },
+        "submission_id": {
+          "$ref": "#/$defs/text"
+        },
+        "evaluator_version": {
+          "$ref": "#/$defs/text"
+        },
+        "model": {
+          "$ref": "#/$defs/text"
+        },
+        "batch_id": {
+          "$ref": "#/$defs/text"
+        },
+        "case_id": {
+          "$ref": "#/$defs/text"
+        },
+        "input_id": {
+          "$ref": "#/$defs/text"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "line"
+          ],
+          "properties": {
+            "file": {
+              "$ref": "#/$defs/text"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

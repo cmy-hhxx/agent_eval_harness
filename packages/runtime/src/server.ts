@@ -1036,3 +1036,20 @@ export async function startWorker(
     },
   };
 }
+
+/** Independent HTTP/session slots share only the loaded SDK and the Node process. */
+export async function startWorkerPool(backend: AgentBackend, directory: string, slots: number, port = 0,
+  execution?: { python: string }) {
+  if (!Number.isSafeInteger(slots) || slots < 1 || slots > 200) throw new Error("Worker slots must be an integer from 1 to 200");
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535 || port > 0 && port + slots - 1 > 65535)
+    throw new Error("Invalid Worker pool port range");
+  const workers: Awaited<ReturnType<typeof startWorker>>[] = [];
+  try {
+    for (let index = 0; index < slots; index++) workers.push(await startWorker(backend,
+      slots === 1 ? directory : path.join(directory, `slot-${index}`), undefined, port ? port + index : 0, execution));
+  } catch (error) {
+    await Promise.allSettled(workers.map(worker => worker.close()));
+    throw error;
+  }
+  return { urls: workers.map(worker => worker.url), close: async () => { await Promise.all(workers.map(worker => worker.close())); } };
+}

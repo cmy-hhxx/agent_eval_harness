@@ -3,9 +3,10 @@ import type { ProblemLibrary } from "@eval/contracts";
 import { projectLibrary } from "@eval/agents/clustering";
 import { readRunTasks } from "./run-data.js";
 import type { AttributionResult } from "./types.js";
+import type { ClusteringRunReader } from "./clustering-job-types.js";
 
 /** Recall only the selected accepted findings, keeping result text out of the shared library. */
-export async function recallProblemLibrary(library: ProblemLibrary, output: string) {
+export async function recallProblemLibrary(library: ProblemLibrary, output: string, readSource: ClusteringRunReader = readRunTasks) {
   const projection = projectLibrary(library);
   const examples = projection.components.flatMap(component => component.classes.flatMap(problem => problem.examples));
   const groups = new Map<string, typeof examples>();
@@ -15,7 +16,7 @@ export async function recallProblemLibrary(library: ProblemLibrary, output: stri
   }
   await Promise.all([...groups].map(async ([run, samples]) => {
     const ids = [...new Set(samples.map(sample => sample.attribution?.task_id ?? sample.task_id))];
-    const state = await readRunTasks(run, ids);
+    const state = await readSource(run, ids);
     const dependencies = samples.filter(sample => !sample.attribution).map(sample => {
       const cluster = state.manifest.tasks.find(task => task.id === sample.task_id);
       const receipt = state.receipts[sample.task_id];
@@ -25,7 +26,7 @@ export async function recallProblemLibrary(library: ProblemLibrary, output: stri
       if (!id) throw new Error("问题类代表样本缺少原归因：" + sample.finding_id);
       return id;
     });
-    const source = dependencies.length ? await readRunTasks(run, [...new Set([...ids, ...dependencies])]) : state;
+    const source = dependencies.length ? await readSource(run, [...new Set([...ids, ...dependencies])]) : state;
     for (const sample of samples) {
       const taskId = sample.attribution?.task_id ?? state.manifest.tasks.find(task => task.id === sample.task_id)!.dependencies[sample.input_id]!;
       const task = source.manifest.tasks.find(task => task.id === taskId), receipt = source.receipts[taskId];

@@ -13,8 +13,9 @@ import { comparisonWorkflow, selectDataset, prepareComparisonRewrites, prepareCo
 import { indexDataset, selectDatasetInputs } from "@eval/workflows/inputs";
 import { reportRun, reportStability } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
-import { validateRun } from "@eval/workflows/comparison";
+import { validateRun, validateClusteringJob, reportClusteringJob } from "@eval/workflows/comparison";
 import { runClusteringCommand } from "./clustering-command.js";
+import { readClusteringSource } from "./clustering-sources.js";
 import { runAttributionCommand } from "./attribution-command.js";
 import { runStabilityCommand } from "./stability-command.js";
 import { runModelProbe } from "./model-probe.js";
@@ -233,11 +234,16 @@ dashboard: --port 4173 在本机启动控制看板`,
     try {
       const checkpoint = await readJson<{
         workflow?: string;
+        kind?: string;
         manifest?: { config?: { stability?: unknown } };
       }>(path.join(run, "state.json"));
       const isStability = command === "report" && Boolean(checkpoint.manifest?.config?.stability);
       result =
-        checkpoint.workflow === "answer-review"
+        checkpoint.kind === "clustering-job"
+          ? command === "status" ? checkpoint
+            : command === "validate" ? await validateClusteringJob(run, readClusteringSource)
+            : await reportClusteringJob(run, readClusteringSource)
+          : checkpoint.workflow === "answer-review"
           ? await readAnswerReviewCommand(command as "report" | "status" | "validate", run)
           : command === "status"
           ? checkpoint

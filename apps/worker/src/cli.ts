@@ -6,7 +6,7 @@ import { createFileLogger } from "@eval/data";
 import type { AgentBackend, Engine, EngineIdentity } from "@eval/contracts";
 import { errorText, redact } from "@eval/contracts";
 import { loadIdentity } from "@eval/runtime/client";
-import { startWorker } from "@eval/runtime/worker";
+import { startWorkerPool } from "@eval/runtime/worker";
 
 function logs(root: string) {
   return createFileLogger({
@@ -25,6 +25,7 @@ async function main() {
       engine: { type: "string" },
       directory: { type: "string" },
       port: { type: "string", default: "0" },
+      slots: { type: "string", default: "1" },
     },
   });
   const ROOT = path.resolve(values.root || defaultRoot);
@@ -48,14 +49,14 @@ async function main() {
     (identity: EngineIdentity) => AgentBackend
   >;
   const backend = adapter[`${engine}Backend`](identity);
-  const worker = await startWorker(
+  const worker = await startWorkerPool(
     backend,
     values.directory || path.join(ROOT, ".runtime", "workers", `${engine}-${process.pid}`),
-    undefined,
+    Number(values.slots),
     Number(values.port),
     { python: process.env.EVAL_PYTHON || path.join(ROOT, ".venv/bin/python") },
   );
-  const ready = { type: "ready", url: worker.url, engine };
+  const ready = { type: "ready", url: worker.urls[0], engine, ...(worker.urls.length > 1 ? { urls: worker.urls } : {}) };
   if (process.send) process.send(ready);
   else console.log(JSON.stringify(ready));
   let closing = false;

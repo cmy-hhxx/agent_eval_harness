@@ -23,6 +23,7 @@
 - `result.schema.json`：程序绑定身份、展开证据并接受后的结果。
 - `workflow/export.schema.json`：含稳定模型身份、源归因及派生判决的正式对比行，仅接受 `decided`。
 - `workflow/answer-review-attribution.schema.json`：独立归因正式行；点评采用Attribution公开结果契约，输入来源、实际trace_id与业务日期由Workflow绑定，落盘及恢复导出时校验。
+- `workflow/clustering-tree.schema.json`：独立聚类完成后的树节点 JSONL；包含模型、功能责任、问题方向和细类，保留待观察问题及全部冻结回答的来源引用。
 - `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，正式 JSONL 的既有字段位置保持不变。
 
 提交方式、各阶段选择规则及 Rewrite 的固定 `rewrites: [{id,text}]` 见[数据契约](../docs/contract.md#提交方式与反馈)，不在导航中另抄字段清单。

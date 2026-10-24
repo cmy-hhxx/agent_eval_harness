@@ -20,7 +20,9 @@ export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";
 export * from "./observations.js";
 export { prepareFrozenClusteringJob, prepareClusteringJob, clusteringJobWorkflow, clusteringJobRepository, reportClusteringJob,
-  type ClusteringJobConfig, type ClusteringJobSource } from "./clustering-job.js";
+  createClusteringJobWorkflow, createClusteringJobRepository,
+  validateClusteringJob,
+  type ClusteringJobConfig, type ClusteringJobSource, type ClusteringRunReader } from "./clustering-job.js";
 export * from "./publication.js";
 export * from "./prediction.js";
 export * from "./problem-occurrence-review.js";
