@@ -1,6 +1,6 @@
 import { renderMarkdown } from '../../../server_dashboard_ths/records-markdown.js';
 
-const labels = { succeeded:'已完成', pending:'待处理', running:'运行中', failed:'失败', timed_out:'超时', cancelled:'已中断', blocked:'依赖阻塞', finished:'已结束', interrupted:'已中断', unknown:'未知', attribution:'回答归因', summary:'总结', findings:'发现', evidence:'证据', final_answer_score:'最终回答得分', evaluations:'评估', explicit_probability:'明确概率', probability_evidence_ids:'概率证据', score:'得分', score_range:'得分区间', status:'状态', reason:'依据', text:'表现', component:'责任组件', label:'问题名称', definition:'定义', type:'类型', strength:'优点', problem:'问题', met:'满足', violated:'未满足', unverified:'待核', not_applicable:'不适用', case_id:'Case', evidence_ids:'证据引用', quote:'原文', source:'来源', evidence_id:'证据坐标' };
+const labels = { succeeded:'已完成', partial:'部分完成', pending:'待处理', running:'运行中', failed:'失败', timed_out:'超时', cancelled:'已中断', blocked:'依赖阻塞', finished:'已结束', interrupted:'已中断', unknown:'未知', attribution:'回答归因', summary:'总结', findings:'发现', evidence:'证据', final_answer_score:'最终回答得分', evaluations:'评估', explicit_probability:'明确概率', probability_evidence_ids:'概率证据', score:'得分', score_range:'得分区间', status:'状态', reason:'依据', text:'表现', component:'责任组件', label:'问题名称', definition:'定义', type:'类型', strength:'优点', problem:'问题', met:'满足', violated:'未满足', unverified:'待核', not_applicable:'不适用', case_id:'Case', evidence_ids:'证据引用', quote:'原文', source:'来源', evidence_id:'证据坐标' };
 const stageName = stage => stage === 'score' ? '独立评分' : stage === 'attribution' ? '回答归因' : stage;
 
 export function mountAimeResults(root, options = {}) {
@@ -29,6 +29,7 @@ export function mountAimeResults(root, options = {}) {
     const numeric = value => typeof value === 'number' && Number.isFinite(value);
     const metrics = run ? [['问句',run.questions],['回答',run.answers]].filter(([,value]) => numeric(value)).map(([label,value]) => `${label} ${value}`) : [];
     if (run && numeric(run.succeeded) && numeric(run.total)) metrics.push(`完整回答 ${run.succeeded} / ${run.total}`);
+    if (run && numeric(run.partial)) metrics.push(`部分完成 ${run.partial}`);
     if (run && numeric(run.taskCompleted) && numeric(run.taskTotal)) metrics.push(`阶段任务 ${run.taskCompleted} / ${run.taskTotal}`);
     if (run && numeric(run.failed)) metrics.push(`失败 ${run.failed}`);
     $('aime-run-status').textContent = run ? metrics.join(' · ') : '暂无运行';
@@ -41,6 +42,7 @@ export function mountAimeResults(root, options = {}) {
     $('aime-sample-rows').replaceChildren(...state.items.map(sample => {
       const row = doc.createElement('tr'), identity = node('td',sample.question); identity.append(node('div',sample.caseId),node('code',sample.traceId));
       const actions = doc.createElement('td'); actions.append(button('查看',() => detail(sample.inputId))); row.append(identity,node('td',sample.model === 'aime_fast' ? 'Fast' : sample.model === 'aime_expert' ? 'Expert' : sample.model));
+      const overall = node('td',labels[sample.status] || sample.status); overall.dataset.cell = 'answer-status'; row.append(overall);
       for (const stage of ['score','attribution']) { const status = sample.stages?.[stage]; const cell = node('td',labels[status?.status] || status?.status || '未执行'); if (status?.error) cell.append(node('div',status.error)); row.append(cell); }
       row.append(actions); row.classList.toggle('selected',sample.inputId === state.selected); return row;
     }));

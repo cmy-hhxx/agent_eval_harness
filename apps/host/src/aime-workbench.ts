@@ -51,6 +51,7 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     }
     return {id,name,workflow:'answer-review' as const,archiveDirectory:configuration.archiveDirectory,inputDirectory:configuration.inputDirectory,outputDirectory:configuration.outputDirectory,
       questions:view.runs.reduce((n,run)=>n+run.questions,0),answers:view.runs.reduce((n,run)=>n+run.answers,0),completedAnswers:view.runs.reduce((n,run)=>n+run.succeeded,0),models,
+      partialAnswers:view.runs.reduce((n,run)=>n+run.partial,0),pendingAnswers:view.runs.reduce((n,run)=>n+run.pending,0),failedAnswers:view.runs.reduce((n,run)=>n+run.failed,0),
       taskTotal:view.runs.reduce((n,run)=>n+run.taskTotal,0),taskCompleted:view.runs.reduce((n,run)=>n+run.taskCompleted,0),
       concurrency:configuration.concurrency,evaluatorVersion:current.evaluatorVersion,ownerAlive,externalOwner,watch:watch??null,
       error:externalOwner?'AIME正由另一个进程运行，请先停止原aime-auto或CLI进程':watch?.lastError??null,

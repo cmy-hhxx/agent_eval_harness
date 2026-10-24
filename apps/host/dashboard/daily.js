@@ -48,7 +48,10 @@ export function mountDaily(root, options = {}) {
       row.classList.toggle('selected',source.id === selected); row.querySelector('td:first-child button').setAttribute('aria-pressed',String(source.id === selected));
       row.querySelector('[data-cell=status]').textContent = textStatus(source.status);
       const stages = Object.values(source.stages || {});
-      for (const key of ['pending','completed','failed']) row.querySelector(`[data-cell=${key}]`).textContent = stages.length && stages.every(counts => numeric(counts[key])) ? stages.reduce((sum,counts) => sum + counts[key],0) : '';
+      for (const key of ['pending','completed','failed']) {
+        const answers = source[{pending:'pendingAnswers',completed:'completedAnswers',failed:'failedAnswers'}[key]];
+        row.querySelector(`[data-cell=${key}]`).textContent = source.id === 'aime' ? numeric(answers) ? answers : '' : stages.length && stages.every(counts => numeric(counts[key])) ? stages.reduce((sum,counts) => sum + counts[key],0) : '';
+      }
       row.querySelector('[data-cell=requests]').textContent = `${source.activeRequests || 0} / ${source.waitingRequests || 0}`;
       const input = row.querySelector('input'); if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
       row.querySelectorAll('input,button').forEach(item => { item.disabled = !connected || sourceBusy.has(source.id); });
@@ -87,7 +90,7 @@ export function mountDaily(root, options = {}) {
     $('daily-source-error').textContent = sourceError; $('daily-source-error').hidden = !sourceError; renderSettings(source);
     const stageCounts = Object.values(source.stages || {}), taskTotal = numeric(source.taskTotal) ? source.taskTotal : stageCounts.length && stageCounts.every(counts => numeric(counts.total)) ? stageCounts.reduce((sum,counts) => sum + counts.total,0) : undefined;
     const taskCompleted = numeric(source.taskCompleted) ? source.taskCompleted : stageCounts.length && stageCounts.every(counts => numeric(counts.completed)) ? stageCounts.reduce((sum,counts) => sum + counts.completed,0) : undefined;
-    const counts = [['问句',source.questions],['回答',source.answers],['完整回答',source.completedAnswers]].filter(([,value]) => numeric(value)).map(([label,value]) => `${label} ${value}`);
+    const counts = [['问句',source.questions],['回答',source.answers],['完整回答',source.completedAnswers],['部分完成回答',source.partialAnswers]].filter(([,value]) => numeric(value)).map(([label,value]) => `${label} ${value}`);
     if (numeric(taskTotal)) counts.push(`阶段任务 ${numeric(taskCompleted) ? taskCompleted + ' / ' : ''}${taskTotal}`);
     const models = Object.entries(source.models || {}).filter(([id]) => ['aime_fast','aime_expert'].includes(id));
     $('daily-aime-coverage').hidden = source.id !== 'aime' || !counts.length && !models.length;

@@ -19,6 +19,9 @@ test('existing accepted Attribution keeps its row while Score is added, paginate
   const historical=await answerReviewRunSummary(run);assert.equal(historical.stages.attribution.succeeded,1);assert.equal(historical.stages.score.total,1);assert.equal(historical.stages.score.pending,1);
   assert.equal(historical.questions,1);assert.equal(historical.answers,1);assert.equal(historical.taskTotal,2);assert.equal(historical.taskCompleted,1);
   assert.deepEqual(historical.models[c.version],{answers:1,completed:0,failed:0,pending:1});assert.equal(historical.total,1);assert.equal(historical.succeeded,0);
+  assert.equal(historical.partial,1);
+  assert.equal((await answerReviewSamples(run,new URLSearchParams({status:'succeeded'}))).total,0);
+  const historicalPage=await answerReviewSamples(run,new URLSearchParams({status:'partial'}));assert.equal(historicalPage.total,1);assert.equal(historicalPage.items[0].status,'partial');
   const historicalDetail=await answerReviewSample(run,c.input_id);assert.equal(historicalDetail.results.attribution?.task_id,task.id);assert.equal(historicalDetail.results.score,null);
   const input={model:c.version,batch_id:c.batch_id,case_id:c.case_id,trace_id:c.trace_id,input_file:c.source,input_index:c.line-1};
   const both:AnswerReviewConfig={...config,reviewStages:['score','attribution'],inputs:{...config.inputs,records:[input]}};
@@ -26,11 +29,14 @@ test('existing accepted Attribution keeps its row while Score is added, paginate
   const current=await answerReviewRepository.readRun(run),score=current.manifest.tasks.find(t=>t.stage==='score')!;
   assert.equal(current.manifest.tasks.length,2);assert.deepEqual(current.receipts[task.id],state.receipts[task.id]);
   current.manifest.states[score.id]={status:'failed',attempts:2,reason:'score failed'};await answerReviewRepository.writeRun(run,current);
-  const page=await answerReviewSamples(run,new URLSearchParams({model:c.version,status:'failed',limit:'1'}));
+  const page=await answerReviewSamples(run,new URLSearchParams({model:c.version,status:'partial',limit:'1'}));
   assert.equal(page.total,1);assert.equal(page.items[0].stages.score.status,'failed');
+  assert.equal((await answerReviewSamples(run,new URLSearchParams({status:'failed'}))).total,0);
+  assert.equal((await answerReviewSamples(run,new URLSearchParams({status:'succeeded'}))).total,0);
   assert.equal((await answerReviewSamples(run,new URLSearchParams({offset:'1'}))).items.length,0);
   const detail=await answerReviewSample(run,c.input_id);assert.equal(detail.answer,'2+2=4');assert.equal(detail.results.score,null);assert.equal(detail.results.attribution?.task_id,task.id);
   const summary=await answerReviewRunSummary(run);assert.equal(summary.failed,1);assert.equal(summary.stages.attribution.succeeded,1);
+  assert.equal(summary.partial,1);assert.equal(detail.status,'partial');
   assert.deepEqual(summary.models[c.version],{answers:1,completed:0,failed:1,pending:0});assert.equal(summary.taskTotal,2);assert.equal(summary.taskCompleted,1);
   const unlock=await runLock(run);await assert.rejects(retryAnswerReviewTasks(run,{stages:['score']}),/owned/);await unlock();
   const retry=await retryAnswerReviewTasks(run,{taskIds:[score.id],stages:['score']});assert.deepEqual(retry.retried,[score.id]);

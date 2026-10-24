@@ -262,9 +262,11 @@ function samples(state:RunState){
   }
   return [...grouped].map(([inputId,tasks])=>{
     const c=candidate(tasks[0]);
-    return {inputId,caseId:c.case_id,batchId:c.batch_id,question:c.question,model:c.version,traceId:c.trace_id,
-      stages:Object.fromEntries(stages.map(stage=>{const task=tasks.find(t=>t.stage===stage),progress=task&&state.manifest.states[task.id];
-        return [stage,{taskId:task?.id??null,status:progress?.status??'pending',attempts:progress?.attempts??0,error:progress?.reason??null}];}))};
+    const views=Object.fromEntries(stages.map(stage=>{const task=tasks.find(t=>t.stage===stage),progress=task&&state.manifest.states[task.id];
+      return [stage,{taskId:task?.id??null,status:progress?.status??'pending',attempts:progress?.attempts??0,error:progress?.reason??null}];}));
+    const statuses=stages.map(stage=>views[stage].status),status=statuses.every(value=>value==='succeeded')?'succeeded':
+      statuses.includes('succeeded')?'partial':statuses.includes('running')?'running':statuses.some(value=>failed.has(value))?'failed':'pending';
+    return {inputId,caseId:c.case_id,batchId:c.batch_id,question:c.question,model:c.version,traceId:c.trace_id,status,stages:views};
   });
 }
 /** Status and pagination read only the compact checkpoint, never the entire result JSONL bodies. */
@@ -281,6 +283,7 @@ export async function answerReviewRunSummary(run:string,date?:string){
     questions:new Set(rows.map(row=>canonical([row.batchId,row.caseId]))).size,
     taskTotal:Object.values(counts).reduce((n,stage)=>n+stage.total,0),taskCompleted:Object.values(counts).reduce((n,stage)=>n+stage.succeeded,0),models,
     succeeded:rows.filter(row=>stages.every(stage=>row.stages[stage].status==='succeeded')).length,
+    partial:rows.filter(row=>row.status==='partial').length,
     failed:rows.filter(row=>stages.some(stage=>failed.has(row.stages[stage].status))).length,
     pending:rows.filter(row=>stages.some(stage=>['pending','running'].includes(row.stages[stage].status))).length,
     stages:counts,evaluatorVersion:state.manifest.evaluatorVersion,artifacts};
@@ -288,7 +291,7 @@ export async function answerReviewRunSummary(run:string,date?:string){
 export async function answerReviewSamples(run:string,params:URLSearchParams){
   const state=await answerReviewRepository.readTasks(run,[]),query=(params.get('query')??'').toLowerCase(),model=params.get('model'),status=params.get('status');
   const rows=samples(state).filter(row=>(!model||row.model===model)&&(!query||[row.question,row.caseId,row.traceId??''].some(value=>value.toLowerCase().includes(query)))&&
-    (!status||status==='all'||Object.values(row.stages).some(stage=>stage.status===status)));
+    (!status||status==='all'||row.status===status));
   const integer=(key:string,fallback:number)=>{const raw=params.get(key);if(raw===null)return fallback;const n=Number(raw);if(!Number.isSafeInteger(n)||n<0)throw new HttpError(400,`Invalid ${key}`);return n;};
   const offset=integer('offset',0),limit=Math.min(100,Math.max(1,integer('limit',25)));
   return {runId:state.manifest.runId,total:rows.length,offset,limit,items:rows.slice(offset,offset+limit)};
