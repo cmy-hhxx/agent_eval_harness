@@ -39,19 +39,23 @@ else
 fi
 cd "$CODE"
 export PATH="$HOME/.local/bin:$PATH"
-mise trust
-mise install
-mise exec -- npm run bootstrap
-mise exec -- npm run build
+if command -v mise >/dev/null 2>&1; then
+  mise trust
+  mise install
+  export PATH="$(mise exec -- printenv PATH)"
+fi
+node scripts/eris-toolchain.mjs
+npm run bootstrap
+npm run build
 # ERIS_PASSWORD_INPUT
-mise exec -- node scripts/eris-init.mjs --runtime-root "$RUNTIME" --source-ini "$RUNTIME/config/post-training.ini"
+node scripts/eris-init.mjs --runtime-root "$RUNTIME" --source-ini "$RUNTIME/config/post-training.ini"
 unset ERIS_ADMIN_PASSWORD
 ${values.start ? `if tmux has-session -t '=eris' 2>/dev/null; then echo 'eris tmux already exists; stop it explicitly before restarting' >&2; exit 1; fi
 tmux new-session -d -s eris -c "$CODE" "bash agent/run.sh --config '$RUNTIME/config/eris.json'"
 ready=0
 for ((attempt=0; attempt<60; attempt++)); do
   tmux has-session -t '=eris' 2>/dev/null || { echo 'Eris exited before readiness' >&2; exit 1; }
-  if mise exec -- python3 -c 'import urllib.request; r=urllib.request.build_opener(urllib.request.ProxyHandler({})).open("http://127.0.0.1:5004/health",timeout=1); assert r.status==200' >/dev/null 2>&1; then ready=1; break; fi
+  if python3 -c 'import urllib.request; r=urllib.request.build_opener(urllib.request.ProxyHandler({})).open("http://127.0.0.1:5004/health",timeout=1); assert r.status==200' >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 test "$ready" = 1 || { echo 'Eris health check timed out' >&2; exit 1; }` : ""}

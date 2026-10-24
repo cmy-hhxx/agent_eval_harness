@@ -28,7 +28,7 @@ ${command === "npm" && fail ? "exit 7" : "exit 0"}
 test("server startup uses external configuration and never issues process cleanup commands", async () => {
   const result = await launch(["--config", "config.json"]);
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.commands, "npm:run build:app\nnode:dist/apps/host/src/agent.js --config config.json\n");
+  assert.equal(result.commands, "node:scripts/eris-toolchain.mjs\nnpm:run build:app\nnode:dist/apps/host/src/agent.js --config config.json\n");
   const source = await readFile(path.join(ROOT, "agent/run.sh"), "utf8");
   assert(!/kill|lsof|xdg-open/.test(source));
 });

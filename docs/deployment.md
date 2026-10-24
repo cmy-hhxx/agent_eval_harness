@@ -148,6 +148,8 @@ unset ERIS_ADMIN_PASSWORD
 
 密码应通过私密环境输入提供，不写入命令历史。部署脚本通过 SSH stdin 传递初始化密码，代码由服务器从集群 Git 读取；复用既有只读 Git 凭据，不传输本机输入、结果、聊天或 checkout。
 
+部署优先使用 mise；服务器已通过系统路径安装同一组锁定版本时直接复用，启动和部署均校验 Node/npm/Python/uv 的精确版本，不允许版本降级。
+
 初始化只在缺失时创建 `runtime/config/eris.ini`、`runtime/config/eris.json` 和 `runtime/secrets/eris/accounts.json`。渠道取服务器 `post-training.ini`，独立绑定实际模型 `deepseek-v4.1-flash`；不会改写原配置。已有账号不重置密码。后续更新可不传初始化密码。
 
 `eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；内部 `0.0.0.0:5004`，外部既有映射为 `http://117.50.195.94:3928`。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
